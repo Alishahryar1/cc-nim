@@ -385,18 +385,8 @@ async def create_message(request_data: MessagesRequest, raw_request: Request):
                     usage=Usage(input_tokens=100, output_tokens=5),
                 )
 
-        # Calculate total request length in characters
-        total_length = 0
-        for msg in request_data.messages:
-            if isinstance(msg.content, str):
-                total_length += len(msg.content)
-            elif isinstance(msg.content, list):
-                for block in msg.content:
-                    total_length += len(json.dumps(block))
-
         logger.info(
-            f"Request: model={request_data.model}, messages={len(request_data.messages)}, "
-            f"length={total_length}, stream={request_data.stream}"
+            f"Request: model={request_data.model}, messages={len(request_data.messages)}, stream={request_data.stream}"
         )
         log_request_details(request_data)
 
