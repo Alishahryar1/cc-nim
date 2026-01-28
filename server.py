@@ -12,7 +12,7 @@ from typing import List, Dict, Any, Optional, Union, Literal
 import os
 import json
 import logging
-import sys
+from providers.nvidia_nim import NvidiaNimProvider, ProviderConfig
 import uvicorn
 from dotenv import load_dotenv
 from contextlib import asynccontextmanager
@@ -199,8 +199,6 @@ class MessagesResponse(BaseModel):
 # Provider
 # =============================================================================
 
-from providers.nvidia_nim import NvidiaNimProvider, ProviderConfig
-
 provider_config = ProviderConfig(
     api_key=os.getenv("NVIDIA_NIM_API_KEY", ""),
     base_url=os.getenv("NVIDIA_NIM_BASE_URL", "https://integrate.api.nvidia.com/v1"),
@@ -295,7 +293,7 @@ def is_prefix_detection_request(request_data: MessagesRequest) -> tuple[bool, st
         try:
             cmd_start = content.rfind("Command:") + len("Command:")
             return True, content[cmd_start:].strip()
-        except:
+        except Exception:
             pass
 
     return False, ""
