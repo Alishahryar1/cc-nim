@@ -87,7 +87,7 @@ To run the test suite, use the following command:
 uv run pytest
 ```
 
-## Adding Your Own Provider
+### Adding Your Own Provider
 
 Extend `BaseProvider` in `providers/` to add support for other APIs:
 
