@@ -11,6 +11,8 @@ dependencies = [
     "pydantic>=2.0.0",
     "python-dotenv>=1.0.0",
     "tiktoken>=0.7.0",
+    "websockets>=13.0",
+    "telethon>=1.35.0",
 ]
 
 [dependency-groups]

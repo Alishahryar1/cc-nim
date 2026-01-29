@@ -10,10 +10,11 @@ enabling Claude Code CLI to utilize NIM models with full support for:
 - Fast prefix detection for CLI policy specifications
 """
 
+import time
+import asyncio
 import os
 import json
 import logging
-import uuid
 from typing import List, Dict, Any, Optional, Union, Literal
 from pydantic import BaseModel, field_validator, model_validator
 from providers.nvidia_nim import NvidiaNimProvider, ProviderConfig
@@ -24,6 +25,14 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, Request, HTTPException, Depends
 from fastapi.responses import StreamingResponse, JSONResponse
 import tiktoken
+from providers.claude_cli import CLISession, CLIParser
+
+# Optional: telethon for the bot
+try:
+    from telethon import TelegramClient, events
+except ImportError:
+    TelegramClient = None
+    events = None
 
 # Initialize tokenizer
 ENCODER = tiktoken.get_encoding("cl100k_base")
@@ -35,7 +44,7 @@ load_dotenv()
 logging.basicConfig(
     level=logging.DEBUG,
     format="%(asctime)s - %(levelname)s - %(message)s",
-    handlers=[logging.FileHandler("server.log", encoding="utf-8", mode="a")],
+    handlers=[logging.FileHandler("server.log", encoding="utf-8", mode="w")],
 )
 logger = logging.getLogger(__name__)
 
@@ -228,15 +237,173 @@ def get_provider() -> NvidiaNimProvider:
 # FastAPI App
 # =============================================================================
 
+tele_client: Optional["TelegramClient"] = None
+
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
-    logger.info("Server starting up...")
+    global tele_client
+    try:
+        api_id = os.getenv("TELEGRAM_API_ID")
+        api_hash = os.getenv("TELEGRAM_API_HASH")
+        if TelegramClient and api_id and api_hash:
+            logger.info("Starting Telegram Bot...")
+            session_path = os.path.join(WORKSPACE_PATH, "claude_bot.session")
+            tele_client = TelegramClient(session_path, int(api_id), api_hash)
+
+            # Register handlers BEFORE starting
+            register_bot_handlers(tele_client)
+
+            await tele_client.start()
+            asyncio.create_task(tele_client.run_until_disconnected())
+
+            # Notify user
+            try:
+                await tele_client.send_message(
+                    "me", f"🚀 **Claude unified server is online!** (v{app.version})"
+                )
+            except:
+                pass
+            logger.info("Bot started and online message sent.")
+    except Exception as e:
+        logger.error(f"Bot failed to start: {e}")
+        tele_client = None
+
     yield
+    if tele_client:
+        await tele_client.disconnect()
     logger.info("Server shutting down...")
     global _provider
     if _provider and hasattr(_provider, "_client"):
         await _provider._client.aclose()
+
+
+# =============================================================================
+# Telegram Bot & CLI Configuration
+# =============================================================================
+
+WORKSPACE_PATH = os.path.abspath(os.getenv("CLAUDE_WORKSPACE", "agent_workspace"))
+ALLOWED_DIRS = []
+raw_dirs = os.getenv("ALLOWED_DIRS", "")
+if raw_dirs:
+    # Handle Windows backslash corrosion (\a, \b etc) by replacing them
+    for d in raw_dirs.split(","):
+        d = d.strip()
+        if not d:
+            continue
+        # If it looks like a Windows path with corrupted escapes, try to fix
+        fixed = (
+            d.replace("\a", "\\a")
+            .replace("\b", "\\b")
+            .replace("\f", "\\f")
+            .replace("\n", "\\n")
+            .replace("\r", "\\r")
+            .replace("\t", "\\t")
+            .replace("\v", "\\v")
+        )
+        ALLOWED_DIRS.append(os.path.normpath(fixed))
+# Internal URL for the CLI to use (points to this server)
+INTERNAL_API_URL = "http://localhost:8082/v1"
+
+# Initialize Global Instances
+cli_session = CLISession(WORKSPACE_PATH, INTERNAL_API_URL, ALLOWED_DIRS)
+
+
+def register_bot_handlers(client: "TelegramClient"):
+    ALLOWED_USER_ID = os.getenv("ALLOWED_TELEGRAM_USER_ID")
+    logger.info(f"DEBUG: Registering bot handlers. Allowed user ID: {ALLOWED_USER_ID}")
+
+    @client.on(events.NewMessage())
+    async def handle_telegram_message(event):
+        sender_id = str(event.sender_id)
+        logger.info(f"BOT_EVENT: From {sender_id} | Text: {event.text[:50]}")
+
+        target_id = str(ALLOWED_USER_ID).strip()
+        if sender_id != target_id:
+            logger.debug(f"BOT_SECURITY: Ignored message from {sender_id}")
+            return
+        
+        # 1. Handle Commands
+        if event.text == "/stop":
+            await cli_session.stop()
+            await event.reply("⏹ **Claude process stopped.**")
+            return
+            
+        # 2. Filter out bot's own status messages and empty text
+        if not event.text or any(event.text.startswith(p) for p in ["⏳", "�", "🔧", "✅", "❌", "🚀", "🤖"]):
+            return
+
+        logger.info(f"BOT_TASK: {event.text}")
+        status_msg = await event.reply("⏳ **Launching Claude CLI...**")
+
+        current_content = ""
+        last_ui_update = 0
+
+        async def update_bot_ui(text, status=None):
+            nonlocal last_ui_update
+            if not text and not status:
+                return
+            now = time.time()
+            if now - last_ui_update < 0.8: # Slightly faster
+                return
+            try:
+                display = f"{status}\n\n{text}" if status else text
+                if len(display) > 4000:
+                    display = "..." + display[-3997:]
+                await status_msg.edit(display, parse_mode="markdown")
+                last_ui_update = now
+            except:
+                pass
+
+        try:
+            async for event_data in cli_session.start_task(event.text):
+                if not isinstance(event_data, dict):
+                    continue
+
+                parsed = CLIParser.parse_event(event_data)
+
+                if event_data.get("type") == "raw":
+                    raw_line = event_data.get("content")
+                    if not raw_line: continue
+                    if "login" in raw_line.lower():
+                        await event.reply("⚠️ **Claude requires login. Run `claude` in terminal.**")
+                    continue
+
+                if not parsed:
+                    continue
+
+                if parsed["type"] == "thinking":
+                    # Display thinking tokens with special prefix
+                    thinking_text = parsed["text"]
+                    await event.reply(f"💭 **Thinking:**\n```\n{thinking_text[:1500]}{'...' if len(thinking_text) > 1500 else ''}\n```", parse_mode="markdown")
+
+                elif parsed["type"] == "content":
+                    current_content += parsed["text"]
+                    await update_bot_ui(current_content, "🧠 **Claude is working...**")
+                
+                elif parsed["type"] == "tool_start":
+                    names = [t.get("name") for t in parsed["tools"]]
+                    # Send a SEPARATE message for tool calls as requested
+                    await event.reply(f"🔧 **Running Tools:** `{', '.join(names)}`")
+                    # Update status message to show we're working
+                    await update_bot_ui(current_content, "⏳ **Executing tools...**")
+                
+                elif parsed["type"] == "subagent_start":
+                    tasks = parsed["tasks"]
+                    await event.reply(f"🤖 **Subagent Task:** {', '.join(tasks)}")
+                    await update_bot_ui(current_content, "🔎 **Subagent working...**")
+
+                elif parsed["type"] == "complete":
+                    if parsed.get("status") == "failed":
+                        await status_msg.edit(f"❌ **Failed**\n\n{current_content}", parse_mode="markdown")
+                    else:
+                        await status_msg.edit(f"✅ **Complete**\n\n{current_content or 'Done.'}", parse_mode="markdown")
+                
+                elif parsed["type"] == "error":
+                    await event.reply(f"❌ **Error:** {parsed['message']}")
+        except Exception as e:
+            logger.error(f"Bot failed: {e}")
+            await event.reply(f"💥 **Failed:** {e}")
 
 
 FAST_PREFIX_DETECTION = os.getenv("FAST_PREFIX_DETECTION", "true").lower() == "true"
@@ -521,7 +688,13 @@ async def root():
 
 @app.get("/health")
 async def health():
-    return {"status": "healthy"}
+    return {"status": "healthy", "bot_running": tele_client is not None}
+
+
+@app.post("/stop")
+async def stop_cli():
+    stopped = await cli_session.stop()
+    return {"status": "terminated" if stopped else "no_active_process"}
 
 
 if __name__ == "__main__":
