@@ -233,8 +233,7 @@ async def root():
     return {
         "status": "ok",
         "provider": "nvidia_nim",
-        "big_model": settings.big_model,
-        "small_model": settings.small_model,
+        "model": settings.model,
     }
 
 

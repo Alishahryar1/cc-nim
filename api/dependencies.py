@@ -3,7 +3,7 @@
 from typing import Optional
 from providers.base import ProviderConfig
 from providers.nvidia_nim import NvidiaNimProvider
-from config.settings import get_settings
+from config.settings import get_settings, NVIDIA_NIM_BASE_URL
 
 # Global provider instance (singleton)
 _provider: Optional[NvidiaNimProvider] = None
@@ -16,7 +16,7 @@ def get_provider() -> NvidiaNimProvider:
         settings = get_settings()
         config = ProviderConfig(
             api_key=settings.nvidia_nim_api_key,
-            base_url=settings.nvidia_nim_base_url,
+            base_url=NVIDIA_NIM_BASE_URL,  # Use constant, not from settings
             rate_limit=settings.nvidia_nim_rate_limit,
             rate_window=settings.nvidia_nim_rate_window,
         )

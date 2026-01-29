@@ -42,10 +42,16 @@ class TestSettings:
             settings.nvidia_nim_seed, int
         )
 
-    def test_model_mapping_defaults(self):
-        """Test model mapping defaults."""
+    def test_model_setting(self):
+        """Test model setting exists and is a string."""
         from config.settings import Settings
 
         settings = Settings()
-        assert "kimi" in settings.big_model.lower() or settings.big_model != ""
-        assert "kimi" in settings.small_model.lower() or settings.small_model != ""
+        assert isinstance(settings.model, str)
+        assert len(settings.model) > 0
+
+    def test_base_url_constant(self):
+        """Test NVIDIA_NIM_BASE_URL is a constant."""
+        from config.settings import NVIDIA_NIM_BASE_URL
+
+        assert NVIDIA_NIM_BASE_URL == "https://integrate.api.nvidia.com/v1"

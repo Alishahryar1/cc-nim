@@ -8,17 +8,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
+# Fixed base URL for NVIDIA NIM
+NVIDIA_NIM_BASE_URL = "https://integrate.api.nvidia.com/v1"
+
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
     # ==================== NVIDIA NIM Config ====================
     nvidia_nim_api_key: str = ""
-    nvidia_nim_base_url: str = "https://integrate.api.nvidia.com/v1"
 
-    # ==================== Model Mapping ====================
-    big_model: str = "moonshotai/kimi-k2-thinking"
-    small_model: str = "moonshotai/kimi-k2-thinking"
+    # ==================== Model ====================
+    # All Claude model requests are mapped to this single model
+    model: str = "moonshotai/kimi-k2-thinking"
 
     # ==================== Rate Limiting ====================
     nvidia_nim_rate_limit: int = 40

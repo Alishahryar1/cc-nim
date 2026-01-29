@@ -44,12 +44,20 @@ async def lifespan(app: FastAPI):
             from messaging.queue import MessageQueueManager
             from cli.manager import CLISessionManager
 
-            # Setup workspace
-            workspace = os.path.abspath(settings.claude_workspace)
+            # Setup workspace - CLI should run in allowed_dir
+            workspace = (
+                os.path.abspath(settings.allowed_dir)
+                if settings.allowed_dir
+                else os.getcwd()
+            )
             os.makedirs(workspace, exist_ok=True)
 
-            # Initialize CLI manager
-            allowed_dirs = [settings.allowed_dir] if settings.allowed_dir else []
+            # Session data stored separately
+            data_path = os.path.abspath(settings.claude_workspace)
+            os.makedirs(data_path, exist_ok=True)
+
+            # Initialize CLI manager with allowed_dir as workspace
+            allowed_dirs = [workspace] if settings.allowed_dir else []
             cli_manager = CLISessionManager(
                 workspace_path=workspace,
                 api_url="http://localhost:8082/v1",
@@ -59,7 +67,7 @@ async def lifespan(app: FastAPI):
 
             # Initialize session store and queue
             session_store = SessionStore(
-                storage_path=os.path.join(workspace, "sessions.json")
+                storage_path=os.path.join(data_path, "sessions.json")
             )
             message_queue = MessageQueueManager()
 
