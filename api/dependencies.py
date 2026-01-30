@@ -1,12 +1,18 @@
 """Dependency injection for FastAPI."""
 
 from typing import Optional
+from config.settings import Settings, get_settings as _get_settings, NVIDIA_NIM_BASE_URL
 from providers.base import ProviderConfig
 from providers.nvidia_nim import NvidiaNimProvider
-from config.settings import get_settings, NVIDIA_NIM_BASE_URL
+
 
 # Global provider instance (singleton)
 _provider: Optional[NvidiaNimProvider] = None
+
+
+def get_settings() -> Settings:
+    """Get application settings via dependency injection."""
+    return _get_settings()
 
 
 def get_provider() -> NvidiaNimProvider:

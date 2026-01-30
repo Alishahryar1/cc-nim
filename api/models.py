@@ -6,6 +6,7 @@ from typing import List, Dict, Any, Optional, Union, Literal
 from pydantic import BaseModel, field_validator, model_validator
 
 from config.settings import get_settings
+from providers.model_utils import normalize_model_name
 
 logger = logging.getLogger(__name__)
 
@@ -115,18 +116,10 @@ class MessagesRequest(BaseModel):
         if self.original_model is None:
             self.original_model = self.model
 
-        # Strip provider prefixes
-        clean_v = self.model
-        for prefix in ["anthropic/", "openai/", "gemini/"]:
-            if clean_v.startswith(prefix):
-                clean_v = clean_v[len(prefix) :]
-                break
-
-        # Map all Claude models to the single configured model
-        if any(
-            name in clean_v.lower() for name in ["haiku", "sonnet", "opus", "claude"]
-        ):
-            self.model = settings.model
+        # Use centralized model normalization
+        normalized = normalize_model_name(self.model, settings.model)
+        if normalized != self.model:
+            self.model = normalized
 
         if self.model != self.original_model:
             logger.debug(f"MODEL MAPPING: '{self.original_model}' -> '{self.model}'")
@@ -147,17 +140,8 @@ class TokenCountRequest(BaseModel):
     def validate_model_field(cls, v, info):
         """Map any Claude model name to the configured model."""
         settings = get_settings()
-        clean_v = v
-        for prefix in ["anthropic/", "openai/", "gemini/"]:
-            if clean_v.startswith(prefix):
-                clean_v = clean_v[len(prefix) :]
-                break
-
-        if any(
-            name in clean_v.lower() for name in ["haiku", "sonnet", "opus", "claude"]
-        ):
-            return settings.model
-        return v
+        # Use centralized model normalization
+        return normalize_model_name(v, settings.model)
 
 
 class TokenCountResponse(BaseModel):

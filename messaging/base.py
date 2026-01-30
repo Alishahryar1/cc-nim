@@ -1,8 +1,54 @@
 """Abstract base class for messaging platforms."""
 
 from abc import ABC, abstractmethod
-from typing import Callable, Awaitable, Optional, Any
+from typing import Callable, Awaitable, Optional, Any, Protocol, Tuple, runtime_checkable
 from .models import IncomingMessage
+
+
+class CLISession(ABC):
+    """Abstract base for CLI session - avoid circular import from cli package."""
+
+    @abstractmethod
+    async def start_task(self, prompt: str, session_id: Optional[str] = None):
+        """Start a task in the CLI session."""
+        pass
+
+    @property
+    @abstractmethod
+    def is_busy(self) -> bool:
+        """Check if session is busy."""
+        pass
+
+
+@runtime_checkable
+class SessionManagerInterface(Protocol):
+    """
+    Protocol for session managers to avoid tight coupling with cli package.
+
+    Implementations: CLISessionManager
+    """
+
+    async def get_or_create_session(
+        self, session_id: Optional[str] = None
+    ) -> Tuple[CLISession, str, bool]:
+        """
+        Get an existing session or create a new one.
+
+        Returns: Tuple of (session, session_id, is_new_session)
+        """
+        ...
+
+    async def register_real_session_id(self, temp_id: str, real_session_id: str) -> bool:
+        """Register the real session ID from CLI output."""
+        ...
+
+    async def stop_all(self) -> None:
+        """Stop all sessions."""
+        ...
+
+    def get_stats(self) -> dict:
+        """Get session statistics."""
+        ...
 
 
 class MessagingPlatform(ABC):

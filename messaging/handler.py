@@ -11,11 +11,11 @@ import asyncio
 import logging
 from typing import Optional, TYPE_CHECKING
 
-from .base import MessagingPlatform
+from .base import MessagingPlatform, SessionManagerInterface, CLISession
 from .models import IncomingMessage
 from .session import SessionStore
 from .tree_queue import TreeQueueManager, MessageNode, MessageState
-from cli import CLISessionManager, CLIParser
+from .event_parser import parse_cli_event
 
 if TYPE_CHECKING:
     pass
@@ -37,7 +37,7 @@ class ClaudeMessageHandler:
     def __init__(
         self,
         platform: MessagingPlatform,
-        cli_manager: CLISessionManager,
+        cli_manager: SessionManagerInterface,
         session_store: SessionStore,
     ):
         self.platform = platform
@@ -251,7 +251,7 @@ class ClaudeMessageHandler:
                         temp_session_id = None
                     continue
 
-                parsed_list = CLIParser.parse_event(event_data)
+                parsed_list = parse_cli_event(event_data)
                 logger.debug(f"HANDLER: Parsed {len(parsed_list)} events from CLI")
 
                 for parsed in parsed_list:
