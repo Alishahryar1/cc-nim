@@ -1,7 +1,12 @@
 """Tests for cli/ module."""
 
 import pytest
+import asyncio
+import json
+import os
 from unittest.mock import AsyncMock, MagicMock, patch
+
+# --- Existing Parser Tests ---
 
 
 class TestCLIParser:
@@ -154,6 +159,9 @@ class TestCLIParser:
         assert result == []
 
 
+# --- CLI Session Tests ---
+
+
 class TestCLISession:
     """Test CLISession."""
 
@@ -166,7 +174,7 @@ class TestCLISession:
             api_url="http://localhost:8082/v1",
             allowed_dirs=["/home/user/projects"],
         )
-        assert session.workspace == "/tmp/test" or "test" in session.workspace
+        assert session.workspace == os.path.normpath(os.path.abspath("/tmp/test"))
         assert session.api_url == "http://localhost:8082/v1"
         assert not session.is_busy
 
@@ -201,6 +209,306 @@ class TestCLISession:
         # No session ID
         assert session._extract_session_id({"type": "message"}) is None
         assert session._extract_session_id("not a dict") is None
+
+    @pytest.mark.asyncio
+    async def test_start_task_basic_flow(self):
+        """Test start_task running a basic command flow."""
+        from cli.session import CLISession
+
+        session = CLISession("/tmp", "http://localhost:8082/v1")
+
+        # Mock subprocess
+        mock_process = AsyncMock()
+        mock_process.stdout.read.side_effect = [
+            b'{"type": "message", "content": "Hello"}\n',
+            b'{"session_id": "sess_1"}\n',
+            b"",  # EOF
+        ]
+        mock_process.stderr.read.return_value = b""  # No error
+        mock_process.wait.return_value = 0
+        mock_process.returncode = 0
+
+        with patch(
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock
+        ) as mock_exec:
+            mock_exec.return_value = mock_process
+
+            events = []
+            async for event in session.start_task("Hello"):
+                events.append(event)
+
+            # Verify command construction
+            # Arg 1 is subprocess command
+            args = mock_exec.call_args[0]
+            assert args[0] == "claude"
+            assert "-p" in args
+            assert "Hello" in args
+
+            # Verify events
+            assert (
+                len(events) == 4
+            )  # message, session_id, session_info (synthesized), exit
+            assert events[0] == {"type": "message", "content": "Hello"}
+            assert events[1] == {"type": "session_info", "session_id": "sess_1"}
+            # The session_info event is yielded by _handle_line_gen right after extracting ID
+            assert events[2] == {"session_id": "sess_1"}  # The original event
+            assert events[3] == {"type": "exit", "code": 0, "stderr": None}
+
+            assert session.current_session_id == "sess_1"
+
+    @pytest.mark.asyncio
+    async def test_start_task_with_session_resume(self):
+        """Test resuming an existing session."""
+        from cli.session import CLISession
+
+        session = CLISession("/tmp", "http://localhost:8082/v1")
+
+        mock_process = AsyncMock()
+        mock_process.stdout.read.side_effect = [
+            b"",
+        ]  # Immediate EOF
+        mock_process.stderr.read.return_value = b""
+        mock_process.wait.return_value = 0
+
+        with patch(
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock
+        ) as mock_exec:
+            mock_exec.return_value = mock_process
+
+            async for _ in session.start_task("Hello", session_id="sess_abc"):
+                pass
+
+            args = mock_exec.call_args[0]
+            assert "--resume" in args
+            assert "sess_abc" in args
+
+    @pytest.mark.asyncio
+    async def test_start_task_process_failure_with_stderr(self):
+        """Test process exit with error code and stderr output."""
+        from cli.session import CLISession
+
+        session = CLISession("/tmp", "http://localhost:8082/v1")
+
+        mock_process = AsyncMock()
+        mock_process.stdout.read.side_effect = [b""]  # No stdout
+        mock_process.stderr.read.return_value = b"Fatal error"
+        mock_process.wait.return_value = 1
+
+        with patch(
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock
+        ) as mock_exec:
+            mock_exec.return_value = mock_process
+
+            events = []
+            async for event in session.start_task("Hello"):
+                events.append(event)
+
+            # Should have error event from stderr, then exit event
+            assert len(events) == 2
+            assert events[0]["type"] == "error"
+            assert events[0]["error"]["message"] == "Fatal error"
+
+            assert events[1]["type"] == "exit"
+            assert events[1]["code"] == 1
+            assert events[1]["stderr"] == "Fatal error"
+
+    @pytest.mark.asyncio
+    async def test_stop_session(self):
+        """Test stopping the session process."""
+        from cli.session import CLISession
+
+        session = CLISession("/tmp", "http://localhost:8082/v1")
+
+        mock_process = MagicMock()
+        mock_process.returncode = None  # Running
+        # Mock wait to simulate async finish
+        mock_process.wait = AsyncMock(return_value=0)
+
+        session.process = mock_process
+
+        stopped = await session.stop()
+
+        assert stopped is True
+        mock_process.terminate.assert_called_once()
+        mock_process.wait.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_stop_session_timeout_force_kill(self):
+        """Test force kill if terminate times out."""
+        from cli.session import CLISession
+
+        session = CLISession("/tmp", "http://localhost:8082/v1")
+
+        mock_process = MagicMock()
+        mock_process.returncode = None
+
+        # First wait times out
+        async def wait_side_effect():
+            if not mock_process.kill.called:
+                await asyncio.sleep(6)  # Should be > 5.0 timeout
+            return 0
+
+        # We can simulate timeout by raising TimeoutError directly on first call
+        mock_process.wait = AsyncMock(side_effect=[asyncio.TimeoutError, 0])
+
+        session.process = mock_process
+
+        stopped = await session.stop()
+
+        assert stopped is True
+        mock_process.terminate.assert_called()
+        mock_process.kill.assert_called()
+
+    @pytest.mark.asyncio
+    async def test_start_task_split_buffer(self):
+        """Test handling of JSON split across chunks."""
+        from cli.session import CLISession
+
+        session = CLISession("/tmp", "http://localhost:8082/v1")
+
+        mock_process = AsyncMock()
+        # Split json: {"type": "mess... age"}
+        mock_process.stdout.read.side_effect = [
+            b'{"type": "mess',
+            b'age", "content": "Split"}\n',
+            b"",
+        ]
+        mock_process.stderr.read.return_value = b""
+        mock_process.wait.return_value = 0
+
+        with patch(
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock
+        ) as mock_exec:
+            mock_exec.return_value = mock_process
+
+            events = []
+            async for event in session.start_task("test"):
+                if event["type"] == "message":
+                    events.append(event)
+
+            assert len(events) == 1
+            assert events[0]["content"] == "Split"
+
+    @pytest.mark.asyncio
+    async def test_start_task_remnant_buffer(self):
+        """Test handling of buffer remnant at EOF (no newline at end)."""
+        from cli.session import CLISession
+
+        session = CLISession("/tmp", "http://localhost:8082/v1")
+
+        mock_process = AsyncMock()
+        mock_process.stdout.read.side_effect = [
+            b'{"type": "message", "content": "Remnant"}',  # No newline
+            b"",
+        ]
+        mock_process.stderr.read.return_value = b""
+        mock_process.wait.return_value = 0
+
+        with patch(
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock
+        ) as mock_exec:
+            mock_exec.return_value = mock_process
+
+            events = []
+            async for event in session.start_task("test"):
+                if event["type"] == "message":
+                    events.append(event)
+
+            assert len(events) == 1
+            assert events[0]["content"] == "Remnant"
+
+    @pytest.mark.asyncio
+    async def test_start_task_non_v1_url(self):
+        """Test start_task with a non-v1 URL."""
+        from cli.session import CLISession
+
+        # URL not ending in /v1
+        session = CLISession("/tmp", "http://localhost:8082")
+
+        mock_process = AsyncMock()
+        mock_process.stdout.read.side_effect = [b""]
+        mock_process.stderr.read.return_value = b""
+        mock_process.wait.return_value = 0
+
+        with patch(
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock
+        ) as mock_exec:
+            mock_exec.return_value = mock_process
+            async for _ in session.start_task("test"):
+                pass
+
+            # Check env var
+            kwargs = mock_exec.call_args[1]
+            env = kwargs["env"]
+            assert env["ANTHROPIC_BASE_URL"] == "http://localhost:8082"
+
+    @pytest.mark.asyncio
+    async def test_start_task_allowed_dirs(self):
+        """Test start_task includes allowed dirs in command."""
+        from cli.session import CLISession
+
+        session = CLISession(
+            "/tmp", "http://localhost:8082/v1", allowed_dirs=["/dir1", "/dir2"]
+        )
+
+        mock_process = AsyncMock()
+        mock_process.stdout.read.side_effect = [b""]
+        mock_process.stderr.read.return_value = b""
+        mock_process.wait.return_value = 0
+
+        with patch(
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock
+        ) as mock_exec:
+            mock_exec.return_value = mock_process
+            async for _ in session.start_task("test"):
+                pass
+
+            cmd = mock_exec.call_args[0]
+            assert "--add-dir" in cmd
+            assert os.path.normpath("/dir1") in cmd
+            assert os.path.normpath("/dir2") in cmd
+
+    @pytest.mark.asyncio
+    async def test_start_task_json_error(self):
+        """Test handling of non-JSON output from CLI."""
+        from cli.session import CLISession
+
+        session = CLISession("/tmp", "http://localhost:8082/v1")
+
+        mock_process = AsyncMock()
+        mock_process.stdout.read.side_effect = [b"Not valid json\n", b""]
+        mock_process.stderr.read.return_value = b""
+        mock_process.wait.return_value = 0
+
+        with patch(
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock
+        ) as mock_exec:
+            mock_exec.return_value = mock_process
+
+            events = []
+            async for event in session.start_task("test"):
+                if event["type"] == "raw":
+                    events.append(event)
+
+            assert len(events) == 1
+            assert events[0]["content"] == "Not valid json"
+
+    @pytest.mark.asyncio
+    async def test_stop_exception(self):
+        """Test exception handling during stop."""
+        from cli.session import CLISession
+
+        session = CLISession("/tmp", "http://localhost:8082/v1")
+
+        mock_process = MagicMock()
+        mock_process.returncode = None
+        # Raise exception on terminate
+        mock_process.terminate.side_effect = RuntimeError("Permission denied")
+
+        session.process = mock_process
+
+        stopped = await session.stop()
+        assert stopped is False
 
 
 class TestCLISessionManager:
