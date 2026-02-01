@@ -22,7 +22,7 @@ from .request_utils import (
     get_token_count,
 )
 from config.settings import Settings
-from providers.nvidia_nim import NvidiaNimProvider
+from providers.base import BaseProvider
 from providers.exceptions import ProviderError
 from providers.logging_utils import log_request_compact
 
@@ -40,7 +40,7 @@ router = APIRouter()
 async def create_message(
     request_data: MessagesRequest,
     raw_request: Request,
-    provider: NvidiaNimProvider = Depends(get_provider),
+    provider: BaseProvider = Depends(get_provider),
     settings: Settings = Depends(get_settings),
 ):
     """Create a message (streaming or non-streaming)."""

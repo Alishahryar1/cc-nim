@@ -2,12 +2,12 @@
 
 from typing import Optional
 from config.settings import Settings, get_settings as _get_settings, NVIDIA_NIM_BASE_URL
-from providers.base import ProviderConfig
+from providers.base import BaseProvider, ProviderConfig
 from providers.nvidia_nim import NvidiaNimProvider
 
 
 # Global provider instance (singleton)
-_provider: Optional[NvidiaNimProvider] = None
+_provider: Optional[BaseProvider] = None
 
 
 def get_settings() -> Settings:
@@ -15,8 +15,8 @@ def get_settings() -> Settings:
     return _get_settings()
 
 
-def get_provider() -> NvidiaNimProvider:
-    """Get or create the NvidiaNimProvider instance."""
+def get_provider() -> BaseProvider:
+    """Get or create the provider instance."""
     global _provider
     if _provider is None:
         settings = get_settings()
