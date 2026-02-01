@@ -4,7 +4,7 @@ from .base import MessagingPlatform, SessionManagerInterface, CLISession
 from .models import IncomingMessage, OutgoingMessage
 from .handler import ClaudeMessageHandler
 from .session import SessionStore
-from .tree_data import MessageTree, MessageNode, MessageState
+from .tree_core import MessageTree, MessageNode, MessageState
 from .tree_queue import TreeQueueManager
 from .event_parser import parse_cli_event
 

@@ -2,7 +2,7 @@ import pytest
 import asyncio
 from unittest.mock import MagicMock
 from messaging.handler import ClaudeMessageHandler
-from messaging.tree_data import MessageState
+from messaging.tree_core import MessageState
 
 
 @pytest.fixture

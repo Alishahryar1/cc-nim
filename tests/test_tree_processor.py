@@ -1,8 +1,8 @@
 import pytest
 import asyncio
 from unittest.mock import AsyncMock, MagicMock
-from messaging.tree_processor import TreeQueueProcessor
-from messaging.tree_data import MessageTree, MessageNode, MessageState
+from messaging.tree_queue import TreeQueueProcessor
+from messaging.tree_core import MessageTree, MessageNode, MessageState
 from messaging.models import IncomingMessage
 
 

@@ -1,7 +1,7 @@
 import pytest
 from unittest.mock import MagicMock
-from messaging.tree_repository import TreeRepository
-from messaging.tree_data import MessageTree, MessageNode, MessageState
+from messaging.tree_queue import TreeRepository
+from messaging.tree_core import MessageTree, MessageNode, MessageState
 from messaging.models import IncomingMessage
 
 
