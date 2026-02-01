@@ -9,16 +9,13 @@ Uses tree-based queuing for message ordering.
 import time
 import asyncio
 import logging
-from typing import Optional, TYPE_CHECKING
+from typing import Optional
 
 from .base import MessagingPlatform, SessionManagerInterface
 from .models import IncomingMessage
 from .session import SessionStore
 from .tree_queue import TreeQueueManager, MessageNode, MessageState
 from .event_parser import parse_cli_event
-
-if TYPE_CHECKING:
-    pass
 
 logger = logging.getLogger(__name__)
 

@@ -253,16 +253,6 @@ class MessageTree:
         """Get number of messages waiting in queue."""
         return self._queue.qsize()
 
-    def get_queue_position(self, node_id: str) -> int:
-        """
-        Get position of a node in the queue.
-
-        Returns 0 if not in queue, 1+ for queue position.
-        """
-        # Note: asyncio.Queue doesn't support direct iteration
-        # This is an approximation based on order
-        return 0  # TODO: Track positions separately if needed
-
     def to_dict(self) -> dict:
         """Serialize tree to dictionary."""
         return {

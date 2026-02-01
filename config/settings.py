@@ -66,8 +66,6 @@ class Settings(BaseSettings):
 
     # ==================== Bot Wrapper Config ====================
     telegram_bot_token: Optional[str] = None
-    telegram_api_id: Optional[str] = None  # Deprecated
-    telegram_api_hash: Optional[str] = None  # Deprecated
     allowed_telegram_user_id: Optional[str] = None
     claude_workspace: str = "./agent_workspace"
     allowed_dir: str = ""
@@ -89,8 +87,6 @@ class Settings(BaseSettings):
     @field_validator(
         "nvidia_nim_stop",
         "telegram_bot_token",
-        "telegram_api_id",
-        "telegram_api_hash",
         "allowed_telegram_user_id",
         mode="before",
     )
