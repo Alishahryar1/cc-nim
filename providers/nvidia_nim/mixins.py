@@ -11,8 +11,8 @@ import json
 import logging
 from typing import Any, Dict
 
-from .utils import AnthropicToOpenAIConverter, map_stop_reason, extract_think_content
-from .exceptions import (
+from ..utils import AnthropicToOpenAIConverter, map_stop_reason, extract_think_content
+from ..exceptions import (
     AuthenticationError,
     InvalidRequestError,
     RateLimitError,
@@ -133,7 +133,7 @@ class ErrorMapperMixin:
             return AuthenticationError(str(e), raw_error=str(e))
         if isinstance(e, openai.RateLimitError):
             # Trigger global rate limit block
-            from .rate_limit import GlobalRateLimiter
+            from ..rate_limit import GlobalRateLimiter
 
             GlobalRateLimiter.get_instance().set_blocked(60)  # Default 60s cooldown
             return RateLimitError(str(e), raw_error=str(e))

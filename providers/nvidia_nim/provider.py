@@ -6,8 +6,8 @@ from typing import Any, AsyncIterator
 
 from openai import AsyncOpenAI
 
-from .base import BaseProvider, ProviderConfig
-from .utils import (
+from ..base import BaseProvider, ProviderConfig
+from ..utils import (
     SSEBuilder,
     map_stop_reason,
     ThinkTagParser,
@@ -15,15 +15,15 @@ from .utils import (
     ContentType,
     extract_reasoning_from_delta,
 )
-from .exceptions import (
+from ..exceptions import (
     APIError,
 )
-from .nvidia_mixins import (
+from .mixins import (
     RequestBuilderMixin,
     ErrorMapperMixin,
     ResponseConverterMixin,
 )
-from .rate_limit import GlobalRateLimiter
+from ..rate_limit import GlobalRateLimiter
 
 logger = logging.getLogger(__name__)
 
