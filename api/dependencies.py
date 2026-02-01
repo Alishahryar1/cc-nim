@@ -3,7 +3,7 @@
 from typing import Optional
 from config.settings import Settings, get_settings as _get_settings, NVIDIA_NIM_BASE_URL
 from providers.base import BaseProvider, ProviderConfig
-from providers.nvidia_nim import NvidiaNimProvider
+from providers import create_provider
 
 
 # Global provider instance (singleton)
@@ -16,17 +16,17 @@ def get_settings() -> Settings:
 
 
 def get_provider() -> BaseProvider:
-    """Get or create the provider instance."""
+    """Get or create the provider instance using registry."""
     global _provider
     if _provider is None:
         settings = get_settings()
         config = ProviderConfig(
             api_key=settings.nvidia_nim_api_key,
-            base_url=NVIDIA_NIM_BASE_URL,  # Use constant, not from settings
+            base_url=NVIDIA_NIM_BASE_URL,
             rate_limit=settings.nvidia_nim_rate_limit,
             rate_window=settings.nvidia_nim_rate_window,
         )
-        _provider = NvidiaNimProvider(config)
+        _provider = create_provider(settings.provider, config)
     return _provider
 
 

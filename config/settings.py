@@ -15,6 +15,9 @@ NVIDIA_NIM_BASE_URL = "https://integrate.api.nvidia.com/v1"
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
+    # ==================== Provider Selection ====================
+    provider: str = "nvidia_nim"  # Provider name (must be registered in registry)
+
     # ==================== NVIDIA NIM Config ====================
     nvidia_nim_api_key: str = ""
 
