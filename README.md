@@ -96,6 +96,7 @@ See [`nvidia_nim_models.json`](nvidia_nim_models.json) for the full list of supp
 
 Popular choices:
 
+- `stepfun-ai/step-3.5-flash`
 - `moonshotai/kimi-k2.5`
 - `z-ai/glm4.7`
 - `minimaxai/minimax-m2.1`

@@ -1016,6 +1016,12 @@
             "owned_by": "speakleash"
         },
         {
+            "id": "stepfun-ai/step-3.5-flash",
+            "object": "model",
+            "created": 735790403,
+            "owned_by": "stepfun-ai"
+        },
+        {
             "id": "stockmark/stockmark-2-100b-instruct",
             "object": "model",
             "created": 735790403,
