@@ -6,13 +6,8 @@ import uuid
 from fastapi import APIRouter, Request, Depends, HTTPException
 from fastapi.responses import StreamingResponse
 
-from .models import (
-    MessagesRequest,
-    MessagesResponse,
-    TokenCountRequest,
-    TokenCountResponse,
-    Usage,
-)
+from .models.anthropic import MessagesRequest, TokenCountRequest
+from .models.responses import MessagesResponse, TokenCountResponse, Usage
 from .dependencies import get_provider, get_settings
 from .request_utils import (
     is_quota_check_request,

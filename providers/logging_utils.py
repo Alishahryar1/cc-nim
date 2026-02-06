@@ -9,21 +9,14 @@ import json
 import logging
 from typing import Any, Dict, List
 
+from utils.text import extract_text_from_content
+
 logger = logging.getLogger(__name__)
 
 
-def _extract_text_from_content(content) -> str:
-    """Extract concatenated text from message content (str or list of content blocks)."""
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            text = getattr(block, "text", "")
-            if text and isinstance(text, str):
-                parts.append(text)
-        return "".join(parts)
-    return ""
+def _extract_text_from_content(content: Any) -> str:
+    """Backward-compatible wrapper for tests and legacy imports."""
+    return extract_text_from_content(content)
 
 
 def generate_request_fingerprint(messages: List[Any]) -> str:
@@ -56,7 +49,7 @@ def get_last_user_message_preview(messages: List[Any], max_len: int = 100) -> st
     """Extract a preview of the last user message."""
     for msg in reversed(messages):
         if hasattr(msg, "role") and msg.role == "user":
-            text = _extract_text_from_content(getattr(msg, "content", ""))
+            text = extract_text_from_content(getattr(msg, "content", ""))
             if text:
                 preview = text.replace("\n", " ").replace("\r", "")
                 return preview[:max_len] + "..." if len(preview) > max_len else preview

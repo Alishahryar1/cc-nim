@@ -100,9 +100,7 @@ async def lifespan(app: FastAPI):
             # Restore tree state if available
             saved_trees = session_store.get_all_trees()
             if saved_trees:
-                logger.info(
-                    f"Restoring {len(saved_trees)} conversation trees..."
-                )
+                logger.info(f"Restoring {len(saved_trees)} conversation trees...")
                 from messaging.tree_queue import TreeQueueManager
 
                 message_handler.tree_queue = TreeQueueManager.from_dict(
@@ -124,7 +122,9 @@ async def lifespan(app: FastAPI):
 
             # Start the platform
             await messaging_platform.start()
-            logger.info(f"{messaging_platform.name} platform started with message handler")
+            logger.info(
+                f"{messaging_platform.name} platform started with message handler"
+            )
 
     except ImportError as e:
         logger.warning(f"Messaging module import error: {e}")

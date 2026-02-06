@@ -1,8 +1,9 @@
-"""Pydantic models for API requests and responses."""
+"""Pydantic models for Anthropic-compatible requests."""
 
 import logging
 from enum import Enum
 from typing import List, Dict, Any, Optional, Union, Literal
+
 from pydantic import BaseModel, field_validator, model_validator
 
 from config.settings import get_settings
@@ -88,18 +89,18 @@ class ThinkingConfig(BaseModel):
 
 
 # =============================================================================
-# Request/Response Models
+# Request Models
 # =============================================================================
 
 
 class MessagesRequest(BaseModel):
     model: str
-    max_tokens: int
+    max_tokens: Optional[int] = None
     messages: List[Message]
     system: Optional[Union[str, List[SystemContent]]] = None
     stop_sequences: Optional[List[str]] = None
     stream: Optional[bool] = False
-    temperature: Optional[float] = 1.0
+    temperature: Optional[float] = None
     top_p: Optional[float] = None
     top_k: Optional[int] = None
     metadata: Optional[Dict[str, Any]] = None
@@ -142,31 +143,3 @@ class TokenCountRequest(BaseModel):
         settings = get_settings()
         # Use centralized model normalization
         return normalize_model_name(v, settings.model)
-
-
-class TokenCountResponse(BaseModel):
-    input_tokens: int
-
-
-class Usage(BaseModel):
-    input_tokens: int
-    output_tokens: int
-    cache_creation_input_tokens: int = 0
-    cache_read_input_tokens: int = 0
-
-
-class MessagesResponse(BaseModel):
-    id: str
-    model: str
-    role: Literal["assistant"] = "assistant"
-    content: List[
-        Union[
-            ContentBlockText, ContentBlockToolUse, ContentBlockThinking, Dict[str, Any]
-        ]
-    ]
-    type: Literal["message"] = "message"
-    stop_reason: Optional[
-        Literal["end_turn", "max_tokens", "stop_sequence", "tool_use"]
-    ] = None
-    stop_sequence: Optional[str] = None
-    usage: Usage

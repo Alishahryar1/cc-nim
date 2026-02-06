@@ -18,6 +18,7 @@ class TestSettings:
         settings = Settings()
         assert isinstance(settings.nvidia_nim_rate_limit, int)
         assert isinstance(settings.nvidia_nim_rate_window, int)
+        assert isinstance(settings.nim.temperature, float)
         assert isinstance(settings.fast_prefix_detection, bool)
         assert isinstance(settings.max_cli_sessions, int)
 
@@ -35,9 +36,7 @@ class TestSettings:
 
         # Settings should handle NVIDIA_NIM_SEED="" gracefully
         settings = Settings()
-        assert settings.nvidia_nim_seed is None or isinstance(
-            settings.nvidia_nim_seed, int
-        )
+        assert settings.nim.seed is None or isinstance(settings.nim.seed, int)
 
     def test_model_setting(self):
         """Test model setting exists and is a string."""

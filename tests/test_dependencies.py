@@ -2,6 +2,7 @@ import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
 from api.dependencies import get_provider, get_settings, cleanup_provider
 from providers.nvidia_nim import NvidiaNimProvider
+from config.nim import NimSettings
 
 
 def _make_mock_settings(**overrides):
@@ -9,19 +10,9 @@ def _make_mock_settings(**overrides):
     mock = MagicMock()
     mock.provider_type = "nvidia_nim"
     mock.nvidia_nim_api_key = "test_key"
-    mock.nvidia_nim_base_url = None
     mock.nvidia_nim_rate_limit = 40
     mock.nvidia_nim_rate_window = 60
-    mock.nvidia_nim_temperature = 0.6
-    mock.nvidia_nim_top_p = 0.95
-    mock.nvidia_nim_max_tokens = 16000
-    mock.nvidia_nim_top_k = -1
-    mock.nvidia_nim_presence_penalty = 0.0
-    mock.nvidia_nim_frequency_penalty = 0.0
-    mock.nvidia_nim_min_p = 0.0
-    mock.nvidia_nim_repetition_penalty = 1.0
-    mock.nvidia_nim_seed = None
-    mock.nvidia_nim_stop = None
+    mock.nim = NimSettings()
     for key, value in overrides.items():
         setattr(mock, key, value)
     return mock

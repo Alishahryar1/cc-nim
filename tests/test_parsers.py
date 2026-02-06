@@ -1,5 +1,5 @@
-from providers.utils.think_parser import ThinkTagParser, ContentType
-from providers.utils.heuristic_tool_parser import HeuristicToolParser
+from providers.nvidia_nim.utils.think_parser import ThinkTagParser, ContentType
+from providers.nvidia_nim.utils.heuristic_tool_parser import HeuristicToolParser
 
 
 def test_think_tag_parser_basic():

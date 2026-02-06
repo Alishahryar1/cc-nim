@@ -13,7 +13,9 @@ class TestCreateMessagingPlatform:
         """Create Telegram platform when bot_token is provided."""
         mock_platform = MagicMock()
         with patch("messaging.telegram.TELEGRAM_AVAILABLE", True):
-            with patch("messaging.telegram.TelegramPlatform", return_value=mock_platform):
+            with patch(
+                "messaging.telegram.TelegramPlatform", return_value=mock_platform
+            ):
                 result = create_messaging_platform(
                     "telegram",
                     bot_token="test_token",

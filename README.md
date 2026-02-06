@@ -117,7 +117,6 @@ curl "https://integrate.api.nvidia.com/v1/models" > nvidia_nim_models.json
 | --------------------------------- | ------------------------------- | ------------------------------------- |
 | `NVIDIA_NIM_API_KEY`              | Your NVIDIA API key             | required                              |
 | `MODEL`                           | Model to use for all requests   | `moonshotai/kimi-k2-thinking`         |
-| `NVIDIA_NIM_BASE_URL`             | NIM endpoint                    | `https://integrate.api.nvidia.com/v1` |
 | `CLAUDE_WORKSPACE`                | Directory for agent workspace   | `./agent_workspace`                   |
 | `ALLOWED_DIR`                     | Allowed directories for agent   | `""`                                  |
 | `MAX_CLI_SESSIONS`                | Max concurrent CLI sessions     | `10`                                  |
@@ -132,10 +131,34 @@ curl "https://integrate.api.nvidia.com/v1/models" > nvidia_nim_models.json
 | `MESSAGING_RATE_WINDOW`           | Messaging window (seconds)      | `1`                                   |
 | `NVIDIA_NIM_RATE_LIMIT`           | API requests per window         | `40`                                  |
 | `NVIDIA_NIM_RATE_WINDOW`          | Rate limit window (seconds)     | `60`                                  |
-| `NVIDIA_NIM_TEMPERATURE`          | Model temperature               | `1.0`                                 |
-| `NVIDIA_NIM_TOP_P`                | Top P sampling                  | `1.0`                                 |
-| `NVIDIA_NIM_TOP_K`                | Top K sampling                  | `-1`                                  |
-| `NVIDIA_NIM_MAX_TOKENS`           | Max tokens for generation       | `81920`                               |
+
+The NVIDIA NIM base URL is fixed to `https://integrate.api.nvidia.com/v1`.
+
+**NIM Settings (prefix `NVIDIA_NIM_`)**
+
+| Variable                              | Description                           | Default   |
+| ------------------------------------- | ------------------------------------- | --------- |
+| `NVIDIA_NIM_TEMPERATURE`              | Sampling temperature                  | `1.0`     |
+| `NVIDIA_NIM_TOP_P`                    | Top-p nucleus sampling                | `1.0`     |
+| `NVIDIA_NIM_TOP_K`                    | Top-k sampling                        | `-1`      |
+| `NVIDIA_NIM_MAX_TOKENS`               | Max tokens for generation             | `81920`   |
+| `NVIDIA_NIM_PRESENCE_PENALTY`         | Presence penalty                      | `0.0`     |
+| `NVIDIA_NIM_FREQUENCY_PENALTY`        | Frequency penalty                     | `0.0`     |
+| `NVIDIA_NIM_MIN_P`                    | Min-p sampling                        | `0.0`     |
+| `NVIDIA_NIM_REPETITION_PENALTY`       | Repetition penalty                    | `1.0`     |
+| `NVIDIA_NIM_SEED`                     | RNG seed (blank = unset)              | unset     |
+| `NVIDIA_NIM_STOP`                     | Stop string (blank = unset)           | unset     |
+| `NVIDIA_NIM_PARALLEL_TOOL_CALLS`      | Parallel tool calls                   | `true`    |
+| `NVIDIA_NIM_RETURN_TOKENS_AS_TOKEN_IDS` | Return token ids                   | `false`   |
+| `NVIDIA_NIM_INCLUDE_STOP_STR_IN_OUTPUT` | Include stop string in output      | `false`   |
+| `NVIDIA_NIM_IGNORE_EOS`               | Ignore EOS token                      | `false`   |
+| `NVIDIA_NIM_MIN_TOKENS`               | Minimum generated tokens              | `0`       |
+| `NVIDIA_NIM_CHAT_TEMPLATE`            | Chat template override                | unset     |
+| `NVIDIA_NIM_REQUEST_ID`               | Request id override                   | unset     |
+| `NVIDIA_NIM_REASONING_EFFORT`         | Reasoning effort (`low|medium|high`)  | `high`    |
+| `NVIDIA_NIM_INCLUDE_REASONING`        | Include reasoning in response         | `true`    |
+
+All `NVIDIA_NIM_*` settings are strictly validated; unknown keys with this prefix will cause startup errors.
 
 See [`.env.example`](.env.example) for all supported parameters.
 

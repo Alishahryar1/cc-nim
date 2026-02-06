@@ -1,10 +1,8 @@
 import pytest
 import json
 from unittest.mock import MagicMock, AsyncMock, patch
-from providers.nvidia_nim import (
-    NvidiaNimProvider,
-    APIError,
-)
+from providers.nvidia_nim import NvidiaNimProvider
+from providers.exceptions import APIError
 
 
 # Mock data classes
@@ -41,7 +39,7 @@ class MockRequest:
 @pytest.fixture(autouse=True)
 def mock_rate_limiter():
     """Mock the global rate limiter to prevent waiting."""
-    with patch("providers.nvidia_nim.GlobalRateLimiter") as mock:
+    with patch("providers.nvidia_nim.client.GlobalRateLimiter") as mock:
         instance = mock.get_instance.return_value
         instance.wait_if_blocked = AsyncMock(return_value=False)
         yield instance
@@ -50,7 +48,7 @@ def mock_rate_limiter():
 @pytest.mark.asyncio
 async def test_init(provider_config):
     """Test provider initialization."""
-    with patch("providers.nvidia_nim.AsyncOpenAI") as mock_openai:
+    with patch("providers.nvidia_nim.client.AsyncOpenAI") as mock_openai:
         provider = NvidiaNimProvider(provider_config)
         assert provider._api_key == "test_key"
         assert provider._base_url == "https://test.api.nvidia.com/v1"

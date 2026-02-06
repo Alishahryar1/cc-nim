@@ -2,9 +2,12 @@
 
 from functools import lru_cache
 from typing import Optional
-from pydantic import field_validator
+
+from pydantic import field_validator, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 from dotenv import load_dotenv
+
+from .nim import NimSettings
 
 load_dotenv()
 
@@ -41,33 +44,8 @@ class Settings(BaseSettings):
     enable_suggestion_mode_skip: bool = True
     enable_filepath_extraction_mock: bool = True
 
-    # ==================== NIM Core Parameters ====================
-    nvidia_nim_temperature: float = 1.0
-    nvidia_nim_top_p: float = 1.0
-    nvidia_nim_top_k: int = -1
-    nvidia_nim_max_tokens: int = 81920
-    nvidia_nim_presence_penalty: float = 0.0
-    nvidia_nim_frequency_penalty: float = 0.0
-
-    # ==================== NIM Advanced Parameters ====================
-    nvidia_nim_min_p: float = 0.0
-    nvidia_nim_repetition_penalty: float = 1.0
-    nvidia_nim_seed: Optional[int] = None
-    nvidia_nim_stop: Optional[str] = None
-
-    # ==================== NIM Flag Parameters ====================
-    nvidia_nim_parallel_tool_calls: bool = True
-    nvidia_nim_return_tokens_as_token_ids: bool = False
-    nvidia_nim_include_stop_str_in_output: bool = False
-    nvidia_nim_ignore_eos: bool = False
-
-    nvidia_nim_min_tokens: int = 0
-    nvidia_nim_chat_template: str = ""
-    nvidia_nim_request_id: str = ""
-
-    # ==================== Thinking/Reasoning Parameters ====================
-    nvidia_nim_reasoning_effort: str = "high"
-    nvidia_nim_include_reasoning: bool = True
+    # ==================== NIM Settings ====================
+    nim: NimSettings = Field(default_factory=NimSettings)
 
     # ==================== Bot Wrapper Config ====================
     telegram_bot_token: Optional[str] = None
@@ -81,17 +59,8 @@ class Settings(BaseSettings):
     port: int = 8082
     log_file: str = "server.log"
 
-    # Handle empty strings for optional int fields
-    @field_validator("nvidia_nim_seed", mode="before")
-    @classmethod
-    def parse_optional_int(cls, v):
-        if v == "" or v is None:
-            return None
-        return int(v)
-
     # Handle empty strings for optional string fields
     @field_validator(
-        "nvidia_nim_stop",
         "telegram_bot_token",
         "allowed_telegram_user_id",
         mode="before",

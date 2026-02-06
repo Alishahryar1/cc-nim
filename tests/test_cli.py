@@ -4,37 +4,34 @@ import pytest
 import asyncio
 import os
 from unittest.mock import AsyncMock, MagicMock, patch
+from messaging.event_parser import parse_cli_event
 
 # --- Existing Parser Tests ---
 
 
 class TestCLIParser:
-    """Test CLIParser event parsing."""
+    """Test CLI event parsing."""
 
     def test_parse_text_content(self):
         """Test parsing text content from assistant message."""
-        from cli.parser import CLIParser
-
         event = {
             "type": "assistant",
             "message": {"content": [{"type": "text", "text": "Hello, world!"}]},
         }
-        result = CLIParser.parse_event(event)
+        result = parse_cli_event(event)
         assert len(result) == 1
         assert result[0]["type"] == "content"
         assert result[0]["text"] == "Hello, world!"
 
     def test_parse_thinking_content(self):
         """Test parsing thinking content."""
-        from cli.parser import CLIParser
-
         event = {
             "type": "assistant",
             "message": {
                 "content": [{"type": "thinking", "thinking": "Let me think..."}]
             },
         }
-        result = CLIParser.parse_event(event)
+        result = parse_cli_event(event)
         assert len(result) == 1
         assert result[0]["type"] == "thinking"
         assert (
@@ -44,8 +41,6 @@ class TestCLIParser:
 
     def test_parse_multiple_content(self):
         """Test parsing mixed content (thinking + tools)."""
-        from cli.parser import CLIParser
-
         event = {
             "type": "assistant",
             "message": {
@@ -55,7 +50,7 @@ class TestCLIParser:
                 ]
             },
         }
-        result = CLIParser.parse_event(event)
+        result = parse_cli_event(event)
         assert len(result) == 2
         assert result[0]["type"] == "thinking"
         assert result[0]["text"] == "Thinking..."
@@ -63,8 +58,6 @@ class TestCLIParser:
 
     def test_parse_tool_use(self):
         """Test parsing tool use content."""
-        from cli.parser import CLIParser
-
         event = {
             "type": "assistant",
             "message": {
@@ -77,7 +70,7 @@ class TestCLIParser:
                 ]
             },
         }
-        result = CLIParser.parse_event(event)
+        result = parse_cli_event(event)
         assert len(result) == 1
         assert result[0]["type"] == "tool_start"
         assert len(result[0]["tools"]) == 1
@@ -85,54 +78,44 @@ class TestCLIParser:
 
     def test_parse_text_delta(self):
         """Test parsing streaming text delta."""
-        from cli.parser import CLIParser
-
         event = {
             "type": "content_block_delta",
             "delta": {"type": "text_delta", "text": "streaming text"},
         }
-        result = CLIParser.parse_event(event)
+        result = parse_cli_event(event)
         assert len(result) == 1
         assert result[0]["type"] == "content"
         assert result[0]["text"] == "streaming text"
 
     def test_parse_thinking_delta(self):
         """Test parsing streaming thinking delta."""
-        from cli.parser import CLIParser
-
         event = {
             "type": "content_block_delta",
             "delta": {"type": "thinking_delta", "thinking": "thinking..."},
         }
-        result = CLIParser.parse_event(event)
+        result = parse_cli_event(event)
         assert len(result) == 1
         assert result[0]["type"] == "thinking"
         assert result[0]["text"] == "thinking..."
 
     def test_parse_error(self):
         """Test parsing error event."""
-        from cli.parser import CLIParser
-
         event = {"type": "error", "error": {"message": "Something went wrong"}}
-        result = CLIParser.parse_event(event)
+        result = parse_cli_event(event)
         assert result[0]["type"] == "error"
         assert result[0]["message"] == "Something went wrong"
 
     def test_parse_exit_success(self):
         """Test parsing exit event with success."""
-        from cli.parser import CLIParser
-
         event = {"type": "exit", "code": 0}
-        result = CLIParser.parse_event(event)
+        result = parse_cli_event(event)
         assert result[0]["type"] == "complete"
         assert result[0]["status"] == "success"
 
     def test_parse_exit_failure(self):
         """Test parsing exit event with failure returns error then complete."""
-        from cli.parser import CLIParser
-
         event = {"type": "exit", "code": 1}
-        result = CLIParser.parse_event(event)
+        result = parse_cli_event(event)
         # Non-zero exit now returns error first, then complete
         assert len(result) == 2
         assert result[0]["type"] == "error"
@@ -145,16 +128,12 @@ class TestCLIParser:
 
     def test_parse_invalid_event(self):
         """Test parsing returns empty list for unrecognized event."""
-        from cli.parser import CLIParser
-
-        result = CLIParser.parse_event({"type": "unknown"})
+        result = parse_cli_event({"type": "unknown"})
         assert result == []
 
     def test_parse_non_dict(self):
         """Test parsing returns empty list for non-dict input."""
-        from cli.parser import CLIParser
-
-        result = CLIParser.parse_event("not a dict")
+        result = parse_cli_event("not a dict")
         assert result == []
 
 

@@ -14,6 +14,7 @@ sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "..")
 from unittest.mock import AsyncMock, MagicMock
 from providers.base import ProviderConfig
 from providers.nvidia_nim import NvidiaNimProvider
+from config.nim import NimSettings
 from messaging.base import CLISession, SessionManagerInterface, MessagingPlatform
 from messaging.models import IncomingMessage
 from messaging.session import SessionStore
@@ -26,6 +27,7 @@ def provider_config():
         base_url="https://test.api.nvidia.com/v1",
         rate_limit=10,
         rate_window=60,
+        nim_settings=NimSettings(),
     )
 
 

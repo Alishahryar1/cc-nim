@@ -1,3 +1,5 @@
+"""NVIDIA NIM provider implementation."""
+
 import logging
 import json
 import uuid
@@ -5,41 +7,32 @@ from typing import Any, AsyncIterator
 
 from openai import AsyncOpenAI
 
-from .base import BaseProvider, ProviderConfig
+from providers.base import BaseProvider, ProviderConfig
+from providers.rate_limit import GlobalRateLimiter
+from .request import build_request_body
+from .response import convert_response
+from .errors import map_error
 from .utils import (
     SSEBuilder,
     map_stop_reason,
     ThinkTagParser,
     HeuristicToolParser,
     ContentType,
-    extract_reasoning_from_delta,
 )
-from .exceptions import (
-    APIError,
-)
-from .nvidia_mixins import (
-    RequestBuilderMixin,
-    ErrorMapperMixin,
-    ResponseConverterMixin,
-)
-from .rate_limit import GlobalRateLimiter
 
 logger = logging.getLogger(__name__)
 
 
-class NvidiaNimProvider(
-    RequestBuilderMixin,
-    ErrorMapperMixin,
-    ResponseConverterMixin,
-    BaseProvider,
-):
+class NvidiaNimProvider(BaseProvider):
     """NVIDIA NIM provider using official OpenAI client."""
 
     def __init__(self, config: ProviderConfig):
         super().__init__(config)
         self._api_key = config.api_key
-        self._base_url = (config.base_url or "https://integrate.api.nvidia.com/v1").rstrip("/")
-        self._nim_params = config.extra_params.copy() if config.extra_params else {}
+        self._base_url = (
+            config.base_url or "https://integrate.api.nvidia.com/v1"
+        ).rstrip("/")
+        self._nim_settings = config.nim_settings
         self._global_rate_limiter = GlobalRateLimiter.get_instance(
             rate_limit=config.rate_limit,
             rate_window=config.rate_window,
@@ -50,6 +43,10 @@ class NvidiaNimProvider(
             max_retries=2,
             timeout=300.0,
         )
+
+    def _build_request_body(self, request: Any, stream: bool = False) -> dict:
+        """Internal helper for tests and shared building."""
+        return build_request_body(request, self._nim_settings, stream=stream)
 
     async def stream_response(
         self, request: Any, input_tokens: int = 0
@@ -163,7 +160,7 @@ class NvidiaNimProvider(
 
         except Exception as e:
             logger.error(f"NIM_ERROR: {type(e).__name__}: {e}")
-            mapped_e = self._map_error(e)
+            mapped_e = map_error(e)
             error_occurred = True
             error_message = str(mapped_e)
             logger.info(f"NIM_STREAM: Emitting SSE error event for {type(e).__name__}")
@@ -235,11 +232,15 @@ class NvidiaNimProvider(
 
         try:
             response = await self._client.chat.completions.create(**body)
-            # ResponseconverterMixin expects a dict
+            # Responseconverter expects a dict
             return response.model_dump()
         except Exception as e:
             logger.error(f"NIM_ERROR: {type(e).__name__}: {e}")
-            raise self._map_error(e)
+            raise map_error(e)
+
+    def convert_response(self, response_json: dict, original_request: Any) -> Any:
+        """Convert provider response to Anthropic format."""
+        return convert_response(response_json, original_request)
 
     def _process_tool_call(self, tc: dict, sse: Any):
         """Process a single tool call delta and yield SSE events.

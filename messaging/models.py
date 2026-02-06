@@ -30,5 +30,3 @@ class IncomingMessage:
     def is_reply(self) -> bool:
         """Check if this message is a reply to another message."""
         return self.reply_to_message_id is not None
-
-

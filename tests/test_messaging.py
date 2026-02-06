@@ -44,7 +44,6 @@ class TestMessagingModels:
         assert msg.reply_to_message_id == "100"
 
 
-
 class TestMessagingBase:
     """Test MessagingPlatform ABC."""
 

@@ -1,5 +1,5 @@
 import json
-from providers.utils.message_converter import AnthropicToOpenAIConverter
+from providers.nvidia_nim.utils.message_converter import AnthropicToOpenAIConverter
 
 # --- Mock Classes ---
 
@@ -265,7 +265,7 @@ def test_convert_mixed_blocks_and_types_and_roles():
 
 def test_get_block_attr_defaults():
     # Test helper directly
-    from providers.utils.message_converter import get_block_attr
+    from providers.nvidia_nim.utils.message_converter import get_block_attr
 
     assert get_block_attr({}, "missing", "default") == "default"
     assert get_block_attr(object(), "missing", "default") == "default"

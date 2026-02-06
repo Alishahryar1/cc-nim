@@ -1,22 +1,25 @@
 """Base provider interface - extend this to implement your own provider."""
 
 from abc import ABC, abstractmethod
-from typing import Any, AsyncIterator, Dict, Optional
-from pydantic import BaseModel
+from typing import Any, AsyncIterator, Optional
+
+from pydantic import BaseModel, Field
+
+from config.nim import NimSettings
 
 
 class ProviderConfig(BaseModel):
     """Configuration for a provider.
 
     Base fields apply to all providers. Provider-specific parameters
-    (e.g. NIM temperature, top_p) are passed via extra_params.
+    (e.g. NIM temperature, top_p) are passed via nim_settings.
     """
 
     api_key: str
     base_url: Optional[str] = None
     rate_limit: Optional[int] = None
     rate_window: int = 60
-    extra_params: Dict[str, Any] = {}
+    nim_settings: NimSettings = Field(default_factory=NimSettings)
 
 
 class BaseProvider(ABC):

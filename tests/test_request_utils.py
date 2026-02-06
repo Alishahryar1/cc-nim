@@ -9,7 +9,7 @@ from api.request_utils import (
     is_prefix_detection_request,
     get_token_count,
 )
-from api.models import MessagesRequest, Message
+from api.models.anthropic import MessagesRequest, Message
 
 
 class TestQuotaCheckRequest:

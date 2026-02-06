@@ -10,28 +10,11 @@ from typing import List, Optional, Tuple, Union
 
 import tiktoken
 
-from .models import MessagesRequest
+from .models.anthropic import MessagesRequest
+from utils.text import extract_text_from_content
 
 logger = logging.getLogger(__name__)
 ENCODER = tiktoken.get_encoding("cl100k_base")
-
-
-def extract_text_from_content(content) -> str:
-    """Extract concatenated text from message content (str or list of content blocks).
-
-    Handles the common pattern of content being either a plain string
-    or a list of content blocks with a .text attribute.
-    """
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for block in content:
-            text = getattr(block, "text", "")
-            if text and isinstance(text, str):
-                parts.append(text)
-        return "".join(parts)
-    return ""
 
 
 def is_quota_check_request(request_data: MessagesRequest) -> bool:
