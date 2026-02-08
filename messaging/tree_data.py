@@ -249,6 +249,18 @@ class MessageTree:
         except asyncio.QueueEmpty:
             return None
 
+    async def get_queue_snapshot(self) -> List[str]:
+        """
+        Get a snapshot of the current queue order.
+
+        Returns:
+            List of node IDs in FIFO order.
+        """
+        async with self._lock:
+            # asyncio.Queue stores its items in a deque at _queue.
+            # We copy it here for safe, consistent reads.
+            return list(self._queue._queue)
+
     def get_queue_size(self) -> int:
         """Get number of messages waiting in queue."""
         return self._queue.qsize()

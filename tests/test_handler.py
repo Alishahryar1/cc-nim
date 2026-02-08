@@ -1,5 +1,7 @@
 import pytest
 from unittest.mock import AsyncMock, MagicMock, patch
+from messaging.tree_data import MessageTree, MessageNode
+from messaging.models import IncomingMessage
 from messaging.handler import ClaudeMessageHandler
 from messaging.tree_queue import MessageState
 
@@ -104,6 +106,67 @@ async def test_handle_message_queued(handler, mock_platform, incoming_message_fa
         "📋 *Queued* \\(position 3\\) \\- waiting\\.\\.\\.",
         parse_mode="MarkdownV2",
     )
+
+
+@pytest.mark.asyncio
+async def test_update_queue_positions(handler, mock_platform):
+    root_incoming = IncomingMessage(
+        text="Root",
+        chat_id="chat_1",
+        user_id="user_1",
+        message_id="root",
+        platform="telegram",
+    )
+    root = MessageNode(
+        node_id="root",
+        incoming=root_incoming,
+        status_message_id="status_root",
+    )
+    tree = MessageTree(root)
+
+    child_incoming_1 = IncomingMessage(
+        text="Child 1",
+        chat_id="chat_1",
+        user_id="user_1",
+        message_id="child_1",
+        platform="telegram",
+        reply_to_message_id="root",
+    )
+    child_incoming_2 = IncomingMessage(
+        text="Child 2",
+        chat_id="chat_1",
+        user_id="user_1",
+        message_id="child_2",
+        platform="telegram",
+        reply_to_message_id="root",
+    )
+
+    await tree.add_node(
+        node_id="child_1",
+        incoming=child_incoming_1,
+        status_message_id="status_1",
+        parent_id="root",
+    )
+    await tree.add_node(
+        node_id="child_2",
+        incoming=child_incoming_2,
+        status_message_id="status_2",
+        parent_id="root",
+    )
+
+    await tree.enqueue("child_1")
+    await tree.enqueue("child_2")
+
+    await handler._update_queue_positions(tree)
+
+    calls = mock_platform.queue_edit_message.call_args_list
+    assert len(calls) == 2
+    assert calls[0][0][0] == "chat_1"
+    assert calls[0][0][1] == "status_1"
+    assert "position 1" in calls[0][0][2]
+    assert calls[1][0][0] == "chat_1"
+    assert calls[1][0][1] == "status_2"
+    assert "position 2" in calls[1][0][2]
 
 
 @pytest.mark.asyncio

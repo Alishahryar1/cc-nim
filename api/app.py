@@ -107,7 +107,8 @@ async def lifespan(app: FastAPI):
                     {
                         "trees": saved_trees,
                         "node_to_tree": session_store.get_node_mapping(),
-                    }
+                    },
+                    queue_update_callback=message_handler._update_queue_positions,
                 )
                 # Reconcile restored state - anything PENDING/IN_PROGRESS is lost across restart
                 if message_handler.tree_queue.cleanup_stale_nodes() > 0:

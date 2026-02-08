@@ -157,3 +157,16 @@ async def test_process_next_with_item(tree_processor, sample_tree):
         await sample_tree._current_task
     except asyncio.CancelledError:
         pass
+
+
+@pytest.mark.asyncio
+async def test_process_next_triggers_queue_update(sample_tree):
+    callback = AsyncMock()
+    processor = TreeQueueProcessor(queue_update_callback=callback)
+
+    await sample_tree._queue.put("next_node")
+    sample_tree.get_node = MagicMock(return_value=None)
+
+    await processor._process_next(sample_tree, AsyncMock())
+
+    callback.assert_awaited_once_with(sample_tree)

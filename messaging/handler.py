@@ -16,7 +16,7 @@ from markdown_it import MarkdownIt
 from .base import MessagingPlatform, SessionManagerInterface
 from .models import IncomingMessage
 from .session import SessionStore
-from .tree_queue import TreeQueueManager, MessageNode, MessageState
+from .tree_queue import TreeQueueManager, MessageNode, MessageState, MessageTree
 from .event_parser import parse_cli_event
 
 logger = logging.getLogger(__name__)
@@ -245,7 +245,9 @@ class ClaudeMessageHandler:
         self.platform = platform
         self.cli_manager = cli_manager
         self.session_store = session_store
-        self.tree_queue = TreeQueueManager()
+        self.tree_queue = TreeQueueManager(
+            queue_update_callback=self._update_queue_positions
+        )
 
     async def handle_message(self, incoming: IncomingMessage) -> None:
         """
@@ -344,6 +346,34 @@ class ClaudeMessageHandler:
                 status_msg_id,
                 format_status("📋", "Queued", f"(position {queue_size}) - waiting..."),
                 parse_mode="MarkdownV2",
+            )
+
+    async def _update_queue_positions(self, tree: MessageTree) -> None:
+        """Refresh queued status messages after a dequeue."""
+        try:
+            queued_ids = await tree.get_queue_snapshot()
+        except Exception as e:
+            logger.warning(f"Failed to read queue snapshot: {e}")
+            return
+
+        if not queued_ids:
+            return
+
+        position = 0
+        for node_id in queued_ids:
+            node = tree.get_node(node_id)
+            if not node or node.state != MessageState.PENDING:
+                continue
+            position += 1
+            self.platform.fire_and_forget(
+                self.platform.queue_edit_message(
+                    node.incoming.chat_id,
+                    node.status_message_id,
+                    format_status(
+                        "📋", "Queued", f"(position {position}) - waiting..."
+                    ),
+                    parse_mode="MarkdownV2",
+                )
             )
 
     async def _process_node(

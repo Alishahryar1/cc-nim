@@ -207,6 +207,55 @@ class TestMessageTree:
         assert node_id == "m1"
         assert tree.get_queue_size() == 0
 
+    @pytest.mark.asyncio
+    async def test_queue_snapshot(self):
+        """Test queue snapshot order."""
+        incoming = IncomingMessage(
+            text="Root",
+            chat_id="1",
+            user_id="1",
+            message_id="root",
+            platform="test",
+        )
+        root = MessageNode(node_id="root", incoming=incoming, status_message_id="s1")
+        tree = MessageTree(root)
+
+        child_incoming_1 = IncomingMessage(
+            text="Child 1",
+            chat_id="1",
+            user_id="1",
+            message_id="child_1",
+            platform="test",
+            reply_to_message_id="root",
+        )
+        child_incoming_2 = IncomingMessage(
+            text="Child 2",
+            chat_id="1",
+            user_id="1",
+            message_id="child_2",
+            platform="test",
+            reply_to_message_id="root",
+        )
+
+        await tree.add_node(
+            node_id="child_1",
+            incoming=child_incoming_1,
+            status_message_id="s2",
+            parent_id="root",
+        )
+        await tree.add_node(
+            node_id="child_2",
+            incoming=child_incoming_2,
+            status_message_id="s3",
+            parent_id="root",
+        )
+
+        await tree.enqueue("child_1")
+        await tree.enqueue("child_2")
+
+        snapshot = await tree.get_queue_snapshot()
+        assert snapshot == ["child_1", "child_2"]
+
     def test_tree_serialization(self):
         """Test tree to_dict and from_dict."""
         incoming = IncomingMessage(

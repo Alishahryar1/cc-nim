@@ -5,7 +5,7 @@ Handles the async processing lifecycle of tree nodes.
 
 import asyncio
 import logging
-from typing import Callable, Awaitable
+from typing import Callable, Awaitable, Optional
 
 from .tree_data import MessageTree, MessageNode, MessageState
 
@@ -18,6 +18,32 @@ class TreeQueueProcessor:
 
     Separates the async processing logic from the data management.
     """
+
+    def __init__(
+        self,
+        queue_update_callback: Optional[
+            Callable[[MessageTree], Awaitable[None]]
+        ] = None,
+    ):
+        self._queue_update_callback = queue_update_callback
+
+    def set_queue_update_callback(
+        self,
+        queue_update_callback: Optional[
+            Callable[[MessageTree], Awaitable[None]]
+        ],
+    ) -> None:
+        """Update the callback used to refresh queue positions."""
+        self._queue_update_callback = queue_update_callback
+
+    async def _notify_queue_updated(self, tree: MessageTree) -> None:
+        """Invoke queue update callback if set."""
+        if not self._queue_update_callback:
+            return
+        try:
+            await self._queue_update_callback(tree)
+        except Exception as e:
+            logger.warning(f"Queue update callback failed: {e}")
 
     async def process_node(
         self,
@@ -56,6 +82,8 @@ class TreeQueueProcessor:
         processor: Callable[[str, MessageNode], Awaitable[None]],
     ) -> None:
         """Process the next message in queue, if any."""
+        next_node_id = None
+        node = None
         async with tree._lock:
             next_node_id = await tree.dequeue()
 
@@ -74,6 +102,10 @@ class TreeQueueProcessor:
                 tree._current_task = asyncio.create_task(
                     self.process_node(tree, node, processor)
                 )
+
+        # Queue positions changed after dequeue; refresh queued status messages.
+        if next_node_id:
+            await self._notify_queue_updated(tree)
 
     async def enqueue_and_start(
         self,

@@ -36,9 +36,14 @@ class TreeQueueManager:
         - TreeQueueProcessor: Async queue processing
     """
 
-    def __init__(self):
+    def __init__(
+        self,
+        queue_update_callback: Optional[
+            Callable[[MessageTree], Awaitable[None]]
+        ] = None,
+    ):
         self._repository = TreeRepository()
-        self._processor = TreeQueueProcessor()
+        self._processor = TreeQueueProcessor(queue_update_callback)
         self._lock = asyncio.Lock()
 
         logger.info("TreeQueueManager initialized")
@@ -319,6 +324,15 @@ class TreeQueueManager:
         """Get the number of active message trees."""
         return len(self._repository._trees)
 
+    def set_queue_update_callback(
+        self,
+        queue_update_callback: Optional[
+            Callable[[MessageTree], Awaitable[None]]
+        ],
+    ) -> None:
+        """Set callback for queue position updates."""
+        self._processor.set_queue_update_callback(queue_update_callback)
+
     def register_node(self, node_id: str, root_id: str) -> None:
         """Register a node ID to a tree (for external mapping)."""
         self._repository.register_node(node_id, root_id)
@@ -328,8 +342,14 @@ class TreeQueueManager:
         return self._repository.to_dict()
 
     @classmethod
-    def from_dict(cls, data: dict) -> "TreeQueueManager":
+    def from_dict(
+        cls,
+        data: dict,
+        queue_update_callback: Optional[
+            Callable[[MessageTree], Awaitable[None]]
+        ] = None,
+    ) -> "TreeQueueManager":
         """Deserialize from dictionary."""
-        manager = cls()
+        manager = cls(queue_update_callback=queue_update_callback)
         manager._repository = TreeRepository.from_dict(data)
         return manager
