@@ -25,7 +25,7 @@ class TestProviderRateLimiter:
     @pytest.mark.asyncio
     async def test_proactive_throttling(self):
         """
-        Test proactive throttling using aiolimiter.
+        Test proactive throttling.
         Logic ported from verify_provider_limiter.py
         """
         # Re-init with tight limits: 1 request per 0.25 second
@@ -157,3 +157,35 @@ class TestProviderRateLimiter:
         limiter = GlobalRateLimiter.get_instance(rate_limit=100, rate_window=60)
         result = await limiter.wait_if_blocked()
         assert result is False
+
+    @pytest.mark.asyncio
+    async def test_proactive_strict_rolling_window(self):
+        """
+        Proactive limiter should enforce a strict rolling window:
+        for any i, t[i+rate_limit] - t[i] >= rate_window (within tolerance).
+        """
+        GlobalRateLimiter.reset_instance()
+        rate_limit = 2
+        rate_window = 0.5
+        limiter = GlobalRateLimiter.get_instance(
+            rate_limit=rate_limit, rate_window=rate_window
+        )
+
+        acquired: list[float] = []
+
+        async def acquire():
+            await limiter.wait_if_blocked()
+            acquired.append(time.monotonic())
+
+        # Trigger concurrency; without strict rolling windows, this can burst.
+        await asyncio.gather(*(acquire() for _ in range(5)))
+
+        acquired.sort()
+        assert len(acquired) == 5
+
+        tolerance = 0.05
+        for i in range(len(acquired) - rate_limit):
+            assert acquired[i + rate_limit] - acquired[i] >= rate_window - tolerance, (
+                f"Rolling window violated at i={i}: "
+                f"dt={acquired[i + rate_limit] - acquired[i]:.3f}s"
+            )
