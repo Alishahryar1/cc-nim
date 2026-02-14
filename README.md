@@ -30,7 +30,7 @@ MODEL=moonshotai/kimi-k2-thinking
 
 ---
 
-### Claude Code
+### Claude Code CLI
 
 **Terminal 1 - Start the server:**
 
