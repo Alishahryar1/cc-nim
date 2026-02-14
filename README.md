@@ -48,7 +48,7 @@ That's it! Claude Code now uses NVIDIA NIM for free.
 
 ---
 
-### Use with Claude Code VSCode Extenstion
+### Claude Code VSCode Extenstion
 
 1. Start the proxy.
 2. Open Settings (`Ctrl + ,`).
