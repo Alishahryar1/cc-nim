@@ -1,5 +1,6 @@
 """Request builder for NVIDIA NIM provider."""
 
+import json
 from typing import Any, Dict
 
 from config.nim import NimSettings
@@ -85,15 +86,43 @@ def build_request_body(
     if request_extra:
         extra_body.update(request_extra)
 
+    # Auto-detect kimi models and enable thinking mode
+    model_name = getattr(request_data, "model", "")
+    if isinstance(model_name, str) and "kimi" in model_name.lower():
+        extra_body.setdefault("chat_template_kwargs", {"thinking": True})
+
+    # Handle chat_template_kwargs from NimSettings (user override)
+    if nim.chat_template_kwargs:
+        try:
+            # Parse JSON string to dict
+            chat_kwargs = json.loads(nim.chat_template_kwargs)
+            if "chat_template_kwargs" in extra_body:
+                # User config takes precedence, merge with auto-detected
+                extra_body["chat_template_kwargs"].update(chat_kwargs)
+            else:
+                extra_body.setdefault("chat_template_kwargs", chat_kwargs)
+        except (json.JSONDecodeError, TypeError):
+            # If not valid JSON, ignore
+            pass
+
     # Handle thinking/reasoning mode
     thinking = getattr(request_data, "thinking", None)
     if thinking and getattr(thinking, "enabled", True):
         extra_body.setdefault("thinking", {"type": "enabled"})
         extra_body.setdefault("reasoning_split", True)
-        extra_body.setdefault(
-            "chat_template_kwargs",
-            {"thinking": True, "reasoning_split": True, "clear_thinking": False},
-        )
+        # Merge with existing chat_template_kwargs if present
+        if "chat_template_kwargs" in extra_body:
+            extra_body["chat_template_kwargs"].update({
+                "thinking": True,
+                "reasoning_split": True,
+                "clear_thinking": False
+            })
+        else:
+            extra_body["chat_template_kwargs"] = {
+                "thinking": True,
+                "reasoning_split": True,
+                "clear_thinking": False
+            }
 
     req_top_k = getattr(request_data, "top_k", None)
     top_k = req_top_k if req_top_k is not None else nim.top_k

@@ -33,6 +33,7 @@ class NimSettings(BaseSettings):
 
     reasoning_effort: Literal["low", "medium", "high"] = "high"
     include_reasoning: bool = True
+    chat_template_kwargs: Optional[str] = None
 
     model_config = SettingsConfigDict(
         env_prefix="NVIDIA_NIM_",
@@ -55,7 +56,7 @@ class NimSettings(BaseSettings):
             return None
         return int(v)
 
-    @field_validator("stop", "chat_template", "request_id", mode="before")
+    @field_validator("stop", "chat_template", "request_id", "chat_template_kwargs", mode="before")
     @classmethod
     def parse_optional_str(cls, v):
         if v == "":
