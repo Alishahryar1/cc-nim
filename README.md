@@ -63,7 +63,7 @@ uv run uvicorn server:app --host 0.0.0.0 --port 8082
 ```json
 "claude-code.environmentVariables": [
   { "name": "ANTHROPIC_BASE_URL", "value": "http://localhost:8082" },
-  { "name": "ANTHROPIC_API_KEY", "value": "ccnim" }
+  { "name": "ANTHROPIC_AUTH_TOKEN", "value": "ccnim" },
 ]
 ```
 
