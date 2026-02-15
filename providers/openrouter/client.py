@@ -180,9 +180,7 @@ class OpenRouterProvider(BaseProvider):
 
         except Exception as e:
             req_tag = f" request_id={request_id}" if request_id else ""
-            logger.error(
-                "OPENROUTER_ERROR:%s %s: %s", req_tag, type(e).__name__, e
-            )
+            logger.error("OPENROUTER_ERROR:%s %s: %s", req_tag, type(e).__name__, e)
             mapped_e = map_error(e)
             error_occurred = True
             error_message = str(mapped_e)
