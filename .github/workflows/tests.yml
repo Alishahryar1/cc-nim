@@ -24,9 +24,6 @@ jobs:
           enable-cache: true
           cache-python: true
 
-      - name: Run tests
-        run: uv run pytest -v --tb=short
-
       - name: "Fail on type: ignore (no suppressions allowed)"
         run: |
           if grep -rE '# type: ignore|# ty: ignore' --include='*.py' . --exclude-dir=.venv --exclude-dir=.git; then
@@ -37,6 +34,9 @@ jobs:
 
       - name: Type check
         run: uv run ty check
+      
+      - name: Run tests
+        run: uv run pytest -v --tb=short
 
       - name: Commit and push changes
         run: |
