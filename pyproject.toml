@@ -3,7 +3,7 @@ name = "free-claude-code"
 version = "2.0.0"
 description = "Middleware between Claude Code CLI (Anthropic API) and NVIDIA NIM"
 readme = "README.md"
-requires-python = "==3.14.2"
+requires-python = ">=3.14.2"
 dependencies = [
     "fastapi[standard]>=0.115.11",
     "uvicorn>=0.34.0",
