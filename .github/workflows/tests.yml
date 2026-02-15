@@ -16,14 +16,7 @@ jobs:
         with:
           ref: ${{ github.head_ref || github.ref_name }}
           fetch-depth: 1
-
-      - name: Install uv
-        uses: astral-sh/setup-uv@v7
-        with:
-          version: "latest"
-          enable-cache: true
-          cache-python: true
-
+ 
       - name: "Fail on type: ignore (no suppressions allowed)"
         run: |
           if grep -rE '# type: ignore|# ty: ignore' --include='*.py' . --exclude-dir=.venv --exclude-dir=.git; then
@@ -31,6 +24,13 @@ jobs:
             exit 1
           fi
           exit 0
+
+      - name: Install uv
+        uses: astral-sh/setup-uv@v7
+        with:
+          version: "latest"
+          enable-cache: true
+          cache-python: true
 
       - name: Type check
         run: uv run ty check
