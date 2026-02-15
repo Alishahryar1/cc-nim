@@ -27,9 +27,6 @@ jobs:
       - name: Run tests
         run: uv run pytest -v --tb=short
 
-      - name: Type check
-        run: uv run ty check
-
       - name: "Fail on type: ignore (no suppressions allowed)"
         run: |
           if grep -rE '# type: ignore|# ty: ignore' --include='*.py' . --exclude-dir=.venv --exclude-dir=.git; then
@@ -38,11 +35,12 @@ jobs:
           fi
           exit 0
 
-      - name: Format
-        run: uv run ruff format
+      - name: Type check
+        run: uv run ty check
 
-      - name: Commit and push formatting changes
+      - name: Commit and push changes
         run: |
+          uv run ruff format
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
           git add -A
