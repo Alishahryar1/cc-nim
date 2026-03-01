@@ -375,7 +375,7 @@ class DiscordPlatform(MessagingPlatform):
                 with contextlib.suppress(asyncio.CancelledError):
                     await self._start_task
 
-        self._set_connected(False)
+        self._connected = False
         logger.info("Discord platform stopped")
 
     async def send_message(
