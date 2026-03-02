@@ -9,6 +9,8 @@ from pydantic_settings import BaseSettings, SettingsConfigDict
 from .nim import NimSettings
 
 load_dotenv()
+
+
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
@@ -201,6 +203,8 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+
 @lru_cache
 def get_settings() -> Settings:
     """Get cached settings instance."""

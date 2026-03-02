@@ -20,6 +20,8 @@ from .optimization_handlers import try_optimizations
 from .request_utils import get_token_count
 
 router = APIRouter()
+
+
 # =============================================================================
 # Routes
 # =============================================================================
@@ -73,6 +75,8 @@ async def create_message(
             status_code=getattr(e, "status_code", 500),
             detail=get_user_facing_error_message(e),
         ) from e
+
+
 @router.post("/v1/messages/count_tokens")
 async def count_tokens(request_data: TokenCountRequest):
     """Count tokens for a request."""
@@ -97,6 +101,8 @@ async def count_tokens(request_data: TokenCountRequest):
             raise HTTPException(
                 status_code=500, detail=get_user_facing_error_message(e)
             ) from e
+
+
 @router.get("/")
 async def root(settings: Settings = Depends(get_settings)):
     """Root endpoint."""
@@ -105,10 +111,14 @@ async def root(settings: Settings = Depends(get_settings)):
         "provider": settings.provider_type,
         "model": settings.model,
     }
+
+
 @router.get("/health")
 async def health():
     """Health check endpoint."""
     return {"status": "healthy"}
+
+
 @router.post("/stop")
 async def stop_cli(request: Request):
     """Stop all CLI sessions and pending tasks."""

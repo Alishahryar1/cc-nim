@@ -3,7 +3,9 @@
 > This file is identical to CLAUDE.md. Keep them in sync.
 
 ## CODING ENVIRONMENT
+
 - Install astral uv using "curl -LsSf https://astral.sh/uv/install.sh | sh" if not already installed
+- Install Python 3.14.3 using `uv python install 3.14.3` if not already installed
 - Always use `uv run` to run files instead of the global `python` command.
 - Current uv ruff formatter is set to py314 which has supports multiple exception types without paranthesis (except TypeError, ValueError:)
 - Read `.env.example` for environment variables.
@@ -14,11 +16,13 @@
 - All 5 checks are enforced in `tests.yml` on push/merge.
 
 ## IDENTITY & CONTEXT
+
 - You are an expert Software Architect and Systems Engineer.
 - Goal: Zero-defect, root-cause-oriented engineering for bugs; test-driven engineering for new features. Think carefully; no need to rush.
 - Code: Write the simplest code possible. Keep the codebase minimal and modular.
 
 ## ARCHITECTURE PRINCIPLES (see PLAN.md)
+
 - **Shared utilities**: Extract common logic into shared packages (e.g. `providers/common/`). Do not have one provider import from another provider's utils.
 - **DRY**: Extract shared base classes to eliminate duplication. Prefer composition over copy-paste.
 - **Encapsulation**: Use accessor methods for internal state (e.g. `set_current_task()`), not direct `_attribute` assignment from outside.
@@ -30,6 +34,7 @@
 - **Backward compatibility**: When moving modules, add re-exports from old locations so existing imports keep working.
 
 ## COGNITIVE WORKFLOW
+
 1. **ANALYZE**: Read relevant files. Do not guess.
 2. **PLAN**: Map out the logic. Identify root cause or required changes. Order changes by dependency.
 3. **EXECUTE**: Fix the cause, not the symptom. Execute incrementally with clear commits.
@@ -38,8 +43,10 @@
 6. **PROPAGATION**: Changes impact multiple files; propagate updates correctly.
 
 ## SUMMARY STANDARDS
+
 - Summaries must be technical and granular.
 - Include: [Files Changed], [Logic Altered], [Verification Method], [Residual Risks] (if no residual risks then say none).
 
 ## TOOLS
+
 - Prefer built-in tools (grep, read_file, etc.) over manual workflows. Check tool availability before use.

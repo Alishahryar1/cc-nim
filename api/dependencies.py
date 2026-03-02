@@ -14,9 +14,13 @@ from providers.open_router import OPENROUTER_BASE_URL, OpenRouterProvider
 
 # Provider registry: keyed by provider type string, lazily populated
 _providers: dict[str, BaseProvider] = {}
+
+
 def get_settings() -> Settings:
     """Get application settings via dependency injection."""
     return _get_settings()
+
+
 def _create_provider_for_type(provider_type: str, settings: Settings) -> BaseProvider:
     """Construct and return a new provider instance for the given provider type."""
     if provider_type == "nvidia_nim":
@@ -73,6 +77,8 @@ def _create_provider_for_type(provider_type: str, settings: Settings) -> BasePro
         f"Unknown provider_type: '{provider_type}'. "
         f"Supported: 'nvidia_nim', 'open_router', 'lmstudio'"
     )
+
+
 def get_provider_for_type(provider_type: str) -> BaseProvider:
     """Get or create a provider for the given provider type.
 
@@ -89,12 +95,16 @@ def get_provider_for_type(provider_type: str) -> BaseProvider:
             ) from e
         logger.info("Provider initialized: {}", provider_type)
     return _providers[provider_type]
+
+
 def get_provider() -> BaseProvider:
     """Get or create the default provider (based on MODEL env var).
 
     Backward-compatible convenience for health/root endpoints and tests.
     """
     return get_provider_for_type(get_settings().provider_type)
+
+
 async def cleanup_provider():
     """Cleanup all provider resources."""
     global _providers

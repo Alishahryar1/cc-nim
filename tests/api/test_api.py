@@ -10,11 +10,15 @@ mock_provider = MagicMock(spec=NvidiaNimProvider)
 
 # Track stream_response calls for test_model_mapping
 _stream_response_calls = []
+
+
 async def _mock_stream_response(*args, **kwargs):
     """Minimal async generator for streaming tests."""
     _stream_response_calls.append((args, kwargs))
     yield "event: message_start\ndata: {}\n\n"
     yield "[DONE]\n\n"
+
+
 mock_provider.stream_response = _mock_stream_response
 
 # Patch get_provider_for_type to always return mock_provider
@@ -22,14 +26,20 @@ _patcher = patch("api.routes.get_provider_for_type", return_value=mock_provider)
 _patcher.start()
 
 client = TestClient(app)
+
+
 def test_root():
     response = client.get("/")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+
+
 def test_health():
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "healthy"
+
+
 def test_create_message_stream():
     """Create message returns streaming response."""
     payload = {
@@ -43,6 +53,8 @@ def test_create_message_stream():
     assert "text/event-stream" in response.headers.get("content-type", "")
     content = b"".join(response.iter_bytes())
     assert b"message_start" in content or b"event:" in content
+
+
 def test_model_mapping():
     # Test Haiku mapping
     _stream_response_calls.clear()
@@ -57,6 +69,8 @@ def test_model_mapping():
     args = _stream_response_calls[0][0]
     assert args[0].model != "claude-3-haiku-20240307"
     assert args[0].original_model == "claude-3-haiku-20240307"
+
+
 def test_error_fallbacks():
     from providers.exceptions import (
         AuthenticationError,
@@ -100,6 +114,8 @@ def test_error_fallbacks():
 
     # Reset for subsequent tests
     mock_provider.stream_response = _mock_stream_response
+
+
 def test_generic_exception_returns_500():
     """Non-ProviderError exceptions are caught and returned as HTTPException(500)."""
 
@@ -118,6 +134,8 @@ def test_generic_exception_returns_500():
     )
     assert response.status_code == 500
     mock_provider.stream_response = _mock_stream_response
+
+
 def test_generic_exception_with_status_code():
     """Generic exception with status_code attribute uses that status (getattr fallback)."""
 
@@ -141,6 +159,8 @@ def test_generic_exception_with_status_code():
     )
     assert response.status_code == 502
     mock_provider.stream_response = _mock_stream_response
+
+
 def test_generic_exception_empty_message_returns_non_empty_detail():
     """Exceptions with empty __str__ still return a readable HTTP detail."""
 
@@ -164,6 +184,8 @@ def test_generic_exception_empty_message_returns_non_empty_detail():
     assert response.status_code == 500
     assert response.json()["detail"] != ""
     mock_provider.stream_response = _mock_stream_response
+
+
 def test_count_tokens_endpoint():
     """count_tokens endpoint returns token count."""
     response = client.post(
@@ -172,6 +194,8 @@ def test_count_tokens_endpoint():
     )
     assert response.status_code == 200
     assert "input_tokens" in response.json()
+
+
 def test_stop_endpoint_no_handler_no_cli_503():
     """POST /stop without handler or cli_manager returns 503."""
     # Ensure no handler or cli_manager on app state

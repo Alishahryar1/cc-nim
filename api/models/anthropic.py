@@ -8,6 +8,7 @@ from pydantic import BaseModel, field_validator, model_validator
 
 from config.settings import Settings, get_settings
 
+
 # =============================================================================
 # Content Block Types
 # =============================================================================
@@ -15,27 +16,41 @@ class Role(StrEnum):
     user = "user"
     assistant = "assistant"
     system = "system"
+
+
 class ContentBlockText(BaseModel):
     type: Literal["text"]
     text: str
+
+
 class ContentBlockImage(BaseModel):
     type: Literal["image"]
     source: dict[str, Any]
+
+
 class ContentBlockToolUse(BaseModel):
     type: Literal["tool_use"]
     id: str
     name: str
     input: dict[str, Any]
+
+
 class ContentBlockToolResult(BaseModel):
     type: Literal["tool_result"]
     tool_use_id: str
     content: str | list[Any] | dict[str, Any]
+
+
 class ContentBlockThinking(BaseModel):
     type: Literal["thinking"]
     thinking: str
+
+
 class SystemContent(BaseModel):
     type: Literal["text"]
     text: str
+
+
 # =============================================================================
 # Message Types
 # =============================================================================
@@ -52,12 +67,18 @@ class Message(BaseModel):
         ]
     )
     reasoning_content: str | None = None
+
+
 class Tool(BaseModel):
     name: str
     description: str | None = None
     input_schema: dict[str, Any]
+
+
 class ThinkingConfig(BaseModel):
     enabled: bool = True
+
+
 # =============================================================================
 # Request Models
 # =============================================================================
@@ -94,6 +115,8 @@ class MessagesRequest(BaseModel):
             logger.debug(f"MODEL MAPPING: '{self.original_model}' -> '{self.model}'")
 
         return self
+
+
 class TokenCountRequest(BaseModel):
     model: str
     messages: list[Message]

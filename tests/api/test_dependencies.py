@@ -279,6 +279,9 @@ async def test_cleanup_provider_cleans_all():
         nim = get_provider_for_type("nvidia_nim")
         lmstudio = get_provider_for_type("lmstudio")
 
+        assert isinstance(nim, NvidiaNimProvider)
+        assert isinstance(lmstudio, LMStudioProvider)
+
         nim._client = AsyncMock()
         lmstudio._client = AsyncMock()
 
