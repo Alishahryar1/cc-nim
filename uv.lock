@@ -503,7 +503,7 @@ wheels = [
 [[package]]
 name = "free-claude-code"
 version = "2.0.0"
-source = { virtual = "." }
+source = { editable = "." }
 dependencies = [
     { name = "discord-py" },
     { name = "fastapi", extra = ["standard"] },

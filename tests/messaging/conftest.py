@@ -1,23 +1,23 @@
-from unittest.mock import AsyncMock, MagicMock
-
 import pytest
+from unittest.mock import AsyncMock, MagicMock
 
 from messaging.models import IncomingMessage
 
 
 @pytest.fixture
-def mock_platform():
+def messaging_platform():
     mp = MagicMock()
     mp.queue_send_message = AsyncMock()
     mp.queue_edit_message = AsyncMock()
     mp.queue_delete_message = AsyncMock()
     mp.cancel_pending_voice = AsyncMock()
-    mp.fire_and_forget = MagicMock()
+    mp.record_message_id = AsyncMock()
+    mp.fire_and_forget = AsyncMock()
     return mp
 
 
 @pytest.fixture
-def mock_cli_manager():
+def cli_manager():
     cm = MagicMock()
     cm.get_or_create_session = AsyncMock()
     cm.stop_all = AsyncMock()
@@ -26,14 +26,25 @@ def mock_cli_manager():
 
 
 @pytest.fixture
-def mock_session_store():
+def session_store():
     ss = MagicMock()
     ss.save_tree = AsyncMock()
     ss.clear_all = AsyncMock()
     ss.get_message_ids_for_chat = AsyncMock(return_value=[])
     ss.remove_node_mappings = AsyncMock()
     ss.remove_tree = AsyncMock()
+    ss.record_message_id = AsyncMock()
     return ss
+
+
+@pytest.fixture
+def message_queue():
+    return MagicMock()
+
+
+@pytest.fixture
+def voice_processor():
+    return MagicMock()
 
 
 @pytest.fixture

@@ -49,7 +49,23 @@ A lightweight proxy that routes Claude Code's Anthropic API calls to **NVIDIA NI
    - **OpenRouter**: [openrouter.ai/keys](https://openrouter.ai/keys)
    - **LM Studio**: No API key needed. Run locally with [LM Studio](https://lmstudio.ai)
 2. Install [Claude Code](https://github.com/anthropics/claude-code)
-3. Install [uv](https://github.com/astral-sh/uv)
+3. Install [uv](https://github.com/astral-sh/uv) (for development) or use Homebrew (see below)
+
+### Install via Homebrew (Production)
+
+macOS/Linux users can install as a system service:
+
+```bash
+brew install alishahryar1/tap/cc-proxy
+```
+
+This installs the package and creates a default config at `~/.ccenv`. The `cc-proxy` service is set up but not started automatically. Start it with:
+
+```bash
+brew services start cc-proxy
+```
+
+Configuration is edited in `~/.ccenv`. See [Configuration](#configuration) below.
 
 ### Clone & Configure
 
@@ -94,9 +110,19 @@ MODEL="lmstudio/lmstudio-community/qwen2.5-7b-instruct"
 
 **Terminal 1:** Start the proxy server:
 
+If installed via Homebrew (recommended for production):
+
 ```bash
-uv run uvicorn server:app --host 0.0.0.0 --port 8082
+brew services start cc-proxy
 ```
+
+Or manually with the CLI:
+
+```bash
+cc-nim start
+```
+
+(Use `cc-nim stop` to stop the service.)
 
 **Terminal 2:** Run Claude Code:
 
@@ -240,8 +266,16 @@ ALLOWED_DIR="C:/Users/yourname/projects"
 
 4. **Start the server:**
 
+If installed via Homebrew:
+
 ```bash
-uv run uvicorn server:app --host 0.0.0.0 --port 8082
+brew services start cc-proxy
+```
+
+Or manually:
+
+```bash
+cc-nim start
 ```
 
 5. **Invite the bot** (OAuth2 URL Generator, scopes: `bot`, permissions: Read Messages, Send Messages, Manage Messages, Read Message History). Send a task to an allowed channel and Claude responds with live thinking tokens and tool calls. Use commands above to cancel or clear.
@@ -364,8 +398,16 @@ Browse: [model.lmstudio.ai](https://model.lmstudio.ai)
 | `MESSAGING_RATE_WINDOW` | Messaging window (seconds) | `1` |
 | `CLAUDE_WORKSPACE` | Directory for agent workspace | `./agent_workspace` |
 | `ALLOWED_DIR` | Allowed directories for agent | `""` |
+| `CCPROXY_CONFIG` | Override config file path (fallback: `~/.ccenv`, then `./.env`) | — |
 
 See [`.env.example`](.env.example) for all supported parameters.
+
+**Config File Priority:** The proxy loads configuration from a file in this order:
+1. Path specified by `CCPROXY_CONFIG` environment variable
+2. `~/.ccenv` (recommended for system-wide installs)
+3. `./.env` (project-local, for development)
+
+Using `~/.ccenv` keeps your project directory clean and aligns with standard OS conventions.
 
 ---
 

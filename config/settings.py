@@ -1,14 +1,14 @@
 """Centralized configuration using Pydantic Settings."""
 
+import os
 from functools import lru_cache
+from pathlib import Path
 
 from dotenv import load_dotenv
 from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .nim import NimSettings
-
-load_dotenv()
 
 
 class Settings(BaseSettings):
@@ -147,13 +147,28 @@ class Settings(BaseSettings):
         return self.model.split("/", 1)[1]
 
     model_config = SettingsConfigDict(
-        env_file=".env",
-        env_file_encoding="utf-8",
         extra="ignore",
     )
+
+
+def _compute_config_path() -> Path:
+    """Return the config file path respecting priority."""
+    override = os.getenv("CCPROXY_CONFIG")
+    if override:
+        return Path(override).expanduser()
+    home_config = Path.home() / ".ccenv"
+    if home_config.exists():
+        return home_config
+    fallback = Path.cwd() / ".env"
+    if fallback.exists():
+        return fallback
+    return home_config
 
 
 @lru_cache
 def get_settings() -> Settings:
     """Get cached settings instance."""
+    config_path = _compute_config_path()
+    if config_path and config_path.exists():
+        load_dotenv(dotenv_path=config_path, override=True)
     return Settings()

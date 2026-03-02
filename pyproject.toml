@@ -1,3 +1,7 @@
+[build-system]
+requires = ["setuptools>=61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
 [project]
 name = "free-claude-code"
 version = "2.0.0"
@@ -17,7 +21,12 @@ dependencies = [
     "pydantic-settings>=2.12.0",
     "openai>=2.16.0",
     "loguru>=0.7.0",
+    "typer>=0.9.0",
 ]
+
+
+[project.scripts]
+cc-nim = "cc_nim.cli:main"
 
 [project.optional-dependencies]
 voice = [
@@ -25,6 +34,16 @@ voice = [
     "transformers>=4.45.0",
     "accelerate>=0.30.0",
     "librosa>=0.10.0",
+]
+
+[tool.setuptools]
+packages = [
+    "cc_nim",
+    "api",
+    "cli",
+    "config",
+    "messaging",
+    "providers",
 ]
 
 [tool.uv.sources]
