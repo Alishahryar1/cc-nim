@@ -10,8 +10,8 @@ import subprocess
 import sys
 from pathlib import Path
 
-import uvicorn
 import typer
+import uvicorn
 from dotenv import load_dotenv
 
 from config.settings import get_settings
@@ -137,7 +137,7 @@ def start_command() -> int:
                 pid_path.unlink(missing_ok=True)
             except OSError:
                 pid_path.unlink(missing_ok=True)
-        except (ValueError, OSError):
+        except ValueError, OSError:
             pid_path.unlink(missing_ok=True)
     pid_path.write_text(str(os.getpid()))
 
@@ -192,7 +192,7 @@ def stop_command() -> int:
                 print(f"Process {pid} already dead.", file=sys.stderr)
         except (ValueError, OSError) as e:
             print(f"Failed to read/kill PID: {e}", file=sys.stderr)
-            raise typer.Exit(1)
+            raise typer.Exit(1) from e
         finally:
             with contextlib.suppress(Exception):
                 pid_path.unlink(missing_ok=True)

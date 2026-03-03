@@ -5,7 +5,10 @@ __pycache__
 .ruff_cache
 .serena
 .venv
+.worktrees
 agent_workspace
 .env
+free_claude_code.egg-info
+server.*.log
 server.log
 .coverage

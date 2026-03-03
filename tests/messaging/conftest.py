@@ -1,5 +1,7 @@
-import pytest
+import asyncio
 from unittest.mock import AsyncMock, MagicMock
+
+import pytest
 
 from messaging.models import IncomingMessage
 
@@ -10,9 +12,15 @@ def messaging_platform():
     mp.queue_send_message = AsyncMock()
     mp.queue_edit_message = AsyncMock()
     mp.queue_delete_message = AsyncMock()
-    mp.cancel_pending_voice = AsyncMock()
-    mp.record_message_id = AsyncMock()
-    mp.fire_and_forget = AsyncMock()
+    mp.cancel_pending_voice = AsyncMock(return_value=None)
+    mp.record_message_id = MagicMock()
+
+    def _fire_and_forget(task):
+        if asyncio.iscoroutine(task):
+            return asyncio.create_task(task)
+        return None
+
+    mp.fire_and_forget = MagicMock(side_effect=_fire_and_forget)
     return mp
 
 
@@ -20,20 +28,22 @@ def messaging_platform():
 def cli_manager():
     cm = MagicMock()
     cm.get_or_create_session = AsyncMock()
+    cm.register_real_session_id = AsyncMock(return_value=True)
     cm.stop_all = AsyncMock()
-    cm.get_stats = AsyncMock()
+    cm.remove_session = AsyncMock(return_value=True)
+    cm.get_stats = MagicMock(return_value={"active_sessions": 0})
     return cm
 
 
 @pytest.fixture
 def session_store():
     ss = MagicMock()
-    ss.save_tree = AsyncMock()
-    ss.clear_all = AsyncMock()
-    ss.get_message_ids_for_chat = AsyncMock(return_value=[])
-    ss.remove_node_mappings = AsyncMock()
-    ss.remove_tree = AsyncMock()
-    ss.record_message_id = AsyncMock()
+    ss.save_tree = MagicMock()
+    ss.clear_all = MagicMock()
+    ss.get_message_ids_for_chat = MagicMock(return_value=[])
+    ss.remove_node_mappings = MagicMock()
+    ss.remove_tree = MagicMock()
+    ss.record_message_id = MagicMock()
     return ss
 
 
@@ -62,6 +72,7 @@ def incoming_message_factory():
             user_id=user_id,
             message_id=message_id,
             platform=platform,
-            **kwargs
+            **kwargs,
         )
+
     return _factory

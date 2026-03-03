@@ -27,11 +27,17 @@ router = APIRouter()
 # =============================================================================
 
 
+def _resolve_provider(request: Request) -> BaseProvider:
+    """Resolve provider honoring FastAPI dependency overrides."""
+    override = request.app.dependency_overrides.get(get_provider)
+    provider_factory = override or get_provider
+    return provider_factory()
+
+
 @router.post("/v1/messages")
 async def create_message(
     request_data: MessagesRequest,
     raw_request: Request,
-    provider: BaseProvider = Depends(get_provider),
     settings: Settings = Depends(get_settings),
 ):
     """Create a message (always streaming)."""
@@ -50,6 +56,7 @@ async def create_message(
         input_tokens = get_token_count(
             request_data.messages, request_data.system, request_data.tools
         )
+        provider = _resolve_provider(raw_request)
         return StreamingResponse(
             provider.stream_response(
                 request_data,

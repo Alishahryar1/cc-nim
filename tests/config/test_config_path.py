@@ -48,13 +48,9 @@ def test_falls_back_to_project_env_when_home_missing(mock_home):
 
 def test_returns_home_ccenv_even_when_missing(mock_home):
     """If no config files exist, returns ~/.ccenv (may be created later)."""
-    # No files exist
-    with (
-        patch.dict(os.environ, {}, clear=True),
-        patch("config.settings.Path.cwd") as mock_cwd,
-    ):
-        # cwd has no .env; Path.cwd().exists() would be True but .env not exist
-        mock_cwd.return_value = mock_cwd / "no_env"
-        mock_cwd.return_value.mkdir.return_value = None
-        result = _compute_config_path()
-        assert result == mock_home / ".ccenv"
+    with patch.dict(os.environ, {}, clear=True):
+        tmp_cwd = mock_home / "no_env"
+        tmp_cwd.mkdir()
+        with patch("config.settings.Path.cwd", return_value=tmp_cwd):
+            result = _compute_config_path()
+            assert result == mock_home / ".ccenv"

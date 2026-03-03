@@ -516,6 +516,7 @@ dependencies = [
     { name = "python-dotenv" },
     { name = "python-telegram-bot" },
     { name = "tiktoken" },
+    { name = "typer" },
     { name = "uvicorn" },
 ]
 
@@ -553,6 +554,7 @@ requires-dist = [
     { name = "tiktoken", specifier = ">=0.7.0" },
     { name = "torch", marker = "extra == 'voice'", specifier = ">=2.0.0", index = "https://download.pytorch.org/whl/cu130" },
     { name = "transformers", marker = "extra == 'voice'", specifier = ">=4.45.0" },
+    { name = "typer", specifier = ">=0.9.0" },
     { name = "uvicorn", specifier = ">=0.34.0" },
 ]
 provides-extras = ["voice"]

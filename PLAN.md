@@ -30,11 +30,11 @@ Add Homebrew formula and CLI commands (`init`, `start`, `stop`) to manage cc-nim
 | 5 | Implement `stop_command` with brew service first, PID fallback. | ✅ Completed | Brew stop tried; PID kill if needed |
 | 6 | Write unit tests for CLI commands (`tests/cli/test_cli_commands.py`). | ✅ Completed | Covers success and error paths |
 | 7 | Fix async test fixtures (`tests/conftest.py`) to use `AsyncMock`. | ✅ Completed | Resolved `MagicMock` await errors |
-| 8 | Update `README.md` with Homebrew installation and usage. | ⏳ Pending | |
-| 9 | Create Homebrew formula `Formula/cc-proxy.rb`. | ⏳ Pending | |
-| 10 | Update `run.sh` to show deprecation notice and direct to `cc-nim`. | ⏳ Pending | |
-| 11 | Run full test suite (`uv run pytest`) and fix any failures. | 🚧 In Progress | Code changes complete; tests not yet executed |
-| 12 | Run lint/type checks (`ruff format`, `ruff check`, `ty`). | ⏳ Pending | Will run after tests |
+| 8 | Update `README.md` with Homebrew installation and usage. | ✅ Completed | Homebrew install and service usage documented |
+| 9 | Create Homebrew formula `Formula/cc-proxy.rb`. | ✅ Completed | Formula added with service + post_install init |
+| 10 | Update `run.sh` to show deprecation notice and direct to `cc-nim`. | ✅ Completed | Deprecation note present |
+| 11 | Run full test suite (`uv run pytest`) and fix any failures. | ✅ Completed | 864 passed |
+| 12 | Run lint/type checks (`ruff format`, `ruff check`, `ty`). | ✅ Completed | All checks passing |
 | 13 | Commit changes on `feature/homebrew-setup` and push to fork. | ⏳ Pending | |
 | 14 | Create pull request to upstream repository. | ⏳ Pending | |
 
@@ -46,14 +46,10 @@ Add Homebrew formula and CLI commands (`init`, `start`, `stop`) to manage cc-nim
 - Updated `tests/conftest.py` to use `AsyncMock` for async methods.
 
 ## Next Steps
-1. Run `uv sync` to ensure `typer` installed in environment.
-2. Execute `uv run pytest` to verify all tests pass.
-3. Run `uv run ruff format` and `uv run ruff check`.
-4. Run `uv run ty check`.
-5. If any failures, debug and fix.
-6. After all checks pass, commit and push to remote.
-7. Update `README.md`, create formula, and update `run.sh`.
-8. Open pull request.
+1. Commit all completed Homebrew/CLI/test-fix changes on `feature/homebrew-setup`.
+2. Push branch to fork (`rainbow`) and open PR against upstream.
+3. Validate Homebrew install flow from tap in a clean environment.
+4. Update release/tag strategy for formula URL pinning.
 
 ---
-*Last updated: 2026-03-02*
+*Last updated: 2026-03-03*

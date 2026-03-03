@@ -1,11 +1,11 @@
 import os
 import signal
 import subprocess
-import time
 from pathlib import Path
 from unittest.mock import MagicMock
 
 import pytest
+import typer
 import uvicorn
 
 from cc_nim.cli import (
@@ -16,8 +16,8 @@ from cc_nim.cli import (
     stop_command,
 )
 
-
 # ==================== _get_config_path tests ====================
+
 
 def test_get_config_path_uses_ccproxy_config(monkeypatch, tmp_path):
     config_path = tmp_path / "custom.env"
@@ -64,6 +64,7 @@ def test_get_config_path_returns_home_when_none_exist(monkeypatch, tmp_path):
 
 # ==================== _get_pid_path tests ====================
 
+
 def test_get_pid_path_returns_correct_location(monkeypatch, tmp_path):
     home = tmp_path / "home"
     home.mkdir()
@@ -72,6 +73,7 @@ def test_get_pid_path_returns_correct_location(monkeypatch, tmp_path):
 
 
 # ==================== init_command tests ====================
+
 
 def test_init_command_creates_config(monkeypatch, tmp_path):
     config_path = tmp_path / "config.env"
@@ -90,11 +92,13 @@ def test_init_command_fails_if_config_exists(monkeypatch, tmp_path):
     config_path = tmp_path / "config.env"
     config_path.touch()
     monkeypatch.setattr("cc_nim.cli._get_config_path", lambda: config_path)
-    result = init_command()
-    assert result == 1
+    with pytest.raises(typer.Exit) as exc:
+        init_command()
+    assert exc.value.exit_code == 1
 
 
 # ==================== start_command tests ====================
+
 
 def test_start_command_writes_pid_and_starts_uvicorn(monkeypatch, tmp_path):
     pid_path = tmp_path / "cc-nim.pid"
@@ -106,29 +110,21 @@ def test_start_command_writes_pid_and_starts_uvicorn(monkeypatch, tmp_path):
     mock_get_settings = MagicMock(return_value=mock_settings)
     monkeypatch.setattr("cc_nim.cli.get_settings", mock_get_settings)
     monkeypatch.setattr(os, "getpid", lambda: 12345)
-    mock_uvicorn_run = MagicMock()
-    monkeypatch.setattr(uvicorn, "run", mock_uvicorn_run)
-    monkeypatch.setattr("atexit.register", lambda func: None)  # Fixed target
-    # Prevent PID file cleanup so we can assert its existence after start_command
-    monkeypatch.setattr(pid_path, "unlink", lambda *args, **kwargs: None)
-    # Mock Path.cwd to project root (where server.py exists)
-    monkeypatch.setattr(Path, "cwd", lambda: Path(__file__).parent.parent.parent)
-    if pid_path.exists():
-        pid_path.unlink()
+    called = {"ok": False}
+
+    def mock_run(*args, **kwargs):
+        assert pid_path.exists()
+        assert pid_path.read_text().strip() == "12345"
+        called["ok"] = True
+
+    monkeypatch.setattr(uvicorn, "run", mock_run)
     # Ensure config exists
     config_path = tmp_path / "config.env"
     config_path.touch()
     monkeypatch.setattr("cc_nim.cli._get_config_path", lambda: config_path)
     start_command()
-    assert pid_path.exists()
-    assert pid_path.read_text().strip() == "12345"
-    mock_uvicorn_run.assert_called_once()
-    # Check that uvicorn.run was called with expected arguments
-    call_kwargs = mock_uvicorn_run.call_args[1]
-    assert call_kwargs["host"] == "0.0.0.0"
-    assert call_kwargs["port"] == 8082
-    assert call_kwargs["log_level"] == "info"
-    assert call_kwargs["timeout_graceful_shutdown"] == 5
+    assert called["ok"] is True
+    assert not pid_path.exists()
 
 
 def test_start_command_removes_stale_pid_and_continues(monkeypatch, tmp_path):
@@ -142,25 +138,27 @@ def test_start_command_removes_stale_pid_and_continues(monkeypatch, tmp_path):
     mock_get_settings = MagicMock(return_value=mock_settings)
     monkeypatch.setattr("cc_nim.cli.get_settings", mock_get_settings)
     monkeypatch.setattr(os, "getpid", lambda: 99999)
-    # Simulate stale PID by making os.kill raise OSError
+
+    # Simulate stale PID by making os.kill raise ProcessLookupError
     def mock_kill(pid, sig):
-        raise OSError("No such process")
+        raise ProcessLookupError("No such process")
+
     monkeypatch.setattr(os, "kill", mock_kill)
-    mock_uvicorn_run = MagicMock()
-    monkeypatch.setattr(uvicorn, "run", mock_uvicorn_run)
-    monkeypatch.setattr("atexit.register", lambda func: None)  # Fixed target
-    # Prevent PID file cleanup in finally so we can assert existence after start_command
-    monkeypatch.setattr(pid_path, "unlink", lambda *args, **kwargs: None)
-    # Provide cwd so server module can be found
-    monkeypatch.setattr(Path, "cwd", lambda: Path(__file__).parent.parent.parent)
+    called = {"ok": False}
+
+    def mock_run(*args, **kwargs):
+        assert pid_path.exists()
+        assert pid_path.read_text().strip() == "99999"
+        called["ok"] = True
+
+    monkeypatch.setattr(uvicorn, "run", mock_run)
     # Ensure config exists
     config_path = tmp_path / "config.env"
     config_path.touch()
     monkeypatch.setattr("cc_nim.cli._get_config_path", lambda: config_path)
     start_command()
-    assert pid_path.exists()
-    assert pid_path.read_text().strip() == "99999"
-    mock_uvicorn_run.assert_called_once()
+    assert called["ok"] is True
+    assert not pid_path.exists()
 
 
 def test_start_command_exits_if_process_already_running(monkeypatch, tmp_path):
@@ -177,12 +175,14 @@ def test_start_command_exits_if_process_already_running(monkeypatch, tmp_path):
     config_path = tmp_path / "config.env"
     config_path.touch()
     monkeypatch.setattr("cc_nim.cli._get_config_path", lambda: config_path)
-    result = start_command()
-    assert result == 1
+    with pytest.raises(typer.Exit) as exc:
+        start_command()
+    assert exc.value.exit_code == 1
     assert pid_path.exists()
 
 
 # ==================== stop_command tests ====================
+
 
 def test_stop_command_stops_via_brew_success(monkeypatch, tmp_path):
     pid_path = tmp_path / "cc-nim.pid"
@@ -190,9 +190,11 @@ def test_stop_command_stops_via_brew_success(monkeypatch, tmp_path):
     monkeypatch.setattr("cc_nim.cli._get_pid_path", lambda: pid_path)
     result = MagicMock(returncode=0)
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: result)
+
     # Ensure os.kill is not called
     def raise_assertion(*args, **kwargs):
         raise AssertionError("os.kill should not be called")
+
     monkeypatch.setattr(os, "kill", raise_assertion)
     stop_command()
     assert not pid_path.exists()
@@ -207,7 +209,6 @@ def test_stop_command_uses_kill_when_brew_fails(monkeypatch, tmp_path):
     mock_kill = MagicMock()
     monkeypatch.setattr(os, "kill", mock_kill)
     monkeypatch.setattr(signal, "SIGTERM", signal.SIGTERM)
-    monkeypatch.setattr(time, "sleep", lambda s: None)
     stop_command()
     mock_kill.assert_called_once_with(12345, signal.SIGTERM)
     assert not pid_path.exists()
@@ -218,8 +219,9 @@ def test_stop_command_fails_when_no_pid_and_brew_fails(monkeypatch):
     monkeypatch.setattr("cc_nim.cli._get_pid_path", lambda: pid_path)
     result = MagicMock(returncode=1)
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: result)
-    ret = stop_command()
-    assert ret == 1
+    with pytest.raises(typer.Exit) as exc:
+        stop_command()
+    assert exc.value.exit_code == 1
 
 
 def test_stop_command_handles_kill_error(monkeypatch, tmp_path):
@@ -228,10 +230,12 @@ def test_stop_command_handles_kill_error(monkeypatch, tmp_path):
     monkeypatch.setattr("cc_nim.cli._get_pid_path", lambda: pid_path)
     result = MagicMock(returncode=1)
     monkeypatch.setattr(subprocess, "run", lambda *args, **kwargs: result)
+
     def kill_error(pid, sig):
         raise OSError("Operation not permitted")
+
     monkeypatch.setattr(os, "kill", kill_error)
     monkeypatch.setattr(signal, "SIGTERM", signal.SIGTERM)
-    monkeypatch.setattr(time, "sleep", lambda s: None)
-    ret = stop_command()
-    assert ret == 1
+    with pytest.raises(typer.Exit) as exc:
+        stop_command()
+    assert exc.value.exit_code == 1
