@@ -192,19 +192,6 @@ uv tool install git+https://github.com/Alishahryar1/free-claude-code.git
 fcc-init        # creates ~/.config/free-claude-code/.env from the built-in template
 ```
 
-To include voice note support, install with the relevant extra:
-
-```bash
-# Local Whisper (cpu/cuda) — no API key needed
-uv tool install "free-claude-code[voice_local] @ git+https://github.com/Alishahryar1/free-claude-code.git"
-
-# NVIDIA NIM transcription via gRPC
-uv tool install "free-claude-code[voice] @ git+https://github.com/Alishahryar1/free-claude-code.git"
-
-# Both
-uv tool install "free-claude-code[voice,voice_local] @ git+https://github.com/Alishahryar1/free-claude-code.git"
-```
-
 Edit `~/.config/free-claude-code/.env` with your API keys and model names, then:
 
 ```bash
@@ -353,10 +340,24 @@ Get a token from [@BotFather](https://t.me/BotFather); find your user ID via [@u
 
 Send voice messages on Discord or Telegram; they are transcribed and processed as regular prompts.
 
-| Backend | How | Requires |
-| ------- | --- | -------- |
-| **Local Whisper** (default) | [Hugging Face Whisper](https://huggingface.co/openai/whisper-large-v3-turbo) — free, offline, CUDA compatible | `uv sync --extra voice_local` |
-| **NVIDIA NIM** | Whisper/Parakeet models via gRPC | `uv sync --extra voice` + `NVIDIA_NIM_API_KEY` |
+| Backend | Description | API Key |
+| ------- | ----------- | ------- |
+| **Local Whisper** (default) | [Hugging Face Whisper](https://huggingface.co/openai/whisper-large-v3-turbo) — free, offline, CUDA compatible | not required |
+| **NVIDIA NIM** | Whisper/Parakeet models via gRPC | `NVIDIA_NIM_API_KEY` |
+
+**Install the voice extras:**
+
+```bash
+# If you cloned the repo:
+uv sync --extra voice_local          # Local Whisper
+uv sync --extra voice                # NVIDIA NIM
+uv sync --extra voice --extra voice_local  # Both
+
+# If you installed as a package (no clone):
+uv tool install "free-claude-code[voice_local] @ git+https://github.com/Alishahryar1/free-claude-code.git"
+uv tool install "free-claude-code[voice] @ git+https://github.com/Alishahryar1/free-claude-code.git"
+uv tool install "free-claude-code[voice,voice_local] @ git+https://github.com/Alishahryar1/free-claude-code.git"
+```
 
 Configure via `WHISPER_DEVICE` (`cpu` | `cuda` | `nvidia_nim`) and `WHISPER_MODEL`. See the [Configuration](#configuration) table for all voice variables and supported model values.
 
