@@ -14,7 +14,7 @@
 
 A lightweight proxy that routes Claude Code's Anthropic API calls to **NVIDIA NIM** (40 req/min free), **OpenRouter** (hundreds of models), or **LM Studio** (fully local).
 
-[Features](#features) · [Quick Start](#quick-start) · [How It Works](#how-it-works) · [Discord Bot](#discord-bot) · [Configuration](#configuration)
+[Features](#features) · [Quick Start](#quick-start) · [How It Works](#how-it-works) · [Discord Bot](#discord-bot) · [Configuration](#configuration) · [Development](#development)
 
 ---
 
@@ -53,7 +53,24 @@ A lightweight proxy that routes Claude Code's Anthropic API calls to **NVIDIA NI
 3. Install [uv](https://github.com/astral-sh/uv)
 4. Update uv if already installed: `uv self update`
 
-### Clone & Configure
+### Option A — Install as a package (no clone needed)
+
+Install directly from GitHub and set up your config in one step:
+
+```bash
+uv tool install git+https://github.com/Alishahryar1/free-claude-code.git
+fcc-init
+```
+
+`fcc-init` creates `~/.config/free-claude-code/.env` from the built-in template. Open that file and fill in your API keys and model names (see provider examples below), then start the server:
+
+```bash
+free-claude-code
+```
+
+> To update to the latest version later: `uv tool upgrade free-claude-code`
+
+### Option B — Clone & Configure
 
 ```bash
 git clone https://github.com/Alishahryar1/free-claude-code.git
@@ -125,6 +142,10 @@ MODEL="nvidia_nim/z-ai/glm4.7"                      # fallback
 **Terminal 1:** Start the proxy server:
 
 ```bash
+# If installed as a package (Option A):
+free-claude-code
+
+# If cloned (Option B):
 uv run uvicorn server:app --host 0.0.0.0 --port 8082
 ```
 
@@ -273,7 +294,8 @@ ALLOWED_DIR="C:/Users/yourname/projects"
 4. **Start the server:**
 
 ```bash
-uv run uvicorn server:app --host 0.0.0.0 --port 8082
+free-claude-code                                    # if installed as a package
+uv run uvicorn server:app --host 0.0.0.0 --port 8082  # if cloned
 ```
 
 5. **Invite the bot** (OAuth2 URL Generator, scopes: `bot`, permissions: Read Messages, Send Messages, Manage Messages, Read Message History). Send a task to an allowed channel and Claude responds with live thinking tokens and tool calls. Use commands above to cancel or clear.
