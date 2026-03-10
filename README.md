@@ -158,7 +158,7 @@ That's it! Claude Code now uses your configured provider for free.
 3. Click **Edit in settings.json** and add:
 
 ```json
-"claude-code.environmentVariables": [
+"claudeCode.environmentVariables": [
   { "name": "ANTHROPIC_BASE_URL", "value": "http://localhost:8082" },
   { "name": "ANTHROPIC_AUTH_TOKEN", "value": "freecc" }
 ]
