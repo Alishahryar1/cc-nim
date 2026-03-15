@@ -11,7 +11,7 @@ from config.settings import Settings
 from providers.common import get_user_facing_error_message
 from providers.exceptions import InvalidRequestError, ProviderError
 
-from .dependencies import get_provider_for_type, get_settings
+from .dependencies import get_provider_for_type, get_settings, require_api_key
 from .models.anthropic import MessagesRequest, TokenCountRequest
 from .models.responses import TokenCountResponse
 from .optimization_handlers import try_optimizations
@@ -28,6 +28,7 @@ async def create_message(
     request_data: MessagesRequest,
     raw_request: Request,
     settings: Settings = Depends(get_settings),
+    _auth=Depends(require_api_key),
 ):
     """Create a message (always streaming)."""
 
@@ -83,7 +84,7 @@ async def create_message(
 
 
 @router.post("/v1/messages/count_tokens")
-async def count_tokens(request_data: TokenCountRequest):
+async def count_tokens(request_data: TokenCountRequest, _auth=Depends(require_api_key)):
     """Count tokens for a request."""
     request_id = f"req_{uuid.uuid4().hex[:12]}"
     with logger.contextualize(request_id=request_id):
@@ -112,7 +113,9 @@ async def count_tokens(request_data: TokenCountRequest):
 
 
 @router.get("/")
-async def root(settings: Settings = Depends(get_settings)):
+async def root(
+    settings: Settings = Depends(get_settings), _auth=Depends(require_api_key)
+):
     """Root endpoint."""
     return {
         "status": "ok",
@@ -128,7 +131,7 @@ async def health():
 
 
 @router.post("/stop")
-async def stop_cli(request: Request):
+async def stop_cli(request: Request, _auth=Depends(require_api_key)):
     """Stop all CLI sessions and pending tasks."""
     handler = getattr(request.app.state, "message_handler", None)
     if not handler:
