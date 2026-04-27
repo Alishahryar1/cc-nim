@@ -47,6 +47,8 @@ htmlcov/
 # Environment files (use docker-compose or -e flags)
 .env
 .env.*
+# Allow template for Hatchling wheel force-include (pyproject.toml)
+!.env.example
 
 # Documentation
 *.md
