@@ -32,3 +32,34 @@ def test_security_headers(client):
     assert "frame-ancestors 'none'" in csp
     assert "form-action 'self'" in csp
     assert "base-uri 'self'" in csp
+
+
+@pytest.mark.parametrize("origin", [
+    "http://localhost:8080",
+    "http://127.0.0.1:3000",
+    "http://[::1]:5173",
+    "https://localhost",
+])
+def test_cors_allowed_origins(client, origin):
+    response = client.options("/", headers={
+        "Origin": origin,
+        "Access-Control-Request-Method": "GET"
+    })
+    assert response.status_code == 200
+    assert response.headers.get("access-control-allow-origin") == origin
+
+
+@pytest.mark.parametrize("origin", [
+    "http://evil.com",
+    "https://attacker.net",
+    "http://localhost.evil.com",
+    "http://127.0.0.1.attacker.com",
+])
+def test_cors_blocked_origins(client, origin):
+    response = client.options("/", headers={
+        "Origin": origin,
+        "Access-Control-Request-Method": "GET"
+    })
+    # FastAPI CORSMiddleware generally passes through unauthorized options requests,
+    # or responds with 400. In either case it should NOT reflect the origin back
+    assert response.headers.get("access-control-allow-origin") != origin
