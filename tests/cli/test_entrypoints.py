@@ -1,5 +1,6 @@
 """Tests for cli/entrypoints.py — fcc-init scaffolding logic."""
 
+import os
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
@@ -43,6 +44,8 @@ def _run_init(tmp_home: Path) -> tuple[str, Path]:
     return "\n".join(printed), env_file
 
 
+
+
 def test_init_creates_env_file(tmp_path: Path) -> None:
     """init() creates .env from the bundled template when it doesn't exist yet."""
     output, env_file = _run_init(tmp_path)
@@ -50,6 +53,8 @@ def test_init_creates_env_file(tmp_path: Path) -> None:
     assert env_file.exists()
     assert env_file.stat().st_size > 0
     assert str(env_file) in output
+    if os.name == "posix":
+        assert env_file.stat().st_mode & 0o777 == 0o600
 
 
 def test_init_copies_template_content(tmp_path: Path) -> None:

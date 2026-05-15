@@ -27,3 +27,7 @@
 **Vulnerability:** Upstream API stalls (e.g. Nvidia NIM) can cause local server hangs, leading to resource exhaustion or denial of service for the CLI client.
 **Learning:** Relying on default HTTP timeouts (120s) for AI inference is insufficient for large-context tasks. Unhandled stalls block concurrency slots.
 **Prevention:** Increased global read timeouts to 600s and implemented proactive retries for timeout exceptions to ensure service availability during upstream instability.
+## 2026-05-13 - Secure Initialization File Permissions
+**Vulnerability:** Initial `.env` scaffolding created by `fcc-init` generates sensitive API key placeholders with default system permissions, which might be world-readable.
+**Learning:** Even placeholder configuration files should be restricted immediately upon creation to prevent later added secrets from being exposed.
+**Prevention:** Apply `os.chmod` to restrict file permissions to `0o600` immediately after file creation, using `contextlib.suppress(Exception)` to gracefully handle filesystems or environments where chmod fails.
