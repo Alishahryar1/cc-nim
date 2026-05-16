@@ -89,10 +89,11 @@ def _serialize_value(value: Any) -> Any:
         return [_serialize_value(item) for item in value]
     if value is None or isinstance(value, str | int | float | bool):
         return value
-    if hasattr(value, "__dict__"):
+    var_dict = getattr(value, "__dict__", None)
+    if var_dict is not None:
         return {
             key: _serialize_value(item)
-            for key, item in vars(value).items()
+            for key, item in var_dict.items()
             if not key.startswith("_") and item is not None
         }
     return value
