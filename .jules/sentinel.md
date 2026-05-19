@@ -27,3 +27,8 @@
 **Vulnerability:** Upstream API stalls (e.g. Nvidia NIM) can cause local server hangs, leading to resource exhaustion or denial of service for the CLI client.
 **Learning:** Relying on default HTTP timeouts (120s) for AI inference is insufficient for large-context tasks. Unhandled stalls block concurrency slots.
 **Prevention:** Increased global read timeouts to 600s and implemented proactive retries for timeout exceptions to ensure service availability during upstream instability.
+
+## 2026-05-13 - Strict CORS Configuration for Local Proxy
+**Vulnerability:** Missing strict CORS configuration allows potential cross-origin exploitation by malicious websites if running as a local proxy.
+**Learning:** Local-only FastAPI proxies must explicitly restrict CORS using `allow_origin_regex` to allow only loopback interfaces to prevent browser-based attacks.
+**Prevention:** Always configure `CORSMiddleware` restricting origins to `localhost`, `127.0.0.1`, and `[::1]`.
