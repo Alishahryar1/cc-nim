@@ -306,6 +306,8 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8082
     log_file: str = "server.log"
+    allowed_hosts: str = Field(default="*", validation_alias="ALLOWED_HOSTS")
+    cors_origins: str = Field(default="*", validation_alias="CORS_ORIGINS")
     # Optional server API key to protect endpoints (Anthropic-style)
     # Set via env `ANTHROPIC_AUTH_TOKEN`. When empty, no auth is required.
     anthropic_auth_token: str = Field(

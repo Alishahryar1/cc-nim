@@ -7,7 +7,9 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from loguru import logger
 from starlette.types import Receive, Scope, Send
@@ -99,6 +101,34 @@ def create_app(*, lifespan_enabled: bool = True) -> FastAPI:
     if lifespan_enabled:
         app_kwargs["lifespan"] = lifespan
     app = FastAPI(**app_kwargs)
+
+    # Configure CORS securely using settings to avoid hardcoding origins
+    cors_origins = [
+        origin.strip() for origin in settings.cors_origins.split(",") if origin.strip()
+    ]
+    if not cors_origins:
+        cors_origins = ["*"]
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_credentials=cors_origins != ["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Configure TrustedHost securely to prevent DNS rebinding attacks while allowing production configs
+    allowed_hosts = [
+        host.strip() for host in settings.allowed_hosts.split(",") if host.strip()
+    ]
+    if not allowed_hosts:
+        allowed_hosts = ["*"]
+
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=allowed_hosts,
+    )
+
     app.add_middleware(GZipMiddleware, minimum_size=1000)
 
     # Pre-calculated security headers (Optimization: ⚡ 1-10)
