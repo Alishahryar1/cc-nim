@@ -312,6 +312,14 @@ class Settings(BaseSettings):
         default="", validation_alias="ANTHROPIC_AUTH_TOKEN"
     )
 
+    # ==================== Security ====================
+    cors_origins: list[str] = Field(
+        default=["*"], validation_alias="CORS_ORIGINS"
+    )
+    allowed_hosts: list[str] = Field(
+        default=["*"], validation_alias="ALLOWED_HOSTS"
+    )
+
     @model_validator(mode="before")
     @classmethod
     def reject_removed_env_vars(cls, data: Any) -> Any:
@@ -378,6 +386,15 @@ class Settings(BaseSettings):
         if v <= 0:
             raise ValueError("messaging_rate_window must be > 0")
         return float(v)
+
+    @field_validator("cors_origins", "allowed_hosts", mode="before")
+    @classmethod
+    def parse_comma_separated_list(cls, v: Any) -> list[str]:
+        if isinstance(v, str):
+            return [part.strip() for part in v.split(",") if part.strip()]
+        if isinstance(v, list):
+            return v
+        return ["*"]
 
     @field_validator("web_fetch_allowed_schemes")
     @classmethod
