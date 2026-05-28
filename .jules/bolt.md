@@ -18,3 +18,7 @@
 ## 2024-05-25 - Avoid hasattr() Overheads in High-Frequency Python Loops
 **Learning:** In high-frequency content block parsing logic for APIs, `hasattr()` is computationally expensive because it catches and hides internal `AttributeError` exceptions inside the CPython interpreter runtime. Also, if a dictionary has a key that matches a built-in dict method name (like `get` or `keys`), `hasattr()` evaluates to `True` leading to method object extraction instead of key retrieval.
 **Action:** When working with mixed dict/object types in payload schemas, explicitly isolate dict behaviors using `isinstance(obj, dict)` initially, then fall back to direct `getattr(obj, attr, default)` calls to avoid double-lookups and exception silencing overheads.
+
+## 2024-05-25 - Avoid Useless dict.get() Defaults and Allocations in High-Frequency Iteration
+**Learning:** During stream parsing (e.g., Anthropic SSE contracts), calling `.get("delta", {})` on every event indiscriminately forces dictionary lookups and empty dictionary `{}` allocations even when the `event.event` type guarantees that the key cannot exist. In loops over thousands of stream chunks, this overhead scales linearly.
+**Action:** Always check the `event.event` type first (a fast string match). Only perform `.get()` on the data dictionary for the specific event types that are known to contain the target payload, and prefer `.get("key")` (which returns `None`) over allocating a default dictionary `{}` when you just need to safely type-check it afterward.
