@@ -7,7 +7,9 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from loguru import logger
 from starlette.types import Receive, Scope, Send
@@ -99,7 +101,24 @@ def create_app(*, lifespan_enabled: bool = True) -> FastAPI:
     if lifespan_enabled:
         app_kwargs["lifespan"] = lifespan
     app = FastAPI(**app_kwargs)
+
+    cors_origins = settings.parsed_cors_origins
+    allow_credentials = "*" not in cors_origins
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=cors_origins,
+        allow_credentials=allow_credentials,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     app.add_middleware(GZipMiddleware, minimum_size=1000)
+
+    # Order matters: middlewares are added from inside out.
+    # Adding TrustedHostMiddleware last makes it the outermost middleware to fail fast.
+    app.add_middleware(
+        TrustedHostMiddleware, allowed_hosts=settings.parsed_trusted_hosts
+    )
 
     # Pre-calculated security headers (Optimization: ⚡ 1-10)
     SECURITY_HEADERS = {

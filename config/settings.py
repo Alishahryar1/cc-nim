@@ -306,6 +306,8 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8082
     log_file: str = "server.log"
+    cors_origins: str = "*"
+    trusted_hosts: str = "*"
     # Optional server API key to protect endpoints (Anthropic-style)
     # Set via env `ANTHROPIC_AUTH_TOKEN`. When empty, no auth is required.
     anthropic_auth_token: str = Field(
@@ -513,6 +515,14 @@ class Settings(BaseSettings):
             for part in self.web_fetch_allowed_schemes.split(",")
             if part.strip()
         )
+
+    @property
+    def parsed_cors_origins(self) -> list[str]:
+        return [p.strip() for p in self.cors_origins.split(",") if p.strip()]
+
+    @property
+    def parsed_trusted_hosts(self) -> list[str]:
+        return [p.strip() for p in self.trusted_hosts.split(",") if p.strip()]
 
     @staticmethod
     def parse_provider_type(model_string: str) -> str:

@@ -27,3 +27,8 @@
 **Vulnerability:** Upstream API stalls (e.g. Nvidia NIM) can cause local server hangs, leading to resource exhaustion or denial of service for the CLI client.
 **Learning:** Relying on default HTTP timeouts (120s) for AI inference is insufficient for large-context tasks. Unhandled stalls block concurrency slots.
 **Prevention:** Increased global read timeouts to 600s and implemented proactive retries for timeout exceptions to ensure service availability during upstream instability.
+
+## 2026-05-13 - FastAPI Middleware Ordering
+**Vulnerability:** Security middlewares placed in the wrong order might allow malicious requests to consume resources (e.g. decompression, parsing) before being rejected.
+**Learning:** In FastAPI/Starlette, `app.add_middleware()` adds middlewares from the inside out. Therefore, to make a middleware execute first on incoming requests (like `TrustedHostMiddleware`), it must be added last.
+**Prevention:** Always verify Starlette's middleware stack execution order when configuring security protections to ensure fail-fast behavior.
