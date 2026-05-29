@@ -311,6 +311,12 @@ class Settings(BaseSettings):
     anthropic_auth_token: str = Field(
         default="", validation_alias="ANTHROPIC_AUTH_TOKEN"
     )
+    cors_origins: list[str] = Field(
+        default=["*"], validation_alias="CORS_ORIGINS"
+    )
+    allowed_hosts: list[str] = Field(
+        default=["*"], validation_alias="ALLOWED_HOSTS"
+    )
 
     @model_validator(mode="before")
     @classmethod
