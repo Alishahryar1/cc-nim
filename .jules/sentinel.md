@@ -27,3 +27,8 @@
 **Vulnerability:** Upstream API stalls (e.g. Nvidia NIM) can cause local server hangs, leading to resource exhaustion or denial of service for the CLI client.
 **Learning:** Relying on default HTTP timeouts (120s) for AI inference is insufficient for large-context tasks. Unhandled stalls block concurrency slots.
 **Prevention:** Increased global read timeouts to 600s and implemented proactive retries for timeout exceptions to ensure service availability during upstream instability.
+
+## 2026-05-12 - API Security Middlewares Configurable Overrides
+**Vulnerability:** Hardcoding loops back restricts API accessibility, but wildcard origins by default allow unrestricted access causing potential CORS vulnerabilities or Starlette Assertion errors.
+**Learning:** `allow_credentials` in `CORSMiddleware` needs to be conditionally evaluated based on whether origins are wildcard. List settings parsed via `@field_validator(mode='before')` gracefully manage env-based array assignments.
+**Prevention:** Always make API access configuration explicit, configurable, and correctly handle CORS and Trusted Hosts conditionally in FastAPI.

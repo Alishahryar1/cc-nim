@@ -312,6 +312,9 @@ class Settings(BaseSettings):
         default="", validation_alias="ANTHROPIC_AUTH_TOKEN"
     )
 
+    cors_origins: list[str] = Field(default=["*"], validation_alias="CORS_ORIGINS")
+    allowed_hosts: list[str] = Field(default=["*"], validation_alias="ALLOWED_HOSTS")
+
     @model_validator(mode="before")
     @classmethod
     def reject_removed_env_vars(cls, data: Any) -> Any:
@@ -321,6 +324,17 @@ class Settings(BaseSettings):
         return data
 
     # Handle empty strings for optional string fields
+    @field_validator("cors_origins", "allowed_hosts", mode="before")
+    @classmethod
+    def parse_comma_separated_list(cls, v: Any) -> list[str]:
+        if isinstance(v, str):
+            if not v.strip():
+                return ["*"]
+            return [x.strip() for x in v.split(",") if x.strip()]
+        if isinstance(v, list):
+            return v
+        return ["*"]
+
     @field_validator(
         "telegram_bot_token",
         "allowed_telegram_user_id",
