@@ -306,11 +306,28 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8082
     log_file: str = "server.log"
+    cors_origins: list[str] = Field(
+        default_factory=lambda: ["*"], validation_alias="CORS_ORIGINS"
+    )
+    allowed_hosts: list[str] = Field(
+        default_factory=lambda: ["*"], validation_alias="ALLOWED_HOSTS"
+    )
     # Optional server API key to protect endpoints (Anthropic-style)
     # Set via env `ANTHROPIC_AUTH_TOKEN`. When empty, no auth is required.
     anthropic_auth_token: str = Field(
         default="", validation_alias="ANTHROPIC_AUTH_TOKEN"
     )
+
+    @field_validator("cors_origins", "allowed_hosts", mode="before")
+    @classmethod
+    def parse_list_fields(cls, v: Any) -> list[str]:
+        if not v:
+            return ["*"]
+        if isinstance(v, str):
+            return [p.strip() for p in v.split(",") if p.strip()] or ["*"]
+        if isinstance(v, list):
+            return [str(p).strip() for p in v if str(p).strip()] or ["*"]
+        return ["*"]
 
     @model_validator(mode="before")
     @classmethod
