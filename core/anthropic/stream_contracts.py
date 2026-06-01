@@ -170,12 +170,12 @@ def text_content(events: list[SSEEvent]) -> str:
     parts: list[str] = []
     for event in events:
         if event.event == "content_block_start":
-            block = event.data.get("content_block", {})
+            block = event.data.get("content_block")
             if isinstance(block, dict) and block.get("type") == "text":
                 eager = str(block.get("text", ""))
                 if eager:
                     parts.append(eager)
-        delta = event.data.get("delta", {})
+        delta = event.data.get("delta")
         if isinstance(delta, dict) and delta.get("type") == "text_delta":
             parts.append(str(delta.get("text", "")))
     return "".join(parts)
@@ -184,7 +184,7 @@ def text_content(events: list[SSEEvent]) -> str:
 def thinking_content(events: list[SSEEvent]) -> str:
     parts: list[str] = []
     for event in events:
-        delta = event.data.get("delta", {})
+        delta = event.data.get("delta")
         if isinstance(delta, dict) and delta.get("type") == "thinking_delta":
             parts.append(str(delta.get("thinking", "")))
     return "".join(parts)
@@ -192,7 +192,7 @@ def thinking_content(events: list[SSEEvent]) -> str:
 
 def has_tool_use(events: list[SSEEvent]) -> bool:
     for event in events:
-        block = event.data.get("content_block", {})
+        block = event.data.get("content_block")
         if isinstance(block, dict) and block.get("type") == "tool_use":
             return True
     return False
