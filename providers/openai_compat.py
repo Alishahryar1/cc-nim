@@ -206,7 +206,7 @@ class OpenAIChatTransport(BaseProvider):
                 yield sse.emit_tool_delta(tc_index, json.dumps(parsed))
             return
         aliases = (
-            tool_argument_aliases.get(state.name, {}) if tool_argument_aliases else {}
+            tool_argument_aliases.get(state.name) if tool_argument_aliases else None
         )
         if aliases:
             if tool_argument_alias_buffers is None:
@@ -238,7 +238,9 @@ class OpenAIChatTransport(BaseProvider):
         if tc_index < 0:
             tc_index = len(sse.blocks.tool_states)
 
-        fn_delta = tc.get("function", {})
+        fn_delta = tc.get("function")
+        if not isinstance(fn_delta, dict):
+            fn_delta = {}
         incoming_name = fn_delta.get("name")
         arguments = fn_delta.get("arguments", "") or ""
 
@@ -308,7 +310,7 @@ class OpenAIChatTransport(BaseProvider):
             state = sse.blocks.tool_states.get(tool_index)
             if state is None or state.name == "Task":
                 continue
-            aliases = tool_argument_aliases.get(state.name, {})
+            aliases = tool_argument_aliases.get(state.name)
             if not aliases:
                 continue
             restored = self._restore_aliased_tool_arguments(buffered_args, aliases)
