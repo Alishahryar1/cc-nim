@@ -18,3 +18,7 @@
 ## 2024-05-25 - Avoid hasattr() Overheads in High-Frequency Python Loops
 **Learning:** In high-frequency content block parsing logic for APIs, `hasattr()` is computationally expensive because it catches and hides internal `AttributeError` exceptions inside the CPython interpreter runtime. Also, if a dictionary has a key that matches a built-in dict method name (like `get` or `keys`), `hasattr()` evaluates to `True` leading to method object extraction instead of key retrieval.
 **Action:** When working with mixed dict/object types in payload schemas, explicitly isolate dict behaviors using `isinstance(obj, dict)` initially, then fall back to direct `getattr(obj, attr, default)` calls to avoid double-lookups and exception silencing overheads.
+
+## 2024-05-25 - Avoid Eager Dictionary Allocations in High-Frequency Stream Loops
+**Learning:** In high-frequency stream loops (like parsing SSEs token-by-token), calling `dict.get('key', {})` evaluates the second argument immediately, meaning a new empty dictionary `{}` is allocated in memory and garbage-collected thousands of times per request, even if the key is present.
+**Action:** Use strict None checks (`val = dict.get('key'); if val is None: val = {}`) to avoid allocating fallback dictionaries unless necessary. Alternatively, if the fetched object is immediately type-checked, rely on `isinstance(dict.get('key'), dict)` which safely handles missing keys (evaluates to False for None).
