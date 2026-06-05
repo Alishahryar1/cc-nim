@@ -108,6 +108,9 @@ def _removed_env_var_message(model_config: Mapping[str, Any]) -> str | None:
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
+    cors_origins: list[str] = Field(default=["*"], validation_alias="CORS_ORIGINS")
+    allowed_hosts: list[str] = Field(default=["*"], validation_alias="ALLOWED_HOSTS")
+
     # ==================== OpenRouter Config ====================
     open_router_api_key: str = Field(default="", validation_alias="OPENROUTER_API_KEY")
 
@@ -321,6 +324,17 @@ class Settings(BaseSettings):
         return data
 
     # Handle empty strings for optional string fields
+    @field_validator("cors_origins", "allowed_hosts", mode="before")
+    @classmethod
+    def parse_comma_separated_list(cls, v: Any) -> list[str]:
+        if isinstance(v, str):
+            if not v.strip():
+                return ["*"]
+            return [part.strip() for part in v.split(",") if part.strip()]
+        if not v:
+            return ["*"]
+        return v
+
     @field_validator(
         "telegram_bot_token",
         "allowed_telegram_user_id",
