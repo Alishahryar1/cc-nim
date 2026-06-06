@@ -306,6 +306,12 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8082
     log_file: str = "server.log"
+    cors_origins: list[str] | str = Field(
+        default_factory=lambda: ["*"], validation_alias="CORS_ORIGINS"
+    )
+    allowed_hosts: list[str] | str = Field(
+        default_factory=lambda: ["*"], validation_alias="ALLOWED_HOSTS"
+    )
     # Optional server API key to protect endpoints (Anthropic-style)
     # Set via env `ANTHROPIC_AUTH_TOKEN`. When empty, no auth is required.
     anthropic_auth_token: str = Field(
@@ -378,6 +384,17 @@ class Settings(BaseSettings):
         if v <= 0:
             raise ValueError("messaging_rate_window must be > 0")
         return float(v)
+
+    @field_validator("cors_origins", "allowed_hosts", mode="before")
+    @classmethod
+    def parse_comma_separated_list(cls, v: Any) -> list[str]:
+        if isinstance(v, str):
+            return [part.strip() for part in v.split(",") if part.strip()]
+        if isinstance(v, list):
+            return v
+        if v is None:
+            return ["*"]
+        raise ValueError("Must be a comma-separated string or a list of strings")
 
     @field_validator("web_fetch_allowed_schemes")
     @classmethod
