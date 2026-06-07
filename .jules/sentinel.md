@@ -27,3 +27,7 @@
 **Vulnerability:** Upstream API stalls (e.g. Nvidia NIM) can cause local server hangs, leading to resource exhaustion or denial of service for the CLI client.
 **Learning:** Relying on default HTTP timeouts (120s) for AI inference is insufficient for large-context tasks. Unhandled stalls block concurrency slots.
 **Prevention:** Increased global read timeouts to 600s and implemented proactive retries for timeout exceptions to ensure service availability during upstream instability.
+## 2024-06-15 - FastAPI Global CORS and Host Header Verification
+**Vulnerability:** Global FastAPI instances lacked configurable `CORSMiddleware` and `TrustedHostMiddleware` allowing potentially overly permissive access.
+**Learning:** While admin routes had specific rebinding checks, standard API routes should also benefit from general CORS and Host header validation via standard middleware to offer defense-in-depth.
+**Prevention:** Apply `TrustedHostMiddleware` and `CORSMiddleware` at the global FastAPI app creation level, backed by strict configuration via Pydantic `Settings` and exposing them safely through admin configuration.
