@@ -31,6 +31,7 @@ from messaging.handler import ClaudeMessageHandler
 from messaging.models import IncomingMessage
 from messaging.platforms.base import MessagingPlatform
 from messaging.session import SessionStore
+from messaging.trees.data import MessageState
 from smoke.lib.config import ProviderModel, SmokeConfig, auth_headers
 from smoke.lib.server import RunningServer, start_server
 from smoke.lib.skips import fail_missing_env
@@ -547,13 +548,10 @@ class FakePlatformDriver:
         raise AssertionError("fake platform did not become idle")
 
     def _all_tree_nodes_terminal(self) -> bool:
-        data = self.handler.tree_queue.to_dict()
-        for tree in data.get("trees", {}).values():
-            nodes = tree.get("nodes", {}) if isinstance(tree, dict) else {}
-            for node in nodes.values():
-                if not isinstance(node, dict):
-                    continue
-                if node.get("state") in {"pending", "in_progress"}:
+        # Avoid expensive to_dict() serialization in wait loop
+        for tree in self.handler.tree_queue._repository._trees.values():
+            for node in tree._nodes.values():
+                if node.state in (MessageState.PENDING, MessageState.IN_PROGRESS):
                     return False
         return True
 
