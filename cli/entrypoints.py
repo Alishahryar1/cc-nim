@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 import shutil
 import subprocess
@@ -99,8 +100,6 @@ def init() -> None:
     config_dir.mkdir(parents=True, exist_ok=True)
     template = _load_env_template()
     env_file.write_text(template, encoding="utf-8")
-    import contextlib
-
     with contextlib.suppress(Exception):
         os.chmod(env_file, 0o600)
     print(f"Config created at {env_file}")

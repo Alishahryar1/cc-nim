@@ -7,7 +7,9 @@ from typing import Any
 from fastapi import FastAPI, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
+from fastapi.middleware.cors import CORSMiddleware
 from fastapi.middleware.gzip import GZipMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
 from fastapi.responses import FileResponse, JSONResponse
 from loguru import logger
 from starlette.types import Receive, Scope, Send
@@ -99,7 +101,90 @@ def create_app(*, lifespan_enabled: bool = True) -> FastAPI:
     if lifespan_enabled:
         app_kwargs["lifespan"] = lifespan
     app = FastAPI(**app_kwargs)
+
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
+
+    allow_credentials = "*" not in settings.cors_origins
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=allow_credentials,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     app.add_middleware(GZipMiddleware, minimum_size=1000)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=("*" not in settings.cors_origins),
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Add CORS Middleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials="*" not in settings.cors_origins,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Add Trusted Host Middleware (added last to execute first)
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=settings.allowed_hosts,
+    )
+
+    allow_credentials = "*" not in settings.cors_origins
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=allow_credentials,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials="*" not in settings.cors_origins,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Added last (outermost) to fail fast on invalid hosts
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=settings.cors_origins != ["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Add TrustedHostMiddleware outermost (last so it runs first)
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=settings.allowed_hosts,
+    )
+
+    # Order matters: middlewares are added from inside out.
+    # Adding TrustedHostMiddleware last makes it the outermost middleware to fail fast.
+    app.add_middleware(
+        TrustedHostMiddleware, allowed_hosts=settings.parsed_trusted_hosts
+    )
+
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     # Pre-calculated security headers (Optimization: ⚡ 1-10)
     SECURITY_HEADERS = {
@@ -217,6 +302,11 @@ def create_app(*, lifespan_enabled: bool = True) -> FastAPI:
             tool_names=tool_names,
         )
         return await request_validation_exception_handler(request, exc)
+
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=settings.allowed_hosts,
+    )
 
     @app.exception_handler(ProviderError)
     async def provider_error_handler(request: Request, exc: ProviderError):

@@ -82,8 +82,9 @@ def get_token_count(
                     "web_search_tool_result",
                     "web_fetch_tool_result",
                 ):
-                    if hasattr(block, "model_dump"):
-                        blob: object = block.model_dump()
+                    model_dump = getattr(block, "model_dump", None)
+                    if model_dump:
+                        blob: object = model_dump()
                     else:
                         blob = block
                     try:
