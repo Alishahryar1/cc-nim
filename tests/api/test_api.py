@@ -35,7 +35,7 @@ def client():
             new_callable=AsyncMock,
         ),
         patch("providers.registry.ProviderRegistry.start_model_list_refresh"),
-        TestClient(app) as test_client,
+        TestClient(app, base_url="http://127.0.0.1:50000") as test_client,
     ):
         yield test_client
 
