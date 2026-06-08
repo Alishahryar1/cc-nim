@@ -18,7 +18,7 @@
 ## 2024-05-25 - Avoid hasattr() Overheads in High-Frequency Python Loops
 **Learning:** In high-frequency content block parsing logic for APIs, `hasattr()` is computationally expensive because it catches and hides internal `AttributeError` exceptions inside the CPython interpreter runtime. Also, if a dictionary has a key that matches a built-in dict method name (like `get` or `keys`), `hasattr()` evaluates to `True` leading to method object extraction instead of key retrieval.
 **Action:** When working with mixed dict/object types in payload schemas, explicitly isolate dict behaviors using `isinstance(obj, dict)` initially, then fall back to direct `getattr(obj, attr, default)` calls to avoid double-lookups and exception silencing overheads.
-## 2024-06-01 - Avoid eager empty dictionary allocation in dict.get() fallback
 
-**Learning:** In tight loops parsing streaming output (like Anthropic server events), using `dict.get("key", {})` eagerly allocates an empty dictionary on every single miss. Since there are thousands of events, this causes massive allocation pressure. Because `isinstance(None, dict)` evaluates to `False`, we can omit the empty dictionary fallback and just check the result type of `dict.get("key")`.
-**Action:** Avoid allocating empty objects as fallbacks in `.get()` when iterating high-volume streams if type-checking is sufficient to short circuit.
+## 2024-05-25 - Avoid Eager Dictionary Allocation in High-Frequency Streams
+**Learning:** In high-frequency loops, such as parsing SSE stream chunks, using `dict.get("key", {})` creates a new empty dictionary object on *every single iteration* when the key does not exist. This results in significant unnecessary memory allocation and garbage collection overhead.
+**Action:** Replace `dict.get("key", {})` with `dict.get("key")` (which returns `None`) in hot loops. If an object requires subsequent dictionary access, use a strict `None` check (`if val is None: val = {}`) or rely on truthiness (`isinstance(val, dict)` evaluates to `False` for `None`) to safely handle missing keys without fallback allocation.
