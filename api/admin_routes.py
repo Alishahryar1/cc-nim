@@ -76,6 +76,14 @@ def _origin_is_local(origin: str | None) -> bool:
     return _is_loopback_host(parsed.hostname)
 
 
+def _host_is_local(host: str | None) -> bool:
+    if not host:
+        return False
+    # Host header can be host:port. urlsplit needs // to parse it correctly without scheme.
+    parsed = urlsplit(f"//{host}")
+    return _is_loopback_host(parsed.hostname)
+
+
 def require_loopback_admin(request: Request) -> None:
     """Allow admin access only from the local machine."""
 
