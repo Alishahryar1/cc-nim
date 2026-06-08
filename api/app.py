@@ -158,6 +158,20 @@ def create_app(*, lifespan_enabled: bool = True) -> FastAPI:
     # Added last (outermost) to fail fast on invalid hosts
     app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
 
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=settings.cors_origins != ["*"],
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Add TrustedHostMiddleware outermost (last so it runs first)
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=settings.allowed_hosts,
+    )
+
     # Pre-calculated security headers (Optimization: ⚡ 1-10)
     SECURITY_HEADERS = {
         "X-Content-Type-Options": "nosniff",
