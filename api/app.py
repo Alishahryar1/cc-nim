@@ -114,6 +114,13 @@ def create_app(*, lifespan_enabled: bool = True) -> FastAPI:
     )
 
     app.add_middleware(GZipMiddleware, minimum_size=1000)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=("*" not in settings.cors_origins),
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
     # Pre-calculated security headers (Optimization: ⚡ 1-10)
     SECURITY_HEADERS = {
@@ -231,6 +238,11 @@ def create_app(*, lifespan_enabled: bool = True) -> FastAPI:
             tool_names=tool_names,
         )
         return await request_validation_exception_handler(request, exc)
+
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=settings.allowed_hosts,
+    )
 
     @app.exception_handler(ProviderError)
     async def provider_error_handler(request: Request, exc: ProviderError):
