@@ -208,6 +208,8 @@ class OpenAIChatTransport(BaseProvider):
         aliases = (
             tool_argument_aliases.get(state.name) if tool_argument_aliases else None
         )
+        if aliases is None:
+            aliases = {}
         if aliases:
             if tool_argument_alias_buffers is None:
                 restored = self._restore_aliased_tool_arguments(args, aliases)
