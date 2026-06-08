@@ -273,7 +273,10 @@ class ProviderRegistry:
         self, provider_id: str, model_id: str
     ) -> bool | None:
         """Return cached thinking support when a provider exposes it."""
-        info = self._model_infos_by_provider.get(provider_id, {}).get(model_id)
+        provider_infos = self._model_infos_by_provider.get(provider_id)
+        if provider_infos is None:
+            return None
+        info = provider_infos.get(model_id)
         if info is None:
             return None
         return info.supports_thinking
@@ -286,7 +289,9 @@ class ProviderRegistry:
         """Return cached provider models with user-selectable prefixed ids."""
         infos: list[ProviderModelInfo] = []
         for provider_id in SUPPORTED_PROVIDER_IDS:
-            provider_infos = self._model_infos_by_provider.get(provider_id, {})
+            provider_infos = self._model_infos_by_provider.get(provider_id)
+            if provider_infos is None:
+                continue
             infos.extend(
                 ProviderModelInfo(
                     model_id=f"{provider_id}/{info.model_id}",

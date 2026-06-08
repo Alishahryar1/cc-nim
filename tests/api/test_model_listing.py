@@ -32,7 +32,7 @@ def test_models_list_includes_configured_refs_cached_provider_models_and_aliases
     app.dependency_overrides[get_settings] = lambda: settings
 
     try:
-        response = TestClient(app).get("/v1/models")
+        response = TestClient(app, base_url="http://127.0.0.1:50000").get("/v1/models")
     finally:
         app.dependency_overrides.clear()
 
@@ -85,7 +85,7 @@ def test_models_list_uses_openrouter_thinking_metadata_for_cached_models():
     app.dependency_overrides[get_settings] = lambda: settings
 
     try:
-        response = TestClient(app).get("/v1/models")
+        response = TestClient(app, base_url="http://127.0.0.1:50000").get("/v1/models")
     finally:
         app.dependency_overrides.clear()
 
@@ -113,7 +113,7 @@ def test_models_list_uses_cached_metadata_for_configured_openrouter_refs():
     app.dependency_overrides[get_settings] = lambda: settings
 
     try:
-        response = TestClient(app).get("/v1/models")
+        response = TestClient(app, base_url="http://127.0.0.1:50000").get("/v1/models")
     finally:
         app.dependency_overrides.clear()
 
@@ -136,7 +136,7 @@ def test_models_list_includes_cached_wafer_models():
     app.dependency_overrides[get_settings] = lambda: settings
 
     try:
-        response = TestClient(app).get("/v1/models")
+        response = TestClient(app, base_url="http://127.0.0.1:50000").get("/v1/models")
     finally:
         app.dependency_overrides.clear()
 
@@ -154,7 +154,7 @@ def test_models_list_works_without_provider_registry():
     app.dependency_overrides[get_settings] = lambda: settings
 
     try:
-        response = TestClient(app).get("/v1/models")
+        response = TestClient(app, base_url="http://127.0.0.1:50000").get("/v1/models")
     finally:
         app.dependency_overrides.clear()
 

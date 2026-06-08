@@ -27,8 +27,7 @@
 **Vulnerability:** Upstream API stalls (e.g. Nvidia NIM) can cause local server hangs, leading to resource exhaustion or denial of service for the CLI client.
 **Learning:** Relying on default HTTP timeouts (120s) for AI inference is insufficient for large-context tasks. Unhandled stalls block concurrency slots.
 **Prevention:** Increased global read timeouts to 600s and implemented proactive retries for timeout exceptions to ensure service availability during upstream instability.
-
-## 2026-05-13 - Strict Local-Only CORS
-**Vulnerability:** Missing Cross-Origin Resource Sharing (CORS) limits.
-**Learning:** Even though the server is locally bound, if a browser opens a malicious website, that website could potentially send unauthorized API requests to `localhost:8082` using the user's credentials or context if CORS is not strictly constrained.
-**Prevention:** Added `CORSMiddleware` with `allow_origin_regex` to explicitly restrict cross-origin access to loopback interfaces.
+## 2026-05-13 - FastAPI Security Configuration
+**Vulnerability:** Missing robust CORS validation and Host header verification logic (potential DNS rebinding vulnerability in non-local environments).
+**Learning:** By default, FastAPI does not automatically protect against cross-origin resource sharing or Host header spoofing issues unless specific middlewares are added. Relying purely on internal logic without explicit framework-level middleware protection creates security gaps.
+**Prevention:** Always implement `CORSMiddleware` and `TrustedHostMiddleware` and expose their configurations (e.g., `CORS_ORIGINS`, `ALLOWED_HOSTS`) securely through Pydantic settings with appropriate comma-separated list parsing for flexibility in deployment environments.
