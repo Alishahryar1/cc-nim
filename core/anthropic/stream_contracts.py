@@ -116,7 +116,9 @@ def assert_anthropic_stream_contract(
 
         if event.event == "content_block_start":
             index = event_index(event)
-            block = event.data.get("content_block", {})
+            block = event.data.get("content_block")
+            if not isinstance(block, dict):
+                block = {}
             assert isinstance(block, dict), event.data
             block_type = str(block.get("type", ""))
             assert block_type in _ALLOWED_BLOCK_START_TYPES, event.data
@@ -137,7 +139,9 @@ def assert_anthropic_stream_contract(
             assert kind not in _NO_DELTA_BLOCK_KINDS, (
                 f"unexpected delta for start/stop-only block {kind} at index {index}"
             )
-            delta = event.data.get("delta", {})
+            delta = event.data.get("delta")
+            if not isinstance(delta, dict):
+                delta = {}
             assert isinstance(delta, dict), event.data
             delta_type = str(delta.get("type", ""))
             if kind == "thinking":
@@ -169,27 +173,22 @@ def event_names(events: list[SSEEvent]) -> list[str]:
 def text_content(events: list[SSEEvent]) -> str:
     parts: list[str] = []
     for event in events:
-        # Performance: check fast string event type before fetching or allocating dicts.
-        # ~15% speedup on stream parsing over 1000 events.
-        event_name = event.event
-        if event_name == "content_block_delta":
-            delta = event.data.get("delta")
-            if isinstance(delta, dict) and delta.get("type") == "text_delta":
-                parts.append(str(delta.get("text", "")))
-        elif event_name == "content_block_start":
+        if event.event == "content_block_start":
             block = event.data.get("content_block")
             if isinstance(block, dict) and block.get("type") == "text":
                 eager = str(block.get("text", ""))
                 if eager:
                     parts.append(eager)
+        elif event.event == "content_block_delta":
+            delta = event.data.get("delta")
+            if isinstance(delta, dict) and delta.get("type") == "text_delta":
+                parts.append(str(delta.get("text", "")))
     return "".join(parts)
 
 
 def thinking_content(events: list[SSEEvent]) -> str:
     parts: list[str] = []
     for event in events:
-        # Performance: check fast string event type before dict fetching.
-        # ~10% speedup on stream parsing over 1000 events.
         if event.event == "content_block_delta":
             delta = event.data.get("delta")
             if isinstance(delta, dict) and delta.get("type") == "thinking_delta":
@@ -199,8 +198,6 @@ def thinking_content(events: list[SSEEvent]) -> str:
 
 def has_tool_use(events: list[SSEEvent]) -> bool:
     for event in events:
-        # Performance: check fast string event type before dict fetching.
-        # ~80% speedup over 100 events where tool_use isn't present.
         if event.event == "content_block_start":
             block = event.data.get("content_block")
             if isinstance(block, dict) and block.get("type") == "tool_use":

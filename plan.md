@@ -1,19 +1,59 @@
-1.  **Refactor `text_content`, `thinking_content`, and `has_tool_use` in `core/anthropic/stream_contracts.py`**
-    *   Currently, these functions blindly call `.get()` on the `.data` dict (often multiple times) for *every* event in a stream, creating new empty dictionaries `{}`, making unnecessary lookups, and checking properties even when the event type makes those properties impossible (e.g. looking for `delta` in a `content_block_start` event).
-    *   By checking `event.event` first (which is a fast string comparison), we can skip dictionary lookups entirely for irrelevant events.
-    *   For `text_content`: Only check `content_block` if `event.event == "content_block_start"`. Only check `delta` if `event.event == "content_block_delta"`.
-    *   For `thinking_content`: Only check `delta` if `event.event == "content_block_delta"`.
-    *   For `has_tool_use`: Only check `content_block` if `event.event == "content_block_start"`.
+1. **Update `config/settings.py`**:
+   - Use `replace_with_git_merge_diff` to add `cors_origins` and `allowed_hosts` to `Settings`, along with a `@field_validator(mode="before")` for parsing comma-separated lists. We will add the properties:
+   ```python
+    cors_origins: list[str] = Field(
+        default_factory=lambda: ["*"], validation_alias="CORS_ORIGINS"
+    )
+    allowed_hosts: list[str] = Field(
+        default_factory=lambda: ["*"], validation_alias="ALLOWED_HOSTS"
+    )
+   ```
+   And the validator:
+   ```python
+    @field_validator("cors_origins", "allowed_hosts", mode="before")
+    @classmethod
+    def parse_comma_separated_list(cls, v: Any) -> list[str]:
+        if isinstance(v, str):
+            return [part.strip() for part in v.split(",") if part.strip()]
+        if isinstance(v, list):
+            return v
+        if v is None:
+            return ["*"]
+        raise ValueError("Must be a comma-separated string or a list of strings")
+   ```
 
-2.  **Add a note to `bolt.md`**
-    *   Record the learning about avoiding dictionary lookups and empty dictionary creations on irrelevant SSE event types during high-frequency stream processing.
+2. **Verify `config/settings.py` update**:
+   - Use `read_file` to verify the exact changes applied correctly.
 
-3.  **Run format, lint, type checks, and tests**
-    *   Run `uv run ruff format`, `uv run ruff check`, `uv run ty check`, and `uv run pytest`.
+3. **Update `api/app.py`**:
+   - Use `replace_with_git_merge_diff` to import `CORSMiddleware` and `TrustedHostMiddleware`:
+   ```python
+from fastapi.middleware.cors import CORSMiddleware
+from fastapi.middleware.trustedhost import TrustedHostMiddleware
+   ```
+   - Use `replace_with_git_merge_diff` to add the middlewares to the FastAPI app initialization. Ensure `TrustedHostMiddleware` is added last (outermost).
+   ```python
+    # Add CORS Middleware
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials="*" not in settings.cors_origins,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
 
-4.  **Complete pre commit steps**
-    *   Complete pre-commit steps to ensure proper testing, verification, review, and reflection are done.
+    # Add Trusted Host Middleware (added last to execute first)
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=settings.allowed_hosts,
+    )
+   ```
 
-5.  **Create PR**
-    *   Title: `⚡ Bolt: Optimize SSE event parsing in stream contracts`
-    *   Description with What, Why, Impact, and Measurement.
+4. **Verify `api/app.py` update**:
+   - Use `read_file` to check that the middlewares were added correctly and in the correct order.
+   - Run `uv run ruff check` to ensure there are no linting errors.
+
+5. **Run all relevant tests (e.g., `uv run pytest`)**
+   - Ensure the tests pass after the security enhancement.
+
+6. **Complete pre-commit steps to ensure proper testing, verification, review, and reflection are done.**
