@@ -208,6 +208,8 @@ class OpenAIChatTransport(BaseProvider):
         aliases = (
             tool_argument_aliases.get(state.name) if tool_argument_aliases else None
         )
+        if aliases is None:
+            aliases = {}
         if aliases:
             if tool_argument_alias_buffers is None:
                 restored = self._restore_aliased_tool_arguments(args, aliases)
@@ -311,8 +313,6 @@ class OpenAIChatTransport(BaseProvider):
             if state is None or state.name == "Task":
                 continue
             aliases = tool_argument_aliases.get(state.name)
-            if aliases is None:
-                aliases = {}
             if not aliases:
                 continue
             restored = self._restore_aliased_tool_arguments(buffered_args, aliases)
