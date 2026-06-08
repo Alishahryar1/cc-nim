@@ -27,8 +27,7 @@
 **Vulnerability:** Upstream API stalls (e.g. Nvidia NIM) can cause local server hangs, leading to resource exhaustion or denial of service for the CLI client.
 **Learning:** Relying on default HTTP timeouts (120s) for AI inference is insufficient for large-context tasks. Unhandled stalls block concurrency slots.
 **Prevention:** Increased global read timeouts to 600s and implemented proactive retries for timeout exceptions to ensure service availability during upstream instability.
-
-## 2026-05-13 - Configurable Security Middlewares
-**Vulnerability:** Hardcoding restrictive CORS or TrustedHost limits in a proxy architecture can break the application on valid deployments, while missing them altogether exposes vulnerabilities. Also, wildcards (`*`) and `allow_credentials=True` together crash Starlette on startup.
-**Learning:** Security middleware (like `CORSMiddleware` and `TrustedHostMiddleware`) must be highly configurable via environment variables (`ALLOWED_HOSTS` and `CORS_ORIGINS`) to permit non-local, production deployments securely. Furthermore, the `allow_credentials` configuration must dynamically toggle to avoid runtime crashes when falling back to wildcard origin defaults.
-**Prevention:** Implement security constraints that are data-driven via settings and ensure logic conditionally enables specifications like `allow_credentials`.
+## 2026-05-13 - FastAPI Security Configuration
+**Vulnerability:** Missing robust CORS validation and Host header verification logic (potential DNS rebinding vulnerability in non-local environments).
+**Learning:** By default, FastAPI does not automatically protect against cross-origin resource sharing or Host header spoofing issues unless specific middlewares are added. Relying purely on internal logic without explicit framework-level middleware protection creates security gaps.
+**Prevention:** Always implement `CORSMiddleware` and `TrustedHostMiddleware` and expose their configurations (e.g., `CORS_ORIGINS`, `ALLOWED_HOSTS`) securely through Pydantic settings with appropriate comma-separated list parsing for flexibility in deployment environments.
