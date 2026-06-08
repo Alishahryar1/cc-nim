@@ -57,11 +57,17 @@ class SessionStore:
                 data = json.load(f)
 
             # Load trees
-            self._trees = data.get("trees", {})
-            self._node_to_tree = data.get("node_to_tree", {})
+            self._trees = data.get("trees")
+            if self._trees is None:
+                self._trees = {}
+            self._node_to_tree = data.get("node_to_tree")
+            if self._node_to_tree is None:
+                self._node_to_tree = {}
 
             # Load message log (optional/backward compatible)
-            raw_log = data.get("message_log", {}) or {}
+            raw_log = data.get("message_log")
+            if raw_log is None:
+                raw_log = {}
             if isinstance(raw_log, dict):
                 self._message_log = {}
                 self._message_log_ids = {}
