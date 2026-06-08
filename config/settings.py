@@ -407,6 +407,17 @@ class Settings(BaseSettings):
             raise ValueError("messaging_rate_window must be > 0")
         return float(v)
 
+    @field_validator("cors_origins", "allowed_hosts", mode="before")
+    @classmethod
+    def parse_comma_separated_list(cls, v: Any) -> list[str]:
+        if isinstance(v, str):
+            return [part.strip() for part in v.split(",") if part.strip()]
+        if isinstance(v, list):
+            return v
+        if v is None:
+            return ["*"]
+        raise ValueError("Must be a comma-separated string or a list of strings")
+
     @field_validator("web_fetch_allowed_schemes")
     @classmethod
     def validate_web_fetch_allowed_schemes(cls, v: str) -> str:
