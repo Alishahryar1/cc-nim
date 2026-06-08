@@ -178,6 +178,14 @@ def create_app(*, lifespan_enabled: bool = True) -> FastAPI:
         TrustedHostMiddleware, allowed_hosts=settings.parsed_trusted_hosts
     )
 
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origin_regex=r"^https?://(localhost|127\.0\.0\.1|\[::1\])(:\d+)?$",
+        allow_credentials=True,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     # Pre-calculated security headers (Optimization: ⚡ 1-10)
     SECURITY_HEADERS = {
         "X-Content-Type-Options": "nosniff",
