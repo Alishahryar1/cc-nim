@@ -88,8 +88,6 @@ def parse_cli_event(event: Any, *, log_raw_cli: bool = False) -> list[dict]:
     # 2. Handle streaming deltas
     if etype == "content_block_delta":
         delta = event.get("delta")
-        if delta is None:
-            delta = {}
         if isinstance(delta, dict):
             if delta.get("type") == "text_delta":
                 return [
@@ -119,8 +117,6 @@ def parse_cli_event(event: Any, *, log_raw_cli: bool = False) -> list[dict]:
     # 3. Handle tool usage start
     if etype == "content_block_start":
         block = event.get("content_block")
-        if block is None:
-            block = {}
         if isinstance(block, dict):
             btype = block.get("type")
             if btype == "thinking":

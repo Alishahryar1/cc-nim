@@ -10,7 +10,7 @@ app = create_app()
 
 
 def test_anthropic_auth_token_required_and_accepts_x_api_key():
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1:50000")
     settings = Settings()
     settings.anthropic_auth_token = "s3cr3t"
     app.dependency_overrides[get_settings] = lambda: settings
@@ -36,7 +36,7 @@ def test_anthropic_auth_token_required_and_accepts_x_api_key():
 
 
 def test_anthropic_auth_token_accepts_bearer_authorization():
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1:50000")
     settings = Settings()
     settings.anthropic_auth_token = "b3artoken"
     app.dependency_overrides[get_settings] = lambda: settings
@@ -60,7 +60,7 @@ def test_anthropic_auth_token_accepts_bearer_authorization():
 
 
 def test_anthropic_auth_token_applies_to_models_endpoint():
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1:50000")
     settings = Settings()
     settings.anthropic_auth_token = "models-token"
     app.dependency_overrides[get_settings] = lambda: settings
@@ -76,7 +76,7 @@ def test_anthropic_auth_token_applies_to_models_endpoint():
 
 
 def test_root_get_requires_auth_but_root_probes_are_public():
-    client = TestClient(app)
+    client = TestClient(app, base_url="http://127.0.0.1:50000")
     settings = Settings()
     settings.anthropic_auth_token = "root-token"
     app.dependency_overrides[get_settings] = lambda: settings

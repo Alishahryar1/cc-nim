@@ -51,7 +51,9 @@ def _serialize_with_context(record) -> str:
     """Format record as JSON with context vars at top level.
     Returns a format template; we inject _json into record for output.
     """
-    extra = record.get("extra", {})
+    extra = record.get("extra")
+    if extra is None:
+        extra = {}
     out = {
         "time": str(record["time"]),
         "level": record["level"].name,
