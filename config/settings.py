@@ -327,6 +327,14 @@ class Settings(BaseSettings):
     cors_origins: list[str] = Field(default=["*"], validation_alias="CORS_ORIGINS")
     allowed_hosts: list[str] = Field(default=["*"], validation_alias="ALLOWED_HOSTS")
 
+    # ==================== Security ====================
+    cors_origins: list[str] = Field(
+        default=["*"], validation_alias="CORS_ORIGINS"
+    )
+    allowed_hosts: list[str] = Field(
+        default=["*"], validation_alias="ALLOWED_HOSTS"
+    )
+
     @model_validator(mode="before")
     @classmethod
     def reject_removed_env_vars(cls, data: Any) -> Any:
