@@ -312,6 +312,10 @@ class Settings(BaseSettings):
         default="", validation_alias="ANTHROPIC_AUTH_TOKEN"
     )
 
+    # ==================== Security ====================
+    cors_origins: list[str] = Field(default=["*"], validation_alias="CORS_ORIGINS")
+    allowed_hosts: list[str] = Field(default=["*"], validation_alias="ALLOWED_HOSTS")
+
     @model_validator(mode="before")
     @classmethod
     def reject_removed_env_vars(cls, data: Any) -> Any:
@@ -339,6 +343,17 @@ class Settings(BaseSettings):
         if v == "":
             return None
         return v
+
+    @field_validator("cors_origins", "allowed_hosts", mode="before")
+    @classmethod
+    def parse_comma_separated_list(cls, v: Any) -> list[str]:
+        if not v:
+            return ["*"]
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            return [part.strip() for part in v.split(",") if part.strip()]
+        return ["*"]
 
     @field_validator("max_message_log_entries_per_chat", mode="before")
     @classmethod
