@@ -27,8 +27,7 @@
 **Vulnerability:** Upstream API stalls (e.g. Nvidia NIM) can cause local server hangs, leading to resource exhaustion or denial of service for the CLI client.
 **Learning:** Relying on default HTTP timeouts (120s) for AI inference is insufficient for large-context tasks. Unhandled stalls block concurrency slots.
 **Prevention:** Increased global read timeouts to 600s and implemented proactive retries for timeout exceptions to ensure service availability during upstream instability.
-
-## 2026-05-13 - FastAPI Security Middlewares configuration
-**Vulnerability:** Overly permissive CORS and missing host header validation.
-**Learning:** Default wildcard `*` for CORS is overly permissive and can expose API endpoints. Missing host header validation can lead to HTTP Host header attacks or DNS rebinding vulnerabilities. The `CORSMiddleware` in FastAPI raises an assertion error if `allow_credentials` is True while `allow_origins` is `["*"]`. `TrustedHostMiddleware` must be added last so it acts as the outermost layer to properly block invalid hosts early.
-**Prevention:** Add `CORSMiddleware` and `TrustedHostMiddleware` as configurable properties instead of hardcoded rules, and dynamically set `allow_credentials` based on the origins list to prevent application crashes while securing cross-origin requests.
+## 2026-05-13 - FastAPI Security Configuration
+**Vulnerability:** Missing robust CORS validation and Host header verification logic (potential DNS rebinding vulnerability in non-local environments).
+**Learning:** By default, FastAPI does not automatically protect against cross-origin resource sharing or Host header spoofing issues unless specific middlewares are added. Relying purely on internal logic without explicit framework-level middleware protection creates security gaps.
+**Prevention:** Always implement `CORSMiddleware` and `TrustedHostMiddleware` and expose their configurations (e.g., `CORS_ORIGINS`, `ALLOWED_HOSTS`) securely through Pydantic settings with appropriate comma-separated list parsing for flexibility in deployment environments.
