@@ -27,8 +27,7 @@
 **Vulnerability:** Upstream API stalls (e.g. Nvidia NIM) can cause local server hangs, leading to resource exhaustion or denial of service for the CLI client.
 **Learning:** Relying on default HTTP timeouts (120s) for AI inference is insufficient for large-context tasks. Unhandled stalls block concurrency slots.
 **Prevention:** Increased global read timeouts to 600s and implemented proactive retries for timeout exceptions to ensure service availability during upstream instability.
-
-## 2025-05-26 - Configurable Security Middlewares
-**Vulnerability:** Application hardcodes strict loopback restrictions or permissive defaults which breaks non-local deployments or prevents proper security configuration for diverse setups.
-**Learning:** Using FastAPI's `CORSMiddleware` and `TrustedHostMiddleware` exposed via the application's `Settings` object allows for adaptable, secure configurations without breaking non-local deployments. `allow_credentials` in `CORSMiddleware` must be conditionally set (e.g. `cors_origins != ['*']`) to prevent Starlette assertion errors.
-**Prevention:** Avoid hardcoding strict loopback or wildcard origin restrictions. Always expose CORS origins and Trusted Hosts as configuration fields in Settings and apply them via standard Starlette middlewares.
+## 2026-05-13 - FastAPI Security Configuration
+**Vulnerability:** Missing robust CORS validation and Host header verification logic (potential DNS rebinding vulnerability in non-local environments).
+**Learning:** By default, FastAPI does not automatically protect against cross-origin resource sharing or Host header spoofing issues unless specific middlewares are added. Relying purely on internal logic without explicit framework-level middleware protection creates security gaps.
+**Prevention:** Always implement `CORSMiddleware` and `TrustedHostMiddleware` and expose their configurations (e.g., `CORS_ORIGINS`, `ALLOWED_HOSTS`) securely through Pydantic settings with appropriate comma-separated list parsing for flexibility in deployment environments.
