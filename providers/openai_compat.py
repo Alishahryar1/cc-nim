@@ -239,7 +239,7 @@ class OpenAIChatTransport(BaseProvider):
             tc_index = len(sse.blocks.tool_states)
 
         fn_delta = tc.get("function")
-        if not isinstance(fn_delta, dict):
+        if fn_delta is None:
             fn_delta = {}
         incoming_name = fn_delta.get("name")
         arguments = fn_delta.get("arguments", "") or ""
