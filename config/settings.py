@@ -573,6 +573,14 @@ class Settings(BaseSettings):
             if part.strip()
         )
 
+    @property
+    def parsed_cors_origins(self) -> list[str]:
+        return [p.strip() for p in self.cors_origins.split(",") if p.strip()]
+
+    @property
+    def parsed_trusted_hosts(self) -> list[str]:
+        return [p.strip() for p in self.trusted_hosts.split(",") if p.strip()]
+
     @staticmethod
     def parse_provider_type(model_string: str) -> str:
         """Extract provider type from any 'provider/model' string."""

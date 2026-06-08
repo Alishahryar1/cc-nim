@@ -172,6 +172,12 @@ def create_app(*, lifespan_enabled: bool = True) -> FastAPI:
         allowed_hosts=settings.allowed_hosts,
     )
 
+    # Order matters: middlewares are added from inside out.
+    # Adding TrustedHostMiddleware last makes it the outermost middleware to fail fast.
+    app.add_middleware(
+        TrustedHostMiddleware, allowed_hosts=settings.parsed_trusted_hosts
+    )
+
     # Pre-calculated security headers (Optimization: ⚡ 1-10)
     SECURITY_HEADERS = {
         "X-Content-Type-Options": "nosniff",
