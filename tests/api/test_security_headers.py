@@ -7,7 +7,7 @@ from api.app import create_app
 @pytest.fixture
 def client():
     app = create_app(lifespan_enabled=False)
-    return TestClient(app)
+    return TestClient(app, base_url="http://127.0.0.1:50000")
 
 
 def test_security_headers(client):
