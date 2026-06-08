@@ -289,7 +289,13 @@ class Settings(BaseSettings):
     # Hugging Face token for faster model downloads (optional, for local Whisper)
     hf_token: str = Field(default="", validation_alias="HF_TOKEN")
 
+
+    # ==================== Security Config ====================
+    cors_origins: list[str] = Field(default=["*"], validation_alias="CORS_ORIGINS")
+    trusted_hosts: list[str] = Field(default=["*"], validation_alias="TRUSTED_HOSTS")
+
     # ==================== Bot Wrapper Config ====================
+
     telegram_bot_token: str | None = None
     allowed_telegram_user_id: str | None = None
     discord_bot_token: str | None = Field(
@@ -356,6 +362,7 @@ class Settings(BaseSettings):
         return v
 
     @field_validator(
+
         "telegram_bot_token",
         "allowed_telegram_user_id",
         "discord_bot_token",
