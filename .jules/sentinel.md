@@ -27,8 +27,7 @@
 **Vulnerability:** Upstream API stalls (e.g. Nvidia NIM) can cause local server hangs, leading to resource exhaustion or denial of service for the CLI client.
 **Learning:** Relying on default HTTP timeouts (120s) for AI inference is insufficient for large-context tasks. Unhandled stalls block concurrency slots.
 **Prevention:** Increased global read timeouts to 600s and implemented proactive retries for timeout exceptions to ensure service availability during upstream instability.
-
-## 2026-05-30 - Securing Application Host and Origins
-**Vulnerability:** Potential for DNS Rebinding and Cross-Site Request Forgery (CSRF) / unwanted access via overly permissive CORS and missing host validation.
-**Learning:** FastAPI instances need configurable `CORSMiddleware` and `TrustedHostMiddleware` exposed via settings. Hardcoding strict restrictions can break non-local deployments. In FastAPI, middlewares are added inside-out, so `TrustedHostMiddleware` must be added last to execute first.
-**Prevention:** Added configurable `cors_origins` and `allowed_hosts` in Pydantic settings with smart comma-separated parsing, and applied the middlewares in the correct order.
+## 2026-05-13 - FastAPI Security Configuration
+**Vulnerability:** Missing robust CORS validation and Host header verification logic (potential DNS rebinding vulnerability in non-local environments).
+**Learning:** By default, FastAPI does not automatically protect against cross-origin resource sharing or Host header spoofing issues unless specific middlewares are added. Relying purely on internal logic without explicit framework-level middleware protection creates security gaps.
+**Prevention:** Always implement `CORSMiddleware` and `TrustedHostMiddleware` and expose their configurations (e.g., `CORS_ORIGINS`, `ALLOWED_HOSTS`) securely through Pydantic settings with appropriate comma-separated list parsing for flexibility in deployment environments.
