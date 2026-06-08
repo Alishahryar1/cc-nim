@@ -102,7 +102,27 @@ def create_app(*, lifespan_enabled: bool = True) -> FastAPI:
         app_kwargs["lifespan"] = lifespan
     app = FastAPI(**app_kwargs)
 
+    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
+
+    allow_credentials = "*" not in settings.cors_origins
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=allow_credentials,
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
     app.add_middleware(GZipMiddleware, minimum_size=1000)
+    app.add_middleware(
+        CORSMiddleware,
+        allow_origins=settings.cors_origins,
+        allow_credentials=("*" not in settings.cors_origins),
+        allow_methods=["*"],
+        allow_headers=["*"],
+    )
+
+    # Add CORS Middleware
     app.add_middleware(
         CORSMiddleware,
         allow_origins=settings.cors_origins,
@@ -110,7 +130,12 @@ def create_app(*, lifespan_enabled: bool = True) -> FastAPI:
         allow_methods=["*"],
         allow_headers=["*"],
     )
-    app.add_middleware(TrustedHostMiddleware, allowed_hosts=settings.allowed_hosts)
+
+    # Add Trusted Host Middleware (added last to execute first)
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=settings.allowed_hosts,
+    )
 
     # Pre-calculated security headers (Optimization: ⚡ 1-10)
     SECURITY_HEADERS = {
@@ -228,6 +253,11 @@ def create_app(*, lifespan_enabled: bool = True) -> FastAPI:
             tool_names=tool_names,
         )
         return await request_validation_exception_handler(request, exc)
+
+    app.add_middleware(
+        TrustedHostMiddleware,
+        allowed_hosts=settings.allowed_hosts,
+    )
 
     @app.exception_handler(ProviderError)
     async def provider_error_handler(request: Request, exc: ProviderError):

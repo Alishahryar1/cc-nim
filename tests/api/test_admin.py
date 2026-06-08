@@ -43,7 +43,9 @@ def test_admin_page_is_loopback_only(monkeypatch, tmp_path):
     app = create_app(lifespan_enabled=False)
 
     assert _local_client(app).get("/admin").status_code == 200
-    remote_client = TestClient(app, client=("203.0.113.10", 50000))
+    remote_client = TestClient(
+        app, base_url="http://127.0.0.1:50000", client=("203.0.113.10", 50000)
+    )
     assert remote_client.get("/admin").status_code == 403
 
 
