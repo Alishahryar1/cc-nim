@@ -595,7 +595,7 @@ def assistant_content_from_events(events: list[SSEEvent]) -> list[dict[str, Any]
     for event in events:
         if event.event == "content_block_start":
             index = event_index(event)
-            block = event.data.get("content_block", {})
+            block = event.data.get("content_block")
             if isinstance(block, dict):
                 blocks[index] = dict(block)
                 block_order.append(index)
@@ -603,7 +603,7 @@ def assistant_content_from_events(events: list[SSEEvent]) -> list[dict[str, Any]
         if event.event == "content_block_delta":
             index = event_index(event)
             block = blocks.get(index)
-            delta = event.data.get("delta", {})
+            delta = event.data.get("delta")
             if not isinstance(block, dict) or not isinstance(delta, dict):
                 continue
             delta_type = delta.get("type")

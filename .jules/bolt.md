@@ -18,9 +18,7 @@
 ## 2024-05-25 - Avoid hasattr() Overheads in High-Frequency Python Loops
 **Learning:** In high-frequency content block parsing logic for APIs, `hasattr()` is computationally expensive because it catches and hides internal `AttributeError` exceptions inside the CPython interpreter runtime. Also, if a dictionary has a key that matches a built-in dict method name (like `get` or `keys`), `hasattr()` evaluates to `True` leading to method object extraction instead of key retrieval.
 **Action:** When working with mixed dict/object types in payload schemas, explicitly isolate dict behaviors using `isinstance(obj, dict)` initially, then fall back to direct `getattr(obj, attr, default)` calls to avoid double-lookups and exception silencing overheads.
-## 2025-03-03 - Removed Default Dict Allocations in High Frequency Loops
-**Learning:** High-frequency loop paths (e.g. SSE event parsers) allocating a default empty dictionary () creates measurable garbage collector overhead and impacts parse latency, especially across tens of thousands of tokens.
-**Action:** Avoid  fallback allocations in any SSE streaming loop. Instead use strict  or  and checking for .
-## 2025-03-03 - Removed Default Dict Allocations in High Frequency Loops
-**Learning:** High-frequency loop paths (e.g. SSE event parsers) allocating a default empty dictionary (`.get("key", {})`) creates measurable garbage collector overhead and impacts parse latency, especially across tens of thousands of tokens.
-**Action:** Avoid `.get(key, {})` fallback allocations in any SSE streaming loop. Instead use strict `val = .get(key); if val is None: val = {}` or `.get(key)` and checking for `isinstance(val, dict)`.
+
+## 2024-05-25 - Avoid Eager Dictionary Allocation in High-Frequency Streams
+**Learning:** In high-frequency loops, such as parsing SSE stream chunks, using `dict.get("key", {})` creates a new empty dictionary object on *every single iteration* when the key does not exist. This results in significant unnecessary memory allocation and garbage collection overhead.
+**Action:** Replace `dict.get("key", {})` with `dict.get("key")` (which returns `None`) in hot loops. If an object requires subsequent dictionary access, use a strict `None` check (`if val is None: val = {}`) or rely on truthiness (`isinstance(val, dict)` evaluates to `False` for `None`) to safely handle missing keys without fallback allocation.
