@@ -447,7 +447,7 @@ async def test_cleanup_provider_cleans_all():
         await cleanup_provider()
 
         nim._client.close.assert_called_once()
-        lmstudio._client.aclose.assert_called_once()
+        lmstudio._client.close.assert_called_once()
 
 
 def test_resolve_provider_per_app_uses_separate_registries() -> None:

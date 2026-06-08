@@ -24,6 +24,8 @@ _REQUEST_FIELDS = (
     "tools",
     "tool_choice",
     "thinking",
+    "effort",
+    "task_budget",
     "context_management",
     "output_config",
     "mcp_servers",
@@ -87,10 +89,11 @@ def _serialize_value(value: Any) -> Any:
         return [_serialize_value(item) for item in value]
     if value is None or isinstance(value, str | int | float | bool):
         return value
-    if hasattr(value, "__dict__"):
+    d = getattr(value, "__dict__", None)
+    if d is not None:
         return {
             key: _serialize_value(item)
-            for key, item in vars(value).items()
+            for key, item in d.items()
             if not key.startswith("_") and item is not None
         }
     return value
@@ -226,10 +229,15 @@ def build_base_native_anthropic_request_body(
     if "thinking" in body:
         thinking_cfg = body.pop("thinking")
         if thinking_enabled and isinstance(thinking_cfg, dict):
-            thinking_payload: dict[str, Any] = {"type": "enabled"}
+            thinking_payload: dict[str, Any] = {
+                "type": thinking_cfg.get("type") or "enabled"
+            }
             budget_tokens = thinking_cfg.get("budget_tokens")
             if isinstance(budget_tokens, int):
                 thinking_payload["budget_tokens"] = budget_tokens
+            display = thinking_cfg.get("display")
+            if isinstance(display, str):
+                thinking_payload["display"] = display
             body["thinking"] = thinking_payload
 
     if "max_tokens" not in body:

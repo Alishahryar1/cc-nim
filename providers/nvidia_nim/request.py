@@ -345,6 +345,15 @@ def clone_body_without_reasoning_content(body: dict[str, Any]) -> dict[str, Any]
     return cloned_body
 
 
+def clone_body_without_reasoning_effort(body: dict[str, Any]) -> dict[str, Any] | None:
+    """Clone a request body and strip the ``reasoning_effort`` field."""
+    if "reasoning_effort" not in body:
+        return None
+    cloned_body = deepcopy(body)
+    cloned_body.pop("reasoning_effort", None)
+    return cloned_body
+
+
 def build_request_body(
     request_data: Any, nim: NimSettings, *, thinking_enabled: bool
 ) -> dict:

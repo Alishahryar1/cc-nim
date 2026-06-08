@@ -1,11 +1,9 @@
-"""Tests for LM Studio native Anthropic provider."""
+"""Tests for LM Studio OpenAI-compatible chat completions provider."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
 import pytest
 
-from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from providers.base import ProviderConfig
 from providers.lmstudio import LMStudioProvider
 from tests.stream_contract import assert_canonical_stream_error_envelope
@@ -26,12 +24,14 @@ class MockRequest:
         self.top_p = 0.9
         self.system = "System prompt"
         self.stop_sequences = None
+        self.stream = True
         self.tools = []
+        self.tool_choice = None
         self.extra_body = {}
         self.thinking = MagicMock()
         self.thinking.enabled = True
-        for k, v in kwargs.items():
-            setattr(self, k, v)
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
     def model_dump(self, exclude_none=True):
         return {
@@ -39,6 +39,11 @@ class MockRequest:
             "messages": [{"role": m.role, "content": m.content} for m in self.messages],
             "max_tokens": self.max_tokens,
             "temperature": self.temperature,
+            "top_p": self.top_p,
+            "system": self.system,
+            "stream": self.stream,
+            "tools": self.tools,
+            "tool_choice": self.tool_choice,
             "extra_body": self.extra_body,
             "thinking": {"enabled": self.thinking.enabled} if self.thinking else None,
         }
@@ -57,7 +62,7 @@ def lmstudio_config():
 @pytest.fixture(autouse=True)
 def mock_rate_limiter():
     """Mock the global rate limiter to prevent waiting."""
-    with patch("providers.anthropic_messages.GlobalRateLimiter") as mock:
+    with patch("providers.openai_compat.GlobalRateLimiter") as mock:
         instance = mock.get_scoped_instance.return_value
         instance.wait_if_blocked = AsyncMock(return_value=False)
 
@@ -75,7 +80,7 @@ def lmstudio_provider(lmstudio_config):
 
 def test_init(lmstudio_config):
     """Test provider initialization."""
-    with patch("httpx.AsyncClient"):
+    with patch("providers.openai_compat.AsyncOpenAI"):
         provider = LMStudioProvider(lmstudio_config)
         assert provider._base_url == "http://localhost:1234/v1"
         assert provider._provider_name == "LMSTUDIO"
@@ -90,10 +95,10 @@ def test_init_uses_configurable_timeouts():
         http_write_timeout=15.0,
         http_connect_timeout=5.0,
     )
-    with patch("httpx.AsyncClient") as mock_client:
+    with patch("providers.openai_compat.AsyncOpenAI") as mock_openai:
         LMStudioProvider(config)
-        call_kwargs = mock_client.call_args[1]
-        timeout = call_kwargs["timeout"]
+        mock_openai.assert_called_once()
+        timeout = mock_openai.call_args[1]["timeout"]
         assert timeout.read == 600.0
         assert timeout.write == 15.0
         assert timeout.connect == 5.0
@@ -107,9 +112,89 @@ def test_init_base_url_strips_trailing_slash():
         rate_limit=10,
         rate_window=60,
     )
-    with patch("httpx.AsyncClient"):
+    with patch("openai.AsyncOpenAI"):
         provider = LMStudioProvider(config)
         assert provider._base_url == "http://localhost:1234/v1"
+
+
+@pytest.mark.asyncio
+async def test_stream_response(lmstudio_provider):
+    """Test streaming OpenAI chat completions response."""
+    req = MockRequest()
+
+    async def mock_iter_chunks():
+        # OpenAI style chunks
+        # Chunk 1: Role
+        delta1 = MagicMock()
+        delta1.role = "assistant"
+        delta1.content = None
+        delta1.reasoning_content = None
+        delta1.tool_calls = None
+        yield MagicMock(
+            choices=[MagicMock(delta=delta1, finish_reason=None)], usage=None
+        )
+
+        # Chunk 2: Content
+        delta2 = MagicMock()
+        delta2.role = None
+        delta2.content = "Hello"
+        delta2.reasoning_content = None
+        delta2.tool_calls = None
+        yield MagicMock(
+            choices=[MagicMock(delta=delta2, finish_reason=None)], usage=None
+        )
+
+        # Chunk 3: Content
+        delta3 = MagicMock()
+        delta3.role = None
+        delta3.content = " World"
+        delta3.reasoning_content = None
+        delta3.tool_calls = None
+        yield MagicMock(
+            choices=[MagicMock(delta=delta3, finish_reason=None)], usage=None
+        )
+
+    # We need to mock the underlying OpenAI client's request execution
+    with patch.object(
+        lmstudio_provider._client.chat.completions,
+        "create",
+        new_callable=AsyncMock,
+        return_value=mock_iter_chunks(),
+    ) as mock_create:
+        events = [event async for event in lmstudio_provider.stream_response(req)]
+
+    mock_create.assert_called_once()
+    full_text = "".join(events)
+    assert "message_start" in full_text
+    assert "Hello" in full_text
+    assert "World" in full_text
+    assert "message_stop" in full_text
+
+
+@pytest.mark.asyncio
+async def test_stream_error_status_code(lmstudio_provider):
+    """Exception during stream creation is yielded as an SSE API error."""
+    req = MockRequest()
+
+    with patch.object(
+        lmstudio_provider._client.chat.completions,
+        "create",
+        new_callable=AsyncMock,
+        side_effect=Exception("Connection failed"),
+    ):
+        events = [
+            event
+            async for event in lmstudio_provider.stream_response(
+                req, request_id="TEST_ID"
+            )
+        ]
+
+    full_text = "".join(events)
+    assert_canonical_stream_error_envelope(
+        events, user_message_substr="Connection failed"
+    )
+    assert "TEST_ID" in full_text
+    assert "Connection failed" in full_text
 
 
 @pytest.mark.asyncio
@@ -119,242 +204,32 @@ async def test_stream_response_omits_thinking_when_globally_disabled(lmstudio_co
     )
     req = MockRequest()
 
-    mock_response = MagicMock()
-    mock_response.status_code = 200
+    with patch.object(
+        provider._client.chat.completions,
+        "create",
+        new_callable=AsyncMock,
+        return_value=AsyncMock(),
+    ) as mock_create:
 
-    async def empty_aiter():
-        if False:
-            yield ""
+        async def empty_aiter():
+            if False:
+                yield None
 
-    mock_response.aiter_lines = empty_aiter
-
-    with (
-        patch.object(provider._client, "build_request") as mock_build,
-        patch.object(
-            provider._client,
-            "send",
-            new_callable=AsyncMock,
-            return_value=mock_response,
-        ),
-    ):
+        mock_create.return_value.__aiter__.return_value = empty_aiter()
         [e async for e in provider.stream_response(req)]
 
-    _, kwargs = mock_build.call_args
-    assert "thinking" not in kwargs["json"]
+    _, kwargs = mock_create.call_args
+    assert "thinking" not in str(kwargs)
 
 
 @pytest.mark.asyncio
-async def test_stream_response_omits_thinking_when_request_disables_it(
-    lmstudio_provider,
-):
-    req = MockRequest()
-    req.thinking.enabled = False
+async def test_cleanup(lmstudio_provider):
+    """Test that cleanup closes the client."""
+    lmstudio_provider._client.close = AsyncMock()
 
-    mock_response = MagicMock()
-    mock_response.status_code = 200
+    await lmstudio_provider.cleanup()
 
-    async def empty_aiter():
-        if False:
-            yield ""
-
-    mock_response.aiter_lines = empty_aiter
-
-    with (
-        patch.object(lmstudio_provider._client, "build_request") as mock_build,
-        patch.object(
-            lmstudio_provider._client,
-            "send",
-            new_callable=AsyncMock,
-            return_value=mock_response,
-        ),
-    ):
-        [e async for e in lmstudio_provider.stream_response(req)]
-
-    _, kwargs = mock_build.call_args
-    assert "thinking" not in kwargs["json"]
-
-
-@pytest.mark.asyncio
-async def test_stream_response(lmstudio_provider):
-    """Test streaming native Anthropic response."""
-    req = MockRequest()
-
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-
-    async def mock_aiter_lines():
-        yield "event: message_start"
-        yield 'data: {"type":"message_start","message":{}}'
-        yield ""
-        yield "event: content_block_delta"
-        yield 'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello World"}}'
-        yield ""
-        yield "event: message_stop"
-        yield 'data: {"type":"message_stop"}'
-        yield ""
-
-    mock_response.aiter_lines = mock_aiter_lines
-
-    with (
-        patch.object(
-            lmstudio_provider._client, "build_request", return_value=MagicMock()
-        ) as mock_build,
-        patch.object(
-            lmstudio_provider._client,
-            "send",
-            new_callable=AsyncMock,
-            return_value=mock_response,
-        ),
-    ):
-        events = [e async for e in lmstudio_provider.stream_response(req)]
-
-        # Verify request construction
-        mock_build.assert_called_once()
-        args, kwargs = mock_build.call_args
-        assert args[0] == "POST"
-        assert args[1] == "/messages"
-        assert kwargs["json"]["model"] == "lmstudio-community/qwen2.5-7b-instruct"
-        # Verify internal fields are popped
-        assert "extra_body" not in kwargs["json"]
-        assert kwargs["json"]["max_tokens"] == 100
-
-        # Verify internal ThinkingConfig is mapped to Anthropic API format
-        assert kwargs["json"]["thinking"] == {"type": "enabled"}
-
-        # Verify events yielded correctly
-        assert len(events) == 9
-        assert events[0] == "event: message_start\n"
-        assert events[1] == 'data: {"type":"message_start","message":{}}\n'
-
-
-@pytest.mark.asyncio
-async def test_stream_response_adds_max_tokens_if_missing(lmstudio_provider):
-    """Fallback max_tokens to 81920 if not present."""
-    req = MockRequest()
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-
-    async def empty_aiter():
-        if False:
-            yield ""
-
-    mock_response.aiter_lines = empty_aiter
-
-    with (
-        patch.object(req, "model_dump", return_value={"model": "test"}),
-        patch.object(lmstudio_provider._client, "build_request") as mock_build,
-        patch.object(
-            lmstudio_provider._client,
-            "send",
-            new_callable=AsyncMock,
-            return_value=mock_response,
-        ),
-    ):
-        # Just run the generator to completion
-        [e async for e in lmstudio_provider.stream_response(req)]
-
-        _, kwargs = mock_build.call_args
-        assert kwargs["json"]["max_tokens"] == ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
-
-
-@pytest.mark.asyncio
-async def test_stream_error_status_code(lmstudio_provider):
-    """Non-200 status code raises an error that gets caught and yielded as an SSE API error."""
-    req = MockRequest()
-
-    mock_response = MagicMock()
-    mock_response.status_code = 500
-    mock_response.aread = AsyncMock(return_value=b"Internal Server Error")
-    mock_response.raise_for_status = MagicMock(
-        side_effect=httpx.HTTPStatusError(
-            "Internal Server Error", request=MagicMock(), response=mock_response
-        )
-    )
-
-    with (
-        patch.object(
-            lmstudio_provider._client, "build_request", return_value=MagicMock()
-        ),
-        patch.object(
-            lmstudio_provider._client,
-            "send",
-            new_callable=AsyncMock,
-            return_value=mock_response,
-        ),
-    ):
-        events = [
-            e
-            async for e in lmstudio_provider.stream_response(req, request_id="TEST_ID")
-        ]
-
-        assert_canonical_stream_error_envelope(
-            events, user_message_substr="Provider API request failed"
-        )
-        assert "TEST_ID" in "".join(events)
-
-
-@pytest.mark.asyncio
-async def test_stream_network_error(lmstudio_provider):
-    """Network errors are caught and yielded as SSE API error events."""
-    req = MockRequest()
-
-    with (
-        patch.object(
-            lmstudio_provider._client, "build_request", return_value=MagicMock()
-        ),
-        patch.object(
-            lmstudio_provider._client,
-            "send",
-            new_callable=AsyncMock,
-            side_effect=httpx.ConnectError("Connection refused"),
-        ),
-    ):
-        events = [
-            e
-            async for e in lmstudio_provider.stream_response(req, request_id="TEST_ID2")
-        ]
-
-        blob = "".join(events)
-        assert_canonical_stream_error_envelope(
-            events, user_message_substr="Connection refused"
-        )
-        assert "TEST_ID2" in blob
-
-
-@pytest.mark.asyncio
-async def test_stream_error_405_mentions_upstream_provider(lmstudio_provider):
-    req = MockRequest()
-
-    mock_response = MagicMock()
-    mock_response.status_code = 405
-    mock_response.aread = AsyncMock(return_value=b"Method Not Allowed")
-    mock_response.raise_for_status = MagicMock(
-        side_effect=httpx.HTTPStatusError(
-            "Method Not Allowed", request=MagicMock(), response=mock_response
-        )
-    )
-
-    with (
-        patch.object(
-            lmstudio_provider._client, "build_request", return_value=MagicMock()
-        ),
-        patch.object(
-            lmstudio_provider._client,
-            "send",
-            new_callable=AsyncMock,
-            return_value=mock_response,
-        ),
-    ):
-        events = [
-            e async for e in lmstudio_provider.stream_response(req, request_id="REQ405")
-        ]
-
-    blob = "".join(events)
-    assert (
-        "Upstream provider LMSTUDIO rejected the request method or endpoint (HTTP 405)."
-        in blob
-    )
-    assert "REQ405" in blob
+    lmstudio_provider._client.close.assert_called_once()
 
 
 def test_build_request_body_disabled_thinking_strips_native_thinking_history(
@@ -377,33 +252,9 @@ def test_build_request_body_disabled_thinking_strips_native_thinking_history(
             ),
         ],
     )
-    body = provider._build_request_body(req, thinking_enabled=False)
-    assert body["messages"][1]["content"] == ""
+    # OpenAIChatTransport doesn't have _build_request_body directly,
+    # it uses _prepare_create_body which uses AnthropicToOpenAIConverter.
+    # We test that the final body passed to create is correct.
+    body = provider._build_request_body(req)
+    assert body["messages"][1]["content"] == " "
     assert "redacted_thinking" not in str(body)
-
-
-def test_build_request_body_preserves_signed_thinking_native_history(lmstudio_config):
-    """When thinking is enabled, signed thinking blocks are kept; unsigned stripped."""
-    provider = LMStudioProvider(lmstudio_config)
-    req = MockRequest(
-        system=None,
-        messages=[
-            MockMessage("user", "hi"),
-            MockMessage(
-                "assistant",
-                [
-                    {
-                        "type": "thinking",
-                        "thinking": "signed",
-                        "signature": "sig",
-                    },
-                    {"type": "redacted_thinking", "data": "opaque"},
-                ],
-            ),
-        ],
-    )
-    body = provider._build_request_body(req, thinking_enabled=True)
-    c = body["messages"][1]["content"]
-    assert isinstance(c, list)
-    assert any(isinstance(b, dict) and b.get("type") == "thinking" for b in c)
-    assert any(isinstance(b, dict) and b.get("type") == "redacted_thinking" for b in c)

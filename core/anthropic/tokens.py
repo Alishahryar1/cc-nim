@@ -1,6 +1,7 @@
 """Token estimation for Anthropic-compatible requests."""
 
 import json
+from functools import lru_cache
 
 import tiktoken
 from loguru import logger
@@ -12,7 +13,9 @@ ENCODER = tiktoken.get_encoding("cl100k_base")
 _DISALLOWED_SPECIAL: tuple[str, ...] = ()
 
 
+@lru_cache(maxsize=1024)
 def _count_text_tokens(text: str) -> int:
+    """Cached token count (⚡ Bolt Optimization: 31-40)."""
     return len(ENCODER.encode(text, disallowed_special=_DISALLOWED_SPECIAL))
 
 
@@ -79,8 +82,9 @@ def get_token_count(
                     "web_search_tool_result",
                     "web_fetch_tool_result",
                 ):
-                    if hasattr(block, "model_dump"):
-                        blob: object = block.model_dump()
+                    model_dump = getattr(block, "model_dump", None)
+                    if model_dump:
+                        blob: object = model_dump()
                     else:
                         blob = block
                     try:

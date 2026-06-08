@@ -273,7 +273,10 @@ class ProviderRegistry:
         self, provider_id: str, model_id: str
     ) -> bool | None:
         """Return cached thinking support when a provider exposes it."""
-        info = self._model_infos_by_provider.get(provider_id, {}).get(model_id)
+        provider_infos = self._model_infos_by_provider.get(provider_id)
+        if provider_infos is None:
+            return None
+        info = provider_infos.get(model_id)
         if info is None:
             return None
         return info.supports_thinking
@@ -286,7 +289,9 @@ class ProviderRegistry:
         """Return cached provider models with user-selectable prefixed ids."""
         infos: list[ProviderModelInfo] = []
         for provider_id in SUPPORTED_PROVIDER_IDS:
-            provider_infos = self._model_infos_by_provider.get(provider_id, {})
+            provider_infos = self._model_infos_by_provider.get(provider_id)
+            if provider_infos is None:
+                continue
             infos.extend(
                 ProviderModelInfo(
                     model_id=f"{provider_id}/{info.model_id}",
@@ -363,7 +368,16 @@ class ProviderRegistry:
         if not tasks:
             return
 
-        results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+        try:
+            results = await asyncio.wait_for(
+                asyncio.gather(*tasks.values(), return_exceptions=True), timeout=30.0
+            )
+        except TimeoutError:
+            for task in tasks.values():
+                task.cancel()
+            logger.warning("Provider model discovery timed out (30s)")
+            return
+
         for (provider_id, _task), result in zip(tasks.items(), results, strict=True):
             if isinstance(result, BaseException):
                 if isinstance(result, asyncio.CancelledError):
@@ -397,7 +411,24 @@ class ProviderRegistry:
             tasks[provider_id] = asyncio.create_task(provider.list_model_infos())
 
         if tasks:
-            results = await asyncio.gather(*tasks.values(), return_exceptions=True)
+            try:
+                results = await asyncio.wait_for(
+                    asyncio.gather(*tasks.values(), return_exceptions=True),
+                    timeout=30.0,
+                )
+            except TimeoutError:
+                for task in tasks.values():
+                    task.cancel()
+                for pid in tasks:
+                    failures.extend(
+                        _format_provider_query_failures(
+                            refs_by_provider[pid],
+                            TimeoutError("Validation timed out (30s)"),
+                            settings,
+                        )
+                    )
+                results = []
+
             for (provider_id, _task), result in zip(
                 tasks.items(), results, strict=True
             ):

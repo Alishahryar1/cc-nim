@@ -124,6 +124,7 @@ class ThinkingConfig(BaseModel):
     enabled: bool | None = True
     type: str | None = None
     budget_tokens: int | None = None
+    display: str | None = None
 
 
 # =============================================================================
@@ -148,6 +149,8 @@ class MessagesRequest(BaseModel):
     tools: list[Tool] | None = None
     tool_choice: dict[str, Any] | None = None
     thinking: ThinkingConfig | None = None
+    effort: str | None = None
+    task_budget: int | None = None
     # Native Anthropic / SDK client hints: ignored (not forwarded) for OpenAI Chat conversion.
     context_management: dict[str, Any] | None = None
     output_config: dict[str, Any] | None = None

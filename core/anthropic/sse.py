@@ -26,7 +26,7 @@ STOP_REASON_MAP = {
     "stop": "end_turn",
     "length": "max_tokens",
     "tool_calls": "tool_use",
-    "content_filter": "end_turn",
+    "content_filter": "content_filtering",
 }
 
 
@@ -231,6 +231,9 @@ class SSEBuilder:
         content_block: dict = {"type": block_type}
         if block_type == "thinking":
             content_block["thinking"] = kwargs.get("thinking", "")
+            signature = kwargs.get("signature")
+            if signature:
+                content_block["signature"] = signature
         elif block_type == "text":
             content_block["text"] = kwargs.get("text", "")
         elif block_type == "tool_use":

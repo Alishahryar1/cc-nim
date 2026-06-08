@@ -27,7 +27,7 @@ class TestMapStopReason:
             ("stop", "end_turn"),
             ("length", "max_tokens"),
             ("tool_calls", "tool_use"),
-            ("content_filter", "end_turn"),
+            ("content_filter", "content_filtering"),
             (None, "end_turn"),
             ("unknown_value", "end_turn"),
             ("", "end_turn"),

@@ -105,21 +105,28 @@ class CLISession:
         Yields:
             Event dictionaries from the CLI
         """
+        if len(prompt) > 120_000:
+            logger.warning("Prompt too long ({} chars), truncating", len(prompt))
+            prompt = prompt[:120_000]
+
         async with self._cli_lock:
             self._is_busy = True
-            env = os.environ.copy()
 
-            if "ANTHROPIC_API_KEY" not in env:
-                env["ANTHROPIC_API_KEY"] = "sk-placeholder-key-for-proxy"
+            # Efficient env creation (⚡ Bolt Optimization: 21-30)
+            env = dict(os.environ)
+            env.update(
+                {
+                    "ANTHROPIC_API_KEY": "sk-placeholder-key-for-proxy",
+                    "ANTHROPIC_API_URL": self.api_url,
+                    "TERM": "dumb",
+                    "PYTHONIOENCODING": "utf-8",
+                }
+            )
 
-            env["ANTHROPIC_API_URL"] = self.api_url
             if self.api_url.endswith("/v1"):
                 env["ANTHROPIC_BASE_URL"] = self.api_url[:-3]
             else:
                 env["ANTHROPIC_BASE_URL"] = self.api_url
-
-            env["TERM"] = "dumb"
-            env["PYTHONIOENCODING"] = "utf-8"
 
             # Build command
             if session_id and not session_id.startswith("pending_"):

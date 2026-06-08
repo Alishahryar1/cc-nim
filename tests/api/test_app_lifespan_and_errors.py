@@ -30,6 +30,7 @@ _RUNTIME_EXTRAS = {
     "log_raw_cli_diagnostics": False,
     "log_messaging_error_details": False,
     "configured_chat_model_refs": lambda: (),
+    "anthropic_auth_token": "",
 }
 
 
@@ -91,7 +92,7 @@ def test_create_app_provider_error_handler_returns_anthropic_format():
         patch.object(api_app_mod, "get_settings", return_value=settings),
         patch.object(ProviderRegistry, "cleanup", new=AsyncMock()),
     ):
-        with TestClient(app) as client:
+        with TestClient(app, base_url="http://127.0.0.1:50000") as client:
             resp = client.get("/raise_provider")
         assert resp.status_code == 401
     body = resp.json()
@@ -130,7 +131,7 @@ def test_create_app_provider_error_default_logs_exclude_provider_message():
         patch.object(ProviderRegistry, "cleanup", new=AsyncMock()),
         patch.object(api_app_mod.logger, "error") as log_err,
     ):
-        with TestClient(app) as client:
+        with TestClient(app, base_url="http://127.0.0.1:50000") as client:
             resp = client.get("/raise_provider_secret")
         assert resp.status_code == 401
 
@@ -166,7 +167,9 @@ def test_create_app_general_exception_handler_returns_500():
         patch.object(api_app_mod, "get_settings", return_value=settings),
         patch.object(ProviderRegistry, "cleanup", new=AsyncMock()),
     ):
-        with TestClient(app, raise_server_exceptions=False) as client:
+        with TestClient(
+            app, base_url="http://127.0.0.1:50000", raise_server_exceptions=False
+        ) as client:
             resp = client.get("/raise_general")
         assert resp.status_code == 500
         body = resp.json()
@@ -205,7 +208,9 @@ def test_create_app_general_exception_default_logs_exclude_exception_message():
         patch.object(ProviderRegistry, "cleanup", new=AsyncMock()),
         patch.object(api_app_mod.logger, "error") as log_err,
     ):
-        with TestClient(app, raise_server_exceptions=False) as client:
+        with TestClient(
+            app, base_url="http://127.0.0.1:50000", raise_server_exceptions=False
+        ) as client:
             resp = client.get("/raise_secret")
         assert resp.status_code == 500
 
@@ -276,7 +281,7 @@ def test_app_lifespan_sets_state_and_cleans_up(tmp_path, messaging_enabled):
             "messaging.trees.queue_manager.TreeQueueManager.from_dict",
             return_value=fake_queue,
         ),
-        TestClient(app),
+        TestClient(app, base_url="http://127.0.0.1:50000"),
     ):
         pass
 
@@ -343,7 +348,7 @@ def test_app_lifespan_cleanup_continues_if_platform_stop_raises(tmp_path):
         ),
         patch("messaging.session.SessionStore", return_value=session_store),
         patch("cli.manager.CLISessionManager", return_value=cli_manager),
-        TestClient(app),
+        TestClient(app, base_url="http://127.0.0.1:50000"),
     ):
         pass
 
@@ -472,7 +477,7 @@ def test_app_lifespan_messaging_import_error_no_crash(tmp_path, caplog):
             "messaging.platforms.factory.create_messaging_platform",
             side_effect=ImportError("discord not installed"),
         ),
-        TestClient(app),
+        TestClient(app, base_url="http://127.0.0.1:50000"),
     ):
         pass
 
@@ -524,7 +529,7 @@ def test_app_lifespan_platform_start_exception_cleanup_still_runs(tmp_path):
         ),
         patch("messaging.session.SessionStore", return_value=session_store),
         patch("cli.manager.CLISessionManager", return_value=cli_manager),
-        TestClient(app),
+        TestClient(app, base_url="http://127.0.0.1:50000"),
     ):
         pass
 
@@ -576,7 +581,7 @@ def test_app_lifespan_flush_pending_save_exception_warning_only(tmp_path):
         ),
         patch("messaging.session.SessionStore", return_value=session_store),
         patch("cli.manager.CLISessionManager", return_value=cli_manager),
-        TestClient(app),
+        TestClient(app, base_url="http://127.0.0.1:50000"),
     ):
         pass
 

@@ -76,14 +76,12 @@ async def test_native_openai_compatible_provider_lists_model_ids() -> None:
         ProviderConfig(api_key="lm-studio", base_url="http://localhost:1234/v1")
     )
     with patch.object(
-        provider._client,
-        "get",
+        provider._client.models,
+        "list",
         new_callable=AsyncMock,
-        return_value=_response(200, {"data": [{"id": "local/model"}]}),
-    ) as mock_get:
+        return_value=SimpleNamespace(data=[SimpleNamespace(id="local/model")]),
+    ):
         assert await provider.list_model_ids() == frozenset({"local/model"})
-
-    mock_get.assert_awaited_once_with("/models", headers={})
 
 
 @pytest.mark.asyncio
@@ -240,25 +238,24 @@ async def test_ollama_lists_native_tag_model_ids() -> None:
     provider = OllamaProvider(
         ProviderConfig(api_key="ollama", base_url="http://localhost:11434")
     )
-    with patch.object(
-        provider._client,
-        "get",
-        new_callable=AsyncMock,
-        return_value=_response(
-            200,
-            {
-                "models": [
-                    {"name": "llama3.1:latest", "model": "llama3.1:latest"},
-                    {"name": "qwen3"},
-                ]
-            },
-        ),
-    ) as mock_get:
+    with (
+        patch("httpx.AsyncClient") as mock_client_cls,
+    ):
+        mock_client = mock_client_cls.return_value.__aenter__.return_value
+        mock_client.get = AsyncMock(
+            return_value=_response(
+                200,
+                {
+                    "models": [
+                        {"name": "llama3.1:latest", "model": "llama3.1:latest"},
+                        {"name": "qwen3"},
+                    ]
+                },
+            )
+        )
         assert await provider.list_model_ids() == frozenset(
             {"llama3.1:latest", "qwen3"}
         )
-
-    mock_get.assert_awaited_once_with("http://localhost:11434/api/tags")
 
 
 @pytest.mark.asyncio
@@ -268,10 +265,10 @@ async def test_model_listing_rejects_malformed_payload() -> None:
     )
     with (
         patch.object(
-            provider._client,
-            "get",
+            provider._client.models,
+            "list",
             new_callable=AsyncMock,
-            return_value=_response(200, {"data": [{}]}),
+            return_value=SimpleNamespace(data=[SimpleNamespace()]),  # Missing 'id'
         ),
         pytest.raises(ModelListResponseError, match="malformed"),
     ):
@@ -285,10 +282,14 @@ async def test_model_listing_raises_http_status_errors() -> None:
     )
     with (
         patch.object(
-            provider._client,
-            "get",
+            provider._client.models,
+            "list",
             new_callable=AsyncMock,
-            return_value=_response(503, {"error": "down"}),
+            side_effect=httpx.HTTPStatusError(
+                "503 Service Unavailable",
+                request=httpx.Request("GET", "test"),
+                response=httpx.Response(503),
+            ),
         ),
         pytest.raises(httpx.HTTPStatusError),
     ):

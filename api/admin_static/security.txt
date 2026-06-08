@@ -1,0 +1,5 @@
+Contact: mailto:security@example.com
+Expires: 2027-01-01T00:00:00.000Z
+Preferred-Languages: en
+Canonical: https://github.com/shreyashjagtap157/free-claude-code/blob/main/api/admin_static/security.txt
+Policy: https://github.com/shreyashjagtap157/free-claude-code/security/policy

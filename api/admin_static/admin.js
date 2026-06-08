@@ -87,34 +87,51 @@ function updateHeader(status) {
 
 function renderNav(sections) {
   const nav = byId("sectionNav");
-  nav.innerHTML = "";
+  const fragment = document.createDocumentFragment();
+  
   sections.forEach((section, index) => {
     const button = document.createElement("button");
     button.type = "button";
     button.className = `nav-link${index === 0 ? " active" : ""}`;
     button.textContent = section.label;
-    button.addEventListener("click", () => {
-      document.querySelectorAll(".nav-link").forEach((link) => {
-        link.classList.remove("active");
-      });
-      button.classList.add("active");
-      byId(`section-${section.id}`).scrollIntoView({ behavior: "smooth" });
+    button.dataset.section = section.id;
+    button.style.animation = `slide-up 0.4s ease-out both ${index * 0.05}s`;
+    fragment.appendChild(button);
+  });
+
+  nav.innerHTML = "";
+  nav.appendChild(fragment);
+
+  // Use event delegation for navigation (⚡ Bolt Optimization: 41-50)
+  nav.addEventListener("click", (e) => {
+    const btn = e.target.closest(".nav-link");
+    if (!btn) return;
+    
+    document.querySelectorAll(".nav-link").forEach((link) => {
+      link.classList.remove("active");
     });
-    nav.appendChild(button);
+    btn.classList.add("active");
+    
+    const sectionId = btn.dataset.section;
+    byId(`section-${sectionId}`).scrollIntoView({ behavior: "smooth" });
   });
 }
 
 function renderProviders(providerStatus) {
   const grid = byId("providerGrid");
-  grid.innerHTML = "";
-  providerStatus.forEach((provider) => {
+  const fragment = document.createDocumentFragment();
+  
+  providerStatus.forEach((provider, index) => {
     const card = document.createElement("article");
     card.className = "provider-card";
     card.dataset.provider = provider.provider_id;
+    card.style.animationDelay = `${index * 0.1}s`;
 
     const title = document.createElement("div");
     title.className = "provider-title";
-    title.innerHTML = `<strong>${providerName(provider.provider_id)}</strong>`;
+    const titleStrong = document.createElement("strong");
+    titleStrong.textContent = providerName(provider.provider_id);
+    title.appendChild(titleStrong);
 
     const pill = document.createElement("span");
     pill.className = `status-pill ${statusClass(provider.status)}`;
@@ -135,8 +152,11 @@ function renderProviders(providerStatus) {
     button.addEventListener("click", () => testProvider(provider.provider_id, button));
 
     card.append(title, meta, button);
-    grid.appendChild(card);
+    fragment.appendChild(card);
   });
+  
+  grid.innerHTML = "";
+  grid.appendChild(fragment);
 }
 
 function updateProviderCard(providerId, status, label, metaText) {
@@ -167,7 +187,13 @@ function renderSections(sections, fields) {
 
     const heading = document.createElement("div");
     heading.className = "section-heading";
-    heading.innerHTML = `<div><h3>${section.label}</h3><p>${section.description}</p></div>`;
+    const headingWrap = document.createElement("div");
+    const h3 = document.createElement("h3");
+    h3.textContent = section.label;
+    const p = document.createElement("p");
+    p.textContent = section.description;
+    headingWrap.append(h3, p);
+    heading.appendChild(headingWrap);
     sectionEl.appendChild(heading);
 
     const grid = document.createElement("div");
@@ -200,9 +226,12 @@ function renderField(field) {
 
   const label = document.createElement("label");
   label.htmlFor = `field-${field.key}`;
-  label.innerHTML = `<span>${field.label}</span><span class="field-source">${sourceLabel(
-    field.source,
-  )}${field.locked ? " locked" : ""}</span>`;
+  const labelText = document.createElement("span");
+  labelText.textContent = field.label;
+  const labelSource = document.createElement("span");
+  labelSource.className = `field-source${field.locked ? " locked" : ""}`;
+  labelSource.textContent = sourceLabel(field.source);
+  label.append(labelText, labelSource);
 
   const input = inputForField(field);
   input.id = `field-${field.key}`;
@@ -411,8 +440,18 @@ function syncModelDatalist() {
 
 function showMessage(message, kind = "") {
   const area = byId("messageArea");
+  if (!message) {
+    area.style.opacity = "0";
+    setTimeout(() => {
+      area.textContent = "";
+      area.className = "message-area";
+    }, 300);
+    return;
+  }
   area.textContent = message;
   area.className = `message-area ${kind}`.trim();
+  area.style.opacity = "1";
+  area.style.animation = "slide-up 0.3s ease-out both";
 }
 
 byId("validateButton").addEventListener("click", () => validate(true));

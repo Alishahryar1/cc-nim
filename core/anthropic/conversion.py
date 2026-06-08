@@ -589,4 +589,8 @@ def build_base_request_body(
             tool_choice
         )
 
+    effort = getattr(request_data, "effort", None)
+    if effort:
+        body["reasoning_effort"] = effort
+
     return body

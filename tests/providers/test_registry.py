@@ -75,12 +75,12 @@ def test_descriptors_cover_advertised_provider_ids():
         assert descriptor.capabilities
 
 
-def test_ollama_descriptor_uses_native_anthropic_transport():
+def test_ollama_descriptor_uses_openai_chat_transport():
     descriptor = PROVIDER_DESCRIPTORS["ollama"]
 
-    assert descriptor.transport_type == "anthropic_messages"
+    assert descriptor.transport_type == "openai_chat"
     assert descriptor.default_base_url == "http://localhost:11434"
-    assert "native_anthropic" in descriptor.capabilities
+    assert "local" in descriptor.capabilities
 
 
 def test_create_provider_uses_native_openrouter_by_default():

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import contextlib
 import os
 from collections.abc import Iterable, Mapping
 from dataclasses import dataclass
@@ -238,7 +239,7 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         "Default Model",
         "models",
         settings_attr="model",
-        default="nvidia_nim/z-ai/glm4.7",
+        default="nvidia_nim/minimaxai/minimax-m2.7",
         description="Fallback provider/model route for all Claude model names.",
     ),
     ConfigFieldSpec(
@@ -295,6 +296,33 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         description="Blank inherits Enable Thinking.",
     ),
     ConfigFieldSpec(
+        "DEFAULT_THINKING_TYPE",
+        "Default Thinking Type",
+        "thinking",
+        "select",
+        settings_attr="default_thinking_type",
+        default="adaptive",
+        options=("enabled", "adaptive"),
+    ),
+    ConfigFieldSpec(
+        "DEFAULT_THINKING_DISPLAY_MODE",
+        "Default Display Mode",
+        "thinking",
+        "select",
+        settings_attr="default_thinking_display_mode",
+        default="summarized",
+        options=("summarized", "omitted", "full"),
+    ),
+    ConfigFieldSpec(
+        "DEFAULT_REASONING_EFFORT",
+        "Default Reasoning Effort",
+        "thinking",
+        "select",
+        settings_attr="default_reasoning_effort",
+        default="medium",
+        options=("low", "medium", "high", "max"),
+    ),
+    ConfigFieldSpec(
         "ANTHROPIC_AUTH_TOKEN",
         "API/CLI Auth Token",
         "runtime",
@@ -334,7 +362,7 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "number",
         settings_attr="http_read_timeout",
-        default="300",
+        default="1800",
     ),
     ConfigFieldSpec(
         "HTTP_WRITE_TIMEOUT",
@@ -342,7 +370,7 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "number",
         settings_attr="http_write_timeout",
-        default="60",
+        default="10",
     ),
     ConfigFieldSpec(
         "HTTP_CONNECT_TIMEOUT",
@@ -350,7 +378,7 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "number",
         settings_attr="http_connect_timeout",
-        default="60",
+        default="10",
     ),
     ConfigFieldSpec(
         "HOST",
@@ -359,6 +387,24 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         settings_attr="host",
         default="0.0.0.0",
         restart_required=True,
+    ),
+    ConfigFieldSpec(
+        "ALLOWED_HOSTS",
+        "Allowed Hosts",
+        "runtime",
+        settings_attr="allowed_hosts",
+        default="*",
+        restart_required=True,
+        description="Comma-separated list of allowed hosts for DNS rebinding protection. e.g. localhost,127.0.0.1",
+    ),
+    ConfigFieldSpec(
+        "CORS_ORIGINS",
+        "CORS Origins",
+        "runtime",
+        settings_attr="cors_origins",
+        default="*",
+        restart_required=True,
+        description="Comma-separated list of allowed origins. Use * for all.",
     ),
     ConfigFieldSpec(
         "PORT",
@@ -721,7 +767,32 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
 
 FIELD_BY_KEY = {field.key: field for field in FIELDS}
 
+# Pre-calculated section manifest (⚡ Bolt Optimization: 11-20)
+SECTION_MANIFEST = [
+    {
+        "id": s.section_id,
+        "label": s.label,
+        "description": s.description,
+        "advanced": s.advanced,
+    }
+    for s in SECTIONS
+]
 
+# Cache for resolved paths
+_PATH_CACHE: dict[str, Path] = {}
+
+
+def _get_cached_path(func):
+    def wrapper(*args, **kwargs):
+        name = func.__name__
+        if name not in _PATH_CACHE:
+            _PATH_CACHE[name] = func(*args, **kwargs)
+        return _PATH_CACHE[name]
+
+    return wrapper
+
+
+@_get_cached_path
 def managed_env_path() -> Path:
     """Return the admin-managed user config path."""
 
@@ -848,40 +919,30 @@ def load_config_response() -> dict[str, Any]:
     """Return manifest and current config values for the admin UI."""
 
     state = _load_value_state()
-    fields: list[dict[str, Any]] = []
-    for field in FIELDS:
-        entry = state[field.key]
-        source = entry["source"]
-        raw_value = entry["value"]
-        fields.append(
-            {
-                "key": field.key,
-                "label": field.label,
-                "section": field.section_id,
-                "type": field.field_type,
-                "value": _display_value(field, raw_value),
-                "configured": bool(str(raw_value).strip()),
-                "source": source,
-                "locked": _is_locked_source(source),
-                "secret": field.secret,
-                "advanced": field.advanced,
-                "restart_required": field.restart_required,
-                "session_sensitive": field.session_sensitive,
-                "options": list(field.options),
-                "description": field.description,
-            }
-        )
+
+    # Use list comprehension for faster field building (⚡ Bolt Optimization)
+    fields = [
+        {
+            "key": field.key,
+            "label": field.label,
+            "section": field.section_id,
+            "type": field.field_type,
+            "value": _display_value(field, state[field.key]["value"]),
+            "configured": bool(str(state[field.key]["value"]).strip()),
+            "source": state[field.key]["source"],
+            "locked": _is_locked_source(state[field.key]["source"]),
+            "secret": field.secret,
+            "advanced": field.advanced,
+            "restart_required": field.restart_required,
+            "session_sensitive": field.session_sensitive,
+            "options": list(field.options),
+            "description": field.description,
+        }
+        for field in FIELDS
+    ]
 
     return {
-        "sections": [
-            {
-                "id": section.section_id,
-                "label": section.label,
-                "description": section.description,
-                "advanced": section.advanced,
-            }
-            for section in SECTIONS
-        ],
+        "sections": SECTION_MANIFEST,
         "fields": fields,
         "paths": {
             "managed": str(managed_env_path()),
@@ -1000,6 +1061,9 @@ def write_managed_env(updates: Mapping[str, Any]) -> dict[str, Any]:
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_suffix(path.suffix + ".tmp")
     temp_path.write_text(render_env_file(target_values), encoding="utf-8")
+    with contextlib.suppress(Exception):
+        # Set permissions to 0600 (owner read/write only) where supported.
+        os.chmod(temp_path, 0o600)
     os.replace(temp_path, path)
     return {
         "applied": True,

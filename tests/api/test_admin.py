@@ -13,7 +13,9 @@ from config.settings import Settings
 
 
 def _local_client(app):
-    return TestClient(app, client=("127.0.0.1", 50000))
+    return TestClient(
+        app, base_url="http://127.0.0.1:50000", client=("127.0.0.1", 50000)
+    )
 
 
 def _set_home(monkeypatch, tmp_path: Path) -> None:
@@ -41,8 +43,20 @@ def test_admin_page_is_loopback_only(monkeypatch, tmp_path):
     app = create_app(lifespan_enabled=False)
 
     assert _local_client(app).get("/admin").status_code == 200
-    remote_client = TestClient(app, client=("203.0.113.10", 50000))
+    remote_client = TestClient(
+        app, base_url="http://127.0.0.1:50000", client=("203.0.113.10", 50000)
+    )
     assert remote_client.get("/admin").status_code == 403
+
+
+def test_admin_page_rejects_dns_rebinding(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    app = create_app(lifespan_enabled=False)
+
+    client = _local_client(app)
+    # The client's IP is loopback, but the Host header suggests a remote host
+    response = client.get("/admin", headers={"Host": "attacker.com:8080"})
+    assert response.status_code == 403
 
 
 def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):

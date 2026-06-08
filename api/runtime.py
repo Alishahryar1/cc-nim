@@ -64,6 +64,23 @@ def warn_if_process_auth_token(settings: Settings) -> None:
         )
 
 
+def warn_if_weak_auth_token(settings: Settings) -> None:
+    """Warn when the server auth token is too weak."""
+    token = settings.anthropic_auth_token
+    if not token:
+        return
+    if len(token) < 8:
+        logger.warning(
+            "ANTHROPIC_AUTH_TOKEN is too short (min 8 chars recommended). "
+            "Security is reduced."
+        )
+    if token in ("freecc", "password", "admin", "12345678"):
+        logger.warning(
+            "ANTHROPIC_AUTH_TOKEN is using a common/default value. "
+            "Change it to a secure random string."
+        )
+
+
 def log_startup_failure(settings: Settings, exc: Exception) -> None:
     """Log startup failures without traceback noise unless verbose diagnostics are enabled."""
     message = startup_failure_message(settings, exc)
@@ -108,6 +125,7 @@ class AppRuntime:
         self.app.state.provider_registry = self._provider_registry
         try:
             warn_if_process_auth_token(self.settings)
+            warn_if_weak_auth_token(self.settings)
             await self._validate_configured_models_best_effort()
             self._provider_registry.start_model_list_refresh(self.settings)
             await self._start_messaging_if_configured()

@@ -28,6 +28,19 @@ def _isolate_from_dotenv(monkeypatch):
     )
 
 
+@pytest.fixture(autouse=True)
+def _clear_settings_cache():
+    """Ensure get_settings() cache and admin path cache are cleared."""
+    from api import admin_config
+    from config.settings import get_settings
+
+    get_settings.cache_clear()
+    admin_config._PATH_CACHE.clear()
+    yield
+    get_settings.cache_clear()
+    admin_config._PATH_CACHE.clear()
+
+
 @pytest.fixture
 def provider_config():
     from providers.base import ProviderConfig

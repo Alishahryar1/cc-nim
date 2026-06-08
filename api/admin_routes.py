@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import ipaddress
+from functools import lru_cache
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -11,7 +12,7 @@ from urllib.parse import urlsplit
 import httpx
 from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import FileResponse
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 
 from config.settings import Settings
 from config.settings import get_settings as get_cached_settings
@@ -41,8 +42,22 @@ class AdminConfigPayload(BaseModel):
 
     values: dict[str, Any] = Field(default_factory=dict)
 
+    @model_validator(mode="after")
+    def validate_payload_size(self) -> AdminConfigPayload:
+        """Prevent excessively large config payloads."""
+        if len(self.values) > 200:
+            raise HTTPException(status_code=400, detail="Too many config fields")
+        for key, value in self.values.items():
+            if len(str(key)) > 128:
+                raise HTTPException(status_code=400, detail="Config key too long")
+            if len(str(value)) > 8192:
+                raise HTTPException(status_code=400, detail=f"Value for {key} too long")
+        return self
 
+
+@lru_cache(maxsize=128)
 def _is_loopback_host(host: str | None) -> bool:
+    """Cached loopback detection (⚡ Bolt Optimization)."""
     if host is None:
         return False
     normalized = host.strip().strip("[]").lower()
@@ -72,12 +87,17 @@ def _host_is_local(host: str | None) -> bool:
 def require_loopback_admin(request: Request) -> None:
     """Allow admin access only from the local machine."""
 
+    # Block access if behind a proxy that might spoof IPs
+    if request.headers.get("x-forwarded-for") or request.headers.get("x-real-ip"):
+        # Even if the proxy is local, we don't want to trust forwarded headers for admin
+        raise HTTPException(status_code=403, detail="Admin UI is local-only")
+
     client_host = request.client.host if request.client else None
     if not _is_loopback_host(client_host):
         raise HTTPException(status_code=403, detail="Admin UI is local-only")
 
-    host = request.headers.get("host")
-    if not _host_is_local(host):
+    # Prevent DNS rebinding attacks by verifying the Host header
+    if not _is_loopback_host(request.url.hostname):
         raise HTTPException(status_code=403, detail="Admin UI is local-only")
 
     origin = request.headers.get("origin")
@@ -85,11 +105,18 @@ def require_loopback_admin(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Admin UI is local-only")
 
 
+# Pre-resolve static dir (⚡ Bolt Optimization)
+STATIC_DIR_RESOLVED = STATIC_DIR.resolve()
+_ASSET_CACHE: dict[str, Path] = {}
+
+
 def _asset_response(filename: str) -> FileResponse:
-    path = STATIC_DIR / filename
-    if not path.is_file():
-        raise HTTPException(status_code=404, detail="Admin asset not found")
-    return FileResponse(path)
+    if filename not in _ASSET_CACHE:
+        path = (STATIC_DIR_RESOLVED / filename).resolve()
+        if not path.is_file() or STATIC_DIR_RESOLVED not in path.parents:
+            raise HTTPException(status_code=404, detail="Admin asset not found")
+        _ASSET_CACHE[filename] = path
+    return FileResponse(_ASSET_CACHE[filename])
 
 
 @router.get("/admin", include_in_schema=False)

@@ -29,14 +29,17 @@ class TestSettings:
         monkeypatch.delenv("HTTP_CONNECT_TIMEOUT", raising=False)
         monkeypatch.setitem(Settings.model_config, "env_file", ())
         settings = Settings()
-        assert settings.model == "nvidia_nim/z-ai/glm4.7"
+        assert settings.model == "nvidia_nim/minimaxai/minimax-m2.7"
         assert isinstance(settings.provider_rate_limit, int)
         assert isinstance(settings.provider_rate_window, int)
         assert isinstance(settings.nim.temperature, float)
         assert isinstance(settings.fast_prefix_detection, bool)
         assert isinstance(settings.enable_model_thinking, bool)
-        assert settings.http_read_timeout == 120.0
+        assert settings.http_read_timeout == 1800.0
         assert settings.http_connect_timeout == HTTP_CONNECT_TIMEOUT_DEFAULT
+        assert settings.default_thinking_type == "adaptive"
+        assert settings.default_thinking_display_mode == "summarized"
+        assert settings.default_reasoning_effort == "medium"
         assert settings.enable_web_server_tools is False
         assert settings.log_raw_api_payloads is False
         assert settings.log_raw_sse_events is False

@@ -47,13 +47,15 @@ def _configured_env_files(model_config: Mapping[str, Any]) -> tuple[Path, ...]:
     return tuple(Path(item) for item in configured)
 
 
+@lru_cache(maxsize=128)
 def _env_file_contains_key(path: Path, key: str) -> bool:
-    """Check whether a dotenv-style file defines the given key."""
+    """Cached dotenv key presence check (⚡ Bolt Optimization)."""
     return _env_file_value(path, key) is not None
 
 
+@lru_cache(maxsize=128)
 def _env_file_value(path: Path, key: str) -> str | None:
-    """Return a dotenv value when the file explicitly defines the key."""
+    """Cached dotenv value lookup (⚡ Bolt Optimization: 61-70)."""
     if not path.is_file():
         return None
 
@@ -106,6 +108,9 @@ def _removed_env_var_message(model_config: Mapping[str, Any]) -> str | None:
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
+    cors_origins: list[str] = Field(default=["*"], validation_alias="CORS_ORIGINS")
+    allowed_hosts: list[str] = Field(default=["*"], validation_alias="ALLOWED_HOSTS")
+
     # ==================== OpenRouter Config ====================
     open_router_api_key: str = Field(default="", validation_alias="OPENROUTER_API_KEY")
 
@@ -154,7 +159,7 @@ class Settings(BaseSettings):
     # ==================== Model ====================
     # All Claude model requests are mapped to this single model (fallback)
     # Format: provider_type/model/name
-    model: str = "nvidia_nim/z-ai/glm4.7"
+    model: str = "nvidia_nim/minimaxai/minimax-m2.7"
 
     # Per-model overrides (optional, falls back to MODEL)
     # Each can use a different provider
@@ -190,10 +195,19 @@ class Settings(BaseSettings):
     enable_haiku_thinking: bool | None = Field(
         default=None, validation_alias="ENABLE_HAIKU_THINKING"
     )
+    default_thinking_type: str = Field(
+        default="adaptive", validation_alias="DEFAULT_THINKING_TYPE"
+    )
+    default_thinking_display_mode: str = Field(
+        default="summarized", validation_alias="DEFAULT_THINKING_DISPLAY_MODE"
+    )
+    default_reasoning_effort: str = Field(
+        default="medium", validation_alias="DEFAULT_REASONING_EFFORT"
+    )
 
     # ==================== HTTP Client Timeouts ====================
     http_read_timeout: float = Field(
-        default=120.0, validation_alias="HTTP_READ_TIMEOUT"
+        default=1800.0, validation_alias="HTTP_READ_TIMEOUT"
     )
     http_write_timeout: float = Field(
         default=10.0, validation_alias="HTTP_WRITE_TIMEOUT"
@@ -275,7 +289,13 @@ class Settings(BaseSettings):
     # Hugging Face token for faster model downloads (optional, for local Whisper)
     hf_token: str = Field(default="", validation_alias="HF_TOKEN")
 
+
+    # ==================== Security Config ====================
+    cors_origins: list[str] = Field(default=["*"], validation_alias="CORS_ORIGINS")
+    trusted_hosts: list[str] = Field(default=["*"], validation_alias="TRUSTED_HOSTS")
+
     # ==================== Bot Wrapper Config ====================
+
     telegram_bot_token: str | None = None
     allowed_telegram_user_id: str | None = None
     discord_bot_token: str | None = Field(
@@ -295,10 +315,30 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8082
     log_file: str = "server.log"
+    cors_origins: list[str] = Field(default=["*"], validation_alias="CORS_ORIGINS")
+    allowed_hosts: list[str] = Field(default=["*"], validation_alias="ALLOWED_HOSTS")
     # Optional server API key to protect endpoints (Anthropic-style)
     # Set via env `ANTHROPIC_AUTH_TOKEN`. When empty, no auth is required.
     anthropic_auth_token: str = Field(
         default="", validation_alias="ANTHROPIC_AUTH_TOKEN"
+    )
+    cors_origins: list[str] = Field(
+        default=["*"], validation_alias="CORS_ORIGINS"
+    )
+    allowed_hosts: list[str] = Field(
+        default=["*"], validation_alias="ALLOWED_HOSTS"
+    )
+
+    # ==================== Security ====================
+    cors_origins: list[str] = Field(default=["*"], validation_alias="CORS_ORIGINS")
+    allowed_hosts: list[str] = Field(default=["*"], validation_alias="ALLOWED_HOSTS")
+
+    # ==================== Security ====================
+    cors_origins: list[str] = Field(
+        default=["*"], validation_alias="CORS_ORIGINS"
+    )
+    allowed_hosts: list[str] = Field(
+        default=["*"], validation_alias="ALLOWED_HOSTS"
     )
 
     @model_validator(mode="before")
@@ -310,7 +350,19 @@ class Settings(BaseSettings):
         return data
 
     # Handle empty strings for optional string fields
+    @field_validator("cors_origins", "allowed_hosts", mode="before")
+    @classmethod
+    def parse_comma_separated_list(cls, v: Any) -> list[str]:
+        if isinstance(v, str):
+            if not v.strip():
+                return ["*"]
+            return [part.strip() for part in v.split(",") if part.strip()]
+        if not v:
+            return ["*"]
+        return v
+
     @field_validator(
+
         "telegram_bot_token",
         "allowed_telegram_user_id",
         "discord_bot_token",
@@ -329,6 +381,17 @@ class Settings(BaseSettings):
             return None
         return v
 
+    @field_validator("cors_origins", "allowed_hosts", mode="before")
+    @classmethod
+    def parse_comma_separated_list(cls, v: Any) -> list[str]:
+        if not v:
+            return ["*"]
+        if isinstance(v, list):
+            return v
+        if isinstance(v, str):
+            return [part.strip() for part in v.split(",") if part.strip()]
+        return ["*"]
+
     @field_validator("max_message_log_entries_per_chat", mode="before")
     @classmethod
     def parse_optional_log_cap(cls, v: Any) -> Any:
@@ -344,6 +407,17 @@ class Settings(BaseSettings):
                 f"whisper_device must be 'cpu', 'cuda', or 'nvidia_nim', got {v!r}"
             )
         return v
+
+    @field_validator("cors_origins", "allowed_hosts", mode="before")
+    @classmethod
+    def parse_comma_separated_list(cls, v: Any) -> list[str]:
+        if isinstance(v, str):
+            return [part.strip() for part in v.split(",") if part.strip()]
+        if isinstance(v, list):
+            return [str(part) for part in v]
+        if v is None:
+            return ["*"]
+        return [str(v)]
 
     @field_validator("messaging_platform")
     @classmethod
@@ -367,6 +441,17 @@ class Settings(BaseSettings):
         if v <= 0:
             raise ValueError("messaging_rate_window must be > 0")
         return float(v)
+
+    @field_validator("cors_origins", "allowed_hosts", mode="before")
+    @classmethod
+    def parse_comma_separated_list(cls, v: Any) -> list[str]:
+        if isinstance(v, str):
+            return [part.strip() for part in v.split(",") if part.strip()]
+        if isinstance(v, list):
+            return v
+        if v is None:
+            return ["*"]
+        raise ValueError("Must be a comma-separated string or a list of strings")
 
     @field_validator("web_fetch_allowed_schemes")
     @classmethod
@@ -502,6 +587,14 @@ class Settings(BaseSettings):
             for part in self.web_fetch_allowed_schemes.split(",")
             if part.strip()
         )
+
+    @property
+    def parsed_cors_origins(self) -> list[str]:
+        return [p.strip() for p in self.cors_origins.split(",") if p.strip()]
+
+    @property
+    def parsed_trusted_hosts(self) -> list[str]:
+        return [p.strip() for p in self.trusted_hosts.split(",") if p.strip()]
 
     @staticmethod
     def parse_provider_type(model_string: str) -> str:

@@ -92,13 +92,19 @@ def content_text(content: Any) -> str:
     return str(content)
 
 
+QUERY_RE = re.compile(r"query:\s*(.+)", flags=re.IGNORECASE | re.DOTALL)
+URL_RE = re.compile(r"https?://\S+")
+
+
 def extract_query(text: str) -> str:
-    match = re.search(r"query:\s*(.+)", text, flags=re.IGNORECASE | re.DOTALL)
+    """Cached regex search for query (⚡ Bolt Optimization: 79-85)."""
+    match = QUERY_RE.search(text)
     if match:
         return match.group(1).strip().strip("\"'")
     return text.strip()
 
 
 def extract_url(text: str) -> str:
-    match = re.search(r"https?://\S+", text)
+    """Cached regex search for URL (⚡ Bolt Optimization)."""
+    match = URL_RE.search(text)
     return match.group(0).rstrip(").,]") if match else text.strip()

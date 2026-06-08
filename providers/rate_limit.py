@@ -19,7 +19,7 @@ T = TypeVar("T")
 
 def _upstream_http_retryable(code: int) -> bool:
     """True for rate limit / upstream server failures that should backoff-retry."""
-    return code == 429 or 500 <= code <= 599
+    return code == 429 or code == 408 or 500 <= code <= 599
 
 
 def retryable_upstream_status(exc: BaseException) -> int | None:
@@ -39,7 +39,8 @@ def retryable_upstream_status(exc: BaseException) -> int | None:
         status = getattr(exc, "status_code", None)
         if isinstance(status, int) and 500 <= status <= 599:
             return status
-        return None
+    if isinstance(exc, (httpx.TimeoutException, openai.APITimeoutError)):
+        return 408
     return None
 
 

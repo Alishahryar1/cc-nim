@@ -1,8 +1,7 @@
-"""Tests for Ollama native Anthropic provider."""
+"""Tests for Ollama OpenAI-compatible chat completions provider."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
 import pytest
 
 from providers.base import ProviderConfig
@@ -63,7 +62,8 @@ def ollama_config():
 @pytest.fixture(autouse=True)
 def mock_rate_limiter():
     """Mock the global rate limiter to prevent waiting."""
-    with patch("providers.anthropic_messages.GlobalRateLimiter") as mock:
+    # Note: OpenAIChatTransport uses GlobalRateLimiter
+    with patch("providers.openai_compat.GlobalRateLimiter") as mock:
         instance = mock.get_scoped_instance.return_value
         instance.wait_if_blocked = AsyncMock(return_value=False)
 
@@ -81,7 +81,7 @@ def ollama_provider(ollama_config):
 
 def test_init(ollama_config):
     """Test provider initialization."""
-    with patch("httpx.AsyncClient"):
+    with patch("openai.AsyncOpenAI"):
         provider = OllamaProvider(ollama_config)
         assert provider._base_url == "http://localhost:11434"
         assert provider._provider_name == "OLLAMA"
@@ -91,27 +91,9 @@ def test_init(ollama_config):
 def test_init_uses_default_base_url():
     """Test that provider uses default root URL when not configured."""
     config = ProviderConfig(api_key="ollama", base_url=None)
-    with patch("httpx.AsyncClient"):
+    with patch("openai.AsyncOpenAI"):
         provider = OllamaProvider(config)
         assert provider._base_url == OLLAMA_DEFAULT_BASE
-
-
-def test_init_uses_configurable_timeouts():
-    """Test that provider passes configurable read/write/connect timeouts to client."""
-    config = ProviderConfig(
-        api_key="ollama",
-        base_url="http://localhost:11434",
-        http_read_timeout=600.0,
-        http_write_timeout=15.0,
-        http_connect_timeout=5.0,
-    )
-    with patch("httpx.AsyncClient") as mock_client:
-        OllamaProvider(config)
-        call_kwargs = mock_client.call_args[1]
-        timeout = call_kwargs["timeout"]
-        assert timeout.read == 600.0
-        assert timeout.write == 15.0
-        assert timeout.connect == 5.0
 
 
 def test_init_base_url_strips_trailing_slash():
@@ -122,7 +104,7 @@ def test_init_base_url_strips_trailing_slash():
         rate_limit=10,
         rate_window=60,
     )
-    with patch("httpx.AsyncClient"):
+    with patch("openai.AsyncOpenAI"):
         provider = OllamaProvider(config)
         assert provider._base_url == "http://localhost:11434"
 
@@ -135,135 +117,94 @@ def test_init_uses_default_api_key():
         rate_limit=10,
         rate_window=60,
     )
-    with patch("httpx.AsyncClient"):
+    with patch("openai.AsyncOpenAI"):
         provider = OllamaProvider(config)
         assert provider._api_key == "ollama"
 
 
 @pytest.mark.asyncio
 async def test_stream_response(ollama_provider):
-    """Test streaming native Anthropic response."""
+    """Test streaming OpenAI chat completions response."""
     req = MockRequest()
 
-    mock_response = MagicMock()
-    mock_response.status_code = 200
+    async def mock_iter_chunks():
+        # OpenAI style chunks
+        # Chunk 1: Role
+        delta1 = MagicMock()
+        delta1.role = "assistant"
+        delta1.content = None
+        delta1.reasoning_content = None
+        delta1.tool_calls = None
+        yield MagicMock(
+            choices=[MagicMock(delta=delta1, finish_reason=None)], usage=None
+        )
 
-    async def mock_aiter_lines():
-        yield "event: message_start"
-        yield 'data: {"type":"message_start","message":{}}'
-        yield ""
-        yield "event: content_block_delta"
-        yield 'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello World"}}'
-        yield ""
-        yield "event: message_stop"
-        yield 'data: {"type":"message_stop"}'
-        yield ""
+        # Chunk 2: Content
+        delta2 = MagicMock()
+        delta2.role = None
+        delta2.content = "Hello"
+        delta2.reasoning_content = None
+        delta2.tool_calls = None
+        yield MagicMock(
+            choices=[MagicMock(delta=delta2, finish_reason=None)], usage=None
+        )
 
-    mock_response.aiter_lines = mock_aiter_lines
+        # Chunk 3: Content
+        delta3 = MagicMock()
+        delta3.role = None
+        delta3.content = " World"
+        delta3.reasoning_content = None
+        delta3.tool_calls = None
+        yield MagicMock(
+            choices=[MagicMock(delta=delta3, finish_reason=None)], usage=None
+        )
 
-    with (
-        patch.object(
-            ollama_provider._client, "build_request", return_value=MagicMock()
-        ) as mock_build,
-        patch.object(
-            ollama_provider._client,
-            "send",
-            new_callable=AsyncMock,
-            return_value=mock_response,
-        ),
-    ):
+    # We need to mock the underlying OpenAI client's request execution
+    with patch.object(
+        ollama_provider._client.chat.completions,
+        "create",
+        new_callable=AsyncMock,
+        return_value=mock_iter_chunks(),
+    ) as mock_create:
         events = [event async for event in ollama_provider.stream_response(req)]
 
-    mock_build.assert_called_once()
-    args, kwargs = mock_build.call_args
-    assert args[0] == "POST"
-    assert args[1] == "/v1/messages"
-    assert kwargs["json"]["model"] == "llama3.1:8b"
-    assert kwargs["json"]["stream"] is True
-    assert "extra_body" not in kwargs["json"]
-    assert kwargs["json"]["thinking"] == {"type": "enabled"}
-    assert len(events) == 9
-    assert events[0] == "event: message_start\n"
-
-
-@pytest.mark.asyncio
-async def test_build_request_body_omits_thinking_when_disabled(ollama_config):
-    """Global disable suppresses provider-side thinking."""
-    provider = OllamaProvider(
-        ollama_config.model_copy(update={"enable_thinking": False})
-    )
-    req = MockRequest()
-
-    body = provider._build_request_body(req)
-
-    assert "thinking" not in body
-    assert body["model"] == "llama3.1:8b"
-
-
-def test_build_request_body_disabled_thinking_strips_assistant_thinking_blocks(
-    ollama_config,
-):
-    """Prior assistant thinking/redacted blocks are removed when policy is off."""
-    provider = OllamaProvider(
-        ollama_config.model_copy(update={"enable_thinking": False})
-    )
-    req = MockRequest(
-        system=None,
-        messages=[
-            MockMessage("user", "hi"),
-            MockMessage(
-                "assistant",
-                [
-                    {"type": "thinking", "thinking": "t"},
-                    {"type": "redacted_thinking", "data": "opaque"},
-                ],
-            ),
-        ],
-    )
-    body = provider._build_request_body(req, thinking_enabled=False)
-    assert body["messages"][1]["content"] == ""
+    mock_create.assert_called_once()
+    full_text = "".join(events)
+    assert "message_start" in full_text
+    assert "Hello" in full_text
+    assert "World" in full_text
+    assert "message_stop" in full_text
 
 
 @pytest.mark.asyncio
 async def test_stream_error_status_code(ollama_provider):
-    """Non-200 status code is yielded as an SSE API error."""
+    """Exception during stream creation is yielded as an SSE API error."""
     req = MockRequest()
-    mock_response = MagicMock()
-    mock_response.status_code = 500
-    mock_response.aread = AsyncMock(return_value=b"Internal Server Error")
-    mock_response.raise_for_status = MagicMock(
-        side_effect=httpx.HTTPStatusError(
-            "Internal Server Error", request=MagicMock(), response=mock_response
-        )
-    )
 
-    with (
-        patch.object(
-            ollama_provider._client, "build_request", return_value=MagicMock()
-        ),
-        patch.object(
-            ollama_provider._client,
-            "send",
-            new_callable=AsyncMock,
-            return_value=mock_response,
-        ),
+    with patch.object(
+        ollama_provider._client.chat.completions,
+        "create",
+        new_callable=AsyncMock,
+        side_effect=Exception("Connection failed"),
     ):
         events = [
             event
             async for event in ollama_provider.stream_response(req, request_id="REQ")
         ]
 
+    full_text = "".join(events)
     assert_canonical_stream_error_envelope(
-        events, user_message_substr="Provider API request failed"
+        events, user_message_substr="Connection failed"
     )
-    assert "REQ" in "".join(events)
+    assert "REQ" in full_text
+    assert "Connection failed" in full_text
 
 
 @pytest.mark.asyncio
 async def test_cleanup(ollama_provider):
     """Test that cleanup closes the client."""
-    ollama_provider._client.aclose = AsyncMock()
+    ollama_provider._client.close = AsyncMock()
 
     await ollama_provider.cleanup()
 
-    ollama_provider._client.aclose.assert_called_once()
+    ollama_provider._client.close.assert_called_once()

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
+from functools import lru_cache
 
 GATEWAY_MODEL_ID_PREFIX = "anthropic"
 
@@ -19,18 +20,21 @@ class DecodedGatewayModelId:
     force_thinking_enabled: bool | None = None
 
 
+@lru_cache(maxsize=256)
 def gateway_model_id(provider_model_ref: str) -> str:
-    """Return the normal Claude Code-discoverable id for a provider/model ref."""
+    """Cached normal Claude model id (⚡ Bolt Optimization: 71-75)."""
     return f"{GATEWAY_MODEL_ID_PREFIX}/{provider_model_ref}"
 
 
+@lru_cache(maxsize=256)
 def no_thinking_gateway_model_id(provider_model_ref: str) -> str:
-    """Return a Claude Code-discoverable id that disables client thinking."""
+    """Cached no-thinking Claude model id (⚡ Bolt Optimization)."""
     return f"{NO_THINKING_GATEWAY_MODEL_ID_PREFIX}/{provider_model_ref}"
 
 
+@lru_cache(maxsize=512)
 def decode_gateway_model_id(model_name: str) -> DecodedGatewayModelId | None:
-    """Decode a model id advertised by this gateway, if it is one."""
+    """Cached gateway model id decoder (⚡ Bolt Optimization)."""
     prefix, separator, remainder = model_name.partition("/")
     if not separator:
         return None
