@@ -553,8 +553,8 @@ class OpenAIChatTransport(BaseProvider):
             output_tokens = completion
         else:
             output_tokens = sse.estimate_output_tokens()
-        if usage_info and hasattr(usage_info, "prompt_tokens"):
-            provider_input = usage_info.prompt_tokens
+        if usage_info is not None:
+            provider_input = getattr(usage_info, "prompt_tokens", None)
             if isinstance(provider_input, int):
                 logger.debug(
                     "TOKEN_ESTIMATE: our={} provider={} diff={:+d}",
