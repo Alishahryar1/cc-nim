@@ -205,14 +205,9 @@ class OpenAIChatTransport(BaseProvider):
             if parsed is not None:
                 yield sse.emit_tool_delta(tc_index, json.dumps(parsed))
             return
-
-        if not tool_argument_aliases:
-            aliases = {}
-        else:
-            aliases = tool_argument_aliases.get(state.name)
-            if aliases is None:
-                aliases = {}
-
+        aliases = (
+            tool_argument_aliases.get(state.name) if tool_argument_aliases else None
+        )
         if aliases:
             if tool_argument_alias_buffers is None:
                 restored = self._restore_aliased_tool_arguments(args, aliases)
