@@ -40,17 +40,17 @@ def update() -> None:
     print(f"Current version: {current_version}")
     print("Checking for updates...")
 
+    uv_bin = shutil.which("uv")
+    if uv_bin is None:
+        print(
+            "uv is required for updates. Install it with: curl -LsSf https://astral.sh/uv/install.sh | sh",
+            file=sys.stderr,
+        )
+        raise SystemExit(1)
+
     try:
         result = subprocess.run(
-            [
-                sys.executable,
-                "-m",
-                "uv",
-                "pip",
-                "install",
-                "--upgrade",
-                "free-claude-code",
-            ],
+            [uv_bin, "pip", "install", "--upgrade", "free-claude-code"],
             capture_output=True,
             text=True,
         )
