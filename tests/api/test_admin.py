@@ -71,42 +71,23 @@ def test_admin_page_no_longer_renders_global_status_header(monkeypatch, tmp_path
     assert "modelBadge" not in response.text
 
 
-def _astro_js_content() -> str:
-    js_dir = Path("api/admin_static/_astro")
-    return "".join(
-        f.read_text(encoding="utf-8") for f in js_dir.glob("*.js") if f.is_file()
-    )
-
-
-def _astro_all_js_content() -> str:
-    """Search both .js files and inline scripts in index.html."""
-    js = _astro_js_content()
-    html = Path("api/admin_static/index.html").read_text(encoding="utf-8")
-    return js + html
-
-
-def _astro_css_content() -> str:
-    js_dir = Path("api/admin_static/_astro")
-    return "".join(
-        f.read_text(encoding="utf-8") for f in js_dir.glob("*.css") if f.is_file()
-    )
-
-
 def test_admin_static_no_longer_fetches_global_status_header():
-    html = Path("api/admin_static/index.html").read_text(encoding="utf-8")
-    js = _astro_js_content()
+    script = Path("api/admin_static/admin.js").read_text(encoding="utf-8")
 
-    assert '/admin/api/status"' not in js
-    assert "serverStatus" not in html
-    assert "modelBadge" not in html
+    assert 'api("/admin/api/status")' not in script
+    assert "updateHeader" not in script
+    assert '"Running"' not in script
+    assert "serverStatus" not in script
+    assert "modelBadge" not in script
 
 
-def test_admin_static_contains_source_label_logic():
-    js = _astro_all_js_content()
+def test_admin_static_hides_managed_source_label():
+    script = Path("api/admin_static/admin.js").read_text(encoding="utf-8")
 
-    assert "managed_env" in js
-    assert "hasOwnProperty" in js or "source_label" in js
-    assert "locked" in js
+    assert 'managed_env: "",' in script
+    assert "hasOwnProperty.call(labels, source)" in script
+    assert 'parts.push("locked")' in script
+    assert "sourceEl.textContent = source" in script
 
 
 def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
