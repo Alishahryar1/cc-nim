@@ -1,9 +1,10 @@
 ---
+import '../styles/app.css';
 import Sidebar from '../components/Sidebar.svelte';
 ---
 
 <!doctype html>
-<html lang="en">
+<html lang="en" class="h-full">
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
@@ -11,491 +12,53 @@ import Sidebar from '../components/Sidebar.svelte';
     <link rel="icon" href="data:," />
     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
   </head>
-  <body>
-    <div class="app-layout" id="app">
+  <body class="h-full">
+    <div class="flex h-full" id="app">
       <Sidebar activeView="providers" collapsed={false} on:viewChange={(e) => setActiveView(e.detail.viewId, { scroll: true })} />
-      <main class="main">
-        <header class="topbar">
-          <div class="topbar-left">
-            <h2 id="pageTitle">Providers</h2>
+
+      <div class="flex flex-1 flex-col min-w-0">
+        <header class="flex items-center justify-between px-6 py-5 border-b border-border-default">
+          <div class="flex items-center gap-3">
+            <h2 id="pageTitle" class="text-base font-semibold text-text-primary tracking-tight">Providers</h2>
           </div>
-          <div class="topbar-right">
+          <div class="flex items-center gap-3">
             <span id="dirtyState" class="status-pill">No changes</span>
           </div>
         </header>
 
-        <div id="adminViews" class="admin-views">
-          <section id="view-providers" class="admin-view active" data-view="providers">
-            <div id="providerGridContainer"></div>
-            <div id="providersSections" class="form-sections"></div>
-          </section>
+        <main class="flex-1 overflow-y-auto">
+          <div id="adminViews" class="p-6 space-y-5">
+            <section id="view-providers" class="admin-view active" data-view="providers">
+              <div id="providerGridContainer"></div>
+              <div id="providersSections" class="space-y-5"></div>
+            </section>
 
-          <section id="view-model_config" class="admin-view" data-view="model_config" hidden>
-            <div id="modelConfigSections" class="form-sections"></div>
-          </section>
+            <section id="view-model_config" class="admin-view" data-view="model_config" hidden>
+              <div id="modelConfigSections" class="space-y-5"></div>
+            </section>
 
-          <section id="view-messaging" class="admin-view" data-view="messaging" hidden>
-            <div id="messagingSections" class="form-sections"></div>
-          </section>
-        </div>
-      </main>
+            <section id="view-messaging" class="admin-view" data-view="messaging" hidden>
+              <div id="messagingSections" class="space-y-5"></div>
+            </section>
+          </div>
+        </main>
 
-      <footer class="action-bar">
-        <div class="action-meta">
-          <span id="configPath"></span>
-        </div>
-        <div id="messageArea" class="message-area"></div>
-        <div class="action-buttons">
-          <button id="validateButton" class="secondary-button" type="button">Validate</button>
-          <button id="applyButton" class="primary-button" type="button" disabled>Apply</button>
-        </div>
-      </footer>
+        <footer class="flex items-center gap-4 px-6 py-3 border-t border-border-default bg-bg-surface min-h-[56px]">
+          <div class="flex-1 min-w-0">
+            <span id="configPath" class="text-xs text-text-muted"></span>
+          </div>
+          <div id="messageArea" class="text-xs text-text-muted text-center flex-1 min-w-0"></div>
+          <div class="flex items-center gap-2 shrink-0">
+            <button id="validateButton" class="btn btn-secondary" type="button">Validate</button>
+            <button id="applyButton" class="btn btn-primary" type="button" disabled>Apply</button>
+          </div>
+        </footer>
+      </div>
     </div>
   </body>
 </html>
 
-<style is:global>
-  :root {
-    --bg-primary: #1a1a1a;
-    --bg-secondary: #252525;
-    --bg-sidebar: #202020;
-    --bg-card: #333333;
-    --bg-card-hover: #333333;
-    --bg-input: #2a2a2a;
-    --border-color: #3a3a3a;
-    --border-light: #333333;
-    --accent-primary: #e0e0e0;
-    --accent-hover: #f5f5f5;
-    --accent-muted: #888888;
-    --text-primary: #f0f0f0;
-    --text-secondary: #c0c0c0;
-    --text-muted: #888888;
-    --success: #66bb6a;
-    --error: #ef5350;
-    --warning: #ffb74d;
-    --accent-primary-rgb: 240, 240, 240;
-    --success-rgb: 102, 187, 106;
-    --error-rgb: 239, 83, 80;
-    --warning-rgb: 255, 183, 77;
-    --radius-sm: 6px;
-    --radius-md: 10px;
-    --radius-lg: 14px;
-    --transition-fast: 0.15s ease;
-    --transition-normal: 0.25s ease;
-    --sidebar-width: 240px;
-    --sidebar-collapsed-width: 64px;
-  }
 
-  *,
-  *::before,
-  *::after {
-    margin: 0;
-    padding: 0;
-    box-sizing: border-box;
-  }
-
-  body {
-    min-width: 320px;
-    background-color: var(--bg-primary);
-    background-image: url('/admin/background.svg');
-    background-size: 400px 400px;
-    background-attachment: fixed;
-    background-repeat: repeat;
-    color: var(--text-primary);
-    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    font-size: 14px;
-    line-height: 1.6;
-    -webkit-font-smoothing: antialiased;
-    -moz-osx-font-smoothing: grayscale;
-  }
-
-  button, input, select, textarea { font-family: inherit; }
-
-  .app-layout {
-    display: flex;
-    min-height: 100vh;
-    padding-bottom: 72px;
-  }
-
-  .main {
-    flex: 1;
-    margin-left: var(--sidebar-width);
-    min-width: 0;
-    overflow-y: auto;
-    background-color: var(--bg-primary);
-  }
-
-  .topbar {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    padding: 21px 20px;
-    border-bottom: 1px solid var(--border-color);
-    flex-shrink: 0;
-  }
-
-  .topbar h2 {
-    font-size: 16px;
-    font-weight: 600;
-    color: var(--text-primary);
-  }
-
-  .status-pill {
-    display: inline-flex;
-    align-items: center;
-    min-height: 28px;
-    border: 1px solid var(--border-color);
-    border-radius: 999px;
-    padding: 4px 12px;
-    background: var(--bg-card);
-    color: var(--text-muted);
-    font-size: 12px;
-    font-weight: 600;
-    white-space: nowrap;
-  }
-
-  .status-pill.ok {
-    color: var(--success);
-    background: rgba(var(--success-rgb), 0.1);
-    border-color: rgba(var(--success-rgb), 0.3);
-  }
-
-  .status-pill.warn {
-    color: var(--warning);
-    background: rgba(var(--warning-rgb), 0.1);
-    border-color: rgba(var(--warning-rgb), 0.3);
-  }
-
-  .status-pill.error {
-    color: var(--error);
-    background: rgba(var(--error-rgb), 0.1);
-    border-color: rgba(var(--error-rgb), 0.3);
-  }
-
-  .admin-views, .admin-view { display: grid; gap: 20px; }
-  .admin-view[hidden] { display: none; }
-
-  .form-sections {
-    display: grid;
-    gap: 20px;
-    padding: 20px;
-  }
-
-  .action-bar {
-    position: fixed;
-    right: 0;
-    bottom: 0;
-    left: var(--sidebar-width);
-    z-index: 50;
-    display: grid;
-    grid-template-columns: minmax(0, 1fr) minmax(180px, auto) auto;
-    gap: 14px;
-    align-items: center;
-    min-height: 64px;
-    border-top: 1px solid var(--border-color);
-    background: var(--bg-primary);
-    padding: 12px 24px;
-  }
-
-  .action-meta span { color: var(--text-muted); font-size: 12px; }
-
-  .message-area {
-    min-width: 0;
-    color: var(--text-muted);
-    font-size: 13px;
-    text-align: center;
-  }
-
-  .message-area.error { color: var(--error); }
-  .message-area.ok { color: var(--success); }
-
-  .action-buttons { display: flex; gap: 8px; }
-
-  .secondary-button {
-    min-height: 34px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border-color);
-    padding: 7px 14px;
-    cursor: pointer;
-    font-weight: 600;
-    font-size: 13px;
-    transition: all var(--transition-fast);
-    background: var(--bg-card);
-    color: var(--text-primary);
-  }
-
-  .secondary-button:hover {
-    background: rgba(var(--accent-primary-rgb), 0.06);
-    border-color: var(--accent-primary);
-  }
-
-  .primary-button {
-    min-height: 34px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--accent-primary);
-    padding: 7px 14px;
-    cursor: pointer;
-    font-weight: 600;
-    font-size: 13px;
-    transition: all var(--transition-fast);
-    background: var(--accent-primary);
-    color: #1a1a1a;
-  }
-
-  .primary-button:hover {
-    background: var(--accent-hover);
-    border-color: var(--accent-hover);
-  }
-
-  .primary-button:disabled {
-    cursor: not-allowed;
-    background: var(--bg-card);
-    border-color: var(--border-color);
-    color: var(--text-muted);
-  }
-
-  .settings-section {
-    border: 1px solid var(--border-color);
-    border-radius: 12px;
-    background: var(--bg-card);
-    padding: 20px;
-    scroll-margin-top: 20px;
-    transition: border-color var(--transition-fast);
-  }
-
-  .settings-section:hover {
-    border-color: var(--accent-muted);
-  }
-
-  .section-heading {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 16px;
-  }
-
-  .section-heading h3 {
-    font-size: 16px;
-    font-weight: 600;
-    margin: 0;
-  }
-
-  .section-heading p {
-    color: var(--text-muted);
-    font-size: 12px;
-    margin: 2px 0 0;
-  }
-
-  .field-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-    gap: 16px;
-  }
-
-  .field {
-    display: grid;
-    gap: 6px;
-    align-content: start;
-  }
-
-  .field label {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    font-size: 13px;
-    font-weight: 600;
-  }
-
-  .field input,
-  .field select,
-  .field textarea {
-    width: 100%;
-    min-height: 38px;
-    border: 1px solid var(--border-color);
-    border-radius: 8px;
-    background: var(--bg-input);
-    color: var(--text-primary);
-    padding: 8px 12px;
-    font-family: inherit;
-    font-size: 14px;
-    transition: border-color var(--transition-fast);
-  }
-
-  .field input:focus,
-  .field select:focus,
-  .field textarea:focus {
-    outline: none;
-    border-color: var(--accent-primary);
-  }
-
-  .field input:hover,
-  .field select:hover,
-  .field textarea:hover {
-    border-color: var(--accent-muted);
-  }
-
-  .field input:disabled,
-  .field select:disabled,
-  .field textarea:disabled {
-    background: var(--bg-secondary);
-    color: var(--text-muted);
-    cursor: not-allowed;
-  }
-
-  .field-source {
-    color: var(--text-muted);
-    font-size: 11px;
-    font-weight: 500;
-  }
-
-  .field-description {
-    color: var(--text-muted);
-    font-size: 12px;
-    line-height: 1.4;
-  }
-
-  .advanced-field {
-    display: none;
-  }
-
-  .show-advanced .advanced-field {
-    display: grid;
-  }
-
-  .ghost-button {
-    min-height: 34px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border-color);
-    padding: 7px 14px;
-    cursor: pointer;
-    font-weight: 600;
-    font-size: 13px;
-    transition: all var(--transition-fast);
-    background: var(--bg-card);
-    color: var(--text-primary);
-  }
-
-  .ghost-button:hover {
-    background-color: rgba(var(--accent-primary-rgb), 0.06);
-    border-color: var(--accent-primary);
-  }
-
-  .provider-strip {
-    border: 1px solid var(--border-color);
-    border-radius: 10px;
-    background: var(--bg-card);
-    padding: 16px;
-    transition: border-color var(--transition-fast);
-  }
-
-  .strip-header {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 12px;
-    margin-bottom: 12px;
-  }
-
-  .strip-header h3 {
-    font-size: 16px;
-    font-weight: 600;
-    margin: 0;
-  }
-
-  .provider-grid {
-    display: grid;
-    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
-    gap: 12px;
-  }
-
-  .provider-card {
-    display: grid;
-    gap: 8px;
-    min-height: 108px;
-    border: 1px solid var(--border-color);
-    border-radius: 10px;
-    padding: 14px;
-    background: var(--bg-sidebar);
-    transition: all var(--transition-fast);
-  }
-
-  .provider-card:hover {
-    background: var(--bg-secondary);
-    border-color: var(--accent-muted);
-  }
-
-  .provider-title {
-    display: flex;
-    align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-  }
-
-  .provider-title strong {
-    font-size: 14px;
-    font-weight: 600;
-  }
-
-  .provider-meta {
-    color: var(--text-muted);
-    font-size: 12px;
-    word-break: break-word;
-  }
-
-  .test-button {
-    min-height: 34px;
-    border-radius: var(--radius-sm);
-    border: 1px solid var(--border-color);
-    padding: 7px 14px;
-    cursor: pointer;
-    font-weight: 600;
-    font-size: 13px;
-    transition: all var(--transition-fast);
-    background: var(--bg-card);
-    color: var(--text-primary);
-  }
-
-  .test-button:hover:not(:disabled) {
-    background-color: rgba(var(--accent-primary-rgb), 0.06);
-    border-color: var(--accent-primary);
-  }
-
-  .test-button:disabled {
-    opacity: 0.5;
-    cursor: not-allowed;
-  }
-
-  ::-webkit-scrollbar {
-    width: 6px;
-    height: 6px;
-  }
-
-  ::-webkit-scrollbar-track {
-    background: transparent;
-  }
-
-  ::-webkit-scrollbar-thumb {
-    background: var(--border-color);
-    border-radius: 3px;
-  }
-
-  ::-webkit-scrollbar-thumb:hover {
-    background: var(--text-muted);
-  }
-
-  ::selection {
-    background: rgba(var(--accent-primary-rgb), 0.3);
-  }
-
-  @media (max-width: 768px) {
-    .main { margin-left: 0; }
-    .action-bar { left: 0; grid-template-columns: 1fr; padding: 12px 16px; }
-    .action-buttons { justify-content: stretch; }
-    .action-buttons button { flex: 1; }
-  }
-</style>
 
 <script>
   import { loadConfig, validateConfig, applyConfig, loadLocalStatus } from '../lib/api';
@@ -540,10 +103,6 @@ import Sidebar from '../components/Sidebar.svelte';
     activeView = view.id;
     byId('pageTitle').textContent = view.title;
 
-    document.querySelectorAll('.nav-item').forEach(item => {
-      item.classList.toggle('active', item.dataset.view === view.id);
-    });
-
     document.querySelectorAll('.admin-view').forEach(v => {
       const selected = v.dataset.view === view.id;
       v.classList.toggle('active', selected);
@@ -556,12 +115,12 @@ import Sidebar from '../components/Sidebar.svelte';
   function showMessage(message, kind = '') {
     const area = byId('messageArea');
     area.textContent = message;
-    area.className = `message-area ${kind}`.trim();
+    area.className = `text-xs text-center flex-1 min-w-0 ${kind || 'text-text-muted'}`.trim();
   }
 
   function showValidationResult(result) {
-    if (result.valid) showMessage('Config shape is valid', 'ok');
-    else showMessage(result.errors.join('; '), 'error');
+    if (result.valid) showMessage('Config shape is valid', 'text-success');
+    else showMessage(result.errors.join('; '), 'text-error');
   }
 
   async function validate(showResult = true) {
@@ -575,25 +134,14 @@ import Sidebar from '../components/Sidebar.svelte';
     if (!result.applied) { showValidationResult(result); return; }
     const restart = result.restart || {};
     if (restart.required && restart.automatic) {
-      showMessage('Applied. Restarting server...', 'ok');
+      showMessage('Applied. Restarting server...', 'text-success');
       byId('applyButton').disabled = true;
       setTimeout(() => window.location.href = restart.admin_url || '/admin', 1600);
       return;
     }
     const pending = restart.required ? restart.fields || [] : result.pending_fields || [];
     await load();
-    showMessage(pending.length ? `Applied. Restart fcc-server to use: ${pending.join(', ')}` : 'Applied', 'ok');
-  }
-
-  function renderNav() {
-    VIEW_GROUPS.forEach(view => {
-      const btn = document.querySelector(`[data-view="${view.id}"]`);
-      if (!btn) return;
-      if (btn.tagName === 'BUTTON') {
-        btn.addEventListener('click', () => setActiveView(view.id, { scroll: true }));
-      }
-    });
-    setActiveView(activeView, { scroll: false });
+    showMessage(pending.length ? `Applied. Restart fcc-server to use: ${pending.join(', ')}` : 'Applied', 'text-success');
   }
 
   function renderSections() {
@@ -630,7 +178,7 @@ import Sidebar from '../components/Sidebar.svelte';
         if (sectionFields.some(f => f.advanced)) {
           const toggle = document.createElement('button');
           toggle.type = 'button';
-          toggle.className = 'ghost-button advanced-toggle';
+          toggle.className = 'ghost-button';
           toggle.textContent = 'Show advanced';
           toggle.addEventListener('click', () => {
             const showing = el.classList.toggle('show-advanced');
@@ -742,8 +290,6 @@ import Sidebar from '../components/Sidebar.svelte';
     sections = cfg.sections;
     providerStatus = cfg.provider_status;
 
-    // Re-render with fresh data
-    renderNav();
     renderProviders(cfg.provider_status);
     renderSections();
     byId('configPath').textContent = cfg.paths.managed;
@@ -774,7 +320,6 @@ import Sidebar from '../components/Sidebar.svelte';
 
     const grid = document.createElement('div');
     grid.className = 'provider-grid';
-    grid.id = 'providerGrid';
 
     providers.forEach(provider => {
       const card = document.createElement('article');
@@ -829,18 +374,6 @@ import Sidebar from '../components/Sidebar.svelte';
   document.addEventListener('DOMContentLoaded', () => {
     byId('validateButton').addEventListener('click', () => validate(true));
     byId('applyButton').addEventListener('click', apply);
-
-    document.querySelectorAll('.nav-group-label').forEach(label => {
-      label.addEventListener('click', () => {
-        const key = label.dataset.group;
-        const arrow = label.querySelector('.nav-group-arrow');
-        const items = document.getElementById(key === 'management' ? 'navManagement' : 'navMessaging');
-        if (arrow && items) {
-          arrow.classList.toggle('collapsed');
-          items.style.display = items.style.display === 'none' ? 'flex' : 'none';
-        }
-      });
-    });
 
     load();
   });
