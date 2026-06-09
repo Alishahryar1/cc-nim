@@ -19,7 +19,7 @@ import Sidebar from '../components/Sidebar.svelte';
       <div class="flex flex-1 flex-col min-w-0 overflow-hidden">
         <header class="flex items-center justify-between px-6 h-14 shrink-0 border-b border-border-default">
           <div class="flex items-center gap-3">
-            <h2 id="pageTitle" class="text-[15px] font-semibold text-text-primary" style="letter-spacing:-0.01em">Providers</h2>
+            <h2 id="pageTitle" class="text-[15px] font-semibold page-title-gradient" style="letter-spacing:-0.01em">Providers</h2>
           </div>
           <div class="flex items-center gap-3">
             <span id="dirtyState" class="status-pill" style="border:1px solid var(--color-border-subtle);background:var(--color-bg-elevated)">No changes</span>
@@ -364,6 +364,7 @@ import Sidebar from '../components/Sidebar.svelte';
 
   function copyPath(path) {
     navigator.clipboard.writeText(path).then(() => {
+      showToast('Config path copied', 'success', 2000);
       const el = byId('configPath');
       const orig = el.innerHTML;
       el.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Copied!';

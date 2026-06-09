@@ -817,3 +817,64 @@ input, select, textarea, button {
 .provider-strip[data-status="error"] {
   border-left: 3px solid var(--color-error);
 }
+
+/* ─── Page Title Gradient ────────────────────────────────────── */
+
+.page-title-gradient {
+  background: linear-gradient(
+    135deg,
+    var(--color-text-primary) 0%,
+    rgba(255, 255, 255, 0.7) 50%,
+    var(--color-text-primary) 100%
+  );
+  background-size: 200% 100%;
+  -webkit-background-clip: text;
+  background-clip: text;
+  -webkit-text-fill-color: transparent;
+}
+
+/* ─── Config Path Copy ───────────────────────────────────────── */
+
+.config-path {
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.config-path:hover {
+  color: var(--color-text-secondary) !important;
+}
+
+/* ─── Stats Card Subtle Pulse ────────────────────────────────── */
+
+.stat-card-value {
+  font-variant-numeric: tabular-nums;
+}
+
+/* ─── Empty State ────────────────────────────────────────────── */
+
+.empty-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  padding: 48px 24px;
+  text-align: center;
+  gap: 12px;
+}
+
+.empty-state svg {
+  color: var(--color-text-muted);
+  opacity: 0.4;
+}
+
+.empty-state h3 {
+  font-size: 15px;
+  font-weight: 500;
+  color: var(--color-text-secondary);
+}
+
+.empty-state p {
+  font-size: 13px;
+  color: var(--color-text-muted);
+  max-width: 320px;
+}
