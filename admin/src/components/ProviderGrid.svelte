@@ -38,7 +38,7 @@
   <div class="strip-header">
     <h3>Provider Status</h3>
   </div>
-  <div class="provider-grid">
+  <div class="provider-grid" id="providerGrid">
     {#each providers as provider (provider.provider_id)}
       <article class="provider-card" data-provider={provider.provider_id}>
         <div class="provider-title">
@@ -58,18 +58,11 @@
 
 <style>
   .provider-strip {
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 12px;
-    background: rgba(20, 20, 30, 0.5);
-    backdrop-filter: blur(12px);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    border: 1px solid #3a3a3a;
+    border-radius: 10px;
+    background: #333333;
     padding: 16px;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
-  }
-
-  .provider-strip:hover {
-    border-color: rgba(255, 255, 255, 0.1);
-    box-shadow: 0 8px 32px rgba(129, 140, 248, 0.06);
+    transition: border-color 0.15s ease;
   }
 
   .strip-header {
@@ -96,17 +89,16 @@
     display: grid;
     gap: 8px;
     min-height: 108px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    border: 1px solid #3a3a3a;
     border-radius: 10px;
     padding: 14px;
-    background: rgba(17, 17, 24, 0.6);
-    backdrop-filter: blur(8px);
+    background: #202020;
     transition: all 0.15s ease;
   }
 
   .provider-card:hover {
-    background: rgba(20, 20, 30, 0.7);
-    border-color: rgba(129, 140, 248, 0.2);
+    background: #252525;
+    border-color: #888888;
   }
 
   .provider-title {
@@ -116,59 +108,55 @@
     gap: 8px;
   }
 
-  .provider-title strong { font-size: 14px; font-weight: 600; }
-  .provider-meta { color: #606070; font-size: 12px; word-break: break-word; }
-
-  .status-pill {
-    display: inline-flex;
-    align-items: center;
-    min-height: 28px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
-    border-radius: 999px;
-    padding: 4px 12px;
-    background: rgba(20, 20, 30, 0.5);
-    color: #606070;
-    font-size: 12px;
+  .provider-title strong {
+    font-size: 14px;
     font-weight: 600;
-    white-space: nowrap;
+  }
+
+  .provider-meta {
+    color: #888888;
+    font-size: 12px;
+    word-break: break-word;
   }
 
   :global(.status-pill.ok) {
-    color: #22c55e;
-    background: rgba(34,197,94,0.1);
-    border-color: rgba(34,197,94,0.3);
+    color: #66bb6a;
+    background: rgba(102, 187, 106, 0.1);
+    border-color: rgba(102, 187, 106, 0.3);
   }
 
   :global(.status-pill.warn) {
-    color: #f59e0b;
-    background: rgba(245,158,11,0.1);
-    border-color: rgba(245,158,11,0.3);
+    color: #ffb74d;
+    background: rgba(255, 183, 77, 0.1);
+    border-color: rgba(255, 183, 77, 0.3);
   }
 
   :global(.status-pill.error) {
-    color: #ef4444;
-    background: rgba(239,68,68,0.1);
-    border-color: rgba(239,68,68,0.3);
+    color: #ef5350;
+    background: rgba(239, 83, 80, 0.1);
+    border-color: rgba(239, 83, 80, 0.3);
   }
 
   .test-button {
     min-height: 34px;
-    border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    border: 1px solid #3a3a3a;
     padding: 7px 14px;
     cursor: pointer;
     font-weight: 600;
     font-size: 13px;
     transition: all 0.15s ease;
-    background: rgba(20, 20, 30, 0.5);
-    color: #f0f0f5;
+    background: #333333;
+    color: #f0f0f0;
   }
 
   .test-button:hover:not(:disabled) {
-    border-color: rgba(129, 140, 248, 0.3);
-    background: rgba(129, 140, 248, 0.1);
-    color: #818cf8;
+    background-color: rgba(240, 240, 240, 0.06);
+    border-color: #e0e0e0;
   }
 
-  .test-button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .test-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
 </style>

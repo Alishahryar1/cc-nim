@@ -1,8 +1,11 @@
 <script lang="ts">
+  import { createEventDispatcher } from 'svelte';
   import { VIEW_GROUPS, type ViewId } from '../lib/config';
 
   export let activeView: ViewId = 'providers';
   export let collapsed = false;
+
+  const dispatch = createEventDispatcher();
 
   let collapsedGroups: Record<string, boolean> = {};
 
@@ -18,6 +21,11 @@
 
   function handleCollapse() {
     collapsed = !collapsed;
+  }
+
+  function handleNavClick(viewId: ViewId) {
+    activeView = viewId;
+    dispatch('viewChange', { viewId });
   }
 </script>
 
@@ -52,7 +60,7 @@
       {#if !isGroupCollapsed('management')}
         <div class="nav-group-items">
           {#each VIEW_GROUPS as view}
-            <button class="nav-item {activeViewClass(view.id)}" on:click={() => activeView = view.id}>
+            <button class="nav-item {activeViewClass(view.id)}" on:click={() => handleNavClick(view.id)}>
               {#if view.id === 'providers'}
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                   <circle cx="12" cy="12" r="3"/><path d="M12 1v4"/><path d="M12 19v4"/><path d="M1 12h4"/><path d="M19 12h4"/><path d="M4.22 4.22l2.83 2.83"/><path d="M16.95 16.95l2.83 2.83"/><path d="M4.22 19.78l2.83-2.83"/><path d="M16.95 7.05l2.83-2.83"/>
@@ -90,25 +98,16 @@
 
 <style>
   .sidebar {
-    position: fixed;
-    top: 0;
-    left: 0;
-    bottom: 0;
+    position: relative;
     width: 240px;
-    background: rgba(13, 13, 20, 0.85);
-    backdrop-filter: blur(16px);
-    border-right: 1px solid rgba(255, 255, 255, 0.06);
+    height: 100vh;
+    background-color: #202020;
+    border-right: 1px solid #3a3a3a;
     display: flex;
     flex-direction: column;
     padding: 0 12px 20px;
-    z-index: 100;
+    flex-shrink: 0;
     transition: width 0.25s ease;
-    overflow: hidden;
-  }
-
-  .sidebar.collapsed {
-    width: 64px;
-    padding: 0 8px 12px;
   }
 
   .sidebar-logo {
@@ -119,45 +118,31 @@
     margin: 0 -12px;
     color: #f0f0f0;
     cursor: pointer;
-    background: rgba(20, 20, 30, 0.6);
-    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
-    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+    background-color: #333333;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.08);
     position: relative;
     overflow: hidden;
-  }
-
-  .sidebar-logo::after {
-    content: '';
-    position: absolute;
-    inset: 0;
-    background: linear-gradient(90deg, transparent 0%, rgba(129, 140, 248, 0.08) 50%, transparent 100%);
-    pointer-events: none;
   }
 
   .logo-icon {
     width: 28px;
     height: 28px;
     flex-shrink: 0;
-    color: #818cf8;
+    color: #f0f0f0;
   }
 
   .logo-text {
-    font-size: 15px;
-    font-weight: 700;
+    font-size: 16px;
+    font-weight: 600;
     letter-spacing: 0.5px;
     white-space: nowrap;
-    background: linear-gradient(135deg, #f0f0f5 0%, #818cf8 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
-  }
-
-  .sidebar.collapsed .sidebar-logo {
-    padding: 16px 8px;
-    justify-content: center;
   }
 
   .collapse-btn {
+    position: absolute;
+    top: 18px;
+    right: 16px;
+    z-index: 5;
     display: flex;
     align-items: center;
     justify-content: center;
@@ -165,17 +150,21 @@
     height: 28px;
     border: none;
     background: none;
-    color: #606070;
+    color: #888888;
     border-radius: 6px;
     cursor: pointer;
     flex-shrink: 0;
-    margin: 8px auto;
     transition: all 0.15s ease;
   }
 
   .collapse-btn:hover {
-    color: #818cf8;
-    background: rgba(129, 140, 248, 0.1);
+    color: #f0f0f0;
+    background-color: rgba(240, 240, 240, 0.08);
+  }
+
+  .sidebar.collapsed .collapse-btn {
+    margin: 0 auto 8px;
+    position: static;
   }
 
   .sidebar-nav {
@@ -184,20 +173,31 @@
     flex-direction: column;
     gap: 6px;
     overflow-y: auto;
-    overflow-x: hidden;
-    padding-top: 12px;
+    min-height: 0;
     scrollbar-width: none;
+    padding-top: 12px;
   }
 
-  .sidebar-nav::-webkit-scrollbar { display: none; }
+  .sidebar-nav::-webkit-scrollbar {
+    display: none;
+  }
 
-  .nav-group { display: flex; flex-direction: column; gap: 2px; }
-  .nav-group-items { display: flex; flex-direction: column; gap: 2px; }
+  .nav-group {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
+
+  .nav-group-items {
+    display: flex;
+    flex-direction: column;
+    gap: 2px;
+  }
 
   .nav-group-label {
     font-size: 10px;
     font-weight: 600;
-    color: #606070;
+    color: #888888;
     text-transform: uppercase;
     letter-spacing: 0.8px;
     padding: 8px 12px 4px;
@@ -209,19 +209,28 @@
     border-radius: 6px;
     transition: color 0.15s ease;
   }
-  .nav-group-label:hover { color: #818cf8; }
 
-  .nav-group-arrow { transition: transform 0.15s ease; flex-shrink: 0; }
-  .nav-group-arrow.collapsed { transform: rotate(-90deg); }
+  .nav-group-label:hover {
+    color: #c0c0c0;
+  }
+
+  .nav-group-arrow {
+    transition: transform 0.15s ease;
+    flex-shrink: 0;
+  }
+
+  .nav-group-arrow.collapsed {
+    transform: rotate(-90deg);
+  }
 
   .nav-item {
     display: flex;
     align-items: center;
     gap: 10px;
-    padding: 10px 12px;
+    padding: 12px;
     border: none;
     background: none;
-    color: #a0a0b0;
+    color: #c0c0c0;
     font-size: 14px;
     border-radius: 6px;
     cursor: pointer;
@@ -229,13 +238,55 @@
     width: 100%;
     text-align: left;
   }
-  .nav-item:hover { background: rgba(129, 140, 248, 0.08); color: #f0f0f5; }
-  .nav-item.active { background: rgba(129, 140, 248, 0.15); color: #818cf8; }
 
-  .sidebar.collapsed .nav-item { justify-content: center; padding: 10px 4px; }
-  .sidebar.collapsed .nav-item span { display: none; }
+  .nav-item:hover {
+    background-color: rgba(240, 240, 240, 0.06);
+    color: #f0f0f0;
+  }
 
-  .sidebar-footer { padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.06); margin-top: auto; }
+  .nav-item.active {
+    background-color: rgba(240, 240, 240, 0.12);
+    color: #e0e0e0;
+  }
+
+  .sidebar.collapsed .nav-item {
+    justify-content: center;
+    padding: 10px 4px;
+  }
+
+  .sidebar.collapsed .nav-item span {
+    display: none;
+  }
+
+  .sidebar.collapsed .sidebar-logo {
+    padding: 12px 4px 8px;
+    margin: 0 -8px;
+    justify-content: center;
+    gap: 0;
+  }
+
+  .sidebar.collapsed .sidebar-logo .logo-text {
+    display: none;
+  }
+
+  .sidebar.collapsed .nav-group-label {
+    justify-content: center;
+    padding: 8px 0 4px;
+    letter-spacing: 0;
+  }
+
+  .sidebar.collapsed .nav-group-label span {
+    max-width: 36px;
+    overflow: hidden;
+    text-align: center;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+  }
+
+  .sidebar-footer {
+    padding-top: 8px;
+    border-top: 1px solid #3a3a3a;
+  }
 
   .status-row {
     display: flex;
@@ -244,7 +295,12 @@
     padding: 8px 12px;
   }
 
-  .status-indicator { display: flex; align-items: center; gap: 8px; font-size: 12px; }
+  .status-indicator {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    font-size: 12px;
+  }
 
   .status-dot {
     width: 8px;
@@ -254,12 +310,30 @@
   }
 
   .status-indicator.connected .status-dot {
-    background-color: #22c55e;
-    box-shadow: 0 0 6px rgba(34,197,94,0.5);
+    background-color: #66bb6a;
+    box-shadow: 0 0 6px rgba(102, 187, 106, 0.5);
     animation: pulse 2s infinite;
   }
 
-  @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
+  @keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.6; }
+  }
 
-  .status-text { color: #a0a0b0; }
+  .status-text {
+    color: #c0c0c0;
+  }
+
+  .sidebar.collapsed .status-text {
+    display: none;
+  }
+
+  .sidebar.collapsed .status-row {
+    justify-content: center;
+  }
+
+  .sidebar.collapsed {
+    width: 64px;
+    padding: 0 8px 12px;
+  }
 </style>

@@ -140,19 +140,16 @@
 
 <style>
   .settings-section {
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    border: 1px solid #3a3a3a;
     border-radius: 12px;
-    background: rgba(20, 20, 30, 0.5);
-    backdrop-filter: blur(12px);
-    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
+    background: #333333;
     padding: 20px;
     scroll-margin-top: 20px;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    transition: border-color 0.15s ease;
   }
 
   .settings-section:hover {
-    border-color: rgba(255, 255, 255, 0.1);
-    box-shadow: 0 8px 32px rgba(129, 140, 248, 0.06);
+    border-color: #888888;
   }
 
   .section-heading {
@@ -163,8 +160,17 @@
     margin-bottom: 16px;
   }
 
-  .section-heading h3 { font-size: 16px; font-weight: 600; margin: 0; }
-  .section-heading p { color: #606070; font-size: 12px; margin: 2px 0 0; }
+  .section-heading h3 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0;
+  }
+
+  .section-heading p {
+    color: #888888;
+    font-size: 12px;
+    margin: 2px 0 0;
+  }
 
   .field-grid {
     display: grid;
@@ -172,7 +178,11 @@
     gap: 16px;
   }
 
-  .field { display: grid; gap: 6px; align-content: start; }
+  .field {
+    display: grid;
+    gap: 6px;
+    align-content: start;
+  }
 
   .field label {
     display: flex;
@@ -183,66 +193,80 @@
     font-weight: 600;
   }
 
-  .field-source { color: #606070; font-size: 11px; font-weight: 500; }
+  .field-source {
+    color: #888888;
+    font-size: 11px;
+    font-weight: 500;
+  }
 
   .field :global(input),
   .field :global(select),
   .field :global(textarea) {
     width: 100%;
     min-height: 38px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    border: 1px solid #3a3a3a;
     border-radius: 8px;
-    background: rgba(26, 26, 40, 0.6);
-    color: #f0f0f5;
+    background: #2a2a2a;
+    color: #f0f0f0;
     padding: 8px 12px;
-    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+    transition: border-color 0.15s ease;
   }
 
   .field :global(input:focus),
   .field :global(select:focus),
   .field :global(textarea:focus) {
     outline: none;
-    border-color: rgba(129, 140, 248, 0.4);
-    box-shadow: 0 0 0 3px rgba(129, 140, 248, 0.1);
+    border-color: #e0e0e0;
   }
 
   .field :global(input:hover),
   .field :global(select:hover),
   .field :global(textarea:hover) {
-    border-color: rgba(255, 255, 255, 0.1);
+    border-color: #888888;
   }
 
   .field :global(input:disabled),
   .field :global(select:disabled),
   .field :global(textarea:disabled) {
-    background: rgba(17, 17, 24, 0.4);
-    color: #606070;
+    background: #202020;
+    color: #888888;
     cursor: not-allowed;
   }
 
-  .field-description { color: #606070; font-size: 12px; line-height: 1.4; }
+  .field-description {
+    color: #888888;
+    font-size: 12px;
+    line-height: 1.4;
+  }
 
-  .advanced-field { display: none; }
-  .show-advanced .advanced-field { display: grid; }
+  .advanced-field {
+    display: none;
+  }
 
-  .advanced-toggle { justify-self: start; margin-top: 12px; }
+  .show-advanced .advanced-field {
+    display: grid;
+  }
+
+  .advanced-toggle {
+    justify-self: start;
+    margin-top: 12px;
+  }
 
   .ghost-button {
     min-height: 34px;
-    border-radius: 8px;
-    border: 1px solid rgba(255, 255, 255, 0.06);
+    border-radius: 6px;
+    border: 1px solid #3a3a3a;
     padding: 7px 14px;
     cursor: pointer;
     font-weight: 600;
     font-size: 13px;
     transition: all 0.15s ease;
-    background: rgba(20, 20, 30, 0.5);
-    color: #f0f0f5;
+    background: #333333;
+    color: #f0f0f0;
   }
 
   .ghost-button:hover {
-    border-color: rgba(129, 140, 248, 0.3);
-    background: rgba(129, 140, 248, 0.1);
-    color: #818cf8;
+    background-color: rgba(240, 240, 240, 0.06);
+    border-color: #e0e0e0;
   }
 </style>

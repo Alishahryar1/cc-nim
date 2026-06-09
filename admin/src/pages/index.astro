@@ -1,7 +1,5 @@
 ---
 import Sidebar from '../components/Sidebar.svelte';
-import ProviderGrid from '../components/ProviderGrid.svelte';
-import SettingsForm from '../components/SettingsForm.svelte';
 ---
 
 <!doctype html>
@@ -15,7 +13,7 @@ import SettingsForm from '../components/SettingsForm.svelte';
   </head>
   <body>
     <div class="app-layout" id="app">
-      <Sidebar activeView="providers" collapsed={false} />
+      <Sidebar activeView="providers" collapsed={false} on:viewChange={(e) => setActiveView(e.detail.viewId, { scroll: true })} />
       <main class="main">
         <header class="topbar">
           <div class="topbar-left">
@@ -28,7 +26,7 @@ import SettingsForm from '../components/SettingsForm.svelte';
 
         <div id="adminViews" class="admin-views">
           <section id="view-providers" class="admin-view active" data-view="providers">
-            <ProviderGrid providers={[]} />
+            <div id="providerGridContainer"></div>
             <div id="providersSections" class="form-sections"></div>
           </section>
 
@@ -58,45 +56,56 @@ import SettingsForm from '../components/SettingsForm.svelte';
 
 <style is:global>
   :root {
-    --bg-primary: #0a0a0f;
-    --bg-secondary: #111118;
-    --bg-card: rgba(20, 20, 30, 0.6);
-    --bg-card-solid: #14141e;
-    --bg-input: #1a1a28;
-    --border-color: rgba(255, 255, 255, 0.08);
-    --border-hover: rgba(255, 255, 255, 0.15);
-    --text-primary: #f0f0f5;
-    --text-secondary: #a0a0b0;
-    --text-muted: #606070;
-    --accent: #818cf8;
-    --accent-glow: rgba(129, 140, 248, 0.15);
-    --success: #22c55e;
-    --error: #ef4444;
-    --warning: #f59e0b;
-    --shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
+    --bg-primary: #1a1a1a;
+    --bg-secondary: #252525;
+    --bg-sidebar: #202020;
+    --bg-card: #333333;
+    --bg-card-hover: #333333;
+    --bg-input: #2a2a2a;
+    --border-color: #3a3a3a;
+    --border-light: #333333;
+    --accent-primary: #e0e0e0;
+    --accent-hover: #f5f5f5;
+    --accent-muted: #888888;
+    --text-primary: #f0f0f0;
+    --text-secondary: #c0c0c0;
+    --text-muted: #888888;
+    --success: #66bb6a;
+    --error: #ef5350;
+    --warning: #ffb74d;
+    --accent-primary-rgb: 240, 240, 240;
+    --success-rgb: 102, 187, 106;
+    --error-rgb: 239, 83, 80;
+    --warning-rgb: 255, 183, 77;
+    --radius-sm: 6px;
+    --radius-md: 10px;
+    --radius-lg: 14px;
+    --transition-fast: 0.15s ease;
+    --transition-normal: 0.25s ease;
+    --sidebar-width: 240px;
+    --sidebar-collapsed-width: 64px;
   }
 
-  * { box-sizing: border-box; margin: 0; padding: 0; }
+  *,
+  *::before,
+  *::after {
+    margin: 0;
+    padding: 0;
+    box-sizing: border-box;
+  }
 
   body {
     min-width: 320px;
-    background: var(--bg-primary);
-    background-image:
-      radial-gradient(ellipse at 15% 30%, rgba(129, 140, 248, 0.08) 0%, transparent 55%),
-      radial-gradient(ellipse at 85% 70%, rgba(99, 102, 241, 0.06) 0%, transparent 55%),
-      radial-gradient(ellipse at 50% 0%, rgba(168, 85, 247, 0.04) 0%, transparent 50%),
-      linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
-    background-size: 100% 100%, 100% 100%, 100% 100%, 60px 60px, 60px 60px;
-    background-attachment: fixed;
+    background-color: var(--bg-primary);
     color: var(--text-primary);
     font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-    line-height: 1.5;
+    font-size: 14px;
+    line-height: 1.6;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
 
-  button, input, select, textarea { font: inherit; }
+  button, input, select, textarea { font-family: inherit; }
 
   .app-layout {
     display: flex;
@@ -106,28 +115,25 @@ import SettingsForm from '../components/SettingsForm.svelte';
 
   .main {
     flex: 1;
-    margin-left: 240px;
+    margin-left: var(--sidebar-width);
     min-width: 0;
-    padding: 24px;
+    overflow-y: auto;
+    background-color: var(--bg-primary);
   }
 
   .topbar {
     display: flex;
     align-items: center;
     justify-content: space-between;
-    margin-bottom: 24px;
-    padding-bottom: 16px;
+    padding: 21px 20px;
     border-bottom: 1px solid var(--border-color);
+    flex-shrink: 0;
   }
 
   .topbar h2 {
-    font-size: 24px;
-    font-weight: 700;
-    letter-spacing: -0.5px;
-    background: linear-gradient(135deg, #f0f0f5 0%, #818cf8 100%);
-    -webkit-background-clip: text;
-    -webkit-text-fill-color: transparent;
-    background-clip: text;
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
   }
 
   .status-pill {
@@ -138,29 +144,44 @@ import SettingsForm from '../components/SettingsForm.svelte';
     border-radius: 999px;
     padding: 4px 12px;
     background: var(--bg-card);
-    backdrop-filter: blur(8px);
     color: var(--text-muted);
     font-size: 12px;
     font-weight: 600;
     white-space: nowrap;
   }
 
+  .status-pill.ok {
+    color: var(--success);
+    background: rgba(var(--success-rgb), 0.1);
+    border-color: rgba(var(--success-rgb), 0.3);
+  }
+
   .status-pill.warn {
     color: var(--warning);
-    background: rgba(245, 158, 11, 0.12);
-    border-color: rgba(245, 158, 11, 0.35);
+    background: rgba(var(--warning-rgb), 0.1);
+    border-color: rgba(var(--warning-rgb), 0.3);
+  }
+
+  .status-pill.error {
+    color: var(--error);
+    background: rgba(var(--error-rgb), 0.1);
+    border-color: rgba(var(--error-rgb), 0.3);
   }
 
   .admin-views, .admin-view { display: grid; gap: 20px; }
   .admin-view[hidden] { display: none; }
 
-  .form-sections { display: grid; gap: 20px; }
+  .form-sections {
+    display: grid;
+    gap: 20px;
+    padding: 20px;
+  }
 
   .action-bar {
     position: fixed;
     right: 0;
     bottom: 0;
-    left: 240px;
+    left: var(--sidebar-width);
     z-index: 50;
     display: grid;
     grid-template-columns: minmax(0, 1fr) minmax(180px, auto) auto;
@@ -168,9 +189,8 @@ import SettingsForm from '../components/SettingsForm.svelte';
     align-items: center;
     min-height: 64px;
     border-top: 1px solid var(--border-color);
-    background: rgba(10, 10, 15, 0.85);
+    background: var(--bg-primary);
     padding: 12px 24px;
-    backdrop-filter: blur(16px);
   }
 
   .action-meta span { color: var(--text-muted); font-size: 12px; }
@@ -189,79 +209,284 @@ import SettingsForm from '../components/SettingsForm.svelte';
 
   .secondary-button {
     min-height: 34px;
-    border-radius: 8px;
+    border-radius: var(--radius-sm);
     border: 1px solid var(--border-color);
     padding: 7px 14px;
     cursor: pointer;
     font-weight: 600;
     font-size: 13px;
-    transition: all 0.15s ease;
+    transition: all var(--transition-fast);
     background: var(--bg-card);
-    backdrop-filter: blur(8px);
     color: var(--text-primary);
   }
 
   .secondary-button:hover {
-    border-color: var(--accent);
-    background: var(--accent-glow);
+    background: rgba(var(--accent-primary-rgb), 0.06);
+    border-color: var(--accent-primary);
   }
 
   .primary-button {
     min-height: 34px;
-    border-radius: 8px;
-    border: none;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--accent-primary);
     padding: 7px 14px;
     cursor: pointer;
     font-weight: 600;
     font-size: 13px;
-    transition: all 0.15s ease;
-    background: linear-gradient(135deg, #6366f1, #818cf8);
-    color: #ffffff;
-    box-shadow: 0 2px 12px rgba(99, 102, 241, 0.35);
+    transition: all var(--transition-fast);
+    background: var(--accent-primary);
+    color: #1a1a1a;
   }
 
   .primary-button:hover {
-    box-shadow: 0 4px 20px rgba(99, 102, 241, 0.5);
-    transform: translateY(-1px);
+    background: var(--accent-hover);
+    border-color: var(--accent-hover);
   }
 
   .primary-button:disabled {
     cursor: not-allowed;
-    background: var(--bg-card-solid);
+    background: var(--bg-card);
+    border-color: var(--border-color);
     color: var(--text-muted);
-    box-shadow: none;
-    transform: none;
   }
 
   .settings-section {
-    background: var(--bg-card) !important;
-    backdrop-filter: blur(12px) !important;
-    border: 1px solid var(--border-color) !important;
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    background: var(--bg-card);
+    padding: 20px;
+    scroll-margin-top: 20px;
+    transition: border-color var(--transition-fast);
   }
 
   .settings-section:hover {
-    border-color: var(--border-hover) !important;
+    border-color: var(--accent-muted);
+  }
+
+  .section-heading {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 16px;
+  }
+
+  .section-heading h3 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0;
+  }
+
+  .section-heading p {
+    color: var(--text-muted);
+    font-size: 12px;
+    margin: 2px 0 0;
+  }
+
+  .field-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+  }
+
+  .field {
+    display: grid;
+    gap: 6px;
+    align-content: start;
+  }
+
+  .field label {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+    font-size: 13px;
+    font-weight: 600;
+  }
+
+  .field input,
+  .field select,
+  .field textarea {
+    width: 100%;
+    min-height: 38px;
+    border: 1px solid var(--border-color);
+    border-radius: 8px;
+    background: var(--bg-input);
+    color: var(--text-primary);
+    padding: 8px 12px;
+    font-family: inherit;
+    font-size: 14px;
+    transition: border-color var(--transition-fast);
+  }
+
+  .field input:focus,
+  .field select:focus,
+  .field textarea:focus {
+    outline: none;
+    border-color: var(--accent-primary);
+  }
+
+  .field input:hover,
+  .field select:hover,
+  .field textarea:hover {
+    border-color: var(--accent-muted);
+  }
+
+  .field input:disabled,
+  .field select:disabled,
+  .field textarea:disabled {
+    background: var(--bg-secondary);
+    color: var(--text-muted);
+    cursor: not-allowed;
+  }
+
+  .field-source {
+    color: var(--text-muted);
+    font-size: 11px;
+    font-weight: 500;
+  }
+
+  .field-description {
+    color: var(--text-muted);
+    font-size: 12px;
+    line-height: 1.4;
+  }
+
+  .advanced-field {
+    display: none;
+  }
+
+  .show-advanced .advanced-field {
+    display: grid;
+  }
+
+  .ghost-button {
+    min-height: 34px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    padding: 7px 14px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 13px;
+    transition: all var(--transition-fast);
+    background: var(--bg-card);
+    color: var(--text-primary);
+  }
+
+  .ghost-button:hover {
+    background-color: rgba(var(--accent-primary-rgb), 0.06);
+    border-color: var(--accent-primary);
+  }
+
+  .provider-strip {
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    background: var(--bg-card);
+    padding: 16px;
+    transition: border-color var(--transition-fast);
+  }
+
+  .strip-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 12px;
+    margin-bottom: 12px;
+  }
+
+  .strip-header h3 {
+    font-size: 16px;
+    font-weight: 600;
+    margin: 0;
+  }
+
+  .provider-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+    gap: 12px;
   }
 
   .provider-card {
-    background: rgba(17, 17, 24, 0.7) !important;
-    backdrop-filter: blur(8px) !important;
+    display: grid;
+    gap: 8px;
+    min-height: 108px;
+    border: 1px solid var(--border-color);
+    border-radius: 10px;
+    padding: 14px;
+    background: var(--bg-sidebar);
+    transition: all var(--transition-fast);
   }
 
   .provider-card:hover {
-    background: rgba(20, 20, 30, 0.8) !important;
-    border-color: var(--border-hover) !important;
+    background: var(--bg-secondary);
+    border-color: var(--accent-muted);
   }
 
-  ::-webkit-scrollbar { width: 6px; height: 6px; }
-  ::-webkit-scrollbar-track { background: transparent; }
-  ::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
+  .provider-title {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+  }
 
-  ::selection { background: rgba(129, 140, 248, 0.3); }
+  .provider-title strong {
+    font-size: 14px;
+    font-weight: 600;
+  }
 
-  @media (max-width: 900px) {
-    .main { margin-left: 0; padding: 16px; }
+  .provider-meta {
+    color: var(--text-muted);
+    font-size: 12px;
+    word-break: break-word;
+  }
+
+  .test-button {
+    min-height: 34px;
+    border-radius: var(--radius-sm);
+    border: 1px solid var(--border-color);
+    padding: 7px 14px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 13px;
+    transition: all var(--transition-fast);
+    background: var(--bg-card);
+    color: var(--text-primary);
+  }
+
+  .test-button:hover:not(:disabled) {
+    background-color: rgba(var(--accent-primary-rgb), 0.06);
+    border-color: var(--accent-primary);
+  }
+
+  .test-button:disabled {
+    opacity: 0.5;
+    cursor: not-allowed;
+  }
+
+  ::-webkit-scrollbar {
+    width: 6px;
+    height: 6px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: transparent;
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--border-color);
+    border-radius: 3px;
+  }
+
+  ::-webkit-scrollbar-thumb:hover {
+    background: var(--text-muted);
+  }
+
+  ::selection {
+    background: rgba(var(--accent-primary-rgb), 0.3);
+  }
+
+  @media (max-width: 768px) {
+    .main { margin-left: 0; }
     .action-bar { left: 0; grid-template-columns: 1fr; padding: 12px 16px; }
     .action-buttons { justify-content: stretch; }
     .action-buttons button { flex: 1; }
@@ -531,9 +756,22 @@ import SettingsForm from '../components/SettingsForm.svelte';
   }
 
   function renderProviders(providers) {
-    const grid = byId('providerGrid');
-    if (!grid) return;
-    grid.innerHTML = '';
+    const container = byId('providerGridContainer');
+    if (!container) return;
+    container.innerHTML = '';
+
+    const strip = document.createElement('section');
+    strip.className = 'provider-strip';
+
+    const header = document.createElement('div');
+    header.className = 'strip-header';
+    header.innerHTML = '<h3>Provider Status</h3>';
+    strip.appendChild(header);
+
+    const grid = document.createElement('div');
+    grid.className = 'provider-grid';
+    grid.id = 'providerGrid';
+
     providers.forEach(provider => {
       const card = document.createElement('article');
       card.className = 'provider-card';
@@ -579,6 +817,9 @@ import SettingsForm from '../components/SettingsForm.svelte';
       card.append(title, meta, button);
       grid.appendChild(card);
     });
+
+    strip.appendChild(grid);
+    container.appendChild(strip);
   }
 
   document.addEventListener('DOMContentLoaded', () => {
