@@ -1,34 +1,35 @@
 @import "tailwindcss";
 
 @theme {
-  --color-bg-base: #09090b;
-  --color-bg-surface: #111113;
-  --color-bg-elevated: #18181b;
-  --color-bg-hover: #1f1f23;
-  --color-bg-active: #27272a;
-  --color-bg-input: #141416;
-  --color-border-subtle: rgba(255, 255, 255, 0.06);
-  --color-border-default: rgba(255, 255, 255, 0.08);
-  --color-border-hover: rgba(255, 255, 255, 0.15);
-  --color-border-active: rgba(255, 255, 255, 0.2);
-  --color-text-primary: #fafafa;
-  --color-text-secondary: #a1a1aa;
-  --color-text-muted: #71717a;
-  --color-text-disabled: #3f3f46;
-  --color-accent: #818cf8;
-  --color-accent-hover: #a5b4fc;
-  --color-accent-subtle: rgba(129, 140, 248, 0.10);
-  --color-accent-glow: rgba(129, 140, 248, 0.15);
-  --color-success: #34d399;
-  --color-success-subtle: rgba(52, 211, 153, 0.10);
-  --color-warning: #fbbf24;
-  --color-warning-subtle: rgba(251, 191, 36, 0.10);
-  --color-error: #f87171;
-  --color-error-subtle: rgba(248, 113, 113, 0.10);
+  --color-bg-base: #06060f;
+  --color-bg-surface: #0c0c1a;
+  --color-bg-elevated: #141428;
+  --color-bg-hover: #1a1a32;
+  --color-bg-active: #22223a;
+  --color-bg-input: #0a0a18;
+  --color-border-subtle: rgba(0, 229, 255, 0.06);
+  --color-border-default: rgba(0, 229, 255, 0.10);
+  --color-border-hover: rgba(0, 229, 255, 0.20);
+  --color-border-active: rgba(0, 229, 255, 0.30);
+  --color-text-primary: #e8eaed;
+  --color-text-secondary: #8b8fa3;
+  --color-text-muted: #5a5e72;
+  --color-text-disabled: #3a3d4e;
+  --color-accent: #00e5ff;
+  --color-accent-hover: #33eaff;
+  --color-accent-subtle: rgba(0, 229, 255, 0.08);
+  --color-accent-glow: rgba(0, 229, 255, 0.12);
+  --color-success: #00ff88;
+  --color-success-subtle: rgba(0, 255, 136, 0.08);
+  --color-warning: #ffaa00;
+  --color-warning-subtle: rgba(255, 170, 0, 0.08);
+  --color-error: #ff3366;
+  --color-error-subtle: rgba(255, 51, 102, 0.08);
   --radius-sm: 6px;
   --radius-md: 8px;
   --radius-lg: 12px;
   --radius-xl: 16px;
+  --font-display: 'Space Grotesk', system-ui, sans-serif;
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
   --font-mono: 'JetBrains Mono', 'Fira Code', monospace;
 }
@@ -288,11 +289,12 @@ input, select, textarea, button {
 }
 
 .strip-header h3 {
+  font-family: var(--font-display);
   font-size: 15px;
   font-weight: 600;
   color: var(--color-text-primary);
   margin: 0;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
 }
 
 .provider-grid {
@@ -395,11 +397,12 @@ input, select, textarea, button {
 }
 
 .section-heading h3 {
+  font-family: var(--font-display);
   font-size: 15px;
   font-weight: 600;
   color: var(--color-text-primary);
   margin: 0;
-  letter-spacing: -0.01em;
+  letter-spacing: -0.02em;
 }
 
 .section-heading p {
@@ -546,11 +549,13 @@ input, select, textarea, button {
 }
 
 .stat-card .stat-value {
+  font-family: var(--font-display);
   font-size: 28px;
   font-weight: 700;
   color: var(--color-text-primary);
   line-height: 1;
-  letter-spacing: -0.02em;
+  letter-spacing: -0.03em;
+  font-variant-numeric: tabular-nums;
 }
 
 .stat-card .stat-label {
@@ -823,14 +828,20 @@ input, select, textarea, button {
 .page-title-gradient {
   background: linear-gradient(
     135deg,
-    var(--color-text-primary) 0%,
-    rgba(255, 255, 255, 0.7) 50%,
-    var(--color-text-primary) 100%
+    var(--color-accent) 0%,
+    var(--color-text-primary) 40%,
+    var(--color-accent) 100%
   );
   background-size: 200% 100%;
   -webkit-background-clip: text;
   background-clip: text;
   -webkit-text-fill-color: transparent;
+  animation: gradient-shift 6s ease-in-out infinite;
+}
+
+@keyframes gradient-shift {
+  0%, 100% { background-position: 0% 50%; }
+  50% { background-position: 100% 50%; }
 }
 
 /* ─── Config Path Copy ───────────────────────────────────────── */

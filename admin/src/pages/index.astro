@@ -6,11 +6,13 @@ import Sidebar from '../components/Sidebar.svelte';
 <!doctype html>
 <html lang="en" class="h-full">
   <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Free Claude Code Admin</title>
-    <link rel="icon" href="data:," />
-    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Free Claude Code - Admin</title>
+    <link rel="icon" type="image/svg+xml" href="/admin/favicon.svg" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   </head>
   <body class="h-full">
     <div class="flex h-full" id="app">
@@ -19,7 +21,7 @@ import Sidebar from '../components/Sidebar.svelte';
       <div class="flex flex-1 flex-col min-w-0 overflow-hidden">
         <header class="flex items-center justify-between px-6 h-14 shrink-0 border-b border-border-default">
           <div class="flex items-center gap-3">
-            <h2 id="pageTitle" class="text-[15px] font-semibold page-title-gradient" style="letter-spacing:-0.01em">Providers</h2>
+            <h2 id="pageTitle" class="text-[18px] font-semibold page-title-gradient" style="font-family:var(--font-display);letter-spacing:-0.02em">Providers</h2>
           </div>
           <div class="flex items-center gap-3">
             <span id="dirtyState" class="status-pill" style="border:1px solid var(--color-border-subtle);background:var(--color-bg-elevated)">No changes</span>
