@@ -28,8 +28,12 @@ import Sidebar from '../components/Sidebar.svelte';
 
         <main class="flex-1 overflow-y-auto">
           <div id="loadingOverlay">
-            <div class="spinner"></div>
-            <span class="loading-text" id="loadingText">Loading config...</span>
+            <div class="skeleton-grid">
+              <div class="skeleton-card" style="--d:0"></div>
+              <div class="skeleton-card" style="--d:1"></div>
+              <div class="skeleton-card" style="--d:2"></div>
+              <div class="skeleton-card" style="--d:3"></div>
+            </div>
           </div>
           <div id="adminViews" class="p-5 space-y-4" hidden>
             <div id="statsBar" class="stats-grid"></div>
@@ -55,10 +59,21 @@ import Sidebar from '../components/Sidebar.svelte';
           </div>
           <div id="messageArea" class="text-[12px] text-text-muted text-center flex-1 min-w-0"></div>
           <div class="flex items-center gap-2 shrink-0">
-            <button id="validateButton" class="btn btn-secondary" type="button">Validate</button>
-            <button id="applyButton" class="btn btn-primary" type="button" disabled>Apply</button>
+            <button id="validateButton" class="btn btn-secondary" type="button">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px"><polyline points="20 6 9 17 4 12"/></svg>
+              Validate
+              <span class="kbd" style="margin-left:6px">⌘K</span>
+            </button>
+            <button id="applyButton" class="btn btn-primary" type="button" disabled>
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" style="margin-right:6px"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+              Apply
+              <span class="kbd" style="margin-left:6px">⌘S</span>
+            </button>
           </div>
         </footer>
+
+        <!-- Toast container -->
+        <div id="toastContainer" class="toast-container"></div>
       </div>
     </div>
   </body>
@@ -121,12 +136,31 @@ import Sidebar from '../components/Sidebar.svelte';
   function showMessage(message, kind = '') {
     const area = byId('messageArea');
     area.textContent = message;
-    area.className = `text-xs text-center flex-1 min-w-0 ${kind || 'text-text-muted'}`.trim();
+    area.className = `text-[12px] text-center flex-1 min-w-0 ${kind || 'text-text-muted'}`.trim();
+  }
+
+  function showToast(message, type = 'info', duration = 4000) {
+    const container = byId('toastContainer');
+    const toast = document.createElement('div');
+    toast.className = `toast toast-${type}`;
+    const iconSvg = {
+      success: '<svg class="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>',
+      error: '<svg class="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>',
+      info: '<svg class="toast-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>'
+    };
+    toast.innerHTML = `${iconSvg[type] || iconSvg.info}<span class="toast-msg">${message}</span><button class="toast-close" onclick="this.parentElement.remove()"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg></button>`;
+    container.appendChild(toast);
+    setTimeout(() => { toast.classList.add('toast-out'); setTimeout(() => toast.remove(), 250); }, duration);
   }
 
   function showValidationResult(result) {
-    if (result.valid) showMessage('Config shape is valid', 'text-success');
-    else showMessage(result.errors.join('; '), 'text-error');
+    if (result.valid) {
+      showMessage('Config shape is valid', 'text-text-success');
+      showToast('Config is valid', 'success');
+    } else {
+      showMessage(result.errors.join('; '), 'text-text-error');
+      showToast(result.errors.join('; '), 'error', 6000);
+    }
   }
 
   async function validate(showResult = true) {
@@ -140,14 +174,17 @@ import Sidebar from '../components/Sidebar.svelte';
     if (!result.applied) { showValidationResult(result); return; }
     const restart = result.restart || {};
     if (restart.required && restart.automatic) {
-      showMessage('Applied. Restarting server...', 'text-success');
+      showToast('Applied. Restarting server...', 'success');
+      showMessage('Applied. Restarting server...', 'text-text-success');
       byId('applyButton').disabled = true;
       setTimeout(() => window.location.href = restart.admin_url || '/admin', 1600);
       return;
     }
     const pending = restart.required ? restart.fields || [] : result.pending_fields || [];
     await load();
-    showMessage(pending.length ? `Applied. Restart fcc-server to use: ${pending.join(', ')}` : 'Applied', 'text-success');
+    const msg = pending.length ? `Applied. Restart fcc-server to use: ${pending.join(', ')}` : 'Applied';
+    showMessage(msg, 'text-text-success');
+    showToast(msg, 'success');
   }
 
   function renderSections() {
@@ -434,6 +471,17 @@ import Sidebar from '../components/Sidebar.svelte';
   document.addEventListener('DOMContentLoaded', () => {
     byId('validateButton').addEventListener('click', () => validate(true));
     byId('applyButton').addEventListener('click', apply);
+
+    document.addEventListener('keydown', (e) => {
+      if ((e.metaKey || e.ctrlKey) && e.key === 's') {
+        e.preventDefault();
+        if (!byId('applyButton').disabled) apply();
+      }
+      if ((e.metaKey || e.ctrlKey) && e.key === 'k') {
+        e.preventDefault();
+        validate(true);
+      }
+    });
 
     load();
   });

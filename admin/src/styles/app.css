@@ -590,14 +590,44 @@ input, select, textarea, button {
   display: none;
 }
 
-#loadingOverlay .spinner {
-  width: 18px;
-  height: 18px;
-  border: 2px solid var(--color-border-default);
-  border-top-color: var(--color-accent);
-  border-radius: 50%;
-  animation: spin 0.6s linear infinite;
-  margin-right: 10px;
+/* ─── Skeleton Cards ─────────────────────────────────────────── */
+
+.skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: var(--space-3);
+  padding: var(--space-6);
+  max-width: 960px;
+  margin: 0 auto;
+  width: 100%;
+}
+
+.skeleton-card {
+  border-radius: var(--radius-lg);
+  background: var(--color-bg-surface);
+  border: 1px solid var(--color-border-subtle);
+  height: 88px;
+  position: relative;
+  overflow: hidden;
+}
+
+.skeleton-card::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  background: linear-gradient(
+    90deg,
+    transparent 0%,
+    rgba(255, 255, 255, 0.04) 50%,
+    transparent 100%
+  );
+  animation: skeleton-shimmer 1.5s infinite;
+  animation-delay: calc(var(--d, 0) * 0.1s);
+}
+
+@keyframes skeleton-shimmer {
+  0% { transform: translateX(-100%); }
+  100% { transform: translateX(100%); }
 }
 
 #loadingOverlay .loading-text {
@@ -623,4 +653,140 @@ input, select, textarea, button {
 
 @media (max-width: 768px) {
   input, textarea, select { font-size: 16px !important; }
+}
+
+/* ─── Toast Notifications ────────────────────────────────────── */
+
+.toast-container {
+  position: fixed;
+  top: 16px;
+  right: 16px;
+  z-index: 9999;
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+  pointer-events: none;
+}
+
+.toast {
+  background: var(--color-bg-elevated);
+  border: 1px solid var(--color-border-default);
+  border-radius: var(--radius-md);
+  padding: 10px 16px;
+  font-size: 13px;
+  color: var(--color-text-primary);
+  box-shadow:
+    0 8px 32px rgba(0, 0, 0, 0.4),
+    0 0 0 1px rgba(255, 255, 255, 0.05) inset;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  pointer-events: auto;
+  opacity: 0;
+  transform: translateX(20px);
+  animation: toast-in 0.3s ease forwards;
+  max-width: 360px;
+  backdrop-filter: blur(8px);
+}
+
+.toast.toast-out {
+  animation: toast-out 0.25s ease forwards;
+}
+
+.toast-icon {
+  flex-shrink: 0;
+  width: 16px;
+  height: 16px;
+}
+
+.toast.toast-success { border-color: var(--color-success); }
+.toast.toast-success .toast-icon { color: var(--color-success); }
+.toast.toast-error { border-color: var(--color-error); }
+.toast.toast-error .toast-icon { color: var(--color-error); }
+.toast.toast-info { border-color: var(--color-accent); }
+.toast.toast-info .toast-icon { color: var(--color-accent); }
+
+.toast-msg {
+  flex: 1;
+  min-width: 0;
+}
+
+.toast-close {
+  flex-shrink: 0;
+  background: none;
+  border: none;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  padding: 2px;
+  border-radius: var(--radius-sm);
+  transition: color 0.15s ease;
+}
+
+.toast-close:hover {
+  color: var(--color-text-primary);
+}
+
+@keyframes toast-in {
+  to { opacity: 1; transform: translateX(0); }
+}
+
+@keyframes toast-out {
+  to { opacity: 0; transform: translateX(20px); }
+}
+
+/* ─── Kbd Shortcut Badge ─────────────────────────────────────── */
+
+.kbd {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  min-width: 20px;
+  height: 20px;
+  padding: 0 5px;
+  font-size: 10px;
+  font-family: var(--font-mono);
+  color: var(--color-text-muted);
+  background: var(--color-bg-base);
+  border: 1px solid var(--color-border-subtle);
+  border-radius: 4px;
+  box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+/* ─── Button Icon-only ───────────────────────────────────────── */
+
+.btn-icon {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 32px;
+  height: 32px;
+  padding: 0;
+  border-radius: var(--radius-md);
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-surface);
+  color: var(--color-text-secondary);
+  cursor: pointer;
+  transition: all 0.15s ease;
+}
+
+.btn-icon:hover {
+  color: var(--color-text-primary);
+  background: var(--color-bg-hover);
+  border-color: var(--color-border-hover);
+}
+
+/* ─── Provider Status Color Override ─────────────────────────── */
+
+.provider-strip[data-status="configured"] {
+  border-left: 3px solid var(--color-success);
+}
+
+.provider-strip[data-status="not_configured"] {
+  border-left: 3px solid var(--color-border-default);
+}
+
+.provider-strip[data-status="error"] {
+  border-left: 3px solid var(--color-error);
 }
