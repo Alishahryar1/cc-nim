@@ -4,7 +4,7 @@ import Sidebar from '../components/Sidebar.svelte';
 ---
 
 <!doctype html>
-<html lang="en" class="h-full bg-[var(--color-bg-base)]">
+<html lang="en" class="h-full">
   <head>
     <meta charset="UTF-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1.0" />
@@ -14,650 +14,433 @@ import Sidebar from '../components/Sidebar.svelte';
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
     <link href="https://fonts.googleapis.com/css2?family=Space+Grotesk:wght@400;500;600;700&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
   </head>
-  <body class="h-full antialiased text-[var(--color-text-primary)] selection:bg-[var(--color-accent-subtle)] selection:text-[var(--color-accent)]">
-    <div class="flex h-full overflow-hidden" id="app">
-      <Sidebar client:load activeView="providers" collapsed={false} onViewChange={(id) => setActiveView(id, { scroll: true })} />
+  <body class="h-full antialiased text-[var(--color-text-primary)]">
+    <div class="flex h-full" id="app">
+      <Sidebar client:load activeView="providers" collapsed={false} onViewChange={(id) => setActiveView(id)} />
 
-      <div class="flex flex-1 flex-col min-w-0 overflow-hidden bg-[var(--color-bg-surface)]">
-        <header class="flex items-center justify-between px-6 h-14 shrink-0 border-b border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] backdrop-blur-md z-10">
+      <div class="flex flex-1 flex-col min-w-0 bg-[var(--color-bg-surface)]">
+        <!-- Header -->
+        <header class="flex items-center justify-between px-6 h-14 shrink-0 border-b border-[var(--color-border-subtle)]">
           <div class="flex items-center gap-3">
-            <h2 id="pageTitle" class="text-[16px] font-semibold tracking-tight text-[var(--color-text-primary)]" style="font-family: var(--font-display); letter-spacing: -0.01em;">
-              Providers
-            </h2>
+            <h2 id="pageTitle" class="text-base font-semibold" style="font-family:var(--font-display)">Providers</h2>
           </div>
-          <div class="flex items-center gap-3">
-            <span id="dirtyState" class="status-pill transition-all duration-300 ease-out font-medium text-[11px] px-2.5 py-1 rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-bg-base)]">
-              No changes
-            </span>
-          </div>
+          <span id="dirtyState" class="text-xs text-[var(--color-text-muted)]">No changes</span>
         </header>
 
-        <main class="flex-1 overflow-y-auto relative min-h-0 focus:outline-none" tabindex="-1">
-          <div id="loadingOverlay" class="absolute inset-0 z-50 bg-[var(--color-bg-surface)] p-6 transition-all duration-300 ease-in-out flex flex-col gap-6">
-            <div class="stats-grid animate-pulse">
-              <div class="h-24 bg-[var(--color-bg-hover)] rounded-xl border border-[var(--color-border-subtle)]"></div>
-              <div class="h-24 bg-[var(--color-bg-hover)] rounded-xl border border-[var(--color-border-subtle)]"></div>
-              <div class="h-24 bg-[var(--color-bg-hover)] rounded-xl border border-[var(--color-border-subtle)]"></div>
+        <!-- Main -->
+        <main id="mainContent" class="flex-1 overflow-y-auto">
+          <!-- Loading skeleton -->
+          <div id="loading" class="p-6 space-y-4">
+            <div class="flex gap-4">
+              <div class="flex-1 h-24 rounded-xl bg-[var(--color-bg-elevated)] animate-pulse"></div>
+              <div class="flex-1 h-24 rounded-xl bg-[var(--color-bg-elevated)] animate-pulse"></div>
+              <div class="flex-1 h-24 rounded-xl bg-[var(--color-bg-elevated)] animate-pulse"></div>
             </div>
-            <div class="skeleton-grid flex-1 overflow-hidden">
-              <div class="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4 animate-pulse">
-                <div class="h-36 bg-[var(--color-bg-hover)] rounded-xl border border-[var(--color-border-subtle)]" style="--d:0"></div>
-                <div class="h-36 bg-[var(--color-bg-hover)] rounded-xl border border-[var(--color-border-subtle)]" style="--d:1"></div>
-                <div class="h-36 bg-[var(--color-bg-hover)] rounded-xl border border-[var(--color-border-subtle)]" style="--d:2"></div>
-              </div>
+            <div class="grid grid-cols-3 gap-4">
+              <div class="h-32 rounded-xl bg-[var(--color-bg-elevated)] animate-pulse"></div>
+              <div class="h-32 rounded-xl bg-[var(--color-bg-elevated)] animate-pulse"></div>
+              <div class="h-32 rounded-xl bg-[var(--color-bg-elevated)] animate-pulse"></div>
             </div>
           </div>
 
-          <div id="adminViews" class="p-6 space-y-6 opacity-0 translate-y-2 transition-all duration-500 ease-out hidden">
-            <div id="statsBar" class="stats-grid grid grid-cols-1 md:grid-cols-3 gap-4"></div>
-            
-            <section id="view-providers" class="admin-view space-y-6" data-view="providers">
+          <!-- Content (hidden until loaded) -->
+          <div id="content" class="p-6 space-y-6" style="display:none">
+            <div id="statsBar" class="grid grid-cols-1 md:grid-cols-3 gap-4"></div>
+
+            <section id="view-providers" class="admin-view" data-view="providers">
               <div id="providerGridContainer"></div>
-              <div id="providersSections" class="space-y-6"></div>
+              <div id="providersSections" class="space-y-4"></div>
             </section>
 
-            <section id="view-model_config" class="admin-view space-y-6" data-view="model_config" hidden>
-              <div id="modelConfigSections" class="space-y-6"></div>
+            <section id="view-model_config" class="admin-view" data-view="model_config" style="display:none">
+              <div id="modelConfigSections" class="space-y-4"></div>
             </section>
 
-            <section id="view-messaging" class="admin-view space-y-6" data-view="messaging" hidden>
-              <div id="messagingSections" class="space-y-6"></div>
+            <section id="view-messaging" class="admin-view" data-view="messaging" style="display:none">
+              <div id="messagingSections" class="space-y-4"></div>
             </section>
           </div>
         </main>
 
-        <footer class="action-bar flex items-center justify-between gap-4 px-6 h-14 shrink-0 border-t border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)] z-10">
+        <!-- Footer -->
+        <footer class="flex items-center justify-between px-6 h-14 shrink-0 border-t border-[var(--color-border-subtle)] bg-[var(--color-bg-elevated)]">
           <div class="flex items-center gap-3 flex-1 min-w-0">
-            <button id="configPath" type="button" class="config-path flex items-center gap-2 text-[12px] font-mono font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-accent)] px-2.5 py-1 rounded-md bg-[var(--color-bg-base)] border border-[var(--color-border-subtle)] transition-all overflow-hidden truncate max-w-md focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]" title="Click to copy path configuration">
-            </button>
-            <span id="versionInfo" class="text-[11px] text-[var(--color-text-muted)] font-mono select-none"></span>
+            <button id="configPath" type="button" class="text-xs font-mono text-[var(--color-text-secondary)] hover:text-[var(--color-accent)] truncate max-w-md cursor-pointer"></button>
+            <span id="versionInfo" class="text-xs text-[var(--color-text-muted)] font-mono"></span>
           </div>
-          
-          <div id="messageArea" class="text-[12px] font-medium text-[var(--color-text-muted)] text-center flex-1 min-w-0 transition-all duration-200" role="status" aria-live="polite"></div>
-          
-          <div class="flex items-center gap-3 shrink-0">
-            <button id="validateButton" class="btn btn-secondary flex items-center gap-2 h-9 px-4 rounded-md text-[13px] font-medium border border-[var(--color-border-subtle)] hover:bg-[var(--color-bg-hover)] transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]" type="button">
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
-              Validate
-              <kbd class="kbd ml-1 text-[10px] px-1.5 py-0.5 rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] text-[var(--color-text-muted)] font-mono uppercase">⌘K</kbd>
-            </button>
-            <button id="applyButton" class="btn btn-primary flex items-center gap-2 h-9 px-4 rounded-md text-[13px] font-medium bg-[var(--color-accent)] text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-all focus-visible:outline focus-visible:outline-2 focus-visible:outline-[var(--color-accent)]" type="button" disabled>
-              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.25" stroke-linecap="round" stroke-linejoin="round"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
-              Apply
-              <kbd class="kbd ml-1 text-[10px] px-1.5 py-0.5 rounded border transparent bg-white/20 text-white font-mono uppercase">⌘S</kbd>
-            </button>
+          <div id="messageArea" class="text-xs text-[var(--color-text-muted)] text-center flex-1 min-w-0"></div>
+          <div class="flex items-center gap-2 shrink-0">
+            <button id="validateBtn" class="h-8 px-3 rounded-md text-xs font-medium border border-[var(--color-border-subtle)] hover:bg-[var(--color-bg-hover)] transition-colors" type="button">Validate</button>
+            <button id="applyBtn" class="h-8 px-3 rounded-md text-xs font-medium bg-[var(--color-accent)] text-white hover:opacity-90 disabled:opacity-40 disabled:cursor-not-allowed transition-opacity" type="button" disabled>Apply</button>
           </div>
         </footer>
 
-        <div id="toastContainer" class="toast-container fixed bottom-6 right-6 flex flex-col gap-2 z-50 pointer-events-none" role="live" aria-live="assertive"></div>
+        <!-- Toast container -->
+        <div id="toastContainer" class="fixed bottom-6 right-6 flex flex-col gap-2 z-50 pointer-events-none"></div>
       </div>
     </div>
   </body>
 </html>
 
-
 <script>
   import { loadConfig, validateConfig, applyConfig, loadLocalStatus } from '../lib/api';
   import { VIEW_GROUPS, MASKED_SECRET } from '../lib/config';
 
-  let appState = {
-    config: null,
-    fields: [],
-    sections: [],
-    providerStatus: [],
-    activeView: 'providers',
-    isInitialLoad: true
-  };
+  let config, fields, sections, providerStatus;
 
-  const byId = (id) => document.getElementById(id);
+  const $ = (id) => document.getElementById(id);
 
-  function readFieldValue(input) {
-    if (input.type === 'checkbox') return input.checked ? 'true' : 'false';
-    if (input.dataset.secret === 'true' && input.dataset.configured === 'true') {
-      return input.value ? input.value : MASKED_SECRET;
-    }
-    return input.value;
+  function readValue(el) {
+    if (el.type === 'checkbox') return el.checked ? 'true' : 'false';
+    if (el.dataset.secret === 'true' && el.dataset.configured === 'true') return el.value || MASKED_SECRET;
+    return el.value;
   }
 
   function changedValues() {
-    const values = {};
-    document.querySelectorAll('[data-key]').forEach(input => {
-      if (input.disabled || !input.matches('input, select, textarea')) return;
-      const value = readFieldValue(input);
-      if (value !== input.dataset.original) values[input.dataset.key] = value;
+    const vals = {};
+    document.querySelectorAll('[data-key]').forEach(el => {
+      if (el.disabled || !el.matches('input, select, textarea')) return;
+      const v = readValue(el);
+      if (v !== el.dataset.original) vals[el.dataset.key] = v;
     });
-    return values;
+    return vals;
   }
 
-  function updateDirtyState() {
-    const count = Object.keys(changedValues()).length;
-    const el = byId('dirtyState');
-    if (!el) return;
-
-    el.textContent = count === 0 ? 'No changes' : `${count} unsaved change${count === 1 ? '' : 's'}`;
-    
-    if (count === 0) {
-      el.className = "status-pill text-[11px] font-medium px-2.5 py-1 rounded-full border border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] text-[var(--color-text-secondary)] transition-all duration-300";
-    } else {
-      el.className = "status-pill text-[11px] font-semibold px-2.5 py-1 rounded-full border border-amber-500/20 bg-amber-500/10 text-amber-500 animate-pulse transition-all duration-300";
-    }
-    
-    byId('applyButton').disabled = count === 0;
+  function markDirty() {
+    const n = Object.keys(changedValues()).length;
+    const el = $('dirtyState');
+    el.textContent = n === 0 ? 'No changes' : `${n} unsaved change${n === 1 ? '' : 's'}`;
+    el.className = `text-xs ${n === 0 ? 'text-[var(--color-text-muted)]' : 'text-amber-500 font-semibold'}`;
+    $('applyBtn').disabled = n === 0;
   }
 
-  function setActiveView(viewId, { scroll = false } = {}) {
+  function setActiveView(viewId) {
     const view = VIEW_GROUPS.find(v => v.id === viewId) || VIEW_GROUPS[0];
-    appState.activeView = view.id;
-    byId('pageTitle').textContent = view.title;
-
+    $('pageTitle').textContent = view.title;
     document.querySelectorAll('.admin-view').forEach(v => {
-      const selected = v.dataset.view === view.id;
-      v.hidden = !selected;
-      
-      if (selected) {
-        v.classList.add('view-enter-active');
-        v.style.animation = 'viewFadeIn 0.35s cubic-bezier(0.16, 1, 0.3, 1) forwards';
-      } else {
-        v.classList.remove('view-enter-active');
-        v.style.animation = 'none';
-      }
+      v.style.display = v.dataset.view === view.id ? '' : 'none';
     });
-
-    if (scroll) {
-      const container = document.querySelector('main');
-      if (container) container.scrollTo({ top: 0, behavior: 'smooth' });
-    }
+    $('mainContent').scrollTop = 0;
   }
 
-  function showMessage(message, className = 'text-[var(--color-text-muted)]') {
-    const area = byId('messageArea');
-    if (!area) return;
-    area.textContent = message;
-    area.className = `text-[12px] font-medium text-center flex-1 min-w-0 transition-all duration-150 ${className}`;
+  function message(msg, cls = 'text-[var(--color-text-muted)]') {
+    const el = $('messageArea');
+    el.textContent = msg;
+    el.className = `text-xs text-center flex-1 min-w-0 ${cls}`;
   }
 
-  function showToast(message, type = 'info', duration = 4000) {
-    const container = byId('toastContainer');
-    if (!container) return;
-    
-    const toast = document.createElement('div');
-    toast.className = `toast toast-${type} flex items-center gap-3 p-3 min-w-[300px] bg-[var(--color-bg-elevated)] border border-[var(--color-border-subtle)] rounded-xl shadow-xl pointer-events-auto transition-all duration-300 transform translate-y-2 opacity-0 check-blur`;
-    
-    const iconColors = {
-      success: 'text-emerald-500',
-      error: 'text-rose-500',
-      info: 'text-blue-500'
-    };
-
-    const iconSvg = {
-      success: `<svg class="w-4 h-4 ${iconColors.success}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/><polyline points="22 4 12 14.01 9 11.01"/></svg>`,
-      error: `<svg class="w-4 h-4 ${iconColors.error}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>`,
-      info: `<svg class="w-4 h-4 ${iconColors.info}" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="10"/><line x1="12" y1="16" x2="12" y2="12"/><line x1="12" y1="8" x2="12.01" y2="8"/></svg>`
-    };
-
-    toast.innerHTML = `
-      ${iconSvg[type] || iconSvg.info}
-      <span class="toast-msg text-[13px] font-medium text-[var(--color-text-primary)] flex-1">${message}</span>
-      <button type="button" class="toast-close p-1 rounded-md text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] transition-all">
-        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
-      </button>
-    `;
-
-    toast.querySelector('.toast-close').addEventListener('click', () => {
-      toast.classList.add('opacity-0', 'translate-y-1');
-      setTimeout(() => toast.remove(), 300);
-    });
-
-    container.appendChild(toast);
-    
-    // Trigger entry layout presentation
-    requestAnimationFrame(() => {
-      toast.classList.remove('opacity-0', 'translate-y-2');
-    });
-
-    setTimeout(() => {
-      toast.classList.add('opacity-0', '-translate-y-2');
-      setTimeout(() => toast.remove(), 300);
-    }, duration);
+  function toast(msg, type = 'info', duration = 4000) {
+    const c = $('toastContainer');
+    const t = document.createElement('div');
+    t.className = `flex items-center gap-2 px-3 py-2 rounded-lg text-xs font-medium pointer-events-auto shadow-lg border ${
+      type === 'success' ? 'bg-emerald-900/80 text-emerald-300 border-emerald-700/30' :
+      type === 'error' ? 'bg-rose-900/80 text-rose-300 border-rose-700/30' :
+      'bg-[var(--color-bg-elevated)] text-[var(--color-text-primary)] border-[var(--color-border-subtle)]'
+    }`;
+    t.textContent = msg;
+    const close = document.createElement('button');
+    close.innerHTML = '&times;';
+    close.className = 'ml-2 text-[var(--color-text-muted)] hover:text-[var(--color-text-primary)]';
+    close.onclick = () => t.remove();
+    t.appendChild(close);
+    c.appendChild(t);
+    setTimeout(() => { t.style.opacity = '0'; setTimeout(() => t.remove(), 300); }, duration);
   }
 
-  function showValidationResult(result) {
-    if (result.valid) {
-      showMessage('Configuration structural profile is completely valid.', 'text-emerald-500');
-      showToast('Configuration schema verified', 'success');
-    } else {
-      showMessage(result.errors.join('; '), 'text-rose-500');
-      showToast(result.errors.join('; '), 'error', 6000);
-    }
+  function showValidation(r) {
+    if (r.valid) { message('Config is valid', 'text-emerald-500'); toast('Config is valid', 'success'); }
+    else { message(r.errors.join('; '), 'text-rose-500'); toast(r.errors.join('; '), 'error', 6000); }
   }
 
-  async function validate(showResult = true) {
-    const result = await validateConfig(changedValues());
-    if (showResult) showValidationResult(result);
-    return result;
+  async function validate(show = true) {
+    const r = await validateConfig(changedValues());
+    if (show) showValidation(r);
+    return r;
   }
 
   async function apply() {
-    const result = await applyConfig(changedValues());
-    if (!result.applied) { showValidationResult(result); return; }
-    
-    const restart = result.restart || {};
+    const r = await applyConfig(changedValues());
+    if (!r.applied) { showValidation(r); return; }
+    const restart = r.restart || {};
     if (restart.required && restart.automatic) {
-      showToast('Profile applied. Synchronizing configuration engine...', 'success');
-      showMessage('Re-initialising core service instances...', 'text-emerald-500');
-      byId('applyButton').disabled = true;
-      setTimeout(() => window.location.href = restart.admin_url || '/admin', 1600);
+      toast('Applied. Restarting...', 'success');
+      message('Applied. Restarting...', 'text-emerald-500');
+      $('applyBtn').disabled = true;
+      setTimeout(() => { window.location.href = restart.admin_url || '/admin'; }, 1600);
       return;
     }
-
-    const pending = restart.required ? restart.fields || [] : result.pending_fields || [];
+    const pending = restart.required ? restart.fields || [] : r.pending_fields || [];
     await load();
-    const msg = pending.length ? `Changes loaded. Service hot-restart needed for: ${pending.join(', ')}` : 'Configuration successfully modified.';
-    showMessage(msg, 'text-emerald-500');
-    showToast(msg, 'success');
+    const m = pending.length ? `Applied. Restart needed for: ${pending.join(', ')}` : 'Applied';
+    message(m, 'text-emerald-500');
+    toast(m, 'success');
+  }
+
+  // ── Rendering ──
+
+  function renderStats(providers) {
+    const total = providers.length;
+    const configured = providers.filter(p => ['configured', 'reachable', 'running'].includes(p.status)).length;
+    const online = providers.filter(p => ['reachable', 'running'].includes(p.status)).length;
+    $('statsBar').innerHTML = `
+      <div class="p-4 rounded-xl bg-[var(--color-bg-elevated)] border border-[var(--color-border-subtle)]">
+        <div class="text-2xl font-bold" style="font-family:var(--font-display)">${total}</div>
+        <div class="text-xs text-[var(--color-text-muted)] mt-1">Adapters</div>
+      </div>
+      <div class="p-4 rounded-xl bg-[var(--color-bg-elevated)] border border-[var(--color-border-subtle)]">
+        <div class="text-2xl font-bold text-emerald-500" style="font-family:var(--font-display)">${configured}</div>
+        <div class="text-xs text-[var(--color-text-muted)] mt-1">Configured</div>
+      </div>
+      <div class="p-4 rounded-xl bg-[var(--color-bg-elevated)] border border-[var(--color-border-subtle)]">
+        <div class="text-2xl font-bold text-[var(--color-accent)]" style="font-family:var(--font-display)">${online}</div>
+        <div class="text-xs text-[var(--color-text-muted)] mt-1">Online</div>
+      </div>
+    `;
+  }
+
+  function renderProviders(providers) {
+    const c = $('providerGridContainer');
+    c.innerHTML = '';
+    const wrap = document.createElement('div');
+    wrap.className = 'grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-3';
+
+    const names = { nvidia_nim: 'NVIDIA NIM', open_router: 'OpenRouter', mistral_codestral: 'Mistral Codestral', deepseek: 'DeepSeek', lmstudio: 'LM Studio', llamacpp: 'llama.cpp', ollama: 'Ollama', kimi: 'Kimi', wafer: 'Wafer', opencode: 'OpenCode Zen', opencode_go: 'OpenCode Go', zai: 'Z.ai' };
+
+    providers.forEach(p => {
+      const card = document.createElement('div');
+      card.className = 'p-4 rounded-xl bg-[var(--color-bg-elevated)] border border-[var(--color-border-subtle)]';
+      card.dataset.provider = p.provider_id;
+
+      const name = names[p.provider_id] || p.provider_id.split('_').map(s => s[0].toUpperCase() + s.slice(1)).join(' ');
+
+      const statusOk = ['configured', 'reachable', 'running'].includes(p.status);
+      const statusWarn = ['missing_key', 'missing_url', 'unknown'].includes(p.status);
+
+      card.innerHTML = `
+        <div class="flex items-center justify-between mb-2">
+          <strong class="text-sm font-semibold">${name}</strong>
+          <span class="text-xs px-2 py-0.5 rounded-md font-medium border ${
+            statusOk ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+            statusWarn ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' :
+            'bg-rose-500/10 text-rose-400 border-rose-500/20'
+          }">${p.label}</span>
+        </div>
+        <div class="text-xs font-mono text-[var(--color-text-muted)] truncate mb-3">${p.kind === 'local' ? (p.base_url || '—') : p.credential_env}</div>
+        <button type="button" class="test-btn w-full h-7 rounded-lg text-xs font-medium border border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] hover:bg-[var(--color-bg-hover)] transition-colors" data-provider="${p.provider_id}" data-kind="${p.kind}" data-name="${name}">${p.kind === 'local' ? 'Test' : 'Refresh'}</button>
+      `;
+
+      card.querySelector('.test-btn').addEventListener('click', async (e) => {
+        const btn = e.currentTarget;
+        btn.disabled = true;
+        btn.textContent = '...';
+        try {
+          const res = await (await fetch(`/admin/api/providers/${p.provider_id}/test`, { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' } })).json();
+          if (res.ok) {
+            const models = (res.models || []).slice(0, 3).join(', ') || 'Connected';
+            const pill = card.querySelector('span');
+            pill.className = 'text-xs px-2 py-0.5 rounded-md font-medium border bg-emerald-500/10 text-emerald-400 border-emerald-500/20';
+            pill.textContent = `${res.models.length} models`;
+            card.querySelector('.text-xs.font-mono').textContent = models;
+            toast(`${name}: ${res.models.length} models`, 'success');
+          } else {
+            const pill = card.querySelector('span');
+            pill.className = 'text-xs px-2 py-0.5 rounded-md font-medium border bg-rose-500/10 text-rose-400 border-rose-500/20';
+            pill.textContent = res.error_type || 'Error';
+            toast(`${name}: ${res.error_type}`, 'error');
+          }
+        } catch { toast(`Test failed for ${name}`, 'error'); }
+        finally { btn.disabled = false; btn.textContent = p.kind === 'local' ? 'Test' : 'Refresh'; }
+      });
+
+      wrap.appendChild(card);
+    });
+
+    c.appendChild(wrap);
   }
 
   function renderSections() {
-    VIEW_GROUPS.forEach(view => { 
-      const el = byId(view.containerId);
-      if (el) el.innerHTML = ''; 
-    });
+    VIEW_GROUPS.forEach(v => { const el = $(v.containerId); if (el) el.innerHTML = ''; });
 
-    const bySection = new Map();
-    appState.sections.forEach(s => bySection.set(s.id, []));
-    appState.fields.forEach(f => {
-      if (!bySection.has(f.section)) bySection.set(f.section, []);
-      bySection.get(f.section).push(f);
-    });
+    const bySec = new Map();
+    sections.forEach(s => bySec.set(s.id, []));
+    fields.forEach(f => { if (!bySec.has(f.section)) bySec.set(f.section, []); bySec.get(f.section).push(f); });
 
     VIEW_GROUPS.forEach(view => {
-      const container = byId(view.containerId);
+      const container = $(view.containerId);
       if (!container) return;
-
-      view.sections.forEach(sectionId => {
-        const section = appState.sections.find(s => s.id === sectionId);
-        const sectionFields = bySection.get(sectionId) || [];
-        if (!section || sectionFields.length === 0) return;
-
+      view.sections.forEach(sid => {
+        const sec = sections.find(s => s.id === sid);
+        const secFields = bySec.get(sid) || [];
+        if (!sec || !secFields.length) return;
         const el = document.createElement('section');
-        el.className = 'settings-section bg-[var(--color-bg-elevated)] border border-[var(--color-border-subtle)] rounded-xl p-5 space-y-4 shadow-sm transition-all';
-        el.id = `section-${section.id}`;
-
-        const heading = document.createElement('div');
-        heading.className = 'section-heading pb-3 border-b border-[var(--color-border-subtle)]';
-        heading.innerHTML = `
-          <div>
-            <h3 class="text-[14px] font-semibold text-[var(--color-text-primary)]">${section.label}</h3>
-            <p class="text-[12px] text-[var(--color-text-muted)] mt-0.5">${section.description}</p>
-          </div>
-        `;
-        el.appendChild(heading);
-
-        const grid = document.createElement('div');
-        grid.className = 'field-grid grid grid-cols-1 md:grid-cols-2 gap-4';
-        sectionFields.forEach(f => grid.appendChild(renderField(f)));
-        el.appendChild(grid);
-
-        if (sectionFields.some(f => f.advanced)) {
+        el.className = 'p-5 rounded-xl bg-[var(--color-bg-elevated)] border border-[var(--color-border-subtle)]';
+        el.innerHTML = `<div class="pb-3 mb-4 border-b border-[var(--color-border-subtle)]"><h3 class="text-sm font-semibold">${sec.label}</h3><p class="text-xs text-[var(--color-text-muted)] mt-0.5">${sec.description}</p></div><div class="grid grid-cols-1 md:grid-cols-2 gap-4"></div>`;
+        const grid = el.querySelector('.grid');
+        secFields.forEach(f => grid.appendChild(renderField(f)));
+        if (secFields.some(f => f.advanced)) {
           const toggle = document.createElement('button');
           toggle.type = 'button';
-          toggle.className = 'ghost-button text-[12px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-accent)] transition-all flex items-center pt-2';
-          toggle.textContent = 'Show advanced settings';
-          toggle.style.fontFamily = 'var(--font-interface)';
-          
-          toggle.addEventListener('click', () => {
-            const showing = el.classList.toggle('show-advanced');
-            toggle.textContent = showing ? 'Hide advanced settings' : 'Show advanced settings';
-          });
+          toggle.className = 'text-xs text-[var(--color-text-muted)] hover:text-[var(--color-accent)] mt-3';
+          toggle.textContent = 'Advanced';
+          toggle.onclick = () => { const show = el.classList.toggle('show-advanced'); toggle.textContent = show ? 'Hide advanced' : 'Advanced'; };
           el.appendChild(toggle);
         }
-
         container.appendChild(el);
       });
     });
   }
 
-  function renderField(field) {
-    const wrapper = document.createElement('div');
-    wrapper.className = `field flex flex-col gap-1.5 transition-all duration-200 ${field.advanced ? 'advanced-field hidden opacity-0' : ''}`;
-    wrapper.dataset.key = field.key;
+  function renderField(f) {
+    const w = document.createElement('div');
+    w.className = `flex flex-col gap-1.5 ${f.advanced ? 'advanced' : ''}`;
+    w.dataset.key = f.key;
 
     const label = document.createElement('label');
-    label.className = "flex items-center justify-between text-[12px] font-semibold text-[var(--color-text-secondary)]";
-    label.htmlFor = `field-${field.key}`;
-    
-    const labelText = document.createElement('span');
-    labelText.textContent = field.label;
-    label.appendChild(labelText);
+    label.className = 'flex items-center justify-between text-xs font-medium text-[var(--color-text-secondary)]';
+    label.htmlFor = `f-${f.key}`;
+    label.innerHTML = `<span>${f.label}</span>`;
 
-    const source = (() => {
-      const parts = [];
-      const labels = { default: 'default', template: 'template', repo_env: 'repo .env', managed_env: '', explicit_env_file: 'FCC_ENV_FILE', process: 'process env' };
-      const labelTextValue = Object.prototype.hasOwnProperty.call(labels, field.source) ? labels[field.source] : field.source;
-      if (labelTextValue) parts.push(labelTextValue);
-      if (field.locked) parts.push('locked');
-      return parts.join(' ');
-    })();
-
-    if (source) {
-      const sourceEl = document.createElement('span');
-      sourceEl.className = 'field-source text-[10px] font-mono px-1.5 py-0.5 rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] text-[var(--color-text-muted)] font-normal uppercase tracking-wider';
-      sourceEl.textContent = source;
-      label.appendChild(sourceEl);
+    const srcParts = [];
+    const srcLabels = { default: 'default', template: 'template', repo_env: 'repo .env', managed_env: '', explicit_env_file: 'FCC_ENV_FILE', process: 'process env' };
+    const sl = Object.prototype.hasOwnProperty.call(srcLabels, f.source) ? srcLabels[f.source] : f.source;
+    if (sl) srcParts.push(sl);
+    if (f.locked) srcParts.push('locked');
+    if (srcParts.length) {
+      const badge = document.createElement('span');
+      badge.className = 'text-[10px] font-mono px-1.5 py-0.5 rounded border border-[var(--color-border-subtle)] bg-[var(--color-bg-base)] text-[var(--color-text-muted)]';
+      badge.textContent = srcParts.join(' ');
+      label.appendChild(badge);
     }
 
     let input;
-    const commonClasses = "w-full h-9 px-3 text-[13px] bg-[var(--color-bg-base)] text-[var(--color-text-primary)] border border-[var(--color-border-subtle)] rounded-lg transition-all focus:outline-none focus:border-[var(--color-accent)] focus:ring-1 focus:ring-[var(--color-accent)] disabled:opacity-50 disabled:bg-[var(--color-bg-hover)]";
+    const baseCls = 'w-full h-8 px-3 text-xs bg-[var(--color-bg-base)] text-[var(--color-text-primary)] border border-[var(--color-border-subtle)] rounded-lg focus:outline-none focus:border-[var(--color-accent)] disabled:opacity-50';
 
-    if (field.type === 'boolean') {
-      const labelSwitch = document.createElement('label');
-      labelSwitch.className = 'relative inline-flex items-center cursor-pointer mt-1';
-      
+    if (f.type === 'boolean') {
+      const sw = document.createElement('label');
+      sw.className = 'relative inline-flex items-center cursor-pointer w-9 h-5';
       input = document.createElement('input');
       input.type = 'checkbox';
       input.className = 'sr-only peer';
-      input.checked = String(field.value).toLowerCase() === 'true';
+      input.checked = String(f.value).toLowerCase() === 'true';
       input.dataset.original = input.checked ? 'true' : 'false';
-
-      const divTrack = document.createElement('div');
-      divTrack.className = "w-9 h-5 bg-zinc-700 peer-focus:outline-none rounded-full peer peer-checked:after:translate-x-full peer-checked:after:border-white after:content-[''] after:absolute after:top-[2px] after:left-[2px] after:bg-white after:border-zinc-300 after:border after:rounded-full after:h-4 after:w-4 after:transition-all peer-checked:bg-[var(--color-accent)]";
-      
-      labelSwitch.append(input, divTrack);
-      wrapper.appendChild(labelSwitch);
+      const track = document.createElement('div');
+      track.className = 'absolute inset-0 rounded-full bg-zinc-700 peer-checked:bg-[var(--color-accent)] transition-colors after:content-[""] after:absolute after:top-0.5 after:left-0.5 after:w-4 after:h-4 after:bg-white after:rounded-full after:transition-transform peer-checked:after:translate-x-4';
+      sw.append(input, track);
+      w.append(label, sw);
     } else {
-      if (field.type === 'tri_boolean') {
-        input = document.createElement('select');
-        input.className = commonClasses;
-        [['', 'Inherit System Logic'], ['true', 'Explicitly Enabled'], ['false', 'Explicitly Disabled']].forEach(([v, l]) => {
-          const opt = document.createElement('option');
-          opt.value = v; opt.textContent = l;
-          if (v === (field.value || '')) opt.selected = true;
-          input.appendChild(opt);
-        });
-      } else if (field.type === 'select') {
-        input = document.createElement('select');
-        input.className = commonClasses;
-        (field.options || []).forEach(v => {
-          const opt = document.createElement('option');
-          opt.value = v; opt.textContent = v;
-          if (v === field.value) opt.selected = true;
-          input.appendChild(opt);
-        });
-      } else if (field.type === 'textarea') {
-        input = document.createElement('textarea');
-        input.className = "w-full min-h-[80px] p-3 text-[13px] bg-[var(--color-bg-base)] text-[var(--color-text-primary)] border border-[var(--color-border-subtle)] rounded-lg resize-y focus:outline-none focus:border-[var(--color-accent)] focus:ring-1 focus:ring-[var(--color-accent)]";
-        input.value = field.value || '';
+      if (f.type === 'tri_boolean') {
+        input = document.createElement('select'); input.className = baseCls;
+        [['', 'Inherit'], ['true', 'Enabled'], ['false', 'Disabled']].forEach(([v, l]) => { const o = document.createElement('option'); o.value = v; o.textContent = l; if (v === (f.value || '')) o.selected = true; input.appendChild(o); });
+      } else if (f.type === 'select') {
+        input = document.createElement('select'); input.className = baseCls;
+        (f.options || []).forEach(v => { const o = document.createElement('option'); o.value = v; o.textContent = v; if (v === f.value) o.selected = true; input.appendChild(o); });
+      } else if (f.type === 'textarea') {
+        input = document.createElement('textarea'); input.className = baseCls.replace('h-8', 'min-h-[64px]') + ' resize-y'; input.value = f.value || '';
       } else {
         input = document.createElement('input');
-        input.className = commonClasses;
-        input.type = field.type === 'number' ? 'number' : (field.type === 'secret' ? 'password' : 'text');
-        
-        if (field.type === 'secret') {
-          input.placeholder = field.configured ? '••••••••••••••••' : 'Unset / Empty';
-          input.value = '';
-          input.autocomplete = 'off';
-        } else {
-          input.value = field.value || '';
-        }
+        input.className = baseCls;
+        input.type = f.type === 'number' ? 'number' : (f.type === 'secret' ? 'password' : 'text');
+        if (f.type === 'secret') { input.placeholder = f.configured ? '********' : ''; input.value = ''; input.autocomplete = 'off'; }
+        else input.value = f.value || '';
       }
+      input.id = `f-${f.key}`;
+      input.dataset.key = f.key;
+      input.dataset.original = f.value || '';
+      input.dataset.secret = f.secret ? 'true' : 'false';
+      input.dataset.configured = f.configured ? 'true' : 'false';
+      input.disabled = f.locked;
+      input.addEventListener('input', markDirty);
+      input.addEventListener('change', markDirty);
+      w.append(label, input);
     }
 
-    input.id = `field-${field.key}`;
-    input.dataset.key = field.key;
-    input.dataset.original = field.value || '';
-    input.dataset.secret = field.secret ? 'true' : 'false';
-    input.dataset.configured = field.configured ? 'true' : 'false';
-    input.disabled = field.locked;
-    
-    input.addEventListener('input', updateDirtyState);
-    input.addEventListener('change', updateDirtyState);
-
-    if (field.type === 'boolean') {
-      wrapper.prepend(label);
-    } else {
-      wrapper.append(label, input);
+    if (f.description) {
+      const d = document.createElement('div');
+      d.className = 'text-[11px] text-[var(--color-text-muted)] leading-relaxed';
+      d.textContent = f.description;
+      w.appendChild(d);
     }
-
-    if (field.description) {
-      const desc = document.createElement('div');
-      desc.className = 'field-description text-[11px] text-[var(--color-text-muted)] leading-relaxed mt-0.5';
-      desc.textContent = field.description;
-      wrapper.appendChild(desc);
-    }
-    
-    return wrapper;
-  }
-
-  function updateProviderCard(providerId, status, label, metaText) {
-    const card = document.querySelector(`[data-provider="${providerId}"]`);
-    if (!card) return;
-    
-    const pill = card.querySelector('.status-pill');
-    if (pill) {
-      const isOk = ['reachable', 'configured', 'running'].includes(status);
-      const isError = ['offline', 'error'].includes(status);
-      
-      pill.className = `status-pill text-[10px] px-2 py-0.5 rounded-md font-medium border ${
-        isOk ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : 
-        isError ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' : 
-        'bg-amber-500/10 text-amber-400 border-amber-500/20'
-      }`;
-      pill.textContent = label;
-    }
-    if (metaText) card.querySelector('.provider-meta').textContent = metaText;
-  }
-
-  function renderStats(providers) {
-    const bar = byId('statsBar');
-    if (!bar) return;
-    
-    const total = providers.length;
-    const configured = providers.filter(p => ['configured', 'reachable', 'running'].includes(p.status)).length;
-    const online = providers.filter(p => ['reachable', 'running'].includes(p.status)).length;
-
-    bar.innerHTML = `
-      <div class="stat-card flex flex-col justify-between p-4 bg-[var(--color-bg-elevated)] border border-[var(--color-border-subtle)] rounded-xl shadow-sm">
-        <div class="flex items-center justify-between">
-          <span class="stat-value text-2xl font-bold tracking-tight">${total}</span>
-          <svg class="w-5 h-5 text-[var(--color-text-muted)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><circle cx="12" cy="12" r="3"/><path d="M12 1v4"/><path d="M12 19v4"/><path d="M1 12h4"/><path d="M19 12h4"/><path d="M4.22 4.22l2.83 2.83"/><path d="M16.95 16.95l2.83 2.83"/><path d="M4.22 19.78l2.83-2.83"/><path d="M16.95 7.05l2.83-2.83"/></svg>
-        </div>
-        <span class="stat-label text-[12px] font-semibold text-[var(--color-text-muted)] mt-2">Active Adapters</span>
-      </div>
-      <div class="stat-card flex flex-col justify-between p-4 bg-[var(--color-bg-elevated)] border border-[var(--color-border-subtle)] rounded-xl shadow-sm">
-        <div class="flex items-center justify-between">
-          <span class="stat-value text-2xl font-bold tracking-tight text-emerald-500">${configured}</span>
-          <svg class="w-5 h-5 text-emerald-500" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
-        </div>
-        <span class="stat-label text-[12px] font-semibold text-[var(--color-text-muted)] mt-2">Configured Pipelines</span>
-      </div>
-      <div class="stat-card flex flex-col justify-between p-4 bg-[var(--color-bg-elevated)] border border-[var(--color-border-subtle)] rounded-xl shadow-sm">
-        <div class="flex items-center justify-between">
-          <span class="stat-value text-2xl font-bold tracking-tight text-[var(--color-accent)]">${online}</span>
-          <svg class="w-5 h-5 text-[var(--color-accent)]" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.75"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
-        </div>
-        <span class="stat-label text-[12px] font-semibold text-[var(--color-text-muted)] mt-2">Operational Nodes</span>
-      </div>
-    `;
+    return w;
   }
 
   function copyPath(path) {
     navigator.clipboard.writeText(path).then(() => {
-      showToast('Configuration absolute path copied to dashboard clipboard', 'success', 2500);
-      const el = byId('configPath');
+      toast('Path copied', 'success', 2000);
+      const el = $('configPath');
       const orig = el.innerHTML;
-      el.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" class="text-emerald-400"><polyline points="20 6 9 17 4 12"/></svg> Copied Path';
+      el.innerHTML = '&#10003; Copied';
       setTimeout(() => el.innerHTML = orig, 1500);
     });
   }
 
-  async function load() {
-    const overlay = byId('loadingOverlay');
-    const views = byId('adminViews');
-    showMessage('');
+  // ── Load ──
 
+  async function load() {
     try {
       const cfg = await loadConfig();
-      appState.config = cfg;
-      appState.fields = cfg.fields;
-      appState.sections = cfg.sections;
-      appState.providerStatus = cfg.provider_status;
+      config = cfg;
+      fields = cfg.fields;
+      sections = cfg.sections;
+      providerStatus = cfg.provider_status;
 
       renderStats(cfg.provider_status);
       renderProviders(cfg.provider_status);
       renderSections();
 
       const path = cfg.paths.managed;
-      byId('configPath').innerHTML = `<svg class="copy-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> <span>${path}</span>`;
-      
-      // Ensure clean multi-call setup
-      if (appState.isInitialLoad) {
-        byId('configPath').addEventListener('click', () => copyPath(path));
-      }
-      
-      byId('versionInfo').textContent = `Build ${cfg.version || '0.0.0-alpha'}`;
+      $('configPath').innerHTML = path;
+      $('configPath').onclick = () => copyPath(path);
+      $('versionInfo').textContent = `v${cfg.version || '?'}`;
 
       await validate(false);
 
-      const statusResult = await loadLocalStatus();
-      statusResult.providers.forEach(p => {
-        const meta = p.status_code ? `HTTP ${p.status_code} — ${p.base_url}` : p.base_url;
-        updateProviderCard(p.provider_id, p.status, p.label, meta);
+      const statusRes = await loadLocalStatus();
+      statusRes.providers.forEach(p => {
+        const card = document.querySelector(`[data-provider="${p.provider_id}"]`);
+        if (!card) return;
+        const meta = p.status_code ? `HTTP ${p.status_code} - ${p.base_url}` : p.base_url;
+        card.querySelector('.text-xs.font-mono').textContent = meta;
+        const pill = card.querySelector('span');
+        const isOk = ['reachable', 'configured', 'running'].includes(p.status);
+        const isErr = ['offline', 'error'].includes(p.status);
+        pill.className = `text-xs px-2 py-0.5 rounded-md font-medium border ${
+          isOk ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' :
+          isErr ? 'bg-rose-500/10 text-rose-400 border-rose-500/20' :
+          'bg-amber-500/10 text-amber-400 border-amber-500/20'
+        }`;
+        pill.textContent = p.label;
       });
 
-      updateDirtyState();
+      markDirty();
 
-      if (overlay) {
-        overlay.classList.add('opacity-0', 'pointer-events-none');
-        setTimeout(() => overlay.remove(), 300);
-      }
-      
-      views.hidden = false;
-      requestAnimationFrame(() => {
-        views.classList.add('opacity-100', 'translate-y-0');
-        views.classList.remove('opacity-0', 'translate-y-2');
-      });
-      
-      appState.isInitialLoad = false;
+      $('loading').style.display = 'none';
+      $('content').style.display = '';
     } catch (err) {
-      showToast('Fatal sync break: could not initialize administration parameters.', 'error', 8000);
+      toast('Failed to load config', 'error', 8000);
+      $('loading').innerHTML = '<div class="text-center py-12 text-[var(--color-text-muted)]">Failed to load admin config. <button onclick="location.reload()" class="text-[var(--color-accent)] underline">Reload</button></div>';
     }
   }
 
-  function renderProviders(providers) {
-    const container = byId('providerGridContainer');
-    if (!container) return;
-    container.innerHTML = '';
+  // ── Init ──
 
-    const strip = document.createElement('section');
-    strip.className = 'provider-strip space-y-3';
+  $('validateBtn').onclick = () => validate(true);
+  $('applyBtn').onclick = apply;
 
-    const header = document.createElement('div');
-    header.className = 'strip-header';
-    header.innerHTML = '<h3 class="text-[13px] font-bold uppercase tracking-wider text-[var(--color-text-muted)]">Core Service Integrations</h3>';
-    strip.appendChild(header);
+  document.addEventListener('keydown', (e) => {
+    const mod = e.metaKey || e.ctrlKey;
+    if (mod && e.key.toLowerCase() === 's' && !$('applyBtn').disabled) { e.preventDefault(); apply(); }
+    if (mod && e.key.toLowerCase() === 'k') { e.preventDefault(); validate(true); }
+  });
 
-    const grid = document.createElement('div');
-    grid.className = 'provider-grid grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4';
-
-    providers.forEach(provider => {
-      const card = document.createElement('article');
-      card.className = 'provider-card flex flex-col justify-between p-4 bg-[var(--color-bg-elevated)] border border-[var(--color-border-subtle)] rounded-xl shadow-sm hover:border-[var(--color-text-muted)] transition-all';
-      card.dataset.provider = provider.provider_id;
-
-      const title = document.createElement('div');
-      title.className = 'provider-title flex items-center justify-between gap-2';
-      
-      const nameMap = { nvidia_nim: 'NVIDIA NIM', open_router: 'OpenRouter', mistral_codestral: 'Mistral Codestral', deepseek: 'DeepSeek', lmstudio: 'LM Studio', llamacpp: 'llama.cpp', ollama: 'Ollama', kimi: 'Kimi', wafer: 'Wafer', opencode: 'OpenCode Zen', opencode_go: 'OpenCode Go', zai: 'Z.ai' };
-      const pname = nameMap[provider.provider_id] || provider.provider_id.split('_').map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
-      title.innerHTML = `<strong class="text-[14px] font-semibold text-[var(--color-text-primary)]">${pname}</strong>`;
-
-      const pill = document.createElement('span');
-      const sc = ['configured','reachable','running'].includes(provider.status) ? 'bg-emerald-500/10 text-emerald-400 border-emerald-500/20' : ['missing_key','missing_url','unknown'].includes(provider.status) ? 'bg-amber-500/10 text-amber-400 border-amber-500/20' : 'bg-rose-500/10 text-rose-400 border-rose-500/20';
-      pill.className = `status-pill text-[10px] px-2 py-0.5 rounded-md font-medium border ${sc}`;
-      pill.textContent = provider.label;
-      title.appendChild(pill);
-
-      const meta = document.createElement('div');
-      meta.className = 'provider-meta text-[11px] font-mono text-[var(--color-text-muted)] truncate my-3';
-      meta.textContent = provider.kind === 'local' ? (provider.base_url || 'No connection string set') : provider.credential_env;
-
-      const button = document.createElement('button');
-      button.type = 'button';
-      button.className = 'test-button w-full h-8 px-3 rounded-lg bg-[var(--color-bg-base)] border border-[var(--color-border-subtle)] text-[12px] font-medium text-[var(--color-text-secondary)] hover:text-[var(--color-text-primary)] hover:bg-[var(--color-bg-hover)] transition-all';
-      button.textContent = provider.kind === 'local' ? 'Test Endpoint' : 'Refresh Models';
-      
-      button.addEventListener('click', async () => {
-        button.disabled = true;
-        button.textContent = 'Verifying link context...';
-        try {
-          const res = await (await fetch(`/admin/api/providers/${provider.provider_id}/test`, { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' } })).json();
-          if (res.ok) {
-            const modelList = (res.models || []).slice(0, 3).join(', ') || 'Connected (Empty Catalog)';
-            updateProviderCard(provider.provider_id, 'reachable', `${res.models.length} profiles`, modelList);
-            showToast(`Synchronized mapping for ${pname}`, 'success');
-          } else {
-            updateProviderCard(provider.provider_id, 'offline', res.error_type, res.error_type);
-            showToast(`Endpoint link dropped: ${res.error_type}`, 'error');
-          }
-        } catch {
-          showToast('Failed to complete background ping operation.', 'error');
-        } finally {
-          button.disabled = false;
-          button.textContent = provider.kind === 'local' ? 'Test Endpoint' : 'Refresh Models';
-        }
-      });
-
-      card.append(title, meta, button);
-      grid.appendChild(card);
-    });
-
-    strip.appendChild(grid);
-    container.appendChild(strip);
-  }
-
-  function init() {
-    byId('validateButton').addEventListener('click', () => validate(true));
-    byId('applyButton').addEventListener('click', apply);
-
-    document.addEventListener('keydown', (e) => {
-      const isMeta = e.metaKey || e.ctrlKey;
-      if (isMeta && e.key.toLowerCase() === 's') {
-        e.preventDefault();
-        if (!byId('applyButton').disabled) apply();
-      }
-      if (isMeta && e.key.toLowerCase() === 'k') {
-        e.preventDefault();
-        validate(true);
-      }
-    });
-
-    load();
-  }
-
-  if (document.readyState === 'loading') {
-    document.addEventListener('DOMContentLoaded', init);
-  } else {
-    init();
-  }
+  load();
 </script>
 
 <style is:global>
   @keyframes viewFadeIn {
-    from { opacity: 0; transform: translateY(6px); }
+    from { opacity: 0; transform: translateY(4px); }
     to { opacity: 1; transform: translateY(0); }
   }
-
-  /* Advanced Config Form Accordion Interpolations */
-  .settings-section .advanced-field {
-    display: none !important;
-  }
-  .settings-section.show-advanced .advanced-field {
-    display: flex !important;
-    animation: viewFadeIn 0.2s cubic-bezier(0.16, 1, 0.3, 1) forwards;
-  }
-  
-  .check-blur {
-    backdrop-filter: blur(12px) saturate(180%);
-    -webkit-backdrop-filter: blur(12px) saturate(180%);
-  }
+  .admin-view { animation: viewFadeIn .25s ease; }
+  .settings-section .advanced { display: none; }
+  .settings-section.show-advanced .advanced { display: flex; }
 </style>
