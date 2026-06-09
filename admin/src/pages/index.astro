@@ -58,18 +58,22 @@ import SettingsForm from '../components/SettingsForm.svelte';
 
 <style is:global>
   :root {
-    --bg-primary: #0a0a0a;
-    --bg-secondary: #111111;
-    --bg-card: #141414;
-    --bg-input: #1a1a1a;
-    --border-color: #1f1f1f;
-    --text-primary: #f0f0f0;
-    --text-secondary: #a0a0a0;
-    --text-muted: #666666;
+    --bg-primary: #0a0a0f;
+    --bg-secondary: #111118;
+    --bg-card: rgba(20, 20, 30, 0.6);
+    --bg-card-solid: #14141e;
+    --bg-input: #1a1a28;
+    --border-color: rgba(255, 255, 255, 0.08);
+    --border-hover: rgba(255, 255, 255, 0.15);
+    --text-primary: #f0f0f5;
+    --text-secondary: #a0a0b0;
+    --text-muted: #606070;
+    --accent: #818cf8;
+    --accent-glow: rgba(129, 140, 248, 0.15);
     --success: #22c55e;
     --error: #ef4444;
     --warning: #f59e0b;
-    --shadow: 0 4px 24px rgba(0,0,0,0.4);
+    --shadow: 0 8px 32px rgba(0, 0, 0, 0.5);
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -78,11 +82,12 @@ import SettingsForm from '../components/SettingsForm.svelte';
     min-width: 320px;
     background: var(--bg-primary);
     background-image:
-      radial-gradient(ellipse at 20% 50%, rgba(255,255,255,0.015) 0%, transparent 50%),
-      radial-gradient(ellipse at 80% 20%, rgba(255,255,255,0.01) 0%, transparent 50%),
-      linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
-    background-size: 100% 100%, 100% 100%, 40px 40px, 40px 40px;
+      radial-gradient(ellipse at 15% 30%, rgba(129, 140, 248, 0.08) 0%, transparent 55%),
+      radial-gradient(ellipse at 85% 70%, rgba(99, 102, 241, 0.06) 0%, transparent 55%),
+      radial-gradient(ellipse at 50% 0%, rgba(168, 85, 247, 0.04) 0%, transparent 50%),
+      linear-gradient(rgba(255, 255, 255, 0.04) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255, 255, 255, 0.04) 1px, transparent 1px);
+    background-size: 100% 100%, 100% 100%, 100% 100%, 60px 60px, 60px 60px;
     background-attachment: fixed;
     color: var(--text-primary);
     font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
@@ -115,7 +120,15 @@ import SettingsForm from '../components/SettingsForm.svelte';
     border-bottom: 1px solid var(--border-color);
   }
 
-  .topbar h2 { font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
+  .topbar h2 {
+    font-size: 24px;
+    font-weight: 700;
+    letter-spacing: -0.5px;
+    background: linear-gradient(135deg, #f0f0f5 0%, #818cf8 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
+  }
 
   .status-pill {
     display: inline-flex;
@@ -125,6 +138,7 @@ import SettingsForm from '../components/SettingsForm.svelte';
     border-radius: 999px;
     padding: 4px 12px;
     background: var(--bg-card);
+    backdrop-filter: blur(8px);
     color: var(--text-muted);
     font-size: 12px;
     font-weight: 600;
@@ -133,8 +147,8 @@ import SettingsForm from '../components/SettingsForm.svelte';
 
   .status-pill.warn {
     color: var(--warning);
-    background: rgba(245,158,11,0.1);
-    border-color: rgba(245,158,11,0.3);
+    background: rgba(245, 158, 11, 0.12);
+    border-color: rgba(245, 158, 11, 0.35);
   }
 
   .admin-views, .admin-view { display: grid; gap: 20px; }
@@ -149,14 +163,14 @@ import SettingsForm from '../components/SettingsForm.svelte';
     left: 240px;
     z-index: 50;
     display: grid;
-    grid-template-columns: minmax(0,1fr) minmax(180px,auto) auto;
+    grid-template-columns: minmax(0, 1fr) minmax(180px, auto) auto;
     gap: 14px;
     align-items: center;
     min-height: 64px;
     border-top: 1px solid var(--border-color);
-    background: rgba(10,10,10,0.95);
+    background: rgba(10, 10, 15, 0.85);
     padding: 12px 24px;
-    backdrop-filter: blur(12px);
+    backdrop-filter: blur(16px);
   }
 
   .action-meta span { color: var(--text-muted); font-size: 12px; }
@@ -183,39 +197,68 @@ import SettingsForm from '../components/SettingsForm.svelte';
     font-size: 13px;
     transition: all 0.15s ease;
     background: var(--bg-card);
+    backdrop-filter: blur(8px);
     color: var(--text-primary);
   }
 
-  .secondary-button:hover { border-color: #ffffff; background: #1a1a1a; }
+  .secondary-button:hover {
+    border-color: var(--accent);
+    background: var(--accent-glow);
+  }
 
   .primary-button {
     min-height: 34px;
     border-radius: 8px;
-    border: 1px solid #ffffff;
+    border: none;
     padding: 7px 14px;
     cursor: pointer;
     font-weight: 600;
     font-size: 13px;
     transition: all 0.15s ease;
-    background: #ffffff;
-    color: #000000;
+    background: linear-gradient(135deg, #6366f1, #818cf8);
+    color: #ffffff;
+    box-shadow: 0 2px 12px rgba(99, 102, 241, 0.35);
   }
 
-  .primary-button:hover { background: #e0e0e0; }
+  .primary-button:hover {
+    box-shadow: 0 4px 20px rgba(99, 102, 241, 0.5);
+    transform: translateY(-1px);
+  }
 
   .primary-button:disabled {
     cursor: not-allowed;
-    border-color: var(--border-color);
-    background: var(--bg-card);
+    background: var(--bg-card-solid);
     color: var(--text-muted);
+    box-shadow: none;
+    transform: none;
+  }
+
+  .settings-section {
+    background: var(--bg-card) !important;
+    backdrop-filter: blur(12px) !important;
+    border: 1px solid var(--border-color) !important;
+  }
+
+  .settings-section:hover {
+    border-color: var(--border-hover) !important;
+  }
+
+  .provider-card {
+    background: rgba(17, 17, 24, 0.7) !important;
+    backdrop-filter: blur(8px) !important;
+  }
+
+  .provider-card:hover {
+    background: rgba(20, 20, 30, 0.8) !important;
+    border-color: var(--border-hover) !important;
   }
 
   ::-webkit-scrollbar { width: 6px; height: 6px; }
   ::-webkit-scrollbar-track { background: transparent; }
   ::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
-  ::-webkit-scrollbar-thumb:hover { background: #252525; }
+  ::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
 
-  ::selection { background: rgba(255,255,255,0.2); }
+  ::selection { background: rgba(129, 140, 248, 0.3); }
 
   @media (max-width: 900px) {
     .main { margin-left: 0; padding: 16px; }

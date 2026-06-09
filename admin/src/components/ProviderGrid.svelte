@@ -58,12 +58,18 @@
 
 <style>
   .provider-strip {
-    border: 1px solid #1f1f1f;
+    border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 12px;
-    background: #141414;
-    box-shadow: 0 4px 24px rgba(0,0,0,0.4);
+    background: rgba(20, 20, 30, 0.5);
+    backdrop-filter: blur(12px);
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.3);
     padding: 16px;
-    transition: border-color 0.15s ease;
+    transition: border-color 0.15s ease, box-shadow 0.15s ease;
+  }
+
+  .provider-strip:hover {
+    border-color: rgba(255, 255, 255, 0.1);
+    box-shadow: 0 8px 32px rgba(129, 140, 248, 0.06);
   }
 
   .strip-header {
@@ -90,16 +96,17 @@
     display: grid;
     gap: 8px;
     min-height: 108px;
-    border: 1px solid #1f1f1f;
+    border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 10px;
     padding: 14px;
-    background: #111111;
+    background: rgba(17, 17, 24, 0.6);
+    backdrop-filter: blur(8px);
     transition: all 0.15s ease;
   }
 
   .provider-card:hover {
-    background: #1a1a1a;
-    border-color: #252525;
+    background: rgba(20, 20, 30, 0.7);
+    border-color: rgba(129, 140, 248, 0.2);
   }
 
   .provider-title {
@@ -110,17 +117,17 @@
   }
 
   .provider-title strong { font-size: 14px; font-weight: 600; }
-  .provider-meta { color: #666; font-size: 12px; word-break: break-word; }
+  .provider-meta { color: #606070; font-size: 12px; word-break: break-word; }
 
   .status-pill {
     display: inline-flex;
     align-items: center;
     min-height: 28px;
-    border: 1px solid #1f1f1f;
+    border: 1px solid rgba(255, 255, 255, 0.06);
     border-radius: 999px;
     padding: 4px 12px;
-    background: #141414;
-    color: #666;
+    background: rgba(20, 20, 30, 0.5);
+    color: #606070;
     font-size: 12px;
     font-weight: 600;
     white-space: nowrap;
@@ -147,19 +154,20 @@
   .test-button {
     min-height: 34px;
     border-radius: 8px;
-    border: 1px solid #1f1f1f;
+    border: 1px solid rgba(255, 255, 255, 0.06);
     padding: 7px 14px;
     cursor: pointer;
     font-weight: 600;
     font-size: 13px;
     transition: all 0.15s ease;
-    background: #141414;
-    color: #f0f0f0;
+    background: rgba(20, 20, 30, 0.5);
+    color: #f0f0f5;
   }
 
   .test-button:hover:not(:disabled) {
-    border-color: #ffffff;
-    background: #1a1a1a;
+    border-color: rgba(129, 140, 248, 0.3);
+    background: rgba(129, 140, 248, 0.1);
+    color: #818cf8;
   }
 
   .test-button:disabled { opacity: 0.5; cursor: not-allowed; }

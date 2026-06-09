@@ -95,8 +95,9 @@
     left: 0;
     bottom: 0;
     width: 240px;
-    background: #0d0d0d;
-    border-right: 1px solid #1f1f1f;
+    background: rgba(13, 13, 20, 0.85);
+    backdrop-filter: blur(16px);
+    border-right: 1px solid rgba(255, 255, 255, 0.06);
     display: flex;
     flex-direction: column;
     padding: 0 12px 20px;
@@ -118,18 +119,26 @@
     margin: 0 -12px;
     color: #f0f0f0;
     cursor: pointer;
-    background: #141414;
-    box-shadow: 0 2px 8px rgba(0,0,0,0.3);
-    border-bottom: 1px solid #1f1f1f;
+    background: rgba(20, 20, 30, 0.6);
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.3);
+    border-bottom: 1px solid rgba(255, 255, 255, 0.06);
     position: relative;
     overflow: hidden;
+  }
+
+  .sidebar-logo::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    background: linear-gradient(90deg, transparent 0%, rgba(129, 140, 248, 0.08) 50%, transparent 100%);
+    pointer-events: none;
   }
 
   .logo-icon {
     width: 28px;
     height: 28px;
     flex-shrink: 0;
-    color: #f0f0f0;
+    color: #818cf8;
   }
 
   .logo-text {
@@ -137,6 +146,10 @@
     font-weight: 700;
     letter-spacing: 0.5px;
     white-space: nowrap;
+    background: linear-gradient(135deg, #f0f0f5 0%, #818cf8 100%);
+    -webkit-background-clip: text;
+    -webkit-text-fill-color: transparent;
+    background-clip: text;
   }
 
   .sidebar.collapsed .sidebar-logo {
@@ -152,7 +165,7 @@
     height: 28px;
     border: none;
     background: none;
-    color: #666;
+    color: #606070;
     border-radius: 6px;
     cursor: pointer;
     flex-shrink: 0;
@@ -161,8 +174,8 @@
   }
 
   .collapse-btn:hover {
-    color: #f0f0f0;
-    background: rgba(255,255,255,0.08);
+    color: #818cf8;
+    background: rgba(129, 140, 248, 0.1);
   }
 
   .sidebar-nav {
@@ -184,7 +197,7 @@
   .nav-group-label {
     font-size: 10px;
     font-weight: 600;
-    color: #666;
+    color: #606070;
     text-transform: uppercase;
     letter-spacing: 0.8px;
     padding: 8px 12px 4px;
@@ -196,7 +209,7 @@
     border-radius: 6px;
     transition: color 0.15s ease;
   }
-  .nav-group-label:hover { color: #a0a0a0; }
+  .nav-group-label:hover { color: #818cf8; }
 
   .nav-group-arrow { transition: transform 0.15s ease; flex-shrink: 0; }
   .nav-group-arrow.collapsed { transform: rotate(-90deg); }
@@ -208,7 +221,7 @@
     padding: 10px 12px;
     border: none;
     background: none;
-    color: #a0a0a0;
+    color: #a0a0b0;
     font-size: 14px;
     border-radius: 6px;
     cursor: pointer;
@@ -216,13 +229,13 @@
     width: 100%;
     text-align: left;
   }
-  .nav-item:hover { background: rgba(255,255,255,0.06); color: #f0f0f0; }
-  .nav-item.active { background: rgba(255,255,255,0.1); color: #ffffff; }
+  .nav-item:hover { background: rgba(129, 140, 248, 0.08); color: #f0f0f5; }
+  .nav-item.active { background: rgba(129, 140, 248, 0.15); color: #818cf8; }
 
   .sidebar.collapsed .nav-item { justify-content: center; padding: 10px 4px; }
   .sidebar.collapsed .nav-item span { display: none; }
 
-  .sidebar-footer { padding-top: 8px; border-top: 1px solid #1f1f1f; margin-top: auto; }
+  .sidebar-footer { padding-top: 8px; border-top: 1px solid rgba(255, 255, 255, 0.06); margin-top: auto; }
 
   .status-row {
     display: flex;
@@ -248,5 +261,5 @@
 
   @keyframes pulse { 0%,100% { opacity: 1; } 50% { opacity: 0.6; } }
 
-  .status-text { color: #a0a0a0; }
+  .status-text { color: #a0a0b0; }
 </style>
