@@ -86,12 +86,16 @@ async def admin_page(request: Request):
     return _asset_response("index.html")
 
 
-@router.get("/admin/assets/{filename}", include_in_schema=False)
-async def admin_asset(filename: str, request: Request):
+@router.get("/admin/_astro/{filename}", include_in_schema=False)
+async def admin_astro_asset(filename: str, request: Request):
     require_loopback_admin(request)
-    if filename not in {"admin.css", "admin.js"}:
-        raise HTTPException(status_code=404, detail="Admin asset not found")
-    return _asset_response(filename)
+    return _asset_response(f"_astro/{filename}")
+
+
+@router.get("/admin/background.svg", include_in_schema=False)
+async def admin_background(request: Request):
+    require_loopback_admin(request)
+    return _asset_response("background.svg")
 
 
 @router.get("/admin/api/config")

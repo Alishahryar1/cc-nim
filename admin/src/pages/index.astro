@@ -1,0 +1,559 @@
+---
+import Sidebar from '../components/Sidebar.svelte';
+import ProviderGrid from '../components/ProviderGrid.svelte';
+import SettingsForm from '../components/SettingsForm.svelte';
+---
+
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Free Claude Code Admin</title>
+    <link rel="icon" href="data:," />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" rel="stylesheet" />
+  </head>
+  <body>
+    <div class="app-layout" id="app">
+      <Sidebar activeView="providers" collapsed={false} />
+      <main class="main">
+        <header class="topbar">
+          <div class="topbar-left">
+            <h2 id="pageTitle">Providers</h2>
+          </div>
+          <div class="topbar-right">
+            <span id="dirtyState" class="status-pill">No changes</span>
+          </div>
+        </header>
+
+        <div id="adminViews" class="admin-views">
+          <section id="view-providers" class="admin-view active" data-view="providers">
+            <ProviderGrid providers={[]} />
+            <div id="providersSections" class="form-sections"></div>
+          </section>
+
+          <section id="view-model_config" class="admin-view" data-view="model_config" hidden>
+            <div id="modelConfigSections" class="form-sections"></div>
+          </section>
+
+          <section id="view-messaging" class="admin-view" data-view="messaging" hidden>
+            <div id="messagingSections" class="form-sections"></div>
+          </section>
+        </div>
+      </main>
+
+      <footer class="action-bar">
+        <div class="action-meta">
+          <span id="configPath"></span>
+        </div>
+        <div id="messageArea" class="message-area"></div>
+        <div class="action-buttons">
+          <button id="validateButton" class="secondary-button" type="button">Validate</button>
+          <button id="applyButton" class="primary-button" type="button" disabled>Apply</button>
+        </div>
+      </footer>
+    </div>
+  </body>
+</html>
+
+<style is:global>
+  :root {
+    --bg-primary: #0a0a0a;
+    --bg-secondary: #111111;
+    --bg-card: #141414;
+    --bg-input: #1a1a1a;
+    --border-color: #1f1f1f;
+    --text-primary: #f0f0f0;
+    --text-secondary: #a0a0a0;
+    --text-muted: #666666;
+    --success: #22c55e;
+    --error: #ef4444;
+    --warning: #f59e0b;
+    --shadow: 0 4px 24px rgba(0,0,0,0.4);
+  }
+
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+
+  body {
+    min-width: 320px;
+    background: var(--bg-primary);
+    background-image:
+      radial-gradient(ellipse at 20% 50%, rgba(255,255,255,0.015) 0%, transparent 50%),
+      radial-gradient(ellipse at 80% 20%, rgba(255,255,255,0.01) 0%, transparent 50%),
+      linear-gradient(rgba(255,255,255,0.03) 1px, transparent 1px),
+      linear-gradient(90deg, rgba(255,255,255,0.03) 1px, transparent 1px);
+    background-size: 100% 100%, 100% 100%, 40px 40px, 40px 40px;
+    background-attachment: fixed;
+    color: var(--text-primary);
+    font-family: 'Inter', system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+    line-height: 1.5;
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
+  }
+
+  button, input, select, textarea { font: inherit; }
+
+  .app-layout {
+    display: flex;
+    min-height: 100vh;
+    padding-bottom: 72px;
+  }
+
+  .main {
+    flex: 1;
+    margin-left: 240px;
+    min-width: 0;
+    padding: 24px;
+  }
+
+  .topbar {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 24px;
+    padding-bottom: 16px;
+    border-bottom: 1px solid var(--border-color);
+  }
+
+  .topbar h2 { font-size: 24px; font-weight: 700; letter-spacing: -0.5px; }
+
+  .status-pill {
+    display: inline-flex;
+    align-items: center;
+    min-height: 28px;
+    border: 1px solid var(--border-color);
+    border-radius: 999px;
+    padding: 4px 12px;
+    background: var(--bg-card);
+    color: var(--text-muted);
+    font-size: 12px;
+    font-weight: 600;
+    white-space: nowrap;
+  }
+
+  .status-pill.warn {
+    color: var(--warning);
+    background: rgba(245,158,11,0.1);
+    border-color: rgba(245,158,11,0.3);
+  }
+
+  .admin-views, .admin-view { display: grid; gap: 20px; }
+  .admin-view[hidden] { display: none; }
+
+  .form-sections { display: grid; gap: 20px; }
+
+  .action-bar {
+    position: fixed;
+    right: 0;
+    bottom: 0;
+    left: 240px;
+    z-index: 50;
+    display: grid;
+    grid-template-columns: minmax(0,1fr) minmax(180px,auto) auto;
+    gap: 14px;
+    align-items: center;
+    min-height: 64px;
+    border-top: 1px solid var(--border-color);
+    background: rgba(10,10,10,0.95);
+    padding: 12px 24px;
+    backdrop-filter: blur(12px);
+  }
+
+  .action-meta span { color: var(--text-muted); font-size: 12px; }
+
+  .message-area {
+    min-width: 0;
+    color: var(--text-muted);
+    font-size: 13px;
+    text-align: center;
+  }
+
+  .message-area.error { color: var(--error); }
+  .message-area.ok { color: var(--success); }
+
+  .action-buttons { display: flex; gap: 8px; }
+
+  .secondary-button {
+    min-height: 34px;
+    border-radius: 8px;
+    border: 1px solid var(--border-color);
+    padding: 7px 14px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 13px;
+    transition: all 0.15s ease;
+    background: var(--bg-card);
+    color: var(--text-primary);
+  }
+
+  .secondary-button:hover { border-color: #ffffff; background: #1a1a1a; }
+
+  .primary-button {
+    min-height: 34px;
+    border-radius: 8px;
+    border: 1px solid #ffffff;
+    padding: 7px 14px;
+    cursor: pointer;
+    font-weight: 600;
+    font-size: 13px;
+    transition: all 0.15s ease;
+    background: #ffffff;
+    color: #000000;
+  }
+
+  .primary-button:hover { background: #e0e0e0; }
+
+  .primary-button:disabled {
+    cursor: not-allowed;
+    border-color: var(--border-color);
+    background: var(--bg-card);
+    color: var(--text-muted);
+  }
+
+  ::-webkit-scrollbar { width: 6px; height: 6px; }
+  ::-webkit-scrollbar-track { background: transparent; }
+  ::-webkit-scrollbar-thumb { background: var(--border-color); border-radius: 3px; }
+  ::-webkit-scrollbar-thumb:hover { background: #252525; }
+
+  ::selection { background: rgba(255,255,255,0.2); }
+
+  @media (max-width: 900px) {
+    .main { margin-left: 0; padding: 16px; }
+    .action-bar { left: 0; grid-template-columns: 1fr; padding: 12px 16px; }
+    .action-buttons { justify-content: stretch; }
+    .action-buttons button { flex: 1; }
+  }
+</style>
+
+<script>
+  import { loadConfig, validateConfig, applyConfig, loadLocalStatus } from '../lib/api';
+  import { VIEW_GROUPS, MASKED_SECRET } from '../lib/config';
+
+  let config = null;
+  let fields = [];
+  let sections = [];
+  let providerStatus = [];
+  let activeView = 'providers';
+
+  function byId(id) { return document.getElementById(id); }
+
+  function readFieldValue(input) {
+    if (input.type === 'checkbox') return input.checked ? 'true' : 'false';
+    if (input.dataset.secret === 'true' && input.dataset.configured === 'true') {
+      return input.value ? input.value : MASKED_SECRET;
+    }
+    return input.value;
+  }
+
+  function changedValues() {
+    const values = {};
+    document.querySelectorAll('[data-key]').forEach(input => {
+      if (input.disabled || !input.matches('input, select, textarea')) return;
+      const value = readFieldValue(input);
+      if (value !== input.dataset.original) values[input.dataset.key] = value;
+    });
+    return values;
+  }
+
+  function updateDirtyState() {
+    const count = Object.keys(changedValues()).length;
+    const el = byId('dirtyState');
+    el.textContent = count === 0 ? 'No changes' : `${count} unsaved change${count === 1 ? '' : 's'}`;
+    el.className = `status-pill${count === 0 ? '' : ' warn'}`;
+    byId('applyButton').disabled = count === 0;
+  }
+
+  function setActiveView(viewId, { scroll = false } = {}) {
+    const view = VIEW_GROUPS.find(v => v.id === viewId) || VIEW_GROUPS[0];
+    activeView = view.id;
+    byId('pageTitle').textContent = view.title;
+
+    document.querySelectorAll('.nav-item').forEach(item => {
+      item.classList.toggle('active', item.dataset.view === view.id);
+    });
+
+    document.querySelectorAll('.admin-view').forEach(v => {
+      const selected = v.dataset.view === view.id;
+      v.classList.toggle('active', selected);
+      v.hidden = !selected;
+    });
+
+    if (scroll) window.scrollTo({ top: 0, behavior: 'smooth' });
+  }
+
+  function showMessage(message, kind = '') {
+    const area = byId('messageArea');
+    area.textContent = message;
+    area.className = `message-area ${kind}`.trim();
+  }
+
+  function showValidationResult(result) {
+    if (result.valid) showMessage('Config shape is valid', 'ok');
+    else showMessage(result.errors.join('; '), 'error');
+  }
+
+  async function validate(showResult = true) {
+    const result = await validateConfig(changedValues());
+    if (showResult) showValidationResult(result);
+    return result;
+  }
+
+  async function apply() {
+    const result = await applyConfig(changedValues());
+    if (!result.applied) { showValidationResult(result); return; }
+    const restart = result.restart || {};
+    if (restart.required && restart.automatic) {
+      showMessage('Applied. Restarting server...', 'ok');
+      byId('applyButton').disabled = true;
+      setTimeout(() => window.location.href = restart.admin_url || '/admin', 1600);
+      return;
+    }
+    const pending = restart.required ? restart.fields || [] : result.pending_fields || [];
+    await load();
+    showMessage(pending.length ? `Applied. Restart fcc-server to use: ${pending.join(', ')}` : 'Applied', 'ok');
+  }
+
+  function renderNav() {
+    VIEW_GROUPS.forEach(view => {
+      const btn = document.querySelector(`[data-view="${view.id}"]`);
+      if (!btn) return;
+      if (btn.tagName === 'BUTTON') {
+        btn.addEventListener('click', () => setActiveView(view.id, { scroll: true }));
+      }
+    });
+    setActiveView(activeView, { scroll: false });
+  }
+
+  function renderSections() {
+    VIEW_GROUPS.forEach(view => { byId(view.containerId).innerHTML = ''; });
+
+    const bySection = new Map();
+    sections.forEach(s => bySection.set(s.id, []));
+    fields.forEach(f => {
+      if (!bySection.has(f.section)) bySection.set(f.section, []);
+      bySection.get(f.section).push(f);
+    });
+
+    VIEW_GROUPS.forEach(view => {
+      const container = byId(view.containerId);
+      view.sections.forEach(sectionId => {
+        const section = sections.find(s => s.id === sectionId);
+        const sectionFields = bySection.get(sectionId) || [];
+        if (!section || sectionFields.length === 0) return;
+
+        const el = document.createElement('section');
+        el.className = 'settings-section';
+        el.id = `section-${section.id}`;
+
+        const heading = document.createElement('div');
+        heading.className = 'section-heading';
+        heading.innerHTML = `<div><h3>${section.label}</h3><p>${section.description}</p></div>`;
+        el.appendChild(heading);
+
+        const grid = document.createElement('div');
+        grid.className = 'field-grid';
+        sectionFields.forEach(f => grid.appendChild(renderField(f)));
+        el.appendChild(grid);
+
+        if (sectionFields.some(f => f.advanced)) {
+          const toggle = document.createElement('button');
+          toggle.type = 'button';
+          toggle.className = 'ghost-button advanced-toggle';
+          toggle.textContent = 'Show advanced';
+          toggle.addEventListener('click', () => {
+            const showing = el.classList.toggle('show-advanced');
+            toggle.textContent = showing ? 'Hide advanced' : 'Show advanced';
+          });
+          el.appendChild(toggle);
+        }
+
+        container.appendChild(el);
+      });
+    });
+  }
+
+  function renderField(field) {
+    const wrapper = document.createElement('div');
+    wrapper.className = `field${field.advanced ? ' advanced-field' : ''}`;
+    wrapper.dataset.key = field.key;
+
+    const label = document.createElement('label');
+    label.htmlFor = `field-${field.key}`;
+    const labelText = document.createElement('span');
+    labelText.textContent = field.label;
+    label.appendChild(labelText);
+
+    const source = (() => {
+      const parts = [];
+      const labels = { default: 'default', template: 'template', repo_env: 'repo .env', managed_env: '', explicit_env_file: 'FCC_ENV_FILE', process: 'process env' };
+      const label = Object.prototype.hasOwnProperty.call(labels, field.source) ? labels[field.source] : field.source;
+      if (label) parts.push(label);
+      if (field.locked) parts.push('locked');
+      return parts.join(' ');
+    })();
+    if (source) {
+      const sourceEl = document.createElement('span');
+      sourceEl.className = 'field-source';
+      sourceEl.textContent = source;
+      label.appendChild(sourceEl);
+    }
+
+    let input;
+    if (field.type === 'boolean') {
+      input = document.createElement('input');
+      input.type = 'checkbox';
+      input.checked = String(field.value).toLowerCase() === 'true';
+      input.dataset.original = input.checked ? 'true' : 'false';
+    } else if (field.type === 'tri_boolean') {
+      input = document.createElement('select');
+      [['', 'Inherit'], ['true', 'Enabled'], ['false', 'Disabled']].forEach(([v, l]) => {
+        const opt = document.createElement('option');
+        opt.value = v; opt.textContent = l;
+        if (v === (field.value || '')) opt.selected = true;
+        input.appendChild(opt);
+      });
+    } else if (field.type === 'select') {
+      input = document.createElement('select');
+      (field.options || []).forEach(v => {
+        const opt = document.createElement('option');
+        opt.value = v; opt.textContent = v;
+        if (v === field.value) opt.selected = true;
+        input.appendChild(opt);
+      });
+    } else if (field.type === 'textarea') {
+      input = document.createElement('textarea');
+      input.value = field.value || '';
+    } else {
+      input = document.createElement('input');
+      input.type = field.type === 'number' ? 'number' : (field.type === 'secret' ? 'password' : 'text');
+      if (field.type === 'secret') {
+        input.placeholder = field.configured ? 'Configured - enter a new value to replace' : 'Not configured';
+        input.value = '';
+        input.autocomplete = 'off';
+      } else {
+        input.value = field.value || '';
+      }
+    }
+
+    input.id = `field-${field.key}`;
+    input.dataset.key = field.key;
+    input.dataset.original = field.value || '';
+    input.dataset.secret = field.secret ? 'true' : 'false';
+    input.dataset.configured = field.configured ? 'true' : 'false';
+    input.disabled = field.locked;
+    input.addEventListener('input', updateDirtyState);
+    input.addEventListener('change', updateDirtyState);
+
+    wrapper.append(label, input);
+    if (field.description) {
+      const desc = document.createElement('div');
+      desc.className = 'field-description';
+      desc.textContent = field.description;
+      wrapper.appendChild(desc);
+    }
+    return wrapper;
+  }
+
+  function updateProviderCard(providerId, status, label, metaText) {
+    const card = document.querySelector(`[data-provider="${providerId}"]`);
+    if (!card) return;
+    const pill = card.querySelector('.status-pill');
+    if (pill) { pill.className = `status-pill ${status === 'reachable' || status === 'configured' || status === 'running' ? 'ok' : status === 'offline' || status === 'error' ? 'error' : 'warn'}`; pill.textContent = label; }
+    if (metaText) card.querySelector('.provider-meta').textContent = metaText;
+  }
+
+  async function load() {
+    showMessage('Loading admin config');
+    const cfg = await loadConfig();
+    config = cfg;
+    fields = cfg.fields;
+    sections = cfg.sections;
+    providerStatus = cfg.provider_status;
+
+    // Re-render with fresh data
+    renderNav();
+    renderProviders(cfg.provider_status);
+    renderSections();
+    byId('configPath').textContent = cfg.paths.managed;
+    await validate(false);
+
+    const statusResult = await loadLocalStatus();
+    statusResult.providers.forEach(p => {
+      const meta = p.status_code ? `${p.base_url} returned HTTP ${p.status_code}` : p.base_url;
+      updateProviderCard(p.provider_id, p.status, p.label, meta);
+    });
+
+    updateDirtyState();
+    showMessage('');
+  }
+
+  function renderProviders(providers) {
+    const grid = byId('providerGrid');
+    if (!grid) return;
+    grid.innerHTML = '';
+    providers.forEach(provider => {
+      const card = document.createElement('article');
+      card.className = 'provider-card';
+      card.dataset.provider = provider.provider_id;
+
+      const title = document.createElement('div');
+      title.className = 'provider-title';
+      const nameMap = { nvidia_nim: 'NVIDIA NIM', open_router: 'OpenRouter', mistral_codestral: 'Mistral Codestral', deepseek: 'DeepSeek', lmstudio: 'LM Studio', llamacpp: 'llama.cpp', ollama: 'Ollama', kimi: 'Kimi', wafer: 'Wafer', opencode: 'OpenCode Zen', opencode_go: 'OpenCode Go', zai: 'Z.ai' };
+      const pname = nameMap[provider.provider_id] || provider.provider_id.split('_').map(p => p.charAt(0).toUpperCase() + p.slice(1)).join(' ');
+      title.innerHTML = `<strong>${pname}</strong>`;
+
+      const pill = document.createElement('span');
+      const sc = ['configured','reachable','running'].includes(provider.status) ? 'ok' : ['missing_key','missing_url','unknown'].includes(provider.status) ? 'warn' : 'error';
+      pill.className = `status-pill ${sc}`;
+      pill.textContent = provider.label;
+      title.appendChild(pill);
+
+      const meta = document.createElement('div');
+      meta.className = 'provider-meta';
+      meta.textContent = provider.kind === 'local' ? (provider.base_url || 'No local URL configured') : provider.credential_env;
+
+      const button = document.createElement('button');
+      button.type = 'button';
+      button.className = 'test-button';
+      button.textContent = provider.kind === 'local' ? 'Test' : 'Refresh models';
+      button.addEventListener('click', async () => {
+        button.disabled = true;
+        button.textContent = 'Testing...';
+        try {
+          const res = await (await fetch(`/admin/api/providers/${provider.provider_id}/test`, { method: 'POST', body: '{}', headers: { 'Content-Type': 'application/json' } })).json();
+          if (res.ok) {
+            const modelList = (res.models || []).slice(0, 3).join(', ') || 'No models returned';
+            updateProviderCard(provider.provider_id, 'reachable', `${res.models.length} models`, modelList);
+          } else {
+            updateProviderCard(provider.provider_id, 'offline', res.error_type, res.error_type);
+          }
+        } finally {
+          button.disabled = false;
+          button.textContent = provider.kind === 'local' ? 'Test' : 'Refresh models';
+        }
+      });
+
+      card.append(title, meta, button);
+      grid.appendChild(card);
+    });
+  }
+
+  document.addEventListener('DOMContentLoaded', () => {
+    byId('validateButton').addEventListener('click', () => validate(true));
+    byId('applyButton').addEventListener('click', apply);
+
+    document.querySelectorAll('.nav-group-label').forEach(label => {
+      label.addEventListener('click', () => {
+        const key = label.dataset.group;
+        const arrow = label.querySelector('.nav-group-arrow');
+        const items = document.getElementById(key === 'management' ? 'navManagement' : 'navMessaging');
+        if (arrow && items) {
+          arrow.classList.toggle('collapsed');
+          items.style.display = items.style.display === 'none' ? 'flex' : 'none';
+        }
+      });
+    });
+
+    load();
+  });
+</script>
