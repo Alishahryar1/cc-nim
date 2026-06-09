@@ -27,8 +27,13 @@ import Sidebar from '../components/Sidebar.svelte';
         </header>
 
         <main class="flex-1 overflow-y-auto">
-          <div id="adminViews" class="p-6 space-y-5">
-            <section id="view-providers" class="admin-view active" data-view="providers">
+          <div id="loadingOverlay">
+            <div class="spinner"></div>
+            <span class="loading-text" id="loadingText">Loading admin config...</span>
+          </div>
+          <div id="adminViews" class="p-6 space-y-5" hidden>
+            <div id="statsBar" class="stats-grid"></div>
+            <section id="view-providers" class="admin-view" data-view="providers">
               <div id="providerGridContainer"></div>
               <div id="providersSections" class="space-y-5"></div>
             </section>
@@ -44,8 +49,9 @@ import Sidebar from '../components/Sidebar.svelte';
         </main>
 
         <footer class="flex items-center gap-4 px-6 py-3 border-t border-border-default bg-bg-surface min-h-[56px]">
-          <div class="flex-1 min-w-0">
-            <span id="configPath" class="text-xs text-text-muted"></span>
+          <div class="flex items-center gap-3 flex-1 min-w-0">
+            <span id="configPath" class="config-path"></span>
+            <span id="versionInfo" class="text-xs text-text-disabled"></span>
           </div>
           <div id="messageArea" class="text-xs text-text-muted text-center flex-1 min-w-0"></div>
           <div class="flex items-center gap-2 shrink-0">
@@ -282,17 +288,67 @@ import Sidebar from '../components/Sidebar.svelte';
     if (metaText) card.querySelector('.provider-meta').textContent = metaText;
   }
 
+  function renderStats(providers) {
+    const bar = byId('statsBar');
+    if (!bar) return;
+    const total = providers.length;
+    const configured = providers.filter(p => p.status === 'configured' || p.status === 'reachable' || p.status === 'running').length;
+    const online = providers.filter(p => p.status === 'reachable' || p.status === 'running').length;
+
+    bar.innerHTML = `
+      <div class="stat-card">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <span class="stat-value">${total}</span>
+          <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 1v4"/><path d="M12 19v4"/><path d="M1 12h4"/><path d="M19 12h4"/><path d="M4.22 4.22l2.83 2.83"/><path d="M16.95 16.95l2.83 2.83"/><path d="M4.22 19.78l2.83-2.83"/><path d="M16.95 7.05l2.83-2.83"/></svg>
+        </div>
+        <span class="stat-label">Total Providers</span>
+      </div>
+      <div class="stat-card accent-success">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <span class="stat-value">${configured}</span>
+          <svg class="stat-icon" style="color:var(--color-success)" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg>
+        </div>
+        <span class="stat-label">Configured</span>
+      </div>
+      <div class="stat-card accent-accent">
+        <div style="display:flex;align-items:center;justify-content:space-between">
+          <span class="stat-value">${online}</span>
+          <svg class="stat-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        </div>
+        <span class="stat-label">Online</span>
+      </div>
+    `;
+  }
+
+  function copyPath(path) {
+    navigator.clipboard.writeText(path).then(() => {
+      const el = byId('configPath');
+      const orig = el.innerHTML;
+      el.innerHTML = '<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><polyline points="20 6 9 17 4 12"/></svg> Copied!';
+      setTimeout(() => el.innerHTML = orig, 1500);
+    });
+  }
+
   async function load() {
-    showMessage('Loading admin config');
+    const overlay = byId('loadingOverlay');
+    const views = byId('adminViews');
+    showMessage('');
+
     const cfg = await loadConfig();
     config = cfg;
     fields = cfg.fields;
     sections = cfg.sections;
     providerStatus = cfg.provider_status;
 
+    renderStats(cfg.provider_status);
     renderProviders(cfg.provider_status);
     renderSections();
-    byId('configPath').textContent = cfg.paths.managed;
+
+    const path = cfg.paths.managed;
+    byId('configPath').innerHTML = `<svg class="copy-icon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 0 1-2-2V4a2 2 0 0 1 2-2h9a2 2 0 0 1 2 2v1"/></svg> ${path}`;
+    byId('configPath').addEventListener('click', () => copyPath(path));
+    byId('versionInfo').textContent = `v${cfg.version || '?'}`;
+
     await validate(false);
 
     const statusResult = await loadLocalStatus();
@@ -302,7 +358,10 @@ import Sidebar from '../components/Sidebar.svelte';
     });
 
     updateDirtyState();
-    showMessage('');
+
+    overlay.classList.add('hidden');
+    views.hidden = false;
+    views.classList.add('view-enter');
   }
 
   function renderProviders(providers) {
@@ -319,7 +378,7 @@ import Sidebar from '../components/Sidebar.svelte';
     strip.appendChild(header);
 
     const grid = document.createElement('div');
-    grid.className = 'provider-grid';
+    grid.className = 'provider-grid card-stagger';
 
     providers.forEach(provider => {
       const card = document.createElement('article');
@@ -340,7 +399,8 @@ import Sidebar from '../components/Sidebar.svelte';
 
       const meta = document.createElement('div');
       meta.className = 'provider-meta';
-      meta.textContent = provider.kind === 'local' ? (provider.base_url || 'No local URL configured') : provider.credential_env;
+      const metaContent = provider.kind === 'local' ? (provider.base_url || 'No local URL configured') : provider.credential_env;
+      meta.textContent = metaContent;
 
       const button = document.createElement('button');
       button.type = 'button';

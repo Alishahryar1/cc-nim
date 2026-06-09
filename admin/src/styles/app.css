@@ -85,6 +85,200 @@ input, select, textarea, button {
   color: var(--color-text-primary);
 }
 
+/* ─── Animations ──────────────────────────────────────────────── */
+
+@keyframes fade-in {
+  from { opacity: 0; transform: translateY(8px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes fade-in-up {
+  from { opacity: 0; transform: translateY(12px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@keyframes pulse-dot {
+  0%, 100% { opacity: 1; transform: scale(1); }
+  50% { opacity: 0.6; transform: scale(0.85); }
+}
+
+@keyframes shimmer {
+  0% { background-position: -200% 0; }
+  100% { background-position: 200% 0; }
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@keyframes slide-in-right {
+  from { opacity: 0; transform: translateX(4px); }
+  to { opacity: 1; transform: translateX(0); }
+}
+
+.view-enter {
+  animation: fade-in 0.25s ease forwards;
+}
+
+/* ─── Card entrance stagger ──────────────────────────────────── */
+
+.card-stagger {
+  --stagger: 0;
+}
+
+.card-stagger > * {
+  animation: fade-in-up 0.3s ease backwards;
+  animation-delay: calc(var(--stagger, 0) * 30ms);
+}
+
+.card-stagger > *:nth-child(1) { --stagger: 1; }
+.card-stagger > *:nth-child(2) { --stagger: 2; }
+.card-stagger > *:nth-child(3) { --stagger: 3; }
+.card-stagger > *:nth-child(4) { --stagger: 4; }
+.card-stagger > *:nth-child(5) { --stagger: 5; }
+.card-stagger > *:nth-child(6) { --stagger: 6; }
+.card-stagger > *:nth-child(7) { --stagger: 7; }
+.card-stagger > *:nth-child(8) { --stagger: 8; }
+.card-stagger > *:nth-child(9) { --stagger: 9; }
+.card-stagger > *:nth-child(10) { --stagger: 10; }
+
+/* ─── Skeleton loading ───────────────────────────────────────── */
+
+.skeleton {
+  background: linear-gradient(
+    90deg,
+    var(--color-bg-elevated) 25%,
+    var(--color-bg-hover) 50%,
+    var(--color-bg-elevated) 75%
+  );
+  background-size: 200% 100%;
+  animation: shimmer 1.5s ease-in-out infinite;
+  border-radius: 4px;
+}
+
+/* ─── Status dot pulse ───────────────────────────────────────── */
+
+.status-dot {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+
+.status-dot.connected {
+  background-color: var(--color-success);
+  box-shadow: 0 0 6px rgba(34, 197, 94, 0.5);
+  animation: pulse-dot 2s ease-in-out infinite;
+}
+
+.status-dot.disconnected {
+  background-color: var(--color-error);
+}
+
+/* ─── Quick stat cards ───────────────────────────────────────── */
+
+.stats-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(160px, 1fr));
+  gap: 12px;
+}
+
+.stat-card {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  padding: 16px;
+  border-radius: 10px;
+  border: 1px solid var(--color-border-default);
+  background: var(--color-bg-elevated);
+  transition: all 0.15s ease;
+}
+
+.stat-card:hover {
+  background: var(--color-bg-hover);
+  border-color: var(--color-border-hover);
+}
+
+.stat-card .stat-value {
+  font-size: 24px;
+  font-weight: 700;
+  color: var(--color-text-primary);
+  line-height: 1;
+}
+
+.stat-card .stat-label {
+  font-size: 12px;
+  color: var(--color-text-muted);
+  font-weight: 500;
+}
+
+.stat-card .stat-icon {
+  width: 20px;
+  height: 20px;
+  color: var(--color-accent);
+}
+
+.stat-card.accent-accent .stat-value { color: var(--color-accent); }
+.stat-card.accent-success .stat-value { color: var(--color-success); }
+.stat-card.accent-warning .stat-value { color: var(--color-warning); }
+.stat-card.accent-error .stat-value { color: var(--color-error); }
+
+/* ─── Config path copy ───────────────────────────────────────── */
+
+.config-path {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 12px;
+  color: var(--color-text-muted);
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.config-path:hover {
+  color: var(--color-text-secondary);
+}
+
+.config-path .copy-icon {
+  width: 12px;
+  height: 12px;
+  opacity: 0;
+  transition: opacity 0.15s ease;
+}
+
+.config-path:hover .copy-icon {
+  opacity: 1;
+}
+
+/* ─── Loading overlay ────────────────────────────────────────── */
+
+#loadingOverlay {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 60px 20px;
+  transition: opacity 0.3s ease;
+}
+
+#loadingOverlay.hidden {
+  display: none;
+}
+
+#loadingOverlay .spinner {
+  width: 20px;
+  height: 20px;
+  border: 2px solid var(--color-border-default);
+  border-top-color: var(--color-accent);
+  border-radius: 50%;
+  animation: spin 0.6s linear infinite;
+  margin-right: 12px;
+}
+
+#loadingOverlay .loading-text {
+  font-size: 13px;
+  color: var(--color-text-muted);
+}
+
 /* ─── Shared Component Classes ─────────────────────────────── */
 
 .btn {
