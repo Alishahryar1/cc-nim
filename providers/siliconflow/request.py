@@ -34,13 +34,16 @@ def build_request_body(request_data: Any, *, thinking_enabled: bool) -> dict:
     except OpenAIConversionError as exc:
         raise InvalidRequestError(str(exc)) from exc
 
+    extra: dict[str, Any] = {}
     request_extra = getattr(request_data, "extra_body", None)
     if isinstance(request_extra, dict) and request_extra:
-        merged = dict(request_extra)
-        body["extra_body"] = merged
+        extra.update(request_extra)
 
     if thinking_enabled:
-        body["enable_thinking"] = True
+        extra["enable_thinking"] = True
+
+    if extra:
+        body["extra_body"] = extra
 
     logger.debug(
         "SILICONFLOW_REQUEST: conversion done model={} msgs={} tools={}",
