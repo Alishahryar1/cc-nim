@@ -48,6 +48,10 @@
 body {
   min-width: 320px;
   background: var(--bg-void);
+  background-image: url('/admin/assets/background.svg');
+  background-attachment: fixed;
+  background-repeat: no-repeat;
+  background-size: cover;
   color: var(--text-primary);
   font-family: var(--font-sans);
   font-size: 14px;
