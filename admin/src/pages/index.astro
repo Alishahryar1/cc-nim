@@ -615,7 +615,7 @@ import Sidebar from '../components/Sidebar.svelte';
     container.appendChild(strip);
   }
 
-  document.addEventListener('DOMContentLoaded', () => {
+  function init() {
     byId('validateButton').addEventListener('click', () => validate(true));
     byId('applyButton').addEventListener('click', apply);
 
@@ -632,7 +632,13 @@ import Sidebar from '../components/Sidebar.svelte';
     });
 
     load();
-  });
+  }
+
+  if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+  } else {
+    init();
+  }
 </script>
 
 <style is:global>
