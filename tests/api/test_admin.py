@@ -78,6 +78,13 @@ def _astro_js_content() -> str:
     )
 
 
+def _astro_all_js_content() -> str:
+    """Search both .js files and inline scripts in index.html."""
+    js = _astro_js_content()
+    html = Path("api/admin_static/index.html").read_text(encoding="utf-8")
+    return js + html
+
+
 def _astro_css_content() -> str:
     js_dir = Path("api/admin_static/_astro")
     return "".join(
@@ -95,7 +102,7 @@ def test_admin_static_no_longer_fetches_global_status_header():
 
 
 def test_admin_static_contains_source_label_logic():
-    js = _astro_js_content()
+    js = _astro_all_js_content()
 
     assert "managed_env" in js
     assert "hasOwnProperty" in js or "source_label" in js

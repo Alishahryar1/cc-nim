@@ -889,3 +889,82 @@ input, select, textarea, button {
   color: var(--color-text-muted);
   max-width: 320px;
 }
+
+
+/* ─── Enhanced Additions ─────────────────────────────────────── */
+
+:root {
+  color-scheme: dark;
+  --shadow-sm: 0 2px 4px rgba(0,0,0,.15);
+  --shadow-md: 0 8px 24px rgba(0,0,0,.25);
+  --shadow-lg: 0 16px 48px rgba(0,0,0,.35);
+  --glass-bg: rgba(20,20,40,.55);
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  background:
+    radial-gradient(circle at 20% 20%, rgba(0,229,255,.05), transparent 35%),
+    radial-gradient(circle at 80% 30%, rgba(0,255,136,.04), transparent 30%),
+    radial-gradient(circle at 50% 80%, rgba(255,170,0,.03), transparent 30%);
+}
+
+.glass-panel {
+  background: var(--glass-bg);
+  backdrop-filter: blur(18px) saturate(160%);
+  -webkit-backdrop-filter: blur(18px) saturate(160%);
+  border: 1px solid var(--color-border-default);
+}
+
+.focus-ring:focus-visible,
+button:focus-visible,
+input:focus-visible,
+textarea:focus-visible,
+select:focus-visible {
+  outline: none;
+  box-shadow: 0 0 0 3px var(--color-accent-subtle);
+}
+
+.hover-lift {
+  transition: transform .2s ease, box-shadow .2s ease;
+}
+
+.hover-lift:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-md);
+}
+
+.neon-border {
+  position: relative;
+}
+
+.neon-border::after {
+  content: "";
+  position: absolute;
+  inset: -1px;
+  border-radius: inherit;
+  background: linear-gradient(135deg,
+    rgba(0,229,255,.35),
+    rgba(0,255,136,.15),
+    rgba(0,229,255,.35));
+  z-index: -1;
+  filter: blur(10px);
+  opacity: .6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation: none !important;
+    transition: none !important;
+    scroll-behavior: auto !important;
+  }
+}
