@@ -243,6 +243,17 @@ input, select, textarea, button {
   border-color: rgba(248, 113, 113, 0.15);
 }
 
+/* ─── Admin View Transition ──────────────────────────────────── */
+
+.admin-view {
+  animation: view-in 0.25s ease;
+}
+
+@keyframes view-in {
+  from { opacity: 0; transform: translateY(6px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
 /* ─── Provider Cards ──────────────────────────────────────────── */
 
 .provider-strip {
@@ -250,7 +261,23 @@ input, select, textarea, button {
   border-radius: var(--radius-lg);
   background: var(--color-bg-surface);
   padding: 20px;
-  box-shadow: 0 1px 3px rgba(0, 0, 0, 0.3), 0 1px 2px rgba(0, 0, 0, 0.2);
+  box-shadow:
+    0 1px 3px rgba(0, 0, 0, 0.3),
+    0 1px 2px rgba(0, 0, 0, 0.2);
+  transition: border-color 0.2s ease, box-shadow 0.25s ease;
+}
+
+.provider-strip:hover {
+  border-color: var(--color-border-hover);
+  box-shadow:
+    0 4px 12px rgba(0, 0, 0, 0.25),
+    0 0 0 1px rgba(255, 255, 255, 0.03) inset;
+}
+
+.provider-strip[data-status="configured"]:hover {
+  box-shadow:
+    0 4px 16px rgba(16, 185, 129, 0.08),
+    0 1px 4px rgba(0, 0, 0, 0.2);
 }
 
 .strip-header {

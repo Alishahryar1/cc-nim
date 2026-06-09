@@ -128,6 +128,11 @@ import Sidebar from '../components/Sidebar.svelte';
       const selected = v.dataset.view === view.id;
       v.classList.toggle('active', selected);
       v.hidden = !selected;
+      if (selected) {
+        v.style.animation = 'none';
+        v.offsetHeight; // trigger reflow
+        v.style.animation = '';
+      }
     });
 
     if (scroll) window.scrollTo({ top: 0, behavior: 'smooth' });
