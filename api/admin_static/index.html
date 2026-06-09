@@ -5,25 +5,100 @@
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>Free Claude Code Admin</title>
     <link rel="icon" href="data:," />
+    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" />
     <link rel="stylesheet" href="/admin/assets/admin.css" />
   </head>
   <body>
-    <div class="app-shell">
-      <aside class="sidebar">
-        <div class="brand">
-          <div class="brand-mark">FC</div>
-          <div>
-            <h1>Free Claude Code</h1>
-            <p>Server Control</p>
+    <div class="app-layout">
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-logo" id="sidebarLogo">
+          <svg class="logo-icon" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/>
+            <line x1="12" y1="22" x2="12" y2="15.5"/>
+            <polyline points="22 8.5 12 15.5 2 8.5"/>
+            <polyline points="2 15.5 12 8.5 22 15.5"/>
+            <line x1="12" y1="2" x2="12" y2="8.5"/>
+          </svg>
+          <span class="logo-text">Free Claude Code</span>
+        </div>
+
+        <button class="collapse-btn" id="collapseBtn" title="Toggle sidebar">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+            <polyline points="15 18 9 12 15 6"/>
+          </svg>
+        </button>
+
+        <nav class="sidebar-nav">
+          <div class="nav-group">
+            <div class="nav-group-label" data-group="management">
+              <span>MANAGEMENT</span>
+              <svg class="nav-group-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </div>
+            <div class="nav-group-items" id="navManagement">
+              <button class="nav-item active" data-view="providers">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <circle cx="12" cy="12" r="3"/>
+                  <path d="M12 1v4"/>
+                  <path d="M12 19v4"/>
+                  <path d="M1 12h4"/>
+                  <path d="M19 12h4"/>
+                  <path d="M4.22 4.22l2.83 2.83"/>
+                  <path d="M16.95 16.95l2.83 2.83"/>
+                  <path d="M4.22 19.78l2.83-2.83"/>
+                  <path d="M16.95 7.05l2.83-2.83"/>
+                </svg>
+                <span>Providers</span>
+              </button>
+              <button class="nav-item" data-view="model_config">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <rect x="4" y="4" width="16" height="16" rx="2"/>
+                  <path d="M9 9h6v6H9z"/>
+                </svg>
+                <span>Model Config</span>
+              </button>
+            </div>
+          </div>
+
+          <div class="nav-group">
+            <div class="nav-group-label" data-group="messaging">
+              <span>MESSAGING</span>
+              <svg class="nav-group-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polyline points="6 9 12 15 18 9"/>
+              </svg>
+            </div>
+            <div class="nav-group-items" id="navMessaging">
+              <button class="nav-item" data-view="messaging">
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
+                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
+                </svg>
+                <span>Channels</span>
+              </button>
+            </div>
+          </div>
+        </nav>
+
+        <div class="sidebar-footer">
+          <div class="status-row">
+            <div class="status-indicator connected">
+              <span class="status-dot"></span>
+              <span class="status-text">Server Online</span>
+            </div>
+          </div>
+          <div class="version-info">
+            <span class="version-text">v1.0.0</span>
           </div>
         </div>
-        <nav id="sectionNav" class="section-nav" aria-label="Admin views"></nav>
       </aside>
 
       <main class="main">
         <header class="topbar">
-          <div>
+          <div class="topbar-left">
             <h2 id="pageTitle">Providers</h2>
+          </div>
+          <div class="topbar-right">
+            <span id="dirtyState" class="status-pill">No changes</span>
           </div>
         </header>
 
@@ -31,38 +106,25 @@
           <section id="view-providers" class="admin-view active" data-view="providers">
             <section class="provider-strip" aria-label="Provider status">
               <div class="strip-header">
-                <h3>Providers</h3>
+                <h3>Provider Status</h3>
               </div>
               <div id="providerGrid" class="provider-grid"></div>
             </section>
-            <div
-              id="providersSections"
-              class="form-sections"
-              aria-label="Provider configuration"
-            ></div>
+            <div id="providersSections" class="form-sections" aria-label="Provider configuration"></div>
           </section>
 
           <section id="view-model_config" class="admin-view" data-view="model_config" hidden>
-            <div
-              id="modelConfigSections"
-              class="form-sections"
-              aria-label="Model configuration"
-            ></div>
+            <div id="modelConfigSections" class="form-sections" aria-label="Model configuration"></div>
           </section>
 
           <section id="view-messaging" class="admin-view" data-view="messaging" hidden>
-            <div
-              id="messagingSections"
-              class="form-sections"
-              aria-label="Messaging configuration"
-            ></div>
+            <div id="messagingSections" class="form-sections" aria-label="Messaging configuration"></div>
           </section>
         </div>
       </main>
 
       <footer class="action-bar">
         <div class="action-meta">
-          <strong id="dirtyState">No changes</strong>
           <span id="configPath"></span>
         </div>
         <div id="messageArea" class="message-area"></div>
