@@ -16,44 +16,44 @@ import Sidebar from '../components/Sidebar.svelte';
     <div class="flex h-full" id="app">
       <Sidebar activeView="providers" collapsed={false} onViewChange={(id) => setActiveView(id, { scroll: true })} />
 
-      <div class="flex flex-1 flex-col min-w-0">
-        <header class="flex items-center justify-between px-6 py-5 border-b border-border-default">
+      <div class="flex flex-1 flex-col min-w-0 overflow-hidden">
+        <header class="flex items-center justify-between px-6 h-14 shrink-0 border-b border-border-default">
           <div class="flex items-center gap-3">
-            <h2 id="pageTitle" class="text-base font-semibold text-text-primary tracking-tight">Providers</h2>
+            <h2 id="pageTitle" class="text-[15px] font-semibold text-text-primary" style="letter-spacing:-0.01em">Providers</h2>
           </div>
           <div class="flex items-center gap-3">
-            <span id="dirtyState" class="status-pill">No changes</span>
+            <span id="dirtyState" class="status-pill" style="border:1px solid var(--color-border-subtle);background:var(--color-bg-elevated)">No changes</span>
           </div>
         </header>
 
         <main class="flex-1 overflow-y-auto">
           <div id="loadingOverlay">
             <div class="spinner"></div>
-            <span class="loading-text" id="loadingText">Loading admin config...</span>
+            <span class="loading-text" id="loadingText">Loading config...</span>
           </div>
-          <div id="adminViews" class="p-6 space-y-5" hidden>
+          <div id="adminViews" class="p-5 space-y-4" hidden>
             <div id="statsBar" class="stats-grid"></div>
             <section id="view-providers" class="admin-view" data-view="providers">
               <div id="providerGridContainer"></div>
-              <div id="providersSections" class="space-y-5"></div>
+              <div id="providersSections" class="space-y-4"></div>
             </section>
 
             <section id="view-model_config" class="admin-view" data-view="model_config" hidden>
-              <div id="modelConfigSections" class="space-y-5"></div>
+              <div id="modelConfigSections" class="space-y-4"></div>
             </section>
 
             <section id="view-messaging" class="admin-view" data-view="messaging" hidden>
-              <div id="messagingSections" class="space-y-5"></div>
+              <div id="messagingSections" class="space-y-4"></div>
             </section>
           </div>
         </main>
 
-        <footer class="flex items-center gap-4 px-6 py-3 border-t border-border-default bg-bg-surface min-h-[56px]">
-          <div class="flex items-center gap-3 flex-1 min-w-0">
+        <footer class="action-bar flex items-center gap-4 px-5 h-14 shrink-0">
+          <div class="flex items-center gap-2 flex-1 min-w-0">
             <span id="configPath" class="config-path"></span>
-            <span id="versionInfo" class="text-xs text-text-disabled"></span>
+            <span id="versionInfo" class="text-[11px] text-text-disabled font-mono"></span>
           </div>
-          <div id="messageArea" class="text-xs text-text-muted text-center flex-1 min-w-0"></div>
+          <div id="messageArea" class="text-[12px] text-text-muted text-center flex-1 min-w-0"></div>
           <div class="flex items-center gap-2 shrink-0">
             <button id="validateButton" class="btn btn-secondary" type="button">Validate</button>
             <button id="applyButton" class="btn btn-primary" type="button" disabled>Apply</button>
