@@ -1,11 +1,9 @@
 <script lang="ts">
-  import { createEventDispatcher } from 'svelte';
   import { VIEW_GROUPS, type ViewId } from '../lib/config';
 
   export let activeView: ViewId = 'providers';
   export let collapsed = false;
-
-  const dispatch = createEventDispatcher();
+  export let onViewChange: ((viewId: ViewId) => void) | undefined = undefined;
 
   let collapsedGroups: Record<string, boolean> = {};
 
@@ -19,7 +17,7 @@
 
   function handleNavClick(viewId: ViewId) {
     activeView = viewId;
-    dispatch('viewChange', { viewId });
+    onViewChange?.(viewId);
   }
 </script>
 

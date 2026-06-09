@@ -14,7 +14,7 @@ import Sidebar from '../components/Sidebar.svelte';
   </head>
   <body class="h-full">
     <div class="flex h-full" id="app">
-      <Sidebar activeView="providers" collapsed={false} on:viewChange={(e) => setActiveView(e.detail.viewId, { scroll: true })} />
+      <Sidebar activeView="providers" collapsed={false} onViewChange={(id) => setActiveView(id, { scroll: true })} />
 
       <div class="flex flex-1 flex-col min-w-0">
         <header class="flex items-center justify-between px-6 py-5 border-b border-border-default">
