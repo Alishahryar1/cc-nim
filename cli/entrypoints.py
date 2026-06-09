@@ -50,7 +50,7 @@ def update() -> None:
 
     try:
         result = subprocess.run(
-            [uv_bin, "pip", "install", "--system", "--upgrade", "free-claude-code"],
+            [uv_bin, "tool", "upgrade", "free-claude-code"],
             capture_output=True,
             text=True,
         )
