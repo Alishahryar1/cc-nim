@@ -3,16 +3,25 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="description" content="Admin dashboard for Free Claude Code configuration and management." />
     <title>Free Claude Code Admin</title>
     <link rel="icon" href="data:," />
-    <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;500;600;700;800&display=swap" />
+    <link rel="preconnect" href="https://fonts.googleapis.com" />
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700;800&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet" />
     <link rel="stylesheet" href="/admin/assets/admin.css" />
   </head>
   <body>
+    <noscript>
+      <div style="padding:1rem;background:#1C2230;color:#CBD5E1;text-align:center;font-family:Inter,sans-serif;border-bottom:1px solid #252E3D">
+        JavaScript is required to use the admin dashboard.
+      </div>
+    </noscript>
+
     <div class="app-layout">
-      <aside class="sidebar" id="sidebar">
-        <div class="sidebar-logo" id="sidebarLogo">
-          <svg class="logo-icon" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+      <aside class="sidebar" id="sidebar" aria-label="Main Navigation">
+        <div class="sidebar-logo">
+          <svg class="logo-icon" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/>
             <line x1="12" y1="22" x2="12" y2="15.5"/>
             <polyline points="22 8.5 12 15.5 2 8.5"/>
@@ -22,7 +31,7 @@
           <span class="logo-text">Free Claude Code</span>
         </div>
 
-        <button class="collapse-btn" id="collapseBtn" title="Toggle sidebar">
+        <button class="collapse-btn" id="collapseBtn" title="Toggle sidebar" aria-expanded="true">
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
             <polyline points="15 18 9 12 15 6"/>
           </svg>
@@ -30,7 +39,7 @@
 
         <nav class="sidebar-nav">
           <div class="nav-group">
-            <div class="nav-group-label" data-group="management">
+            <div class="nav-group-label" data-group="management" role="button" tabindex="0" aria-expanded="true">
               <span>MANAGEMENT</span>
               <svg class="nav-group-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="6 9 12 15 18 9"/>
@@ -40,21 +49,15 @@
               <button class="nav-item active" data-view="providers">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
                   <circle cx="12" cy="12" r="3"/>
-                  <path d="M12 1v4"/>
-                  <path d="M12 19v4"/>
-                  <path d="M1 12h4"/>
-                  <path d="M19 12h4"/>
-                  <path d="M4.22 4.22l2.83 2.83"/>
-                  <path d="M16.95 16.95l2.83 2.83"/>
-                  <path d="M4.22 19.78l2.83-2.83"/>
-                  <path d="M16.95 7.05l2.83-2.83"/>
+                  <path d="M12 1v4"/><path d="M12 19v4"/><path d="M1 12h4"/><path d="M19 12h4"/>
+                  <path d="M4.22 4.22l2.83 2.83"/><path d="M16.95 16.95l2.83 2.83"/>
+                  <path d="M4.22 19.78l2.83-2.83"/><path d="M16.95 7.05l2.83-2.83"/>
                 </svg>
                 <span>Providers</span>
               </button>
               <button class="nav-item" data-view="model_config">
                 <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="4" y="4" width="16" height="16" rx="2"/>
-                  <path d="M9 9h6v6H9z"/>
+                  <rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/>
                 </svg>
                 <span>Model Config</span>
               </button>
@@ -62,7 +65,7 @@
           </div>
 
           <div class="nav-group">
-            <div class="nav-group-label" data-group="messaging">
+            <div class="nav-group-label" data-group="messaging" role="button" tabindex="0" aria-expanded="true">
               <span>MESSAGING</span>
               <svg class="nav-group-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
                 <polyline points="6 9 12 15 18 9"/>
@@ -87,7 +90,7 @@
             </div>
           </div>
           <div class="version-info">
-            <span class="version-text">v1.0.0</span>
+            <span class="version-text" id="versionText">v1.0.0</span>
           </div>
         </div>
       </aside>
@@ -104,36 +107,37 @@
 
         <div id="adminViews" class="admin-views">
           <section id="view-providers" class="admin-view active" data-view="providers">
-            <section class="provider-strip" aria-label="Provider status">
+            <section class="provider-strip">
               <div class="strip-header">
                 <h3>Provider Status</h3>
               </div>
               <div id="providerGrid" class="provider-grid"></div>
             </section>
-            <div id="providersSections" class="form-sections" aria-label="Provider configuration"></div>
+            <div id="providersSections" class="form-sections"></div>
           </section>
 
           <section id="view-model_config" class="admin-view" data-view="model_config" hidden>
-            <div id="modelConfigSections" class="form-sections" aria-label="Model configuration"></div>
+            <div id="modelConfigSections" class="form-sections"></div>
           </section>
 
           <section id="view-messaging" class="admin-view" data-view="messaging" hidden>
-            <div id="messagingSections" class="form-sections" aria-label="Messaging configuration"></div>
+            <div id="messagingSections" class="form-sections"></div>
           </section>
         </div>
-      </main>
 
-      <footer class="action-bar">
-        <div class="action-meta">
-          <span id="configPath"></span>
-        </div>
-        <div id="messageArea" class="message-area"></div>
-        <div class="action-buttons">
-          <button id="validateButton" class="secondary-button" type="button">Validate</button>
-          <button id="applyButton" class="primary-button" type="button" disabled>Apply</button>
-        </div>
-      </footer>
+        <footer class="action-bar">
+          <div class="action-meta">
+            <span id="configPath"></span>
+          </div>
+          <div id="messageArea" class="message-area"></div>
+          <div class="action-buttons">
+            <button id="validateButton" class="secondary-button" type="button">Validate</button>
+            <button id="applyButton" class="primary-button" type="button" disabled>Apply</button>
+          </div>
+        </footer>
+      </main>
     </div>
+
     <script src="/admin/assets/admin.js"></script>
   </body>
 </html>

@@ -154,6 +154,7 @@ function renderProviders(providerStatus) {
     const card = document.createElement('article');
     card.className = 'provider-card';
     card.dataset.provider = provider.provider_id;
+    card.dataset.status = statusClass(provider.status);
 
     const title = document.createElement('div');
     title.className = 'provider-title';
@@ -188,6 +189,7 @@ function updateProviderCard(providerId, status, label, metaText) {
   const pill = card.querySelector('.status-pill');
   pill.className = `status-pill ${statusClass(status)}`;
   pill.textContent = label;
+  card.dataset.status = statusClass(status);
   if (metaText) {
     card.querySelector('.provider-meta').textContent = metaText;
   }
