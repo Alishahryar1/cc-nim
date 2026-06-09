@@ -252,6 +252,19 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         ),
     ),
     ConfigFieldSpec(
+        "SILICONFLOW_API_KEY",
+        "SiliconFlow API Key",
+        "providers",
+        "secret",
+        settings_attr="siliconflow_api_key",
+        secret=True,
+        description=(
+            "SiliconFlow OpenAI-compatible API key "
+            "([cloud.siliconflow.com/account/ak](https://cloud.siliconflow.com/account/ak)); "
+            "see [Quickstart](https://docs.siliconflow.com/en/userguide/quickstart)."
+        ),
+    ),
+    ConfigFieldSpec(
         "LM_STUDIO_BASE_URL",
         "LM Studio Base URL",
         "providers",
@@ -404,6 +417,15 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         "providers",
         "secret",
         settings_attr="cerebras_proxy",
+        secret=True,
+        advanced=True,
+    ),
+    ConfigFieldSpec(
+        "SILICONFLOW_PROXY",
+        "SiliconFlow Proxy",
+        "providers",
+        "secret",
+        settings_attr="siliconflow_proxy",
         secret=True,
         advanced=True,
     ),
@@ -894,6 +916,12 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
     ConfigFieldSpec(
         "FCC_SMOKE_MODEL_CEREBRAS",
         "Smoke Cerebras Model",
+        "smoke",
+        advanced=True,
+    ),
+    ConfigFieldSpec(
+        "FCC_SMOKE_MODEL_SILICONFLOW",
+        "Smoke SiliconFlow Model",
         "smoke",
         advanced=True,
     ),

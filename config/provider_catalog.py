@@ -36,6 +36,7 @@ ZAI_DEFAULT_BASE = "https://api.z.ai/api/anthropic/v1"
 GEMINI_DEFAULT_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GROQ_DEFAULT_BASE = "https://api.groq.com/openai/v1"
 CEREBRAS_DEFAULT_BASE = "https://api.cerebras.ai/v1"
+SILICONFLOW_DEFAULT_BASE = "https://api.siliconflow.com/v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -245,6 +246,16 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
             "native_anthropic",
             "local",
         ),
+    ),
+    "siliconflow": ProviderDescriptor(
+        provider_id="siliconflow",
+        transport_type="openai_chat",
+        credential_env="SILICONFLOW_API_KEY",
+        credential_url="https://cloud.siliconflow.com/account/ak",
+        credential_attr="siliconflow_api_key",
+        default_base_url=SILICONFLOW_DEFAULT_BASE,
+        proxy_attr="siliconflow_proxy",
+        capabilities=("chat", "streaming", "tools", "thinking", "rate_limit"),
     ),
 }
 
