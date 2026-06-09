@@ -32,6 +32,46 @@ PROXY_PREFLIGHT_TIMEOUT_SECONDS = 1.5
 SERVER_GRACEFUL_SHUTDOWN_SECONDS = 5
 
 
+def update() -> None:
+    """Update Free Claude Code to the latest version (registered as `fcc-update`)."""
+    import importlib.metadata
+
+    current_version = importlib.metadata.version("free-claude-code")
+    print(f"Current version: {current_version}")
+    print("Checking for updates...")
+
+    try:
+        result = subprocess.run(
+            [
+                sys.executable,
+                "-m",
+                "uv",
+                "pip",
+                "install",
+                "--upgrade",
+                "free-claude-code",
+            ],
+            capture_output=True,
+            text=True,
+        )
+        if result.returncode != 0:
+            print(f"Update failed: {result.stderr}", file=sys.stderr)
+            raise SystemExit(1)
+
+        new_version = importlib.metadata.version("free-claude-code")
+        if new_version == current_version:
+            print("Already up to date.")
+        else:
+            print(f"Updated: {current_version} -> {new_version}")
+            print("Restart fcc-server to use the new version.")
+    except FileNotFoundError:
+        print(
+            "uv is required for updates. Install it with: curl -LsSf https://astral.sh/uv/install.sh | sh",
+            file=sys.stderr,
+        )
+        raise SystemExit(1) from None
+
+
 def _load_env_template() -> str:
     """Load the canonical root env template from package resources or source."""
     import importlib.resources
