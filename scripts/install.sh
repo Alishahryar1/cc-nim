@@ -304,19 +304,32 @@ package_spec() {
 
 install_free_claude_code() {
     spec=$(package_spec)
+    
+    is_success=0
 
     if [ -n "$torch_backend" ]; then
-        run uv tool install --force --torch-backend "$torch_backend" "$spec"
+        if run uv tool install --force --torch-backend "$torch_backend" "$spec"; then
+            is_success=1
+        fi
     else
-        run uv tool install --force "$spec"
+        if run uv tool install --force "$spec"; then
+            is_success=1
+        fi
+    fi
+
+    if [ "$is_success" -eq 1 ]; then
+        printf '\nSuccess! Free Claude Code is installed. Start the proxy with: fcc-server\n\n'
+        return 0
+    else
+        printf '\nFailed Install! Free Claude Code was not installed due to some error. Take help of the guide:{Guide link here} and check the Caused By error above\n\n'
+        return 1
     fi
 }
 
 parse_args "$@"
 validate_args
 
-step "Installing Claude Code if missing"
-install_claude_if_missing
+# This would be the right order. uv, python, claude, FCC
 
 step "Installing uv if missing, updating if present"
 install_or_update_uv
@@ -324,7 +337,8 @@ install_or_update_uv
 step "Installing Python $PYTHON_VERSION"
 run uv python install "$PYTHON_VERSION"
 
+step "Installing Claude Code if missing"
+install_claude_if_missing
+
 step "Installing or updating Free Claude Code"
 install_free_claude_code
-
-printf '\nFree Claude Code is installed. Start the proxy with: fcc-server\n'
