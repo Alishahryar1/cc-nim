@@ -501,6 +501,179 @@ function toggleGroup(groupName) {
   }
 }
 
+function renderProviderCharts(providerStatus) {
+  const statusCounts = {
+    ok: 0,
+    warn: 0,
+    error: 0,
+    neutral: 0,
+  };
+
+  providerStatus.forEach((provider) => {
+    const status = statusClass(provider.status);
+    if (statusCounts[status] !== undefined) {
+      statusCounts[status]++;
+    }
+  });
+
+  const total = providerStatus.length;
+  if (total === 0) return;
+
+  const container = document.createElement('section');
+  container.className = 'provider-charts';
+  container.innerHTML = `
+    <div class="charts-grid">
+      <div class="chart-card">
+        <h4>Provider Status Distribution</h4>
+        <div class="pie-chart" id="statusPieChart"></div>
+      </div>
+      <div class="chart-card">
+        <h4>Provider Types</h4>
+        <div class="bar-chart" id="providerTypesChart"></div>
+      </div>
+    </div>
+  `;
+
+  const chartsSection = document.createElement('section');
+  chartsSection.className = 'provider-strip';
+  chartsSection.innerHTML = `
+    <div class="strip-header">
+      <h3>Provider Analytics</h3>
+    </div>
+  `;
+  chartsSection.appendChild(container);
+
+  const providerStrip = byId('providerGrid').parentElement;
+  providerStrip.insertBefore(chartsSection, byId('providerGrid'));
+
+  renderPieChart('statusPieChart', statusCounts, total);
+  renderBarChart('providerTypesChart', providerStatus);
+}
+
+function renderPieChart(id, data, total) {
+  const container = document.getElementById(id);
+  if (!container) return;
+
+  const colors = {
+    ok: 'var(--success)',
+    warn: 'var(--warning)',
+    error: 'var(--error)',
+    neutral: 'var(--text-muted)',
+  };
+
+  let angle = 0;
+  const radius = 50;
+  const centerX = 100;
+  const centerY = 100;
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('width', '200');
+  svg.setAttribute('height', '200');
+
+  for (const [status, count] of Object.entries(data)) {
+    if (count === 0) continue;
+
+    const percentage = (count / total) * 100;
+    const strokeDasharray = `${(count / total) * 628.318} 628.318`;
+    const strokeDashoffset = 628.318 - (count / total) * 628.318;
+
+    const slice = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
+    slice.setAttribute('cx', centerX.toString());
+    slice.setAttribute('cy', centerY.toString());
+    slice.setAttribute('r', radius.toString());
+    slice.setAttribute('fill', 'none');
+    slice.setAttribute('stroke', colors[status] || '#ccc');
+    slice.setAttribute('stroke-width', '20');
+    slice.setAttribute('stroke-dasharray', strokeDasharray);
+    slice.setAttribute('stroke-dashoffset', strokeDashoffset.toString());
+    slice.setAttribute('transform', `rotate(${angle} ${centerX} ${centerY})`);
+
+    container.appendChild(slice);
+
+    angle += (count / total) * 360;
+  }
+
+  const legend = document.createElement('div');
+  legend.className = 'pie-legend';
+
+  for (const [status, count] of Object.entries(data)) {
+    if (count === 0) continue;
+
+    const item = document.createElement('div');
+    item.className = 'legend-item';
+    item.innerHTML = `
+      <span class="legend-color" style="background: ${colors[status]}"></span>
+      <span class="legend-label">${status.toUpperCase()}</span>
+      <span class="legend-count">${count}</span>
+    `;
+    legend.appendChild(item);
+  }
+
+  container.appendChild(legend);
+}
+
+function renderBarChart(id, providers) {
+  const container = document.getElementById(id);
+  if (!container) return;
+
+  const typeCounts = {};
+  providers.forEach((provider) => {
+    const type = provider.kind === 'local' ? 'Local' : 'Remote';
+    typeCounts[type] = (typeCounts[type] || 0) + 1;
+  });
+
+  const maxCount = Math.max(...Object.values(typeCounts), 1);
+  const barWidth = 60;
+  const barSpacing = 20;
+  const chartWidth = Object.keys(typeCounts).length * (barWidth + barSpacing);
+
+  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
+  svg.setAttribute('width', chartWidth.toString());
+  svg.setAttribute('height', '200');
+
+  let x = 0;
+
+  for (const [type, count] of Object.entries(typeCounts)) {
+    const barHeight = (count / maxCount) * 150;
+    const y = 150 - barHeight;
+
+    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+    rect.setAttribute('x', x.toString());
+    rect.setAttribute('y', y.toString());
+    rect.setAttribute('width', barWidth.toString());
+    rect.setAttribute('height', barHeight.toString());
+    rect.setAttribute('fill', type === 'Local' ? 'var(--accent)' : 'var(--success)');
+    rect.setAttribute('rx', '4');
+
+    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    label.setAttribute('x', (x + barWidth / 2).toString());
+    label.setAttribute('y', (y - 5).toString());
+    label.setAttribute('text-anchor', 'middle');
+    label.setAttribute('font-family', 'Inter');
+    label.setAttribute('font-size', '12');
+    label.setAttribute('fill', 'var(--text-primary)');
+    label.textContent = type;
+
+    const value = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    value.setAttribute('x', (x + barWidth / 2).toString());
+    value.setAttribute('y', (y + barHeight + 15).toString());
+    value.setAttribute('text-anchor', 'middle');
+    value.setAttribute('font-family', 'Inter');
+    value.setAttribute('font-size', '14');
+    value.setAttribute('font-weight', '600');
+    value.setAttribute('fill', 'var(--text-primary)');
+    value.textContent = count.toString();
+
+    svg.appendChild(rect);
+    svg.appendChild(label);
+    svg.appendChild(value);
+
+    x += barWidth + barSpacing;
+  }
+
+  container.appendChild(svg);
+}
+
 function initEventListeners() {
   byId('validateButton').addEventListener('click', () => validate(true));
   byId('applyButton').addEventListener('click', apply);
