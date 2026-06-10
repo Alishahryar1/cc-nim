@@ -112,6 +112,12 @@ def _create_zai(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     return ZaiProvider(config)
 
 
+def _create_minimax(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+    from providers.minimax import MinimaxProvider
+
+    return MinimaxProvider(config)
+
+
 def _create_fireworks(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     from providers.fireworks import FireworksProvider
 
@@ -151,6 +157,7 @@ PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "groq": _create_groq,
     "fireworks": _create_fireworks,
     "zai": _create_zai,
+    "minimax": _create_minimax,
     "lmstudio": _create_lmstudio,
     "llamacpp": _create_llamacpp,
     "ollama": _create_ollama,

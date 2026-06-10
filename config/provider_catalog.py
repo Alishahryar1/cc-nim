@@ -32,6 +32,9 @@ OPENCODE_DEFAULT_BASE = "https://opencode.ai/zen/v1"
 OPENCODE_GO_DEFAULT_BASE = "https://opencode.ai/zen/go/v1"
 # Z.ai Anthropic-compatible Messages API (not OpenAI Coding Plan chat completions).
 ZAI_DEFAULT_BASE = "https://api.z.ai/api/anthropic/v1"
+# MiniMax Anthropic-compatible Messages API. Claude Code calls /v1/messages
+# against this base; documented in https://platform.minimaxi.com/.
+MINIMAX_DEFAULT_BASE = "https://api.minimaxi.com/anthropic/v1"
 # Google AI Studio Gemini API OpenAI-compat layer (not Vertex AI).
 GEMINI_DEFAULT_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GROQ_DEFAULT_BASE = "https://api.groq.com/openai/v1"
@@ -204,6 +207,23 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="zai_api_key",
         default_base_url=ZAI_DEFAULT_BASE,
         proxy_attr="zai_proxy",
+        capabilities=(
+            "chat",
+            "streaming",
+            "tools",
+            "thinking",
+            "native_anthropic",
+            "rate_limit",
+        ),
+    ),
+    "minimax": ProviderDescriptor(
+        provider_id="minimax",
+        transport_type="anthropic_messages",
+        credential_env="MINIMAX_API_KEY",
+        credential_url="https://platform.minimaxi.com/user-center/basic-information/interface-key",
+        credential_attr="minimax_api_key",
+        default_base_url=MINIMAX_DEFAULT_BASE,
+        proxy_attr="minimax_proxy",
         capabilities=(
             "chat",
             "streaming",

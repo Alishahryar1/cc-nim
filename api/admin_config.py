@@ -203,6 +203,18 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         description="Z.ai Coding Plan API key.",
     ),
     ConfigFieldSpec(
+        "MINIMAX_API_KEY",
+        "MiniMax API Key",
+        "providers",
+        "secret",
+        settings_attr="minimax_api_key",
+        secret=True,
+        description=(
+            "MiniMax Anthropic-compatible Messages API key "
+            "(https://platform.minimaxi.com/). Paid (M2 ≈ 8% of Claude Sonnet)."
+        ),
+    ),
+    ConfigFieldSpec(
         "FIREWORKS_API_KEY",
         "Fireworks API Key",
         "providers",
@@ -368,6 +380,15 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         "providers",
         "secret",
         settings_attr="zai_proxy",
+        secret=True,
+        advanced=True,
+    ),
+    ConfigFieldSpec(
+        "MINIMAX_PROXY",
+        "MiniMax Proxy",
+        "providers",
+        "secret",
+        settings_attr="minimax_proxy",
         secret=True,
         advanced=True,
     ),

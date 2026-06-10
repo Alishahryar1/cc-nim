@@ -102,6 +102,9 @@ class Settings(BaseSettings):
     # ==================== Z.ai Config ====================
     zai_api_key: str = Field(default="", validation_alias="ZAI_API_KEY")
 
+    # ==================== MiniMax Config (Anthropic-compatible Messages) ====================
+    minimax_api_key: str = Field(default="", validation_alias="MINIMAX_API_KEY")
+
     # ==================== Fireworks AI Config ====================
     fireworks_api_key: str = Field(default="", validation_alias="FIREWORKS_API_KEY")
 
@@ -170,6 +173,7 @@ class Settings(BaseSettings):
     opencode_proxy: str = Field(default="", validation_alias="OPENCODE_PROXY")
     opencode_go_proxy: str = Field(default="", validation_alias="OPENCODE_GO_PROXY")
     zai_proxy: str = Field(default="", validation_alias="ZAI_PROXY")
+    minimax_proxy: str = Field(default="", validation_alias="MINIMAX_PROXY")
     fireworks_proxy: str = Field(default="", validation_alias="FIREWORKS_PROXY")
     gemini_proxy: str = Field(default="", validation_alias="GEMINI_PROXY")
     groq_proxy: str = Field(default="", validation_alias="GROQ_PROXY")
