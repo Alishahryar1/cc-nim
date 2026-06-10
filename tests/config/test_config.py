@@ -307,7 +307,36 @@ class TestSettings:
         assert settings.resolve_thinking("claude-haiku-4-20250514") is False
         assert settings.resolve_thinking("unknown-model") is False
 
-    def test_anthropic_auth_token_from_env_without_dotenv_key(self, monkeypatch):
+    def test_resolve_thinking_fable_override(self, monkeypatch):
+        """ENABLE_FABLE_THINKING overrides global thinking for fable models."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("ENABLE_MODEL_THINKING", "false")
+        monkeypatch.setenv("ENABLE_FABLE_THINKING", "true")
+        settings = Settings()
+        assert settings.resolve_thinking("claude-fable-5") is True
+        assert settings.resolve_thinking("claude-opus-4-8") is False
+        assert settings.resolve_thinking("unknown-model") is False
+
+    def test_per_fable_thinking_from_env(self, monkeypatch):
+        """ENABLE_FABLE_THINKING env var is loaded into settings."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("ENABLE_FABLE_THINKING", "true")
+        settings = Settings()
+        assert settings.enable_fable_thinking is True
+
+    def test_empty_fable_thinking_inherits_model_default(self, monkeypatch):
+        """Blank ENABLE_FABLE_THINKING is treated as unset."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("ENABLE_MODEL_THINKING", "false")
+        monkeypatch.setenv("ENABLE_FABLE_THINKING", "")
+        settings = Settings()
+        assert settings.enable_fable_thinking is None
+        assert settings.resolve_thinking("claude-fable-5") is False
+
+
         """ANTHROPIC_AUTH_TOKEN env var is loaded when dotenv does not define it."""
         from config.settings import Settings
 
@@ -592,9 +621,18 @@ class TestPerModelMapping:
         from config.settings import Settings
 
         s = Settings()
+        assert s.model_fable is None
         assert s.model_opus is None
         assert s.model_sonnet is None
         assert s.model_haiku is None
+
+    def test_model_fable_from_env(self, monkeypatch):
+        """MODEL_FABLE env var is loaded."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("MODEL_FABLE", "open_router/anthropic/claude-fable-5")
+        s = Settings()
+        assert s.model_fable == "open_router/anthropic/claude-fable-5"
 
     def test_model_opus_from_env(self, monkeypatch):
         """MODEL_OPUS env var is loaded."""
@@ -604,7 +642,7 @@ class TestPerModelMapping:
         s = Settings()
         assert s.model_opus == "open_router/deepseek/deepseek-r1"
 
-    @pytest.mark.parametrize("env_var", ["MODEL_OPUS", "MODEL_SONNET", "MODEL_HAIKU"])
+    @pytest.mark.parametrize("env_var", ["MODEL_FABLE", "MODEL_OPUS", "MODEL_SONNET", "MODEL_HAIKU"])
     def test_empty_model_override_env_is_unset(self, monkeypatch, env_var):
         """Empty per-model override env vars are treated as unset."""
         from config.settings import Settings
@@ -692,6 +730,21 @@ class TestPerModelMapping:
         monkeypatch.setenv("MODEL_HAIKU", "invalid/model")
         with pytest.raises(ValidationError, match="Invalid provider"):
             Settings()
+
+    def test_resolve_model_fable_override(self):
+        """resolve_model returns model_fable for fable model names."""
+        from config.settings import Settings
+
+        s = Settings()
+        s.model_fable = "open_router/anthropic/claude-fable-5"
+        assert (
+            s.resolve_model("claude-fable-5")
+            == "open_router/anthropic/claude-fable-5"
+        )
+        assert (
+            s.resolve_model("claude-fable-5-20260101")
+            == "open_router/anthropic/claude-fable-5"
+        )
 
     def test_resolve_model_opus_override(self):
         """resolve_model returns model_opus for opus model names."""
