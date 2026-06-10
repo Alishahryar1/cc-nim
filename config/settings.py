@@ -146,10 +146,14 @@ class Settings(BaseSettings):
         default="http://localhost:11434",
         validation_alias="OLLAMA_BASE_URL",
     )
-
-    # ==================== Model ====================
-    # All Claude model requests are mapped to this single model (fallback)
-    # Format: provider_type/model/name
+    ollama_api_key: str = Field(
+        default="", 
+        validation_alias="OLLAMA_API_KEY"
+    )
+    ollama_use_cloud: bool = Field(
+        default=False, 
+        validation_alias="OLLAMA_USE_CLOUD"
+    )
     model: str = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
 
     # Per-model overrides (optional, falls back to MODEL)
@@ -390,10 +394,14 @@ class Settings(BaseSettings):
     @field_validator("ollama_base_url")
     @classmethod
     def validate_ollama_base_url(cls, v: str) -> str:
+        # Skip validation for cloud default URL
+        if v == "https://ollama.com":
+            return v
         if v.rstrip("/").endswith("/v1"):
             raise ValueError(
                 "OLLAMA_BASE_URL must be the Ollama root URL for native Anthropic "
-                "messages, e.g. http://localhost:11434 (without /v1)."
+                "messages, e.g. http://localhost:11434 (without /v1). "
+                "For Ollama Cloud, use https://ollama.com/v1"
             )
         return v
 
