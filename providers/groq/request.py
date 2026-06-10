@@ -40,6 +40,15 @@ def _normalize_max_completion_tokens(body: dict[str, Any]) -> None:
         body["max_completion_tokens"] = body.pop("max_tokens")
 
 
+def _cap_max_completion_tokens(body: dict[str, Any], max_tokens: int) -> None:
+    """Cap max_completion_tokens to the configured limit (Groq API constraint)."""
+    if "max_completion_tokens" in body:
+        if body["max_completion_tokens"] is not None:
+            body["max_completion_tokens"] = min(
+                body["max_completion_tokens"], max_tokens
+            )
+
+
 def _normalize_n_candidates(body: dict[str, Any]) -> None:
     """Groq only supports ``n`` = 1; coerce if present."""
     if body.get("n") is None:
@@ -47,8 +56,16 @@ def _normalize_n_candidates(body: dict[str, Any]) -> None:
     body["n"] = 1
 
 
-def build_request_body(request_data: Any, *, thinking_enabled: bool) -> dict:
-    """Build OpenAI-format request body from an Anthropic request for Groq."""
+def build_request_body(
+    request_data: Any, *, thinking_enabled: bool, max_tokens: int = 32768
+) -> dict:
+    """Build OpenAI-format request body from an Anthropic request for Groq.
+    
+    Args:
+        request_data: The incoming Anthropic request data
+        thinking_enabled: Whether to enable thinking mode
+        max_tokens: Maximum tokens cap for Groq (default 32768)
+    """
     logger.debug(
         "GROQ_REQUEST: conversion start model={} msgs={}",
         getattr(request_data, "model", "?"),
@@ -72,12 +89,14 @@ def build_request_body(request_data: Any, *, thinking_enabled: bool) -> dict:
     _strip_message_names(body.get("messages"))
     _strip_unsupported_body_keys(body)
     _normalize_max_completion_tokens(body)
+    _cap_max_completion_tokens(body, max_tokens)
     _normalize_n_candidates(body)
 
     logger.debug(
-        "GROQ_REQUEST: conversion done model={} msgs={} tools={}",
+        "GROQ_REQUEST: conversion done model={} msgs={} tools={} max_tokens={}",
         body.get("model"),
         len(body.get("messages", [])),
         len(body.get("tools", [])),
+        body.get("max_completion_tokens"),
     )
     return body

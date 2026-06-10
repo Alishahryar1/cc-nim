@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from config.settings import get_settings
 from providers.base import ProviderConfig
 from providers.defaults import GROQ_DEFAULT_BASE
 from providers.openai_compat import OpenAIChatTransport
@@ -12,7 +13,10 @@ from .request import build_request_body
 
 
 class GroqProvider(OpenAIChatTransport):
-    """Groq API using ``https://api.groq.com/openai/v1/chat/completions``."""
+    """Groq API using ``https://api.groq.com/openai/v1/chat/completions``.
+    
+    Enforces max_tokens cap via GROQ_MAX_TOKENS environment variable (default: 32768).
+    """
 
     def __init__(self, config: ProviderConfig):
         super().__init__(
@@ -25,7 +29,9 @@ class GroqProvider(OpenAIChatTransport):
     def _build_request_body(
         self, request: Any, thinking_enabled: bool | None = None
     ) -> dict:
+        settings = get_settings()
         return build_request_body(
             request,
             thinking_enabled=self._is_thinking_enabled(request, thinking_enabled),
+            max_tokens=settings.groq_max_tokens,
         )

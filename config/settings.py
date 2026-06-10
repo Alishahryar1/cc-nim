@@ -110,6 +110,9 @@ class Settings(BaseSettings):
 
     # ==================== Groq (OpenAI-compatible) ====================
     groq_api_key: str = Field(default="", validation_alias="GROQ_API_KEY")
+    groq_max_tokens: int = Field(
+        default=32768, validation_alias="GROQ_MAX_TOKENS"
+    )
 
     # ==================== Cerebras Inference (OpenAI-compatible) ====================
     cerebras_api_key: str = Field(default="", validation_alias="CEREBRAS_API_KEY")
@@ -328,6 +331,15 @@ class Settings(BaseSettings):
     def parse_optional_log_cap(cls, v: Any) -> Any:
         if v == "" or v is None:
             return None
+        return v
+
+    @field_validator("groq_max_tokens")
+    @classmethod
+    def validate_groq_max_tokens(cls, v: int) -> int:
+        if v <= 0:
+            raise ValueError("GROQ_MAX_TOKENS must be > 0")
+        if v > 32768:
+            raise ValueError("GROQ_MAX_TOKENS must be <= 32768 (Groq API limit)")
         return v
 
     @property
