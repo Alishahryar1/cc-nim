@@ -128,9 +128,7 @@ def test_build_request_body_merges_extra_body_with_caller_precedence(
     huggingface_provider,
 ):
     """Caller extra_body keys merge into (not replace) any converter-set entry."""
-    with patch(
-        "providers.huggingface.request.build_base_request_body"
-    ) as mock_convert:
+    with patch("providers.huggingface.request.build_base_request_body") as mock_convert:
         mock_convert.return_value = {
             "model": "m",
             "messages": [{"role": "user", "content": "hi"}],
