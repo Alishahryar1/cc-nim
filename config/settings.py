@@ -333,6 +333,8 @@ class Settings(BaseSettings):
     )
     @classmethod
     def parse_optional_int(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            v = v.strip()
         if v == "" or v is None:
             return None
         return v

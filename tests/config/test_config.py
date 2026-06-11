@@ -205,6 +205,22 @@ class TestSettings:
         with pytest.raises(ValidationError):
             Settings()
 
+    def test_open_router_max_tokens_strips_whitespace(self, monkeypatch):
+        """Test OPENROUTER_MAX_TOKENS=" 8192 " parses to an int."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("OPENROUTER_MAX_TOKENS", " 8192 ")
+        settings = Settings()
+        assert settings.open_router_max_tokens == 8192
+
+    def test_open_router_max_tokens_whitespace_only_is_none(self, monkeypatch):
+        """Test OPENROUTER_MAX_TOKENS="   " parses as None (no cap)."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("OPENROUTER_MAX_TOKENS", "   ")
+        settings = Settings()
+        assert settings.open_router_max_tokens is None
+
     def test_model_setting(self):
         """Test model setting exists and is a string."""
         from config.settings import Settings

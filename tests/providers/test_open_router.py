@@ -236,7 +236,7 @@ def test_build_request_body_cap_applies_to_default_max_tokens(open_router_config
 
     body = provider._build_request_body(req)
 
-    assert body["max_tokens"] == 8192
+    assert body["max_tokens"] == min(OPENROUTER_DEFAULT_MAX_TOKENS, 8192)
 
 
 def test_build_request_body_no_cap_by_default(open_router_provider):
