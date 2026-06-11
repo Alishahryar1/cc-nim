@@ -190,6 +190,60 @@ async def test_stream_response_reasoning_content(huggingface_provider):
         )
 
 
+_ROUTER_MAX_TOKENS_400 = (
+    "Error code: 400 - {'message': '`max_tokens` must be less than or equal to "
+    "`32768`, the maximum value for `max_tokens` is less than the "
+    "`context_window` for this model', 'type': 'invalid_request_error', "
+    "'param': 'max_tokens'}"
+)
+
+
+class _Stub400(Exception):
+    status_code = 400
+
+
+def test_retry_body_clamps_max_tokens_to_router_limit(huggingface_provider):
+    body = {"model": "m", "messages": [], "max_tokens": 81920}
+
+    retry_body = huggingface_provider._get_retry_request_body(
+        _Stub400(_ROUTER_MAX_TOKENS_400), body
+    )
+
+    assert retry_body is not None
+    assert retry_body["max_tokens"] == 32768
+    assert body["max_tokens"] == 81920  # original body untouched
+
+
+def test_retry_body_none_when_max_tokens_already_within_limit(huggingface_provider):
+    body = {"model": "m", "messages": [], "max_tokens": 100}
+
+    retry_body = huggingface_provider._get_retry_request_body(
+        _Stub400(_ROUTER_MAX_TOKENS_400), body
+    )
+
+    assert retry_body is None
+
+
+def test_retry_body_none_for_non_400_errors(huggingface_provider):
+    body = {"model": "m", "messages": [], "max_tokens": 81920}
+
+    retry_body = huggingface_provider._get_retry_request_body(
+        RuntimeError(_ROUTER_MAX_TOKENS_400), body
+    )
+
+    assert retry_body is None
+
+
+def test_retry_body_none_for_unrelated_400_errors(huggingface_provider):
+    body = {"model": "m", "messages": [], "max_tokens": 81920}
+
+    retry_body = huggingface_provider._get_retry_request_body(
+        _Stub400("model not found"), body
+    )
+
+    assert retry_body is None
+
+
 @pytest.mark.asyncio
 async def test_cleanup(huggingface_provider):
     huggingface_provider._client = AsyncMock()
