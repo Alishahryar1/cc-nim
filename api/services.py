@@ -31,6 +31,59 @@ from .web_tools.streaming import stream_web_server_tool_response
 
 TokenCounter = Callable[[list[Any], str | list[Any] | None, list[Any] | None], int]
 
+
+def _record_token_stats(
+    model: str,
+    provider_id: str,
+    input_tokens: int,
+    output_tokens: int,
+) -> None:
+    """Record token usage stats."""
+    try:
+        from api.admin_stats import token_stats
+
+        token_stats.record_usage(model, provider_id, input_tokens, output_tokens)
+    except Exception as e:
+        logger.warning("Failed to record token stats: {}", e)
+
+
+class TokenCapturingStream:
+    """Wrapper that captures output tokens from a stream."""
+
+    def __init__(
+        self,
+        stream: AsyncIterator[str],
+        model: str,
+        provider_id: str,
+        input_tokens: int,
+    ) -> None:
+        self._stream = stream
+        self._model = model
+        self._provider_id = provider_id
+        self._input_tokens = input_tokens
+        self._output_tokens = 0
+
+    def __aiter__(self) -> TokenCapturingStream:
+        return self
+
+    async def __anext__(self) -> str:
+        chunk = await self._stream.__anext__()
+        # Estimate output tokens from SSE content
+        # This is a rough approximation - each token is roughly 4 chars
+        if chunk:
+            self._output_tokens += max(1, len(chunk) // 4)
+        return chunk
+
+    async def aclose(self) -> None:
+        """Close the stream and record stats."""
+        aclose_method = getattr(self._stream, "aclose", None)
+        if callable(aclose_method):
+            await aclose_method()
+        _record_token_stats(
+            self._model, self._provider_id, self._input_tokens, self._output_tokens
+        )
+
+
 ProviderGetter = Callable[[str], BaseProvider]
 
 # Providers that use ``/chat/completions`` + Anthropic-to-OpenAI conversion (not native Messages).
@@ -187,13 +240,21 @@ class ClaudeProxyService:
                     routed.request.tools,
                 )
 
-                streamed = traced_async_stream(
+                # Wrap stream to capture output tokens
+                capturing_stream = TokenCapturingStream(
                     provider.stream_response(
                         routed.request,
                         input_tokens=input_tokens,
                         request_id=request_id,
                         thinking_enabled=routed.resolved.thinking_enabled,
                     ),
+                    model=routed.request.model,
+                    provider_id=routed.resolved.provider_id,
+                    input_tokens=input_tokens,
+                )
+
+                streamed = traced_async_stream(
+                    capturing_stream,
                     stage="egress",
                     source="api",
                     complete_event="api.response.stream_completed",
