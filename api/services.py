@@ -209,6 +209,11 @@ class ClaudeProxyService:
 
         except ProviderError:
             raise
+        except HTTPException:
+            # Provider resolution raises curated HTTPExceptions (e.g. 503 with a
+            # config hint when a provider key is missing); preserve their status
+            # instead of re-wrapping as a generic 500.
+            raise
         except Exception as e:
             _log_unexpected_service_exception(
                 self._settings, e, context="CREATE_MESSAGE_ERROR"
@@ -248,6 +253,8 @@ class ClaudeProxyService:
                 )
                 return TokenCountResponse(input_tokens=tokens)
             except ProviderError:
+                raise
+            except HTTPException:
                 raise
             except Exception as e:
                 _log_unexpected_service_exception(

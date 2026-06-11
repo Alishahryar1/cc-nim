@@ -147,6 +147,55 @@ def test_create_message_unexpected_error_always_returns_500():
     assert excinfo.value.status_code == 500
 
 
+def test_create_message_preserves_http_exception_status_and_detail():
+    """Curated HTTPExceptions (e.g. 503 missing-key hints) must not become 500s."""
+    detail = "NVIDIA_NIM_API_KEY is not set. Add it to your .env file."
+
+    def getter_boom(_provider_id):
+        raise HTTPException(status_code=503, detail=detail)
+
+    settings = Settings()
+    service = ClaudeProxyService(settings, provider_getter=getter_boom)
+    request = MessagesRequest(
+        model="claude-3-haiku-20240307",
+        max_tokens=10,
+        messages=[Message(role="user", content="hi")],
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        service.create_message(request)
+
+    assert excinfo.value.status_code == 503
+    assert excinfo.value.detail == detail
+
+
+def test_count_tokens_preserves_http_exception_status_and_detail():
+    """count_tokens must re-raise HTTPException without re-wrapping as 500."""
+    from api.models.anthropic import TokenCountRequest
+
+    detail = "service temporarily unavailable"
+
+    def counter_boom(*_a, **_kw):
+        raise HTTPException(status_code=503, detail=detail)
+
+    settings = Settings()
+    service = ClaudeProxyService(
+        settings,
+        provider_getter=lambda _: MagicMock(),
+        token_counter=counter_boom,
+    )
+    request = TokenCountRequest(
+        model="claude-3-haiku-20240307",
+        messages=[Message(role="user", content="hi")],
+    )
+
+    with pytest.raises(HTTPException) as excinfo:
+        service.count_tokens(request)
+
+    assert excinfo.value.status_code == 503
+    assert excinfo.value.detail == detail
+
+
 def test_parse_cli_event_error_logs_metadata_by_default():
     """CLI parser must not log raw error text unless LOG_RAW_CLI_DIAGNOSTICS is on."""
     from messaging.event_parser import parse_cli_event
