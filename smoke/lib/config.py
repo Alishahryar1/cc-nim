@@ -57,6 +57,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "gemini": "gemini/models/gemini-3.1-flash-lite",
     "groq": "groq/llama-3.3-70b-versatile",
     "cerebras": "cerebras/llama3.1-8b",
+    "huggingface": "huggingface/meta-llama/Llama-3.3-70B-Instruct",
 }
 
 NVIDIA_NIM_CLI_DEFAULT_MODELS: tuple[str, ...] = (
@@ -257,6 +258,8 @@ class SmokeConfig:
             return bool(self.settings.groq_api_key.strip())
         if provider == "cerebras":
             return bool(self.settings.cerebras_api_key.strip())
+        if provider == "huggingface":
+            return bool(self.settings.huggingface_api_key.strip())
         return False
 
 

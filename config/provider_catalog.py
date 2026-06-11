@@ -36,6 +36,8 @@ ZAI_DEFAULT_BASE = "https://api.z.ai/api/anthropic/v1"
 GEMINI_DEFAULT_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GROQ_DEFAULT_BASE = "https://api.groq.com/openai/v1"
 CEREBRAS_DEFAULT_BASE = "https://api.cerebras.ai/v1"
+# Hugging Face Inference Providers router (OpenAI-compatible chat completions).
+HUGGINGFACE_DEFAULT_BASE = "https://router.huggingface.co/v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -196,6 +198,16 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
             "native_anthropic",
             "rate_limit",
         ),
+    ),
+    "huggingface": ProviderDescriptor(
+        provider_id="huggingface",
+        transport_type="openai_chat",
+        credential_env="HUGGINGFACE_API_KEY",
+        credential_url="https://huggingface.co/settings/tokens",
+        credential_attr="huggingface_api_key",
+        default_base_url=HUGGINGFACE_DEFAULT_BASE,
+        proxy_attr="huggingface_proxy",
+        capabilities=("chat", "streaming", "tools", "thinking", "rate_limit"),
     ),
     "zai": ProviderDescriptor(
         provider_id="zai",

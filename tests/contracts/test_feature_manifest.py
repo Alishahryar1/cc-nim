@@ -11,6 +11,7 @@ from providers.deepseek import DeepSeekProvider
 from providers.fireworks import FireworksProvider
 from providers.gemini import GeminiProvider
 from providers.groq import GroqProvider
+from providers.huggingface import HuggingFaceProvider
 from providers.kimi import KimiProvider
 from providers.llamacpp import LlamaCppProvider
 from providers.lmstudio import LMStudioProvider
@@ -94,6 +95,7 @@ def test_provider_and_platform_registries_include_advertised_builtins() -> None:
         "gemini": GeminiProvider,
         "groq": GroqProvider,
         "cerebras": CerebrasProvider,
+        "huggingface": HuggingFaceProvider,
     }
     for provider_class in provider_classes.values():
         assert issubclass(provider_class, BaseProvider)

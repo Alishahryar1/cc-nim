@@ -18,6 +18,7 @@ _EXPECTED_PROVIDER_ORDER: tuple[str, ...] = (
     "cerebras",
     "groq",
     "fireworks",
+    "huggingface",
     "zai",
     "lmstudio",
     "llamacpp",

@@ -252,6 +252,20 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         ),
     ),
     ConfigFieldSpec(
+        "HUGGINGFACE_API_KEY",
+        "Hugging Face API Key",
+        "providers",
+        "secret",
+        settings_attr="huggingface_api_key",
+        secret=True,
+        description=(
+            "Hugging Face access token (create at "
+            "[Settings > Access Tokens](https://huggingface.co/settings/tokens) with "
+            "Inference Providers permission); free monthly credits included. See "
+            "[Inference Providers docs](https://huggingface.co/docs/inference-providers)."
+        ),
+    ),
+    ConfigFieldSpec(
         "LM_STUDIO_BASE_URL",
         "LM Studio Base URL",
         "providers",
@@ -404,6 +418,15 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         "providers",
         "secret",
         settings_attr="cerebras_proxy",
+        secret=True,
+        advanced=True,
+    ),
+    ConfigFieldSpec(
+        "HUGGINGFACE_PROXY",
+        "Hugging Face Proxy",
+        "providers",
+        "secret",
+        settings_attr="huggingface_proxy",
         secret=True,
         advanced=True,
     ),

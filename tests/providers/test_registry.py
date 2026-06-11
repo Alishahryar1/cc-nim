@@ -14,6 +14,7 @@ from providers.exceptions import UnknownProviderTypeError
 from providers.fireworks import FireworksProvider
 from providers.gemini import GeminiProvider
 from providers.groq import GroqProvider
+from providers.huggingface import HuggingFaceProvider
 from providers.kimi import KimiProvider
 from providers.llamacpp import LlamaCppProvider
 from providers.lmstudio import LMStudioProvider
@@ -67,6 +68,8 @@ def _make_settings(**overrides):
     mock.groq_proxy = ""
     mock.cerebras_api_key = ""
     mock.cerebras_proxy = ""
+    mock.huggingface_api_key = ""
+    mock.huggingface_proxy = ""
     mock.provider_rate_limit = 40
     mock.provider_rate_window = 60
     mock.provider_max_concurrency = 5
@@ -168,6 +171,7 @@ def test_create_provider_instantiates_each_builtin():
         gemini_api_key="test_gemini_key",
         groq_api_key="test_groq_key",
         cerebras_api_key="test_cerebras_key",
+        huggingface_api_key="test_huggingface_key",
         fireworks_api_key="test_fireworks_key",
         kimi_api_key="test_kimi_key",
     )
@@ -188,6 +192,7 @@ def test_create_provider_instantiates_each_builtin():
         "gemini": GeminiProvider,
         "groq": GroqProvider,
         "cerebras": CerebrasProvider,
+        "huggingface": HuggingFaceProvider,
     }
 
     with (

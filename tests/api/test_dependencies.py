@@ -68,6 +68,8 @@ def _make_mock_settings(**overrides):
     mock.groq_proxy = ""
     mock.cerebras_api_key = ""
     mock.cerebras_proxy = ""
+    mock.huggingface_api_key = ""
+    mock.huggingface_proxy = ""
     mock.nim = NimSettings()
     mock.http_read_timeout = 300.0
     mock.http_write_timeout = 10.0
@@ -346,6 +348,23 @@ async def test_get_provider_cerebras_missing_api_key():
         assert exc_info.value.status_code == 503
         assert "CEREBRAS_API_KEY" in exc_info.value.detail
         assert "cloud.cerebras.ai" in exc_info.value.detail
+
+
+@pytest.mark.asyncio
+async def test_get_provider_huggingface_missing_api_key():
+    """Hugging Face with empty API key raises HTTPException 503."""
+    with patch("api.dependencies.get_settings") as mock_settings:
+        mock_settings.return_value = _make_mock_settings(
+            provider_type="huggingface",
+            huggingface_api_key="",
+        )
+
+        with pytest.raises(HTTPException) as exc_info:
+            get_provider()
+
+        assert exc_info.value.status_code == 503
+        assert "HUGGINGFACE_API_KEY" in exc_info.value.detail
+        assert "huggingface.co/settings/tokens" in exc_info.value.detail
 
 
 @pytest.mark.asyncio

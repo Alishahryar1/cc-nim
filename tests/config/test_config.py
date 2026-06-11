@@ -789,6 +789,12 @@ class TestPerModelMapping:
         )
         assert Settings.parse_provider_type("groq/llama-3.3-70b-versatile") == "groq"
         assert Settings.parse_provider_type("cerebras/llama3.1-8b") == "cerebras"
+        assert (
+            Settings.parse_provider_type(
+                "huggingface/meta-llama/Llama-3.3-70B-Instruct"
+            )
+            == "huggingface"
+        )
 
     def test_parse_model_name(self):
         """parse_model_name extracts model name from model string."""
@@ -817,6 +823,10 @@ class TestPerModelMapping:
             == "llama-3.3-70b-versatile"
         )
         assert Settings.parse_model_name("cerebras/llama3.1-8b") == "llama3.1-8b"
+        assert (
+            Settings.parse_model_name("huggingface/meta-llama/Llama-3.3-70B-Instruct")
+            == "meta-llama/Llama-3.3-70B-Instruct"
+        )
 
     def test_configured_chat_model_refs_collects_unique_models_with_sources(
         self, monkeypatch

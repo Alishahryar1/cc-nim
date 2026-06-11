@@ -136,6 +136,12 @@ def _create_cerebras(config: ProviderConfig, _settings: Settings) -> BaseProvide
     return CerebrasProvider(config)
 
 
+def _create_huggingface(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+    from providers.huggingface import HuggingFaceProvider
+
+    return HuggingFaceProvider(config)
+
+
 PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "nvidia_nim": _create_nvidia_nim,
     "open_router": _create_open_router,
@@ -150,6 +156,7 @@ PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "cerebras": _create_cerebras,
     "groq": _create_groq,
     "fireworks": _create_fireworks,
+    "huggingface": _create_huggingface,
     "zai": _create_zai,
     "lmstudio": _create_lmstudio,
     "llamacpp": _create_llamacpp,

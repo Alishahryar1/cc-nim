@@ -43,7 +43,7 @@ Free Claude Code routes Anthropic Messages API traffic from Claude Code to any p
 ## What You Get
 
 - Drop-in proxy for Claude Code's Anthropic API calls.
-- 17 provider backends: NVIDIA NIM, OpenRouter, Google AI Studio (Gemini), DeepSeek, Mistral La Plateforme, Mistral Codestral, OpenCode Zen, OpenCode Go, Wafer, Kimi, Cerebras Inference, Groq, Fireworks AI, Z.ai, LM Studio, llama.cpp, and Ollama.
+- 18 provider backends: NVIDIA NIM, OpenRouter, Google AI Studio (Gemini), DeepSeek, Mistral La Plateforme, Mistral Codestral, OpenCode Zen, OpenCode Go, Wafer, Kimi, Cerebras Inference, Groq, Fireworks AI, Hugging Face, Z.ai, LM Studio, llama.cpp, and Ollama.
 - Per-model routing: send Opus, Sonnet, Haiku, and fallback traffic to different providers.
 - Native Claude Code `/model` picker support through the proxy's `/v1/models` endpoint (see [Model Picker](#model-picker)).
 - Streaming, tool use, reasoning/thinking block handling, and local request optimizations.
@@ -262,7 +262,17 @@ Fireworks exposes an **Anthropic-compatible** Messages API at `https://api.firew
 
 Browse models at [fireworks.ai/models](https://fireworks.ai/models).
 
-### 14. [Z.ai](https://z.ai/)
+### 14. [Hugging Face](https://huggingface.co/)
+
+Create an access token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) with the **Inference Providers** permission. Free accounts include monthly inference credits; [PRO](https://huggingface.co/pricing) increases them.
+
+In the Admin UI, paste it into `HUGGINGFACE_API_KEY`, then set `MODEL` to a Hub model id prefixed with `huggingface/`, such as `huggingface/meta-llama/Llama-3.3-70B-Instruct`.
+
+The router (`https://router.huggingface.co/v1`) is OpenAI-compatible and fans out to partner inference providers. Append `:provider` to pin one (e.g. `huggingface/deepseek-ai/DeepSeek-V3:fireworks-ai`); otherwise the router picks automatically.
+
+Browse models at [huggingface.co/models?inference_provider=all](https://huggingface.co/models?inference_provider=all).
+
+### 15. [Z.ai](https://z.ai/)
 
 Get an API key at [Z.ai/manage-apikey/apikey-list](https://z.ai/manage-apikey/apikey-list).
 
@@ -277,13 +287,13 @@ Popular examples:
 
 Browse models at [Z.ai](https://z.ai).
 
-### 15. [LM Studio](https://lmstudio.ai/)
+### 16. [LM Studio](https://lmstudio.ai/)
 
 Start LM Studio's local server and load a model. In the Admin UI, keep or update `LM_STUDIO_BASE_URL`, then set `MODEL` to the model identifier shown by LM Studio, prefixed with `lmstudio/`.
 
 Prefer models with tool-use support for Claude Code workflows.
 
-### 16. [llama.cpp](https://github.com/ggml-org/llama.cpp)
+### 17. [llama.cpp](https://github.com/ggml-org/llama.cpp)
 
 Start `llama-server` with an Anthropic-compatible `/v1/messages` endpoint and enough context for Claude Code requests.
 
@@ -291,7 +301,7 @@ In the Admin UI, keep or update `LLAMACPP_BASE_URL`, then set `MODEL` to the loc
 
 For local coding models, context size matters. If llama.cpp returns HTTP 400 for normal Claude Code requests, increase `--ctx-size` and verify the model/server build supports the requested features.
 
-### 17. [Ollama](https://ollama.com/)
+### 18. [Ollama](https://ollama.com/)
 
 Run Ollama and pull a model:
 
