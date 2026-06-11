@@ -157,6 +157,17 @@ async def admin_status(request: Request):
     }
 
 
+@router.get("/admin/api/stats")
+async def admin_stats(request: Request):
+    """Return token usage statistics."""
+    require_loopback_admin(request)
+    from .admin_stats import token_stats
+    return {
+        "models": token_stats.get_model_stats(),
+        "providers": token_stats.get_provider_stats(),
+    }
+
+
 @router.get("/admin/api/providers/local-status")
 async def local_provider_status(request: Request):
     require_loopback_admin(request)

@@ -118,7 +118,9 @@ async function load() {
   await validate(false);
   await refreshLocalStatus();
   updateDirtyState();
-  renderProviderHealth();
+  await renderProviderHealth();
+  await renderTokenUsage();
+  updateStatsBar();
   showMessage('');
 }
 
@@ -518,6 +520,54 @@ function renderProviderHealth() {
       </div>
     </div>
   `;
+}
+
+async function renderTokenUsage() {
+  const container = byId('tokenUsageChart');
+  if (!container) return;
+
+  try {
+    const stats = await api('/admin/api/stats');
+    const models = stats.models || [];
+
+    if (models.length === 0) {
+      container.innerHTML = '<div class="empty-state">No token usage data yet</div>';
+      return;
+    }
+
+    const topModels = models.slice(0, 5);
+    const maxTokens = Math.max(...topModels.map(m => m.total_tokens), 1);
+
+    container.innerHTML = `
+      <div style="display:flex;flex-direction:column;gap:12px">
+        ${topModels.map(m => `
+          <div style="display:flex;align-items:center;gap:12px">
+            <div style="width:80px;font-size:12px;color:var(--text-secondary);white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${m.model.split('/').pop() || m.model}</div>
+            <div style="flex:1;height:8px;background:var(--bg-elevated);border-radius:4px;overflow:hidden">
+              <div style="width:${(m.total_tokens/maxTokens)*100}%;height:100%;background:var(--accent);border-radius:4px"></div>
+            </div>
+            <div style="width:60px;text-align:right;font-size:12px;color:var(--text-primary)">${Math.round(m.total_tokens).toLocaleString()}</div>
+          </div>
+        `).join('')}
+      </div>
+    `;
+  } catch {
+    container.innerHTML = '<div class="empty-state">Unable to load stats</div>';
+  }
+}
+
+function updateStatsBar() {
+  const totalTokensEl = byId('totalTokens');
+  const totalRequestsEl = byId('totalRequests');
+  const activeProvidersEl = byId('activeProviders');
+
+  if (state.config) {
+    const providers = state.config.provider_status || [];
+    const okCount = providers.filter(p => statusClass(p.status) === 'ok').length;
+    activeProvidersEl.textContent = String(okCount);
+  }
+  totalTokensEl.textContent = '-';
+  totalRequestsEl.textContent = '-';
 }
 
 function initEventListeners() {

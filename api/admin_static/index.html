@@ -85,6 +85,33 @@
           </div>
         </header>
 
+        <!-- Stats Bar -->
+        <div class="stats-bar">
+          <div class="stat-item">
+            <span class="stat-label">Total Tokens</span>
+            <span class="stat-value" id="totalTokens">-</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Requests</span>
+            <span class="stat-value" id="totalRequests">-</span>
+          </div>
+          <div class="stat-item">
+            <span class="stat-label">Active Providers</span>
+            <span class="stat-value" id="activeProviders">-</span>
+          </div>
+        </div>
+        <header class="topbar">
+          <div class="topbar-left">
+            <h2 class="page-title" id="pageTitle">Dashboard</h2>
+          </div>
+          <div class="topbar-right">
+            <div class="dirty-indicator" id="dirtyState">
+              <span class="dot"></span>
+              <span class="text">No changes</span>
+            </div>
+          </div>
+        </header>
+
         <!-- Views -->
         <div class="admin-views" id="adminViews">
           <!-- Dashboard View -->
@@ -96,6 +123,16 @@
                   <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
                 </div>
                 <div class="card-content" id="providerHealthChart">
+                  <div class="empty-state">Loading...</div>
+                </div>
+              </div>
+
+              <div class="dashboard-card">
+                <div class="card-header">
+                  <h3>Token Usage (24h)</h3>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 2v20M5 12h14M8 5l4 4 4-4M8 19l4-4 4 4"/></svg>
+                </div>
+                <div class="card-content" id="tokenUsageChart">
                   <div class="empty-state">Loading...</div>
                 </div>
               </div>

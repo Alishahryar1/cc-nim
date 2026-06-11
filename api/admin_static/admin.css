@@ -293,6 +293,37 @@ button, input, select, textarea {
   color: var(--warning);
 }
 
+/* ─── Stats Bar ─────────────────────────────────────────────── */
+
+.stats-bar {
+  display: flex;
+  align-items: center;
+  gap: 32px;
+  padding: 12px 32px;
+  border-bottom: 1px solid var(--border);
+  background: var(--bg-elevated);
+}
+
+.stat-item {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.stat-label {
+  font-size: 11px;
+  color: var(--text-muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.stat-value {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--text-primary);
+  font-family: var(--font-mono);
+}
+
 /* ─── Admin Views ───────────────────────────────────────────── */
 
 .admin-views {
