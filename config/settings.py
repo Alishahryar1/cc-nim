@@ -115,9 +115,7 @@ class Settings(BaseSettings):
     cerebras_api_key: str = Field(default="", validation_alias="CEREBRAS_API_KEY")
 
     # ==================== Hugging Face Inference Providers (OpenAI-compatible) ====================
-    huggingface_api_key: str = Field(
-        default="", validation_alias="HUGGINGFACE_API_KEY"
-    )
+    huggingface_api_key: str = Field(default="", validation_alias="HUGGINGFACE_API_KEY")
 
     # ==================== Messaging Platform Selection ====================
     # Valid: "telegram" | "discord" | "none"

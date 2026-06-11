@@ -264,7 +264,9 @@ Browse models at [fireworks.ai/models](https://fireworks.ai/models).
 
 ### 14. [Hugging Face](https://huggingface.co/)
 
-Create an access token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) with the **Inference Providers** permission. Free accounts include monthly inference credits; [PRO](https://huggingface.co/pricing) increases them.
+Create an access token at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens) with the **Inference Providers** permission.
+
+Credit reality check: free accounts include only a small monthly inference allowance — enough to try the integration, not to drive Claude Code daily (each request carries large tool schemas). Sustained use needs [PRO](https://huggingface.co/pricing) (20x included credits) or pre-paid credits, which are billed at partner-provider cost with no markup. For fully free usage, prefer the OpenRouter `:free` models or NVIDIA NIM providers above.
 
 In the Admin UI, paste it into `HUGGINGFACE_API_KEY`, then set `MODEL` to a Hub model id prefixed with `huggingface/`, such as `huggingface/meta-llama/Llama-3.3-70B-Instruct`.
 
