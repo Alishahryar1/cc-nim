@@ -106,6 +106,7 @@ async function load() {
   state.fields = new Map(config.fields.map((field) => [field.key, field]));
   renderNav();
   renderProviders(config.provider_status);
+  renderProviderCharts(config.provider_status);
   renderSections(config.sections, config.fields);
   byId('configPath').textContent = config.paths.managed;
   await validate(false);
