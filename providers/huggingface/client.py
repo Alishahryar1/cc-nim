@@ -51,10 +51,19 @@ class HuggingFaceProvider(OpenAIChatTransport):
             error_text = f"{error_text} {json.dumps(error_body, default=str)}"
 
         retry_body = clone_body_with_clamped_max_tokens(error_text, body)
-        if retry_body is None:
-            return None
-        logger.warning(
-            "HUGGINGFACE_STREAM: retrying with max_tokens clamped to {} after 400 error",
-            retry_body["max_tokens"],
-        )
-        return retry_body
+        if retry_body is not None:
+            logger.warning(
+                "HUGGINGFACE_STREAM: retrying with max_tokens clamped to {} after 400 error",
+                retry_body["max_tokens"],
+            )
+            return retry_body
+
+        # Malformed tool-call generations ("tool_use_failed") are usually
+        # transient sampling flukes; one resample often succeeds.
+        if "tool_use_failed" in error_text:
+            logger.warning(
+                "HUGGINGFACE_STREAM: retrying once after tool_use_failed 400 error"
+            )
+            return dict(body)
+
+        return None

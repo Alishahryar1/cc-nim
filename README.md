@@ -270,6 +270,8 @@ In the Admin UI, paste it into `HUGGINGFACE_API_KEY`, then set `MODEL` to a Hub 
 
 The router (`https://router.huggingface.co/v1`) is OpenAI-compatible and fans out to partner inference providers. Append `:provider` to pin one (e.g. `huggingface/deepseek-ai/DeepSeek-V3:fireworks-ai`); otherwise the router picks automatically.
 
+For Claude Code tool workflows, prefer models with strong function-calling (Kimi, DeepSeek, Qwen, GLM families); smaller chat models can fail tool calls with `tool_use_failed`. The provider resamples once automatically, but a tool-capable model is the real fix.
+
 Browse models at [huggingface.co/models?inference_provider=all](https://huggingface.co/models?inference_provider=all).
 
 ### 15. [Z.ai](https://z.ai/)

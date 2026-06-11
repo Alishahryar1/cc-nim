@@ -244,6 +244,19 @@ def test_retry_body_none_for_unrelated_400_errors(huggingface_provider):
     assert retry_body is None
 
 
+def test_retry_body_resamples_once_on_tool_use_failed(huggingface_provider):
+    body = {"model": "m", "messages": [], "max_tokens": 100}
+    error = _Stub400(
+        "Error code: 400 - {'message': 'Failed to call a function. Please adjust "
+        "your prompt.', 'type': 'invalid_request_error', 'code': 'tool_use_failed'}"
+    )
+
+    retry_body = huggingface_provider._get_retry_request_body(error, body)
+
+    assert retry_body == body
+    assert retry_body is not body  # cloned, not the same object
+
+
 @pytest.mark.asyncio
 async def test_cleanup(huggingface_provider):
     huggingface_provider._client = AsyncMock()
