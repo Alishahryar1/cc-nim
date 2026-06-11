@@ -12,127 +12,139 @@
     <link rel="stylesheet" href="/admin/assets/admin.css" />
   </head>
   <body>
-    <noscript>
-      <div style="padding:1rem;background:#121922;color:#e6edf5;text-align:center;font-family:Inter,sans-serif;border-bottom:1px solid #253040">
-        JavaScript is required to use the admin dashboard.
-      </div>
-    </noscript>
-
     <div class="app-layout">
-      <aside class="sidebar" id="sidebar" aria-label="Main Navigation">
-        <div class="sidebar-logo">
-          <svg class="logo-icon" width="28" height="28" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/>
-            <line x1="12" y1="22" x2="12" y2="15.5"/>
-            <polyline points="22 8.5 12 15.5 2 8.5"/>
-            <polyline points="2 15.5 12 8.5 22 15.5"/>
-            <line x1="12" y1="2" x2="12" y2="8.5"/>
-          </svg>
-          <span class="logo-text">Free Claude Code</span>
-        </div>
-
-        <button class="collapse-btn" id="collapseBtn" title="Toggle sidebar" aria-expanded="true">
-          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-            <polyline points="15 18 9 12 15 6"/>
-          </svg>
-        </button>
-
-        <nav class="sidebar-nav">
-          <div class="nav-group">
-            <div class="nav-group-label" data-group="management" role="button" tabindex="0" aria-expanded="true">
-              <span>MANAGEMENT</span>
-              <svg class="nav-group-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="6 9 12 15 18 9"/>
+      <!-- Left Sidebar -->
+      <aside class="sidebar" id="sidebar">
+        <div class="sidebar-header">
+          <div class="logo-wrapper">
+            <div class="logo-icon">
+              <svg width="32" height="32" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
+                <polygon points="12 2 22 8.5 22 15.5 12 22 2 15.5 2 8.5 12 2"/>
+                <line x1="12" y1="22" x2="12" y2="15.5"/>
+                <polyline points="22 8.5 12 15.5 2 8.5"/>
+                <polyline points="2 15.5 12 8.5 22 15.5"/>
+                <line x1="12" y1="2" x2="12" y2="8.5"/>
               </svg>
             </div>
-            <div class="nav-group-items" id="navManagement">
-              <button class="nav-item active" data-view="providers">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                  <circle cx="12" cy="12" r="3"/>
-                  <path d="M12 1v4"/><path d="M12 19v4"/><path d="M1 12h4"/><path d="M19 12h4"/>
-                  <path d="M4.22 4.22l2.83 2.83"/><path d="M16.95 16.95l2.83 2.83"/>
-                  <path d="M4.22 19.78l2.83-2.83"/><path d="M16.95 7.05l2.83-2.83"/>
-                </svg>
+            <h1 class="logo-text">FCC</h1>
+          </div>
+        </div>
+
+        <nav class="sidebar-nav">
+          <div class="nav-section">
+            <div class="nav-section-label">Navigation</div>
+            <div class="nav-list">
+              <button class="nav-item active" data-view="dashboard">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="3" y="3" width="7" height="7"/><rect x="14" y="3" width="7" height="7"/><rect x="3" y="14" width="7" height="7"/><rect x="14" y="14" width="7" height="7"/></svg>
+                <span>Dashboard</span>
+              </button>
+              <button class="nav-item" data-view="providers">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><circle cx="12" cy="12" r="3"/><path d="M12 1v4"/><path d="M12 19v4"/><path d="M1 12h4"/><path d="M19 12h4"/></svg>
                 <span>Providers</span>
               </button>
               <button class="nav-item" data-view="model_config">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                  <rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/>
-                </svg>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M9 9h6v6H9z"/></svg>
                 <span>Model Config</span>
               </button>
-            </div>
-          </div>
-
-          <div class="nav-group">
-            <div class="nav-group-label" data-group="messaging" role="button" tabindex="0" aria-expanded="true">
-              <span>MESSAGING</span>
-              <svg class="nav-group-arrow" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
-                <polyline points="6 9 12 15 18 9"/>
-              </svg>
-            </div>
-            <div class="nav-group-items" id="navMessaging">
               <button class="nav-item" data-view="messaging">
-                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round">
-                  <path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/>
-                </svg>
-                <span>Channels</span>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M21 15a2 2 0 0 1-2 2H7l-4 4V5a2 2 0 0 1 2-2h14a2 2 0 0 1 2 2z"/></svg>
+                <span>Messaging</span>
               </button>
             </div>
           </div>
         </nav>
 
         <div class="sidebar-footer">
-          <div class="status-row">
+          <div class="status-card">
             <div class="status-indicator connected">
               <span class="status-dot"></span>
-              <span class="status-text">Server Online</span>
+              <div class="status-content">
+                <span class="status-label">Server Status</span>
+                <span class="status-text">Online</span>
+              </div>
             </div>
           </div>
-          <div class="version-info">
-            <span class="version-text" id="versionText">v1.3.1</span>
+          <div class="version-card">
+            <span class="version-text">v1.4.0</span>
           </div>
         </div>
       </aside>
 
+      <!-- Main Content -->
       <main class="main">
+        <!-- Top Bar -->
         <header class="topbar">
           <div class="topbar-left">
-            <h2 id="pageTitle">Providers</h2>
+            <h2 class="page-title" id="pageTitle">Dashboard</h2>
           </div>
           <div class="topbar-right">
-            <span id="dirtyState" class="status-pill">No changes</span>
+            <div class="dirty-indicator" id="dirtyState">
+              <span class="dot"></span>
+              <span class="text">No changes</span>
+            </div>
           </div>
         </header>
 
-        <div id="adminViews" class="admin-views">
-          <section id="view-providers" class="admin-view active" data-view="providers">
-            <section class="provider-strip">
-              <div class="strip-header">
-                <h3>Provider Status</h3>
+        <!-- Views -->
+        <div class="admin-views" id="adminViews">
+          <!-- Dashboard View -->
+          <section id="view-dashboard" class="admin-view active" data-view="dashboard">
+            <div class="dashboard-grid">
+              <div class="dashboard-card">
+                <div class="card-header">
+                  <h3>Provider Health</h3>
+                  <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
+                </div>
+                <div class="card-content" id="providerHealthChart">
+                  <div class="empty-state">Loading...</div>
+                </div>
               </div>
-              <div id="providerGrid" class="provider-grid"></div>
-            </section>
-            <div id="providersSections" class="form-sections"></div>
+
+              <div class="dashboard-card">
+                <div class="card-header">
+                  <h3>Quick Actions</h3>
+                </div>
+                <div class="card-content">
+                  <button class="action-btn primary" id="validateButton">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/></svg>
+                    Validate Config
+                  </button>
+                  <button class="action-btn" id="applyButton" disabled>
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l7 7v7a2 2 0 0 1-2 2z"/><line x1="14" y1="3" x2="14" y2="9"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
+                    Apply Changes
+                  </button>
+                </div>
+              </div>
+            </div>
           </section>
 
+          <!-- Providers View -->
+          <section id="view-providers" class="admin-view" data-view="providers" hidden>
+            <div class="providers-header">
+              <h3>Provider Management</h3>
+            </div>
+            <div class="provider-grid" id="providerGrid"></div>
+            <div class="form-sections" id="providersSections"></div>
+          </section>
+
+          <!-- Model Config View -->
           <section id="view-model_config" class="admin-view" data-view="model_config" hidden>
-            <div id="modelConfigSections" class="form-sections"></div>
+            <div class="form-sections" id="modelConfigSections"></div>
           </section>
 
+          <!-- Messaging View -->
           <section id="view-messaging" class="admin-view" data-view="messaging" hidden>
-            <div id="messagingSections" class="form-sections"></div>
+            <div class="form-sections" id="messagingSections"></div>
           </section>
         </div>
 
+        <!-- Footer -->
         <footer class="action-bar">
-          <div class="action-meta">
-            <span id="configPath"></span>
-          </div>
-          <div id="messageArea" class="message-area"></div>
+          <div class="config-path" id="configPath"></div>
+          <div class="message-area" id="messageArea"></div>
           <div class="action-buttons">
-            <button id="validateButton" class="secondary-button" type="button">Validate</button>
-            <button id="applyButton" class="primary-button" type="button" disabled>Apply</button>
+            <button class="btn-secondary" id="validateButton">Validate</button>
+            <button class="btn-primary" id="applyButton" disabled>Apply</button>
           </div>
         </footer>
       </main>

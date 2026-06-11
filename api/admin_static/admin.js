@@ -3,13 +3,20 @@ const state = {
   fields: new Map(),
   localStatus: new Map(),
   modelOptions: [],
-  activeView: 'providers',
+  activeView: 'dashboard',
   sidebarCollapsed: false,
   collapsedGroups: {},
 };
 
 const MASKED_SECRET = '********';
 const VIEW_GROUPS = [
+  {
+    id: 'dashboard',
+    label: 'Dashboard',
+    title: 'Dashboard',
+    sections: [],
+    containerId: null,
+  },
   {
     id: 'providers',
     label: 'Providers',
@@ -106,12 +113,12 @@ async function load() {
   state.fields = new Map(config.fields.map((field) => [field.key, field]));
   renderNav();
   renderProviders(config.provider_status);
-  renderProviderCharts(config.provider_status);
   renderSections(config.sections, config.fields);
   byId('configPath').textContent = config.paths.managed;
   await validate(false);
   await refreshLocalStatus();
   updateDirtyState();
+  renderProviderHealth();
   showMessage('');
 }
 
@@ -150,6 +157,7 @@ function setActiveView(viewId, { scroll = false } = {}) {
 
 function renderProviders(providerStatus) {
   const grid = byId('providerGrid');
+  if (!grid) return;
   grid.innerHTML = '';
   providerStatus.forEach((provider) => {
     const card = document.createElement('article');
@@ -198,7 +206,9 @@ function updateProviderCard(providerId, status, label, metaText) {
 
 function renderSections(sections, fields) {
   VIEW_GROUPS.forEach((view) => {
-    byId(view.containerId).innerHTML = '';
+    if (view.containerId) {
+      byId(view.containerId).innerHTML = '';
+    }
   });
 
   const sectionById = new Map(sections.map((section) => [section.id, section]));
@@ -210,6 +220,7 @@ function renderSections(sections, fields) {
   });
 
   VIEW_GROUPS.forEach((view) => {
+    if (!view.containerId) return;
     const container = byId(view.containerId);
     view.sections.forEach((sectionId) => {
       const section = sectionById.get(sectionId);
@@ -368,9 +379,11 @@ function changedValues() {
 
 function updateDirtyState() {
   const count = Object.keys(changedValues()).length;
-  byId('dirtyState').textContent =
-    count === 0 ? 'No changes' : `${count} unsaved change${count === 1 ? '' : 's'}`;
-  byId('dirtyState').className = `status-pill${count === 0 ? '' : ' warn'}`;
+  const dirtyState = byId('dirtyState');
+  dirtyState.innerHTML = count === 0
+    ? '<span class="dot"></span><span class="text">No changes</span>'
+    : `<span class="dot"></span><span class="text">${count} unsaved change${count === 1 ? '' : 's'}</span>`;
+  dirtyState.classList.toggle('warn', count > 0);
   byId('applyButton').disabled = count === 0;
 }
 
@@ -481,233 +494,44 @@ function showMessage(message, kind = '') {
   area.className = `message-area ${kind}`.trim();
 }
 
-function toggleSidebar() {
-  const sidebar = byId('sidebar');
-  state.sidebarCollapsed = !state.sidebarCollapsed;
-  sidebar.classList.toggle('collapsed', state.sidebarCollapsed);
-  localStorage.setItem('sidebarCollapsed', state.sidebarCollapsed);
-}
-
-function toggleGroup(groupName) {
-  const arrow = document.querySelector(`[data-group="${groupName}"] .nav-group-arrow`);
-  const items = document.getElementById(
-    groupName === 'management' ? 'navManagement' : 'navMessaging',
-  );
-
-  if (arrow && items) {
-    state.collapsedGroups[groupName] = !state.collapsedGroups[groupName];
-    arrow.classList.toggle('collapsed', state.collapsedGroups[groupName]);
-    items.style.display = state.collapsedGroups[groupName] ? 'none' : 'flex';
-    localStorage.setItem('collapsedGroups', JSON.stringify(state.collapsedGroups));
+function renderProviderHealth() {
+  const container = byId('providerHealthChart');
+  if (!container || !state.config) {
+    if (container) container.innerHTML = '<div class="empty-state">No providers configured</div>';
+    return;
   }
-}
 
-function renderProviderCharts(providerStatus) {
-  const statusCounts = {
-    ok: 0,
-    warn: 0,
-    error: 0,
-    neutral: 0,
-  };
+  const providers = state.config.provider_status || [];
+  const okCount = providers.filter(p => statusClass(p.status) === 'ok').length;
+  const totalCount = providers.length;
 
-  providerStatus.forEach((provider) => {
-    const status = statusClass(provider.status);
-    if (statusCounts[status] !== undefined) {
-      statusCounts[status]++;
-    }
-  });
-
-  const total = providerStatus.length;
-  if (total === 0) return;
-
-  const container = document.createElement('section');
-  container.className = 'provider-charts';
   container.innerHTML = `
-    <div class="charts-grid">
-      <div class="chart-card">
-        <h4>Provider Status Distribution</h4>
-        <div class="pie-chart" id="statusPieChart"></div>
+    <div style="display:flex;align-items:center;gap:24px;justify-content:center">
+      <div style="text-align:center">
+        <div style="font-size:32px;font-weight:700;color:var(--success)">${okCount}</div>
+        <div style="font-size:12px;color:var(--text-muted)">Healthy</div>
       </div>
-      <div class="chart-card">
-        <h4>Provider Types</h4>
-        <div class="bar-chart" id="providerTypesChart"></div>
+      <div style="width:60px;height:60px;border-radius:50%;background:conic-gradient(from 0deg,var(--success) 0deg,var(--success) ${Math.round((okCount/totalCount)*360)}deg,transparent ${Math.round((okCount/totalCount)*360)}deg transparent);"></div>
+      <div style="text-align:center">
+        <div style="font-size:32px;font-weight:700;color:var(--text-primary)">${totalCount}</div>
+        <div style="font-size:12px;color:var(--text-muted)">Total</div>
       </div>
     </div>
   `;
-
-  const chartsSection = document.createElement('section');
-  chartsSection.className = 'provider-strip';
-  chartsSection.innerHTML = `
-    <div class="strip-header">
-      <h3>Provider Analytics</h3>
-    </div>
-  `;
-  chartsSection.appendChild(container);
-
-  const providerStrip = byId('providerGrid').parentElement;
-  providerStrip.insertBefore(chartsSection, byId('providerGrid'));
-
-  renderPieChart('statusPieChart', statusCounts, total);
-  renderBarChart('providerTypesChart', providerStatus);
-}
-
-function renderPieChart(id, data, total) {
-  const container = document.getElementById(id);
-  if (!container) return;
-
-  const colors = {
-    ok: 'var(--success)',
-    warn: 'var(--warning)',
-    error: 'var(--error)',
-    neutral: 'var(--text-muted)',
-  };
-
-  let angle = 0;
-  const radius = 50;
-  const centerX = 100;
-  const centerY = 100;
-
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('width', '200');
-  svg.setAttribute('height', '200');
-
-  for (const [status, count] of Object.entries(data)) {
-    if (count === 0) continue;
-
-    const percentage = (count / total) * 100;
-    const strokeDasharray = `${(count / total) * 628.318} 628.318`;
-    const strokeDashoffset = 628.318 - (count / total) * 628.318;
-
-    const slice = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-    slice.setAttribute('cx', centerX.toString());
-    slice.setAttribute('cy', centerY.toString());
-    slice.setAttribute('r', radius.toString());
-    slice.setAttribute('fill', 'none');
-    slice.setAttribute('stroke', colors[status] || '#ccc');
-    slice.setAttribute('stroke-width', '20');
-    slice.setAttribute('stroke-dasharray', strokeDasharray);
-    slice.setAttribute('stroke-dashoffset', strokeDashoffset.toString());
-    slice.setAttribute('transform', `rotate(${angle} ${centerX} ${centerY})`);
-
-    container.appendChild(slice);
-
-    angle += (count / total) * 360;
-  }
-
-  const legend = document.createElement('div');
-  legend.className = 'pie-legend';
-
-  for (const [status, count] of Object.entries(data)) {
-    if (count === 0) continue;
-
-    const item = document.createElement('div');
-    item.className = 'legend-item';
-    item.innerHTML = `
-      <span class="legend-color" style="background: ${colors[status]}"></span>
-      <span class="legend-label">${status.toUpperCase()}</span>
-      <span class="legend-count">${count}</span>
-    `;
-    legend.appendChild(item);
-  }
-
-  container.appendChild(legend);
-}
-
-function renderBarChart(id, providers) {
-  const container = document.getElementById(id);
-  if (!container) return;
-
-  const typeCounts = {};
-  providers.forEach((provider) => {
-    const type = provider.kind === 'local' ? 'Local' : 'Remote';
-    typeCounts[type] = (typeCounts[type] || 0) + 1;
-  });
-
-  const maxCount = Math.max(...Object.values(typeCounts), 1);
-  const barWidth = 60;
-  const barSpacing = 20;
-  const chartWidth = Object.keys(typeCounts).length * (barWidth + barSpacing);
-
-  const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
-  svg.setAttribute('width', chartWidth.toString());
-  svg.setAttribute('height', '200');
-
-  let x = 0;
-
-  for (const [type, count] of Object.entries(typeCounts)) {
-    const barHeight = (count / maxCount) * 150;
-    const y = 150 - barHeight;
-
-    const rect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    rect.setAttribute('x', x.toString());
-    rect.setAttribute('y', y.toString());
-    rect.setAttribute('width', barWidth.toString());
-    rect.setAttribute('height', barHeight.toString());
-    rect.setAttribute('fill', type === 'Local' ? 'var(--accent)' : 'var(--success)');
-    rect.setAttribute('rx', '4');
-
-    const label = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    label.setAttribute('x', (x + barWidth / 2).toString());
-    label.setAttribute('y', (y - 5).toString());
-    label.setAttribute('text-anchor', 'middle');
-    label.setAttribute('font-family', 'Inter');
-    label.setAttribute('font-size', '12');
-    label.setAttribute('fill', 'var(--text-primary)');
-    label.textContent = type;
-
-    const value = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    value.setAttribute('x', (x + barWidth / 2).toString());
-    value.setAttribute('y', (y + barHeight + 15).toString());
-    value.setAttribute('text-anchor', 'middle');
-    value.setAttribute('font-family', 'Inter');
-    value.setAttribute('font-size', '14');
-    value.setAttribute('font-weight', '600');
-    value.setAttribute('fill', 'var(--text-primary)');
-    value.textContent = count.toString();
-
-    svg.appendChild(rect);
-    svg.appendChild(label);
-    svg.appendChild(value);
-
-    x += barWidth + barSpacing;
-  }
-
-  container.appendChild(svg);
 }
 
 function initEventListeners() {
-  byId('validateButton').addEventListener('click', () => validate(true));
-  byId('applyButton').addEventListener('click', apply);
-  byId('collapseBtn').addEventListener('click', toggleSidebar);
-
-  document.querySelectorAll('.nav-group-label').forEach((label) => {
-    label.addEventListener('click', () => {
-      toggleGroup(label.dataset.group);
+  document.querySelectorAll('.nav-item').forEach((item) => {
+    item.addEventListener('click', () => {
+      setActiveView(item.dataset.view, { scroll: true });
     });
   });
 
-  const savedCollapsed = localStorage.getItem('sidebarCollapsed');
-  if (savedCollapsed === 'true') {
-    state.sidebarCollapsed = true;
-    byId('sidebar').classList.add('collapsed');
-  }
-
-  const savedGroups = localStorage.getItem('collapsedGroups');
-  if (savedGroups) {
-    try {
-      state.collapsedGroups = JSON.parse(savedGroups);
-      Object.entries(state.collapsedGroups).forEach(([group, collapsed]) => {
-        if (collapsed) {
-          const arrow = document.querySelector(`[data-group="${group}"] .nav-group-arrow`);
-          const items = document.getElementById(
-            group === 'management' ? 'navManagement' : 'navMessaging',
-          );
-          if (arrow) arrow.classList.add('collapsed');
-          if (items) items.style.display = 'none';
-        }
-      });
-    } catch {
-      // ignore parse errors
+  const savedView = localStorage.getItem('activeView');
+  if (savedView) {
+    const viewExists = VIEW_GROUPS.some(v => v.id === savedView);
+    if (viewExists) {
+      state.activeView = savedView;
     }
   }
 }
