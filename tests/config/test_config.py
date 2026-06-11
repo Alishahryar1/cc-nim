@@ -189,6 +189,22 @@ class TestSettings:
         settings = Settings()
         assert settings.open_router_max_tokens == 8192
 
+    def test_open_router_max_tokens_rejects_zero(self, monkeypatch):
+        """Test OPENROUTER_MAX_TOKENS=0 fails the ge=1 constraint."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("OPENROUTER_MAX_TOKENS", "0")
+        with pytest.raises(ValidationError):
+            Settings()
+
+    def test_open_router_max_tokens_rejects_negative(self, monkeypatch):
+        """Test OPENROUTER_MAX_TOKENS=-1 fails the ge=1 constraint."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("OPENROUTER_MAX_TOKENS", "-1")
+        with pytest.raises(ValidationError):
+            Settings()
+
     def test_model_setting(self):
         """Test model setting exists and is a string."""
         from config.settings import Settings
