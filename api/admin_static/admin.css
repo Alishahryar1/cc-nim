@@ -3,25 +3,25 @@
 :root {
   color-scheme: dark;
 
-  /* Palette */
-  --bg-void: #080A0D;
-  --bg-sidebar: #0E1117;
-  --bg-surface: #141820;
-  --bg-elevated: #1C2230;
-  --border: #252E3D;
-  --border-light: #2E3A4D;
-  --text-muted: #4A5568;
-  --text-secondary: #718096;
-  --text-primary: #CBD5E1;
-  --accent: #FF6B35;
-  --accent-dim: rgba(255, 107, 53, 0.12);
-  --success: #0FC88A;
-  --success-dim: rgba(15, 200, 138, 0.10);
-  --success-glow: rgba(15, 200, 138, 0.25);
-  --error: #EF4444;
-  --error-dim: rgba(239, 68, 68, 0.10);
-  --warning: #F59E0B;
-  --warning-dim: rgba(245, 158, 11, 0.10);
+  /* Palette - Deep Space Theme */
+  --bg-void: #0a0f14;
+  --bg-sidebar: #0d1218;
+  --bg-surface: #121922;
+  --bg-elevated: #1a2330;
+  --border: #253040;
+  --border-light: #35455f;
+  --text-muted: #6b7a90;
+  --text-secondary: #8a9ba8;
+  --text-primary: #e6edf5;
+  --accent: #6366f1;
+  --accent-dim: rgba(99, 102, 241, 0.15);
+  --accent-glow: rgba(99, 102, 241, 0.3);
+  --success: #10b981;
+  --success-dim: rgba(16, 185, 129, 0.15);
+  --warning: #f59e0b;
+  --warning-dim: rgba(245, 158, 11, 0.15);
+  --error: #ef4444;
+  --error-dim: rgba(239, 68, 68, 0.15);
 
   /* Typography */
   --font-sans: 'Inter', system-ui, -apple-system, sans-serif;
@@ -31,10 +31,12 @@
   --ease: cubic-bezier(0.4, 0, 0.2, 1);
   --transition-fast: 0.15s var(--ease);
   --transition-normal: 0.25s var(--ease);
+  --transition-slow: 0.4s var(--ease);
 
   /* Shadows */
-  --shadow-card: 0 2px 8px rgba(0, 0, 0, 0.3);
-  --shadow-elevated: 0 8px 32px rgba(0, 0, 0, 0.4);
+  --shadow-card: 0 4px 12px rgba(0, 0, 0, 0.3);
+  --shadow-elevated: 0 16px 40px rgba(0, 0, 0, 0.4);
+  --shadow-glow: 0 0 30px var(--accent-glow);
 }
 
 /* ─── Reset ─────────────────────────────────────────────────── */
@@ -48,16 +50,15 @@
 body {
   min-width: 320px;
   background: var(--bg-void);
-  background-image: url('/admin/assets/background.svg');
-  background-attachment: fixed;
-  background-repeat: no-repeat;
-  background-size: cover;
   color: var(--text-primary);
   font-family: var(--font-sans);
   font-size: 14px;
-  line-height: 1.5;
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
+  background-image:
+    radial-gradient(circle at 10% 20%, rgba(99, 102, 241, 0.05) 0%, transparent 25%),
+    radial-gradient(circle at 90% 80%, rgba(99, 102, 241, 0.03) 0%, transparent 30%);
 }
 
 button, input, select, textarea {
@@ -83,32 +84,30 @@ button, input, select, textarea {
   flex-direction: column;
   overflow-y: auto;
   overflow-x: hidden;
-  scrollbar-width: none;
   position: sticky;
   top: 0;
   height: 100vh;
   z-index: 100;
 }
 
-.sidebar::-webkit-scrollbar { display: none; }
-
 .sidebar-logo {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 16px 16px 12px;
+  gap: 12px;
+  padding: 20px 16px;
   border-bottom: 1px solid var(--border);
 }
 
 .logo-icon {
-  width: 24px;
-  height: 24px;
+  width: 28px;
+  height: 28px;
   flex-shrink: 0;
   color: var(--accent);
+  filter: drop-shadow(0 0 8px var(--accent-glow));
 }
 
 .logo-text {
-  font-size: 15px;
+  font-size: 16px;
   font-weight: 700;
   color: var(--text-primary);
   letter-spacing: -0.01em;
@@ -119,21 +118,21 @@ button, input, select, textarea {
   display: flex;
   align-items: center;
   justify-content: center;
-  width: 28px;
-  height: 28px;
+  width: 32px;
+  height: 32px;
   border: none;
-  background: none;
+  background: transparent;
   color: var(--text-muted);
-  border-radius: 6px;
+  border-radius: 8px;
   cursor: pointer;
   flex-shrink: 0;
-  margin: 8px auto;
+  margin: 8px auto 0;
   transition: all var(--transition-fast);
 }
 
 .collapse-btn:hover {
   color: var(--text-primary);
-  background: rgba(255, 255, 255, 0.06);
+  background: rgba(255, 255, 255, 0.05);
 }
 
 .sidebar.collapsed {
@@ -154,12 +153,12 @@ button, input, select, textarea {
 
 .sidebar.collapsed .sidebar-logo {
   justify-content: center;
-  padding: 16px 8px;
+  padding: 20px 8px;
 }
 
 .sidebar.collapsed .nav-item {
   justify-content: center;
-  padding: 10px 4px;
+  padding: 12px 4px;
 }
 
 .sidebar.collapsed .status-row,
@@ -173,8 +172,8 @@ button, input, select, textarea {
   flex: 1;
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  padding: 12px 8px;
+  gap: 6px;
+  padding: 16px 12px;
 }
 
 .nav-group {
@@ -186,12 +185,12 @@ button, input, select, textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 6px 10px;
+  padding: 8px 12px;
   font-size: 11px;
-  font-weight: 500;
+  font-weight: 600;
   color: var(--text-muted);
   text-transform: uppercase;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.08em;
   cursor: pointer;
   user-select: none;
   border-radius: 6px;
@@ -214,16 +213,17 @@ button, input, select, textarea {
 .nav-group-items {
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 4px;
+  padding-left: 8px;
 }
 
 .nav-item {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 10px;
+  gap: 12px;
+  padding: 10px 12px;
   border: none;
-  background: none;
+  background: transparent;
   color: var(--text-secondary);
   font-size: 14px;
   border-radius: 6px;
@@ -234,7 +234,7 @@ button, input, select, textarea {
 }
 
 .nav-item:hover {
-  background: rgba(255, 255, 255, 0.05);
+  background: rgba(255, 255, 255, 0.04);
   color: var(--text-primary);
 }
 
@@ -246,7 +246,7 @@ button, input, select, textarea {
 
 .nav-item svg {
   flex-shrink: 0;
-  opacity: 0.7;
+  opacity: 0.6;
 }
 
 .nav-item.active svg {
@@ -256,52 +256,60 @@ button, input, select, textarea {
 /* ─── Sidebar Footer ────────────────────────────────────────── */
 
 .sidebar-footer {
-  padding: 8px;
+  padding: 12px;
   border-top: 1px solid var(--border);
   margin-top: auto;
 }
 
 .status-row {
-  padding: 6px 10px;
+  padding: 8px 12px;
 }
 
 .status-indicator {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   font-size: 12px;
   color: var(--text-secondary);
 }
 
 .status-dot {
-  width: 7px;
-  height: 7px;
+  width: 8px;
+  height: 8px;
   border-radius: 50%;
   flex-shrink: 0;
+  box-shadow: 0 0 0 0 currentColor;
+  transition: box-shadow var(--transition-slow);
 }
 
 .status-indicator.connected .status-dot {
   background: var(--success);
-  box-shadow: 0 0 8px var(--success-glow);
   animation: pulse 2s ease-in-out infinite;
 }
 
 @keyframes pulse {
-  0%, 100% { box-shadow: 0 0 8px var(--success-glow); }
-  50% { box-shadow: 0 0 16px var(--success-glow); }
+  0%, 100% {
+    box-shadow: 0 0 0 0 rgba(16, 185, 129, 0.4);
+    transform: scale(1);
+  }
+  50% {
+    box-shadow: 0 0 0 6px rgba(16, 185, 129, 0);
+    transform: scale(1.2);
+  }
 }
 
 .version-info {
-  padding: 4px 10px 6px;
+  padding: 6px 12px 0;
   font-size: 11px;
   color: var(--text-muted);
   display: flex;
   align-items: center;
-  justify-content: space-between;
+  justify-content: center;
 }
 
 .version-text {
   font-family: var(--font-mono);
+  opacity: 0.7;
 }
 
 /* ─── Main ──────────────────────────────────────────────────── */
@@ -323,17 +331,18 @@ button, input, select, textarea {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  height: 56px;
-  padding: 0 24px;
+  height: 64px;
+  padding: 0 32px;
   border-bottom: 1px solid var(--border);
-  background: var(--bg-void);
-  backdrop-filter: blur(8px);
+  background: rgba(10, 15, 20, 0.8);
+  backdrop-filter: blur(12px);
 }
 
 .topbar h2 {
-  font-size: 16px;
+  font-size: 18px;
   font-weight: 700;
   letter-spacing: -0.02em;
+  color: var(--text-primary);
 }
 
 /* ─── Status Pill ───────────────────────────────────────────── */
@@ -341,42 +350,43 @@ button, input, select, textarea {
 .status-pill {
   display: inline-flex;
   align-items: center;
-  min-height: 24px;
+  min-height: 28px;
   border: 1px solid var(--border);
   border-radius: 999px;
-  padding: 3px 10px;
-  background: var(--bg-surface);
+  padding: 4px 14px;
+  background: var(--bg-elevated);
   color: var(--text-muted);
-  font-size: 11px;
+  font-size: 12px;
   font-weight: 600;
   white-space: nowrap;
+  transition: all var(--transition-fast);
 }
 
 .status-pill.ok {
   color: var(--success);
   background: var(--success-dim);
-  border-color: rgba(15, 200, 138, 0.2);
+  border-color: rgba(16, 185, 129, 0.3);
 }
 
 .status-pill.warn {
   color: var(--warning);
   background: var(--warning-dim);
-  border-color: rgba(245, 158, 11, 0.2);
+  border-color: rgba(245, 158, 11, 0.3);
 }
 
 .status-pill.error {
   color: var(--error);
   background: var(--error-dim);
-  border-color: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.3);
 }
 
 /* ─── Admin Views ───────────────────────────────────────────── */
 
 .admin-views {
   flex: 1;
-  padding: 24px;
+  padding: 32px;
   display: grid;
-  gap: 24px;
+  gap: 32px;
 }
 
 .admin-view {
@@ -392,20 +402,21 @@ button, input, select, textarea {
 
 .provider-strip {
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 16px;
   background: var(--bg-surface);
-  padding: 16px;
+  padding: 20px;
+  box-shadow: var(--shadow-card);
 }
 
 .strip-header {
   display: flex;
   align-items: center;
   justify-content: space-between;
-  margin-bottom: 12px;
+  margin-bottom: 16px;
 }
 
 .strip-header h3 {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 600;
   color: var(--text-primary);
 }
@@ -414,36 +425,43 @@ button, input, select, textarea {
 
 .provider-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
-  gap: 12px;
+  grid-template-columns: repeat(auto-fill, minmax(280px, 1fr));
+  gap: 16px;
 }
 
 /* ─── Charts ─────────────────────────────────────────────────── */
 
 .provider-charts {
-  margin-top: 20px;
-  padding-top: 20px;
+  margin-top: 24px;
+  padding-top: 24px;
   border-top: 1px solid var(--border);
 }
 
 .charts-grid {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+  grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
   gap: 20px;
 }
 
 .chart-card {
   border: 1px solid var(--border);
-  border-radius: 10px;
+  border-radius: 12px;
   background: var(--bg-elevated);
-  padding: 16px;
+  padding: 20px;
+  box-shadow: var(--shadow-card);
+  transition: transform var(--transition-fast), box-shadow var(--transition-fast);
+}
+
+.chart-card:hover {
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-elevated);
 }
 
 .chart-card h4 {
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 600;
   color: var(--text-primary);
-  margin: 0 0 12px 0;
+  margin: 0 0 16px 0;
 }
 
 .pie-chart {
@@ -456,21 +474,21 @@ button, input, select, textarea {
 .pie-legend {
   display: flex;
   flex-direction: column;
-  gap: 6px;
-  margin-top: 12px;
+  gap: 8px;
+  margin-top: 16px;
 }
 
 .legend-item {
   display: flex;
   align-items: center;
-  gap: 8px;
+  gap: 10px;
   font-size: 12px;
 }
 
 .legend-color {
-  width: 12px;
-  height: 12px;
-  border-radius: 2px;
+  width: 14px;
+  height: 14px;
+  border-radius: 3px;
 }
 
 .legend-label {
@@ -480,15 +498,16 @@ button, input, select, textarea {
 
 .legend-count {
   color: var(--text-muted);
+  margin-left: auto;
 }
 
 .bar-chart {
   display: flex;
   align-items: flex-end;
   justify-content: center;
-  gap: 20px;
+  gap: 24px;
   height: 180px;
-  padding: 10px 0;
+  padding: 12px 0;
 }
 
 @media (max-width: 900px) {
@@ -497,30 +516,35 @@ button, input, select, textarea {
   }
 }
 
+/* ─── Provider Card ─────────────────────────────────────────── */
+
 .provider-card {
   display: grid;
-  gap: 8px;
-  min-height: 108px;
+  gap: 10px;
+  min-height: 120px;
   border: 1px solid var(--border);
-  border-radius: 10px;
-  padding: 14px;
+  border-radius: 12px;
+  padding: 18px;
   background: var(--bg-elevated);
   transition: all var(--transition-fast);
   position: relative;
   overflow: hidden;
+  box-shadow: var(--shadow-card);
 }
 
 .provider-card:hover {
   border-color: var(--border-light);
-  background: #1F2940;
+  background: var(--bg-surface);
+  transform: translateY(-2px);
+  box-shadow: var(--shadow-elevated);
 }
 
 /* Live glow for connected providers */
 .provider-card[data-status="ok"] {
-  border-color: rgba(15, 200, 138, 0.25);
+  border-color: rgba(16, 185, 129, 0.3);
   box-shadow:
-    0 0 20px rgba(15, 200, 138, 0.06),
-    inset 0 0 20px rgba(15, 200, 138, 0.03);
+    0 0 25px rgba(16, 185, 129, 0.1),
+    inset 0 0 25px rgba(16, 185, 129, 0.05);
 }
 
 .provider-card[data-status="ok"]::before {
@@ -530,24 +554,19 @@ button, input, select, textarea {
   border-radius: inherit;
   background: radial-gradient(
     ellipse at 50% 0%,
-    rgba(15, 200, 138, 0.12) 0%,
+    rgba(16, 185, 129, 0.15) 0%,
     transparent 70%
   );
   pointer-events: none;
   animation: glow-breathe 3s ease-in-out infinite;
 }
 
-@keyframes glow-breathe {
-  0%, 100% { opacity: 0.6; }
-  50% { opacity: 1; }
-}
-
 .provider-card[data-status="error"] {
-  border-color: rgba(239, 68, 68, 0.2);
+  border-color: rgba(239, 68, 68, 0.3);
 }
 
 .provider-card[data-status="warn"] {
-  border-color: rgba(245, 158, 11, 0.2);
+  border-color: rgba(245, 158, 11, 0.3);
 }
 
 .provider-title {
@@ -558,7 +577,7 @@ button, input, select, textarea {
 }
 
 .provider-title strong {
-  font-size: 14px;
+  font-size: 15px;
   font-weight: 600;
 }
 
@@ -573,10 +592,10 @@ button, input, select, textarea {
 /* ─── Buttons ───────────────────────────────────────────────── */
 
 .test-button, .ghost-button, .secondary-button, .primary-button {
-  min-height: 34px;
+  min-height: 36px;
   border-radius: 8px;
   border: 1px solid var(--border);
-  padding: 7px 14px;
+  padding: 8px 16px;
   cursor: pointer;
   font-weight: 600;
   font-size: 13px;
@@ -584,23 +603,25 @@ button, input, select, textarea {
 }
 
 .ghost-button, .secondary-button, .test-button {
-  background: var(--bg-surface);
+  background: var(--bg-elevated);
   color: var(--text-primary);
 }
 
 .ghost-button:hover, .secondary-button:hover, .test-button:hover {
   border-color: var(--border-light);
-  background: var(--bg-elevated);
+  background: var(--bg-surface);
 }
 
 .primary-button {
   border-color: var(--accent);
   background: var(--accent);
   color: #fff;
+  box-shadow: 0 4px 12px rgba(99, 102, 241, 0.25);
 }
 
 .primary-button:hover {
-  background: #e85d2c;
+  background: #5a67d8;
+  box-shadow: 0 6px 16px rgba(99, 102, 241, 0.35);
 }
 
 .primary-button:disabled {
@@ -608,21 +629,23 @@ button, input, select, textarea {
   border-color: var(--border);
   background: var(--bg-surface);
   color: var(--text-muted);
+  box-shadow: none;
 }
 
 /* ─── Form Sections ─────────────────────────────────────────── */
 
 .form-sections {
   display: grid;
-  gap: 20px;
+  gap: 24px;
 }
 
 .settings-section {
   border: 1px solid var(--border);
-  border-radius: 12px;
+  border-radius: 16px;
   background: var(--bg-surface);
-  padding: 20px;
-  scroll-margin-top: 20px;
+  padding: 24px;
+  scroll-margin-top: 24px;
+  box-shadow: var(--shadow-card);
 }
 
 .section-heading {
@@ -630,19 +653,20 @@ button, input, select, textarea {
   align-items: center;
   justify-content: space-between;
   gap: 12px;
-  margin-bottom: 16px;
+  margin-bottom: 20px;
 }
 
 .section-heading h3 {
-  font-size: 14px;
+  font-size: 16px;
   font-weight: 700;
   letter-spacing: -0.01em;
+  color: var(--text-primary);
 }
 
 .section-heading p {
   color: var(--text-muted);
-  font-size: 12px;
-  margin: 2px 0 0;
+  font-size: 13px;
+  margin: 0;
 }
 
 /* ─── Field Grid ────────────────────────────────────────────── */
@@ -650,12 +674,12 @@ button, input, select, textarea {
 .field-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
-  gap: 16px;
+  gap: 20px;
 }
 
 .field {
   display: grid;
-  gap: 6px;
+  gap: 8px;
   align-content: start;
 }
 
@@ -666,32 +690,33 @@ button, input, select, textarea {
   gap: 8px;
   font-size: 13px;
   font-weight: 500;
+  color: var(--text-primary);
 }
 
 .field-source {
   color: var(--text-muted);
   font-size: 10px;
-  font-weight: 500;
+  font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.05em;
 }
 
 .field input, .field select, .field textarea {
   width: 100%;
-  min-height: 36px;
+  min-height: 40px;
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--bg-void);
   color: var(--text-primary);
-  padding: 7px 12px;
+  padding: 10px 14px;
   font-size: 13px;
-  transition: border-color var(--transition-fast);
+  transition: border-color var(--transition-fast), box-shadow var(--transition-fast);
 }
 
 .field input:focus, .field select:focus, .field textarea:focus {
   outline: none;
   border-color: var(--accent);
-  box-shadow: 0 0 0 2px var(--accent-dim);
+  box-shadow: 0 0 0 3px var(--accent-dim);
 }
 
 .field input:hover, .field select:hover, .field textarea:hover {
@@ -699,7 +724,7 @@ button, input, select, textarea {
 }
 
 .field textarea {
-  min-height: 80px;
+  min-height: 96px;
   resize: vertical;
 }
 
@@ -725,7 +750,7 @@ button, input, select, textarea {
 
 .advanced-toggle {
   justify-self: start;
-  margin-top: 12px;
+  margin-top: 8px;
 }
 
 /* ─── Action Bar ────────────────────────────────────────────── */
@@ -737,13 +762,13 @@ button, input, select, textarea {
   z-index: 50;
   display: grid;
   grid-template-columns: minmax(0, 1fr) minmax(180px, auto) auto;
-  gap: 14px;
+  gap: 16px;
   align-items: center;
-  min-height: 56px;
+  min-height: 64px;
   border-top: 1px solid var(--border);
-  background: var(--bg-void);
-  padding: 10px 24px;
-  backdrop-filter: blur(8px);
+  background: rgba(10, 15, 20, 0.8);
+  padding: 12px 32px;
+  backdrop-filter: blur(12px);
   transition: left var(--transition-normal);
 }
 
@@ -774,7 +799,7 @@ button, input, select, textarea {
 
 .action-buttons {
   display: flex;
-  gap: 8px;
+  gap: 12px;
 }
 
 /* ─── Scrollbar ─────────────────────────────────────────────── */
@@ -785,7 +810,7 @@ button, input, select, textarea {
 ::-webkit-scrollbar-thumb:hover { background: var(--border-light); }
 
 ::selection {
-  background: rgba(255, 107, 53, 0.25);
+  background: rgba(99, 102, 241, 0.25);
   color: var(--text-primary);
 }
 
@@ -826,10 +851,14 @@ button, input, select, textarea {
   .action-bar {
     left: 0;
     grid-template-columns: 1fr;
-    padding: 10px 16px;
+    padding: 12px 16px;
   }
 
   .action-buttons button {
     flex: 1;
+  }
+
+  .admin-views {
+    padding: 16px;
   }
 }
