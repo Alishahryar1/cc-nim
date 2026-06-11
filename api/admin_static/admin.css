@@ -3,22 +3,22 @@
 :root {
   color-scheme: dark;
 
-  /* Palette - Midnight Theme */
-  --bg-void: #0a0f17;
-  --bg-sidebar: #0d1320;
-  --bg-surface: #121a28;
-  --bg-elevated: #1a2538;
-  --bg-card: #1e283d;
-  --border: #2a3a55;
-  --border-light: #3a4a6d;
-  --text-muted: #7a8a99;
-  --text-secondary: #9ab0c0;
-  --text-primary: #e6f0fa;
-  --accent: #6366f1;
-  --accent-dim: rgba(99, 102, 241, 0.15);
-  --accent-glow: rgba(99, 102, 241, 0.25);
-  --success: #10b981;
-  --success-dim: rgba(16, 185, 129, 0.15);
+  /* Palette - Obsidian Theme */
+  --bg-void: #030712;
+  --bg-sidebar: #0f172a;
+  --bg-surface: #111827;
+  --bg-elevated: #1f2937;
+  --bg-card: #1e293b;
+  --border: #334155;
+  --border-light: #475569;
+  --text-muted: #94a3b8;
+  --text-secondary: #cbd5e1;
+  --text-primary: #f8fafc;
+  --accent: #8b5cf6;
+  --accent-dim: rgba(139, 92, 246, 0.15);
+  --accent-glow: rgba(139, 92, 246, 0.25);
+  --success: #22c55e;
+  --success-dim: rgba(34, 197, 94, 0.15);
   --warning: #f59e0b;
   --warning-dim: rgba(245, 158, 11, 0.15);
   --error: #ef4444;
@@ -35,8 +35,8 @@
   --transition-slow: 0.35s var(--ease);
 
   /* Shadows */
-  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.25);
-  --shadow-elevated: 0 16px 48px rgba(0, 0, 0, 0.35);
+  --shadow-card: 0 8px 24px rgba(0, 0, 0, 0.4);
+  --shadow-elevated: 0 16px 48px rgba(0, 0, 0, 0.5);
 }
 
 /* ─── Reset ─────────────────────────────────────────────────── */
@@ -57,8 +57,8 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   background-image:
-    radial-gradient(circle at 5% 15%, rgba(99, 102, 241, 0.08) 0%, transparent 30%),
-    radial-gradient(circle at 95% 85%, rgba(99, 102, 241, 0.05) 0%, transparent 25%);
+    radial-gradient(circle at 5% 15%, rgba(139, 92, 246, 0.03) 0%, transparent 30%),
+    radial-gradient(circle at 95% 85%, rgba(139, 92, 246, 0.02) 0%, transparent 25%);
 }
 
 button, input, select, textarea {
@@ -257,7 +257,7 @@ button, input, select, textarea {
   padding: 0 32px;
   height: 60px;
   border-bottom: 1px solid var(--border);
-  background: rgba(18, 26, 40, 0.8);
+  background: rgba(17, 24, 39, 0.8);
   backdrop-filter: blur(12px);
 }
 
@@ -373,6 +373,7 @@ button, input, select, textarea {
   border-color: var(--accent);
   background: var(--accent);
   color: #fff;
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.25);
 }
 
 .action-btn.primary:hover {
@@ -423,8 +424,8 @@ button, input, select, textarea {
 }
 
 .provider-card[data-status="ok"] {
-  border-color: rgba(16, 185, 129, 0.3);
-  box-shadow: 0 0 20px rgba(16, 185, 129, 0.1);
+  border-color: rgba(34, 197, 94, 0.3);
+  box-shadow: 0 0 20px rgba(34, 197, 94, 0.1);
 }
 
 .provider-title {
@@ -455,7 +456,7 @@ button, input, select, textarea {
 .status-pill.ok {
   color: var(--success);
   background: var(--success-dim);
-  border-color: rgba(16, 185, 129, 0.3);
+  border-color: rgba(34, 197, 94, 0.3);
 }
 
 .status-pill.warn {
@@ -561,7 +562,7 @@ button, input, select, textarea {
   min-height: 40px;
   border: 1px solid var(--border);
   border-radius: 8px;
-  background: #0a0f17;
+  background: #030712;
   color: var(--text-primary);
   padding: 10px 14px;
   font-size: 13px;
@@ -597,7 +598,7 @@ button, input, select, textarea {
   gap: 16px;
   padding: 16px 32px;
   border-top: 1px solid var(--border);
-  background: rgba(18, 26, 40, 0.8);
+  background: rgba(17, 24, 39, 0.8);
   backdrop-filter: blur(12px);
 }
 
@@ -642,6 +643,7 @@ button, input, select, textarea {
   border: 1px solid var(--accent);
   background: var(--accent);
   color: #fff;
+  box-shadow: 0 4px 12px rgba(139, 92, 246, 0.25);
 }
 
 .btn-primary:hover {
@@ -669,7 +671,7 @@ button, input, select, textarea {
 /* ─── Selection ─────────────────────────────────────────────── */
 
 ::selection {
-  background: rgba(99, 102, 241, 0.25);
+  background: rgba(139, 92, 246, 0.25);
   color: var(--text-primary);
 }
 
