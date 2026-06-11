@@ -135,6 +135,19 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         secret=True,
     ),
     ConfigFieldSpec(
+        "OPENROUTER_MAX_TOKENS",
+        "OpenRouter Max Tokens Cap",
+        "providers",
+        "number",
+        settings_attr="open_router_max_tokens",
+        advanced=True,
+        description=(
+            "Optional cap on max_tokens forwarded to OpenRouter. Prevents 402 "
+            "errors when remaining credits cannot afford the requested output "
+            "budget. Empty = no cap."
+        ),
+    ),
+    ConfigFieldSpec(
         "MISTRAL_API_KEY",
         "Mistral API Key",
         "providers",

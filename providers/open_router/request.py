@@ -16,7 +16,12 @@ from core.anthropic.native_messages_request import (
 from providers.exceptions import InvalidRequestError
 
 
-def build_request_body(request_data: Any, *, thinking_enabled: bool) -> dict:
+def build_request_body(
+    request_data: Any,
+    *,
+    thinking_enabled: bool,
+    max_tokens_cap: int | None = None,
+) -> dict:
     """Build an Anthropic-format request body for OpenRouter's messages API."""
     logger.debug(
         "OPENROUTER_REQUEST: conversion start model={} msgs={}",
@@ -32,6 +37,10 @@ def build_request_body(request_data: Any, *, thinking_enabled: bool) -> dict:
         )
     except OpenRouterExtraBodyError as exc:
         raise InvalidRequestError(str(exc)) from exc
+
+    # OpenRouter-specific max_tokens: cap against OPENROUTER_MAX_TOKENS
+    if max_tokens_cap is not None and isinstance(body.get("max_tokens"), int):
+        body["max_tokens"] = min(body["max_tokens"], max_tokens_cap)
 
     logger.debug(
         "OPENROUTER_REQUEST: conversion done model={} msgs={} tools={}",

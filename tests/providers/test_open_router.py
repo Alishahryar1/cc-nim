@@ -212,6 +212,41 @@ def test_build_request_body_default_max_tokens(open_router_provider):
     assert body["max_tokens"] == OPENROUTER_DEFAULT_MAX_TOKENS
 
 
+def test_build_request_body_max_tokens_capped(open_router_config):
+    provider = OpenRouterProvider(open_router_config, max_tokens_cap=8192)
+    req = MockRequest(max_tokens=32000)
+
+    body = provider._build_request_body(req)
+
+    assert body["max_tokens"] == 8192
+
+
+def test_build_request_body_max_tokens_below_cap_unchanged(open_router_config):
+    provider = OpenRouterProvider(open_router_config, max_tokens_cap=8192)
+    req = MockRequest(max_tokens=100)
+
+    body = provider._build_request_body(req)
+
+    assert body["max_tokens"] == 100
+
+
+def test_build_request_body_cap_applies_to_default_max_tokens(open_router_config):
+    provider = OpenRouterProvider(open_router_config, max_tokens_cap=8192)
+    req = MockRequest(max_tokens=None)
+
+    body = provider._build_request_body(req)
+
+    assert body["max_tokens"] == 8192
+
+
+def test_build_request_body_no_cap_by_default(open_router_provider):
+    req = MockRequest(max_tokens=32000)
+
+    body = open_router_provider._build_request_body(req)
+
+    assert body["max_tokens"] == 32000
+
+
 def test_build_request_body_strips_unsigned_thinking_history(open_router_provider):
     req = MockRequest(
         messages=[

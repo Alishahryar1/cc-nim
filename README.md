@@ -135,6 +135,8 @@ In the Admin UI, paste it into `OPENROUTER_API_KEY`, then set `MODEL` to an Open
 
 Browse [all models](https://openrouter.ai/models) or [free models](https://openrouter.ai/collections/free-models).
 
+Optional: set `OPENROUTER_MAX_TOKENS` (e.g. `8192`) to cap the `max_tokens` forwarded to OpenRouter. OpenRouter rejects requests with a 402 error when the requested output budget exceeds what your remaining credits can afford — capping it keeps low-credit accounts working.
+
 ### 3. [Google AI Studio (Gemini)](https://aistudio.google.com/)
 
 Get a Gemini API key at [Google AI Studio](https://aistudio.google.com/apikey) (see Google's [Gemini OpenAI compatibility](https://ai.google.dev/gemini-api/docs/openai) docs).
