@@ -2,6 +2,9 @@
 
 from __future__ import annotations
 
+import hashlib
+import math
+import random
 import traceback
 import uuid
 from collections.abc import AsyncIterator, Callable
@@ -14,12 +17,19 @@ from loguru import logger
 from config.settings import Settings
 from core.anthropic import get_token_count, get_user_facing_error_message
 from core.anthropic.sse import ANTHROPIC_SSE_RESPONSE_HEADERS
+from core.anthropic.tokens import ENCODER
 from core.trace import api_messages_request_snapshot, trace_event, traced_async_stream
 from providers.base import BaseProvider
 from providers.exceptions import InvalidRequestError, ProviderError
 
 from .model_router import ModelRouter
 from .models.anthropic import MessagesRequest, TokenCountRequest
+from .models.embeddings import (
+    EmbeddingData,
+    EmbeddingRequest,
+    EmbeddingResponse,
+    EmbeddingUsage,
+)
 from .models.responses import TokenCountResponse
 from .optimization_handlers import try_optimizations
 from .web_tools.egress import WebFetchEgressPolicy
@@ -28,6 +38,18 @@ from .web_tools.request import (
     openai_chat_upstream_server_tool_error,
 )
 from .web_tools.streaming import stream_web_server_tool_response
+
+
+def _generate_mock_embedding(text: str, dimensions: int) -> list[float]:
+    """Generate a deterministic, unit-length normalized mock embedding vector."""
+    seed = int(hashlib.md5(text.encode("utf-8")).hexdigest(), 16) & 0xFFFFFFFF
+    rng = random.Random(seed)
+    vector = [rng.gauss(0, 1) for _ in range(dimensions)]
+    norm = math.sqrt(sum(x * x for x in vector))
+    if norm > 0:
+        vector = [x / norm for x in vector]
+    return vector
+
 
 TokenCounter = Callable[[list[Any], str | list[Any] | None, list[Any] | None], int]
 
@@ -260,3 +282,110 @@ class ClaudeProxyService:
                     status_code=_http_status_for_unexpected_service_exception(e),
                     detail=get_user_facing_error_message(e),
                 ) from e
+
+    async def create_embedding(
+        self, request_data: EmbeddingRequest
+    ) -> EmbeddingResponse:
+        """Create an embedding vector or list of vectors."""
+        try:
+            raw_input = request_data.input
+            texts: list[str] = []
+            if isinstance(raw_input, str):
+                texts = [raw_input]
+            elif isinstance(raw_input, list):
+                if not raw_input:
+                    raise InvalidRequestError("input cannot be empty")
+                first = raw_input[0]
+                if isinstance(first, str):
+                    texts = [str(x) for x in raw_input]
+                elif isinstance(first, int):
+                    tokens = [int(x) for x in raw_input if isinstance(x, int)]
+                    texts = [ENCODER.decode(tokens)]
+                elif isinstance(first, list):
+                    texts = []
+                    for item in raw_input:
+                        if isinstance(item, list):
+                            tokens = [int(x) for x in item if isinstance(x, int)]
+                            texts.append(ENCODER.decode(tokens))
+                        else:
+                            raise InvalidRequestError("input format is not supported")
+                else:
+                    raise InvalidRequestError("input format is not supported")
+            else:
+                raise InvalidRequestError("input format is not supported")
+
+            prompt_tokens = 0
+            for text in texts:
+                prompt_tokens += len(ENCODER.encode(text, disallowed_special=()))
+
+            requested_model = request_data.model
+            if "/" in requested_model:
+                provider_id = requested_model.split("/", 1)[0]
+                model_id = requested_model.split("/", 1)[1]
+                if provider_id == "nvidia":
+                    provider_id = "nvidia_nim"
+                    model_id = requested_model
+            else:
+                configured_model = self._settings.model_embedding
+                provider_id = configured_model.split("/", 1)[0]
+                model_id = configured_model.split("/", 1)[1]
+                requested_model = configured_model
+
+            target_dimensions = request_data.dimensions or 1536
+
+            embeddings: list[list[float]] = []
+            if provider_id == "mock":
+                embeddings = [
+                    _generate_mock_embedding(t, target_dimensions) for t in texts
+                ]
+            else:
+                provider = self._provider_getter(provider_id)
+                try:
+                    extra_params = request_data.model_extra or {}
+                    raw_embeddings = await provider.get_embedding(
+                        texts=texts,
+                        model=model_id,
+                        dimensions=request_data.dimensions,
+                        **extra_params,
+                    )
+                    embeddings = []
+                    for vec in raw_embeddings:
+                        if len(vec) == target_dimensions:
+                            embeddings.append(vec)
+                        elif len(vec) > target_dimensions:
+                            embeddings.append(vec[:target_dimensions])
+                        else:
+                            embeddings.append(
+                                vec + [0.0] * (target_dimensions - len(vec))
+                            )
+                except NotImplementedError:
+                    logger.warning(
+                        "Provider '{}' does not support embeddings. Falling back to mock embeddings.",
+                        provider_id,
+                    )
+                    embeddings = [
+                        _generate_mock_embedding(t, target_dimensions) for t in texts
+                    ]
+
+            data_items = [
+                EmbeddingData(index=idx, embedding=emb)
+                for idx, emb in enumerate(embeddings)
+            ]
+            usage = EmbeddingUsage(
+                prompt_tokens=prompt_tokens,
+                total_tokens=prompt_tokens,
+            )
+            return EmbeddingResponse(
+                data=data_items,
+                model=requested_model,
+                usage=usage,
+            )
+
+        except Exception as e:
+            _log_unexpected_service_exception(
+                self._settings, e, context="CREATE_EMBEDDING_ERROR"
+            )
+            raise HTTPException(
+                status_code=_http_status_for_unexpected_service_exception(e),
+                detail=get_user_facing_error_message(e),
+            ) from e

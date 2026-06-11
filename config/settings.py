@@ -157,6 +157,9 @@ class Settings(BaseSettings):
     model_opus: str | None = Field(default=None, validation_alias="MODEL_OPUS")
     model_sonnet: str | None = Field(default=None, validation_alias="MODEL_SONNET")
     model_haiku: str | None = Field(default=None, validation_alias="MODEL_HAIKU")
+    model_embedding: str = Field(
+        default="mock/embedding-mock", validation_alias="MODEL_EMBEDDING"
+    )
 
     # ==================== Per-Provider Proxy ====================
     nvidia_nim_proxy: str = Field(default="", validation_alias="NVIDIA_NIM_PROXY")
@@ -411,6 +414,20 @@ class Settings(BaseSettings):
         provider = v.split("/", 1)[0]
         if provider not in SUPPORTED_PROVIDER_IDS:
             supported = ", ".join(f"'{p}'" for p in SUPPORTED_PROVIDER_IDS)
+            raise ValueError(f"Invalid provider: '{provider}'. Supported: {supported}")
+        return v
+
+    @field_validator("model_embedding")
+    @classmethod
+    def validate_embedding_model_format(cls, v: str) -> str:
+        if "/" not in v:
+            raise ValueError(
+                "Embedding model must be prefixed with provider type. "
+                "Format: provider_type/model/name"
+            )
+        provider = v.split("/", 1)[0]
+        if provider != "mock" and provider not in SUPPORTED_PROVIDER_IDS:
+            supported = ", ".join(f"'{p}'" for p in ["mock", *SUPPORTED_PROVIDER_IDS])
             raise ValueError(f"Invalid provider: '{provider}'. Supported: {supported}")
         return v
 

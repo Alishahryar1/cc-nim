@@ -12,6 +12,7 @@ from . import dependencies
 from .dependencies import get_settings, require_api_key
 from .gateway_model_ids import gateway_model_id, no_thinking_gateway_model_id
 from .models.anthropic import MessagesRequest, TokenCountRequest
+from .models.embeddings import EmbeddingRequest
 from .models.responses import ModelResponse, ModelsListResponse
 from .services import ClaudeProxyService
 
@@ -193,6 +194,16 @@ async def count_tokens(
 async def probe_count_tokens(_auth=Depends(require_api_key)):
     """Respond to Claude compatibility probes for the token count endpoint."""
     return _probe_response("POST, HEAD, OPTIONS")
+
+
+@router.post("/v1/embeddings")
+async def create_embeddings(
+    request_data: EmbeddingRequest,
+    service: ClaudeProxyService = Depends(get_proxy_service),
+    _auth=Depends(require_api_key),
+):
+    """Create embedding vector(s) for the input text."""
+    return await service.create_embedding(request_data)
 
 
 @router.get("/")

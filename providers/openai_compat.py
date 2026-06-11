@@ -151,6 +151,43 @@ class OpenAIChatTransport(BaseProvider):
         payload = await self._client.models.list()
         return extract_openai_model_ids(payload, provider_name=self._provider_name)
 
+    async def get_embedding(
+        self,
+        texts: list[str],
+        model: str,
+        dimensions: int | None = None,
+        **kwargs: Any,
+    ) -> list[list[float]]:
+        """Return embedding vectors for a list of texts using OpenAI-compatible embeddings client."""
+        request_kwargs: dict[str, Any] = {}
+        if dimensions is not None:
+            request_kwargs["dimensions"] = dimensions
+        if kwargs:
+            request_kwargs["extra_body"] = kwargs
+
+        try:
+            response = await self._client.embeddings.create(
+                input=texts,
+                model=model,
+                **request_kwargs,
+            )
+            return [item.embedding for item in response.data]
+        except Exception as error:
+            if request_kwargs:
+                logger.warning(
+                    "{}_EMBEDDING: Upstream error when using extra parameters {}: {}. "
+                    "Retrying with basic request (no extra parameters).",
+                    self._provider_name,
+                    request_kwargs,
+                    error,
+                )
+                response = await self._client.embeddings.create(
+                    input=texts,
+                    model=model,
+                )
+                return [item.embedding for item in response.data]
+            raise
+
     @abstractmethod
     def _build_request_body(
         self, request: Any, thinking_enabled: bool | None = None

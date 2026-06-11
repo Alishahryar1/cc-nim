@@ -145,3 +145,15 @@ class BaseProvider(ABC):
         # inference; this branch is never executed.
         if False:
             yield ""
+
+    async def get_embedding(
+        self,
+        texts: list[str],
+        model: str,
+        dimensions: int | None = None,
+        **kwargs: Any,
+    ) -> list[list[float]]:
+        """Return embedding vectors for a list of texts."""
+        raise NotImplementedError(
+            f"Embeddings are not supported by {self.__class__.__name__}"
+        )
