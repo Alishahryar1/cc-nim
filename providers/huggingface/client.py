@@ -42,7 +42,8 @@ class HuggingFaceProvider(OpenAIChatTransport):
         and rejects larger values with a 400 that names the limit.
         """
         status_code = getattr(error, "status_code", None)
-        if not isinstance(error, openai.BadRequestError) and status_code != 400:
+        is_bad_request = isinstance(error, openai.BadRequestError) or status_code == 400
+        if not is_bad_request:
             return None
 
         error_text = str(error)

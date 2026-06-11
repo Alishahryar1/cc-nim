@@ -1,4 +1,4 @@
-"""Tests for Hugging Face Inference Providers (OpenAI-compatible) provider."""
+"""Tests for the Hugging Face Inference Providers (OpenAI-compatible) adapter."""
 
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -122,6 +122,28 @@ def test_build_request_body_preserves_caller_extra_body(huggingface_provider):
     eb = body.get("extra_body")
     assert isinstance(eb, dict)
     assert eb.get("custom_flag") is True
+
+
+def test_build_request_body_merges_extra_body_with_caller_precedence(
+    huggingface_provider,
+):
+    """Caller extra_body keys merge into (not replace) any converter-set entry."""
+    with patch(
+        "providers.huggingface.request.build_base_request_body"
+    ) as mock_convert:
+        mock_convert.return_value = {
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "extra_body": {"converter_key": 1, "shared_key": "converter"},
+        }
+        req = MockRequest(extra_body={"caller_key": 2, "shared_key": "caller"})
+        body = huggingface_provider._build_request_body(req)
+
+    assert body["extra_body"] == {
+        "converter_key": 1,
+        "caller_key": 2,
+        "shared_key": "caller",
+    }
 
 
 @pytest.mark.asyncio

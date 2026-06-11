@@ -44,7 +44,7 @@ def build_request_body(request_data: Any, *, thinking_enabled: bool) -> dict:
     logger.debug(
         "HUGGINGFACE_REQUEST: conversion start model={} msgs={}",
         getattr(request_data, "model", "?"),
-        len(getattr(request_data, "messages", [])),
+        len(getattr(request_data, "messages", None) or []),
     )
     try:
         body = build_base_request_body(
@@ -58,7 +58,10 @@ def build_request_body(request_data: Any, *, thinking_enabled: bool) -> dict:
 
     request_extra = getattr(request_data, "extra_body", None)
     if isinstance(request_extra, dict) and request_extra:
-        body["extra_body"] = dict(request_extra)
+        existing_extra = body.get("extra_body")
+        merged = dict(existing_extra) if isinstance(existing_extra, dict) else {}
+        merged.update(request_extra)
+        body["extra_body"] = merged
 
     logger.debug(
         "HUGGINGFACE_REQUEST: conversion done model={} msgs={} tools={}",
