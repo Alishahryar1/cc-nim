@@ -165,6 +165,62 @@ class TestSettings:
         settings = Settings()
         assert settings.nim.seed is None or isinstance(settings.nim.seed, int)
 
+    def test_open_router_max_tokens_defaults_to_none(self, monkeypatch):
+        """Test OPENROUTER_MAX_TOKENS is unset by default (no cap)."""
+        from config.settings import Settings
+
+        monkeypatch.delenv("OPENROUTER_MAX_TOKENS", raising=False)
+        settings = Settings()
+        assert settings.open_router_max_tokens is None
+
+    def test_open_router_max_tokens_empty_string_is_none(self, monkeypatch):
+        """Test OPENROUTER_MAX_TOKENS="" parses as None."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("OPENROUTER_MAX_TOKENS", "")
+        settings = Settings()
+        assert settings.open_router_max_tokens is None
+
+    def test_open_router_max_tokens_parses_int(self, monkeypatch):
+        """Test OPENROUTER_MAX_TOKENS parses to an int."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("OPENROUTER_MAX_TOKENS", "8192")
+        settings = Settings()
+        assert settings.open_router_max_tokens == 8192
+
+    def test_open_router_max_tokens_rejects_zero(self, monkeypatch):
+        """Test OPENROUTER_MAX_TOKENS=0 fails the ge=1 constraint."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("OPENROUTER_MAX_TOKENS", "0")
+        with pytest.raises(ValidationError):
+            Settings()
+
+    def test_open_router_max_tokens_rejects_negative(self, monkeypatch):
+        """Test OPENROUTER_MAX_TOKENS=-1 fails the ge=1 constraint."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("OPENROUTER_MAX_TOKENS", "-1")
+        with pytest.raises(ValidationError):
+            Settings()
+
+    def test_open_router_max_tokens_strips_whitespace(self, monkeypatch):
+        """Test OPENROUTER_MAX_TOKENS=" 8192 " parses to an int."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("OPENROUTER_MAX_TOKENS", " 8192 ")
+        settings = Settings()
+        assert settings.open_router_max_tokens == 8192
+
+    def test_open_router_max_tokens_whitespace_only_is_none(self, monkeypatch):
+        """Test OPENROUTER_MAX_TOKENS="   " parses as None (no cap)."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("OPENROUTER_MAX_TOKENS", "   ")
+        settings = Settings()
+        assert settings.open_router_max_tokens is None
+
     def test_model_setting(self):
         """Test model setting exists and is a string."""
         from config.settings import Settings

@@ -212,6 +212,56 @@ def test_build_request_body_default_max_tokens(open_router_provider):
     assert body["max_tokens"] == OPENROUTER_DEFAULT_MAX_TOKENS
 
 
+def test_build_request_body_max_tokens_capped(open_router_config):
+    provider = OpenRouterProvider(open_router_config, max_tokens_cap=8192)
+    req = MockRequest(max_tokens=32000)
+
+    body = provider._build_request_body(req)
+
+    assert body["max_tokens"] == 8192
+
+
+def test_build_request_body_max_tokens_below_cap_unchanged(open_router_config):
+    provider = OpenRouterProvider(open_router_config, max_tokens_cap=8192)
+    req = MockRequest(max_tokens=100)
+
+    body = provider._build_request_body(req)
+
+    assert body["max_tokens"] == 100
+
+
+def test_build_request_body_cap_applies_to_default_max_tokens(open_router_config):
+    provider = OpenRouterProvider(open_router_config, max_tokens_cap=8192)
+    req = MockRequest(max_tokens=None)
+
+    body = provider._build_request_body(req)
+
+    assert body["max_tokens"] == min(OPENROUTER_DEFAULT_MAX_TOKENS, 8192)
+
+
+def test_build_request_body_no_cap_by_default(open_router_provider):
+    req = MockRequest(max_tokens=32000)
+
+    body = open_router_provider._build_request_body(req)
+
+    assert body["max_tokens"] == 32000
+
+
+def test_build_request_body_cap_skipped_warns_on_non_integer_max_tokens(
+    open_router_config,
+):
+    """A configured cap that cannot apply must warn instead of silently skipping."""
+    provider = OpenRouterProvider(open_router_config, max_tokens_cap=8192)
+    req = MockRequest(max_tokens=12.5)
+
+    with patch("providers.open_router.request.logger.warning") as mock_warning:
+        body = provider._build_request_body(req)
+
+    assert body["max_tokens"] == 12.5
+    assert mock_warning.call_count == 1
+    assert "cap" in str(mock_warning.call_args)
+
+
 def test_build_request_body_strips_unsigned_thinking_history(open_router_provider):
     req = MockRequest(
         messages=[

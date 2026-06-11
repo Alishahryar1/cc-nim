@@ -79,6 +79,11 @@ class Settings(BaseSettings):
 
     # ==================== OpenRouter Config ====================
     open_router_api_key: str = Field(default="", validation_alias="OPENROUTER_API_KEY")
+    # Optional cap on max_tokens forwarded to OpenRouter. Prevents 402
+    # "can only afford N tokens" rejections when account credits are low.
+    open_router_max_tokens: int | None = Field(
+        default=None, ge=1, validation_alias="OPENROUTER_MAX_TOKENS"
+    )
 
     # ==================== Mistral La Plateforme ====================
     mistral_api_key: str = Field(default="", validation_alias="MISTRAL_API_KEY")
@@ -323,9 +328,13 @@ class Settings(BaseSettings):
             return None
         return v
 
-    @field_validator("max_message_log_entries_per_chat", mode="before")
+    @field_validator(
+        "max_message_log_entries_per_chat", "open_router_max_tokens", mode="before"
+    )
     @classmethod
-    def parse_optional_log_cap(cls, v: Any) -> Any:
+    def parse_optional_int(cls, v: Any) -> Any:
+        if isinstance(v, str):
+            v = v.strip()
         if v == "" or v is None:
             return None
         return v

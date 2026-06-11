@@ -31,12 +31,13 @@ class OpenRouterProvider(AnthropicMessagesTransport):
 
     stream_chunk_mode: StreamChunkMode = "event"
 
-    def __init__(self, config: ProviderConfig):
+    def __init__(self, config: ProviderConfig, *, max_tokens_cap: int | None = None):
         super().__init__(
             config,
             provider_name="OPENROUTER",
             default_base_url=OPENROUTER_DEFAULT_BASE,
         )
+        self._max_tokens_cap = max_tokens_cap
 
     def _build_request_body(
         self, request: Any, thinking_enabled: bool | None = None
@@ -45,6 +46,7 @@ class OpenRouterProvider(AnthropicMessagesTransport):
         return build_request_body(
             request,
             thinking_enabled=self._is_thinking_enabled(request, thinking_enabled),
+            max_tokens_cap=self._max_tokens_cap,
         )
 
     def _request_headers(self) -> dict[str, str]:
