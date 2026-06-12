@@ -270,7 +270,9 @@ class Settings(BaseSettings):
     nim: NimSettings = Field(default_factory=NimSettings)
 
     # ==================== Voice Note Transcription ====================
-    voice_note_enabled: bool = Field(default=False, validation_alias="VOICE_NOTE_ENABLED")
+    voice_note_enabled: bool = Field(
+        default=True, validation_alias="VOICE_NOTE_ENABLED"
+    )
     # Device: "cpu" | "cuda" | "nvidia_nim"
     # - "cpu"/"cuda": local Whisper (requires voice_local extra: uv sync --extra voice_local)
     # - "nvidia_nim": NVIDIA NIM Whisper API (requires voice extra: uv sync --extra voice)
@@ -315,7 +317,7 @@ class Settings(BaseSettings):
         "model_opus",
         "model_sonnet",
         "model_haiku",
-        "enable_fable_thinking", 
+        "enable_fable_thinking",
         "enable_opus_thinking",
         "enable_sonnet_thinking",
         "enable_haiku_thinking",

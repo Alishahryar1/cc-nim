@@ -19,6 +19,7 @@ NO_THINKING_GATEWAY_MODEL_ID_PREFIX = "claude-3-freecc-no-thinking"
 FABLE_GATEWAY_MODEL_IDS: tuple[str, ...] = (
     "claude-fable-5",
     "claude-fable-5-2026",
+    "claude-fable-5-20250612",
 )
 
 
