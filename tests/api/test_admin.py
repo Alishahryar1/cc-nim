@@ -87,7 +87,7 @@ def test_admin_static_hides_managed_source_label():
     assert 'managed_env: "",' in script
     assert "hasOwnProperty.call(labels, source)" in script
     assert 'parts.push("locked")' in script
-    assert "sourceEl.textContent = source" in script
+    assert "textContent = src" in script
 
 
 def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):

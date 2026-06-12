@@ -22,6 +22,11 @@ DISCOVERED_MODEL_CREATED_AT = "1970-01-01T00:00:00Z"
 
 SUPPORTED_CLAUDE_MODELS = [
     ModelResponse(
+        id="claude-fable-5-20250612",
+        display_name="Claude Fable 5",
+        created_at="2026-06-12T00:00:00Z",
+    ),
+    ModelResponse(
         id="claude-opus-4-20250514",
         display_name="Claude Opus 4",
         created_at="2025-05-14T00:00:00Z",

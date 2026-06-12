@@ -154,6 +154,7 @@ class Settings(BaseSettings):
 
     # Per-model overrides (optional, falls back to MODEL)
     # Each can use a different provider
+    model_fable: str | None = Field(default=None, validation_alias="MODEL_FABLE")
     model_opus: str | None = Field(default=None, validation_alias="MODEL_OPUS")
     model_sonnet: str | None = Field(default=None, validation_alias="MODEL_SONNET")
     model_haiku: str | None = Field(default=None, validation_alias="MODEL_HAIKU")
@@ -185,6 +186,9 @@ class Settings(BaseSettings):
     )
     enable_model_thinking: bool = Field(
         default=True, validation_alias="ENABLE_MODEL_THINKING"
+    )
+    enable_fable_thinking: bool | None = Field(
+        default=None, validation_alias="ENABLE_FABLE_THINKING"
     )
     enable_opus_thinking: bool | None = Field(
         default=None, validation_alias="ENABLE_OPUS_THINKING"
@@ -266,9 +270,7 @@ class Settings(BaseSettings):
     nim: NimSettings = Field(default_factory=NimSettings)
 
     # ==================== Voice Note Transcription ====================
-    voice_note_enabled: bool = Field(
-        default=True, validation_alias="VOICE_NOTE_ENABLED"
-    )
+    voice_note_enabled: bool = Field(default=False, validation_alias="VOICE_NOTE_ENABLED")
     # Device: "cpu" | "cuda" | "nvidia_nim"
     # - "cpu"/"cuda": local Whisper (requires voice_local extra: uv sync --extra voice_local)
     # - "nvidia_nim": NVIDIA NIM Whisper API (requires voice extra: uv sync --extra voice)
@@ -309,9 +311,11 @@ class Settings(BaseSettings):
         "allowed_telegram_user_id",
         "discord_bot_token",
         "allowed_discord_channels",
+        "model_fable",
         "model_opus",
         "model_sonnet",
         "model_haiku",
+        "enable_fable_thinking", 
         "enable_opus_thinking",
         "enable_sonnet_thinking",
         "enable_haiku_thinking",
@@ -397,7 +401,9 @@ class Settings(BaseSettings):
             )
         return v
 
-    @field_validator("model", "model_opus", "model_sonnet", "model_haiku")
+    @field_validator(
+        "model", "model_fable", "model_opus", "model_sonnet", "model_haiku"
+    )
     @classmethod
     def validate_model_format(cls, v: str | None) -> str | None:
         if v is None:
@@ -454,10 +460,12 @@ class Settings(BaseSettings):
     def resolve_model(self, claude_model_name: str) -> str:
         """Resolve a Claude model name to the configured provider/model string.
 
-        Classifies the incoming Claude model (opus/sonnet/haiku) and
+        Classifies the incoming Claude model (fable/opus/sonnet/haiku) and
         returns the model-specific override if configured, otherwise the fallback MODEL.
         """
         name_lower = claude_model_name.lower()
+        if "fable" in name_lower and self.model_fable is not None:
+            return self.model_fable
         if "opus" in name_lower and self.model_opus is not None:
             return self.model_opus
         if "haiku" in name_lower and self.model_haiku is not None:
@@ -470,6 +478,7 @@ class Settings(BaseSettings):
         """Return unique configured chat provider/model refs with source env keys."""
         candidates = (
             ("MODEL", self.model),
+            ("MODEL_FABLE", self.model_fable),
             ("MODEL_OPUS", self.model_opus),
             ("MODEL_SONNET", self.model_sonnet),
             ("MODEL_HAIKU", self.model_haiku),
@@ -493,6 +502,8 @@ class Settings(BaseSettings):
     def resolve_thinking(self, claude_model_name: str) -> bool:
         """Resolve whether thinking is enabled for an incoming Claude model name."""
         name_lower = claude_model_name.lower()
+        if "fable" in name_lower and self.enable_fable_thinking is not None:
+            return self.enable_fable_thinking
         if "opus" in name_lower and self.enable_opus_thinking is not None:
             return self.enable_opus_thinking
         if "haiku" in name_lower and self.enable_haiku_thinking is not None:
