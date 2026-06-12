@@ -65,7 +65,7 @@
             </div>
           </div>
           <div class="version-card">
-            <span class="version-text">v1.4.0</span>
+            <span class="version-text" id="versionText">v1.6.2</span>
           </div>
         </div>
       </aside>
@@ -100,18 +100,6 @@
             <span class="stat-value" id="activeProviders">-</span>
           </div>
         </div>
-        <header class="topbar">
-          <div class="topbar-left">
-            <h2 class="page-title" id="pageTitle">Dashboard</h2>
-          </div>
-          <div class="topbar-right">
-            <div class="dirty-indicator" id="dirtyState">
-              <span class="dot"></span>
-              <span class="text">No changes</span>
-            </div>
-          </div>
-        </header>
-
         <!-- Views -->
         <div class="admin-views" id="adminViews">
           <!-- Dashboard View -->
@@ -142,11 +130,11 @@
                   <h3>Quick Actions</h3>
                 </div>
                 <div class="card-content">
-                  <button class="action-btn primary" id="validateButton">
+                  <button class="action-btn primary" id="dashValidateButton">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M22 11.08V12a10 10 0 1 1-5.93-9.14"/></svg>
                     Validate Config
                   </button>
-                  <button class="action-btn" id="applyButton" disabled>
+                  <button class="action-btn" id="dashApplyButton" disabled>
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l7 7v7a2 2 0 0 1-2 2z"/><line x1="14" y1="3" x2="14" y2="9"/><line x1="9" y1="14" x2="15" y2="14"/></svg>
                     Apply Changes
                   </button>

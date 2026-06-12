@@ -2,17 +2,23 @@
 
 import json
 
-import tiktoken
 from loguru import logger
 
 from .content import get_block_attr
 
-ENCODER = tiktoken.get_encoding("cl100k_base")
+try:
+    import tiktoken
+
+    ENCODER = tiktoken.get_encoding("cl100k_base")
+except Exception:
+    ENCODER = None
 
 _DISALLOWED_SPECIAL: tuple[str, ...] = ()
 
 
 def _count_text_tokens(text: str) -> int:
+    if ENCODER is None:
+        return max(1, len(text) // 4)
     return len(ENCODER.encode(text, disallowed_special=_DISALLOWED_SPECIAL))
 
 

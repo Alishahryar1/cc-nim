@@ -62,26 +62,38 @@ class TokenCapturingStream:
         self._provider_id = provider_id
         self._input_tokens = input_tokens
         self._output_tokens = 0
+        self._recorded = False
 
     def __aiter__(self) -> TokenCapturingStream:
         return self
 
     async def __anext__(self) -> str:
-        chunk = await self._stream.__anext__()
-        # Estimate output tokens from SSE content
-        # This is a rough approximation - each token is roughly 4 chars
+        try:
+            chunk = await self._stream.__anext__()
+        except StopAsyncIteration:
+            self._flush_stats()
+            raise
         if chunk:
             self._output_tokens += max(1, len(chunk) // 4)
         return chunk
+
+    def _flush_stats(self) -> None:
+        if self._recorded:
+            return
+        self._recorded = True
+        _record_token_stats(
+            self._model,
+            self._provider_id,
+            self._input_tokens,
+            self._output_tokens,
+        )
 
     async def aclose(self) -> None:
         """Close the stream and record stats."""
         aclose_method = getattr(self._stream, "aclose", None)
         if callable(aclose_method):
             await aclose_method()
-        _record_token_stats(
-            self._model, self._provider_id, self._input_tokens, self._output_tokens
-        )
+        self._flush_stats()
 
 
 ProviderGetter = Callable[[str], BaseProvider]

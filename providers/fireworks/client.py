@@ -26,11 +26,9 @@ class FireworksProvider(AnthropicMessagesTransport):
     def _build_request_body(
         self, request: Any, thinking_enabled: bool | None = None
     ) -> dict:
-        if thinking_enabled is None:
-            thinking_enabled = self._is_thinking_enabled(request)
         return build_request_body(
             request,
-            thinking_enabled=thinking_enabled,
+            thinking_enabled=self._is_thinking_enabled(request, thinking_enabled),
         )
 
     def _request_headers(self) -> dict[str, str]:

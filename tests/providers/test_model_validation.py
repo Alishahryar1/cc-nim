@@ -262,7 +262,7 @@ async def test_ollama_lists_native_tag_model_ids() -> None:
             {"llama3.1:latest", "qwen3"}
         )
 
-    mock_get.assert_awaited_once_with("http://localhost:11434/api/tags")
+    mock_get.assert_awaited_once_with("/api/tags")
 
 
 @pytest.mark.asyncio

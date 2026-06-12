@@ -115,6 +115,10 @@ async function load() {
   renderProviders(config.provider_status);
   renderSections(config.sections, config.fields);
   byId('configPath').textContent = config.paths.managed;
+  if (config.version) {
+    const versionEl = byId('versionText');
+    if (versionEl) versionEl.textContent = `v${config.version}`;
+  }
   await validate(false);
   await refreshLocalStatus();
   updateDirtyState();
@@ -125,14 +129,6 @@ async function load() {
 }
 
 function renderNav() {
-  VIEW_GROUPS.forEach((view) => {
-    const button = document.querySelector(`[data-view="${view.id}"]`);
-    if (button) {
-      button.addEventListener('click', () => {
-        setActiveView(view.id, { scroll: true });
-      });
-    }
-  });
   setActiveView(state.activeView, { scroll: false });
 }
 
@@ -284,7 +280,9 @@ function renderField(field) {
   const input = inputForField(field);
   input.id = `field-${field.key}`;
   input.dataset.key = field.key;
-  input.dataset.original = field.value || '';
+  if (input.type !== 'checkbox') {
+    input.dataset.original = field.value || '';
+  }
   input.dataset.secret = field.secret ? 'true' : 'false';
   input.dataset.configured = field.configured ? 'true' : 'false';
   input.disabled = field.locked;
@@ -386,7 +384,11 @@ function updateDirtyState() {
     ? '<span class="dot"></span><span class="text">No changes</span>'
     : `<span class="dot"></span><span class="text">${count} unsaved change${count === 1 ? '' : 's'}</span>`;
   dirtyState.classList.toggle('warn', count > 0);
-  byId('applyButton').disabled = count === 0;
+  const disabled = count === 0;
+  const footerApply = byId('applyButton');
+  if (footerApply) footerApply.disabled = disabled;
+  const dashApply = byId('dashApplyButton');
+  if (dashApply) dashApply.disabled = disabled;
 }
 
 async function validate(showResult = true) {
@@ -427,13 +429,13 @@ async function apply() {
     return;
   }
   const pending = restart.required ? restart.fields || [] : result.pending_fields || [];
-  await load();
   showMessage(
     pending.length
       ? `Applied. Restart fcc-server to use: ${pending.join(', ')}`
       : 'Applied',
     'ok',
   );
+  await load();
 }
 
 async function refreshLocalStatus() {
@@ -506,6 +508,7 @@ function renderProviderHealth() {
   const providers = state.config.provider_status || [];
   const okCount = providers.filter(p => statusClass(p.status) === 'ok').length;
   const totalCount = providers.length;
+  const okDeg = totalCount > 0 ? Math.round((okCount / totalCount) * 360) : 0;
 
   container.innerHTML = `
     <div style="display:flex;align-items:center;gap:24px;justify-content:center">
@@ -513,7 +516,7 @@ function renderProviderHealth() {
         <div style="font-size:32px;font-weight:700;color:var(--success)">${okCount}</div>
         <div style="font-size:12px;color:var(--text-muted)">Healthy</div>
       </div>
-      <div style="width:60px;height:60px;border-radius:50%;background:conic-gradient(from 0deg,var(--success) 0deg,var(--success) ${Math.round((okCount/totalCount)*360)}deg,transparent ${Math.round((okCount/totalCount)*360)}deg transparent);"></div>
+      <div style="width:60px;height:60px;border-radius:50%;background:conic-gradient(from 0deg,var(--success) 0deg,var(--success) ${okDeg}deg,transparent ${okDeg}deg transparent);"></div>
       <div style="text-align:center">
         <div style="font-size:32px;font-weight:700;color:var(--text-primary)">${totalCount}</div>
         <div style="font-size:12px;color:var(--text-muted)">Total</div>
@@ -583,6 +586,23 @@ function initEventListeners() {
     if (viewExists) {
       state.activeView = savedView;
     }
+  }
+
+  const footerApply = byId('applyButton');
+  if (footerApply) {
+    footerApply.addEventListener('click', () => apply());
+  }
+  const footerValidate = byId('validateButton');
+  if (footerValidate) {
+    footerValidate.addEventListener('click', () => validate());
+  }
+  const dashApply = byId('dashApplyButton');
+  if (dashApply) {
+    dashApply.addEventListener('click', () => apply());
+  }
+  const dashValidate = byId('dashValidateButton');
+  if (dashValidate) {
+    dashValidate.addEventListener('click', () => validate());
   }
 }
 

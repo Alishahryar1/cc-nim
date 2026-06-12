@@ -31,7 +31,7 @@ class OllamaProvider(AnthropicMessagesTransport):
 
     async def _send_model_list_request(self) -> httpx.Response:
         """Query Ollama's native local model-list endpoint."""
-        return await self._client.get(f"{self._base_url}/api/tags")
+        return await self._client.get("/api/tags")
 
     def _extract_model_ids_from_model_list_payload(
         self, payload: object

@@ -162,6 +162,7 @@ async def admin_stats(request: Request):
     """Return token usage statistics."""
     require_loopback_admin(request)
     from .admin_stats import token_stats
+
     return {
         "models": token_stats.get_model_stats(),
         "providers": token_stats.get_provider_stats(),
@@ -247,9 +248,13 @@ def _next_admin_url() -> str:
     fields = {
         field["key"]: field["value"] for field in load_config_response()["fields"]
     }
+    try:
+        port = int(fields.get("PORT") or 8082)
+    except ValueError, TypeError:
+        port = 8082
     settings = Settings.model_construct(
         host=fields.get("HOST") or "0.0.0.0",
-        port=int(fields.get("PORT") or 8082),
+        port=port,
     )
     return local_admin_url(settings)
 

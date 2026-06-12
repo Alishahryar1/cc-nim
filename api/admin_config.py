@@ -37,6 +37,16 @@ SourceType = Literal[
 MASKED_SECRET = "********"
 
 
+def _package_version() -> str:
+    """Return the installed package version, falling back to empty string."""
+    try:
+        from importlib.metadata import version
+
+        return version("free-claude-code")
+    except Exception:
+        return ""
+
+
 @dataclass(frozen=True, slots=True)
 class ConfigSectionSpec:
     """A group of config fields rendered together in the admin UI."""
@@ -1099,6 +1109,7 @@ def load_config_response() -> dict[str, Any]:
         )
 
     return {
+        "version": _package_version(),
         "sections": [
             {
                 "id": section.section_id,
