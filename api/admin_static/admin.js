@@ -11,7 +11,7 @@ const MASKED_SECRET = "********";
 // Recognised Claude model ids that route through Settings.model_* overrides.
 // These mirror config.settings.Settings.resolve_model / resolve_thinking on
 // the backend; both sides must be updated together if the supported ids change.
-const FABLE_IDS = ["claude-fable-5", "claude-fable-5-2026", "claude-fable-5-2025-20260612"];
+const FABLE_IDS = ["claude-fable-5", "claude-fable-5-2026", "claude-fable-5-20250612"];
 const FABLE_OPUS_IDS = ["claude-opus-4-8", "claude-opus-4-7"];
 const FABLE_SONNET_IDS = ["claude-sonnet-4-6", "claude-sonnet-4-5"];
 const FABLE_HAIKU_IDS = ["claude-haiku-4-5"];
@@ -103,7 +103,7 @@ function ensureFableFields(config) {
   const keys = new Set(config.fields.map((f) => f.key));
 
   if (!keys.has("MODEL_FABLE")) {
-    const firstModelIdx = config.fields.findIndex((f) => f.section === "models" && f.key !== "MODEL_DEFAULT");
+    const firstModelIdx = config.fields.findIndex((f) => f.section === "models" && f.key !== "MODEL" && f.key !== "MODEL_DEFAULT");
     const entry = {
       key: "MODEL_FABLE",
       label: "Fable Override",
