@@ -205,6 +205,13 @@ def format_provider_error_message(
     else:
         lines = [f"Upstream provider {provider_name} returned an error."]
 
+    # Add actionable hints for common errors
+    if detail.status_code == 429:
+        lines.append(
+            "\nTip: Rate limit hit after automatic retries. Wait a moment and retry, "
+            "or try a different model/provider via /model in Claude Code."
+        )
+
     category = detail.error_type_hint or _provider_error_category(mapped)
     if category:
         lines.append(f"Category: {category}")

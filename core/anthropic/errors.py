@@ -27,7 +27,7 @@ def get_user_facing_error_message(
         return "Request timed out."
 
     if isinstance(e, openai.RateLimitError):
-        return "Provider rate limit reached. Please retry shortly."
+        return "Provider rate limit reached. The proxy already retried. Try again in a few moments or switch models."
     if isinstance(e, openai.AuthenticationError):
         return "Provider authentication failed. Check API key."
     if isinstance(e, openai.BadRequestError):
@@ -36,7 +36,7 @@ def get_user_facing_error_message(
     name = type(e).__name__
     status_code = getattr(e, "status_code", None)
     if name == "RateLimitError":
-        return "Provider rate limit reached. Please retry shortly."
+        return "Provider rate limit reached. The proxy already retried. Try again in a few moments or switch models."
     if name == "AuthenticationError":
         return "Provider authentication failed. Check API key."
     if name == "InvalidRequestError":

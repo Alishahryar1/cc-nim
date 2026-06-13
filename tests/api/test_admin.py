@@ -87,7 +87,7 @@ def test_admin_static_hides_managed_source_label():
     assert 'managed_env: "",' in script
     assert "hasOwnProperty.call(labels, source)" in script
     assert 'parts.push("locked")' in script
-    assert "sourceEl.textContent = source" in script
+    assert "textContent = src" in script
 
 
 def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
@@ -510,3 +510,91 @@ def test_admin_launch_url_uses_loopback_for_wildcard_host():
     settings = Settings.model_construct(host="0.0.0.0", port=8082)
 
     assert local_admin_url(settings) == "http://127.0.0.1:8082/admin"
+
+
+def test_admin_config_exposes_fable_model_and_thinking_fields(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_app(lifespan_enabled=False)
+
+    response = _local_client(app).get("/admin/api/config")
+
+    assert response.status_code == 200
+    keys = {field["key"] for field in response.json()["fields"]}
+    assert "MODEL_FABLE" in keys
+    assert "ENABLE_FABLE_THINKING" in keys
+
+
+def test_admin_apply_writes_fable_model_override(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_app(lifespan_enabled=False)
+
+    response = _local_client(app).post(
+        "/admin/api/config/apply",
+        json={
+            "values": {
+                "MODEL": "nvidia_nim/nvidia/nemotron-super-49b-v1",
+                "MODEL_FABLE": "nvidia_nim/nvidia/llama-3.1-nemotron-nano-8b-v1",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["applied"] is True
+    text = (tmp_path / ".fcc" / ".env").read_text("utf-8")
+    assert "MODEL_FABLE=nvidia_nim/nvidia/llama-3.1-nemotron-nano-8b-v1" in text
+
+
+def test_settings_resolve_model_routes_fable_to_model_fable():
+    settings = Settings.model_construct(
+        model="nvidia_nim/default-model",
+        model_fable="nvidia_nim/fable-override",
+        model_opus=None,
+        model_sonnet=None,
+        model_haiku=None,
+    )
+
+    assert settings.resolve_model("claude-fable-5") == "nvidia_nim/fable-override"
+    assert settings.resolve_model("claude-fable-5-2026") == "nvidia_nim/fable-override"
+    assert (
+        settings.resolve_model("claude-fable-5-20250612") == "nvidia_nim/fable-override"
+    )
+    assert settings.resolve_model("claude-opus-4-6") == "nvidia_nim/default-model"
+
+
+def test_settings_resolve_model_fable_falls_back_to_model_when_not_set():
+    settings = Settings.model_construct(
+        model="nvidia_nim/default-model",
+        model_fable=None,
+        model_opus=None,
+        model_sonnet=None,
+        model_haiku=None,
+    )
+
+    assert settings.resolve_model("claude-fable-5") == "nvidia_nim/default-model"
+
+
+def test_settings_resolve_thinking_fable_inherits_global():
+    settings = Settings.model_construct(
+        enable_model_thinking=True,
+        enable_fable_thinking=None,
+        enable_opus_thinking=None,
+        enable_sonnet_thinking=None,
+        enable_haiku_thinking=None,
+    )
+
+    assert settings.resolve_thinking("claude-fable-5") is True
+
+
+def test_settings_resolve_thinking_fable_override_takes_precedence():
+    settings = Settings.model_construct(
+        enable_model_thinking=True,
+        enable_fable_thinking=False,
+        enable_opus_thinking=None,
+        enable_sonnet_thinking=None,
+        enable_haiku_thinking=None,
+    )
+
+    assert settings.resolve_thinking("claude-fable-5") is False

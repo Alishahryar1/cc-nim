@@ -416,6 +416,16 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         description="Fallback provider/model route for all Claude model names.",
     ),
     ConfigFieldSpec(
+        "MODEL_FABLE",
+        "Fable Override",
+        "models",
+        settings_attr="model_fable",
+        description=(
+            "Routes claude-fable-5 (and any other claude-fable-* model id) here. "
+            "Leave blank to fall back to the Default Model."
+        ),
+    ),
+    ConfigFieldSpec(
         "MODEL_OPUS",
         "Opus Override",
         "models",
@@ -443,6 +453,14 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         "boolean",
         settings_attr="enable_model_thinking",
         default="true",
+    ),
+    ConfigFieldSpec(
+        "ENABLE_FABLE_THINKING",
+        "Fable Thinking",
+        "thinking",
+        "tri_boolean",
+        settings_attr="enable_fable_thinking",
+        description="Blank inherits Enable Thinking.",
     ),
     ConfigFieldSpec(
         "ENABLE_OPUS_THINKING",

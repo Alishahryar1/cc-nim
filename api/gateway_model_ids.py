@@ -11,6 +11,17 @@ GATEWAY_MODEL_ID_PREFIX = "anthropic"
 # heuristic while keeping the real provider/model ref reversible for routing.
 NO_THINKING_GATEWAY_MODEL_ID_PREFIX = "claude-3-freecc-no-thinking"
 
+# Known Claude model ids that should be routed via Settings.model_fable.
+# config.settings.Settings.resolve_model matches on the substring "fable", so
+# any of these (and any future "claude-fable-*" id) automatically fall through
+# to MODEL_FABLE. Listed here so the admin UI can surface them in the
+# MODEL_FABLE field hint and so future contributors can extend the registry.
+FABLE_GATEWAY_MODEL_IDS: tuple[str, ...] = (
+    "claude-fable-5",
+    "claude-fable-5-2026",
+    "claude-fable-5-20250612",
+)
+
 
 @dataclass(frozen=True, slots=True)
 class DecodedGatewayModelId:
