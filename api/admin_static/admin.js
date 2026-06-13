@@ -11,7 +11,7 @@ const MASKED_SECRET = "********";
 // Recognised Claude model ids that route through Settings.model_* overrides.
 // These mirror config.settings.Settings.resolve_model / resolve_thinking on
 // the backend; both sides must be updated together if the supported ids change.
-const FABLE_IDS = ["claude-fable-5", "claude-fable-5-2026", "claude-fable-5-2025-XX"];
+const FABLE_IDS = ["claude-fable-5", "claude-fable-5-2026", "claude-fable-5-2025-20260612"];
 const FABLE_OPUS_IDS = ["claude-opus-4-8", "claude-opus-4-7"];
 const FABLE_SONNET_IDS = ["claude-sonnet-4-6", "claude-sonnet-4-5"];
 const FABLE_HAIKU_IDS = ["claude-haiku-4-5"];
@@ -121,10 +121,10 @@ function ensureFableFields(config) {
     else config.fields.push(entry);
   }
 
-  if (!keys.has("THINKING_FABLE")) {
+  if (!keys.has("ENABLE_FABLE_THINKING")) {
     const firstThinkingIdx = config.fields.findIndex((f) => f.section === "thinking" && f.key !== "THINKING_ENABLED");
     const entry = {
-      key: "THINKING_FABLE",
+      key: "ENABLE_FABLE_THINKING",
       label: "Fable Thinking",
       type: "tri_boolean",
       value: "",
