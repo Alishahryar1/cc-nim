@@ -53,7 +53,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "wafer": "wafer/DeepSeek-V4-Pro",
     "opencode": "opencode/gpt-5.3-codex",
     "opencode_go": "opencode_go/minimax-m2.7",
-    "zai": "zai/glm-5.1",
+    "zai": "zai/glm-5.2",
     "gemini": "gemini/gemini-2.5-flash",
     "groq": "groq/llama-3.3-70b-versatile",
     "cerebras": "cerebras/llama3.1-8b",
