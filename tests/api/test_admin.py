@@ -511,6 +511,7 @@ def test_admin_launch_url_uses_loopback_for_wildcard_host():
 
     assert local_admin_url(settings) == "http://127.0.0.1:8082/admin"
 
+
 def test_admin_config_exposes_fable_model_and_thinking_fields(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
@@ -557,7 +558,9 @@ def test_settings_resolve_model_routes_fable_to_model_fable():
 
     assert settings.resolve_model("claude-fable-5") == "nvidia_nim/fable-override"
     assert settings.resolve_model("claude-fable-5-2026") == "nvidia_nim/fable-override"
-    assert settings.resolve_model("claude-fable-5-20250612") == "nvidia_nim/fable-override"
+    assert (
+        settings.resolve_model("claude-fable-5-20250612") == "nvidia_nim/fable-override"
+    )
     assert settings.resolve_model("claude-opus-4-6") == "nvidia_nim/default-model"
 
 
