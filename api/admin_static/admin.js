@@ -99,6 +99,7 @@ async function api(path, options = {}) {
 
 async function load() {
   showMessage("Loading admin config");
+  showLoadingSkeleton();
   const config = await api("/admin/api/config");
   state.config = config;
   state.fields = new Map(config.fields.map((field) => [field.key, field]));
@@ -110,6 +111,52 @@ async function load() {
   await refreshLocalStatus();
   updateDirtyState();
   showMessage("");
+}
+
+function skeletonLine(extraClass = "") {
+  const line = document.createElement("div");
+  line.className = `skeleton-line ${extraClass}`.trim();
+  return line;
+}
+
+function showLoadingSkeleton() {
+  const grid = byId("providerGrid");
+  if (grid) {
+    grid.innerHTML = "";
+    for (let i = 0; i < 6; i += 1) {
+      const card = document.createElement("div");
+      card.className = "provider-card skeleton-card";
+      card.setAttribute("aria-hidden", "true");
+      card.append(
+        skeletonLine("skeleton-line-title"),
+        skeletonLine(),
+        skeletonLine("skeleton-line-button"),
+      );
+      grid.appendChild(card);
+    }
+  }
+
+  const container = byId("providersSections");
+  if (container) {
+    container.innerHTML = "";
+    const section = document.createElement("div");
+    section.className = "settings-section skeleton-section";
+    section.setAttribute("aria-hidden", "true");
+    section.appendChild(skeletonLine("skeleton-line-heading"));
+    const fieldsGrid = document.createElement("div");
+    fieldsGrid.className = "skeleton-grid";
+    for (let i = 0; i < 4; i += 1) {
+      const field = document.createElement("div");
+      field.className = "skeleton-field";
+      field.append(
+        skeletonLine("skeleton-line-label"),
+        skeletonLine("skeleton-line-input"),
+      );
+      fieldsGrid.appendChild(field);
+    }
+    section.appendChild(fieldsGrid);
+    container.appendChild(section);
+  }
 }
 
 function renderNav() {
@@ -292,7 +339,8 @@ function renderField(field) {
   input.addEventListener("input", updateDirtyState);
   input.addEventListener("change", updateDirtyState);
 
-  wrapper.append(label, input);
+  const control = field.secret ? buildSecretControl(input) : input;
+  wrapper.append(label, control);
   if (field.description) {
     const description = document.createElement("div");
     description.className = "field-description";
@@ -300,6 +348,27 @@ function renderField(field) {
     wrapper.appendChild(description);
   }
   return wrapper;
+}
+
+function buildSecretControl(input) {
+  const wrap = document.createElement("div");
+  wrap.className = "secret-input";
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "secret-toggle";
+  toggle.textContent = "Show";
+  toggle.setAttribute("aria-label", "Show value");
+  toggle.setAttribute("aria-pressed", "false");
+  toggle.disabled = input.disabled;
+  toggle.addEventListener("click", () => {
+    const reveal = input.type === "password";
+    input.type = reveal ? "text" : "password";
+    toggle.textContent = reveal ? "Hide" : "Show";
+    toggle.setAttribute("aria-pressed", reveal ? "true" : "false");
+    toggle.setAttribute("aria-label", reveal ? "Hide value" : "Show value");
+  });
+  wrap.append(input, toggle);
+  return wrap;
 }
 
 function inputForField(field) {
