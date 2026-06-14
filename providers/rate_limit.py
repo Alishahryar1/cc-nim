@@ -21,15 +21,20 @@ DEFAULT_UPSTREAM_MAX_RETRIES = UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS - 1
 
 
 def _upstream_http_retryable(code: int) -> bool:
-    """True for rate limit / upstream server failures that should backoff-retry."""
+    """True for rate limit / upstream server failures that should backoff-retry.
+
+    Does NOT include 400 — 400 retries skip set_blocked (see retryable_upstream_status).
+    """
     return code == 429 or 500 <= code <= 599
 
 
 def retryable_upstream_status(exc: BaseException) -> int | None:
-    """Return HTTP-like status codes that qualify for reactive backoff retries.
+    """Return HTTP-like status codes that qualify for backoff retries.
 
-    ``429`` plus any upstream ``5xx`` use the same exponential backoff and scoped
-    limiter blocking semantics as today's rate-limit path.
+    ``429`` and upstream ``5xx`` use the same exponential backoff and scoped
+    limiter blocking semantics as today's rate-limit path. ``400`` is also
+    retried but does NOT trigger the global reactive block (per-request hiccup,
+    not upstream congestion).
     """
     if isinstance(exc, openai.RateLimitError):
         return 429
@@ -275,6 +280,8 @@ class GlobalRateLimiter:
                     "Rate limited (429)"
                     if status == 429
                     else f"Upstream server error ({status})"
+                    if status >= 500
+                    else f"Transient bad request ({status})"
                 )
                 last_exc = e
                 if attempt >= max_retries:
