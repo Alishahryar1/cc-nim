@@ -155,7 +155,10 @@ function setActiveView(viewId, { scroll = false } = {}) {
   });
 
   if (scroll) {
-    window.scrollTo({ top: 0, behavior: "smooth" });
+    const prefersReducedMotion = window.matchMedia(
+      "(prefers-reduced-motion: reduce)",
+    ).matches;
+    window.scrollTo({ top: 0, behavior: prefersReducedMotion ? "auto" : "smooth" });
   }
 }
 
@@ -246,9 +249,11 @@ function renderSections(sections, fields) {
         toggle.type = "button";
         toggle.className = "ghost-button advanced-toggle";
         toggle.textContent = "Show advanced";
+        toggle.setAttribute("aria-expanded", "false");
         toggle.addEventListener("click", () => {
           const showing = sectionEl.classList.toggle("show-advanced");
           toggle.textContent = showing ? "Hide advanced" : "Show advanced";
+          toggle.setAttribute("aria-expanded", showing ? "true" : "false");
         });
         sectionEl.appendChild(toggle);
       }
@@ -443,6 +448,7 @@ async function refreshLocalStatus() {
 async function testProvider(providerId, button) {
   const original = button.textContent;
   button.disabled = true;
+  button.setAttribute("aria-busy", "true");
   button.textContent = "Testing";
   try {
     const result = await api(`/admin/api/providers/${providerId}/test`, {
@@ -468,6 +474,7 @@ async function testProvider(providerId, button) {
     }
   } finally {
     button.disabled = false;
+    button.removeAttribute("aria-busy");
     button.textContent = original;
   }
 }
