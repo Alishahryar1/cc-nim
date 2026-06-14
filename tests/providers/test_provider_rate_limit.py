@@ -375,7 +375,6 @@ class TestProviderRateLimiter:
             )
 
     @pytest.mark.asyncio
-    @pytest.mark.asyncio
     async def test_execute_with_retry_400_retried_then_exhausts(self):
         """HTTP 400 is now retried by execute_with_retry (transient 400 support)."""
         import httpx

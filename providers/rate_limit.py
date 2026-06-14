@@ -241,7 +241,9 @@ class GlobalRateLimiter:
 
         Waits for the proactive limiter before each attempt. On ``429`` (rate limit)
         or upstream ``5xx`` server errors, applies exponential backoff with jitter
-        and sets the reactive block before retrying.
+        and sets the reactive block before retrying. HTTP 400 is also retried but
+        does NOT set the global reactive block (genuine bad requests should not
+        stall concurrent requests).
 
         Args:
             fn: Async callable to execute.
@@ -303,7 +305,8 @@ class GlobalRateLimiter:
                     max_attempts=total_attempts,
                     delay_s=round(delay, 3),
                 )
-                self.set_blocked(delay)
+                if status != 400:
+                    self.set_blocked(delay)
                 await asyncio.sleep(delay)
 
         assert last_exc is not None
