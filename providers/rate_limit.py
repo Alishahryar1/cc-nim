@@ -37,11 +37,15 @@ def retryable_upstream_status(exc: BaseException) -> int | None:
         status = exc.response.status_code
         if _upstream_http_retryable(status):
             return status
+        if status == 400:
+            return 400
         return None
     if isinstance(exc, openai.APIError):
         status = getattr(exc, "status_code", None)
         if isinstance(status, int) and 500 <= status <= 599:
             return status
+        if status == 400:
+            return 400
         return None
     return None
 
