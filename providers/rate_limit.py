@@ -45,6 +45,8 @@ def retryable_upstream_status(exc: BaseException) -> int | None:
         if status == 400:
             return 400
         return None
+    if isinstance(exc, openai.BadRequestError):
+        return 400
     if isinstance(exc, openai.APIError):
         status = getattr(exc, "status_code", None)
         if isinstance(status, int) and 500 <= status <= 599:
@@ -293,7 +295,8 @@ class GlobalRateLimiter:
                     )
                     break
 
-                delay = min(base_delay * (2**attempt), max_delay)
+                effective_base = 0.5 if status == 400 else base_delay
+                delay = min(effective_base * (2**attempt), max_delay)
                 delay += random.uniform(0, jitter)
                 attempt_no = attempt + 1
                 logger.warning(
