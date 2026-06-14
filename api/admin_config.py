@@ -408,6 +408,30 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         advanced=True,
     ),
     ConfigFieldSpec(
+        "XIAOMIMIMO_API_KEY",
+        "Xiaomi MiMo API Key",
+        "providers",
+        "secret",
+        settings_attr="xiaomimimo_api_key",
+        secret=True,
+        description=(
+            "Xiaomi MiMo Pay-As-You-Go API key ([platform.xiaomimimo.com/console/api-keys]("
+            "https://platform.xiaomimimo.com/console/api-keys)); "
+            "native Anthropic Messages at api.xiaomimimo.com/anthropic. "
+            "Token Plan subscribers should set XIAOMIMIMO_API_KEY to their tp-* key and "
+            "override the base URL to https://token-plan-cn.xiaomimimo.com/anthropic."
+        ),
+    ),
+    ConfigFieldSpec(
+        "XIAOMIMIMO_PROXY",
+        "Xiaomi MiMo Proxy",
+        "providers",
+        "secret",
+        settings_attr="xiaomimimo_proxy",
+        secret=True,
+        advanced=True,
+    ),
+    ConfigFieldSpec(
         "MODEL",
         "Default Model",
         "models",
@@ -894,6 +918,12 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
     ConfigFieldSpec(
         "FCC_SMOKE_MODEL_CEREBRAS",
         "Smoke Cerebras Model",
+        "smoke",
+        advanced=True,
+    ),
+    ConfigFieldSpec(
+        "FCC_SMOKE_MODEL_XIAOMIMIMO",
+        "Smoke Xiaomi MiMo Model",
         "smoke",
         advanced=True,
     ),

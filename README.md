@@ -43,7 +43,7 @@ Free Claude Code routes Anthropic Messages API traffic from Claude Code to any p
 ## What You Get
 
 - Drop-in proxy for Claude Code's Anthropic API calls.
-- 17 provider backends: NVIDIA NIM, OpenRouter, Google AI Studio (Gemini), DeepSeek, Mistral La Plateforme, Mistral Codestral, OpenCode Zen, OpenCode Go, Wafer, Kimi, Cerebras Inference, Groq, Fireworks AI, Z.ai, LM Studio, llama.cpp, and Ollama.
+- 18 provider backends: NVIDIA NIM, OpenRouter, Google AI Studio (Gemini), DeepSeek, Mistral La Plateforme, Mistral Codestral, OpenCode Zen, OpenCode Go, Wafer, Kimi, Cerebras Inference, Groq, Fireworks AI, Z.ai, LM Studio, llama.cpp, Ollama, and Xiaomi MiMo.
 - Per-model routing: send Opus, Sonnet, Haiku, and fallback traffic to different providers.
 - Native Claude Code `/model` picker support through the proxy's `/v1/models` endpoint (see [Model Picker](#model-picker)).
 - Streaming, tool use, reasoning/thinking block handling, and local request optimizations.
@@ -304,7 +304,25 @@ In the Admin UI, keep or update `OLLAMA_BASE_URL`, then set `MODEL` to the same 
 
 `OLLAMA_BASE_URL` is the Ollama server root; do not append `/v1`. Example model slugs include `ollama/llama3.1` and `ollama/llama3.1:8b`.
 
-### 18. Mix Providers By Model Tier
+### 18. [Xiaomi MiMo](https://mimo.mi.com/)
+
+Get a Pay-As-You-Go API key at [platform.xiaomimimo.com/console/api-keys](https://platform.xiaomimimo.com/console/api-keys).
+
+In the Admin UI, paste it into `XIAOMIMIMO_API_KEY`, then set `MODEL` to a MiMo slug such as `xiaomimimo/mimo-v2.5-pro`.
+
+This provider calls MiMo's **Anthropic-compatible** Messages API (`https://api.xiaomimimo.com/anthropic/v1/messages`; model discovery uses OpenAI-compat `GET https://api.xiaomimimo.com/v1/models`). It is **not** the OpenAI Chat Completions path.
+
+Popular examples:
+
+- `xiaomimimo/mimo-v2.5-pro` — full-featured flagship
+- `xiaomimimo/mimo-v2.5` — balanced speed/cost
+- `xiaomimimo/mimo-v2-flash` — fast and lightweight (note: auto-routes to v2.5 pricing from June 18, 2026)
+
+**Token Plan subscribers:** use the alternative base URL `https://token-plan-cn.xiaomimimo.com/anthropic/v1` instead of the default Pay-As-You-Go endpoint.
+
+Browse models and pricing at [mimo.mi.com/docs/en-US/models](https://mimo.mi.com/docs/en-US/models).
+
+### 19. Mix Providers By Model Tier
 
 Each model tier can use a different provider by setting `MODEL_OPUS`, `MODEL_SONNET`, and `MODEL_HAIKU` in the Admin UI. Leave a tier blank to inherit `MODEL`.
 
@@ -451,7 +469,7 @@ Important pieces:
 - FastAPI exposes Anthropic-compatible routes such as `/v1/messages`, `/v1/messages/count_tokens`, and `/v1/models`.
 - Model routing resolves the Claude model name to `MODEL_OPUS`, `MODEL_SONNET`, `MODEL_HAIKU`, or `MODEL`.
 - NIM, OpenCode Zen, and OpenCode Go use OpenAI chat streaming translated into Anthropic SSE.
-- Wafer, OpenRouter, DeepSeek, Kimi, Fireworks AI, Z.ai, LM Studio, llama.cpp, and Ollama use Anthropic Messages style transports where applicable (with provider-specific quirks and model-list URLs).
+- Wafer, OpenRouter, DeepSeek, Kimi, Fireworks AI, Z.ai, Xiaomi MiMo, LM Studio, llama.cpp, and Ollama use Anthropic Messages style transports where applicable (with provider-specific quirks and model-list URLs).
 - The proxy normalizes thinking blocks, tool calls, token usage metadata, and provider errors into the shape Claude Code expects.
 - Request optimizations answer trivial Claude Code probes locally to save latency and quota.
 

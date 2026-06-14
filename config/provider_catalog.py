@@ -36,6 +36,9 @@ ZAI_DEFAULT_BASE = "https://api.z.ai/api/anthropic/v1"
 GEMINI_DEFAULT_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GROQ_DEFAULT_BASE = "https://api.groq.com/openai/v1"
 CEREBRAS_DEFAULT_BASE = "https://api.cerebras.ai/v1"
+# Xiaomi MiMo Pay-As-You-Go Anthropic-compatible Messages API.
+# Token Plan subscribers use https://token-plan-cn.xiaomimimo.com/anthropic instead.
+XIAOMIMIMO_DEFAULT_BASE = "https://api.xiaomimimo.com/anthropic/v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,6 +247,22 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
             "thinking",
             "native_anthropic",
             "local",
+        ),
+    ),
+    "xiaomimimo": ProviderDescriptor(
+        provider_id="xiaomimimo",
+        transport_type="anthropic_messages",
+        credential_env="XIAOMIMIMO_API_KEY",
+        credential_url="https://platform.xiaomimimo.com/console/api-keys",
+        credential_attr="xiaomimimo_api_key",
+        default_base_url=XIAOMIMIMO_DEFAULT_BASE,
+        proxy_attr="xiaomimimo_proxy",
+        capabilities=(
+            "chat",
+            "streaming",
+            "tools",
+            "thinking",
+            "native_anthropic",
         ),
     ),
 }

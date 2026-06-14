@@ -29,6 +29,7 @@ from providers.registry import (
     create_provider,
 )
 from providers.wafer import WaferProvider
+from providers.xiaomimimo import XiaomiMiMoProvider
 from providers.zai import ZaiProvider
 
 
@@ -67,6 +68,8 @@ def _make_settings(**overrides):
     mock.groq_proxy = ""
     mock.cerebras_api_key = ""
     mock.cerebras_proxy = ""
+    mock.xiaomimimo_api_key = ""
+    mock.xiaomimimo_proxy = ""
     mock.provider_rate_limit = 40
     mock.provider_rate_window = 60
     mock.provider_max_concurrency = 5
@@ -170,6 +173,7 @@ def test_create_provider_instantiates_each_builtin():
         cerebras_api_key="test_cerebras_key",
         fireworks_api_key="test_fireworks_key",
         kimi_api_key="test_kimi_key",
+        xiaomimimo_api_key="test_xiaomimimo_key",
     )
     cases = {
         "nvidia_nim": NvidiaNimProvider,
@@ -188,6 +192,7 @@ def test_create_provider_instantiates_each_builtin():
         "gemini": GeminiProvider,
         "groq": GroqProvider,
         "cerebras": CerebrasProvider,
+        "xiaomimimo": XiaomiMiMoProvider,
     }
 
     with (
