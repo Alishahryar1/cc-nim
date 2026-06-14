@@ -21,15 +21,20 @@ DEFAULT_UPSTREAM_MAX_RETRIES = UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS - 1
 
 
 def _upstream_http_retryable(code: int) -> bool:
-    """True for rate limit / upstream server failures that should backoff-retry."""
+    """True for rate limit / upstream server failures that should backoff-retry.
+
+    Does NOT include 400 — 400 retries skip set_blocked (see retryable_upstream_status).
+    """
     return code == 429 or 500 <= code <= 599
 
 
 def retryable_upstream_status(exc: BaseException) -> int | None:
-    """Return HTTP-like status codes that qualify for reactive backoff retries.
+    """Return HTTP-like status codes that qualify for backoff retries.
 
-    ``429`` plus any upstream ``5xx`` use the same exponential backoff and scoped
-    limiter blocking semantics as today's rate-limit path.
+    ``429`` and upstream ``5xx`` use the same exponential backoff and scoped
+    limiter blocking semantics as today's rate-limit path. ``400`` is also
+    retried but does NOT trigger the global reactive block (per-request hiccup,
+    not upstream congestion).
     """
     if isinstance(exc, openai.RateLimitError):
         return 429
@@ -37,11 +42,17 @@ def retryable_upstream_status(exc: BaseException) -> int | None:
         status = exc.response.status_code
         if _upstream_http_retryable(status):
             return status
+        if status == 400:
+            return 400
         return None
+    if isinstance(exc, openai.BadRequestError):
+        return 400
     if isinstance(exc, openai.APIError):
         status = getattr(exc, "status_code", None)
         if isinstance(status, int) and 500 <= status <= 599:
             return status
+        if status == 400:
+            return 400
         return None
     return None
 
@@ -237,7 +248,9 @@ class GlobalRateLimiter:
 
         Waits for the proactive limiter before each attempt. On ``429`` (rate limit)
         or upstream ``5xx`` server errors, applies exponential backoff with jitter
-        and sets the reactive block before retrying.
+        and sets the reactive block before retrying. HTTP 400 is also retried but
+        does NOT set the global reactive block (genuine bad requests should not
+        stall concurrent requests).
 
         Args:
             fn: Async callable to execute.
@@ -269,6 +282,8 @@ class GlobalRateLimiter:
                     "Rate limited (429)"
                     if status == 429
                     else f"Upstream server error ({status})"
+                    if status >= 500
+                    else f"Transient bad request ({status})"
                 )
                 last_exc = e
                 if attempt >= max_retries:
@@ -280,7 +295,8 @@ class GlobalRateLimiter:
                     )
                     break
 
-                delay = min(base_delay * (2**attempt), max_delay)
+                effective_base = 0.5 if status == 400 else base_delay
+                delay = min(effective_base * (2**attempt), max_delay)
                 delay += random.uniform(0, jitter)
                 attempt_no = attempt + 1
                 logger.warning(
@@ -299,7 +315,8 @@ class GlobalRateLimiter:
                     max_attempts=total_attempts,
                     delay_s=round(delay, 3),
                 )
-                self.set_blocked(delay)
+                if status != 400:
+                    self.set_blocked(delay)
                 await asyncio.sleep(delay)
 
         assert last_exc is not None

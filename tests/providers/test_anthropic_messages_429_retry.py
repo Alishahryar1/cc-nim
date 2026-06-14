@@ -207,8 +207,8 @@ async def test_native_stream_5xx_retry_exhausted(provider_config, status_code, s
 
 
 @pytest.mark.asyncio
-async def test_non_retryable_4xx_http_error_not_retried(provider_config):
-    """HTTP 400 from upstream is not retried; single send (passthrough limiter)."""
+async def test_transient_400_is_retried_then_exhausts(provider_config):
+    """HTTP 400 from upstream IS now retried (transient 400 support); 5 send calls then SSE error."""
     GlobalRateLimiter.reset_instance()
     try:
 
@@ -218,11 +218,14 @@ async def test_non_retryable_4xx_http_error_not_retried(provider_config):
 
         with patch("providers.anthropic_messages.GlobalRateLimiter") as mock_gl:
             instance = mock_gl.get_scoped_instance.return_value
-
-            async def _passthrough(fn, *args, **kwargs):
-                return await fn(*args, **kwargs)
-
-            instance.execute_with_retry = AsyncMock(side_effect=_passthrough)
+            real = GlobalRateLimiter(
+                rate_limit=100,
+                rate_window=60,
+                max_concurrency=5,
+            )
+            instance.wait_if_blocked = real.wait_if_blocked
+            instance.execute_with_retry = real.execute_with_retry
+            instance.set_blocked = real.set_blocked
             instance.concurrency_slot.side_effect = _slot
 
             provider = NativeProvider(provider_config)
@@ -239,10 +242,12 @@ async def test_non_retryable_4xx_http_error_not_retried(provider_config):
                     new_callable=AsyncMock,
                     return_value=err,
                 ) as mock_send,
+                patch("asyncio.sleep", new_callable=AsyncMock),
             ):
                 events = [e async for e in provider.stream_response(req)]
 
-            mock_send.assert_awaited_once()
+            # 1 initial + 4 retries = 5 calls (400 is now retryable with default max_retries=4)
+            assert mock_send.await_count == 5
             assert err.is_closed
             assert_canonical_stream_error_envelope(
                 events, user_message_substr="Invalid request sent to provider"
