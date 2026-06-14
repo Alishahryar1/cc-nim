@@ -272,6 +272,21 @@ Popular examples:
 - `zai/glm-5.2`
 - `zai/glm-5-turbo`
 
+#### Z.ai MCP servers
+
+Z.ai publishes four MCP servers ([docs.z.ai/devpack/mcp](https://docs.z.ai/devpack/mcp)). This gateway auto-injects the three **HTTP remote** servers into every Z.ai request as native Anthropic `mcp_servers`, so the `glm-5.2` model can call them server-side using your `ZAI_API_KEY`:
+
+- `web-reader` — turn blogs/guides into actionable developer notes
+- `web-search-prime` — web search
+- `zread` — read and summarize URLs
+
+Set `ZAI_INJECT_MCP_SERVERS=false` to disable. The fourth server, **Vision** (`@z_ai/mcp-server`), is a stdio `npx` server and cannot run server-side — add it client-side instead:
+
+```sh
+claude mcp add -s user zai-mcp-server \
+  --env Z_AI_API_KEY=your_key Z_AI_MODE=ZAI -- npx -y "@z_ai/mcp-server"
+```
+
 Browse models at [Z.ai](https://z.ai).
 
 ### 15. [LM Studio](https://lmstudio.ai/)
