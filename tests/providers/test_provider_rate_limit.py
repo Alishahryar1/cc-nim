@@ -375,8 +375,9 @@ class TestProviderRateLimiter:
             )
 
     @pytest.mark.asyncio
-    async def test_execute_with_retry_httpx_400_raises_immediately(self):
-        """Non-retryable 4xx is not wrapped by execute_with_retry loop."""
+    @pytest.mark.asyncio
+    async def test_execute_with_retry_400_retried_then_exhausts(self):
+        """HTTP 400 is now retried by execute_with_retry (transient 400 support)."""
         import httpx
         from httpx import Request, Response
 
@@ -385,7 +386,7 @@ class TestProviderRateLimiter:
 
         call_count = 0
 
-        async def bad_request():
+        async def always_400():
             nonlocal call_count
             call_count += 1
             r = Response(400, request=Request("POST", "http://x"), text="bad request")
@@ -393,14 +394,75 @@ class TestProviderRateLimiter:
 
         with pytest.raises(httpx.HTTPStatusError):
             await limiter.execute_with_retry(
-                bad_request,
+                always_400,
                 max_retries=2,
                 base_delay=0.01,
                 max_delay=0.1,
                 jitter=0,
             )
 
-        assert call_count == 1
+        # 1 initial + 2 retries = 3 calls total (400 is now retryable)
+        assert call_count == 3
+
+    @pytest.mark.asyncio
+    async def test_execute_with_retry_400_then_200_recovers(self):
+        """Transient HTTP 400 then success: retry recovers."""
+        import httpx
+        from httpx import Request, Response
+
+        GlobalRateLimiter.reset_instance()
+        limiter = GlobalRateLimiter.get_instance(rate_limit=100, rate_window=60)
+
+        call_count = 0
+
+        async def fail_then_ok():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                r = Response(400, request=Request("POST", "http://x"), text="bad request")
+                raise httpx.HTTPStatusError("Bad Request", request=r.request, response=r)
+            return "ok"
+
+        result = await limiter.execute_with_retry(
+            fail_then_ok,
+            max_retries=2,
+            base_delay=0.01,
+            max_delay=0.1,
+            jitter=0,
+        )
+        assert result == "ok"
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_execute_with_retry_openai_400_retried_then_exhausts(self):
+        """OpenAI 400 errors are also retried."""
+        import openai
+        from httpx import Request, Response
+
+        GlobalRateLimiter.reset_instance()
+        limiter = GlobalRateLimiter.get_instance(rate_limit=100, rate_window=60)
+
+        call_count = 0
+
+        async def always_400():
+            nonlocal call_count
+            call_count += 1
+            raise openai.BadRequestError(
+                "bad request",
+                response=Response(400, request=Request("POST", "http://x")),
+                body={},
+            )
+
+        with pytest.raises(openai.BadRequestError):
+            await limiter.execute_with_retry(
+                always_400,
+                max_retries=2,
+                base_delay=0.01,
+                max_delay=0.1,
+                jitter=0,
+            )
+
+        assert call_count == 3
 
     @pytest.mark.asyncio
     async def test_max_concurrency_zero_raises(self):
