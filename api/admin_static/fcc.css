@@ -520,6 +520,19 @@ kbd {
   opacity: 0.6;
 }
 
+.provider-actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+  margin-top: 4px;
+}
+
+.validate-button {
+  min-height: 28px;
+  font-size: 11px;
+  padding: 0 10px;
+}
+
 /* ── Buttons ────────────────────────────────────────────────── */
 .test-button,
 .ghost-button,

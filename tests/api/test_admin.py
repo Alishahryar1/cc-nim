@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 from unittest.mock import patch
 
 import httpx
@@ -607,3 +608,245 @@ def test_health_history_caps_per_provider_buffer(monkeypatch, tmp_path):
     assert len(snapshot["openai"]) == 50
     # Oldest dropped — first entry is i=30
     assert snapshot["openai"][0]["latency_ms"] == 30.0
+
+
+# ── Provider credential validation ─────────────────────────────────────────
+
+
+from providers.base import BaseProvider as _BaseProvider  # noqa: E402
+from providers.base import ProviderConfig as _ProviderConfig  # noqa: E402
+
+_STUB_CONFIG = _ProviderConfig(api_key="stub", base_url="http://stub.invalid")
+
+
+class _StubValidatingProvider(_BaseProvider):
+    """Minimal BaseProvider subclass returning a pre-canned validate result."""
+
+    def __init__(self, result: dict) -> None:
+        super().__init__(_STUB_CONFIG)
+        self._stub_result = result
+        self.calls: list[dict] = []
+
+    async def cleanup(self) -> None:
+        return None
+
+    async def list_model_ids(self) -> frozenset[str]:
+        return frozenset({"stub-model"})
+
+    async def stream_response(
+        self,
+        request: Any,
+        input_tokens: int = 0,
+        *,
+        request_id: str | None = None,
+        thinking_enabled: bool | None = None,
+    ):
+        if False:
+            yield ""
+
+    async def validate_credentials(self, preferred_model: str | None = None) -> dict:
+        self.calls.append({"preferred_model": preferred_model})
+        return self._stub_result
+
+
+def _inject_stub_provider(app, provider_id, result) -> tuple:
+    """Insert a stub provider directly into the registry to bypass real I/O.
+
+    Returns ``(registry, stub)`` so callers can inspect call records.
+    """
+    from providers.registry import ProviderRegistry
+
+    stub = _StubValidatingProvider(result)
+    registry = ProviderRegistry(providers={provider_id: stub})
+    app.state.provider_registry = registry
+    return registry, stub
+
+
+def test_validate_endpoint_full_pass(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    from api import health_history
+
+    health_history.clear()
+    app = create_app(lifespan_enabled=False)
+    _inject_stub_provider(
+        app,
+        "openai",
+        {
+            "auth_ok": True,
+            "completion_ok": True,
+            "models_count": 12,
+            "test_model": "stub-model",
+        },
+    )
+
+    response = _local_client(app).post("/admin/api/providers/openai/validate")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider_id"] == "openai"
+    assert body["auth_ok"] is True
+    assert body["completion_ok"] is True
+    assert body["test_model"] == "stub-model"
+    # health history records the outcome
+    history = health_history.snapshot().get("openai", [])
+    assert len(history) == 1
+    assert history[0]["status"] == "ok"
+
+
+def test_validate_endpoint_auth_ok_but_completion_fails(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    from api import health_history
+
+    health_history.clear()
+    app = create_app(lifespan_enabled=False)
+    _inject_stub_provider(
+        app,
+        "openai",
+        {
+            "auth_ok": True,
+            "completion_ok": False,
+            "models_count": 12,
+            "test_model": "stub-model",
+            "error_type": "BadRequestError",
+        },
+    )
+
+    response = _local_client(app).post("/admin/api/providers/openai/validate")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["auth_ok"] is True
+    assert body["completion_ok"] is False
+    assert body["error_type"] == "BadRequestError"
+    # Partial pass (completion failed) → health history records as error
+    history = health_history.snapshot().get("openai", [])
+    assert history[0]["status"] == "error"
+
+
+def test_validate_endpoint_auth_failure(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    from api import health_history
+
+    health_history.clear()
+    app = create_app(lifespan_enabled=False)
+    _inject_stub_provider(
+        app,
+        "openai",
+        {
+            "auth_ok": False,
+            "completion_ok": False,
+            "models_count": 0,
+            "error_type": "AuthenticationError",
+        },
+    )
+
+    response = _local_client(app).post("/admin/api/providers/openai/validate")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["auth_ok"] is False
+    assert body["error_type"] == "AuthenticationError"
+
+
+def test_validate_endpoint_exception_returns_auth_false(monkeypatch, tmp_path):
+    """Exception raised by validate_credentials must surface as auth_ok=False."""
+    _set_home(monkeypatch, tmp_path)
+    from api import health_history
+
+    health_history.clear()
+    app = create_app(lifespan_enabled=False)
+
+    class _RaisingProvider(_StubValidatingProvider):
+        def __init__(self):
+            super().__init__(result={})
+
+        async def validate_credentials(self, preferred_model=None):
+            raise ConnectionError("network unreachable")
+
+    from providers.registry import ProviderRegistry
+
+    registry = ProviderRegistry(providers={"openai": _RaisingProvider()})
+    app.state.provider_registry = registry
+
+    response = _local_client(app).post("/admin/api/providers/openai/validate")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["provider_id"] == "openai"
+    assert body["auth_ok"] is False
+    assert body["completion_ok"] is False
+    assert body["error_type"] == "ConnectionError"
+    # Recorded as error in health history
+    history = health_history.snapshot().get("openai", [])
+    assert len(history) == 1
+    assert history[0]["status"] == "error"
+    assert history[0]["error_type"] == "ConnectionError"
+
+
+def test_validate_endpoint_is_loopback_only(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    app = create_app(lifespan_enabled=False)
+    remote_client = TestClient(app, client=("203.0.113.10", 50000))
+    assert remote_client.post("/admin/api/providers/openai/validate").status_code == 403
+
+
+def test_validate_endpoint_forwards_configured_model(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    monkeypatch.setenv("MODEL", "openai/gpt-4o")
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-test")
+    # Bust the settings lru_cache so the new MODEL env var is picked up
+    from config.settings import get_settings
+
+    get_settings.cache_clear()
+    try:
+        app = create_app(lifespan_enabled=False)
+        stub_result = {
+            "auth_ok": True,
+            "completion_ok": True,
+            "models_count": 5,
+            "test_model": "gpt-4o",
+        }
+        _registry, stub = _inject_stub_provider(app, "openai", stub_result)
+
+        response = _local_client(app).post("/admin/api/providers/openai/validate")
+
+        assert response.status_code == 200
+        assert stub.calls == [{"preferred_model": "gpt-4o"}]
+    finally:
+        get_settings.cache_clear()
+
+
+def test_base_provider_validate_credentials_default_impl():
+    """Default implementation should report auth_ok based on list_model_ids() success."""
+    import asyncio
+
+    class _DummyProvider:
+        async def list_model_ids(self):
+            return frozenset({"a", "b", "c"})
+
+        # Bound to BaseProvider's default impl
+        from providers.base import BaseProvider
+
+        validate_credentials = BaseProvider.validate_credentials
+
+    result = asyncio.run(_DummyProvider().validate_credentials())
+    assert result["auth_ok"] is True
+    assert result["models_count"] == 3
+    assert result["completion_ok"] is None
+
+
+def test_base_provider_validate_credentials_default_impl_auth_failure():
+    import asyncio
+
+    class _FailingProvider:
+        async def list_model_ids(self):
+            raise PermissionError("invalid key")
+
+        from providers.base import BaseProvider
+
+        validate_credentials = BaseProvider.validate_credentials
+
+    result = asyncio.run(_FailingProvider().validate_credentials())
+    assert result["auth_ok"] is False
+    assert result["models_count"] == 0
+    assert result["error_type"] == "PermissionError"

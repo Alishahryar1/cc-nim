@@ -277,10 +277,60 @@ function renderProviders(providerStatus) {
       testProvider(provider.provider_id, testBtn)
     );
 
-    card.append(title, meta, spark, testBtn);
+    const actions = document.createElement("div");
+    actions.className = "provider-actions";
+    actions.append(testBtn);
+
+    if (provider.kind !== "local") {
+      const validateBtn = document.createElement("button");
+      validateBtn.type = "button";
+      validateBtn.className = "ghost-button validate-button";
+      validateBtn.textContent = "Validate key";
+      validateBtn.title = "Run a 1-token completion to verify the API key works";
+      validateBtn.addEventListener("click", () =>
+        validateProviderKey(provider.provider_id, validateBtn)
+      );
+      actions.append(validateBtn);
+    }
+
+    card.append(title, meta, spark, actions);
     grid.appendChild(card);
   });
   loadHealthHistory();
+}
+
+async function validateProviderKey(providerId, button) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "Validating…";
+  try {
+    const result = await api(`/admin/api/providers/${providerId}/validate`, {
+      method: "POST",
+      body: "{}",
+    });
+    if (result.auth_ok && result.completion_ok) {
+      Toast.show(
+        `${providerName(providerId)}: key valid — ${result.test_model} responded`,
+        "ok"
+      );
+    } else if (result.auth_ok && result.completion_ok === false) {
+      Toast.show(
+        `${providerName(providerId)}: auth ok but inference failed (${result.error_type || "unknown"})`,
+        "error"
+      );
+    } else {
+      Toast.show(
+        `${providerName(providerId)}: auth failed (${result.error_type || "unknown"})`,
+        "error"
+      );
+    }
+  } catch (err) {
+    Toast.show(`${providerName(providerId)}: ${err.message}`, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+    loadHealthHistory();
+  }
 }
 
 async function loadHealthHistory() {

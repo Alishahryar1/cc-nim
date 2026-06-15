@@ -236,6 +236,54 @@ async def get_health_history(request: Request):
     return {"providers": _health_history.snapshot()}
 
 
+@router.post("/admin/api/providers/{provider_id}/validate")
+async def validate_provider_credentials(provider_id: str, request: Request):
+    """Deep credential validation — fetch /models AND perform a 1-token
+    completion to prove the API key is valid for actual inference."""
+    require_loopback_admin(request)
+    settings = get_cached_settings()
+    registry = getattr(request.app.state, "provider_registry", None)
+    if not isinstance(registry, ProviderRegistry):
+        registry = ProviderRegistry()
+        request.app.state.provider_registry = registry
+
+    # Hand the provider its currently-configured model when applicable.
+    configured = settings.model or ""
+    preferred = None
+    if "/" in configured:
+        cfg_provider, _, cfg_model = configured.partition("/")
+        if cfg_provider == provider_id:
+            preferred = cfg_model
+
+    start = time.perf_counter()
+    try:
+        provider = registry.get(provider_id, settings)
+        result = await provider.validate_credentials(preferred_model=preferred)
+    except Exception as exc:
+        _health_history.record(
+            provider_id=provider_id,
+            status="error",
+            latency_ms=(time.perf_counter() - start) * 1000,
+            error_type=type(exc).__name__,
+        )
+        return {
+            "provider_id": provider_id,
+            "auth_ok": False,
+            "completion_ok": False,
+            "error_type": type(exc).__name__,
+        }
+
+    latency_ms = (time.perf_counter() - start) * 1000
+    is_full_pass = result.get("auth_ok") and result.get("completion_ok") is not False
+    _health_history.record(
+        provider_id=provider_id,
+        status="ok" if is_full_pass else "error",
+        latency_ms=latency_ms,
+        error_type=result.get("error_type"),
+    )
+    return {"provider_id": provider_id, **result}
+
+
 @router.post("/admin/api/models/refresh")
 async def refresh_models(request: Request):
     require_loopback_admin(request)

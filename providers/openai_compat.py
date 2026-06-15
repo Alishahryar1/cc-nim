@@ -113,6 +113,58 @@ class OpenAIChatTransport(BaseProvider):
         payload = await self._client.models.list()
         return extract_openai_model_ids(payload, provider_name=self._provider_name)
 
+    async def validate_credentials(
+        self, preferred_model: str | None = None
+    ) -> dict[str, Any]:
+        """Hit `/models` *and* perform a 1-token chat completion against the
+        preferred (or first listed) model — the completion call is what
+        proves the key is valid for actual inference, not just discovery.
+        """
+        try:
+            model_ids = await self.list_model_ids()
+        except Exception as exc:
+            return {
+                "auth_ok": False,
+                "completion_ok": False,
+                "models_count": 0,
+                "error_type": type(exc).__name__,
+            }
+
+        # Pick a model: caller-supplied if it exists on this provider, else first listed.
+        if preferred_model and preferred_model in model_ids:
+            test_model = preferred_model
+        elif model_ids:
+            test_model = sorted(model_ids)[0]
+        else:
+            return {
+                "auth_ok": True,
+                "completion_ok": False,
+                "models_count": 0,
+                "error_type": "no_models_available",
+            }
+
+        try:
+            await self._client.chat.completions.create(
+                model=test_model,
+                messages=[{"role": "user", "content": "."}],
+                max_tokens=1,
+                stream=False,
+            )
+        except Exception as exc:
+            return {
+                "auth_ok": True,
+                "completion_ok": False,
+                "models_count": len(model_ids),
+                "test_model": test_model,
+                "error_type": type(exc).__name__,
+            }
+        return {
+            "auth_ok": True,
+            "completion_ok": True,
+            "models_count": len(model_ids),
+            "test_model": test_model,
+        }
+
     @abstractmethod
     def _build_request_body(
         self, request: Any, thinking_enabled: bool | None = None

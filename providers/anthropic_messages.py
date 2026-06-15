@@ -109,6 +109,70 @@ class AnthropicMessagesTransport(BaseProvider):
         finally:
             await _maybe_await_aclose(response)
 
+    async def validate_credentials(
+        self, preferred_model: str | None = None
+    ) -> dict[str, Any]:
+        """Verify auth via `/models` then prove the key works for inference
+        with a 1-token `/messages` call."""
+        try:
+            model_ids = await self.list_model_ids()
+        except Exception as exc:
+            return {
+                "auth_ok": False,
+                "completion_ok": False,
+                "models_count": 0,
+                "error_type": type(exc).__name__,
+            }
+
+        if preferred_model and preferred_model in model_ids:
+            test_model = preferred_model
+        elif model_ids:
+            test_model = sorted(model_ids)[0]
+        else:
+            return {
+                "auth_ok": True,
+                "completion_ok": False,
+                "models_count": 0,
+                "error_type": "no_models_available",
+            }
+
+        body = {
+            "model": test_model,
+            "max_tokens": 1,
+            "messages": [{"role": "user", "content": "."}],
+        }
+        try:
+            response = await self._client.post(
+                "/v1/messages",
+                json=body,
+                headers=self._request_headers(),
+            )
+        except Exception as exc:
+            return {
+                "auth_ok": True,
+                "completion_ok": False,
+                "models_count": len(model_ids),
+                "test_model": test_model,
+                "error_type": type(exc).__name__,
+            }
+        try:
+            if response.status_code >= 400:
+                return {
+                    "auth_ok": True,
+                    "completion_ok": False,
+                    "models_count": len(model_ids),
+                    "test_model": test_model,
+                    "error_type": f"HTTP_{response.status_code}",
+                }
+            return {
+                "auth_ok": True,
+                "completion_ok": True,
+                "models_count": len(model_ids),
+                "test_model": test_model,
+            }
+        finally:
+            await _maybe_await_aclose(response)
+
     async def _send_model_list_request(self) -> httpx.Response:
         """Query the provider endpoint that advertises available model ids."""
         return await self._client.get(

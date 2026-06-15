@@ -163,13 +163,21 @@ All enforced in `.github/workflows/tests.yml` on push/PR to `main`/`master`:
 - [x] **Dark/light theme toggle** — `localStorage` persistence, sun/moon SVG icons, `data-theme` on `<html>`, full light-mode design token overrides in CSS
 - [x] **Per-request metrics panel** — `api/metrics.py` in-memory store, `GET /admin/api/metrics`, Admin UI "Metrics" tab: summary cards (total/avg/p95/tokens), latency sparkline, request table with inline bars
 - [x] **Provider health history** — `api/health_history.py` per-provider bounded deque (50 entries), `GET /admin/api/health-history`, JSON persistence to `~/.fcc-cache/health_history.json` (serverless-safe fallback), inline sparkline on each provider card
+- [x] **One-click API-key validation** — `BaseProvider.validate_credentials()` + 1-token completion override on `OpenAIChatTransport` + `AnthropicMessagesTransport`; `POST /admin/api/providers/{id}/validate`; "Validate key" button on every non-local provider card; partial-pass error states reported through Toast
 
 ### Planned 🔲
-- [ ] One-click provider API key validation (not just model fetch)
+- [ ] (none — roadmap caught up)
 
 ---
 
 ## Changelog
+
+### v2.0.0 — 2026-06-15 (validate key)
+- **`BaseProvider.validate_credentials(preferred_model)`**: optional method, default impl reuses `list_model_ids()` for backwards-compat. Returns `{auth_ok, completion_ok, models_count, test_model?, error_type?}`.
+- **OpenAI-compat + Anthropic-native overrides**: `OpenAIChatTransport` and `AnthropicMessagesTransport` perform an actual 1-token completion against the configured `MODEL` (or first listed) to prove the key works for inference, not just discovery.
+- **`POST /admin/api/providers/{provider_id}/validate`** (loopback-only): forwards the model from `settings.model` when its provider prefix matches; records outcome in `health_history`.
+- **Admin UI "Validate key" button**: appears on every non-local provider card; reports auth-ok / partial / fail via Toast; refreshes sparkline after each click.
+- **CI**: 1443/1443 passing (8 new tests: full pass, auth+inference partial, auth failure, exception handling, loopback enforcement, configured-model forwarding, default impl success+failure)
 
 ### v2.0.0 — 2026-06-15 (health history)
 - **Provider health history**: `api/health_history.py` — per-provider `defaultdict(deque(maxlen=50))` with `threading.Lock`. `record(provider_id, status, latency_ms, error_type)` writes one outcome per `test_provider` or `_check_local_provider` call.

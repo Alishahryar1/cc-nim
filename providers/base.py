@@ -131,6 +131,31 @@ class BaseProvider(ABC):
         """Return advertised model ids with optional provider capability metadata."""
         return model_infos_from_ids(await self.list_model_ids())
 
+    async def validate_credentials(
+        self, preferred_model: str | None = None
+    ) -> dict[str, Any]:
+        """Verify the provider is reachable AND the configured API key works.
+
+        The default implementation only checks the model-listing endpoint —
+        for providers that serve catalogs publicly, override to perform a
+        minimal authenticated call (e.g. a 1-token completion). Returns a
+        dict with: {auth_ok, completion_ok, models_count, error_type?}.
+        """
+        try:
+            ids = await self.list_model_ids()
+        except Exception as exc:
+            return {
+                "auth_ok": False,
+                "completion_ok": False,
+                "models_count": 0,
+                "error_type": type(exc).__name__,
+            }
+        return {
+            "auth_ok": True,
+            "completion_ok": None,  # not exercised by default impl
+            "models_count": len(ids),
+        }
+
     @abstractmethod
     async def stream_response(
         self,
