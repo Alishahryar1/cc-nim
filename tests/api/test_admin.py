@@ -567,7 +567,7 @@ def test_health_history_records_and_persists(monkeypatch, tmp_path):
 
     from api import health_history
 
-    health_history = importlib.reload(health_history)
+    importlib.reload(health_history)
     health_history.clear()
 
     health_history.record(provider_id="openai", status="ok", latency_ms=125.4)
@@ -586,7 +586,7 @@ def test_health_history_records_and_persists(monkeypatch, tmp_path):
     assert persisted.exists()
 
     # Reload picks up persisted entries
-    health_history = importlib.reload(health_history)
+    importlib.reload(health_history)
     snapshot2 = health_history.snapshot()
     assert len(snapshot2["openai"]) == 2
 
@@ -597,7 +597,7 @@ def test_health_history_caps_per_provider_buffer(monkeypatch, tmp_path):
 
     from api import health_history
 
-    health_history = importlib.reload(health_history)
+    importlib.reload(health_history)
     health_history.clear()
 
     for i in range(80):

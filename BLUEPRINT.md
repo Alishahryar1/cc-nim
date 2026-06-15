@@ -6,7 +6,7 @@
 
 ## Executive Summary
 
-Drop-in Anthropic Messages API proxy that routes Claude Code CLI traffic to 17+ provider backends. Keeps Claude Code's client-side protocol stable while swapping the underlying model. Ships with a local Admin UI, Discord/Telegram bot wrapper, and optional voice-note transcription.
+Drop-in Anthropic Messages API proxy that routes Claude Code CLI traffic to 18 provider backends. Keeps Claude Code's client-side protocol stable while swapping the underlying model. Ships with a local Admin UI, Discord/Telegram bot wrapper, and optional voice-note transcription.
 
 ---
 
@@ -53,11 +53,11 @@ Claude Code CLI / VS Code / JetBrains ACP
 | `api/` | FastAPI routes, admin UI, services, model routing, request optimizations |
 | `core/anthropic/` | Shared Anthropic protocol: SSE, content, conversion, thinking, tokens, tools |
 | `core/` | Rate limiting, trace/logging utilities |
-| `providers/` | Provider transports (17 backends), registry, base classes, error mapping |
+| `providers/` | Provider transports (18 backends), registry, base classes, error mapping |
 | `config/` | Settings (`pydantic-settings`), provider catalog, logging config, paths |
 | `messaging/` | Discord/Telegram platforms, session trees, voice transcription |
 | `cli/` | `fcc-server`, `fcc-claude`, `fcc-init` entry points; process registry |
-| `tests/` | 1429 unit, contract, and integration tests |
+| `tests/` | 1443 unit, contract, and integration tests |
 
 ---
 
@@ -139,7 +139,7 @@ All enforced in `.github/workflows/tests.yml` on push/PR to `main`/`master`:
 | ruff-format | `uv run ruff format --check` | ✅ |
 | ruff-check | `uv run ruff check` | ✅ |
 | ty | `uv run ty check` | ✅ |
-| pytest | `uv run pytest -v --tb=short` | ✅ 1429/1429 |
+| pytest | `uv run pytest -v --tb=short` | ✅ 1443/1443 |
 
 ---
 
@@ -172,6 +172,11 @@ All enforced in `.github/workflows/tests.yml` on push/PR to `main`/`master`:
 ---
 
 ## Changelog
+
+### v2.0.0 — 2026-06-15 (audit + ty)
+- **`ty` regression fix**: removed redundant `health_history = importlib.reload(health_history)` reassignments in `tests/api/test_admin.py` (3 sites). `importlib.reload()` mutates the module in place, so the rebinding only confused ty's narrowed-import type with the generic `ModuleType` return — no `# type: ignore` added (CLAUDE.md hard rule).
+- **KafCade audit (`kc E`)**: read-only structured pass. Scores — Security 9/10, Correctness 9/10, Performance 10/10, Quality 9/10. No P0/P1 findings. Surfaced provider count drift (17 → 18, openai shipped 2026-05-30) and test count drift (1429 → 1443) in Module Map — corrected.
+- **CI**: 1443/1443 passing across all 4 gates (ruff format, ruff check, ty, pytest).
 
 ### v2.0.0 — 2026-06-15 (validate-key)
 - **One-click provider API key validation**: `POST /admin/api/providers/{id}/validate` (loopback-only). Calls `provider.validate_credentials(preferred_model?)`. `BaseProvider` default: model-list check. `OpenAIChatTransport` override: model list **+** 1-token `max_tokens=1` chat completion — proves the key works for actual inference.
