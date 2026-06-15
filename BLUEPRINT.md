@@ -107,6 +107,7 @@ Local-only (loopback guard), served at `/admin`.
 - Full mobile-responsive layout
 - Dark/light theme toggle — `localStorage` persistence, sun/moon icons, full CSS variable override
 - Metrics tab — summary cards, latency sparkline, per-request table with inline bars; `GET /admin/api/metrics`
+- One-click API key validation — "Validate key" button per non-local provider card; `POST /admin/api/providers/{id}/validate`; 3-state result: key valid / auth OK (completion failed) / key invalid
 
 ---
 
@@ -163,21 +164,19 @@ All enforced in `.github/workflows/tests.yml` on push/PR to `main`/`master`:
 - [x] **Dark/light theme toggle** — `localStorage` persistence, sun/moon SVG icons, `data-theme` on `<html>`, full light-mode design token overrides in CSS
 - [x] **Per-request metrics panel** — `api/metrics.py` in-memory store, `GET /admin/api/metrics`, Admin UI "Metrics" tab: summary cards (total/avg/p95/tokens), latency sparkline, request table with inline bars
 - [x] **Provider health history** — `api/health_history.py` per-provider bounded deque (50 entries), `GET /admin/api/health-history`, JSON persistence to `~/.fcc-cache/health_history.json` (serverless-safe fallback), inline sparkline on each provider card
-- [x] **One-click API-key validation** — `BaseProvider.validate_credentials()` + 1-token completion override on `OpenAIChatTransport` + `AnthropicMessagesTransport`; `POST /admin/api/providers/{id}/validate`; "Validate key" button on every non-local provider card; partial-pass error states reported through Toast
+- [x] **One-click API key validation** — `POST /admin/api/providers/{id}/validate`; `validate_credentials()` on BaseProvider; OpenAI-compat override adds 1-token completion check; "Validate key" button per non-local provider card
 
 ### Planned 🔲
-- [ ] (none — roadmap caught up)
+- [ ] *(roadmap clear — open an issue to propose the next feature)*
 
 ---
 
 ## Changelog
 
-### v2.0.0 — 2026-06-15 (validate key)
-- **`BaseProvider.validate_credentials(preferred_model)`**: optional method, default impl reuses `list_model_ids()` for backwards-compat. Returns `{auth_ok, completion_ok, models_count, test_model?, error_type?}`.
-- **OpenAI-compat + Anthropic-native overrides**: `OpenAIChatTransport` and `AnthropicMessagesTransport` perform an actual 1-token completion against the configured `MODEL` (or first listed) to prove the key works for inference, not just discovery.
-- **`POST /admin/api/providers/{provider_id}/validate`** (loopback-only): forwards the model from `settings.model` when its provider prefix matches; records outcome in `health_history`.
-- **Admin UI "Validate key" button**: appears on every non-local provider card; reports auth-ok / partial / fail via Toast; refreshes sparkline after each click.
-- **CI**: 1443/1443 passing (8 new tests: full pass, auth+inference partial, auth failure, exception handling, loopback enforcement, configured-model forwarding, default impl success+failure)
+### v2.0.0 — 2026-06-15 (validate-key)
+- **One-click provider API key validation**: `POST /admin/api/providers/{id}/validate` (loopback-only). Calls `provider.validate_credentials(preferred_model?)`. `BaseProvider` default: model-list check. `OpenAIChatTransport` override: model list **+** 1-token `max_tokens=1` chat completion — proves the key works for actual inference.
+- **Admin UI "Validate key" button**: every non-local provider card gets a dedicated "Validate key" button (distinct from "Refresh models"). Returns `{auth_ok, completion_ok, models_count, test_model?, error_type?}`. UI shows "Key valid ✓" / "Auth OK" (completion failed) / "Key invalid ✗" with toast.
+- **CI**: 1443/1443 passing (9 new tests).
 
 ### v2.0.0 — 2026-06-15 (health history)
 - **Provider health history**: `api/health_history.py` — per-provider `defaultdict(deque(maxlen=50))` with `threading.Lock`. `record(provider_id, status, latency_ms, error_type)` writes one outcome per `test_provider` or `_check_local_provider` call.
