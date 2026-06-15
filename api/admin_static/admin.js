@@ -263,6 +263,11 @@ function renderProviders(providerStatus) {
         ? provider.base_url || "No local URL configured"
         : provider.credential_env;
 
+    const spark = document.createElement("div");
+    spark.className = "provider-spark";
+    spark.dataset.providerSpark = provider.provider_id;
+    spark.title = "Health history — newest right";
+
     const testBtn = document.createElement("button");
     testBtn.type = "button";
     testBtn.className = "test-button";
@@ -272,9 +277,50 @@ function renderProviders(providerStatus) {
       testProvider(provider.provider_id, testBtn)
     );
 
-    card.append(title, meta, testBtn);
+    card.append(title, meta, spark, testBtn);
     grid.appendChild(card);
   });
+  loadHealthHistory();
+}
+
+async function loadHealthHistory() {
+  try {
+    const data = await api("/admin/api/health-history");
+    renderHealthHistory(data.providers || {});
+  } catch (_err) {
+    // Endpoint is loopback-only; remote contexts get a 403 — fail silently.
+  }
+}
+
+function renderHealthHistory(providers) {
+  document.querySelectorAll("[data-provider-spark]").forEach((el) => {
+    const pid = el.dataset.providerSpark;
+    const entries = providers[pid] || [];
+    el.innerHTML = renderSparkBars(entries);
+  });
+}
+
+function renderSparkBars(entries) {
+  if (entries.length === 0) {
+    return '<span class="spark-empty">No history yet</span>';
+  }
+  const recent = entries.slice(-30);
+  const maxLat = Math.max(...recent.map((e) => e.latency_ms || 0), 1);
+  return recent
+    .map((e) => {
+      const ok = e.status === "ok";
+      const pct = Math.max(8, Math.round(((e.latency_ms || 0) / maxLat) * 100));
+      const cls = !ok
+        ? "spark-bar error-bar"
+        : e.latency_ms > 1500
+        ? "spark-bar slow"
+        : "spark-bar";
+      const label = ok
+        ? `${fmtLatency(e.latency_ms)}`
+        : `${e.error_type || "error"}`;
+      return `<div class="${cls}" style="height:${pct}%" title="${escapeHtml(label)}"></div>`;
+    })
+    .join("");
 }
 
 function updateProviderCard(providerId, status, label, metaText) {
@@ -682,6 +728,7 @@ async function testProvider(providerId, button) {
   } finally {
     button.disabled    = false;
     button.textContent = original;
+    loadHealthHistory();
   }
 }
 

@@ -535,3 +535,75 @@ def test_admin_metrics_endpoint_is_loopback_only(monkeypatch, tmp_path):
 
     remote_client = TestClient(app, client=("203.0.113.10", 50000))
     assert remote_client.get("/admin/api/metrics").status_code == 403
+
+
+def test_admin_health_history_endpoint_returns_empty(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    from api import health_history
+
+    health_history.clear()
+    app = create_app(lifespan_enabled=False)
+
+    response = _local_client(app).get("/admin/api/health-history")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body == {"providers": {}}
+
+
+def test_admin_health_history_endpoint_is_loopback_only(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    app = create_app(lifespan_enabled=False)
+
+    remote_client = TestClient(app, client=("203.0.113.10", 50000))
+    assert remote_client.get("/admin/api/health-history").status_code == 403
+
+
+def test_health_history_records_and_persists(monkeypatch, tmp_path):
+    monkeypatch.setenv("FCC_CACHE_DIR", str(tmp_path))
+    # Re-import to pick up the new cache dir
+    import importlib
+
+    from api import health_history
+
+    health_history = importlib.reload(health_history)
+    health_history.clear()
+
+    health_history.record(provider_id="openai", status="ok", latency_ms=125.4)
+    health_history.record(
+        provider_id="openai", status="error", latency_ms=2100.0, error_type="Timeout"
+    )
+
+    snapshot = health_history.snapshot()
+    assert "openai" in snapshot
+    assert len(snapshot["openai"]) == 2
+    assert snapshot["openai"][0]["status"] == "ok"
+    assert snapshot["openai"][1]["error_type"] == "Timeout"
+
+    # Persisted file should exist
+    persisted = tmp_path / "health_history.json"
+    assert persisted.exists()
+
+    # Reload picks up persisted entries
+    health_history = importlib.reload(health_history)
+    snapshot2 = health_history.snapshot()
+    assert len(snapshot2["openai"]) == 2
+
+
+def test_health_history_caps_per_provider_buffer(monkeypatch, tmp_path):
+    monkeypatch.setenv("FCC_CACHE_DIR", str(tmp_path))
+    import importlib
+
+    from api import health_history
+
+    health_history = importlib.reload(health_history)
+    health_history.clear()
+
+    for i in range(80):
+        health_history.record(provider_id="openai", status="ok", latency_ms=float(i))
+
+    snapshot = health_history.snapshot()
+    # Bounded to _MAX_ENTRIES_PER_PROVIDER (50)
+    assert len(snapshot["openai"]) == 50
+    # Oldest dropped — first entry is i=30
+    assert snapshot["openai"][0]["latency_ms"] == 30.0

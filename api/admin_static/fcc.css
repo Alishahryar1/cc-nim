@@ -496,6 +496,30 @@ kbd {
   line-height: 1.4;
 }
 
+/* ── Provider Health Sparkline ─────────────────────────────── */
+.provider-spark {
+  display: flex;
+  align-items: flex-end;
+  gap: 2px;
+  height: 24px;
+  margin-top: 4px;
+  padding: 2px 0;
+  border-top: 1px dashed var(--border, rgba(255, 255, 255, 0.06));
+}
+
+.provider-spark .spark-bar {
+  flex: 1 1 0;
+  min-width: 3px;
+  max-width: 8px;
+  border-radius: 1px;
+}
+
+.provider-spark .spark-empty {
+  font-size: 10px;
+  color: var(--muted);
+  opacity: 0.6;
+}
+
 /* ── Buttons ────────────────────────────────────────────────── */
 .test-button,
 .ghost-button,

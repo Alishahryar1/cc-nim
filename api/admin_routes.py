@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import ipaddress
+import time
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
@@ -17,6 +18,7 @@ from config.settings import Settings
 from config.settings import get_settings as get_cached_settings
 from providers.registry import ProviderRegistry
 
+from . import health_history as _health_history
 from . import metrics as _metrics
 from .admin_config import (
     FIELD_BY_KEY,
@@ -198,21 +200,40 @@ async def test_provider(provider_id: str, request: Request):
     if not isinstance(registry, ProviderRegistry):
         registry = ProviderRegistry()
         request.app.state.provider_registry = registry
+    start = time.perf_counter()
     try:
         provider = registry.get(provider_id, settings)
         infos = await provider.list_model_infos()
     except Exception as exc:
+        _health_history.record(
+            provider_id=provider_id,
+            status="error",
+            latency_ms=(time.perf_counter() - start) * 1000,
+            error_type=type(exc).__name__,
+        )
         return {
             "provider_id": provider_id,
             "ok": False,
             "error_type": type(exc).__name__,
         }
+    _health_history.record(
+        provider_id=provider_id,
+        status="ok",
+        latency_ms=(time.perf_counter() - start) * 1000,
+    )
     registry.cache_model_infos(provider_id, infos)
     return {
         "provider_id": provider_id,
         "ok": True,
         "models": sorted(info.model_id for info in infos),
     }
+
+
+@router.get("/admin/api/health-history")
+async def get_health_history(request: Request):
+    """Return per-provider health-check history (last 50 outcomes each)."""
+    require_loopback_admin(request)
+    return {"providers": _health_history.snapshot()}
 
 
 @router.post("/admin/api/models/refresh")
@@ -287,10 +308,17 @@ async def _check_local_provider(
         }
 
     url = f"{clean_url}{path}"
+    start = time.perf_counter()
     try:
         async with httpx.AsyncClient(timeout=1.5) as client:
             response = await client.get(url)
         ok = 200 <= response.status_code < 300
+        _health_history.record(
+            provider_id=provider_id,
+            status="ok" if ok else "error",
+            latency_ms=(time.perf_counter() - start) * 1000,
+            error_type=None if ok else f"HTTP_{response.status_code}",
+        )
         return {
             "provider_id": provider_id,
             "status": "reachable" if ok else "offline",
@@ -299,6 +327,12 @@ async def _check_local_provider(
             "status_code": response.status_code,
         }
     except Exception as exc:
+        _health_history.record(
+            provider_id=provider_id,
+            status="error",
+            latency_ms=(time.perf_counter() - start) * 1000,
+            error_type=type(exc).__name__,
+        )
         return {
             "provider_id": provider_id,
             "status": "offline",

@@ -1,5 +1,5 @@
 # Free Claude Code — Project Blueprint
-**Version:** 2.0.0 · **Updated:** 2026-06-13 · **Python:** 3.14.0
+**Version:** 2.0.0 · **Updated:** 2026-06-15 · **Python:** 3.14.0
 **Live:** https://free-claude-code-main-ebon.vercel.app · **Repo:** https://github.com/dnzengou/free-claude-code
 
 ---
@@ -162,14 +162,21 @@ All enforced in `.github/workflows/tests.yml` on push/PR to `main`/`master`:
 - [x] **`GET /health/ready`** — authenticated readiness check: provider, model, tier overrides, auth status; useful for Vercel env var verification
 - [x] **Dark/light theme toggle** — `localStorage` persistence, sun/moon SVG icons, `data-theme` on `<html>`, full light-mode design token overrides in CSS
 - [x] **Per-request metrics panel** — `api/metrics.py` in-memory store, `GET /admin/api/metrics`, Admin UI "Metrics" tab: summary cards (total/avg/p95/tokens), latency sparkline, request table with inline bars
+- [x] **Provider health history** — `api/health_history.py` per-provider bounded deque (50 entries), `GET /admin/api/health-history`, JSON persistence to `~/.fcc-cache/health_history.json` (serverless-safe fallback), inline sparkline on each provider card
 
 ### Planned 🔲
-- [ ] Provider health history (sparkline chart, persisted across refreshes)
 - [ ] One-click provider API key validation (not just model fetch)
 
 ---
 
 ## Changelog
+
+### v2.0.0 — 2026-06-15 (health history)
+- **Provider health history**: `api/health_history.py` — per-provider `defaultdict(deque(maxlen=50))` with `threading.Lock`. `record(provider_id, status, latency_ms, error_type)` writes one outcome per `test_provider` or `_check_local_provider` call.
+- **JSON persistence**: writes to `${FCC_CACHE_DIR:-~/.fcc-cache}/health_history.json` on every record; restored on module import. `_PERSIST_DISABLED` flag prevents repeat retries on read-only Vercel/Lambda FS (same pattern as `configure_logging`).
+- **`GET /admin/api/health-history`** (loopback-only): returns `{providers: {<id>: [{ts, status, latency_ms, error_type?}, …]}}`.
+- **Admin UI inline sparkline**: every provider card gets a `.provider-spark` strip showing last 30 health-check outcomes; bars color-coded (ok/slow/error); refreshes after every Test/Refresh-models click.
+- **CI**: 1435/1435 passing (6 new tests: empty store, loopback enforcement, record+persist roundtrip, per-provider buffer cap)
 
 ### v2.0.0 — 2026-06-13 (metrics)
 - **Per-request metrics panel**: `api/metrics.py` bounded deque (500 entries), thread-safe `record()`/`snapshot()`. `_metered_stream()` in `services.py` wraps provider SSE, parses `message_delta` for `output_tokens`, records latency on completion/error.
