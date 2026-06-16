@@ -179,6 +179,7 @@ def create_app(*, lifespan_enabled: bool = True) -> FastAPI:
         message = "An unexpected error occurred."
 
         from fastapi import HTTPException
+
         if isinstance(exc, HTTPException):
             status_code = exc.status_code
             message = str(exc.detail)

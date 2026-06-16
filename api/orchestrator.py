@@ -1,17 +1,27 @@
-import json
-from typing import Any, AsyncIterator
+from collections.abc import AsyncIterator
+from typing import Any
+
 from loguru import logger
-from api.models.anthropic import MessagesRequest, Message
+
+from api.models.anthropic import Message, MessagesRequest
 from core.anthropic import SSEBuilder
+
 
 class Orchestrator:
     def __init__(self, proxy_service: Any):
         self.proxy_service = proxy_service
 
-    async def run_cot(self, request_data: MessagesRequest, reasoner_model: str, writer_model: str) -> AsyncIterator[str]:
+    async def run_cot(
+        self, request_data: MessagesRequest, reasoner_model: str, writer_model: str
+    ) -> AsyncIterator[str]:
         """Run a 2-step Chain-of-Thought pipeline: Reason -> Write."""
         import uuid
-        logger.info("Starting CoT Orchestration: reasoner={}, writer={}", reasoner_model, writer_model)
+
+        logger.info(
+            "Starting CoT Orchestration: reasoner={}, writer={}",
+            reasoner_model,
+            writer_model,
+        )
 
         # Initialize SSE
         message_id = f"msg_cot_{uuid.uuid4().hex[:12]}"
@@ -20,7 +30,9 @@ class Orchestrator:
 
         # STAGE 1: Reasoning
         yield sse.start_thinking_block()
-        yield sse.emit_thinking_delta(f"Orchestrating Chain-of-Thought with {reasoner_model}...\n")
+        yield sse.emit_thinking_delta(
+            f"Orchestrating Chain-of-Thought with {reasoner_model}...\n"
+        )
         reasoning_request = request_data.model_copy(deep=True)
         reasoning_request.model = reasoner_model
 
@@ -30,12 +42,18 @@ class Orchestrator:
             "step-by-step plan and internal monologue on how to best fulfill this request.\n"
             "Focus on logic, edge cases, and accuracy. Do not provide the final answer yet, just the reasoning."
         )
-        reasoning_request.messages.insert(0, Message(role="user", content=reasoning_prompt))
+        reasoning_request.messages.insert(
+            0, Message(role="user", content=reasoning_prompt)
+        )
 
         logger.debug("CoT Stage 1: Reasoning...")
-        reasoning_output = await self._get_full_response(reasoner_model, reasoning_request)
+        reasoning_output = await self._get_full_response(
+            reasoner_model, reasoning_request
+        )
 
-        yield sse.emit_thinking_delta("Reasoning complete. Synthesizing final response...\n")
+        yield sse.emit_thinking_delta(
+            "Reasoning complete. Synthesizing final response...\n"
+        )
         yield sse.stop_thinking_block()
 
         # STAGE 2: Writing (Streaming)
@@ -59,12 +77,16 @@ class Orchestrator:
 
         stream = provider.stream_response(writer_routed)
         async for chunk in stream:
-            if "message_start" in chunk: continue
+            if "message_start" in chunk:
+                continue
             yield chunk
 
-    async def _get_full_response(self, model_ref: str, request_data: MessagesRequest) -> str:
+    async def _get_full_response(
+        self, model_ref: str, request_data: MessagesRequest
+    ) -> str:
         """Robustly extract full text from a provider stream."""
         from core.anthropic.emitted_sse_tracker import EmittedNativeSseTracker
+
         tracker = EmittedNativeSseTracker()
 
         panel_request = request_data.model_copy(deep=True)

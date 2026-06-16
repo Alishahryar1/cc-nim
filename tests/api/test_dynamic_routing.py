@@ -1,12 +1,10 @@
-import pytest
 from api.model_router import ModelRouter
 from api.performance import performance_tracker
 from config.settings import Settings
 
+
 def test_dynamic_routing_ranking():
-    settings = Settings.model_construct(
-        model="slow/m1,fast/m1"
-    )
+    settings = Settings.model_construct(model="slow/m1,fast/m1")
     router = ModelRouter(settings)
 
     # 1. Initially, they might be in order or equal
@@ -22,10 +20,9 @@ def test_dynamic_routing_ranking():
     assert candidates2[0].provider_id == "fast"
     assert candidates2[1].provider_id == "slow"
 
+
 def test_dynamic_routing_reliability():
-    settings = Settings.model_construct(
-        model="unreliable/m1,reliable/m1"
-    )
+    settings = Settings.model_construct(model="unreliable/m1,reliable/m1")
     router = ModelRouter(settings)
 
     # Record metrics: 'reliable' has success, 'unreliable' has failures

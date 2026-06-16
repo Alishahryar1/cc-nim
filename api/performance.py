@@ -1,12 +1,14 @@
-import time
+from __future__ import annotations
+
 from collections import deque
 from dataclasses import dataclass, field
-from typing import Dict
+
 
 @dataclass
 class ProviderMetrics:
     success_count: int = 0
     failure_count: int = 0
+    quality_score: float = 1.0
     total_input_tokens: int = 0
     total_output_tokens: int = 0
     latencies: deque = field(default_factory=lambda: deque(maxlen=20))
@@ -39,18 +41,23 @@ class ProviderMetrics:
             return 0.0
         return self.failure_count / total
 
+
 class PerformanceTracker:
     _instance = None
+    metrics: dict[str, ProviderMetrics]
+    category_metrics: dict[str, dict[str, ProviderMetrics]]
 
     def __new__(cls):
         if cls._instance is None:
-            cls._instance = super(PerformanceTracker, cls).__new__(cls)
-            cls._instance.metrics: Dict[str, ProviderMetrics] = {}
+            cls._instance = super().__new__(cls)
+            cls._instance.metrics = {}
             # Track best models per category: {category: {model_ref: ProviderMetrics}}
-            cls._instance.category_metrics: Dict[str, Dict[str, ProviderMetrics]] = {}
+            cls._instance.category_metrics = {}
         return cls._instance
 
-    def record_category_performance(self, category: str, model_ref: str, latency: float, status_code: int):
+    def record_category_performance(
+        self, category: str, model_ref: str, latency: float, status_code: int
+    ):
         if category not in self.category_metrics:
             self.category_metrics[category] = {}
         if model_ref not in self.category_metrics[category]:
@@ -58,8 +65,10 @@ class PerformanceTracker:
 
         m = self.category_metrics[category][model_ref]
         m.latencies.append(latency)
-        if 200 <= status_code < 400: m.success_count += 1
-        else: m.failure_count += 1
+        if 200 <= status_code < 400:
+            m.success_count += 1
+        else:
+            m.failure_count += 1
 
     def get_best_model_for_category(self, category: str, fallback: str) -> str:
         metrics_dict = self.category_metrics.get(category, {})
@@ -68,7 +77,8 @@ class PerformanceTracker:
 
         def _score(m_ref: str) -> float:
             m = metrics_dict[m_ref]
-            if m.success_count == 0: return 0.0
+            if m.success_count == 0:
+                return 0.0
             # Incorporate Quality Score if available (Shadow Feedback)
             quality = getattr(m, "quality_score", 1.0)
             return (quality * (1.0 - m.error_rate)) / max(m.avg_latency, 0.001)
@@ -80,7 +90,6 @@ class PerformanceTracker:
         for cat in self.category_metrics.values():
             if model_ref in cat:
                 m = cat[model_ref]
-                if not hasattr(m, "quality_score"): m.quality_score = 1.0
                 m.quality_score = (m.quality_score * 0.9) + (score * 0.1)
 
     def record_request(
@@ -91,7 +100,7 @@ class PerformanceTracker:
         ttft: float | None = None,
         throughput: float | None = None,
         input_tokens: int = 0,
-        output_tokens: int = 0
+        output_tokens: int = 0,
     ):
         if provider_id not in self.metrics:
             self.metrics[provider_id] = ProviderMetrics()
@@ -114,5 +123,6 @@ class PerformanceTracker:
 
     def get_metrics(self, provider_id: str) -> ProviderMetrics:
         return self.metrics.get(provider_id, ProviderMetrics())
+
 
 performance_tracker = PerformanceTracker()

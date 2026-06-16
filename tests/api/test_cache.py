@@ -1,12 +1,15 @@
-import pytest
-import shutil
 import os
-from api.services import ClaudeProxyService
-from api.model_router import ModelRouter
-from api.models.anthropic import MessagesRequest
-from config.settings import Settings
+import shutil
+
+import pytest
+from fastapi.responses import StreamingResponse
+
 from api.cache import ResponseCache
+from api.models.anthropic import Message, MessagesRequest
+from api.services import ClaudeProxyService
+from config.settings import Settings
 from providers.base import BaseProvider
+
 
 class MockProvider(BaseProvider):
     def __init__(self, config):
@@ -19,9 +22,12 @@ class MockProvider(BaseProvider):
     async def list_model_ids(self):
         return frozenset(["model1"])
 
-    async def stream_response(self, request, input_tokens=0, request_id=None, thinking_enabled=None):
+    async def stream_response(
+        self, request, input_tokens=0, request_id=None, thinking_enabled=None
+    ):
         self.call_count += 1
-        yield f"data: {{\"type\": \"content_block_delta\", \"delta\": {{\"type\": \"text\", \"text\": \"Response {self.call_count}\"}}}}\n\n"
+        yield f'data: {{"type": "content_block_delta", "delta": {{"type": "text", "text": "Response {self.call_count}"}}}}\n\n'
+
 
 @pytest.mark.asyncio
 async def test_caching():
@@ -36,10 +42,11 @@ async def test_caching():
         log_api_error_tracebacks=True,
         log_raw_api_payloads=False,
         enable_model_thinking=True,
-        enable_response_caching=True
+        enable_response_caching=True,
     )
 
     provider = MockProvider(None)
+
     def provider_getter(provider_id):
         return provider
 
@@ -47,23 +54,25 @@ async def test_caching():
 
     request_data = MessagesRequest(
         model="claude-3-sonnet-20240229",
-        messages=[{"role": "user", "content": "hello"}]
+        messages=[Message(role="user", content="hello")],
     )
 
     # First call - should go to provider
     response1 = await service.create_message(request_data)
-    chunks1 = []
-    async for chunk in response1.body_iterator:
-        chunks1.append(chunk)
+    assert isinstance(response1, StreamingResponse)
+    chunks1 = [
+        str(chunk) for chunk in [chunk async for chunk in response1.body_iterator]
+    ]
 
     assert provider.call_count == 1
     assert "Response 1" in chunks1[0]
 
     # Second call - should come from cache
     response2 = await service.create_message(request_data)
-    chunks2 = []
-    async for chunk in response2.body_iterator:
-        chunks2.append(chunk)
+    assert isinstance(response2, StreamingResponse)
+    chunks2 = [
+        str(chunk) for chunk in [chunk async for chunk in response2.body_iterator]
+    ]
 
     assert provider.call_count == 1  # Still 1
     assert "Response 1" in chunks2[0]

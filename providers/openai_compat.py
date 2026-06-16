@@ -154,6 +154,9 @@ class OpenAIChatTransport(BaseProvider):
             stream = await self._global_rate_limiter.execute_with_retry(
                 self._client.chat.completions.create, **create_body, stream=True
             )
+            # Capture rate limit headers from the response
+            if hasattr(stream, "response"):
+                self._global_rate_limiter.update_from_headers(stream.response.headers)
             return stream, body
         except Exception as error:
             retry_body = self._get_retry_request_body(error, body)
@@ -168,6 +171,8 @@ class OpenAIChatTransport(BaseProvider):
             stream = await self._global_rate_limiter.execute_with_retry(
                 self._client.chat.completions.create, **create_retry_body, stream=True
             )
+            if hasattr(stream, "response"):
+                self._global_rate_limiter.update_from_headers(stream.response.headers)
             return stream, retry_body
 
     def _restore_aliased_tool_arguments(
@@ -417,7 +422,6 @@ class OpenAIChatTransport(BaseProvider):
         tool_argument_aliases: dict[str, dict[str, str]] = {}
         tool_argument_alias_buffers: dict[int, str] = {}
         ttft = None
-        output_token_count = 0
 
         async with self._global_rate_limiter.concurrency_slot():
             try:
@@ -502,15 +506,12 @@ class OpenAIChatTransport(BaseProvider):
                             ):
                                 yield event
 
-            except asyncio.CancelledError, GeneratorExit:
+            except (asyncio.CancelledError, GeneratorExit):
                 raise
             except Exception as e:
                 status_code = getattr(e, "status_code", 500)
                 self._record_metrics(
-                    self._provider_id,
-                    start_time,
-                    status_code,
-                    ttft=ttft
+                    self._provider_id, start_time, status_code, ttft=ttft
                 )
                 self._log_stream_transport_error(tag, req_tag, e, request_id=request_id)
                 mapped_e = map_error(e, rate_limiter=self._global_rate_limiter)
@@ -618,7 +619,7 @@ class OpenAIChatTransport(BaseProvider):
             ttft=ttft,
             throughput=throughput,
             input_tokens=input_tokens,
-            output_tokens=output_tokens
+            output_tokens=output_tokens,
         )
 
         if usage_info and hasattr(usage_info, "prompt_tokens"):

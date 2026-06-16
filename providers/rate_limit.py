@@ -208,6 +208,38 @@ class GlobalRateLimiter:
         """Get remaining reactive wait time in seconds."""
         return max(0.0, self._blocked_until - time.monotonic())
 
+    def update_from_headers(self, headers: dict[str, str] | Any) -> None:
+        """Update rate limit state from provider response headers."""
+        # Common headers: x-ratelimit-reset, retry-after
+        # OpenAI/Anthropic/others often use these
+        try:
+            # retry-after can be seconds or a timestamp (RFC 1123)
+            # here we mostly care about 429-related retry-after
+            retry_after = headers.get("retry-after")
+            if retry_after and retry_after.isdigit():
+                self.set_blocked(float(retry_after))
+                return
+
+            # x-ratelimit-reset: seconds until reset
+            reset = headers.get("x-ratelimit-reset")
+            if reset:
+                try:
+                    # Some providers use seconds, some use timestamps
+                    reset_val = float(reset)
+                    if reset_val > 1000000000:  # looks like a timestamp
+                        wait = max(0.0, reset_val - time.time())
+                    else:
+                        wait = reset_val
+
+                    # Only block if we are actually low on remaining
+                    remaining = headers.get("x-ratelimit-remaining")
+                    if remaining and int(remaining) <= 0:
+                        self.set_blocked(wait)
+                except (ValueError, TypeError):
+                    pass
+        except Exception as e:
+            logger.debug("Failed to update rate limits from headers: {}", e)
+
     @asynccontextmanager
     async def concurrency_slot(self) -> AsyncIterator[None]:
         """Async context manager that holds one concurrency slot for a stream.

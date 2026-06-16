@@ -473,3 +473,29 @@ class TestProviderRateLimiter:
 
         assert nim.is_blocked() is True
         assert openrouter.is_blocked() is False
+
+    @pytest.mark.asyncio
+    async def test_update_from_headers_retry_after(self):
+        """update_from_headers sets block when Retry-After is present."""
+        limiter = GlobalRateLimiter.get_instance(rate_limit=100, rate_window=60)
+        limiter.update_from_headers({"retry-after": "10"})
+        assert limiter.is_blocked()
+        assert 9.0 < limiter.remaining_wait() <= 10.0
+
+    @pytest.mark.asyncio
+    async def test_update_from_headers_ratelimit_reset(self):
+        """update_from_headers sets block when x-ratelimit-remaining is 0."""
+        limiter = GlobalRateLimiter.get_instance(rate_limit=100, rate_window=60)
+
+        # Should NOT block if remaining > 0
+        limiter.update_from_headers(
+            {"x-ratelimit-remaining": "5", "x-ratelimit-reset": "10"}
+        )
+        assert not limiter.is_blocked()
+
+        # Should block if remaining is 0
+        limiter.update_from_headers(
+            {"x-ratelimit-remaining": "0", "x-ratelimit-reset": "5"}
+        )
+        assert limiter.is_blocked()
+        assert 4.0 < limiter.remaining_wait() <= 5.0

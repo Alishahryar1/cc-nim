@@ -168,14 +168,14 @@ def render_markdown_to_discord(text: str) -> str:
                     if val is not None:
                         try:
                             start = int(val)
-                        except TypeError, ValueError:
+                        except (TypeError, ValueError):
                             start = 1
                 else:
                     for key, val in tok.attrs:
                         if key == "start":
                             try:
                                 start = int(val)
-                            except TypeError, ValueError:
+                            except (TypeError, ValueError):
                                 start = 1
                             break
             list_stack.append({"type": "ordered", "index": start})

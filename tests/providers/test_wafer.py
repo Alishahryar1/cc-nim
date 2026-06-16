@@ -14,12 +14,12 @@ from tests.stream_contract import assert_canonical_stream_error_envelope
 
 
 class FakeResponse:
-    def __init__(self, *, status_code=200, lines=None, text=""):
+    def __init__(self, *, status_code=200, lines=None, text="", headers=None):
         self.status_code = status_code
         self._lines = lines or []
         self._text = text
         self.is_closed = False
-        self.headers = httpx.Headers()
+        self.headers = httpx.Headers(headers or {})
         self.request = httpx.Request("POST", "https://pass.wafer.ai/v1/messages")
 
     async def aiter_lines(self):

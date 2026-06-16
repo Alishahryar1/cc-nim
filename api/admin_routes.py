@@ -155,7 +155,7 @@ async def admin_status(request: Request):
             "error_rate": m.error_rate,
             "success_count": m.success_count,
             "failure_count": m.failure_count,
-            "last_status": m.last_status
+            "last_status": m.last_status,
         }
 
     return {

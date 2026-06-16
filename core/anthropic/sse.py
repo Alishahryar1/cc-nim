@@ -119,7 +119,7 @@ class ContentBlockManager:
         except Exception:
             # Check for common malformed JSON from certain providers (e.g. unescaped newlines)
             try:
-                fixed = state.task_arg_buffer.replace('\n', '\\n').replace('\r', '\\r')
+                fixed = state.task_arg_buffer.replace("\n", "\\n").replace("\r", "\\r")
                 args_json = json.loads(fixed)
             except Exception:
                 return None

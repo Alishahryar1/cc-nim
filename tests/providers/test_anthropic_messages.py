@@ -51,6 +51,7 @@ class FakeResponse:
         lines=None,
         text="",
         raise_after_line_index: int | None = None,
+        headers=None,
     ):
         self.status_code = status_code
         self._lines = lines or []
@@ -58,7 +59,7 @@ class FakeResponse:
         self._raise_after_line_index = raise_after_line_index
         self.is_closed = False
         self.request = httpx.Request("POST", "https://example.test/v1/messages")
-        self.headers = httpx.Headers()
+        self.headers = httpx.Headers(headers or {})
 
     async def aiter_lines(self):
         for i, line in enumerate(self._lines):

@@ -43,13 +43,13 @@ class FixedProviderModelRouter(ModelRouter):
         super().__init__(settings)
         self._fixed_provider_id = provider_id
 
-    def resolve_candidates(self, model_name: str) -> list[ResolvedModel]:
+    def resolve_candidates(self, claude_model_name: str) -> list[ResolvedModel]:
         return [
             ResolvedModel(
-                original_model=model_name,
+                original_model=claude_model_name,
                 provider_id=self._fixed_provider_id,
-                provider_model=model_name,
-                provider_model_ref=f"{self._fixed_provider_id}/{model_name}",
+                provider_model=claude_model_name,
+                provider_model_ref=f"{self._fixed_provider_id}/{claude_model_name}",
                 thinking_enabled=True,
             )
         ]

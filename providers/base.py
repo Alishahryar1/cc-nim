@@ -167,11 +167,12 @@ class BaseProvider(ABC):
         ttft: float | None = None,
         throughput: float | None = None,
         input_tokens: int = 0,
-        output_tokens: int = 0
+        output_tokens: int = 0,
     ):
         try:
             # Import at runtime to avoid static dependency cycles in test contracts
             import importlib
+
             perf = importlib.import_module("api.performance")
             latency = time.time() - start_time
             perf.performance_tracker.record_request(
@@ -181,7 +182,7 @@ class BaseProvider(ABC):
                 ttft=ttft,
                 throughput=throughput,
                 input_tokens=input_tokens,
-                output_tokens=output_tokens
+                output_tokens=output_tokens,
             )
         except (ImportError, AttributeError):
             pass

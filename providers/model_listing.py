@@ -24,7 +24,7 @@ def model_infos_from_ids(
     *,
     supports_thinking: bool | None = None,
     supports_vision: bool | None = None,
-    supports_tools: bool | None = None
+    supports_tools: bool | None = None,
 ) -> frozenset[ProviderModelInfo]:
     """Build unknown-capability model metadata from plain provider model ids."""
     return frozenset(
@@ -32,7 +32,7 @@ def model_infos_from_ids(
             model_id=model_id,
             supports_thinking=supports_thinking,
             supports_vision=supports_vision,
-            supports_tools=supports_tools
+            supports_tools=supports_tools,
         )
         for model_id in model_ids
         if model_id.strip()
@@ -95,8 +95,11 @@ def extract_openrouter_tool_model_infos(
             ProviderModelInfo(
                 model_id=model_id,
                 supports_thinking="reasoning" in supported_parameter_names,
-                supports_tools=not supported_parameter_names.isdisjoint({"tools", "tool_choice"}),
-                supports_vision="vision" in str(item).lower() or "multimodal" in str(item).lower(),
+                supports_tools=not supported_parameter_names.isdisjoint(
+                    {"tools", "tool_choice"}
+                ),
+                supports_vision="vision" in str(item).lower()
+                or "multimodal" in str(item).lower(),
             )
         )
 

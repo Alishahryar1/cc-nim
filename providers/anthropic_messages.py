@@ -413,6 +413,7 @@ class AnthropicMessagesTransport(BaseProvider):
                 async def _validated_stream_send() -> httpx.Response:
                     """Send request; retries apply to 429/5xx raises after structured logging."""
                     send_response = await self._send_stream_request(body)
+                    self._global_rate_limiter.update_from_headers(send_response.headers)
                     if send_response.status_code != 200:
                         try:
                             await self._raise_for_status(send_response, req_tag=req_tag)
@@ -456,10 +457,7 @@ class AnthropicMessagesTransport(BaseProvider):
                 if isinstance(error, httpx.HTTPStatusError):
                     status_code = error.response.status_code
                 self._record_metrics(
-                    self._provider_id,
-                    start_time,
-                    status_code,
-                    ttft=ttft
+                    self._provider_id, start_time, status_code, ttft=ttft
                 )
 
                 if not isinstance(error, httpx.HTTPStatusError):
@@ -487,7 +485,7 @@ class AnthropicMessagesTransport(BaseProvider):
                     ttft=ttft,
                     throughput=throughput,
                     input_tokens=input_tokens,
-                    output_tokens=output_tokens
+                    output_tokens=output_tokens,
                 )
 
                 trace_event(

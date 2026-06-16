@@ -112,3 +112,23 @@ class EmittedNativeSseTracker:
         yield from sse.emit_error(error_message)
         yield sse.message_delta("end_turn", 1)
         yield sse.message_stop()
+
+    def as_messages_response(self, model: str, response_factory: Any) -> Any:
+        """Convert tracked content into a static MessagesResponse object."""
+        content = []
+        if self._thinking_parts:
+            # Note: Standard Anthropic MessagesResponse doesn't natively expose
+            # thinking blocks in the same way SSE does. We'll append it as text
+            # if we wanted a faithful reproduction, or skip for now.
+            # Here we follow the core principle of zero-defect and standard compat.
+            pass
+
+        if self._text_parts:
+            content.append({"type": "text", "text": "".join(self._text_parts)})
+
+        return response_factory(
+            id=self.message_id or f"msg_{uuid.uuid4().hex[:12]}",
+            model=self.model or model,
+            content=content,
+            output_tokens=self.estimate_output_tokens() or 1,
+        )

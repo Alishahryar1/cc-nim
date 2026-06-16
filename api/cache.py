@@ -1,10 +1,10 @@
 import hashlib
 import json
-import os
-import pickle
 from pathlib import Path
-from typing import Any, Optional
+from typing import Any
+
 from loguru import logger
+
 
 class ResponseCache:
     def __init__(self, cache_dir: str = ".fcc_cache", enabled: bool = True):
@@ -27,14 +27,14 @@ class ResponseCache:
         key = hashlib.sha256(data_str.encode()).hexdigest()
         return key
 
-    def get(self, request_data: Any) -> Optional[list[str]]:
+    def get(self, request_data: Any) -> list[str] | None:
         if not self.enabled:
             return None
         key = self._get_key(request_data)
         cache_file = self.cache_dir / f"{key}.json"
         if cache_file.exists():
             try:
-                with open(cache_file, "r") as f:
+                with open(cache_file) as f:
                     logger.debug("Cache hit for request {}", key)
                     return json.load(f)
             except Exception as e:

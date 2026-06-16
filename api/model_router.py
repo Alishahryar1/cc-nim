@@ -79,11 +79,12 @@ class ModelRouter:
 
         # Dynamic Ranking: Sort candidates by score (reliability / (latency + ttft))
         if len(provider_refs) > 1:
+
             def _score(ref: str) -> float:
                 p_id = Settings.parse_provider_type(ref)
                 m = performance_tracker.get_metrics(p_id)
                 if m.success_count == 0 and m.failure_count == 0:
-                    return 1000.0 # Default high score for unused providers
+                    return 1000.0  # Default high score for unused providers
 
                 # Weigh TTFT heavily for "snappiness"
                 latency_weight = max(m.avg_latency + (m.avg_ttft * 2.0), 0.001)

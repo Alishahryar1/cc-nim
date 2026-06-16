@@ -1,26 +1,44 @@
 import asyncio
-import json
 import uuid
-from typing import Any, AsyncIterator, List
+from collections.abc import AsyncIterator
+from typing import Any
+
 from loguru import logger
-from api.models.anthropic import MessagesRequest, Message, ContentBlockText
+
+from api.models.anthropic import Message, MessagesRequest
 from core.anthropic import SSEBuilder
+
 
 class FusionEngine:
     def __init__(self, proxy_service: Any):
         self.proxy_service = proxy_service
 
-    async def _get_model_response(self, model_ref: str, request_data: MessagesRequest) -> str:
+    async def _get_model_response(
+        self, model_ref: str, request_data: MessagesRequest
+    ) -> str:
         """Helper to get a full non-streaming text response from a specific model."""
         try:
-            return await self.proxy_service._orchestrator._get_full_response(model_ref, request_data)
+            return await self.proxy_service._orchestrator._get_full_response(
+                model_ref, request_data
+            )
         except Exception as e:
             logger.error("Fusion panel model {} failed: {}", model_ref, e)
-            return f"Error from {model_ref}: {str(e)}"
+            return f"Error from {model_ref}: {e!s}"
 
-    async def run_fusion(self, request_data: MessagesRequest, panel_models: List[str], judge_model: str, rounds: int = 1) -> AsyncIterator[str]:
+    async def run_fusion(
+        self,
+        request_data: MessagesRequest,
+        panel_models: list[str],
+        judge_model: str,
+        rounds: int = 1,
+    ) -> AsyncIterator[str]:
         """Run parallel queries and synthesize with a multi-stage reflection pipeline."""
-        logger.info("Starting Recursive Fusion: panel={}, judge={}, rounds={}", panel_models, judge_model, rounds)
+        logger.info(
+            "Starting Recursive Fusion: panel={}, judge={}, rounds={}",
+            panel_models,
+            judge_model,
+            rounds,
+        )
 
         # Initialize SSE for progress
         message_id = f"msg_fusion_{uuid.uuid4().hex[:12]}"
@@ -29,12 +47,16 @@ class FusionEngine:
 
         # STAGE 1: Parallel Drafting
         yield sse.start_thinking_block()
-        yield sse.emit_thinking_delta(f"Gathering expert drafts from {len(panel_models)} models...\n")
+        yield sse.emit_thinking_delta(
+            f"Gathering expert drafts from {len(panel_models)} models...\n"
+        )
 
         tasks = [self._get_model_response(m, request_data) for m in panel_models]
         responses = await asyncio.gather(*tasks)
 
-        yield sse.emit_thinking_delta("Expert drafts received. Analyzing contradictions and potential hallucinations...\n")
+        yield sse.emit_thinking_delta(
+            "Expert drafts received. Analyzing contradictions and potential hallucinations...\n"
+        )
 
         # STAGE 2: Self-Correction & Critique (First synthesis pass)
         critique_prompt = (
@@ -42,7 +64,7 @@ class FusionEngine:
             f"REQUEST: {request_data.messages[-1].content}\n\n"
         )
         for i, resp in enumerate(responses):
-            critique_prompt += f"EXPERT {i+1}:\n{resp}\n\n"
+            critique_prompt += f"EXPERT {i + 1}:\n{resp}\n\n"
 
         critique_prompt += (
             "Identify:\n"
@@ -52,11 +74,21 @@ class FusionEngine:
             "Deliver a concise CRITIQUE report for the final synthesis."
         )
 
-        critique_report = await self._get_model_response(judge_model, request_data.model_copy(update={
-            "messages": request_data.messages + [Message(role="user", content=critique_prompt)]
-        }))
+        critique_report = await self._get_model_response(
+            judge_model,
+            request_data.model_copy(
+                update={
+                    "messages": [
+                        *request_data.messages,
+                        Message(role="user", content=critique_prompt),
+                    ]
+                }
+            ),
+        )
 
-        yield sse.emit_thinking_delta(f"Critique report generated. (Round 1/{rounds})\n")
+        yield sse.emit_thinking_delta(
+            f"Critique report generated. (Round 1/{rounds})\n"
+        )
 
         # Multi-round Debate Extension
         current_critique = critique_report
@@ -66,12 +98,22 @@ class FusionEngine:
                 f"Analyze the prior expert drafts and the previous critique:\n{current_critique}\n\n"
                 "Refine the critique. Focus on resolving remaining disagreements between experts."
             )
-            current_critique = await self._get_model_response(judge_model, request_data.model_copy(update={
-                "messages": request_data.messages + [Message(role="user", content=debate_prompt)]
-            }))
+            current_critique = await self._get_model_response(
+                judge_model,
+                request_data.model_copy(
+                    update={
+                        "messages": [
+                            *request_data.messages,
+                            Message(role="user", content=debate_prompt),
+                        ]
+                    }
+                ),
+            )
             yield sse.emit_thinking_delta(f"Round {r} complete.\n")
 
-        yield sse.emit_thinking_delta("Finalizing synthesis based on expert strengths and debate...\n")
+        yield sse.emit_thinking_delta(
+            "Finalizing synthesis based on expert strengths and debate...\n"
+        )
         yield sse.stop_thinking_block()
 
         # STAGE 3: Final Synthesis with Recursive Context
@@ -82,7 +124,7 @@ class FusionEngine:
             "EXPERT DRAFTS:\n"
         )
         for i, resp in enumerate(responses):
-            final_prompt += f"EXPERT {i+1} DRAFT:\n{resp}\n\n"
+            final_prompt += f"EXPERT {i + 1} DRAFT:\n{resp}\n\n"
 
         final_prompt += (
             "FINAL INSTRUCTION: Create a master response. Prioritize accuracy over verbosity. "
@@ -104,5 +146,6 @@ class FusionEngine:
         # since we already sent one.
         stream = provider.stream_response(judge_routed)
         async for chunk in stream:
-            if "message_start" in chunk: continue
+            if "message_start" in chunk:
+                continue
             yield chunk

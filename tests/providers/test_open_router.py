@@ -4,6 +4,7 @@ import json
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
 from core.anthropic.stream_contracts import (
@@ -43,11 +44,12 @@ class MockRequest:
 
 
 class FakeResponse:
-    def __init__(self, *, status_code=200, lines=None, text=""):
+    def __init__(self, *, status_code=200, lines=None, text="", headers=None):
         self.status_code = status_code
         self._lines = lines or []
         self._text = text
         self.is_closed = False
+        self.headers = httpx.Headers(headers or {})
 
     async def aiter_lines(self):
         for line in self._lines:

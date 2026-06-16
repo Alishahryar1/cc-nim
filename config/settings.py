@@ -249,7 +249,9 @@ class Settings(BaseSettings):
     enable_title_generation_skip: bool = True
     enable_suggestion_mode_skip: bool = True
     enable_filepath_extraction_mock: bool = True
-    enable_response_caching: bool = Field(default=False, validation_alias="ENABLE_RESPONSE_CACHING")
+    enable_response_caching: bool = Field(
+        default=False, validation_alias="ENABLE_RESPONSE_CACHING"
+    )
     fusion_panels: str = Field(default="", validation_alias="FUSION_PANELS")
 
     # ==================== Local web server tools (web_search / web_fetch) ====================
@@ -542,7 +544,9 @@ class Settings(BaseSettings):
         for source, raw_ref in candidates:
             if raw_ref is None:
                 continue
-            for model_ref in (part.strip() for part in raw_ref.split(",") if part.strip()):
+            for model_ref in (
+                part.strip() for part in raw_ref.split(",") if part.strip()
+            ):
                 sources_by_ref.setdefault(model_ref, []).append(source)
 
         return tuple(
@@ -583,11 +587,14 @@ class Settings(BaseSettings):
 
         panels = self.fusion_panels.split(";")
         for p in panels:
-            if not p.strip(): continue
+            if not p.strip():
+                continue
             name, _, config = p.partition("=")
             if name.strip() == panel_name:
                 judge, _, models = config.partition(":")
-                return judge.strip(), [m.strip() for m in models.split(",") if m.strip()]
+                return judge.strip(), [
+                    m.strip() for m in models.split(",") if m.strip()
+                ]
         return None
 
     @staticmethod

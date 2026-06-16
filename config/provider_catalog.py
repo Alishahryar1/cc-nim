@@ -73,7 +73,14 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="open_router_api_key",
         default_base_url=OPENROUTER_DEFAULT_BASE,
         proxy_attr="open_router_proxy",
-        capabilities=("chat", "streaming", "tools", "thinking", "vision", "native_anthropic"),
+        capabilities=(
+            "chat",
+            "streaming",
+            "tools",
+            "thinking",
+            "vision",
+            "native_anthropic",
+        ),
     ),
     "gemini": ProviderDescriptor(
         provider_id="gemini",
