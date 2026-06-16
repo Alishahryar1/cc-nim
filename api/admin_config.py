@@ -252,6 +252,29 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         ),
     ),
     ConfigFieldSpec(
+        "CUSTOM_API_KEY",
+        "Custom API Key",
+        "providers",
+        "secret",
+        settings_attr="custom_api_key",
+        secret=True,
+        description=(
+            "Bearer token for your custom OpenAI-compatible backend "
+            "(``Authorization: Bearer …`` on ``/v1/chat/completions``)."
+        ),
+    ),
+    ConfigFieldSpec(
+        "CUSTOM_URL_PROVIDER",
+        "Custom URL Provider",
+        "providers",
+        settings_attr="custom_url_provider",
+        description=(
+            "Base URL of the custom OpenAI-compatible API, including ``/v1`` "
+            "(for example ``http://host:3001/v1``). Route models as "
+            "``custom/<upstream-model-id>`` under Model Routing."
+        ),
+    ),
+    ConfigFieldSpec(
         "LM_STUDIO_BASE_URL",
         "LM Studio Base URL",
         "providers",
@@ -404,6 +427,15 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         "providers",
         "secret",
         settings_attr="cerebras_proxy",
+        secret=True,
+        advanced=True,
+    ),
+    ConfigFieldSpec(
+        "CUSTOM_PROXY",
+        "Custom Provider Proxy",
+        "providers",
+        "secret",
+        settings_attr="custom_proxy",
         secret=True,
         advanced=True,
     ),
@@ -898,6 +930,12 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         advanced=True,
     ),
     ConfigFieldSpec(
+        "FCC_SMOKE_MODEL_CUSTOM",
+        "Smoke Custom Provider Model",
+        "smoke",
+        advanced=True,
+    ),
+    ConfigFieldSpec(
         "FCC_SMOKE_NIM_MODELS",
         "Smoke NIM Models",
         "smoke",
@@ -1269,16 +1307,32 @@ def provider_config_status(
             continue
 
         value = str(state.get(descriptor.credential_env, {}).get("value", ""))
-        configured = bool(value.strip())
-        statuses.append(
-            {
-                "provider_id": provider_id,
-                "kind": "remote",
-                "status": "configured" if configured else "missing_key",
-                "label": "Configured" if configured else "Missing key",
-                "credential_env": descriptor.credential_env,
-            }
-        )
+        has_key = bool(value.strip())
+        base_url = ""
+        if descriptor.base_url_attr is not None:
+            base_url = _value_for_settings_attr(state, descriptor.base_url_attr)
+        has_url = bool(base_url.strip()) or descriptor.base_url_attr is None
+
+        if not has_key:
+            status = "missing_key"
+            label = "Missing key"
+        elif not has_url:
+            status = "missing_url"
+            label = "Missing URL"
+        else:
+            status = "configured"
+            label = "Configured"
+
+        entry: dict[str, Any] = {
+            "provider_id": provider_id,
+            "kind": "remote",
+            "status": status,
+            "label": label,
+            "credential_env": descriptor.credential_env,
+        }
+        if descriptor.base_url_attr is not None:
+            entry["base_url"] = base_url
+        statuses.append(entry)
     return statuses
 
 

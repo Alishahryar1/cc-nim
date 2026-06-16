@@ -112,6 +112,12 @@ def _create_zai(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     return ZaiProvider(config)
 
 
+def _create_custom(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+    from providers.custom import CustomProvider
+
+    return CustomProvider(config)
+
+
 def _create_fireworks(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     from providers.fireworks import FireworksProvider
 
@@ -151,6 +157,7 @@ PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "groq": _create_groq,
     "fireworks": _create_fireworks,
     "zai": _create_zai,
+    "custom": _create_custom,
     "lmstudio": _create_lmstudio,
     "llamacpp": _create_llamacpp,
     "ollama": _create_ollama,
@@ -284,6 +291,11 @@ def _model_list_provider_ids_for_settings(settings: Settings) -> tuple[str, ...]
             descriptor.credential_env is not None
             and _credential_for(descriptor, settings).strip()
         ):
+            if (
+                descriptor.base_url_attr is not None
+                and not _string_attr(settings, descriptor.base_url_attr).strip()
+            ):
+                continue
             provider_ids.append(provider_id)
     return tuple(provider_ids)
 

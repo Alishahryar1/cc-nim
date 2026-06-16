@@ -71,6 +71,7 @@ function providerName(providerId) {
     opencode: "OpenCode Zen",
     opencode_go: "OpenCode Go",
     zai: "Z.ai",
+    custom: "Custom Provider",
   };
   if (names[providerId]) return names[providerId];
   return providerId
@@ -178,10 +179,13 @@ function renderProviders(providerStatus) {
 
     const meta = document.createElement("div");
     meta.className = "provider-meta";
-    meta.textContent =
-      provider.kind === "local"
-        ? provider.base_url || "No local URL configured"
-        : provider.credential_env;
+    if (provider.kind === "local") {
+      meta.textContent = provider.base_url || "No local URL configured";
+    } else if (provider.base_url) {
+      meta.textContent = `${provider.credential_env} · ${provider.base_url}`;
+    } else {
+      meta.textContent = provider.credential_env;
+    }
 
     const button = document.createElement("button");
     button.type = "button";

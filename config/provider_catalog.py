@@ -213,6 +213,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
             "rate_limit",
         ),
     ),
+    "custom": ProviderDescriptor(
+        provider_id="custom",
+        transport_type="openai_chat",
+        credential_env="CUSTOM_API_KEY",
+        credential_attr="custom_api_key",
+        base_url_attr="custom_url_provider",
+        proxy_attr="custom_proxy",
+        capabilities=("chat", "streaming", "tools", "thinking", "rate_limit"),
+    ),
     "lmstudio": ProviderDescriptor(
         provider_id="lmstudio",
         transport_type="anthropic_messages",

@@ -43,7 +43,7 @@ Free Claude Code routes Anthropic Messages API traffic from Claude Code to any p
 ## What You Get
 
 - Drop-in proxy for Claude Code's Anthropic API calls.
-- 17 provider backends: NVIDIA NIM, OpenRouter, Google AI Studio (Gemini), DeepSeek, Mistral La Plateforme, Mistral Codestral, OpenCode Zen, OpenCode Go, Wafer, Kimi, Cerebras Inference, Groq, Fireworks AI, Z.ai, LM Studio, llama.cpp, and Ollama.
+- 18 provider backends: NVIDIA NIM, OpenRouter, Google AI Studio (Gemini), DeepSeek, Mistral La Plateforme, Mistral Codestral, OpenCode Zen, OpenCode Go, Wafer, Kimi, Cerebras Inference, Groq, Fireworks AI, Z.ai, a custom OpenAI-compatible gateway, LM Studio, llama.cpp, and Ollama.
 - Per-model routing: send Opus, Sonnet, Haiku, and fallback traffic to different providers.
 - Native Claude Code `/model` picker support through the proxy's `/v1/models` endpoint (see [Model Picker](#model-picker)).
 - Streaming, tool use, reasoning/thinking block handling, and local request optimizations.
@@ -277,13 +277,31 @@ Popular examples:
 
 Browse models at [Z.ai](https://z.ai).
 
-### 15. [LM Studio](https://lmstudio.ai/)
+### 15. Custom Provider (OpenAI-compatible gateway)
+
+Use this when you already run a **self-hosted or private OpenAI-compatible API**—for example a backend in front of Ollama that exposes `GET /v1/models` and `POST /v1/chat/completions` with `Authorization: Bearer …`.
+
+In the Admin UI **Providers** view, set:
+
+- `CUSTOM_URL_PROVIDER` — base URL including `/v1` (for example `http://host:3001/v1`)
+- `CUSTOM_API_KEY` — Bearer token for that gateway
+
+Then set `MODEL` to a slug prefixed with `custom/`. Everything after the first `/` is sent upstream unchanged, so upstream ids may contain slashes or tags:
+
+- `custom/your-model-id`
+- `custom/org/coder-model:latest`
+
+Click **Refresh models** on the **Custom Provider** card to confirm connectivity and populate the model picker.
+
+This adapter uses OpenAI chat streaming translated into Anthropic SSE (same path as NIM and Groq). Prefer upstream models with **tool-use** support for Claude Code workflows.
+
+### 16. [LM Studio](https://lmstudio.ai/)
 
 Start LM Studio's local server and load a model. In the Admin UI, keep or update `LM_STUDIO_BASE_URL`, then set `MODEL` to the model identifier shown by LM Studio, prefixed with `lmstudio/`.
 
 Prefer models with tool-use support for Claude Code workflows.
 
-### 16. [llama.cpp](https://github.com/ggml-org/llama.cpp)
+### 17. [llama.cpp](https://github.com/ggml-org/llama.cpp)
 
 Start `llama-server` with an Anthropic-compatible `/v1/messages` endpoint and enough context for Claude Code requests.
 
@@ -291,7 +309,7 @@ In the Admin UI, keep or update `LLAMACPP_BASE_URL`, then set `MODEL` to the loc
 
 For local coding models, context size matters. If llama.cpp returns HTTP 400 for normal Claude Code requests, increase `--ctx-size` and verify the model/server build supports the requested features.
 
-### 17. [Ollama](https://ollama.com/)
+### 18. [Ollama](https://ollama.com/)
 
 Run Ollama and pull a model:
 
@@ -304,11 +322,11 @@ In the Admin UI, keep or update `OLLAMA_BASE_URL`, then set `MODEL` to the same 
 
 `OLLAMA_BASE_URL` is the Ollama server root; do not append `/v1`. Example model slugs include `ollama/llama3.1` and `ollama/llama3.1:8b`.
 
-### 18. Mix Providers By Model Tier
+### 19. Mix Providers By Model Tier
 
 Each model tier can use a different provider by setting `MODEL_OPUS`, `MODEL_SONNET`, and `MODEL_HAIKU` in the Admin UI. Leave a tier blank to inherit `MODEL`.
 
-For example, you can route Opus to `nvidia_nim/moonshotai/kimi-k2.6`, Sonnet to `open_router/openrouter/free`, Haiku to `lmstudio/qwen3.5-coder`, and keep the fallback `MODEL` on `zai/glm-5.1`.
+For example, you can route Opus to `nvidia_nim/moonshotai/kimi-k2.6`, Sonnet to `open_router/openrouter/free`, Haiku to `custom/your-fast-model`, and keep the fallback `MODEL` on `zai/glm-5.1`.
 
 ## Connect Claude Code
 
@@ -321,6 +339,20 @@ fcc-claude
 ```
 
 Keep `fcc-server` running while you work. The Admin UI manages proxy config, restarts the server when runtime settings change, and `fcc-claude` reads the current Admin UI-managed port and auth token every time it starts. It also sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW` to `190000` for auto-compaction.
+
+To debug Claude Code against the proxy, pass through the real CLI flags (there is no separate `fcc-claude debug` subcommand):
+
+```bash
+fcc-claude --debug "api" --verbose
+```
+
+For a debug log file:
+
+```bash
+fcc-claude --debug-file ~/.fcc/logs/claude-debug.log --verbose
+```
+
+Proxy-side verbose logging: in the Admin UI **Diagnostics** view, enable `LOG_RAW_API_PAYLOADS`, `LOG_RAW_SSE_EVENTS`, and `LOG_API_ERROR_TRACEBACKS`, then **Apply** and restart `fcc-server`. Server logs default to `~/.fcc/logs/server.log`.
 
 ### 2. VS Code Extension
 
@@ -450,7 +482,7 @@ Important pieces:
 
 - FastAPI exposes Anthropic-compatible routes such as `/v1/messages`, `/v1/messages/count_tokens`, and `/v1/models`.
 - Model routing resolves the Claude model name to `MODEL_OPUS`, `MODEL_SONNET`, `MODEL_HAIKU`, or `MODEL`.
-- NIM, OpenCode Zen, and OpenCode Go use OpenAI chat streaming translated into Anthropic SSE.
+- NIM, OpenCode Zen, OpenCode Go, **custom**, Gemini, Groq, Cerebras, and Mistral use OpenAI chat streaming translated into Anthropic SSE.
 - Wafer, OpenRouter, DeepSeek, Kimi, Fireworks AI, Z.ai, LM Studio, llama.cpp, and Ollama use Anthropic Messages style transports where applicable (with provider-specific quirks and model-list URLs).
 - The proxy normalizes thinking blocks, tool calls, token usage metadata, and provider errors into the shape Claude Code expects.
 - Request optimizations answer trivial Claude Code probes locally to save latency and quota.
@@ -503,10 +535,26 @@ Run them in that order before pushing. CI enforces the same checks.
 
 ### 5. Extending
 
-- Add OpenAI-compatible providers by extending `OpenAIChatTransport`.
+- Add OpenAI-compatible providers by extending `OpenAIChatTransport` (see `providers/custom/` for a configurable base URL + API key example).
 - Add Anthropic Messages providers by extending `AnthropicMessagesTransport`.
 - Register provider metadata in `config.provider_catalog` and factory wiring in `providers.registry`.
 - Add messaging platforms by implementing the `MessagingPlatform` interface in `messaging/`.
+
+### 6. Debug From Source
+
+Run the proxy with Uvicorn debug logging:
+
+```bash
+uv run uvicorn server:app --host 0.0.0.0 --port 8082 --log-level debug
+```
+
+In another terminal, launch Claude Code through the proxy with API tracing:
+
+```bash
+uv run fcc-claude --debug "api" --verbose
+```
+
+Enable **Diagnostics** flags in the Admin UI when you need raw request/SSE payloads or full API tracebacks (see [Claude Code CLI](#1-claude-code-cli) above).
 
 ## Contributing
 
