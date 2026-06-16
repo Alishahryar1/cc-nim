@@ -11,6 +11,7 @@ from config.settings import Settings
 
 from .gateway_model_ids import decode_gateway_model_id
 from .models.anthropic import MessagesRequest, TokenCountRequest
+from .performance import performance_tracker
 
 
 @dataclass(frozen=True, slots=True)
@@ -40,12 +41,14 @@ class ModelRouter:
     def __init__(self, settings: Settings):
         self._settings = settings
 
-    def resolve(self, claude_model_name: str) -> ResolvedModel:
+    def resolve_candidates(self, claude_model_name: str) -> list[ResolvedModel]:
+        """Resolve a Claude model name to one or more prioritized candidate models."""
         (
             direct_provider_id,
             direct_provider_model,
             force_thinking_enabled,
         ) = self._direct_provider_model(claude_model_name)
+
         if direct_provider_id is not None and direct_provider_model is not None:
             thinking_enabled = (
                 force_thinking_enabled
@@ -59,29 +62,61 @@ class ModelRouter:
                 direct_provider_model,
                 thinking_enabled,
             )
-            return ResolvedModel(
-                original_model=claude_model_name,
-                provider_id=direct_provider_id,
-                provider_model=direct_provider_model,
-                provider_model_ref=claude_model_name,
-                thinking_enabled=thinking_enabled,
+            return [
+                ResolvedModel(
+                    original_model=claude_model_name,
+                    provider_id=direct_provider_id,
+                    provider_model=direct_provider_model,
+                    provider_model_ref=claude_model_name,
+                    thinking_enabled=thinking_enabled,
+                )
+            ]
+
+        candidates: list[ResolvedModel] = []
+        thinking_enabled = self._settings.resolve_thinking(claude_model_name)
+
+        provider_refs = list(self._settings.resolve_models(claude_model_name))
+
+        # Dynamic Ranking: Sort candidates by score (reliability / (latency + ttft))
+        if len(provider_refs) > 1:
+            def _score(ref: str) -> float:
+                p_id = Settings.parse_provider_type(ref)
+                m = performance_tracker.get_metrics(p_id)
+                if m.success_count == 0 and m.failure_count == 0:
+                    return 1000.0 # Default high score for unused providers
+
+                # Weigh TTFT heavily for "snappiness"
+                latency_weight = max(m.avg_latency + (m.avg_ttft * 2.0), 0.001)
+                reliability = 1.0 - m.error_rate
+                return reliability / latency_weight
+
+            provider_refs.sort(key=_score, reverse=True)
+
+        for provider_model_ref in provider_refs:
+            provider_id = Settings.parse_provider_type(provider_model_ref)
+            provider_model = Settings.parse_model_name(provider_model_ref)
+            if provider_model != claude_model_name:
+                logger.debug(
+                    "MODEL MAPPING: '{}' -> '{}'", claude_model_name, provider_model
+                )
+            candidates.append(
+                ResolvedModel(
+                    original_model=claude_model_name,
+                    provider_id=provider_id,
+                    provider_model=provider_model,
+                    provider_model_ref=provider_model_ref,
+                    thinking_enabled=thinking_enabled,
+                )
             )
 
-        provider_model_ref = self._settings.resolve_model(claude_model_name)
-        thinking_enabled = self._settings.resolve_thinking(claude_model_name)
-        provider_id = Settings.parse_provider_type(provider_model_ref)
-        provider_model = Settings.parse_model_name(provider_model_ref)
-        if provider_model != claude_model_name:
-            logger.debug(
-                "MODEL MAPPING: '{}' -> '{}'", claude_model_name, provider_model
-            )
-        return ResolvedModel(
-            original_model=claude_model_name,
-            provider_id=provider_id,
-            provider_model=provider_model,
-            provider_model_ref=provider_model_ref,
-            thinking_enabled=thinking_enabled,
-        )
+        if not candidates:
+            # Fallback to single resolve if split somehow failed
+            return [self.resolve(claude_model_name)]
+
+        return candidates
+
+    def resolve(self, claude_model_name: str) -> ResolvedModel:
+        return self.resolve_candidates(claude_model_name)[0]
 
     def _direct_provider_model(
         self, model_name: str

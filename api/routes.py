@@ -170,7 +170,7 @@ async def create_message(
     _auth=Depends(require_api_key),
 ):
     """Create a message (always streaming)."""
-    return service.create_message(request_data)
+    return await service.create_message(request_data)
 
 
 @router.api_route("/v1/messages", methods=["HEAD", "OPTIONS"])

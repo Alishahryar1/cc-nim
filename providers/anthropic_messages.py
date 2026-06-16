@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import inspect
+import time
 from collections.abc import AsyncIterator, Iterator
 from typing import Any, Literal
 
@@ -72,6 +73,7 @@ class AnthropicMessagesTransport(BaseProvider):
         default_base_url: str,
     ):
         super().__init__(config)
+        self._provider_id = provider_name.lower()
         self._provider_name = provider_name
         self._api_key = config.api_key
         self._base_url = (config.base_url or default_base_url).rstrip("/")
@@ -151,11 +153,16 @@ class AnthropicMessagesTransport(BaseProvider):
 
     async def _send_stream_request(self, body: dict) -> httpx.Response:
         """Create a streaming messages response."""
+        key = self._get_next_api_key()
+        headers = self._request_headers()
+        if key:
+            headers["x-api-key"] = key
+            headers["anthropic-version"] = "2023-06-01"
         request = self._client.build_request(
             "POST",
             "/messages",
             json=body,
-            headers=self._request_headers(),
+            headers=headers,
         )
         return await self._client.send(request, stream=True)
 
@@ -272,6 +279,10 @@ class AnthropicMessagesTransport(BaseProvider):
             return f"{base_message}\nRequest ID: {request_id}"
         return base_message
 
+    def _should_inject_synthetic_thinking(self, thinking_enabled: bool) -> bool:
+        """True if we should force <think> tags via system prompt."""
+        return thinking_enabled and self._config.force_synthetic_thinking
+
     def _get_error_message(self, error: Exception, request_id: str | None) -> str:
         """Map an exception into a user-facing provider error message."""
         mapped_error = map_error(error, rate_limiter=self._global_rate_limiter)
@@ -345,10 +356,38 @@ class AnthropicMessagesTransport(BaseProvider):
         thinking_enabled: bool | None = None,
     ) -> AsyncIterator[str]:
         """Stream response via a native Anthropic-compatible messages endpoint."""
+        start_time = time.time()
         tag = self._provider_name
         req_tag = f" request_id={request_id}" if request_id else ""
-        body = self._build_request_body(request, thinking_enabled=thinking_enabled)
         thinking_enabled = self._is_thinking_enabled(request, thinking_enabled)
+        body = self._build_request_body(request, thinking_enabled=thinking_enabled)
+
+        if self._should_inject_synthetic_thinking(thinking_enabled):
+            thinking_instr = (
+                "\n\n[SYSTEM INSTRUCTION: Always begin your response with your internal "
+                "reasoning wrapped in <think>...</think> tags. Do not skip this step.]"
+            )
+            if self._config.enable_synthetic_tools:
+                thinking_instr += (
+                    "\n\nYou also have access to external tools. To use them, output: "
+                    "● <function=NAME><parameter=KEY>VALUE</parameter></function>"
+                )
+            # Use system prompt if possible for better reliability
+            current_system = body.get("system", "")
+            if isinstance(current_system, str):
+                body["system"] = (current_system + thinking_instr).strip()
+            elif isinstance(current_system, list):
+                current_system.append({"type": "text", "text": thinking_instr})
+            else:
+                # Fallback to messages[0] if no system prompt support detected
+                messages = body.get("messages", [])
+                if messages:
+                    target = messages[0]
+                    content = target.get("content", "")
+                    if isinstance(content, str):
+                        target["content"] = content + thinking_instr
+                    elif isinstance(content, list):
+                        content.append({"type": "text", "text": thinking_instr})
 
         trace_event(
             stage="provider",
@@ -366,6 +405,7 @@ class AnthropicMessagesTransport(BaseProvider):
         sent_any_event = False
         state = self._new_stream_state(request, thinking_enabled=thinking_enabled)
         emitted_tracker = EmittedNativeSseTracker()
+        ttft = None
 
         async with self._global_rate_limiter.concurrency_slot():
             try:
@@ -393,6 +433,8 @@ class AnthropicMessagesTransport(BaseProvider):
                     state=state,
                     thinking_enabled=thinking_enabled,
                 ):
+                    if ttft is None:
+                        ttft = time.time() - start_time
                     chunk_count += 1
                     chunk_bytes += len(chunk.encode("utf-8", errors="replace"))
                     sent_any_event = True
@@ -410,6 +452,16 @@ class AnthropicMessagesTransport(BaseProvider):
                 )
 
             except Exception as error:
+                status_code = 500
+                if isinstance(error, httpx.HTTPStatusError):
+                    status_code = error.response.status_code
+                self._record_metrics(
+                    self._provider_id,
+                    start_time,
+                    status_code,
+                    ttft=ttft
+                )
+
                 if not isinstance(error, httpx.HTTPStatusError):
                     self._log_stream_transport_error(
                         tag, req_tag, error, request_id=request_id
@@ -418,6 +470,25 @@ class AnthropicMessagesTransport(BaseProvider):
 
                 if response is not None and not response.is_closed:
                     await _maybe_await_aclose(response)
+
+                # Estimate output tokens for throughput
+                output_tokens = emitted_tracker.estimate_output_tokens()
+                total_time = time.time() - start_time
+                throughput = None
+                if ttft is not None and output_tokens > 0:
+                    gen_time = total_time - ttft
+                    if gen_time > 0:
+                        throughput = output_tokens / gen_time
+
+                self._record_metrics(
+                    self._provider_id,
+                    start_time,
+                    200,
+                    ttft=ttft,
+                    throughput=throughput,
+                    input_tokens=input_tokens,
+                    output_tokens=output_tokens
+                )
 
                 trace_event(
                     stage="provider",

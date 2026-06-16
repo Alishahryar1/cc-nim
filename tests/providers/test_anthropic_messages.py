@@ -201,6 +201,8 @@ async def test_stream_uses_retry_builds_request_and_closes_response(
     assert mock_build.call_args.kwargs["headers"] == {
         "Content-Type": "application/json",
         "X-Test": "1",
+        "x-api-key": "test-key",
+        "anthropic-version": "2023-06-01",
     }
     assert mock_build.call_args.kwargs["json"]["thinking"] == {"type": "enabled"}
     mock_send.assert_awaited_once_with(request_obj, stream=True)

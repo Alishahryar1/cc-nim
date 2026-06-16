@@ -195,8 +195,18 @@ async def test_openrouter_lists_tool_metadata_with_thinking_support() -> None:
 
     assert infos == frozenset(
         {
-            ProviderModelInfo("reasoning-tool-model", supports_thinking=True),
-            ProviderModelInfo("plain-tool-model", supports_thinking=False),
+            ProviderModelInfo(
+                "reasoning-tool-model",
+                supports_thinking=True,
+                supports_vision=False,
+                supports_tools=True,
+            ),
+            ProviderModelInfo(
+                "plain-tool-model",
+                supports_thinking=False,
+                supports_vision=False,
+                supports_tools=True,
+            ),
         }
     )
 

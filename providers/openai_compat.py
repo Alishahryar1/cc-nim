@@ -6,6 +6,7 @@ in separate modules; do not list them as subclasses of this class.
 
 import asyncio
 import json
+import time
 import uuid
 from abc import abstractmethod
 from collections.abc import AsyncIterator, Iterator
@@ -69,6 +70,7 @@ class OpenAIChatTransport(BaseProvider):
         api_key: str,
     ):
         super().__init__(config)
+        self._provider_id = provider_name.lower()
         self._provider_name = provider_name
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
@@ -137,10 +139,18 @@ class OpenAIChatTransport(BaseProvider):
         """Return provider-specific per-tool argument aliases for this request."""
         return {}
 
+    def _should_inject_synthetic_thinking(self, thinking_enabled: bool) -> bool:
+        """True if we should force <think> tags via system prompt."""
+        return thinking_enabled and self._config.force_synthetic_thinking
+
     async def _create_stream(self, body: dict) -> tuple[Any, dict]:
         """Create a streaming chat completion, optionally retrying once."""
         try:
             create_body = self._prepare_create_body(body)
+
+            # Key Rotation
+            self._client.api_key = self._get_next_api_key()
+
             stream = await self._global_rate_limiter.execute_with_retry(
                 self._client.chat.completions.create, **create_body, stream=True
             )
@@ -151,6 +161,10 @@ class OpenAIChatTransport(BaseProvider):
                 raise
 
             create_retry_body = self._prepare_create_body(retry_body)
+
+            # Key Rotation for retry
+            self._client.api_key = self._get_next_api_key()
+
             stream = await self._global_rate_limiter.execute_with_retry(
                 self._client.chat.completions.create, **create_retry_body, stream=True
             )
@@ -341,6 +355,7 @@ class OpenAIChatTransport(BaseProvider):
         *,
         thinking_enabled: bool | None,
     ) -> AsyncIterator[str]:
+        start_time = time.time()
         """Shared streaming implementation."""
         tag = self._provider_name
         message_id = f"msg_{uuid.uuid4()}"
@@ -351,8 +366,35 @@ class OpenAIChatTransport(BaseProvider):
             log_raw_events=self._config.log_raw_sse_events,
         )
 
-        body = self._build_request_body(request, thinking_enabled=thinking_enabled)
         thinking_enabled = self._is_thinking_enabled(request, thinking_enabled)
+        body = self._build_request_body(request, thinking_enabled=thinking_enabled)
+
+        if self._should_inject_synthetic_thinking(thinking_enabled):
+            thinking_instr = (
+                "\n\n[SYSTEM INSTRUCTION: Always begin your response with your internal "
+                "reasoning wrapped in <think>...</think> tags. Do not skip this step.]"
+            )
+            if self._config.enable_synthetic_tools:
+                thinking_instr += (
+                    "\n\nYou also have access to external tools. To use them, output: "
+                    "● <function=NAME><parameter=KEY>VALUE</parameter></function>"
+                )
+            # Use system prompt if possible for better reliability
+            current_system = body.get("system", "")
+            if isinstance(current_system, str):
+                body["system"] = (current_system + thinking_instr).strip()
+            elif isinstance(current_system, list):
+                current_system.append({"type": "text", "text": thinking_instr})
+            else:
+                # Fallback to messages[0] if no system prompt support detected or it's None
+                messages = body.get("messages", [])
+                if messages:
+                    target = messages[0]
+                    content = target.get("content", "")
+                    if isinstance(content, str):
+                        target["content"] = content + thinking_instr
+                    elif isinstance(content, list):
+                        content.append({"type": "text", "text": thinking_instr})
         req_tag = f" request_id={request_id}" if request_id else ""
         trace_event(
             stage="provider",
@@ -374,12 +416,16 @@ class OpenAIChatTransport(BaseProvider):
         usage_info = None
         tool_argument_aliases: dict[str, dict[str, str]] = {}
         tool_argument_alias_buffers: dict[int, str] = {}
+        ttft = None
+        output_token_count = 0
 
         async with self._global_rate_limiter.concurrency_slot():
             try:
                 stream, body = await self._create_stream(body)
                 tool_argument_aliases = self._tool_argument_aliases(body)
                 async for chunk in stream:
+                    if ttft is None:
+                        ttft = time.time() - start_time
                     if getattr(chunk, "usage", None):
                         usage_info = chunk.usage
 
@@ -459,6 +505,13 @@ class OpenAIChatTransport(BaseProvider):
             except asyncio.CancelledError, GeneratorExit:
                 raise
             except Exception as e:
+                status_code = getattr(e, "status_code", 500)
+                self._record_metrics(
+                    self._provider_id,
+                    start_time,
+                    status_code,
+                    ttft=ttft
+                )
                 self._log_stream_transport_error(tag, req_tag, e, request_id=request_id)
                 mapped_e = map_error(e, rate_limiter=self._global_rate_limiter)
                 base_message = user_visible_message_for_mapped_provider_error(
@@ -549,6 +602,25 @@ class OpenAIChatTransport(BaseProvider):
             output_tokens = completion
         else:
             output_tokens = sse.estimate_output_tokens()
+
+        # Record final metrics
+        total_time = time.time() - start_time
+        throughput = None
+        if ttft is not None and output_tokens > 0:
+            gen_time = total_time - ttft
+            if gen_time > 0:
+                throughput = output_tokens / gen_time
+
+        self._record_metrics(
+            self._provider_id,
+            start_time,
+            200,
+            ttft=ttft,
+            throughput=throughput,
+            input_tokens=input_tokens,
+            output_tokens=output_tokens
+        )
+
         if usage_info and hasattr(usage_info, "prompt_tokens"):
             provider_input = usage_info.prompt_tokens
             if isinstance(provider_input, int):

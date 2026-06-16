@@ -20,6 +20,15 @@ class EmittedNativeSseTracker:
         self._max_index = -1
         self.message_id: str | None = None
         self.model: str = ""
+        self._text_parts: list[str] = []
+        self._thinking_parts: list[str] = []
+
+    def estimate_output_tokens(self) -> int:
+        """Return the estimated number of output tokens emitted so far."""
+        t = "".join(self._text_parts)
+        th = "".join(self._thinking_parts)
+        # Rough estimate: 4 chars per token
+        return (len(t) + len(th)) // 4
 
     def feed(self, chunk: str) -> None:
         """Record SSE frames completed by ``chunk`` (handles splitting across reads)."""
@@ -51,6 +60,14 @@ class EmittedNativeSseTracker:
             idx = event_index(event)
             self._max_index = max(self._max_index, idx)
             self._open_stack.append(idx)
+            return
+
+        if event.event == "content_block_delta":
+            delta = event.data.get("delta", {})
+            if delta.get("type") == "text_delta":
+                self._text_parts.append(delta.get("text", ""))
+            elif delta.get("type") == "thinking_delta":
+                self._thinking_parts.append(delta.get("thinking", ""))
             return
 
         if event.event == "content_block_stop":

@@ -1,5 +1,6 @@
 """Base provider interface - extend this to implement your own provider."""
 
+import time
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
 from typing import Any
@@ -18,6 +19,7 @@ class ProviderConfig(BaseModel):
     """
 
     api_key: str
+    api_keys: list[str] = []
     base_url: str | None = None
     rate_limit: int | None = None
     rate_window: int = 60
@@ -26,6 +28,8 @@ class ProviderConfig(BaseModel):
     http_write_timeout: float = 10.0
     http_connect_timeout: float = HTTP_CONNECT_TIMEOUT_DEFAULT
     enable_thinking: bool = True
+    force_synthetic_thinking: bool = False
+    enable_synthetic_tools: bool = True
     proxy: str = ""
     log_raw_sse_events: bool = False
     log_api_error_tracebacks: bool = False
@@ -36,6 +40,15 @@ class BaseProvider(ABC):
 
     def __init__(self, config: ProviderConfig):
         self._config = config
+        self._key_index = 0
+
+    def _get_next_api_key(self) -> str:
+        """Rotate through available API keys."""
+        if not self._config.api_keys:
+            return self._config.api_key
+        key = self._config.api_keys[self._key_index]
+        self._key_index = (self._key_index + 1) % len(self._config.api_keys)
+        return key
 
     def _is_thinking_enabled(
         self, request: Any, thinking_enabled: bool | None = None
@@ -145,3 +158,30 @@ class BaseProvider(ABC):
         # inference; this branch is never executed.
         if False:
             yield ""
+
+    def _record_metrics(
+        self,
+        provider_id: str,
+        start_time: float,
+        status_code: int,
+        ttft: float | None = None,
+        throughput: float | None = None,
+        input_tokens: int = 0,
+        output_tokens: int = 0
+    ):
+        try:
+            # Import at runtime to avoid static dependency cycles in test contracts
+            import importlib
+            perf = importlib.import_module("api.performance")
+            latency = time.time() - start_time
+            perf.performance_tracker.record_request(
+                provider_id,
+                latency,
+                status_code,
+                ttft=ttft,
+                throughput=throughput,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens
+            )
+        except (ImportError, AttributeError):
+            pass

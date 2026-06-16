@@ -117,7 +117,12 @@ class ContentBlockManager:
         try:
             args_json = json.loads(state.task_arg_buffer)
         except Exception:
-            return None
+            # Check for common malformed JSON from certain providers (e.g. unescaped newlines)
+            try:
+                fixed = state.task_arg_buffer.replace('\n', '\\n').replace('\r', '\\r')
+                args_json = json.loads(fixed)
+            except Exception:
+                return None
 
         _normalize_task_run_in_background(args_json)
 

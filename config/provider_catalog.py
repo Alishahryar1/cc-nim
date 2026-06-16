@@ -63,7 +63,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="nvidia_nim_api_key",
         default_base_url=NVIDIA_NIM_DEFAULT_BASE,
         proxy_attr="nvidia_nim_proxy",
-        capabilities=("chat", "streaming", "tools", "thinking", "rate_limit"),
+        capabilities=("chat", "streaming", "tools", "thinking", "vision", "rate_limit"),
     ),
     "open_router": ProviderDescriptor(
         provider_id="open_router",
@@ -73,7 +73,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="open_router_api_key",
         default_base_url=OPENROUTER_DEFAULT_BASE,
         proxy_attr="open_router_proxy",
-        capabilities=("chat", "streaming", "tools", "thinking", "native_anthropic"),
+        capabilities=("chat", "streaming", "tools", "thinking", "vision", "native_anthropic"),
     ),
     "gemini": ProviderDescriptor(
         provider_id="gemini",
@@ -83,7 +83,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="gemini_api_key",
         default_base_url=GEMINI_DEFAULT_BASE,
         proxy_attr="gemini_proxy",
-        capabilities=("chat", "streaming", "tools", "thinking", "rate_limit"),
+        capabilities=("chat", "streaming", "tools", "thinking", "vision", "rate_limit"),
     ),
     "deepseek": ProviderDescriptor(
         provider_id="deepseek",

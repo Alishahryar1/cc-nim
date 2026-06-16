@@ -25,6 +25,7 @@ from .admin_config import (
     write_managed_env,
 )
 from .admin_urls import local_admin_url
+from .performance import performance_tracker
 
 router = APIRouter()
 
@@ -145,6 +146,18 @@ async def admin_status(request: Request):
             provider_id: sorted(model_ids)
             for provider_id, model_ids in registry.cached_model_ids().items()
         }
+    metrics = {}
+    for p_id, m in performance_tracker.metrics.items():
+        metrics[p_id] = {
+            "avg_latency": m.avg_latency,
+            "avg_ttft": m.avg_ttft,
+            "avg_throughput": m.avg_throughput,
+            "error_rate": m.error_rate,
+            "success_count": m.success_count,
+            "failure_count": m.failure_count,
+            "last_status": m.last_status
+        }
+
     return {
         "status": "running",
         "host": settings.host,
@@ -154,6 +167,7 @@ async def admin_status(request: Request):
         "pending_fields": getattr(request.app.state, "admin_pending_fields", []),
         "provider_status": provider_config_status(),
         "cached_models": cached_models,
+        "performance_metrics": metrics,
     }
 
 

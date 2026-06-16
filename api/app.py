@@ -174,13 +174,22 @@ def create_app(*, lifespan_enabled: bool = True) -> FastAPI:
                 request.method,
                 type(exc).__name__,
             )
+
+        status_code = 500
+        message = "An unexpected error occurred."
+
+        from fastapi import HTTPException
+        if isinstance(exc, HTTPException):
+            status_code = exc.status_code
+            message = str(exc.detail)
+
         return JSONResponse(
-            status_code=500,
+            status_code=status_code,
             content={
                 "type": "error",
                 "error": {
                     "type": "api_error",
-                    "message": "An unexpected error occurred.",
+                    "message": message,
                 },
             },
         )

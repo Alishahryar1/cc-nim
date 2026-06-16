@@ -216,6 +216,9 @@ class Settings(BaseSettings):
     enable_model_thinking: bool = Field(
         default=True, validation_alias="ENABLE_MODEL_THINKING"
     )
+    enable_synthetic_thinking: bool = Field(
+        default=True, validation_alias="ENABLE_SYNTHETIC_THINKING"
+    )
     enable_opus_thinking: bool | None = Field(
         default=None, validation_alias="ENABLE_OPUS_THINKING"
     )
@@ -246,11 +249,25 @@ class Settings(BaseSettings):
     enable_title_generation_skip: bool = True
     enable_suggestion_mode_skip: bool = True
     enable_filepath_extraction_mock: bool = True
+    enable_response_caching: bool = Field(default=False, validation_alias="ENABLE_RESPONSE_CACHING")
+    fusion_panels: str = Field(default="", validation_alias="FUSION_PANELS")
 
     # ==================== Local web server tools (web_search / web_fetch) ====================
     # Off by default: these tools perform outbound HTTP from the proxy (SSRF risk).
     enable_web_server_tools: bool = Field(
         default=False, validation_alias="ENABLE_WEB_SERVER_TOOLS"
+    )
+    enable_synthetic_tools: bool = Field(
+        default=True, validation_alias="ENABLE_SYNTHETIC_TOOLS"
+    )
+    context_compression_threshold: int = Field(
+        default=0, validation_alias="CONTEXT_COMPRESSION_THRESHOLD"
+    )
+    routing_probe_model: str | None = Field(
+        default=None, validation_alias="ROUTING_PROBE_MODEL"
+    )
+    vision_expert_model: str | None = Field(
+        default=None, validation_alias="VISION_EXPERT_MODEL"
     )
     # Comma-separated URL schemes allowed for web_fetch (default: http,https).
     web_fetch_allowed_schemes: str = Field(
@@ -490,19 +507,28 @@ class Settings(BaseSettings):
         return Settings.parse_model_name(self.model)
 
     def resolve_model(self, claude_model_name: str) -> str:
-        """Resolve a Claude model name to the configured provider/model string.
+        """Resolve a Claude model name to the primary configured provider/model string."""
+        return self.resolve_models(claude_model_name)[0]
+
+    def resolve_models(self, claude_model_name: str) -> tuple[str, ...]:
+        """Resolve a Claude model name to one or more configured provider/model strings.
 
         Classifies the incoming Claude model (opus/sonnet/haiku) and
-        returns the model-specific override if configured, otherwise the fallback MODEL.
+        returns the model-specific overrides if configured, otherwise the fallback MODEL.
+        Supports comma-separated fallback lists in settings.
         """
         name_lower = claude_model_name.lower()
+        raw_ref: str
         if "opus" in name_lower and self.model_opus is not None:
-            return self.model_opus
-        if "haiku" in name_lower and self.model_haiku is not None:
-            return self.model_haiku
-        if "sonnet" in name_lower and self.model_sonnet is not None:
-            return self.model_sonnet
-        return self.model
+            raw_ref = self.model_opus
+        elif "haiku" in name_lower and self.model_haiku is not None:
+            raw_ref = self.model_haiku
+        elif "sonnet" in name_lower and self.model_sonnet is not None:
+            raw_ref = self.model_sonnet
+        else:
+            raw_ref = self.model
+
+        return tuple(part.strip() for part in raw_ref.split(",") if part.strip())
 
     def configured_chat_model_refs(self) -> tuple[ConfiguredChatModelRef, ...]:
         """Return unique configured chat provider/model refs with source env keys."""
@@ -513,10 +539,11 @@ class Settings(BaseSettings):
             ("MODEL_HAIKU", self.model_haiku),
         )
         sources_by_ref: dict[str, list[str]] = {}
-        for source, model_ref in candidates:
-            if model_ref is None:
+        for source, raw_ref in candidates:
+            if raw_ref is None:
                 continue
-            sources_by_ref.setdefault(model_ref, []).append(source)
+            for model_ref in (part.strip() for part in raw_ref.split(",") if part.strip()):
+                sources_by_ref.setdefault(model_ref, []).append(source)
 
         return tuple(
             ConfiguredChatModelRef(
@@ -546,6 +573,22 @@ class Settings(BaseSettings):
             for part in self.web_fetch_allowed_schemes.split(",")
             if part.strip()
         )
+
+    def resolve_fusion_panel(self, panel_name: str) -> tuple[str, list[str]] | None:
+        """Resolve a named fusion panel to (judge, [models]).
+        Format in env: panel1=judge:m1,m2;panel2=judge:m3,m4
+        """
+        if not self.fusion_panels:
+            return None
+
+        panels = self.fusion_panels.split(";")
+        for p in panels:
+            if not p.strip(): continue
+            name, _, config = p.partition("=")
+            if name.strip() == panel_name:
+                judge, _, models = config.partition(":")
+                return judge.strip(), [m.strip() for m in models.split(",") if m.strip()]
+        return None
 
     @staticmethod
     def parse_provider_type(model_string: str) -> str:

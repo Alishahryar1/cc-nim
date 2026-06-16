@@ -211,6 +211,8 @@ def build_provider_config(
         http_write_timeout=settings.http_write_timeout,
         http_connect_timeout=settings.http_connect_timeout,
         enable_thinking=settings.enable_model_thinking,
+        force_synthetic_thinking=settings.enable_synthetic_thinking,
+        enable_synthetic_tools=settings.enable_synthetic_tools,
         proxy=proxy,
         log_raw_sse_events=settings.log_raw_sse_events,
         log_api_error_tracebacks=settings.log_api_error_tracebacks,
@@ -342,6 +344,15 @@ class ProviderRegistry:
         if info is None:
             return None
         return info.supports_thinking
+
+    def cached_model_supports_vision(
+        self, provider_id: str, model_id: str
+    ) -> bool | None:
+        """Return cached vision support when a provider exposes it."""
+        info = self._model_infos_by_provider.get(provider_id, {}).get(model_id)
+        if info is None:
+            return None
+        return info.supports_vision
 
     def cached_prefixed_model_refs(self) -> tuple[str, ...]:
         """Return cached provider models in user-selectable ``provider/model`` form."""
