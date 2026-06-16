@@ -41,6 +41,7 @@ def _settings(**overrides):
         "groq_api_key": "",
         "cerebras_api_key": "",
         "fireworks_api_key": "",
+        "custom_openai_api_key": "",
         "lm_studio_base_url": "",
         "llamacpp_base_url": "",
         "ollama_base_url": "http://localhost:11434",

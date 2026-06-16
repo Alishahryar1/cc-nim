@@ -246,6 +246,21 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
             "local",
         ),
     ),
+    # The custom_openai provider lets users connect any OpenAI /v1/chat/completions
+    # endpoint. Unlike the other built-in providers, its URL and key are fully
+    # user-defined — ideal for freellmapi, self-hosted models, or proprietary
+    # OpenAI-compatible services. It reuses the existing Anthropic→OpenAI
+    # conversion pipeline and supports streaming, tools, and extended thinking.
+    "custom_openai": ProviderDescriptor(
+        provider_id="custom_openai",
+        transport_type="openai_chat",
+        credential_env="CUSTOM_OPENAI_API_KEY",
+        credential_attr="custom_openai_api_key",
+        default_base_url="http://localhost:3000/v1",
+        base_url_attr="custom_openai_base_url",
+        proxy_attr="custom_openai_proxy",
+        capabilities=("chat", "streaming", "tools", "thinking", "rate_limit"),
+    ),
 }
 
 # Key order:

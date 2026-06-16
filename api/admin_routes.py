@@ -33,6 +33,9 @@ LOCAL_PROVIDER_PATHS = {
     "lmstudio": "/models",
     "llamacpp": "/models",
     "ollama": "/api/tags",
+    # The custom_openai provider uses the standard OpenAI /v1/models endpoint
+    # for model discovery, which can be queried to populate the model selector.
+    "custom_openai": "/models",
 }
 
 
@@ -63,13 +66,18 @@ def _origin_is_local(origin: str | None) -> bool:
 
 def require_loopback_admin(request: Request) -> None:
     """Allow admin access only from the local machine."""
+    from loguru import logger
 
     client_host = request.client.host if request.client else None
     if not _is_loopback_host(client_host):
+        logger.warning(
+            "require_loopback_admin: rejected non-loopback client_host={}", client_host
+        )
         raise HTTPException(status_code=403, detail="Admin UI is local-only")
 
     origin = request.headers.get("origin")
     if not _origin_is_local(origin):
+        logger.warning("require_loopback_admin: rejected non-local origin={}", origin)
         raise HTTPException(status_code=403, detail="Admin UI is local-only")
 
 
@@ -250,6 +258,9 @@ def _local_provider_url(provider_id: str, values: dict[str, str]) -> str:
         return values.get("LLAMACPP_BASE_URL", "")
     if provider_id == "ollama":
         return values.get("OLLAMA_BASE_URL", "")
+    # Custom OpenAI endpoint uses a user-defined URL from the admin UI config.
+    if provider_id == "custom_openai":
+        return values.get("CUSTOM_OPENAI_API_BASE_URL", "")
     return ""
 
 

@@ -9,6 +9,7 @@ from config.provider_catalog import PROVIDER_CATALOG, ZAI_DEFAULT_BASE
 from config.provider_ids import SUPPORTED_PROVIDER_IDS
 from providers.cerebras import CerebrasProvider
 from providers.codestral import CodestralProvider
+from providers.custom_openai import CustomOpenAIProvider
 from providers.deepseek import DeepSeekProvider
 from providers.exceptions import UnknownProviderTypeError
 from providers.fireworks import FireworksProvider
@@ -67,6 +68,9 @@ def _make_settings(**overrides):
     mock.groq_proxy = ""
     mock.cerebras_api_key = ""
     mock.cerebras_proxy = ""
+    mock.custom_openai_api_key = ""
+    mock.custom_openai_base_url = "http://localhost:3000/v1"
+    mock.custom_openai_proxy = ""
     mock.provider_rate_limit = 40
     mock.provider_rate_window = 60
     mock.provider_max_concurrency = 5
@@ -170,6 +174,7 @@ def test_create_provider_instantiates_each_builtin():
         cerebras_api_key="test_cerebras_key",
         fireworks_api_key="test_fireworks_key",
         kimi_api_key="test_kimi_key",
+        custom_openai_api_key="test_custom_openai_key",
     )
     cases = {
         "nvidia_nim": NvidiaNimProvider,
@@ -188,6 +193,7 @@ def test_create_provider_instantiates_each_builtin():
         "gemini": GeminiProvider,
         "groq": GroqProvider,
         "cerebras": CerebrasProvider,
+        "custom_openai": CustomOpenAIProvider,
     }
 
     with (

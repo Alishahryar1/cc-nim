@@ -114,6 +114,13 @@ class Settings(BaseSettings):
     # ==================== Cerebras Inference (OpenAI-compatible) ====================
     cerebras_api_key: str = Field(default="", validation_alias="CEREBRAS_API_KEY")
 
+    # ==================== Custom Provider Config (OpenAI-compatible) ====================
+    # API key for a user-defined OpenAI-compatible endpoint (e.g. freellmapi, LM Studio).
+    # The user sets this via the admin UI or CUSTOM_OPENAI_API_KEY env var.
+    custom_openai_api_key: str = Field(
+        default="", validation_alias="CUSTOM_OPENAI_API_KEY"
+    )
+
     # ==================== Messaging Platform Selection ====================
     # Valid: "telegram" | "discord" | "none"
     messaging_platform: str = Field(
@@ -147,6 +154,15 @@ class Settings(BaseSettings):
         validation_alias="OLLAMA_BASE_URL",
     )
 
+    # ==================== Custom Provider URL (OpenAI-compatible) ====================
+    # Base URL of the user-defined OpenAI-compatible API endpoint, configurable
+    # via the admin UI or CUSTOM_OPENAI_API_BASE_URL env var. Default points at
+    # freellmapi's standard port for easy out-of-box setup.
+    custom_openai_base_url: str = Field(
+        default="http://localhost:3000/v1",
+        validation_alias="CUSTOM_OPENAI_API_BASE_URL",
+    )
+
     # ==================== Model ====================
     # All Claude model requests are mapped to this single model (fallback)
     # Format: provider_type/model/name
@@ -174,6 +190,9 @@ class Settings(BaseSettings):
     gemini_proxy: str = Field(default="", validation_alias="GEMINI_PROXY")
     groq_proxy: str = Field(default="", validation_alias="GROQ_PROXY")
     cerebras_proxy: str = Field(default="", validation_alias="CEREBRAS_PROXY")
+    # Proxy URL for the custom OpenAI-compatible endpoint (optional, advanced).
+    # Useful when routing through a corporate proxy or SSH tunnel.
+    custom_openai_proxy: str = Field(default="", validation_alias="CUSTOM_OPENAI_PROXY")
 
     # ==================== Provider Rate Limiting ====================
     provider_rate_limit: int = Field(default=40, validation_alias="PROVIDER_RATE_LIMIT")
