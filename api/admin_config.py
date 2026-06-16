@@ -251,6 +251,19 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
             "[OpenAI compatibility](https://inference-docs.cerebras.ai/resources/openai)."
         ),
     ),
+    # === Custom / user-defined provider (OpenAI-compatible) ===
+    # Key, URL, and proxy for any OpenAI /v1/chat/completions endpoint.
+    # The user configures these in the admin UI to connect to e.g. freellmapi,
+    # a self-hosted model server, or any third-party OpenAI-compatible API.
+    ConfigFieldSpec(
+        "CUSTOM_OPENAI_API_KEY",
+        "Custom OpenAI API Key",
+        "providers",
+        "secret",
+        settings_attr="custom_openai_api_key",
+        secret=True,
+        description="API Key for the custom OpenAI-compatible endpoint.",
+    ),
     ConfigFieldSpec(
         "LM_STUDIO_BASE_URL",
         "LM Studio Base URL",
@@ -271,6 +284,14 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         "providers",
         settings_attr="ollama_base_url",
         default="http://localhost:11434",
+    ),
+    ConfigFieldSpec(
+        "CUSTOM_OPENAI_API_BASE_URL",
+        "Custom OpenAI Base URL",
+        "providers",
+        settings_attr="custom_openai_base_url",
+        default="http://localhost:3000/v1",
+        description="The base URL of the custom OpenAI-compatible API endpoint.",
     ),
     ConfigFieldSpec(
         "NVIDIA_NIM_PROXY",
@@ -404,6 +425,17 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         "providers",
         "secret",
         settings_attr="cerebras_proxy",
+        secret=True,
+        advanced=True,
+    ),
+    # A custom endpoint typically won't need a proxy; this is offered as an
+    # advanced option for corporate or tunneled deployments.
+    ConfigFieldSpec(
+        "CUSTOM_OPENAI_PROXY",
+        "Custom OpenAI Proxy",
+        "providers",
+        "secret",
+        settings_attr="custom_openai_proxy",
         secret=True,
         advanced=True,
     ),

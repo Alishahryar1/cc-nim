@@ -57,6 +57,10 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "gemini": "gemini/models/gemini-3.1-flash-lite",
     "groq": "groq/llama-3.3-70b-versatile",
     "cerebras": "cerebras/llama3.1-8b",
+    # Default model ref for the user-defined OpenAI-compatible provider.
+    # The actual model used is determined by the upstream endpoint (e.g. freellmapi
+    # routes requests to the best available model regardless of this identifier).
+    "custom_openai": "custom_openai/gpt-4o-mini",
 }
 
 NVIDIA_NIM_CLI_DEFAULT_MODELS: tuple[str, ...] = (
@@ -257,6 +261,10 @@ class SmokeConfig:
             return bool(self.settings.groq_api_key.strip())
         if provider == "cerebras":
             return bool(self.settings.cerebras_api_key.strip())
+        # The custom OpenAI provider requires an API key to be set; the URL
+        # defaults are sufficient for local testing but can be overridden.
+        if provider == "custom_openai":
+            return bool(self.settings.custom_openai_api_key.strip())
         return False
 
 

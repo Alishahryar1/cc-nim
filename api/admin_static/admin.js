@@ -71,6 +71,7 @@ function providerName(providerId) {
     opencode: "OpenCode Zen",
     opencode_go: "OpenCode Go",
     zai: "Z.ai",
+    custom_openai: "Custom OpenAI-Compatible",  // User-defined OpenAI endpoint (e.g. freellmapi)
   };
   if (names[providerId]) return names[providerId];
   return providerId

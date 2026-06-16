@@ -34,7 +34,11 @@ TokenCounter = Callable[[list[Any], str | list[Any] | None, list[Any] | None], i
 ProviderGetter = Callable[[str], BaseProvider]
 
 # Providers that use ``/chat/completions`` + Anthropic-to-OpenAI conversion (not native Messages).
-_OPENAI_CHAT_UPSTREAM_IDS = frozenset({"nvidia_nim", "opencode", "opencode_go"})
+# ``custom_openai`` is included here because even though it's user-defined, it speaks
+# the OpenAI /v1/chat/completions format and needs the same conversion pipeline.
+_OPENAI_CHAT_UPSTREAM_IDS = frozenset(
+    {"nvidia_nim", "opencode", "opencode_go", "custom_openai"}
+)
 
 
 def anthropic_sse_streaming_response(
