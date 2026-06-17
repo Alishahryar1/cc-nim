@@ -15,6 +15,21 @@ def _script_text(name: str) -> str:
     return (_repo_root() / "scripts" / name).read_text(encoding="utf-8")
 
 
+def test_readme_uninstall_one_liners_use_raw_github_urls() -> None:
+    text = (_repo_root() / "README.md").read_text(encoding="utf-8")
+
+    assert (
+        'curl -fsSL "https://raw.githubusercontent.com/'
+        'Alishahryar1/free-claude-code/main/scripts/uninstall.sh" | sh'
+    ) in text
+    assert (
+        'irm "https://raw.githubusercontent.com/'
+        'Alishahryar1/free-claude-code/main/scripts/uninstall.ps1" | iex'
+    ) in text
+    assert "blob/main/scripts/uninstall.sh?raw=1" not in text
+    assert "blob/main/scripts/uninstall.ps1?raw=1" not in text
+
+
 def _braced_body(text: str, declaration: str) -> str:
     start = text.index(declaration)
     brace_start = text.index("{", start)
