@@ -96,6 +96,13 @@ class TestIsSafetyClassifierRequest:
         req = _make_request("hola, ¿quién eres?")
         assert is_safety_classifier_request(req) is False
 
+    def test_xml_content_without_verdict_instruction(self):
+        """XML-heavy text with <transcript>/<block> but no verdict tag -> False."""
+        req = _make_request(
+            "Explain this format: <transcript> ... </transcript> and a <block> tag."
+        )
+        assert is_safety_classifier_request(req) is False
+
 
 class TestIsFilepathExtractionRequest:
     def test_output_marker_minus_one_returns_false(self):

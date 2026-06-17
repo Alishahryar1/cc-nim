@@ -96,7 +96,8 @@ def is_safety_classifier_request(request_data: MessagesRequest) -> bool:
         extract_text_from_content(message.content) for message in request_data.messages
     )
     combined = f"{system_text}\n{messages_text}"
-    return "<transcript>" in combined and "<block>" in combined
+    has_verdict_instruction = "yes</block>" in combined or "no</block>" in combined
+    return "<transcript>" in combined and has_verdict_instruction
 
 
 def is_suggestion_mode_request(request_data: MessagesRequest) -> bool:
