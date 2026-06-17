@@ -1,7 +1,41 @@
 """User-facing error formatting shared by API, providers, and integrations."""
 
+import re
+
 import httpx
 import openai
+
+
+def _redact_token(text: str) -> str:
+    # Redact header-style values: Authorization / api_key / token / secret / password
+    text = re.sub(
+        r"(?i)((Authorization|api_key|X-Api-Key|X-API-Key|token|secret|password)[^\n]*?)(\s*[=:]\s*)([^\n]+)",
+        lambda m: f"{m.group(1)}{m.group(3)}[REDACTED]",
+        text,
+    )
+    # Redact long opaque tokens.
+    text = re.sub(r"\b[A-Za-z0-9_+/=-]{32,}\b", "[REDACTED_TOKEN]", text)
+    return text
+
+
+def _safe_raw_error_preview(raw_error: object, max_len: int = 180) -> str:
+    if raw_error is None:
+        return ""
+    text = str(raw_error).strip()
+    if not text:
+        return ""
+    first_line = text.splitlines()[0]
+    first_line = _redact_token(first_line)
+    return first_line[:max_len]
+
+
+def _format_auth_error(base_message: str, exc: object) -> str:
+    if not isinstance(exc, Exception):
+        return base_message
+    preview = _safe_raw_error_preview(getattr(exc, "raw_error", None))
+    if not preview:
+        return base_message
+    return f"{base_message} Upstream recap: {preview}"
 
 
 def get_user_facing_error_message(
@@ -29,7 +63,7 @@ def get_user_facing_error_message(
     if isinstance(e, openai.RateLimitError):
         return "Provider rate limit reached. Please retry shortly."
     if isinstance(e, openai.AuthenticationError):
-        return "Provider authentication failed. Check API key."
+        return _format_auth_error("Provider authentication failed. Check API key.", e)
     if isinstance(e, openai.BadRequestError):
         return "Invalid request sent to provider."
 
@@ -38,7 +72,7 @@ def get_user_facing_error_message(
     if name == "RateLimitError":
         return "Provider rate limit reached. Please retry shortly."
     if name == "AuthenticationError":
-        return "Provider authentication failed. Check API key."
+        return _format_auth_error("Provider authentication failed. Check API key.", e)
     if name == "InvalidRequestError":
         return "Invalid request sent to provider."
     if name == "OverloadedError":

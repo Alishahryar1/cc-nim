@@ -29,6 +29,55 @@ from providers.exceptions import (
 )
 
 
+def test_authentication_error_plain_401_omits_empty_upstream_cap():
+    exc = _make_openai_error(openai.AuthenticationError, message="", status_code=401)
+    result = map_error(exc)
+    assert isinstance(result, AuthenticationError)
+    message = get_user_facing_error_message(result)
+    assert message == "Provider authentication failed. Check API key."
+
+
+def test_authentication_error_with_raw_upstream_error_attaches_preview():
+    raw = "Error code: 401 - {'error': {'message': 'Invalid API Key'}}"
+    exc = _make_openai_error(
+        openai.AuthenticationError, message="auth failed", status_code=401
+    )
+    result = map_error(exc)
+    assert isinstance(result, AuthenticationError)
+    result.raw_error = raw
+    message = get_user_facing_error_message(result)
+    assert message.startswith("Provider authentication failed. Check API key.")
+    assert "Upstream recap:" in message
+    assert "REDACTED" in message or "401" in message
+
+
+def test_authentication_error_raw_error_bearing_token_is_redacted():
+    raw = "Authorization: Bearer sk-ABCDEF1234567890EXTRA"
+    exc = _make_openai_error(
+        openai.AuthenticationError, message="401 Unauthorized", status_code=401
+    )
+    result = map_error(exc)
+    assert isinstance(result, AuthenticationError)
+    result.raw_error = raw
+    message = get_user_facing_error_message(result)
+    assert "sk-ABCDEF1234567890EXTRA" not in message
+    assert "REDACTED" in message
+
+
+def test_authentication_error_raw_error_with_newlines_only_uses_first_line():
+    raw = "401 Unauthorized\nDate: Wed, 31 May 2026 00:00:00 GMT\nWWW: test"
+    exc = _make_openai_error(
+        openai.AuthenticationError, message="401 Unauthorized", status_code=401
+    )
+    result = map_error(exc)
+    assert isinstance(result, AuthenticationError)
+    result.raw_error = raw
+    message = get_user_facing_error_message(result)
+    assert "Date:" not in message
+    assert "WWW:" not in message
+    assert "401 Unauthorized" in message
+
+
 def _make_openai_error(cls, message="test error", status_code=None):
     """Helper to create openai exceptions with required httpx objects."""
     response = Response(
