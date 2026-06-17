@@ -35,6 +35,23 @@ def _shell_path_with_mock(bin_dir: Path) -> str:
     return f"{bin_dir}:/usr/bin:/bin"
 
 
+def _path_prepending(path: Path) -> str:
+    return os.pathsep.join((str(path), os.environ.get("PATH", "")))
+
+
+def _path_without_uv(prefix: Path) -> str:
+    uv_names = ("uv", "uv.exe", "uv.cmd", "uv.bat")
+    entries = [str(prefix)]
+    for raw_entry in os.environ.get("PATH", "").split(os.pathsep):
+        if not raw_entry:
+            continue
+        entry = Path(raw_entry)
+        if any((entry / name).exists() for name in uv_names):
+            continue
+        entries.append(raw_entry)
+    return os.pathsep.join(entries)
+
+
 def _write_mock_uv(bin_dir: Path, *, message: str, exit_code: int) -> None:
     if os.name == "nt":
         uv = bin_dir / "uv.cmd"
@@ -277,7 +294,7 @@ def test_uninstall_ps1_generic_uv_failure_does_not_delete_fcc_home(
             **os.environ,
             "HOME": str(home),
             "USERPROFILE": str(home),
-            "PATH": str(bin_dir),
+            "PATH": _path_prepending(bin_dir),
         },
         text=True,
         capture_output=True,
@@ -312,7 +329,7 @@ def test_uninstall_ps1_missing_tool_still_deletes_fcc_home(tmp_path: Path) -> No
             **os.environ,
             "HOME": str(home),
             "USERPROFILE": str(home),
-            "PATH": str(bin_dir),
+            "PATH": _path_prepending(bin_dir),
         },
         text=True,
         capture_output=True,
@@ -341,7 +358,7 @@ def test_uninstall_ps1_missing_uv_still_deletes_fcc_home(tmp_path: Path) -> None
             **os.environ,
             "HOME": str(home),
             "USERPROFILE": str(home),
-            "PATH": str(empty_bin),
+            "PATH": _path_without_uv(empty_bin),
         },
         text=True,
         capture_output=True,
