@@ -22,6 +22,10 @@ Free Claude Code routes Anthropic Messages API traffic from Claude Code (CLI and
   <img src="assets/pic.png" alt="Free Claude Code in action" width="700">
 </div>
 
+<div align="center">
+  <img src="assets/codex.png" alt="Codex CLI in action through Free Claude Code" width="700">
+</div>
+
 <a id="model-picker"></a>
 
 <div align="center">
