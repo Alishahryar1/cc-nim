@@ -99,6 +99,12 @@ Console scripts are registered in [pyproject.toml](pyproject.toml):
 - `fcc-claude` calls `cli.entrypoints:launch_claude`.
 - `fcc-codex` calls `cli.entrypoints:launch_codex`.
 
+[scripts/install.sh](scripts/install.sh) and [scripts/install.ps1](scripts/install.ps1)
+install or update the uv tool plus optional voice extras. [scripts/uninstall.sh](scripts/uninstall.sh)
+and [scripts/uninstall.ps1](scripts/uninstall.ps1) remove only the FCC uv tool and always
+delete the managed `~/.fcc/` tree from [config/paths.py](config/paths.py); they do not remove
+uv, Claude Code, Codex, or uv-managed Python runtimes.
+
 [cli/entrypoints.py](cli/entrypoints.py) starts the FastAPI server with Uvicorn.
 `serve()` migrates legacy env files when needed, loads cached settings, runs a
 supervised server instance, and can restart the server after admin config changes.

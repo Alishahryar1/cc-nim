@@ -86,6 +86,22 @@ irm "https://github.com/Alishahryar1/free-claude-code/blob/main/scripts/install.
 
 Review the installers at [scripts/install.sh](https://github.com/Alishahryar1/free-claude-code/blob/main/scripts/install.sh) and [scripts/install.ps1](https://github.com/Alishahryar1/free-claude-code/blob/main/scripts/install.ps1). They install Claude Code and Codex when missing, then install or update the proxy. Re-run these commands to update to the latest version.
 
+To remove only Free Claude Code (not uv, Claude Code, Codex, or the uv-managed Python runtime):
+
+macOS/Linux:
+
+```bash
+curl -fsSL "https://github.com/Alishahryar1/free-claude-code/blob/main/scripts/uninstall.sh?raw=1" | sh
+```
+
+Windows PowerShell:
+
+```powershell
+irm "https://github.com/Alishahryar1/free-claude-code/blob/main/scripts/uninstall.ps1?raw=1" | iex
+```
+
+Review [scripts/uninstall.sh](https://github.com/Alishahryar1/free-claude-code/blob/main/scripts/uninstall.sh) and [scripts/uninstall.ps1](https://github.com/Alishahryar1/free-claude-code/blob/main/scripts/uninstall.ps1). They remove the FCC uv tool and always delete `~/.fcc/`. Stop any running `fcc-server`, `fcc-claude`, `fcc-codex`, `fcc-init`, or `free-claude-code` process before uninstalling.
+
 ### 2. Start The Proxy
 
 ```bash
