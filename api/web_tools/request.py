@@ -85,3 +85,14 @@ def openai_chat_upstream_server_tool_error(
             "tool_choice, or remove these tools from the request."
         )
     return None
+
+def filter_anthropic_server_tools(request: MessagesRequest) -> MessagesRequest:
+    """Return a copy of request with Anthropic server tools removed from the tools list."""
+    if not request.tools:
+        return request
+    
+    filtered_tools = [t for t in request.tools if not is_anthropic_server_tool_definition(t)]
+    if len(filtered_tools) == len(request.tools):
+        return request
+        
+    return request.model_copy(update={'tools': filtered_tools if filtered_tools else None})

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import traceback
 import uuid
+from dataclasses import replace
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
@@ -37,7 +38,7 @@ from .models.responses import TokenCountResponse
 from .optimization_handlers import try_optimizations
 from .web_tools.egress import WebFetchEgressPolicy
 from .web_tools.request import (
-    is_web_server_tool_request,
+    is_web_server_tool_request, filter_anthropic_server_tools,
     openai_chat_upstream_server_tool_error,
 )
 from .web_tools.streaming import stream_web_server_tool_response
@@ -128,7 +129,7 @@ class ClaudeProxyService:
         self._token_counter = token_counter
 
     def create_message(self, request_data: MessagesRequest) -> object:
-        """Create a message response or streaming response."""
+        '''Create a message response or streaming response.'''
         try:
             _require_non_empty_messages(request_data.messages)
 
@@ -139,7 +140,10 @@ class ClaudeProxyService:
                     web_tools_enabled=self._settings.enable_web_server_tools,
                 )
                 if tool_err is not None:
-                    raise InvalidRequestError(tool_err)
+                    if not self._settings.enable_web_server_tools:
+                        raise InvalidRequestError(tool_err)
+                    # If enabled but not forced, just strip them so OpenAI doesn't complain
+                    routed = replace(routed, request=filter_anthropic_server_tools(routed.request))
 
             if self._settings.enable_web_server_tools and is_web_server_tool_request(
                 routed.request
