@@ -1,12 +1,12 @@
-"""Command handlers for messaging platform commands (/stop, /stats, /clear).
-
-Extracted from ClaudeMessageHandler to keep handler.py focused on
-core message processing logic.
+"""
+Command utilities for chat operations like /stop, /stats, /clear.
+Refactored for resilience, retries, and cleaner async handling.
 """
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+import asyncio
+from typing import TYPE_CHECKING, Iterable
 
 from loguru import logger
 
@@ -15,26 +15,253 @@ if TYPE_CHECKING:
     from messaging.models import IncomingMessage
 
 
-async def handle_stop_command(
-    handler: ClaudeMessageHandler, incoming: IncomingMessage
-) -> None:
-    """Handle /stop command from messaging platform."""
-    # Reply-scoped stop: reply "/stop" to stop only that task.
-    if incoming.is_reply() and incoming.reply_to_message_id:
-        reply_id = incoming.reply_to_message_id
-        tree = handler.tree_queue.get_tree_for_node(reply_id)
-        node_id = handler.tree_queue.resolve_parent_node_id(reply_id) if tree else None
+# ------------------ Helpers ------------------
 
-        if not node_id:
-            msg_id = await handler.platform.queue_send_message(
-                incoming.chat_id,
-                handler.format_status(
-                    "⏹", "Stopped.", "Nothing to stop for that message."
-                ),
+async def _safe_send(handler, chat, text, thread_id):
+    """Send message with timeout protection."""
+    try:
+        return await asyncio.wait_for(
+            handler.platform.queue_send_message(
+                chat,
+                text,
                 fire_and_forget=False,
-                message_thread_id=incoming.message_thread_id,
+                message_thread_id=thread_id,
+            ),
+            timeout=10,
+        )
+    except Exception as err:
+        logger.error(f"Send failed: {err}")
+        return None
+
+
+async def _retry_delete(handler, chat, ids: Iterable[str], retries: int = 2):
+    """Retry deletion for robustness."""
+    for attempt in range(retries + 1):
+        try:
+            await handler.platform.queue_delete_messages(
+                chat, list(ids), fire_and_forget=False
             )
-            handler.record_outgoing_message(
+            return
+        except Exception as err:
+            logger.debug(f"Delete attempt {attempt+1} failed: {err}")
+            await asyncio.sleep(0.5)
+
+
+def _format_ids(values: set[str]) -> list[str]:
+    """Sort numeric IDs descending, others appended."""
+    def parse(x):
+        try:
+            return int(x)
+        except Exception:
+            return None
+
+    numeric = [(parse(v), v) for v in values if parse(v) is not None]
+    text = [v for v in values if parse(v) is None]
+
+    numeric.sort(reverse=True)
+    return [v for _, v in numeric] + text
+
+
+# ------------------ STOP ------------------
+
+async def handle_stop_command(handler: ClaudeMessageHandler, incoming: IncomingMessage):
+    """Stop running tasks (scoped or global)."""
+
+    def make_msg(text):
+        return handler.format_status("⏹", "Stopped.", text)
+
+    if incoming.is_reply() and incoming.reply_to_message_id:
+        ref = incoming.reply_to_message_id
+        tree_obj = handler.tree_queue.get_tree_for_node(ref)
+
+        node = (
+            handler.tree_queue.resolve_parent_node_id(ref)
+            if tree_obj else None
+        )
+
+        if node:
+            total = await handler.stop_task(node)
+            label = "request" if total == 1 else "requests"
+            msg = make_msg(f"Cancelled {total} {label}.")
+        else:
+            msg = make_msg("Nothing to stop for that message.")
+
+        sent = await _safe_send(handler, incoming.chat_id, msg, incoming.message_thread_id)
+        if sent:
+            handler.record_outgoing_message(incoming.platform, incoming.chat_id, sent, "command")
+        return
+
+    total = await handler.stop_all_tasks()
+    msg = make_msg(f"Cancelled {total} pending or active requests.")
+
+    sent = await _safe_send(handler, incoming.chat_id, msg, incoming.message_thread_id)
+    if sent:
+        handler.record_outgoing_message(incoming.platform, incoming.chat_id, sent, "command")
+
+
+# ------------------ STATS ------------------
+
+async def handle_stats_command(handler: ClaudeMessageHandler, incoming: IncomingMessage):
+    """Display system stats."""
+    stats = handler.cli_manager.get_stats()
+    trees = handler.tree_queue.get_tree_count()
+    ctx = handler.get_render_ctx()
+
+    content = (
+        "📊 "
+        + ctx.bold("Stats")
+        + "\n"
+        + ctx.escape_text(f"• Active CLI: {stats.get('active_sessions', 0)}")
+        + "\n"
+        + ctx.escape_text(f"• Message Trees: {trees}")
+    )
+
+    sent = await _safe_send(handler, incoming.chat_id, content, incoming.message_thread_id)
+    if sent:
+        handler.record_outgoing_message(incoming.platform, incoming.chat_id, sent, "command")
+
+
+# ------------------ CLEAR (CORE) ------------------
+
+async def _collect_branch_ids(handler, root_id, incoming):
+    """Gather all related message IDs."""
+    ids = set()
+    tree = handler.tree_queue.get_tree_for_node(root_id)
+
+    if not tree:
+        return ids
+
+    for nid in tree.get_descendants(root_id):
+        node = tree.get_node(nid)
+        if not node:
+            continue
+
+        if node.incoming.message_id:
+            ids.add(str(node.incoming.message_id))
+
+        if node.status_message_id:
+            ids.add(str(node.status_message_id))
+
+    if incoming.message_id:
+        ids.add(str(incoming.message_id))
+
+    return ids
+
+
+async def _clear_branch(handler, incoming, root_id):
+    """Clear a subtree safely."""
+    cancelled_nodes = await handler.tree_queue.cancel_branch(root_id)
+    handler.update_cancelled_nodes_ui(cancelled_nodes)
+
+    ids = await _collect_branch_ids(handler, root_id, incoming)
+    ordered = _format_ids(ids)
+
+    if ordered:
+        await _retry_delete(handler, incoming.chat_id, ordered)
+
+    removed, tree_root, wiped = await handler.tree_queue.remove_branch(root_id)
+
+    try:
+        handler.session_store.remove_node_mappings([n.node_id for n in removed])
+
+        if wiped:
+            handler.session_store.remove_tree(tree_root)
+        else:
+            updated = handler.tree_queue.get_tree(tree_root)
+            if updated:
+                handler.session_store.save_tree(tree_root, updated.to_dict())
+    except Exception as err:
+        logger.warning(f"State update failed: {err}")
+
+
+# ------------------ CLEAR (ENTRY) ------------------
+
+async def handle_clear_command(handler: ClaudeMessageHandler, incoming: IncomingMessage):
+    """Handle clearing logic (branch or full reset)."""
+    from messaging.trees import TreeQueueManager
+
+    def msg(text):
+        return handler.format_status("🗑", "Cleared.", text)
+
+    if incoming.is_reply() and incoming.reply_to_message_id:
+        ref = incoming.reply_to_message_id
+        tree = handler.tree_queue.get_tree_for_node(ref)
+
+        root = (
+            handler.tree_queue.resolve_parent_node_id(ref)
+            if tree else None
+        )
+
+        if root:
+            await _clear_branch(handler, incoming, root)
+            return
+
+        cancel_voice = getattr(handler.platform, "cancel_pending_voice", None)
+        if cancel_voice:
+            result = await cancel_voice(incoming.chat_id, ref)
+            if result:
+                voice_id, status_id = result
+                ids = {voice_id, status_id}
+                if incoming.message_id:
+                    ids.add(str(incoming.message_id))
+
+                await _retry_delete(handler, incoming.chat_id, ids)
+
+                sent = await _safe_send(handler, incoming.chat_id, msg("Voice note cancelled."), incoming.message_thread_id)
+                if sent:
+                    handler.record_outgoing_message(incoming.platform, incoming.chat_id, sent, "command")
+                return
+
+        sent = await _safe_send(handler, incoming.chat_id, msg("Nothing to clear for that message."), incoming.message_thread_id)
+        if sent:
+            handler.record_outgoing_message(incoming.platform, incoming.chat_id, sent, "command")
+        return
+
+    # -------- GLOBAL CLEAR --------
+
+    await handler.stop_all_tasks()
+
+    ids = set()
+
+    try:
+        ids.update(
+            str(x)
+            for x in handler.session_store.get_message_ids_for_chat(
+                incoming.platform, incoming.chat_id
+            )
+            if x is not None
+        )
+    except Exception as err:
+        logger.debug(f"Session read error: {err}")
+
+    try:
+        ids.update(
+            handler.tree_queue.get_message_ids_for_chat(
+                incoming.platform, incoming.chat_id
+            )
+        )
+    except Exception as err:
+        logger.warning(f"Tree read error: {err}")
+
+    if incoming.message_id:
+        ids.add(str(incoming.message_id))
+
+    ordered = _format_ids(ids)
+
+    if ordered:
+        await _retry_delete(handler, incoming.chat_id, ordered)
+
+    try:
+        handler.session_store.clear_all()
+    except Exception as err:
+        logger.warning(f"Storage clear failed: {err}")
+
+    handler.replace_tree_queue(
+        TreeQueueManager(
+            queue_update_callback=handler.update_queue_positions,
+            node_started_callback=handler.mark_node_processing,
+        )
+    )            handler.record_outgoing_message(
                 incoming.platform, incoming.chat_id, msg_id, "command"
             )
             return
