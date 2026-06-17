@@ -667,6 +667,13 @@ class OpenAIChatTransport(BaseProvider):
         )
 
         yield sse.message_start()
+        if thinking_enabled:
+            for event in sse.ensure_thinking_block():
+                yield event
+            yield sse.emit_thinking_delta("Processing request...")
+        else:
+            for event in sse.ensure_text_block():
+                yield event
 
         think_parser = ThinkTagParser()
         heuristic_parser = HeuristicToolParser()

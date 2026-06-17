@@ -73,6 +73,10 @@ def _strip_chat_template_field(extra_body: dict[str, Any]) -> bool:
     return extra_body.pop("chat_template", None) is not None
 
 
+def _strip_chat_template_kwargs_field(extra_body: dict[str, Any]) -> bool:
+    return extra_body.pop("chat_template_kwargs", None) is not None
+
+
 def _strip_message_reasoning_content(body: dict[str, Any]) -> bool:
     removed = False
     messages = body.get("messages")
@@ -335,6 +339,13 @@ def clone_body_without_reasoning_budget(body: dict[str, Any]) -> dict[str, Any] 
 def clone_body_without_chat_template(body: dict[str, Any]) -> dict[str, Any] | None:
     """Clone a request body and strip only chat_template."""
     return _clone_strip_extra_body(body, _strip_chat_template_field)
+
+
+def clone_body_without_chat_template_kwargs(
+    body: dict[str, Any],
+) -> dict[str, Any] | None:
+    """Clone a request body and strip only chat_template_kwargs."""
+    return _clone_strip_extra_body(body, _strip_chat_template_kwargs_field)
 
 
 def clone_body_without_reasoning_content(body: dict[str, Any]) -> dict[str, Any] | None:

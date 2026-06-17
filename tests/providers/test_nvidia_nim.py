@@ -374,7 +374,7 @@ async def test_stream_response_retries_without_chat_template(provider_config):
         provider_config,
         nim_settings=NimSettings(chat_template="custom_template"),
     )
-    req = MockRequest(model="mistralai/mixtral-8x7b-instruct-v0.1")
+    req = MockRequest(model="test-model")
 
     mock_chunk = MagicMock()
     mock_chunk.choices = [
@@ -431,7 +431,7 @@ async def test_stream_response_does_not_retry_unrelated_bad_request(provider_con
         provider_config,
         nim_settings=NimSettings(chat_template="custom_template"),
     )
-    req = MockRequest(model="mistralai/mixtral-8x7b-instruct-v0.1")
+    req = MockRequest(model="test-model")
 
     with patch.object(
         provider._client.chat.completions, "create", new_callable=AsyncMock
