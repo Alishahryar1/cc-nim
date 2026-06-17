@@ -132,8 +132,9 @@ uninstall_free_claude_code() {
     if [ "$dry_run" -eq 0 ]; then
         if output=$(uv tool uninstall "$PACKAGE_NAME" 2>&1); then
             return 0
+        else
+            status=$?
         fi
-        status=$?
         if is_missing_uv_tool_error "$output"; then
             printf 'Free Claude Code uv tool not installed or already removed; skipping uv tool uninstall.\n'
             return 0
