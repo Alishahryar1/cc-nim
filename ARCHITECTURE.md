@@ -78,10 +78,10 @@ new places to add unrelated behavior:
   should keep route handlers thin and move separable use-case logic behind small
   helpers.
 - [providers/openai_compat.py](providers/openai_compat.py) and
-  [providers/anthropic_messages.py](providers/anthropic_messages.py) own shared
-  transport behavior plus retry, recovery, stream translation, and error
-  handling. Shared protocol rules should continue moving toward [core/](core/)
-  when they are not provider-specific.
+  [providers/anthropic_messages.py](providers/anthropic_messages.py) still own
+  provider-specific stream parsing, request construction, and recovery event
+  construction. Shared protocol rules should continue moving toward
+  [core/](core/) when they are not provider-specific.
 - [messaging/handler.py](messaging/handler.py) owns command dispatch, tree
   queueing, CLI session execution, transcript updates, and persistence
   coordination. New platform-specific behavior should stay in platform or
@@ -306,8 +306,17 @@ where supported, and returning Anthropic SSE strings to the service layer.
 - thinking block handling;
 - SSE event formatting through `SSEBuilder`;
 - native Anthropic stream policy;
-- stream recovery and repair helpers;
+- stream recovery policy, holdback, continuation, and repair helpers;
 - token counting and user-facing error formatting.
+
+Shared stream recovery policy lives in
+[core/anthropic/stream_recovery_session.py](core/anthropic/stream_recovery_session.py)
+and [core/anthropic/stream_recovery.py](core/anthropic/stream_recovery.py). The
+shared layer owns early retry classification, holdback buffering, retry attempt
+counting, and common flush/discard behavior. Provider transports still own
+upstream request construction, stream semantic parsing, transport-specific state
+tracking, and the actual recovery SSE events emitted for OpenAI-chat or native
+Anthropic streams.
 
 [core/openai_responses/](core/openai_responses/) owns OpenAI Responses support:
 
