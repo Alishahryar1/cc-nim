@@ -35,6 +35,23 @@ def _shell_path_with_mock(bin_dir: Path) -> str:
     return f"{bin_dir}:/usr/bin:/bin"
 
 
+def _write_mock_uv(bin_dir: Path, *, message: str, exit_code: int) -> None:
+    if os.name == "nt":
+        uv = bin_dir / "uv.cmd"
+        uv.write_text(
+            f"@echo off\necho {message} 1>&2\nexit /b {exit_code}\n",
+            encoding="utf-8",
+        )
+        return
+
+    uv = bin_dir / "uv"
+    uv.write_text(
+        f"#!/bin/sh\nprintf '%s\\n' '{message}' >&2\nexit {exit_code}\n",
+        encoding="utf-8",
+    )
+    uv.chmod(uv.stat().st_mode | stat.S_IXUSR)
+
+
 def test_uninstall_sh_removes_uv_tool_and_purges_fcc_home() -> None:
     text = _script_text("uninstall.sh")
     tool_body = _braced_body(text, "uninstall_free_claude_code()")
@@ -247,10 +264,10 @@ def test_uninstall_ps1_generic_uv_failure_does_not_delete_fcc_home(
     bin_dir = home / ".local" / "bin"
     fcc_home.mkdir(parents=True)
     bin_dir.mkdir(parents=True)
-    uv = bin_dir / "uv.cmd"
-    uv.write_text(
-        "@echo off\necho permission denied while removing tool 1>&2\nexit /b 42\n",
-        encoding="utf-8",
+    _write_mock_uv(
+        bin_dir,
+        message="permission denied while removing tool",
+        exit_code=42,
     )
 
     result = subprocess.run(
@@ -260,7 +277,7 @@ def test_uninstall_ps1_generic_uv_failure_does_not_delete_fcc_home(
             **os.environ,
             "HOME": str(home),
             "USERPROFILE": str(home),
-            "PATH": os.pathsep.join((str(bin_dir), os.environ.get("PATH", ""))),
+            "PATH": str(bin_dir),
         },
         text=True,
         capture_output=True,
@@ -282,10 +299,10 @@ def test_uninstall_ps1_missing_tool_still_deletes_fcc_home(tmp_path: Path) -> No
     bin_dir = home / ".local" / "bin"
     fcc_home.mkdir(parents=True)
     bin_dir.mkdir(parents=True)
-    uv = bin_dir / "uv.cmd"
-    uv.write_text(
-        "@echo off\necho tool free-claude-code is not installed 1>&2\nexit /b 2\n",
-        encoding="utf-8",
+    _write_mock_uv(
+        bin_dir,
+        message="tool free-claude-code is not installed",
+        exit_code=2,
     )
 
     result = subprocess.run(
@@ -295,7 +312,7 @@ def test_uninstall_ps1_missing_tool_still_deletes_fcc_home(tmp_path: Path) -> No
             **os.environ,
             "HOME": str(home),
             "USERPROFILE": str(home),
-            "PATH": os.pathsep.join((str(bin_dir), os.environ.get("PATH", ""))),
+            "PATH": str(bin_dir),
         },
         text=True,
         capture_output=True,
