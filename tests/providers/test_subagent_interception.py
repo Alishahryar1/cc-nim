@@ -7,6 +7,7 @@ from config.nim import NimSettings
 from core.anthropic import ContentBlockManager
 from providers.base import ProviderConfig
 from providers.nvidia_nim import NvidiaNimProvider
+from providers.transports.openai_chat.tool_calls import OpenAIToolCallAssembler
 
 
 @pytest.mark.asyncio
@@ -38,8 +39,12 @@ async def test_task_tool_interception():
         },
     }
 
-    # Call the method (consume generator to trigger side effects)
-    list(provider._process_tool_call(tc, sse))
+    tool_calls = OpenAIToolCallAssembler(
+        record_extra_content=provider._record_tool_call_extra_content
+    )
+
+    # Call the assembler (consume generator to trigger side effects)
+    list(tool_calls.process_tool_call(tc, sse))
 
     # Find the emit_tool_delta call and check args
     calls = sse.emit_tool_delta.call_args_list

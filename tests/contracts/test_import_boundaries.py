@@ -134,6 +134,27 @@ def test_removed_openrouter_rollback_transport_stays_removed() -> None:
     assert _text_occurrences(repo_root, "OPENROUTER" + "_TRANSPORT") == []
 
 
+def test_provider_transports_live_under_transport_family_packages() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    providers_root = repo_root / "providers"
+
+    assert not (providers_root / "openai_compat.py").exists()
+    assert not (providers_root / "anthropic_messages.py").exists()
+    assert (providers_root / "transports" / "openai_chat" / "transport.py").exists()
+    assert (
+        providers_root / "transports" / "anthropic_messages" / "transport.py"
+    ).exists()
+
+    offenders = _imports_matching(
+        [providers_root, repo_root / "tests"],
+        forbidden_prefixes=(
+            "providers.openai_compat",
+            "providers.anthropic_messages",
+        ),
+    )
+    assert offenders == []
+
+
 def _imports_matching(
     roots: list[Path], *, forbidden_prefixes: tuple[str, ...]
 ) -> list[str]:

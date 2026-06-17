@@ -77,11 +77,11 @@ new places to add unrelated behavior:
   server tools, provider execution, and Responses adaptation. Future changes
   should keep route handlers thin and move separable use-case logic behind small
   helpers.
-- [providers/openai_compat.py](providers/openai_compat.py) and
-  [providers/anthropic_messages.py](providers/anthropic_messages.py) still own
-  provider-specific stream parsing, request construction, and recovery event
-  construction. Shared protocol rules should continue moving toward
-  [core/](core/) when they are not provider-specific.
+- [providers/transports/](providers/transports/) owns provider transport
+  families. The OpenAI-chat and native Anthropic transport packages split thin
+  transport bases from per-request stream runners, recovery event construction,
+  and transport-specific parsing. Shared protocol rules should continue moving
+  toward [core/](core/) when they are not provider-specific.
 - [messaging/handler.py](messaging/handler.py) owns command dispatch, tree
   queueing, CLI session execution, transcript updates, and persistence
   coordination. New platform-specific behavior should stay in platform or
@@ -273,16 +273,18 @@ providers lazily, caches them, refreshes model lists, and cleans up transports.
 - `BaseProvider`: the provider interface for cleanup, model listing, preflight,
   and `stream_response()`.
 
-There are two transport families:
+There are two transport families under [providers/transports/](providers/transports/):
 
-- [providers/openai_compat.py](providers/openai_compat.py) implements
-  `OpenAIChatTransport` for providers with OpenAI-compatible
-  `/chat/completions` APIs. These providers convert Anthropic messages and tools
-  into OpenAI chat payloads, then rebuild Anthropic SSE events.
-- [providers/anthropic_messages.py](providers/anthropic_messages.py) implements
-  `AnthropicMessagesTransport` for providers with Anthropic-compatible
-  `/messages` APIs. These providers can send more of the Anthropic request shape
-  natively while still enforcing local stream and error contracts.
+- [providers/transports/openai_chat/](providers/transports/openai_chat/)
+  implements `OpenAIChatTransport` for providers with OpenAI-compatible
+  `/chat/completions` APIs. The package owns the thin transport base,
+  per-request stream runner, OpenAI tool-call assembly, and OpenAI-chat recovery
+  event construction.
+- [providers/transports/anthropic_messages/](providers/transports/anthropic_messages/)
+  implements `AnthropicMessagesTransport` for providers with
+  Anthropic-compatible `/messages` APIs. The package owns the thin transport
+  base, native stream runner, HTTP response helpers, and native recovery event
+  construction.
 
 Shared provider responsibilities include upstream rate limiting, model listing,
 safe error mapping, transport cleanup, thinking/tool handling, retry or recovery
@@ -324,7 +326,11 @@ shared layer owns early retry classification, holdback buffering, retry attempt
 counting, and common flush/discard behavior. Provider transports still own
 upstream request construction, stream semantic parsing, transport-specific state
 tracking, and the actual recovery SSE events emitted for OpenAI-chat or native
-Anthropic streams.
+Anthropic streams. Per-request stream runners in
+[providers/transports/openai_chat/](providers/transports/openai_chat/) and
+[providers/transports/anthropic_messages/](providers/transports/anthropic_messages/)
+own mutable stream state so transport base classes stay focused on provider
+hooks, client setup, and model listing.
 
 [core/openai_responses/](core/openai_responses/) owns OpenAI Responses support:
 

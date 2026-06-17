@@ -9,8 +9,9 @@ import pytest
 from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from core.anthropic.sse import format_sse_event
 from core.anthropic.stream_contracts import event_index, parse_sse_text
-from providers.anthropic_messages import AnthropicMessagesTransport
 from providers.base import ProviderConfig
+from providers.transports.anthropic_messages import AnthropicMessagesTransport
+from providers.transports.anthropic_messages.recovery import AnthropicMessagesRecovery
 from tests.stream_contract import assert_canonical_stream_error_envelope
 
 
@@ -118,7 +119,9 @@ def mock_rate_limiter():
     async def _slot():
         yield
 
-    with patch("providers.anthropic_messages.GlobalRateLimiter") as mock:
+    with patch(
+        "providers.transports.anthropic_messages.transport.GlobalRateLimiter"
+    ) as mock:
         instance = mock.get_scoped_instance.return_value
 
         async def _passthrough(fn, *args, **kwargs):
@@ -433,8 +436,8 @@ async def test_clean_eof_after_native_text_continues_with_overlap_trim(
             return_value=response,
         ),
         patch.object(
-            provider,
-            "_collect_native_recovery_text",
+            AnthropicMessagesRecovery,
+            "collect_text",
             new_callable=AsyncMock,
             return_value=("world", ""),
         ),

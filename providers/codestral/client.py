@@ -7,7 +7,7 @@ from typing import Any
 from providers.base import ProviderConfig
 from providers.defaults import CODESTRAL_DEFAULT_BASE
 from providers.mistral.request import build_request_body
-from providers.openai_compat import OpenAIChatTransport
+from providers.transports.openai_chat import OpenAIChatTransport
 
 
 class CodestralProvider(OpenAIChatTransport):
