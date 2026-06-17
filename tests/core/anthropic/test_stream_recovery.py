@@ -12,6 +12,10 @@ from core.anthropic.stream_recovery import (
     continuation_suffix,
     is_retryable_stream_error,
 )
+from core.anthropic.stream_recovery_session import (
+    StreamFailureAction,
+    StreamRecoverySession,
+)
 
 
 def test_early_transparent_retry_total_attempts_is_five() -> None:
@@ -37,6 +41,112 @@ def test_retryable_stream_error_classifies_transport_and_http_status() -> None:
             "bad request", request=request, response=httpx.Response(400)
         )
     )
+
+
+def test_stream_recovery_session_advances_early_retry_and_discards_holdback() -> None:
+    session = StreamRecoverySession(provider_name="TEST", request_id="REQ")
+
+    assert session.push("hidden") == []
+    decision = session.advance_failure(
+        httpx.ReadError("early cutoff"),
+        stream_opened=True,
+        generated_output=True,
+        complete_tool_salvageable=False,
+    )
+
+    assert decision.action == StreamFailureAction.EARLY_RETRY
+    assert decision.early_retry_attempt == 1
+    assert session.early_retries == 1
+    assert not session.committed
+    assert not session.has_buffered
+    assert session.flush() == []
+
+
+def test_stream_recovery_session_respects_early_retry_limit() -> None:
+    session = StreamRecoverySession(provider_name="TEST", request_id=None)
+
+    for attempt in range(1, EARLY_TRANSPARENT_MAX_RETRIES + 1):
+        decision = session.advance_failure(
+            httpx.ReadError("cutoff"),
+            stream_opened=True,
+            generated_output=False,
+            complete_tool_salvageable=False,
+        )
+        assert decision.action == StreamFailureAction.EARLY_RETRY
+        assert decision.early_retry_attempt == attempt
+
+    decision = session.advance_failure(
+        httpx.ReadError("cutoff"),
+        stream_opened=True,
+        generated_output=False,
+        complete_tool_salvageable=False,
+    )
+
+    assert decision.action == StreamFailureAction.FINAL_ERROR
+    assert session.early_retries == EARLY_TRANSPARENT_MAX_RETRIES
+
+
+def test_stream_recovery_session_classifies_midstream_recovery_after_commit() -> None:
+    session = StreamRecoverySession(provider_name="TEST", request_id=None)
+
+    assert session.push("event: content_block_delta\n\n") == []
+    assert session.flush() == ["event: content_block_delta\n\n"]
+    decision = session.advance_failure(
+        httpx.ReadError("midstream cutoff"),
+        stream_opened=True,
+        generated_output=True,
+        complete_tool_salvageable=False,
+    )
+
+    assert decision.action == StreamFailureAction.MIDSTREAM_RECOVERY
+    assert decision.retryable
+    assert decision.committed
+    assert session.flush_uncommitted(decision) == []
+
+
+def test_stream_recovery_session_flushes_uncommitted_midstream_decision() -> None:
+    session = StreamRecoverySession(provider_name="TEST", request_id=None)
+
+    assert session.push("event: content_block_delta\n\n") == []
+    decision = session.advance_failure(
+        httpx.ReadError("midstream cutoff"),
+        stream_opened=True,
+        generated_output=True,
+        complete_tool_salvageable=True,
+    )
+
+    assert decision.action == StreamFailureAction.MIDSTREAM_RECOVERY
+    assert not decision.committed
+    assert decision.has_buffered
+    assert not session.committed
+    assert session.has_buffered
+
+    assert session.flush_uncommitted(decision) == ["event: content_block_delta\n\n"]
+    assert not decision.committed
+    assert decision.has_buffered
+    assert session.committed
+    assert not session.has_buffered
+
+
+def test_stream_recovery_session_non_retryable_error_is_final() -> None:
+    request = httpx.Request("POST", "https://example.test/messages")
+    error = httpx.HTTPStatusError(
+        "bad request",
+        request=request,
+        response=httpx.Response(400, request=request),
+    )
+    session = StreamRecoverySession(provider_name="TEST", request_id=None)
+
+    decision = session.advance_failure(
+        error,
+        stream_opened=True,
+        generated_output=True,
+        complete_tool_salvageable=False,
+    )
+
+    assert decision.action == StreamFailureAction.FINAL_ERROR
+    assert not decision.retryable
+    assert session.early_retries == 0
 
 
 def test_continuation_suffix_trims_overlap() -> None:

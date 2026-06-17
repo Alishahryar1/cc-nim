@@ -78,10 +78,10 @@ new places to add unrelated behavior:
   should keep route handlers thin and move separable use-case logic behind small
   helpers.
 - [providers/openai_compat.py](providers/openai_compat.py) and
-  [providers/anthropic_messages.py](providers/anthropic_messages.py) own shared
-  transport behavior plus retry, recovery, stream translation, and error
-  handling. Shared protocol rules should continue moving toward [core/](core/)
-  when they are not provider-specific.
+  [providers/anthropic_messages.py](providers/anthropic_messages.py) still own
+  provider-specific stream parsing, request construction, and recovery event
+  construction. Shared protocol rules should continue moving toward
+  [core/](core/) when they are not provider-specific.
 - [messaging/handler.py](messaging/handler.py) owns command dispatch, tree
   queueing, CLI session execution, transcript updates, and persistence
   coordination. New platform-specific behavior should stay in platform or
@@ -139,6 +139,7 @@ defines it, that dotenv value replaces a stale inherited shell token.
 
 - config directory: `~/.fcc`;
 - managed env file: `~/.fcc/.env`;
+- generated Codex model catalog: `~/.fcc/codex-model-catalog.json`;
 - agent workspace: `~/.fcc/agent_workspace`;
 - server log: `~/.fcc/logs/server.log`.
 
@@ -239,6 +240,12 @@ Provider model discovery is app-scoped through `ProviderRegistry`, which caches
 model IDs and optional thinking capability metadata for the model-list route and
 admin status.
 
+Codex-specific model picker shaping stays out of this route. `fcc-codex` fetches
+the same `/v1/models` response at launch, converts FCC gateway IDs into
+provider-selectable Codex slugs, writes `~/.fcc/codex-model-catalog.json`, and
+passes it as `model_catalog_json`. Codex users open the native picker with
+`/model`; FCC does not implement a proxy-level `/models` alias.
+
 ## Provider Architecture
 
 Provider metadata is neutral and centralized in
@@ -299,8 +306,17 @@ where supported, and returning Anthropic SSE strings to the service layer.
 - thinking block handling;
 - SSE event formatting through `SSEBuilder`;
 - native Anthropic stream policy;
-- stream recovery and repair helpers;
+- stream recovery policy, holdback, continuation, and repair helpers;
 - token counting and user-facing error formatting.
+
+Shared stream recovery policy lives in
+[core/anthropic/stream_recovery_session.py](core/anthropic/stream_recovery_session.py)
+and [core/anthropic/stream_recovery.py](core/anthropic/stream_recovery.py). The
+shared layer owns early retry classification, holdback buffering, retry attempt
+counting, and common flush/discard behavior. Provider transports still own
+upstream request construction, stream semantic parsing, transport-specific state
+tracking, and the actual recovery SSE events emitted for OpenAI-chat or native
+Anthropic streams.
 
 [core/openai_responses/](core/openai_responses/) owns OpenAI Responses support:
 
@@ -308,6 +324,21 @@ where supported, and returning Anthropic SSE strings to the service layer.
 - Anthropic message response conversion into Responses objects;
 - Anthropic SSE conversion into Responses SSE;
 - OpenAI-compatible error envelopes.
+
+Responses reasoning is handled as protocol conversion, not provider policy.
+`reasoning.effort = "none"` converts to a disabled Anthropic `thinking`
+request; any other explicit Responses reasoning request enables Anthropic
+thinking without translating OpenAI effort names into Anthropic token budgets.
+Prior Responses `reasoning` input items replay plaintext `reasoning_text`, or
+fallback `summary_text`, into assistant `reasoning_content`. Encrypted reasoning
+input is ignored because the proxy cannot decrypt it.
+
+Provider thinking output maps back to Responses reasoning in the same block
+order the upstream Anthropic stream produced. Anthropic `thinking` blocks become
+Responses `reasoning` output items and `response.reasoning_text.*` stream
+events. Anthropic `redacted_thinking` becomes a Responses `reasoning` item with
+`encrypted_content`; the opaque value is not exposed as visible text and FCC
+does not synthesize reasoning summaries.
 
 Provider code should delegate protocol details to these modules. Avoid copying
 conversion code into individual providers, and avoid provider-to-provider imports
@@ -363,9 +394,16 @@ adapter:
 - `fcc-codex` strips official OpenAI and Codex credential variables.
 - It creates an ephemeral `fcc` model provider with `wire_api = "responses"` and
   a base URL pointing at the local proxy `/v1` path.
+- After proxy health succeeds, it fetches `/v1/models`, writes a generated Codex
+  `model_catalog_json` file under `~/.fcc/`, and injects that path so Codex's
+  native `/model` picker lists FCC provider slugs. Catalog generation is
+  fail-open: launch continues with a warning if the catalog cannot be prepared.
 - It stores the proxy auth token in `FCC_CODEX_API_KEY` for Codex to read.
 - Managed task invocations use Codex JSON output and map Responses events into
   the messaging parser event shape.
+- Codex `response.reasoning_text.delta` events are converted into the shared
+  Anthropic-style `thinking_delta` parser shape; summary reasoning events remain
+  raw unless a future feature selects them as the proxy wire shape.
 
 [cli/manager.py](cli/manager.py) coordinates multiple `CLISession` instances so
 separate conversations can run in separate client CLI processes while replies

@@ -20,16 +20,24 @@ Free Claude Code routes Anthropic Messages API traffic from Claude Code (CLI and
 
 <div align="center">
   <img src="assets/pic.png" alt="Free Claude Code in action" width="700">
+  <p><em>Claude Code running through the Free Claude Code proxy.</em></p>
 </div>
 
 <div align="center">
   <img src="assets/codex.png" alt="Codex CLI in action through Free Claude Code" width="700">
+  <p><em>Codex CLI using the local FCC Responses provider.</em></p>
 </div>
 
 <a id="model-picker"></a>
 
 <div align="center">
   <img src="assets/cc-model-picker.png" alt="Claude Code model picker showing gateway models" width="700">
+  <p><em>Claude Code native <code>/model</code> picker with FCC gateway models.</em></p>
+</div>
+
+<div align="center">
+  <img src="assets/codex-model-picker.png" alt="Codex model picker showing generated FCC model catalog" width="700">
+  <p><em>Codex native <code>/model</code> picker with the generated FCC catalog.</em></p>
 </div>
 
 ## Star History
@@ -52,6 +60,7 @@ Free Claude Code routes Anthropic Messages API traffic from Claude Code (CLI and
 - 17 provider backends: NVIDIA NIM, OpenRouter, Google AI Studio (Gemini), DeepSeek, Mistral La Plateforme, Mistral Codestral, OpenCode Zen, OpenCode Go, Wafer, Kimi, Cerebras Inference, Groq, Fireworks AI, Z.ai, LM Studio, llama.cpp, and Ollama.
 - Per-model routing for Claude Code: send Opus, Sonnet, Haiku, and fallback traffic to different providers.
 - Native Claude Code `/model` picker support through the proxy's `/v1/models` endpoint (see [Model Picker](#model-picker)).
+- Native Codex `/model` picker support when launched through `fcc-codex`, using a generated local model catalog.
 - Streaming, tool use, reasoning/thinking block handling, and local request optimizations.
 - Optional Discord or Telegram bot wrapper for remote Claude Code sessions.
 - Optional Usage through the Claude Code VS Code extension.
@@ -123,7 +132,7 @@ fcc-claude
 fcc-codex
 ```
 
-`fcc-codex` reads the same port and auth token, registers an ephemeral `fcc` model provider that points at the local proxy's `/v1/responses` endpoint, sets `FCC_CODEX_API_KEY` from the Admin UI auth token, strips official `OPENAI_*` credentials from the child environment, and then launches the real `codex` command. Pass through Codex args as usual, for example `fcc-codex exec "hello"`.
+`fcc-codex` reads the same port and auth token, registers an ephemeral `fcc` model provider that points at the local proxy's `/v1/responses` endpoint, generates a Codex model catalog from the proxy's `/v1/models` response, sets `FCC_CODEX_API_KEY` from the Admin UI auth token, strips official `OPENAI_*` credentials from the child environment, and then launches the real `codex` command. Type `/model` inside Codex to open its native picker. Pass through Codex args as usual, for example `fcc-codex exec "hello"`.
 
 ## Choose A Provider
 
@@ -357,8 +366,9 @@ The installer provisions Codex when it is missing (`npm install -g @openai/codex
 - `model_providers.fcc.base_url=http://127.0.0.1:<PORT>/v1`
 - `model_providers.fcc.env_key=FCC_CODEX_API_KEY`
 - `model_providers.fcc.wire_api=responses`
+- `model_catalog_json=~/.fcc/codex-model-catalog.json`
 
-The Admin UI auth token is reused as `FCC_CODEX_API_KEY`. Official OpenAI credentials are stripped from the child environment so traffic stays on the local proxy.
+The Admin UI auth token is reused as `FCC_CODEX_API_KEY`. Official OpenAI credentials are stripped from the child environment so traffic stays on the local proxy. The generated model catalog lets Codex's native `/model` picker list provider-selectable FCC model slugs. If the catalog cannot be fetched or written, `fcc-codex` warns and still launches without picker injection.
 
 **Advanced manual setup**
 
@@ -586,7 +596,7 @@ Run them in that order before pushing. CI enforces the same checks.
 - `fcc-server`: starts the proxy with configured host and port.
 - `fcc-init`: optional advanced scaffold for `~/.fcc/.env`; prefer the **Admin UI** for normal configuration.
 - `fcc-claude`: launches Claude Code with the configured local proxy URL, auth token, model discovery flag, and a 190k `CLAUDE_CODE_AUTO_COMPACT_WINDOW` for auto-compaction.
-- `fcc-codex`: launches Codex with ephemeral `fcc` provider config pointing at the local proxy's `/v1/responses` endpoint and `FCC_CODEX_API_KEY` from the Admin UI auth token.
+- `fcc-codex`: launches Codex with ephemeral `fcc` provider config pointing at the local proxy's `/v1/responses` endpoint, a generated native `/model` picker catalog, and `FCC_CODEX_API_KEY` from the Admin UI auth token.
 - `free-claude-code`: compatibility alias for `fcc-server`.
 
 ### 5. Extending

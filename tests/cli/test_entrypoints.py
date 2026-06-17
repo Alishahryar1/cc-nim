@@ -1,9 +1,12 @@
 """Tests for cli/entrypoints.py — fcc-init scaffolding logic."""
 
+import json
 import tomllib
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
+from urllib.error import URLError
+from urllib.request import Request
 
 import pytest
 
@@ -40,6 +43,20 @@ def _run_init(tmp_home: Path) -> tuple[str, Path]:
         init()
 
     return "\n".join(printed), env_file
+
+
+class _JsonResponse:
+    def __init__(self, payload: dict[str, object]) -> None:
+        self._payload = payload
+
+    def __enter__(self) -> _JsonResponse:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return None
+
+    def read(self) -> bytes:
+        return json.dumps(self._payload).encode("utf-8")
 
 
 def test_init_creates_env_file(tmp_path: Path) -> None:
@@ -341,6 +358,7 @@ def test_launch_claude_passes_args_and_child_env(
         patch("cli.entrypoints.get_settings", return_value=settings),
         patch("cli.entrypoints._preflight_proxy", return_value=None),
         patch("cli.entrypoints.shutil.which", return_value="resolved-claude.cmd"),
+        patch("cli.entrypoints.urlopen") as urlopen,
         patch("cli.entrypoints.subprocess.Popen") as popen,
         patch("cli.entrypoints.register_pid") as register_pid,
         patch("cli.entrypoints.unregister_pid") as unregister_pid,
@@ -362,10 +380,12 @@ def test_launch_claude_passes_args_and_child_env(
     assert child_env["KEEP_ME"] == "yes"
     register_pid.assert_called_once_with(12345)
     unregister_pid.assert_called_once_with(12345)
+    urlopen.assert_not_called()
 
 
 def test_launch_codex_passes_responses_config_and_child_env(
     monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
 ) -> None:
     from cli.entrypoints import launch_codex
 
@@ -373,11 +393,37 @@ def test_launch_codex_passes_responses_config_and_child_env(
     monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
     monkeypatch.setenv("CODEX_HOME", "keep-home")
     settings = _launcher_settings(port=9191, token="proxy-token")
+    catalog_path = tmp_path / "codex-model-catalog.json"
+    requests: list[Request] = []
+
+    def fake_urlopen(request: Request, *, timeout: float) -> _JsonResponse:
+        requests.append(request)
+        assert timeout == 1.5
+        return _JsonResponse(
+            {
+                "data": [
+                    {
+                        "id": "anthropic/nvidia_nim/provider-model",
+                        "display_name": "NVIDIA model",
+                    },
+                    {
+                        "id": ("claude-3-freecc-no-thinking/nvidia_nim/provider-model"),
+                        "display_name": "NVIDIA model (no thinking)",
+                    },
+                    {
+                        "id": "claude-opus-4-20250514",
+                        "display_name": "Claude Opus 4",
+                    },
+                ]
+            }
+        )
 
     with (
         patch("cli.entrypoints.get_settings", return_value=settings),
         patch("cli.entrypoints._preflight_proxy", return_value=None),
         patch("cli.entrypoints.shutil.which", return_value="resolved-codex.cmd"),
+        patch("cli.entrypoints.codex_model_catalog_path", return_value=catalog_path),
+        patch("cli.entrypoints.urlopen", side_effect=fake_urlopen),
         patch("cli.entrypoints.subprocess.Popen") as popen,
         patch("cli.entrypoints.register_pid") as register_pid,
         patch("cli.entrypoints.unregister_pid") as unregister_pid,
@@ -394,7 +440,17 @@ def test_launch_codex_passes_responses_config_and_child_env(
     assert 'model_provider="fcc"' in command
     assert 'model_providers.fcc.base_url="http://127.0.0.1:9191/v1"' in command
     assert 'model_providers.fcc.wire_api="responses"' in command
+    assert f"model_catalog_json={json.dumps(str(catalog_path))}" in command
     assert command[-2:] == ["exec", "hello"]
+    assert len(requests) == 1
+    request = requests[0]
+    assert request.full_url == "http://127.0.0.1:9191/v1/models"
+    headers = {key.lower(): value for key, value in request.header_items()}
+    assert headers["x-api-key"] == "proxy-token"
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    assert [model["slug"] for model in catalog["models"]] == [
+        "nvidia_nim/provider-model"
+    ]
     child_env = popen.call_args.kwargs["env"]
     assert child_env["FCC_CODEX_API_KEY"] == "proxy-token"
     assert child_env["CODEX_HOME"] == "keep-home"
@@ -402,6 +458,41 @@ def test_launch_codex_passes_responses_config_and_child_env(
     assert "OPENAI_BASE_URL" not in child_env
     register_pid.assert_called_once_with(12345)
     unregister_pid.assert_called_once_with(12345)
+
+
+def test_launch_codex_catalog_failure_warns_and_continues(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    from cli.entrypoints import launch_codex
+
+    settings = _launcher_settings(port=9191, token="proxy-token")
+
+    with (
+        patch("cli.entrypoints.get_settings", return_value=settings),
+        patch("cli.entrypoints._preflight_proxy", return_value=None),
+        patch("cli.entrypoints.shutil.which", return_value="resolved-codex.cmd"),
+        patch(
+            "cli.entrypoints.codex_model_catalog_path",
+            return_value=tmp_path / "codex-model-catalog.json",
+        ),
+        patch("cli.entrypoints.urlopen", side_effect=URLError("boom")),
+        patch("cli.entrypoints.subprocess.Popen") as popen,
+        patch("cli.entrypoints.register_pid"),
+        patch("cli.entrypoints.unregister_pid"),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        process = popen.return_value
+        process.pid = 12345
+        process.wait.return_value = 0
+        launch_codex(["exec", "hello"])
+
+    assert exc_info.value.code == 0
+    command = popen.call_args.args[0]
+    assert not any("model_catalog_json=" in arg for arg in command)
+    captured = capsys.readouterr()
+    assert "could not prepare Codex model catalog" in captured.err
+    assert "launching without model picker catalog" in captured.err
 
 
 def test_launch_claude_keyboard_interrupt_kills_child_tree() -> None:

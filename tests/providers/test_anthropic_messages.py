@@ -442,12 +442,13 @@ async def test_clean_eof_after_native_text_continues_with_overlap_trim(
         events = [e async for e in provider.stream_response(req)]
 
     parsed = parse_sse_text("".join(events))
-    text = "".join(
+    text_deltas = [
         event.data.get("delta", {}).get("text", "")
         for event in parsed
         if event.event == "content_block_delta"
-    )
-    assert text == "hello world"
+    ]
+    assert text_deltas == ["hello wor", "ld"]
+    assert "".join(text_deltas) == "hello world"
     assert any(
         event.event == "message_delta"
         and event.data.get("delta", {}).get("stop_reason") == "end_turn"

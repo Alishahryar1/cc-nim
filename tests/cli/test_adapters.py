@@ -320,6 +320,27 @@ def test_codex_adapter_parses_response_text_delta() -> None:
     ]
 
 
+def test_codex_adapter_parses_response_reasoning_text_delta() -> None:
+    events = list(
+        CODEX_CLI_ADAPTER.parse_stdout_line(
+            (
+                '{"type":"response.reasoning_text.delta","delta":"think",'
+                '"output_index":2,"thread_id":"t1"}'
+            ),
+            CliParseState(),
+        )
+    )
+
+    assert events == [
+        {"type": "session_info", "session_id": "t1"},
+        {
+            "type": "content_block_delta",
+            "index": 2,
+            "delta": {"type": "thinking_delta", "thinking": "think"},
+        },
+    ]
+
+
 def test_codex_adapter_parses_completed_function_call_item() -> None:
     line = json.dumps(
         {
@@ -349,6 +370,29 @@ def test_codex_adapter_parses_completed_function_call_item() -> None:
                 ]
             },
         }
+    ]
+
+
+def test_codex_adapter_reasoning_summary_delta_remains_raw() -> None:
+    events = list(
+        CODEX_CLI_ADAPTER.parse_stdout_line(
+            (
+                '{"type":"response.reasoning_summary_text.delta",'
+                '"delta":"summary","thread_id":"t1"}'
+            ),
+            CliParseState(),
+        )
+    )
+
+    assert events == [
+        {"type": "session_info", "session_id": "t1"},
+        {
+            "type": "raw",
+            "content": (
+                '{"type":"response.reasoning_summary_text.delta",'
+                '"delta":"summary","thread_id":"t1"}'
+            ),
+        },
     ]
 
 

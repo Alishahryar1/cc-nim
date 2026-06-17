@@ -93,6 +93,10 @@ def iter_message_response_as_openai_responses(
         if item.get("type") == "message":
             text = _message_item_text(item)
             chunks.extend(_message_text_events(item, output_index, text))
+        elif item.get("type") == "reasoning":
+            text = _reasoning_item_text(item)
+            if text:
+                chunks.extend(_reasoning_text_events(item, output_index, text))
         elif item.get("type") == "function_call":
             arguments = str(item.get("arguments", ""))
             if arguments:
@@ -153,6 +157,14 @@ class _ToolState:
     argument_parts: list[str] = field(default_factory=list)
 
 
+@dataclass(slots=True)
+class _ReasoningState:
+    output_index: int
+    item_id: str
+    text_parts: list[str] = field(default_factory=list)
+    encrypted_content: str | None = None
+
+
 class _ResponsesStreamTransformer:
     def __init__(self, request: Mapping[str, Any]) -> None:
         self._request = request
@@ -166,6 +178,7 @@ class _ResponsesStreamTransformer:
         self._text_block_indexes: set[int] = set()
         self._text_parts: list[str] = []
         self._tools_by_block_index: dict[int, _ToolState] = {}
+        self._reasoning_by_block_index: dict[int, _ReasoningState] = {}
         self._stop_reason: str | None = None
         self._usage: dict[str, int] | None = None
         self._started = False
@@ -242,6 +255,23 @@ class _ResponsesStreamTransformer:
             if text := str(block.get("text", "")):
                 chunks.extend(self._emit_text_delta(text))
             return chunks
+        if block_type == "thinking":
+            index = _event_index(data)
+            if index is None:
+                return []
+            state = self._start_reasoning_block(index)
+            chunks = self._reasoning_item_added(state)
+            if text := str(block.get("thinking", "")):
+                chunks.extend(self._emit_reasoning_delta(state, text))
+            return chunks
+        if block_type == "redacted_thinking":
+            index = _event_index(data)
+            if index is None:
+                return []
+            state = self._start_reasoning_block(
+                index, encrypted_content=str(block.get("data", ""))
+            )
+            return self._reasoning_item_added(state)
         if block_type == "tool_use":
             index = _event_index(data)
             if index is None:
@@ -272,6 +302,18 @@ class _ResponsesStreamTransformer:
         delta_type = delta.get("type")
         if delta_type == "text_delta":
             return self._emit_text_delta(str(delta.get("text", "")))
+        if delta_type == "thinking_delta":
+            index = _event_index(data)
+            if index is None:
+                return []
+            state = self._reasoning_by_block_index.get(index)
+            if state is None:
+                state = self._start_reasoning_block(index)
+                return [
+                    *self._reasoning_item_added(state),
+                    *self._emit_reasoning_delta(state, str(delta.get("thinking", ""))),
+                ]
+            return self._emit_reasoning_delta(state, str(delta.get("thinking", "")))
         if delta_type == "input_json_delta":
             index = _event_index(data)
             if index is not None and index in self._tools_by_block_index:
@@ -284,10 +326,87 @@ class _ResponsesStreamTransformer:
         index = _event_index(data)
         if index is None:
             return []
-        state = self._tools_by_block_index.pop(index, None)
-        if state is None and index in self._text_block_indexes:
+        if index in self._text_block_indexes:
             self._text_block_indexes.remove(index)
             return self._complete_text_if_needed()
+        reasoning_state = self._reasoning_by_block_index.pop(index, None)
+        if reasoning_state is not None:
+            return self._complete_reasoning(reasoning_state)
+        return self._handle_tool_block_stop(index)
+
+    def _start_reasoning_block(
+        self, index: int, *, encrypted_content: str | None = None
+    ) -> _ReasoningState:
+        state = _ReasoningState(
+            output_index=len(self._output),
+            item_id=_new_reasoning_item_id(),
+            encrypted_content=encrypted_content,
+        )
+        self._reasoning_by_block_index[index] = state
+        return state
+
+    def _reasoning_item_added(self, state: _ReasoningState) -> list[str]:
+        item = _reasoning_output_item(state, status="in_progress")
+        return [
+            format_response_sse_event(
+                "response.output_item.added",
+                {
+                    "type": "response.output_item.added",
+                    "output_index": state.output_index,
+                    "item": item,
+                },
+            )
+        ]
+
+    def _emit_reasoning_delta(self, state: _ReasoningState, text: str) -> list[str]:
+        if not text:
+            return []
+        state.text_parts.append(text)
+        return [
+            format_response_sse_event(
+                "response.reasoning_text.delta",
+                {
+                    "type": "response.reasoning_text.delta",
+                    "item_id": state.item_id,
+                    "output_index": state.output_index,
+                    "content_index": 0,
+                    "delta": text,
+                },
+            )
+        ]
+
+    def _complete_reasoning(self, state: _ReasoningState) -> list[str]:
+        item = _reasoning_output_item(state, status="completed")
+        self._output.append(item)
+        chunks: list[str] = []
+        text = "".join(state.text_parts)
+        if text:
+            chunks.append(
+                format_response_sse_event(
+                    "response.reasoning_text.done",
+                    {
+                        "type": "response.reasoning_text.done",
+                        "item_id": state.item_id,
+                        "output_index": state.output_index,
+                        "content_index": 0,
+                        "text": text,
+                    },
+                )
+            )
+        chunks.append(
+            format_response_sse_event(
+                "response.output_item.done",
+                {
+                    "type": "response.output_item.done",
+                    "output_index": state.output_index,
+                    "item": item,
+                },
+            )
+        )
+        return chunks
+
+    def _handle_tool_block_stop(self, index: int) -> list[str]:
+        state = self._tools_by_block_index.pop(index, None)
         if state is None:
             return []
         return self._complete_tool_call(state)
@@ -469,6 +588,9 @@ class _ResponsesStreamTransformer:
 
     def _complete_response(self) -> list[str]:
         chunks = self._complete_text_if_needed()
+        for index in list(self._reasoning_by_block_index):
+            state = self._reasoning_by_block_index.pop(index)
+            chunks.extend(self._complete_reasoning(state))
         self.final_response = self.response_payload(status="completed")
         if self._stop_reason:
             self.final_response["stop_reason"] = self._stop_reason
@@ -624,6 +746,34 @@ def _message_text_events(
     ]
 
 
+def _reasoning_text_events(
+    item: Mapping[str, Any], output_index: int, text: str
+) -> list[str]:
+    item_id = str(item.get("id", ""))
+    return [
+        format_response_sse_event(
+            "response.reasoning_text.delta",
+            {
+                "type": "response.reasoning_text.delta",
+                "item_id": item_id,
+                "output_index": output_index,
+                "content_index": 0,
+                "delta": text,
+            },
+        ),
+        format_response_sse_event(
+            "response.reasoning_text.done",
+            {
+                "type": "response.reasoning_text.done",
+                "item_id": item_id,
+                "output_index": output_index,
+                "content_index": 0,
+                "text": text,
+            },
+        ),
+    ]
+
+
 def _message_item(item_id: str, text: str, status: str) -> dict[str, Any]:
     return {
         "id": item_id,
@@ -632,6 +782,20 @@ def _message_item(item_id: str, text: str, status: str) -> dict[str, Any]:
         "role": "assistant",
         "content": [{"type": "output_text", "text": text, "annotations": []}],
     }
+
+
+def _reasoning_output_item(state: _ReasoningState, *, status: str) -> dict[str, Any]:
+    item: dict[str, Any] = {
+        "id": state.item_id,
+        "type": "reasoning",
+        "status": status,
+        "summary": [],
+    }
+    if state.encrypted_content is not None:
+        item["encrypted_content"] = state.encrypted_content
+        return item
+    item["content"] = [{"type": "reasoning_text", "text": "".join(state.text_parts)}]
+    return item
 
 
 def _message_item_text(item: Mapping[str, Any]) -> str:
@@ -646,10 +810,24 @@ def _message_item_text(item: Mapping[str, Any]) -> str:
     return "".join(parts)
 
 
+def _reasoning_item_text(item: Mapping[str, Any]) -> str:
+    content = item.get("content")
+    if not isinstance(content, list):
+        return ""
+    parts = [
+        str(part.get("text", ""))
+        for part in content
+        if isinstance(part, dict) and part.get("type") == "reasoning_text"
+    ]
+    return "".join(parts)
+
+
 def _in_progress_item(item: Mapping[str, Any]) -> dict[str, Any]:
     clone = dict(item)
     clone["status"] = "in_progress"
     if clone.get("type") == "message":
+        clone["content"] = []
+    if clone.get("type") == "reasoning" and "content" in clone:
         clone["content"] = []
     if clone.get("type") == "function_call":
         clone["arguments"] = ""
@@ -662,6 +840,10 @@ def _new_response_id() -> str:
 
 def _new_message_item_id() -> str:
     return f"msg_{uuid.uuid4().hex}"
+
+
+def _new_reasoning_item_id() -> str:
+    return f"rs_{uuid.uuid4().hex}"
 
 
 def _new_call_id() -> str:

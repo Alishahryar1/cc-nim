@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
 import subprocess
@@ -21,13 +22,22 @@ from api.app import GracefulLifespanApp, create_app
 from cli.adapters.base import ClientCliAdapter
 from cli.adapters.claude import CLAUDE_CLI_ADAPTER
 from cli.adapters.codex import CODEX_CLI_ADAPTER
+from cli.codex_model_catalog import (
+    build_codex_model_catalog,
+    write_codex_model_catalog,
+)
 from cli.process_registry import (
     kill_all_best_effort,
     kill_pid_tree_best_effort,
     register_pid,
     unregister_pid,
 )
-from config.paths import config_dir_path, legacy_env_paths, managed_env_path
+from config.paths import (
+    codex_model_catalog_path,
+    config_dir_path,
+    legacy_env_paths,
+    managed_env_path,
+)
 from config.settings import Settings, get_settings
 
 PROXY_PREFLIGHT_PATH = "/health"
@@ -248,6 +258,9 @@ def _launch_client_cli(
         settings=settings,
         proxy_root_url=proxy_root_url,
     )
+    catalog_args = _codex_model_catalog_config_args(adapter, proxy_root_url, settings)
+    if catalog_args:
+        command = [command[0], *catalog_args, *command[1:]]
     env = adapter.build_launcher_env(
         proxy_root_url=proxy_root_url,
         auth_token=settings.anthropic_auth_token,
@@ -276,3 +289,52 @@ def _launch_client_cli(
             unregister_pid(process.pid)
 
     raise SystemExit(return_code)
+
+
+def _codex_model_catalog_config_args(
+    adapter: ClientCliAdapter, proxy_root_url: str, settings: Settings
+) -> list[str]:
+    if adapter.id != CODEX_CLI_ADAPTER.id:
+        return []
+
+    try:
+        models_response = _fetch_proxy_models_response(
+            proxy_root_url, settings.anthropic_auth_token
+        )
+        catalog = build_codex_model_catalog(models_response)
+        models = catalog.get("models")
+        if not isinstance(models, list) or not models:
+            print(
+                "Free Claude Code warning: Codex model catalog is empty; "
+                "launching without model picker catalog.",
+                file=sys.stderr,
+            )
+            return []
+        catalog_path = codex_model_catalog_path()
+        write_codex_model_catalog(catalog_path, catalog)
+    except Exception as exc:
+        print(
+            "Free Claude Code warning: could not prepare Codex model catalog "
+            f"({exc}); launching without model picker catalog.",
+            file=sys.stderr,
+        )
+        return []
+
+    return CODEX_CLI_ADAPTER.build_model_catalog_config_args(str(catalog_path))
+
+
+def _fetch_proxy_models_response(
+    proxy_root_url: str, auth_token: str
+) -> dict[str, object]:
+    url = f"{proxy_root_url.rstrip('/')}/v1/models"
+    headers: dict[str, str] = {}
+    if token := auth_token.strip():
+        headers["X-API-Key"] = token
+
+    request = Request(url, headers=headers, method="GET")
+    with urlopen(request, timeout=PROXY_PREFLIGHT_TIMEOUT_SECONDS) as response:
+        payload = json.loads(response.read().decode("utf-8"))
+
+    if not isinstance(payload, dict):
+        raise ValueError("model list response was not a JSON object")
+    return payload
