@@ -345,6 +345,23 @@ def clone_body_without_reasoning_content(body: dict[str, Any]) -> dict[str, Any]
     return cloned_body
 
 
+def clone_body_without_all_thinking(body: dict[str, Any]) -> dict[str, Any] | None:
+    """Clone a request body and strip all thinking/reasoning fields from extra_body."""
+    cloned = deepcopy(body)
+    extra = cloned.get("extra_body")
+    if not isinstance(extra, dict):
+        return None
+    thinking_keys = [
+        k for k in extra
+        if "thinking" in k.lower() or "reasoning" in k.lower() or k == "chat_template"
+    ]
+    if not thinking_keys:
+        return None
+    for k in thinking_keys:
+        del extra[k]
+    return cloned
+
+
 def build_request_body(
     request_data: Any, nim: NimSettings, *, thinking_enabled: bool
 ) -> dict:

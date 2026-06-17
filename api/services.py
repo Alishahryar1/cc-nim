@@ -177,7 +177,15 @@ class ClaudeProxyService:
                 return optimized
             logger.debug("No optimization matched, routing to provider")
 
-            provider = self._provider_getter(routed.resolved.provider_id)
+            # Prefer passing `claude_model` kwarg but fall back to older/test
+            # callables that accept only the provider_id positional argument.
+            try:
+                provider = self._provider_getter(
+                    routed.resolved.provider_id,
+                    claude_model=routed.resolved.original_model,
+                )
+            except TypeError:
+                provider = self._provider_getter(routed.resolved.provider_id)
             provider.preflight_stream(
                 routed.request,
                 thinking_enabled=routed.resolved.thinking_enabled,

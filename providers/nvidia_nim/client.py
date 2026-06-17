@@ -1,8 +1,10 @@
 """NVIDIA NIM provider implementation."""
 
 import json
+import threading
 from typing import Any
 
+import httpx
 import openai
 from loguru import logger
 
@@ -14,6 +16,7 @@ from providers.openai_compat import OpenAIChatTransport
 from .request import (
     body_without_nim_tool_argument_aliases,
     build_request_body,
+    clone_body_without_all_thinking,
     clone_body_without_chat_template,
     clone_body_without_reasoning_budget,
     clone_body_without_reasoning_content,
@@ -21,8 +24,19 @@ from .request import (
 )
 
 
+_RETRYABLE_EXC = (
+    openai.RateLimitError,
+    openai.APITimeoutError,
+    httpx.ReadTimeout,
+)
+
+
 class NvidiaNimProvider(OpenAIChatTransport):
-    """NVIDIA NIM provider using official OpenAI client."""
+    """NVIDIA NIM provider using official OpenAI client.
+
+    Supports round-robin across multiple API keys (comma-separated in config.api_key).
+    On 429 or read timeout, remaining keys are tried before giving up.
+    """
 
     def __init__(self, config: ProviderConfig, *, nim_settings: NimSettings):
         super().__init__(
@@ -32,6 +46,20 @@ class NvidiaNimProvider(OpenAIChatTransport):
             api_key=config.api_key,
         )
         self._nim_settings = nim_settings
+        # Round-robin key rotation
+        raw_key = config.api_key or ""
+        self._api_keys: list[str] = [k.strip() for k in raw_key.split(",") if k.strip()]
+        if not self._api_keys:
+            self._api_keys = [raw_key]
+        self._key_index = 0
+        self._key_lock = threading.Lock()
+
+    def _next_api_key(self) -> str:
+        """Return the next API key in round-robin rotation."""
+        with self._key_lock:
+            key = self._api_keys[self._key_index % len(self._api_keys)]
+            self._key_index += 1
+            return key
 
     def _build_request_body(
         self, request: Any, thinking_enabled: bool | None = None
@@ -88,4 +116,48 @@ class NvidiaNimProvider(OpenAIChatTransport):
             )
             return retry_body
 
+        # Last resort: strip all thinking/reasoning fields when error hints at them
+        if any(kw in error_text for kw in ("thinking", "reasoning", "budget")):
+            retry_body = clone_body_without_all_thinking(body)
+            if retry_body is not None:
+                logger.warning(
+                    "NIM_STREAM: retrying without all thinking fields after 400 error"
+                )
+                return retry_body
+
         return None
+
+    async def _create_stream(self, body: dict) -> tuple[Any, dict]:
+        """Create a streaming completion with round-robin key rotation on retryable errors."""
+        try:
+            create_body = self._prepare_create_body(body)
+            stream = await self._global_rate_limiter.execute_with_retry(
+                self._client.chat.completions.create, **create_body, stream=True
+            )
+            return stream, body
+        except _RETRYABLE_EXC as error:
+            # Try next key
+            if len(self._api_keys) > 1:
+                next_key = self._next_api_key()
+                logger.warning(
+                    "NIM_STREAM: retryable error ({}), rotating to next API key",
+                    type(error).__name__,
+                )
+                self._client.api_key = next_key
+            retry_body = self._get_retry_request_body(error, body)
+            if retry_body is None:
+                raise
+            create_retry_body = self._prepare_create_body(retry_body)
+            stream = await self._global_rate_limiter.execute_with_retry(
+                self._client.chat.completions.create, **create_retry_body, stream=True
+            )
+            return stream, retry_body
+        except Exception as error:
+            retry_body = self._get_retry_request_body(error, body)
+            if retry_body is None:
+                raise
+            create_retry_body = self._prepare_create_body(retry_body)
+            stream = await self._global_rate_limiter.execute_with_retry(
+                self._client.chat.completions.create, **create_retry_body, stream=True
+            )
+            return stream, retry_body

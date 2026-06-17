@@ -20,6 +20,8 @@ from core.anthropic import (
     HeuristicToolParser,
     SSEBuilder,
     ThinkTagParser,
+    _strip_markdown_fences,
+    append_request_id,
     map_stop_reason,
 )
 from core.anthropic.stream_recovery import (
@@ -44,15 +46,32 @@ from providers.error_mapping import (
     map_error,
     user_visible_message_for_mapped_provider_error,
 )
+from providers.exceptions import MidStreamDisconnectError
 from providers.model_listing import extract_openai_model_ids
 from providers.rate_limit import GlobalRateLimiter
 
 
 def _iter_heuristic_tool_use_sse(
-    sse: SSEBuilder, tool_use: dict[str, Any]
+    sse: SSEBuilder,
+    tool_use: dict[str, Any],
+    valid_tool_names: frozenset[str] | None = None,
 ) -> Iterator[str]:
-    """Emit SSE for one heuristic tool_use block (closes open text/thinking first)."""
-    if tool_use.get("name") == "Task" and isinstance(tool_use.get("input"), dict):
+    """Emit SSE for one heuristic tool_use block (closes open text/thinking first).
+
+    If *valid_tool_names* is provided and the tool name is not in the set,
+    the call is suppressed and emitted as plain text instead.
+    """
+    tool_name = tool_use.get("name", "")
+    if valid_tool_names and tool_name not in valid_tool_names:
+        logger.warning(
+            "SUPPRESSED_HEURISTIC_TOOL: '{}' not in valid_tool_names, emitting as text",
+            tool_name,
+        )
+        yield from sse.close_content_blocks()
+        args_str = json.dumps(tool_use.get("input", {}))
+        yield sse.emit_text_delta(f"[Attempted tool call: {tool_name}({args_str})]")
+        return
+    if tool_name == "Task" and isinstance(tool_use.get("input"), dict):
         task_input = tool_use["input"]
         if task_input.get("run_in_background") is not False:
             task_input["run_in_background"] = False
@@ -62,7 +81,7 @@ def _iter_heuristic_tool_use_sse(
         block_idx,
         "tool_use",
         id=tool_use["id"],
-        name=tool_use["name"],
+        name=tool_name,
     )
     yield sse.content_block_delta(
         block_idx,

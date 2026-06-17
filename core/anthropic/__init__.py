@@ -14,10 +14,16 @@ from .errors import (
 )
 from .native_messages_request import sanitize_native_messages_thinking_policy
 from .provider_stream_error import iter_provider_stream_error_sse_events
-from .sse import ContentBlockManager, SSEBuilder, format_sse_event, map_stop_reason
+from .sse import (
+    ContentBlockManager,
+    SSEBuilder,
+    _strip_markdown_fences,
+    format_sse_event,
+    map_stop_reason,
+)
 from .thinking import ContentChunk, ContentType, ThinkTagParser
 from .tokens import get_token_count
-from .tools import HeuristicToolParser
+from .tools import HeuristicToolParser, _KNOWN_TOOL_NAMES
 from .utils import set_if_not_none
 
 __all__ = [

@@ -88,6 +88,9 @@ class Settings(BaseSettings):
 
     # ==================== DeepSeek Config ====================
     deepseek_api_key: str = Field(default="", validation_alias="DEEPSEEK_API_KEY")
+    deepseek_base_url: str | None = Field(
+        default=None, validation_alias="DEEPSEEK_BASE_URL"
+    )
 
     # ==================== Kimi Config ====================
     kimi_api_key: str = Field(default="", validation_alias="KIMI_API_KEY")
@@ -157,6 +160,8 @@ class Settings(BaseSettings):
     model_opus: str | None = Field(default=None, validation_alias="MODEL_OPUS")
     model_sonnet: str | None = Field(default=None, validation_alias="MODEL_SONNET")
     model_haiku: str | None = Field(default=None, validation_alias="MODEL_HAIKU")
+    # Vision model used when request contains image blocks (falls back to MODEL)
+    model_vision: str | None = Field(default=None, validation_alias="MODEL_VISION")
 
     # ==================== Per-Provider Proxy ====================
     nvidia_nim_proxy: str = Field(default="", validation_alias="NVIDIA_NIM_PROXY")
@@ -198,7 +203,7 @@ class Settings(BaseSettings):
 
     # ==================== HTTP Client Timeouts ====================
     http_read_timeout: float = Field(
-        default=120.0, validation_alias="HTTP_READ_TIMEOUT"
+        default=300.0, validation_alias="HTTP_READ_TIMEOUT"
     )
     http_write_timeout: float = Field(
         default=10.0, validation_alias="HTTP_WRITE_TIMEOUT"
@@ -263,6 +268,11 @@ class Settings(BaseSettings):
     )
 
     # ==================== NIM Settings ====================
+    nim_strip_tools: str = Field(
+        default="",
+        validation_alias="NIM_STRIP_TOOLS",
+        description="Comma-separated tool names to strip from NIM requests.",
+    )
     nim: NimSettings = Field(default_factory=NimSettings)
 
     # ==================== Voice Note Transcription ====================
@@ -312,6 +322,7 @@ class Settings(BaseSettings):
         "model_opus",
         "model_sonnet",
         "model_haiku",
+        "model_vision",
         "enable_opus_thinking",
         "enable_sonnet_thinking",
         "enable_haiku_thinking",
@@ -403,7 +414,7 @@ class Settings(BaseSettings):
             )
         return v
 
-    @field_validator("model", "model_opus", "model_sonnet", "model_haiku")
+    @field_validator("model", "model_opus", "model_sonnet", "model_haiku", "model_vision")
     @classmethod
     def validate_model_format(cls, v: str | None) -> str | None:
         if v is None:
@@ -457,12 +468,17 @@ class Settings(BaseSettings):
         """Extract the actual model name from the default model string."""
         return Settings.parse_model_name(self.model)
 
-    def resolve_model(self, claude_model_name: str) -> str:
+    def resolve_model(self, claude_model_name: str, *, has_images: bool = False) -> str:
         """Resolve a Claude model name to the configured provider/model string.
 
         Classifies the incoming Claude model (opus/sonnet/haiku) and
         returns the model-specific override if configured, otherwise the fallback MODEL.
+
+        When *has_images* is True and MODEL_VISION is configured, return that
+        instead so image-bearing requests route to a vision-capable model.
         """
+        if has_images and self.model_vision is not None:
+            return self.model_vision
         name_lower = claude_model_name.lower()
         if "opus" in name_lower and self.model_opus is not None:
             return self.model_opus
@@ -479,6 +495,7 @@ class Settings(BaseSettings):
             ("MODEL_OPUS", self.model_opus),
             ("MODEL_SONNET", self.model_sonnet),
             ("MODEL_HAIKU", self.model_haiku),
+            ("MODEL_VISION", self.model_vision),
         )
         sources_by_ref: dict[str, list[str]] = {}
         for source, model_ref in candidates:

@@ -35,7 +35,18 @@ PROVIDER_DESCRIPTORS: dict[str, ProviderDescriptor] = PROVIDER_CATALOG
 def _create_nvidia_nim(config: ProviderConfig, settings: Settings) -> BaseProvider:
     from providers.nvidia_nim import NvidiaNimProvider
 
-    return NvidiaNimProvider(config, nim_settings=settings.nim)
+    nim_settings = settings.nim
+    if settings.nim_strip_tools:
+        nim_settings = nim_settings.model_copy(
+            update={
+                "strip_tools": [
+                    t.strip()
+                    for t in settings.nim_strip_tools.split(",")
+                    if t.strip()
+                ]
+            }
+        )
+    return NvidiaNimProvider(config, nim_settings=nim_settings)
 
 
 def _create_open_router(config: ProviderConfig, _settings: Settings) -> BaseProvider:

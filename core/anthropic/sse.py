@@ -175,6 +175,34 @@ def _normalize_task_run_in_background(args_json: dict) -> None:
         args_json["run_in_background"] = False
 
 
+def _strip_markdown_fences(text: str) -> tuple[str, int]:
+    """Strip markdown code fences from tool argument text.
+
+    Some models (especially NIM with reasoning) wrap tool JSON in
+    `````json ... ````` fences. This strips them so JSON parsing/rescue
+    can work on the raw JSON inside.
+
+    Returns (cleaned_text, prefix_length) where prefix_length is the
+    byte offset of the JSON start within the original text.
+    """
+    stripped = text.strip()
+    prefix_len = len(text) - len(text.lstrip())
+
+    if stripped.startswith("```json"):
+        prefix_len += 7
+        stripped = stripped[7:]
+    elif stripped.startswith("```"):
+        prefix_len += 3
+        stripped = stripped[3:]
+
+    stripped = stripped.lstrip("\n")
+    if stripped.endswith("```"):
+        stripped = stripped[:-3]
+    stripped = stripped.rstrip("\n ")
+
+    return stripped, prefix_len
+
+
 class SSEBuilder:
     """Builder for Anthropic SSE streaming events."""
 
@@ -324,6 +352,14 @@ class SSEBuilder:
         *,
         extra_content: dict[str, Any] | None = None,
     ) -> str:
+        if not tool_id or not name:
+            logger.warning(
+                "BLOCKED_START_TOOL_BLOCK: empty tool_id={} or name={} at index={} — skipping",
+                tool_id,
+                name,
+                tool_index,
+            )
+            return ""
         block_idx = self.blocks.allocate_index()
         if tool_index in self.blocks.tool_states:
             state = self.blocks.tool_states[tool_index]
@@ -376,6 +412,208 @@ class SSEBuilder:
             yield self.stop_thinking_block()
         if self.blocks.text_started:
             yield self.stop_text_block()
+
+    def close_incomplete_tool_blocks(self) -> Iterator[str]:
+        """Emit completing deltas for tool blocks with invalid accumulated JSON.
+
+        When a transport error interrupts a stream mid-tool-call, the
+        input_json_delta fragments already sent may concatenate to invalid
+        JSON. Claude Code then fails with "tool call could not be parsed".
+
+        Must be called **before** close_all_blocks so the rescue delta
+        arrives before content_block_stop.
+        """
+        for _tool_index, state in list(self.blocks.tool_states.items()):
+            if not state.started:
+                continue
+            if not state.contents:
+                logger.warning(
+                    "TOOL_BLOCK_NO_CONTENTS: tool_index={} name={} tool_id={} — "
+                    "tool block started but has zero input_json_delta events",
+                    _tool_index,
+                    state.name or "unknown",
+                    state.tool_id or "unknown",
+                )
+                continue
+            concatenated = "".join(state.contents)
+            if not concatenated.strip():
+                continue
+            cleaned, _prefix_len = _strip_markdown_fences(concatenated)
+            try:
+                json.loads(cleaned)
+                continue
+            except (json.JSONDecodeError, ValueError):
+                pass
+            rescue = self._rescue_partial_json(cleaned)
+            repaired = cleaned + rescue
+            try:
+                json.loads(repaired)
+            except (json.JSONDecodeError, ValueError):
+                logger.warning(
+                    "TOOL_RESCUE_FAILED: tool_id={} len={} — rescue '{}' "
+                    "did not produce valid JSON",
+                    state.tool_id or "unknown",
+                    len(cleaned),
+                    rescue[:80],
+                )
+            else:
+                logger.debug(
+                    "TOOL_RESCUE_OK: tool_id={} name={} len={}→{}",
+                    state.tool_id or "unknown",
+                    state.name or "unknown",
+                    len(concatenated),
+                    len(repaired),
+                )
+            state.contents = [repaired]
+            yield self.content_block_delta(
+                state.block_index, "input_json_delta", rescue
+            )
+
+    def validate_tool_blocks(self, valid_tool_names: frozenset[str]) -> Iterator[str]:
+        """Replace arguments of tool blocks with unrecognized names so the client can parse them.
+
+        When a model hallucinates a tool name not in the request's tool list,
+        Claude Code fails with "tool call could not be parsed". This method
+        detects such blocks and ensures the accumulated input_json_delta
+        fragments form parseable JSON so the client doesn't crash.
+        """
+        if not valid_tool_names:
+            return
+        for tool_index, state in list(self.blocks.tool_states.items()):
+            if not state.started:
+                continue
+            tool_name = (state.name or "").strip()
+            if not tool_name or tool_name in valid_tool_names:
+                continue
+            concatenated = "".join(state.contents)
+            if concatenated.strip():
+                rescue_suffix = self._rescue_partial_json(concatenated)
+                logger.warning(
+                    "INVALID_TOOL_RESCUE: tool_id={} name={} not in valid set — "
+                    "rescued partial args (original_len={} suffix_len={})",
+                    state.tool_id or "unknown",
+                    tool_name,
+                    len(concatenated),
+                    len(rescue_suffix),
+                )
+                try:
+                    total = concatenated + rescue_suffix
+                    json.loads(total)
+                    state.contents = [total]
+                except (json.JSONDecodeError, ValueError):
+                    state.contents = ['{"_invalid_tool": true}']
+                yield self.content_block_delta(
+                    state.block_index,
+                    "input_json_delta",
+                    rescue_suffix,
+                )
+            else:
+                fallback = json.dumps({"_invalid_tool": True, "name": tool_name})
+                state.contents = [fallback]
+                yield self.emit_tool_delta(tool_index, fallback)
+
+    @staticmethod
+    def _rescue_partial_json(partial: str) -> str:
+        """Return a JSON fragment that when appended to *partial* yields valid JSON."""
+        s = partial.strip()
+        if not s:
+            return '{"_interrupted": true}'
+
+        in_string = False
+        escape_next = False
+        open_stack: list[str] = []
+        for ch in s:
+            if escape_next:
+                escape_next = False
+                continue
+            if ch == "\\" and in_string:
+                escape_next = True
+                continue
+            if ch == '"':
+                in_string = not in_string
+                continue
+            if in_string:
+                continue
+            if ch == "{":
+                open_stack.append("}")
+            elif ch == "[":
+                open_stack.append("]")
+            elif ch in ("}", "]") and open_stack:
+                open_stack.pop()
+
+        suffix = ""
+        was_in_string = in_string
+        if in_string:
+            suffix += '"'
+
+        candidate = s + suffix
+        if open_stack and open_stack[-1] == "}":
+            stripped = candidate.rstrip()
+            if stripped.endswith(":"):
+                suffix += " null"
+            elif stripped.endswith(","):
+                suffix += '"_truncated": null'
+            elif was_in_string and stripped.endswith('"'):
+                before = s[: s.rfind('"')].rstrip()
+                if before.endswith(",") or before.endswith("{"):
+                    suffix += ": null"
+
+        for bracket in reversed(open_stack):
+            suffix += bracket
+
+        candidate = s + suffix
+        try:
+            json.loads(candidate)
+            return suffix
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        close_brackets = "".join(reversed(open_stack))
+        if was_in_string:
+            before = s[: s.rfind('"')].rstrip()
+            if before.endswith(",") or before.endswith("{"):
+                candidate2 = s + '"' + ": null" + close_brackets
+            else:
+                candidate2 = s + '"' + " null" + close_brackets
+        else:
+            candidate2 = s + " null" + close_brackets
+        try:
+            json.loads(candidate2)
+            return candidate2[len(s) :]
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        truncation = ""
+        if in_string:
+            truncation += '"'
+        truncation += ',"_interrupted": true'
+        for bracket in reversed(open_stack):
+            truncation += bracket
+
+        candidate3 = s + truncation
+        try:
+            json.loads(candidate3)
+            return truncation
+        except (json.JSONDecodeError, ValueError):
+            pass
+
+        raw_opens = s.count("{") - s.count("}")
+        raw_bracket_opens = s.count("[") - s.count("]")
+        rescue = ""
+        if in_string:
+            rescue += '"'
+        if raw_opens > 0:
+            rescue += ',"_interrupted": true'
+            rescue += "}" * raw_opens
+        if raw_bracket_opens > 0:
+            rescue += "]" * raw_bracket_opens
+        if not rescue.strip():
+            rescue = "}}"
+        try:
+            json.loads(s + rescue)
+            return rescue
+        except (json.JSONDecodeError, ValueError):
+            return "}}"
 
     def close_all_blocks(self) -> Iterator[str]:
         yield from self.close_content_blocks()

@@ -35,6 +35,11 @@ class NimSettings(BaseModel):
     min_tokens: int = Field(0, ge=0, description="Minimum tokens in the response.")
     chat_template: str | None = None
     request_id: str | None = None
+    reasoning_effort: str | None = None
+    strip_tools: list[str] = Field(
+        default_factory=list,
+        description="Tool names to strip from requests (e.g. image tools that confuse the model).",
+    )
 
     model_config = ConfigDict(extra="forbid")
 
