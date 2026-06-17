@@ -215,11 +215,12 @@ sequenceDiagram
     Provider-->>Client: Anthropic SSE events
 ```
 
-OpenAI Responses uses the same core route. `create_response()` converts the
-Responses payload into an Anthropic Messages payload with
-[core/openai_responses/conversion.py](core/openai_responses/conversion.py),
-reuses `create_message()`, then converts the final response or SSE stream back to
-Responses format.
+OpenAI Responses uses the same core route. `create_response()` delegates
+Responses protocol work to the `OpenAIResponsesAdapter` in
+[core/openai_responses/adapter.py](core/openai_responses/adapter.py). The adapter
+converts the Responses payload into an Anthropic Messages payload, lets the
+service reuse `create_message()`, then converts the final response or SSE stream
+back to Responses format.
 
 ## Model Routing
 
@@ -334,10 +335,25 @@ hooks, client setup, and model listing.
 
 [core/openai_responses/](core/openai_responses/) owns OpenAI Responses support:
 
+- the `OpenAIResponsesAdapter` facade used by the API layer;
 - Responses request conversion into Anthropic Messages payloads;
 - Anthropic message response conversion into Responses objects;
 - Anthropic SSE conversion into Responses SSE;
 - OpenAI-compatible error envelopes.
+
+The package is split by protocol responsibility. Request conversion, complete
+response conversion, stream transformation, Anthropic SSE parsing, Responses SSE
+event formatting, output item construction, tool identity mapping, reasoning
+mapping, ID generation, and error envelope construction each live behind the
+adapter boundary. API code should depend on the adapter, not on those internal
+module owners directly.
+
+Responses custom tools are also boundary-owned. The adapter accepts native
+Responses `custom` tool declarations, represents them internally as Anthropic
+tools with a single string `input` field, and restores `custom_tool_call`,
+`custom_tool_call_output`, and `response.custom_tool_call_input.*` shapes at the
+Responses edge. Text or grammar format metadata is preserved as model guidance;
+FCC does not validate custom-tool grammars.
 
 Responses reasoning is handled as protocol conversion, not provider policy.
 `reasoning.effort = "none"` converts to a disabled Anthropic `thinking`

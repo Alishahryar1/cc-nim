@@ -399,6 +399,38 @@ def test_codex_adapter_parses_completed_function_call_item() -> None:
     ]
 
 
+def test_codex_adapter_parses_completed_custom_tool_call_item() -> None:
+    line = json.dumps(
+        {
+            "type": "response.output_item.done",
+            "item": {
+                "type": "custom_tool_call",
+                "call_id": "call_1",
+                "name": "apply_patch",
+                "input": "*** Begin Patch",
+            },
+        }
+    )
+
+    events = list(CODEX_CLI_ADAPTER.parse_stdout_line(line, CliParseState()))
+
+    assert events == [
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "call_1",
+                        "name": "apply_patch",
+                        "input": {"input": "*** Begin Patch"},
+                    }
+                ]
+            },
+        }
+    ]
+
+
 def test_codex_adapter_reasoning_summary_delta_remains_raw() -> None:
     events = list(
         CODEX_CLI_ADAPTER.parse_stdout_line(

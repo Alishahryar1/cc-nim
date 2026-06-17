@@ -238,6 +238,49 @@ def test_create_response_accepts_codex_namespace_tool_request() -> None:
     assert call["name"] == "js"
 
 
+def test_create_response_accepts_codex_custom_tool_request() -> None:
+    provider = FakeProvider(
+        _anthropic_tool_stream(
+            tool_name="apply_patch",
+            partial_json='{"input":"*** Begin Patch"}',
+        )
+    )
+    app = create_app(lifespan_enabled=False)
+    with (
+        patch("api.dependencies.resolve_provider", return_value=provider),
+        TestClient(app) as client,
+    ):
+        response = client.post(
+            "/v1/responses",
+            json={
+                "model": "nvidia_nim/test-model",
+                "input": "Use apply_patch",
+                "stream": True,
+                "tools": [
+                    {
+                        "type": "custom",
+                        "name": "apply_patch",
+                        "description": "Apply repo patches",
+                        "format": {"type": "text"},
+                    }
+                ],
+                "tool_choice": {"type": "custom", "name": "apply_patch"},
+            },
+        )
+
+    assert response.status_code == 200
+    routed = provider.requests[0]
+    assert [tool.name for tool in routed.tools] == ["apply_patch"]
+    assert routed.tool_choice == {"type": "tool", "name": "apply_patch"}
+    events = parse_sse_text(response.text)
+    assert "response.custom_tool_call_input.delta" in [event.event for event in events]
+    completed = events[-1].data["response"]
+    call = completed["output"][0]
+    assert call["type"] == "custom_tool_call"
+    assert call["name"] == "apply_patch"
+    assert call["input"] == "*** Begin Patch"
+
+
 def test_create_response_replays_prior_reasoning_as_reasoning_content() -> None:
     provider = FakeProvider(_anthropic_text_stream("done"))
     app = create_app(lifespan_enabled=False)
@@ -415,7 +458,9 @@ def _anthropic_text_stream(text: str) -> list[str]:
     ]
 
 
-def _anthropic_tool_stream(tool_name: str = "echo") -> list[str]:
+def _anthropic_tool_stream(
+    tool_name: str = "echo", partial_json: str = '{"value":"FCC"}'
+) -> list[str]:
     return [
         format_sse_event("message_start", {"type": "message_start", "message": {}}),
         format_sse_event(
@@ -438,7 +483,7 @@ def _anthropic_tool_stream(tool_name: str = "echo") -> list[str]:
                 "index": 0,
                 "delta": {
                     "type": "input_json_delta",
-                    "partial_json": '{"value":"FCC"}',
+                    "partial_json": partial_json,
                 },
             },
         ),

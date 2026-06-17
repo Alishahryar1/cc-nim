@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import pytest
 
-from core.openai_responses import (
-    ResponsesConversionError,
-    anthropic_message_response_to_openai_response,
-    responses_request_to_anthropic_payload,
-)
+from core.openai_responses import OpenAIResponsesAdapter
+
+_ADAPTER = OpenAIResponsesAdapter()
+_CONVERSION_ERROR = OpenAIResponsesAdapter.ConversionError
 
 
 def test_responses_string_input_converts_to_anthropic_message() -> None:
-    payload = responses_request_to_anthropic_payload(
+    payload = _ADAPTER.to_anthropic_payload(
         {
             "model": "nvidia_nim/test-model",
             "instructions": "System instructions",
@@ -32,7 +31,7 @@ def test_responses_string_input_converts_to_anthropic_message() -> None:
 
 
 def test_responses_messages_tools_and_tool_results_convert() -> None:
-    payload = responses_request_to_anthropic_payload(
+    payload = _ADAPTER.to_anthropic_payload(
         {
             "model": "deepseek/deepseek-chat",
             "input": [
@@ -112,7 +111,7 @@ def test_responses_messages_tools_and_tool_results_convert() -> None:
 
 
 def test_responses_tool_choice_none_disables_forwarded_tools() -> None:
-    payload = responses_request_to_anthropic_payload(
+    payload = _ADAPTER.to_anthropic_payload(
         {
             "model": "deepseek/deepseek-chat",
             "input": "Reply without tools",
@@ -135,7 +134,7 @@ def test_responses_tool_choice_none_disables_forwarded_tools() -> None:
 
 
 def test_responses_namespace_tools_flatten_for_anthropic() -> None:
-    payload = responses_request_to_anthropic_payload(
+    payload = _ADAPTER.to_anthropic_payload(
         {
             "model": "nvidia_nim/test-model",
             "input": "Use JS",
@@ -180,8 +179,85 @@ def test_responses_namespace_tools_flatten_for_anthropic() -> None:
     assert payload["tool_choice"] == {"type": "tool", "name": "mcp__node_repl__js"}
 
 
+def test_responses_custom_tool_converts_to_anthropic_string_tool() -> None:
+    payload = _ADAPTER.to_anthropic_payload(
+        {
+            "model": "nvidia_nim/test-model",
+            "input": "Use apply_patch",
+            "tools": [
+                {
+                    "type": "custom",
+                    "name": "apply_patch",
+                    "description": "Apply a repo patch",
+                    "format": {
+                        "type": "grammar",
+                        "syntax": "lark",
+                        "definition": "start: /.+/",
+                    },
+                }
+            ],
+            "tool_choice": {"type": "custom", "name": "apply_patch"},
+        }
+    )
+
+    assert payload["tools"] == [
+        {
+            "name": "apply_patch",
+            "description": (
+                "Apply a repo patch\n\n"
+                "Custom tool input format: grammar (lark): start: /.+/"
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "input": {
+                        "type": "string",
+                        "description": "Free-form input for the custom tool.",
+                    }
+                },
+                "required": ["input"],
+            },
+        }
+    ]
+    assert payload["tool_choice"] == {"type": "tool", "name": "apply_patch"}
+
+
+def test_responses_namespaced_custom_tool_flattens_for_anthropic() -> None:
+    payload = _ADAPTER.to_anthropic_payload(
+        {
+            "model": "nvidia_nim/test-model",
+            "input": "Use shell",
+            "tools": [
+                {
+                    "type": "namespace",
+                    "name": "mcp__shell",
+                    "tools": [
+                        {
+                            "type": "custom",
+                            "name": "exec",
+                            "description": "Run shell text",
+                            "format": {"type": "text"},
+                        }
+                    ],
+                }
+            ],
+            "tool_choice": {
+                "type": "custom",
+                "namespace": "mcp__shell",
+                "custom": {"name": "exec"},
+            },
+        }
+    )
+
+    assert payload["tools"][0]["name"] == "mcp__shell__exec"
+    assert payload["tools"][0]["description"] == (
+        "Run shell text\n\nCustom tool input format: unconstrained text."
+    )
+    assert payload["tool_choice"] == {"type": "tool", "name": "mcp__shell__exec"}
+
+
 def test_responses_passive_codex_built_in_tools_are_ignored() -> None:
-    payload = responses_request_to_anthropic_payload(
+    payload = _ADAPTER.to_anthropic_payload(
         {
             "model": "nvidia_nim/test-model",
             "input": "Hello",
@@ -203,7 +279,7 @@ def test_responses_passive_codex_built_in_tools_are_ignored() -> None:
 
 
 def test_responses_namespaced_prior_function_call_flattens_tool_use_name() -> None:
-    payload = responses_request_to_anthropic_payload(
+    payload = _ADAPTER.to_anthropic_payload(
         {
             "model": "nvidia_nim/test-model",
             "input": [
@@ -226,8 +302,54 @@ def test_responses_namespaced_prior_function_call_flattens_tool_use_name() -> No
     assert payload["messages"][0]["content"][0]["name"] == "mcp__node_repl__js"
 
 
+def test_responses_prior_custom_tool_call_flattens_tool_use_name() -> None:
+    payload = _ADAPTER.to_anthropic_payload(
+        {
+            "model": "nvidia_nim/test-model",
+            "input": [
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "call_1",
+                    "namespace": "mcp__shell",
+                    "name": "exec",
+                    "input": "printf FCC",
+                },
+                {
+                    "type": "custom_tool_call_output",
+                    "call_id": "call_1",
+                    "output": "FCC",
+                },
+            ],
+        }
+    )
+
+    assert payload["messages"] == [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "mcp__shell__exec",
+                    "input": {"input": "printf FCC"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "call_1",
+                    "content": "FCC",
+                }
+            ],
+        },
+    ]
+
+
 def test_anthropic_namespaced_tool_response_restores_responses_namespace() -> None:
-    response = anthropic_message_response_to_openai_response(
+    response = _ADAPTER.from_anthropic_message(
         {
             "content": [
                 {
@@ -261,11 +383,43 @@ def test_anthropic_namespaced_tool_response_restores_responses_namespace() -> No
     assert call["name"] == "js"
 
 
+def test_anthropic_namespaced_custom_tool_response_restores_responses_custom_call() -> (
+    None
+):
+    response = _ADAPTER.from_anthropic_message(
+        {
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "mcp__shell__exec",
+                    "input": {"input": "printf FCC"},
+                }
+            ]
+        },
+        {
+            "model": "nvidia_nim/test-model",
+            "tools": [
+                {
+                    "type": "namespace",
+                    "name": "mcp__shell",
+                    "tools": [{"type": "custom", "name": "exec"}],
+                }
+            ],
+        },
+    )
+
+    call = response["output"][0]
+    assert call["type"] == "custom_tool_call"
+    assert call["call_id"] == "toolu_1"
+    assert call["namespace"] == "mcp__shell"
+    assert call["name"] == "exec"
+    assert call["input"] == "printf FCC"
+
+
 def test_responses_unsupported_tool_type_is_clear() -> None:
-    with pytest.raises(
-        ResponsesConversionError, match="Unsupported Responses tool type"
-    ):
-        responses_request_to_anthropic_payload(
+    with pytest.raises(_CONVERSION_ERROR, match="Unsupported Responses tool type"):
+        _ADAPTER.to_anthropic_payload(
             {
                 "model": "nvidia_nim/test-model",
                 "input": "Hello",
@@ -275,8 +429,8 @@ def test_responses_unsupported_tool_type_is_clear() -> None:
 
 
 def test_responses_invalid_function_arguments_are_rejected() -> None:
-    with pytest.raises(ResponsesConversionError, match="invalid JSON"):
-        responses_request_to_anthropic_payload(
+    with pytest.raises(_CONVERSION_ERROR, match="invalid JSON"):
+        _ADAPTER.to_anthropic_payload(
             {
                 "model": "nvidia_nim/test-model",
                 "input": [

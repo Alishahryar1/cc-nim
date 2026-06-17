@@ -319,6 +319,21 @@ def _responses_item_to_parser_events(
                 ]
             },
         }
+        return
+    if item_type == "custom_tool_call":
+        yield {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": str(item.get("call_id", item.get("id", ""))),
+                        "name": str(item.get("name", "")),
+                        "input": {"input": _custom_tool_input_text(item.get("input"))},
+                    }
+                ]
+            },
+        }
 
 
 def _event_message(event: Mapping[str, Any]) -> str:
@@ -346,6 +361,17 @@ def _safe_json_object(value: Any) -> dict[str, Any]:
     except json.JSONDecodeError:
         return {}
     return parsed if isinstance(parsed, dict) else {}
+
+
+def _custom_tool_input_text(value: Any) -> str:
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    try:
+        return json.dumps(value)
+    except TypeError:
+        return str(value)
 
 
 def _base_codex_env(base_env: Mapping[str, str]) -> dict[str, str]:

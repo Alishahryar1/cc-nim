@@ -16,16 +16,7 @@ from config.provider_catalog import PROVIDER_CATALOG
 from config.settings import Settings
 from core.anthropic import get_token_count, get_user_facing_error_message
 from core.anthropic.sse import ANTHROPIC_SSE_RESPONSE_HEADERS
-from core.openai_responses import (
-    OPENAI_RESPONSES_SSE_HEADERS,
-    ResponsesConversionError,
-    anthropic_message_response_to_openai_response,
-    collect_openai_response_from_anthropic_sse,
-    iter_anthropic_sse_as_openai_responses,
-    iter_message_response_as_openai_responses,
-    openai_error_payload,
-    responses_request_to_anthropic_payload,
-)
+from core.openai_responses import OpenAIResponsesAdapter
 from core.trace import api_messages_request_snapshot, trace_event, traced_async_stream
 from providers.base import BaseProvider
 from providers.exceptions import InvalidRequestError, ProviderError
@@ -72,7 +63,7 @@ def openai_responses_sse_streaming_response(
     return StreamingResponse(
         body,
         media_type="text/event-stream",
-        headers=OPENAI_RESPONSES_SSE_HEADERS,
+        headers=OpenAIResponsesAdapter.sse_headers,
     )
 
 
@@ -121,11 +112,13 @@ class ClaudeProxyService:
         provider_getter: ProviderGetter,
         model_router: ModelRouter | None = None,
         token_counter: TokenCounter = get_token_count,
+        responses_adapter: OpenAIResponsesAdapter | None = None,
     ):
         self._settings = settings
         self._provider_getter = provider_getter
         self._model_router = model_router or ModelRouter(settings)
         self._token_counter = token_counter
+        self._responses_adapter = responses_adapter or OpenAIResponsesAdapter()
 
     def create_message(self, request_data: MessagesRequest) -> object:
         """Create a message response or streaming response."""
@@ -251,13 +244,15 @@ class ClaudeProxyService:
 
         request_payload = request_data.model_dump(mode="json", exclude_none=True)
         try:
-            anthropic_payload = responses_request_to_anthropic_payload(request_payload)
+            anthropic_payload = self._responses_adapter.to_anthropic_payload(
+                request_payload
+            )
             result = self.create_message(MessagesRequest(**anthropic_payload))
-        except ResponsesConversionError as exc:
+        except OpenAIResponsesAdapter.ConversionError as exc:
             invalid_request = InvalidRequestError(str(exc))
             return JSONResponse(
                 status_code=invalid_request.status_code,
-                content=openai_error_payload(
+                content=self._responses_adapter.error_payload(
                     message=invalid_request.message,
                     error_type=invalid_request.error_type,
                 ),
@@ -265,7 +260,7 @@ class ClaudeProxyService:
         except ProviderError as exc:
             return JSONResponse(
                 status_code=exc.status_code,
-                content=openai_error_payload(
+                content=self._responses_adapter.error_payload(
                     message=exc.message,
                     error_type=exc.error_type,
                 ),
@@ -273,18 +268,18 @@ class ClaudeProxyService:
 
         if request_data.stream is False:
             if isinstance(result, StreamingResponse):
-                return await collect_openai_response_from_anthropic_sse(
+                return await self._responses_adapter.collect_from_anthropic_sse(
                     result.body_iterator,
                     request_payload,
                 )
-            return anthropic_message_response_to_openai_response(
+            return self._responses_adapter.from_anthropic_message(
                 _model_dump_json(result),
                 request_payload,
             )
 
         if isinstance(result, StreamingResponse):
             return openai_responses_sse_streaming_response(
-                iter_anthropic_sse_as_openai_responses(
+                self._responses_adapter.iter_sse_from_anthropic(
                     result.body_iterator,
                     request_payload,
                 )
@@ -292,7 +287,7 @@ class ClaudeProxyService:
 
         return openai_responses_sse_streaming_response(
             _iter_static_response_sse(
-                iter_message_response_as_openai_responses(
+                self._responses_adapter.iter_sse_from_anthropic_message(
                     _model_dump_json(result),
                     request_payload,
                 )

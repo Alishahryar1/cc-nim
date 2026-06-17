@@ -9,32 +9,39 @@ from collections.abc import AsyncIterable, AsyncIterator, Mapping
 from dataclasses import dataclass, field
 from typing import Any
 
-from .conversion import (
-    anthropic_message_response_to_openai_response,
+from .anthropic_sse import AnthropicSseEvent, iter_sse_events
+from .events import format_response_sse_event
+from .ids import (
+    new_call_id,
+    new_message_item_id,
+    new_reasoning_item_id,
+    new_response_id,
+)
+from .items import (
+    base_response,
+    custom_tool_call_item,
+    encrypted_reasoning_item,
+    in_progress_item,
+    message_item,
+    message_item_text,
+    reasoning_item,
+    reasoning_item_text,
+)
+from .output import convert_message_to_response
+from .tools import (
+    custom_tool_input_text_from_arguments,
     responses_tool_identity_from_anthropic_name,
 )
 
-OPENAI_RESPONSES_SSE_HEADERS: dict[str, str] = {
-    "X-Accel-Buffering": "no",
-    "Cache-Control": "no-cache",
-    "Connection": "keep-alive",
-}
 
-
-def format_response_sse_event(event_type: str, data: Mapping[str, Any]) -> str:
-    """Format one OpenAI Responses SSE event."""
-
-    return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
-
-
-async def iter_anthropic_sse_as_openai_responses(
+async def iter_responses_sse_from_anthropic(
     chunks: AsyncIterable[Any],
     request: Mapping[str, Any],
 ) -> AsyncIterator[str]:
     """Yield Responses SSE events translated from an Anthropic SSE stream."""
 
     transformer = _ResponsesStreamTransformer(request)
-    async for event in _iter_sse_events(chunks):
+    async for event in iter_sse_events(chunks):
         for chunk in transformer.process_anthropic_event(event):
             yield chunk
         if transformer.terminal:
@@ -43,14 +50,14 @@ async def iter_anthropic_sse_as_openai_responses(
         yield chunk
 
 
-async def collect_openai_response_from_anthropic_sse(
+async def collect_response_from_anthropic_sse(
     chunks: AsyncIterable[Any],
     request: Mapping[str, Any],
 ) -> dict[str, Any]:
     """Collect a translated Anthropic SSE stream into one Responses object."""
 
     transformer = _ResponsesStreamTransformer(request)
-    async for event in _iter_sse_events(chunks):
+    async for event in iter_sse_events(chunks):
         transformer.process_anthropic_event(event)
         if transformer.terminal:
             break
@@ -62,23 +69,21 @@ async def collect_openai_response_from_anthropic_sse(
     )
 
 
-def iter_message_response_as_openai_responses(
+def iter_responses_sse_from_message(
     message: Mapping[str, Any],
     request: Mapping[str, Any],
 ) -> list[str]:
     """Return Responses SSE chunks for a non-stream Anthropic message response."""
 
-    response_id = _new_response_id()
-    response = _base_response(request, response_id=response_id, status="in_progress")
+    response_id = new_response_id()
+    response = base_response(request, response_id=response_id, status="in_progress")
     chunks = [
         format_response_sse_event(
             "response.created",
             {"type": "response.created", "response": response},
         )
     ]
-    completed = anthropic_message_response_to_openai_response(
-        message, request, response_id=response_id
-    )
+    completed = convert_message_to_response(message, request, response_id=response_id)
     for output_index, item in enumerate(completed["output"]):
         chunks.append(
             format_response_sse_event(
@@ -86,15 +91,15 @@ def iter_message_response_as_openai_responses(
                 {
                     "type": "response.output_item.added",
                     "output_index": output_index,
-                    "item": _in_progress_item(item),
+                    "item": in_progress_item(item),
                 },
             )
         )
         if item.get("type") == "message":
-            text = _message_item_text(item)
+            text = message_item_text(item)
             chunks.extend(_message_text_events(item, output_index, text))
         elif item.get("type") == "reasoning":
-            text = _reasoning_item_text(item)
+            text = reasoning_item_text(item)
             if text:
                 chunks.extend(_reasoning_text_events(item, output_index, text))
         elif item.get("type") == "function_call":
@@ -122,6 +127,31 @@ def iter_message_response_as_openai_responses(
                     },
                 )
             )
+        elif item.get("type") == "custom_tool_call":
+            input_text = str(item.get("input", ""))
+            if input_text:
+                chunks.append(
+                    format_response_sse_event(
+                        "response.custom_tool_call_input.delta",
+                        {
+                            "type": "response.custom_tool_call_input.delta",
+                            "item_id": item.get("id"),
+                            "output_index": output_index,
+                            "delta": input_text,
+                        },
+                    )
+                )
+            chunks.append(
+                format_response_sse_event(
+                    "response.custom_tool_call_input.done",
+                    {
+                        "type": "response.custom_tool_call_input.done",
+                        "item_id": item.get("id"),
+                        "output_index": output_index,
+                        "input": input_text,
+                    },
+                )
+            )
         chunks.append(
             format_response_sse_event(
                 "response.output_item.done",
@@ -142,16 +172,11 @@ def iter_message_response_as_openai_responses(
 
 
 @dataclass(slots=True)
-class _AnthropicSseEvent:
-    event: str
-    data: dict[str, Any]
-
-
-@dataclass(slots=True)
 class _ToolState:
     output_index: int
     item_id: str
     call_id: str
+    kind: str
     name: str
     namespace: str | None = None
     argument_parts: list[str] = field(default_factory=list)
@@ -168,10 +193,10 @@ class _ReasoningState:
 class _ResponsesStreamTransformer:
     def __init__(self, request: Mapping[str, Any]) -> None:
         self._request = request
-        self._response_id = _new_response_id()
+        self._response_id = new_response_id()
         self._created_at = int(time.time())
         self._output: list[dict[str, Any]] = []
-        self._text_item_id = _new_message_item_id()
+        self._text_item_id = new_message_item_id()
         self._text_started = False
         self._text_done = False
         self._text_output_index: int | None = None
@@ -185,7 +210,7 @@ class _ResponsesStreamTransformer:
         self.terminal = False
         self.final_response: dict[str, Any] | None = None
 
-    def process_anthropic_event(self, event: _AnthropicSseEvent) -> list[str]:
+    def process_anthropic_event(self, event: AnthropicSseEvent) -> list[str]:
         if self.terminal:
             return []
 
@@ -276,21 +301,25 @@ class _ResponsesStreamTransformer:
             index = _event_index(data)
             if index is None:
                 return []
-            call_id = str(block.get("id", "") or _new_call_id())
-            item_id = f"fc_{uuid.uuid4().hex[:24]}"
-            output_index = len(self._output)
-            namespace, name = responses_tool_identity_from_anthropic_name(
+            call_id = str(block.get("id", "") or new_call_id())
+            identity = responses_tool_identity_from_anthropic_name(
                 self._request, str(block.get("name", ""))
             )
+            item_prefix = "ctc" if identity.kind == "custom" else "fc"
+            item_id = f"{item_prefix}_{uuid.uuid4().hex[:24]}"
+            output_index = len(self._output)
             state = _ToolState(
                 output_index=output_index,
                 item_id=item_id,
                 call_id=call_id,
-                name=name,
-                namespace=namespace,
+                kind=identity.kind,
+                name=identity.name,
+                namespace=identity.namespace,
             )
             initial_input = block.get("input")
-            if isinstance(initial_input, dict) and initial_input:
+            if (identity.kind == "custom" and initial_input not in (None, {}, "")) or (
+                isinstance(initial_input, dict) and initial_input
+            ):
                 state.argument_parts.append(json.dumps(initial_input))
             self._tools_by_block_index[index] = state
         return []
@@ -339,7 +368,7 @@ class _ResponsesStreamTransformer:
     ) -> _ReasoningState:
         state = _ReasoningState(
             output_index=len(self._output),
-            item_id=_new_reasoning_item_id(),
+            item_id=new_reasoning_item_id(),
             encrypted_content=encrypted_content,
         )
         self._reasoning_by_block_index[index] = state
@@ -431,7 +460,7 @@ class _ResponsesStreamTransformer:
         if self._text_started:
             return []
         if self._text_done:
-            self._text_item_id = _new_message_item_id()
+            self._text_item_id = new_message_item_id()
             self._text_done = False
             self._text_parts = []
         self._text_started = True
@@ -492,7 +521,7 @@ class _ResponsesStreamTransformer:
         self._text_started = False
         text = "".join(self._text_parts)
         output_index = self._current_text_output_index()
-        item = _message_item(self._text_item_id, text, "completed")
+        item = message_item(self._text_item_id, text, "completed")
         if output_index >= len(self._output):
             self._output.append(item)
         else:
@@ -529,6 +558,8 @@ class _ResponsesStreamTransformer:
         ]
 
     def _complete_tool_call(self, state: _ToolState) -> list[str]:
+        if state.kind == "custom":
+            return self._complete_custom_tool_call(state)
         arguments = "".join(state.argument_parts) or "{}"
         item = {
             "id": state.item_id,
@@ -586,6 +617,64 @@ class _ResponsesStreamTransformer:
         )
         return chunks
 
+    def _complete_custom_tool_call(self, state: _ToolState) -> list[str]:
+        input_text = custom_tool_input_text_from_arguments(
+            "".join(state.argument_parts)
+        )
+        item = custom_tool_call_item(
+            block_id=state.call_id,
+            name=state.name,
+            namespace=state.namespace,
+            input_text=input_text,
+            status="completed",
+        )
+        item["id"] = state.item_id
+        self._output.append(item)
+        chunks = [
+            format_response_sse_event(
+                "response.output_item.added",
+                {
+                    "type": "response.output_item.added",
+                    "output_index": state.output_index,
+                    "item": {**item, "status": "in_progress", "input": ""},
+                },
+            )
+        ]
+        if input_text:
+            chunks.append(
+                format_response_sse_event(
+                    "response.custom_tool_call_input.delta",
+                    {
+                        "type": "response.custom_tool_call_input.delta",
+                        "item_id": state.item_id,
+                        "output_index": state.output_index,
+                        "delta": input_text,
+                    },
+                )
+            )
+        chunks.extend(
+            [
+                format_response_sse_event(
+                    "response.custom_tool_call_input.done",
+                    {
+                        "type": "response.custom_tool_call_input.done",
+                        "item_id": state.item_id,
+                        "output_index": state.output_index,
+                        "input": input_text,
+                    },
+                ),
+                format_response_sse_event(
+                    "response.output_item.done",
+                    {
+                        "type": "response.output_item.done",
+                        "output_index": state.output_index,
+                        "item": item,
+                    },
+                ),
+            ]
+        )
+        return chunks
+
     def _complete_response(self) -> list[str]:
         chunks = self._complete_text_if_needed()
         for index in list(self._reasoning_by_block_index):
@@ -628,74 +717,9 @@ class _ResponsesStreamTransformer:
         return self._text_output_index
 
 
-async def _iter_sse_events(
-    chunks: AsyncIterable[Any],
-) -> AsyncIterator[_AnthropicSseEvent]:
-    buffer = ""
-    async for chunk in chunks:
-        if isinstance(chunk, bytes):
-            buffer += chunk.decode("utf-8", errors="replace")
-        else:
-            buffer += str(chunk)
-
-        while "\n\n" in buffer:
-            raw, buffer = buffer.split("\n\n", 1)
-            event = _parse_sse_event(raw)
-            if event is not None:
-                yield event
-
-    if buffer.strip():
-        event = _parse_sse_event(buffer)
-        if event is not None:
-            yield event
-
-
-def _parse_sse_event(raw: str) -> _AnthropicSseEvent | None:
-    event_type = ""
-    data_parts: list[str] = []
-    for line in raw.splitlines():
-        stripped = line.rstrip("\r")
-        if stripped.startswith("event:"):
-            event_type = stripped.split(":", 1)[1].strip()
-        elif stripped.startswith("data:"):
-            data_parts.append(stripped.split(":", 1)[1].strip())
-    if not event_type and not data_parts:
-        return None
-    data_text = "\n".join(data_parts)
-    if data_text == "[DONE]":
-        return None
-    try:
-        parsed = json.loads(data_text) if data_text else {}
-    except json.JSONDecodeError:
-        parsed = {"raw": data_text}
-    if not isinstance(parsed, dict):
-        parsed = {"value": parsed}
-    return _AnthropicSseEvent(event=event_type, data=parsed)
-
-
 def _event_index(data: Mapping[str, Any]) -> int | None:
     value = data.get("index")
     return value if isinstance(value, int) else None
-
-
-def _base_response(
-    request: Mapping[str, Any], *, response_id: str, status: str
-) -> dict[str, Any]:
-    return {
-        "id": response_id,
-        "object": "response",
-        "created_at": int(time.time()),
-        "status": status,
-        "model": str(request.get("model", "")),
-        "output": [],
-        "parallel_tool_calls": bool(request.get("parallel_tool_calls", True)),
-        "tool_choice": request.get("tool_choice", "auto"),
-        "temperature": request.get("temperature"),
-        "top_p": request.get("top_p"),
-        "max_output_tokens": request.get("max_output_tokens"),
-        "usage": None,
-        "error": None,
-    }
 
 
 def _message_text_events(
@@ -774,77 +798,7 @@ def _reasoning_text_events(
     ]
 
 
-def _message_item(item_id: str, text: str, status: str) -> dict[str, Any]:
-    return {
-        "id": item_id,
-        "type": "message",
-        "status": status,
-        "role": "assistant",
-        "content": [{"type": "output_text", "text": text, "annotations": []}],
-    }
-
-
 def _reasoning_output_item(state: _ReasoningState, *, status: str) -> dict[str, Any]:
-    item: dict[str, Any] = {
-        "id": state.item_id,
-        "type": "reasoning",
-        "status": status,
-        "summary": [],
-    }
     if state.encrypted_content is not None:
-        item["encrypted_content"] = state.encrypted_content
-        return item
-    item["content"] = [{"type": "reasoning_text", "text": "".join(state.text_parts)}]
-    return item
-
-
-def _message_item_text(item: Mapping[str, Any]) -> str:
-    content = item.get("content")
-    if not isinstance(content, list):
-        return ""
-    parts = [
-        str(part.get("text", ""))
-        for part in content
-        if isinstance(part, dict) and part.get("type") == "output_text"
-    ]
-    return "".join(parts)
-
-
-def _reasoning_item_text(item: Mapping[str, Any]) -> str:
-    content = item.get("content")
-    if not isinstance(content, list):
-        return ""
-    parts = [
-        str(part.get("text", ""))
-        for part in content
-        if isinstance(part, dict) and part.get("type") == "reasoning_text"
-    ]
-    return "".join(parts)
-
-
-def _in_progress_item(item: Mapping[str, Any]) -> dict[str, Any]:
-    clone = dict(item)
-    clone["status"] = "in_progress"
-    if clone.get("type") == "message":
-        clone["content"] = []
-    if clone.get("type") == "reasoning" and "content" in clone:
-        clone["content"] = []
-    if clone.get("type") == "function_call":
-        clone["arguments"] = ""
-    return clone
-
-
-def _new_response_id() -> str:
-    return f"resp_{uuid.uuid4().hex}"
-
-
-def _new_message_item_id() -> str:
-    return f"msg_{uuid.uuid4().hex}"
-
-
-def _new_reasoning_item_id() -> str:
-    return f"rs_{uuid.uuid4().hex}"
-
-
-def _new_call_id() -> str:
-    return f"call_{uuid.uuid4().hex[:24]}"
+        return encrypted_reasoning_item(state.item_id, state.encrypted_content, status)
+    return reasoning_item(state.item_id, "".join(state.text_parts), status)

@@ -155,6 +155,47 @@ def test_provider_transports_live_under_transport_family_packages() -> None:
     assert offenders == []
 
 
+def test_openai_responses_uses_adapter_boundary() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    responses_root = repo_root / "core" / "openai_responses"
+
+    assert not (responses_root / "conversion.py").exists()
+    assert not (responses_root / "sse.py").exists()
+    for filename in {
+        "adapter.py",
+        "anthropic_sse.py",
+        "errors.py",
+        "events.py",
+        "ids.py",
+        "input.py",
+        "items.py",
+        "output.py",
+        "reasoning.py",
+        "stream.py",
+        "tools.py",
+    }:
+        assert (responses_root / filename).exists()
+
+    services_text = (repo_root / "api" / "services.py").read_text(encoding="utf-8")
+    assert "from core.openai_responses import OpenAIResponsesAdapter" in services_text
+    for old_helper in {
+        "responses_request_to_anthropic_payload",
+        "anthropic_message_response_to_openai_response",
+        "iter_anthropic_sse_as_openai_responses",
+        "collect_openai_response_from_anthropic_sse",
+        "iter_message_response_as_openai_responses",
+    }:
+        assert old_helper not in services_text
+
+    offenders: list[str] = []
+    for path in (repo_root / "api").rglob("*.py"):
+        for imported in _imports_from(path, repo_root):
+            if imported is not None and imported.startswith("core.openai_responses."):
+                rel = path.relative_to(repo_root)
+                offenders.append(f"{rel}: {imported}")
+    assert sorted(offenders) == []
+
+
 def _imports_matching(
     roots: list[Path], *, forbidden_prefixes: tuple[str, ...]
 ) -> list[str]:

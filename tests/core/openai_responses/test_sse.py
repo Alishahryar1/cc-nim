@@ -6,16 +6,15 @@ import pytest
 
 from core.anthropic.sse import format_sse_event
 from core.anthropic.stream_contracts import parse_sse_text
-from core.openai_responses import (
-    collect_openai_response_from_anthropic_sse,
-    iter_anthropic_sse_as_openai_responses,
-)
+from core.openai_responses import OpenAIResponsesAdapter
+
+_ADAPTER = OpenAIResponsesAdapter()
 
 
 @pytest.mark.asyncio
 async def test_anthropic_text_stream_converts_to_responses_sse() -> None:
     text = await _collect_sse(
-        iter_anthropic_sse_as_openai_responses(
+        _ADAPTER.iter_sse_from_anthropic(
             _aiter(_anthropic_text_stream("Hello Codex")),
             {"model": "nvidia_nim/test-model", "stream": True},
         )
@@ -38,7 +37,7 @@ async def test_anthropic_text_stream_converts_to_responses_sse() -> None:
 @pytest.mark.asyncio
 async def test_anthropic_tool_stream_converts_to_function_call_item() -> None:
     text = await _collect_sse(
-        iter_anthropic_sse_as_openai_responses(
+        _ADAPTER.iter_sse_from_anthropic(
             _aiter(_anthropic_tool_stream()),
             {"model": "nvidia_nim/test-model", "stream": True},
         )
@@ -59,7 +58,7 @@ async def test_anthropic_tool_stream_converts_to_function_call_item() -> None:
 @pytest.mark.asyncio
 async def test_namespaced_anthropic_tool_stream_restores_responses_namespace() -> None:
     text = await _collect_sse(
-        iter_anthropic_sse_as_openai_responses(
+        _ADAPTER.iter_sse_from_anthropic(
             _aiter(_anthropic_tool_stream(tool_name="mcp__node_repl__js")),
             {
                 "model": "nvidia_nim/test-model",
@@ -90,9 +89,46 @@ async def test_namespaced_anthropic_tool_stream_restores_responses_namespace() -
 
 
 @pytest.mark.asyncio
+async def test_anthropic_custom_tool_stream_converts_to_custom_tool_call() -> None:
+    text = await _collect_sse(
+        _ADAPTER.iter_sse_from_anthropic(
+            _aiter(
+                _anthropic_tool_stream(
+                    tool_name="apply_patch",
+                    partial_json='{"input":"*** Begin Patch"}',
+                )
+            ),
+            {
+                "model": "nvidia_nim/test-model",
+                "stream": True,
+                "tools": [
+                    {
+                        "type": "custom",
+                        "name": "apply_patch",
+                        "format": {"type": "text"},
+                    }
+                ],
+            },
+        )
+    )
+
+    events = parse_sse_text(text)
+    names = [event.event for event in events]
+    assert "response.custom_tool_call_input.delta" in names
+    assert "response.custom_tool_call_input.done" in names
+    assert "response.function_call_arguments.delta" not in names
+    completed = events[-1].data["response"]
+    custom_call = completed["output"][0]
+    assert custom_call["type"] == "custom_tool_call"
+    assert custom_call["call_id"] == "toolu_1"
+    assert custom_call["name"] == "apply_patch"
+    assert custom_call["input"] == "*** Begin Patch"
+
+
+@pytest.mark.asyncio
 async def test_anthropic_error_stream_converts_to_responses_error_event() -> None:
     text = await _collect_sse(
-        iter_anthropic_sse_as_openai_responses(
+        _ADAPTER.iter_sse_from_anthropic(
             _aiter(
                 [
                     format_sse_event(
@@ -119,7 +155,7 @@ async def test_anthropic_error_stream_converts_to_responses_error_event() -> Non
 
 @pytest.mark.asyncio
 async def test_collect_non_stream_response_from_anthropic_sse() -> None:
-    response = await collect_openai_response_from_anthropic_sse(
+    response = await _ADAPTER.collect_from_anthropic_sse(
         _aiter(_anthropic_text_stream("Non-stream")),
         {"model": "deepseek/deepseek-chat", "stream": False},
     )
@@ -174,7 +210,9 @@ def _anthropic_text_stream(text: str) -> list[str]:
     ]
 
 
-def _anthropic_tool_stream(tool_name: str = "echo") -> list[str]:
+def _anthropic_tool_stream(
+    tool_name: str = "echo", partial_json: str = '{"value":"FCC"}'
+) -> list[str]:
     return [
         format_sse_event("message_start", {"type": "message_start", "message": {}}),
         format_sse_event(
@@ -197,7 +235,7 @@ def _anthropic_tool_stream(tool_name: str = "echo") -> list[str]:
                 "index": 0,
                 "delta": {
                     "type": "input_json_delta",
-                    "partial_json": '{"value":"FCC"}',
+                    "partial_json": partial_json,
                 },
             },
         ),
