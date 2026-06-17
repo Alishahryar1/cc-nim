@@ -17,6 +17,9 @@ class TokenCountResponse(BaseModel):
 
 
 class ModelResponse(BaseModel):
+    object: Literal["model"] = "model"
+    created: int = 0
+    owned_by: str = "free-claude-code"
     created_at: str
     display_name: str
     id: str
@@ -24,6 +27,7 @@ class ModelResponse(BaseModel):
 
 
 class ModelsListResponse(BaseModel):
+    object: Literal["list"] = "list"
     data: list[ModelResponse]
     first_id: str | None
     has_more: bool

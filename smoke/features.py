@@ -35,6 +35,7 @@ class FeatureCoverage:
 README_FEATURES: tuple[str, ...] = (
     "zero_cost_provider_access",
     "drop_in_claude_code_replacement",
+    "drop_in_codex_replacement",
     "provider_matrix",
     "per_model_mapping",
     "thinking_token_support",
@@ -85,6 +86,17 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
             "OPENROUTER_API_KEY",
         ),
         "skip real CLI when binary is absent; configured providers must pass",
+    ),
+    FeatureCoverage(
+        "drop_in_codex_replacement",
+        "OpenAI Responses API and Codex CLI adapter route through the proxy",
+        "readme",
+        ("tests/api/test_openai_responses.py", "tests/cli/test_adapters.py"),
+        ("test_probe_and_models_routes",),
+        ("test_provider_codex_responses_text_e2e",),
+        ("api", "providers"),
+        ("configured provider credentials or local provider endpoint",),
+        "missing providers are missing_env unless FCC_ALLOW_NO_PROVIDER_SMOKE=1",
     ),
     FeatureCoverage(
         "provider_matrix",
@@ -468,7 +480,7 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     ),
     FeatureCoverage(
         "removed_env_migration",
-        "Removed env vars fail fast with migration guidance",
+        "Removed thinking env vars are ignored without changing defaults",
         "public_surface",
         ("tests/config/test_config.py",),
         (),

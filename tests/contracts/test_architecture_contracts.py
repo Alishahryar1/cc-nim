@@ -3,6 +3,30 @@ from __future__ import annotations
 import re
 import tomllib
 from pathlib import Path
+from urllib.parse import unquote, urlsplit
+
+
+def test_architecture_document_exists() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+
+    assert (repo_root / "ARCHITECTURE.md").is_file()
+
+
+def test_architecture_document_relative_links_resolve() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    architecture = repo_root / "ARCHITECTURE.md"
+    text = architecture.read_text(encoding="utf-8")
+
+    missing: list[str] = []
+    for match in re.finditer(r"(?<!!)\[[^\]]+\]\(([^)]+)\)", text):
+        raw_target = match.group(1).strip()
+        target = raw_target.split("#", 1)[0]
+        if not target or urlsplit(target).scheme:
+            continue
+        if not (repo_root / unquote(target)).exists():
+            missing.append(raw_target)
+
+    assert missing == []
 
 
 def test_smoke_lib_has_no_sse_shim_module() -> None:

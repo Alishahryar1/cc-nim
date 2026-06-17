@@ -23,10 +23,7 @@ from core.anthropic import (
     map_stop_reason,
 )
 from core.anthropic.stream_recovery import (
-    EARLY_TRANSPARENT_MAX_RETRIES,
-    EARLY_TRANSPARENT_TOTAL_ATTEMPTS,
     MIDSTREAM_RECOVERY_ATTEMPTS,
-    RecoveryHoldbackBuffer,
     TruncatedProviderStreamError,
     accept_tool_json_repair,
     continuation_suffix,
@@ -35,6 +32,10 @@ from core.anthropic.stream_recovery import (
     make_openai_tool_repair_body,
     parse_complete_tool_input,
     tool_schemas_by_name,
+)
+from core.anthropic.stream_recovery_session import (
+    StreamFailureAction,
+    StreamRecoverySession,
 )
 from core.trace import provider_chat_body_snapshot, trace_event
 from providers.base import BaseProvider, ProviderConfig
@@ -638,10 +639,13 @@ class OpenAIChatTransport(BaseProvider):
             )
 
         sse = new_sse_builder()
-        holdback = RecoveryHoldbackBuffer()
+        recovery_session = StreamRecoverySession(
+            provider_name=tag,
+            request_id=request_id,
+        )
 
         def hold_event(event: str) -> Iterator[str]:
-            yield from holdback.push(event)
+            yield from recovery_session.push(event)
 
         def hold_events(events: Iterator[str]) -> Iterator[str]:
             for event in events:
@@ -672,7 +676,6 @@ class OpenAIChatTransport(BaseProvider):
         tool_argument_alias_buffers: dict[int, str] = {}
 
         async with self._global_rate_limiter.concurrency_slot():
-            early_retries = 0
             while True:
                 stream_opened = False
                 try:
@@ -783,23 +786,19 @@ class OpenAIChatTransport(BaseProvider):
                 except asyncio.CancelledError, GeneratorExit:
                     raise
                 except Exception as e:
-                    committed = holdback.committed
                     generated_output = self._has_committed_sse_output(sse)
                     complete_tool_salvageable = (
                         generated_output
                         and sse.blocks.has_emitted_tool_block()
                         and self._all_started_tools_complete(sse, request)
                     )
-                    if (
-                        not committed
-                        and stream_opened
-                        and is_retryable_stream_error(e)
-                        and not complete_tool_salvageable
-                        and early_retries < EARLY_TRANSPARENT_MAX_RETRIES
-                    ):
-                        early_retries += 1
-                        holdback.discard()
-                        holdback = RecoveryHoldbackBuffer()
+                    decision = recovery_session.advance_failure(
+                        e,
+                        stream_opened=stream_opened,
+                        generated_output=generated_output,
+                        complete_tool_salvageable=complete_tool_salvageable,
+                    )
+                    if decision.action == StreamFailureAction.EARLY_RETRY:
                         sse = new_sse_builder()
                         think_parser = ThinkTagParser()
                         heuristic_parser = HeuristicToolParser()
@@ -807,19 +806,9 @@ class OpenAIChatTransport(BaseProvider):
                         usage_info = None
                         tool_argument_aliases = {}
                         tool_argument_alias_buffers = {}
-                        trace_event(
-                            stage="provider",
-                            event="provider.recovery.early_retry",
-                            source="provider",
-                            provider=tag,
-                            request_id=request_id,
-                            attempt=early_retries,
-                            max_attempts=EARLY_TRANSPARENT_TOTAL_ATTEMPTS,
-                            exc_type=type(e).__name__,
-                        )
                         continue
 
-                    if generated_output and is_retryable_stream_error(e):
+                    if decision.action == StreamFailureAction.MIDSTREAM_RECOVERY:
                         try:
                             recovery_events = await self._openai_recovery_events(
                                 body=body,
@@ -840,9 +829,8 @@ class OpenAIChatTransport(BaseProvider):
                             )
                             recovery_events = None
                         if recovery_events is not None:
-                            if not committed:
-                                for event in holdback.flush():
-                                    yield event
+                            for event in recovery_session.flush_uncommitted(decision):
+                                yield event
                             for event in recovery_events:
                                 yield event
                             return
@@ -861,11 +849,11 @@ class OpenAIChatTransport(BaseProvider):
                             map_error(e, rate_limiter=self._global_rate_limiter)
                         ).__name__,
                     )
-                    if not committed and holdback.has_buffered:
-                        for event in holdback.flush():
+                    if not decision.committed and decision.has_buffered:
+                        for event in recovery_session.flush():
                             yield event
-                    elif not committed:
-                        holdback.discard()
+                    elif not decision.committed:
+                        recovery_session.discard()
                         sse = new_sse_builder()
                     for event in self._emit_openai_error_tail(sse, error_message):
                         yield event
@@ -963,5 +951,5 @@ class OpenAIChatTransport(BaseProvider):
             yield event
         for event in hold_event(sse.message_stop()):
             yield event
-        for event in holdback.flush():
+        for event in recovery_session.flush():
             yield event

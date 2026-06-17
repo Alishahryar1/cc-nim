@@ -26,7 +26,13 @@ def test_probe_and_models_routes(
         assert models.status_code == 200
         assert models.json()["data"]
 
-        for path in ("/", "/health", "/v1/messages", "/v1/messages/count_tokens"):
+        for path in (
+            "/",
+            "/health",
+            "/v1/messages",
+            "/v1/responses",
+            "/v1/messages/count_tokens",
+        ):
             head = client.head(path)
             assert head.status_code == 204, (path, head.status_code, head.text)
             options = client.options(path)

@@ -8,18 +8,31 @@ from collections.abc import AsyncIterator, Callable
 from typing import Any
 
 from fastapi import HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 from loguru import logger
+from pydantic import BaseModel
 
+from config.provider_catalog import PROVIDER_CATALOG
 from config.settings import Settings
 from core.anthropic import get_token_count, get_user_facing_error_message
 from core.anthropic.sse import ANTHROPIC_SSE_RESPONSE_HEADERS
+from core.openai_responses import (
+    OPENAI_RESPONSES_SSE_HEADERS,
+    ResponsesConversionError,
+    anthropic_message_response_to_openai_response,
+    collect_openai_response_from_anthropic_sse,
+    iter_anthropic_sse_as_openai_responses,
+    iter_message_response_as_openai_responses,
+    openai_error_payload,
+    responses_request_to_anthropic_payload,
+)
 from core.trace import api_messages_request_snapshot, trace_event, traced_async_stream
 from providers.base import BaseProvider
 from providers.exceptions import InvalidRequestError, ProviderError
 
 from .model_router import ModelRouter
 from .models.anthropic import MessagesRequest, TokenCountRequest
+from .models.openai_responses import OpenAIResponsesRequest
 from .models.responses import TokenCountResponse
 from .optimization_handlers import try_optimizations
 from .web_tools.egress import WebFetchEgressPolicy
@@ -34,7 +47,11 @@ TokenCounter = Callable[[list[Any], str | list[Any] | None, list[Any] | None], i
 ProviderGetter = Callable[[str], BaseProvider]
 
 # Providers that use ``/chat/completions`` + Anthropic-to-OpenAI conversion (not native Messages).
-_OPENAI_CHAT_UPSTREAM_IDS = frozenset({"nvidia_nim", "opencode", "opencode_go"})
+_OPENAI_CHAT_UPSTREAM_IDS = frozenset(
+    provider_id
+    for provider_id, descriptor in PROVIDER_CATALOG.items()
+    if descriptor.transport_type == "openai_chat"
+)
 
 
 def anthropic_sse_streaming_response(
@@ -45,6 +62,17 @@ def anthropic_sse_streaming_response(
         body,
         media_type="text/event-stream",
         headers=ANTHROPIC_SSE_RESPONSE_HEADERS,
+    )
+
+
+def openai_responses_sse_streaming_response(
+    body: AsyncIterator[str],
+) -> StreamingResponse:
+    """Return a streaming response for OpenAI Responses-style SSE."""
+    return StreamingResponse(
+        body,
+        media_type="text/event-stream",
+        headers=OPENAI_RESPONSES_SSE_HEADERS,
     )
 
 
@@ -218,6 +246,59 @@ class ClaudeProxyService:
                 detail=get_user_facing_error_message(e),
             ) from e
 
+    async def create_response(self, request_data: OpenAIResponsesRequest) -> object:
+        """Create an OpenAI Responses-compatible response through the provider router."""
+
+        request_payload = request_data.model_dump(mode="json", exclude_none=True)
+        try:
+            anthropic_payload = responses_request_to_anthropic_payload(request_payload)
+            result = self.create_message(MessagesRequest(**anthropic_payload))
+        except ResponsesConversionError as exc:
+            invalid_request = InvalidRequestError(str(exc))
+            return JSONResponse(
+                status_code=invalid_request.status_code,
+                content=openai_error_payload(
+                    message=invalid_request.message,
+                    error_type=invalid_request.error_type,
+                ),
+            )
+        except ProviderError as exc:
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=openai_error_payload(
+                    message=exc.message,
+                    error_type=exc.error_type,
+                ),
+            )
+
+        if request_data.stream is False:
+            if isinstance(result, StreamingResponse):
+                return await collect_openai_response_from_anthropic_sse(
+                    result.body_iterator,
+                    request_payload,
+                )
+            return anthropic_message_response_to_openai_response(
+                _model_dump_json(result),
+                request_payload,
+            )
+
+        if isinstance(result, StreamingResponse):
+            return openai_responses_sse_streaming_response(
+                iter_anthropic_sse_as_openai_responses(
+                    result.body_iterator,
+                    request_payload,
+                )
+            )
+
+        return openai_responses_sse_streaming_response(
+            _iter_static_response_sse(
+                iter_message_response_as_openai_responses(
+                    _model_dump_json(result),
+                    request_payload,
+                )
+            )
+        )
+
     def count_tokens(self, request_data: TokenCountRequest) -> TokenCountResponse:
         """Count tokens for a request after applying configured model routing."""
         request_id = f"req_{uuid.uuid4().hex[:12]}"
@@ -260,3 +341,17 @@ class ClaudeProxyService:
                     status_code=_http_status_for_unexpected_service_exception(e),
                     detail=get_user_facing_error_message(e),
                 ) from e
+
+
+def _model_dump_json(value: object) -> dict[str, Any]:
+    if isinstance(value, BaseModel):
+        dumped = value.model_dump(mode="json")
+        return dumped if isinstance(dumped, dict) else {}
+    if isinstance(value, dict):
+        return {str(key): item for key, item in value.items()}
+    return {}
+
+
+async def _iter_static_response_sse(chunks: list[str]) -> AsyncIterator[str]:
+    for chunk in chunks:
+        yield chunk

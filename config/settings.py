@@ -342,6 +342,12 @@ class Settings(BaseSettings):
 
         return "claude"
 
+    @property
+    def codex_cli_bin(self) -> str:
+        """Return the fixed Codex CLI binary name."""
+
+        return "codex"
+
     @field_validator("whisper_device")
     @classmethod
     def validate_whisper_device(cls, v: str) -> str:

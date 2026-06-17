@@ -16,7 +16,7 @@ show_usage() {
     cat <<'USAGE'
 Usage: install.sh [options]
 
-Installs Claude Code if missing, installs or updates uv, Python 3.14.0, and Free Claude Code.
+Installs Claude Code and Codex if missing, installs or updates uv, Python 3.14.0, and Free Claude Code.
 
 Options:
   --voice-nim              Install NVIDIA NIM voice transcription support.
@@ -209,6 +209,16 @@ install_claude_if_missing() {
     run npm install -g @anthropic-ai/claude-code
 }
 
+install_codex_if_missing() {
+    if command -v codex >/dev/null 2>&1; then
+        printf 'Codex already found on PATH; skipping install.\n'
+        return 0
+    fi
+
+    require_command npm
+    run npm install -g @openai/codex
+}
+
 install_or_update_uv() {
     add_uv_to_path
 
@@ -318,6 +328,9 @@ validate_args
 step "Installing Claude Code if missing"
 install_claude_if_missing
 
+step "Installing Codex if missing"
+install_codex_if_missing
+
 step "Installing uv if missing, updating if present"
 install_or_update_uv
 
@@ -328,3 +341,5 @@ step "Installing or updating Free Claude Code"
 install_free_claude_code
 
 printf '\nFree Claude Code is installed. Start the proxy with: fcc-server\n'
+printf 'Run Claude Code with: fcc-claude\n'
+printf 'Run Codex with: fcc-codex\n'

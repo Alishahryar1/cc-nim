@@ -140,6 +140,40 @@ def test_provider_error_e2e(smoke_config: SmokeConfig) -> None:
     assert any(event.event == "error" for event in events) or text_content(events)
 
 
+def test_provider_codex_responses_text_e2e(
+    smoke_config: SmokeConfig, provider_model: ProviderModel
+) -> None:
+    try:
+        with (
+            _server_for_provider(
+                smoke_config, provider_model, "codex-responses"
+            ) as server,
+            httpx.stream(
+                "POST",
+                f"{server.base_url}/v1/responses",
+                headers=_openai_auth_headers(smoke_config),
+                json={
+                    "model": provider_model.full_model,
+                    "input": smoke_config.prompt,
+                    "max_output_tokens": 128,
+                    "stream": True,
+                },
+                timeout=smoke_config.timeout_s,
+            ) as response,
+        ):
+            assert response.status_code == 200, response.read()
+            events = parse_sse_lines(response.iter_lines())
+    except Exception as exc:
+        skip_if_upstream_unavailable_exception(exc)
+        raise
+
+    skip_if_upstream_unavailable_events(events)
+    names = [event.event for event in events]
+    assert names[0] == "response.created", names
+    assert names[-1] == "response.completed", names
+    assert any(event.event == "response.output_text.delta" for event in events), names
+
+
 def test_openrouter_native_e2e(smoke_config: SmokeConfig) -> None:
     models = [
         model
@@ -517,3 +551,11 @@ def _server_for_provider(
             "MESSAGING_PLATFORM": "none",
         },
     ).run()
+
+
+def _openai_auth_headers(smoke_config: SmokeConfig) -> dict[str, str]:
+    headers = {"content-type": "application/json"}
+    token = smoke_config.settings.anthropic_auth_token
+    if token:
+        headers["authorization"] = f"Bearer {token}"
+    return headers

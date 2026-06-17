@@ -3,7 +3,8 @@
 import asyncio
 import json
 import os
-from typing import cast
+from collections.abc import Iterable, Mapping
+from typing import Any, cast
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -638,6 +639,117 @@ class TestCLISession:
 
             assert len(events) == 1
             assert events[0]["content"] == "Not valid json"
+
+    @pytest.mark.asyncio
+    async def test_start_task_uses_injected_client_cli_adapter(self, tmp_path):
+        """CLISession delegates argv/env/line parsing to the injected adapter."""
+        from cli.adapters.base import CliInvocation, CliParseState, CliTaskRequest
+        from cli.session import CLISession
+
+        class FakeClientCliAdapter:
+            id = "fake"
+            display_name = "Fake CLI"
+            default_binary = "fake"
+            install_hint = "Install Fake CLI"
+            trace_stage = "claude_cli"
+            process_launch_event = "claude_cli.process.launch"
+            trace_source = "claude_cli"
+
+            def __init__(self) -> None:
+                self.request: CliTaskRequest | None = None
+
+            def build_task_invocation(
+                self,
+                *,
+                config: Any,
+                request: CliTaskRequest,
+                base_env: Mapping[str, str],
+            ) -> CliInvocation:
+                self.request = request
+                return CliInvocation(
+                    argv=("fake-cli", "--prompt", request.prompt),
+                    env={"FAKE_ENV": base_env.get("KEEP_ME", "")},
+                    cwd=config.workspace_path,
+                    trace_metadata={"client_cli_id": self.id},
+                )
+
+            def parse_stdout_line(
+                self, line: str, state: CliParseState
+            ) -> Iterable[dict[str, Any]]:
+                if not state.session_id_extracted:
+                    state.session_id_extracted = True
+                    yield {"type": "session_info", "session_id": "fake_session"}
+                yield {"type": "message", "content": line}
+
+            def extract_session_id(self, event: Any) -> str | None:
+                if isinstance(event, dict):
+                    value = event.get("session_id")
+                    return value if isinstance(value, str) else None
+                return None
+
+            def get_launcher_binary_name(self, settings: Any) -> str:
+                return self.default_binary
+
+            def build_launcher_command(
+                self,
+                *,
+                binary_path: str,
+                argv: Iterable[str],
+                settings: Any,
+                proxy_root_url: str,
+            ) -> list[str]:
+                return [binary_path, *argv]
+
+            def build_launcher_env(
+                self,
+                *,
+                proxy_root_url: str,
+                auth_token: str,
+                base_env: Mapping[str, str],
+            ) -> dict[str, str]:
+                return dict(base_env)
+
+        adapter = FakeClientCliAdapter()
+        session = CLISession(
+            str(tmp_path),
+            "http://localhost:8082/v1",
+            client_cli_adapter=adapter,
+        )
+
+        mock_process = AsyncMock()
+        mock_process.stdout.read.side_effect = [b"hello\n", b""]
+        mock_process.stderr.read.return_value = b""
+        mock_process.wait.return_value = 0
+        mock_process.returncode = 0
+
+        with (
+            patch.dict(os.environ, {"KEEP_ME": "yes"}, clear=False),
+            patch(
+                "asyncio.create_subprocess_exec", new_callable=AsyncMock
+            ) as mock_exec,
+        ):
+            mock_exec.return_value = mock_process
+            events = [
+                e
+                async for e in session.start_task(
+                    "adapter prompt",
+                    session_id="sess_fake",
+                    fork_session=True,
+                )
+            ]
+
+        assert adapter.request == CliTaskRequest(
+            prompt="adapter prompt",
+            session_id="sess_fake",
+            fork_session=True,
+        )
+        assert mock_exec.call_args.args == ("fake-cli", "--prompt", "adapter prompt")
+        assert mock_exec.call_args.kwargs["env"] == {"FAKE_ENV": "yes"}
+        assert session.current_session_id == "fake_session"
+        assert events[:2] == [
+            {"type": "session_info", "session_id": "fake_session"},
+            {"type": "message", "content": "hello"},
+        ]
 
     @pytest.mark.asyncio
     async def test_stop_exception(self):

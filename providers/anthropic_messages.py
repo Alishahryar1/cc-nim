@@ -25,10 +25,7 @@ from core.anthropic.native_sse_block_policy import (
 )
 from core.anthropic.stream_contracts import parse_sse_text
 from core.anthropic.stream_recovery import (
-    EARLY_TRANSPARENT_MAX_RETRIES,
-    EARLY_TRANSPARENT_TOTAL_ATTEMPTS,
     MIDSTREAM_RECOVERY_ATTEMPTS,
-    RecoveryHoldbackBuffer,
     TruncatedProviderStreamError,
     accept_tool_json_repair,
     continuation_suffix,
@@ -37,6 +34,10 @@ from core.anthropic.stream_recovery import (
     make_native_tool_repair_body,
     parse_complete_tool_input,
     tool_schemas_by_name,
+)
+from core.anthropic.stream_recovery_session import (
+    StreamFailureAction,
+    StreamRecoverySession,
 )
 from core.trace import provider_native_messages_body_snapshot, trace_event
 from providers.base import BaseProvider, ProviderConfig
@@ -564,10 +565,12 @@ class AnthropicMessagesTransport(BaseProvider):
         sent_any_event = False
         state = self._new_stream_state(request, thinking_enabled=thinking_enabled)
         emitted_tracker = EmittedNativeSseTracker()
-        holdback = RecoveryHoldbackBuffer()
+        recovery_session = StreamRecoverySession(
+            provider_name=self._provider_name,
+            request_id=request_id,
+        )
 
         async with self._global_rate_limiter.concurrency_slot():
-            early_retries = 0
             while True:
                 stream_opened = False
                 try:
@@ -587,7 +590,7 @@ class AnthropicMessagesTransport(BaseProvider):
                         chunk_count += 1
                         chunk_bytes += len(chunk.encode("utf-8", errors="replace"))
                         emitted_tracker.feed(chunk)
-                        for event in holdback.push(chunk):
+                        for event in recovery_session.push(chunk):
                             sent_any_event = True
                             yield event
 
@@ -605,13 +608,12 @@ class AnthropicMessagesTransport(BaseProvider):
                         sse_chunks_out=chunk_count,
                         sse_bytes_out=chunk_bytes,
                     )
-                    for event in holdback.flush():
+                    for event in recovery_session.flush():
                         sent_any_event = True
                         yield event
                     return
 
                 except Exception as error:
-                    committed = holdback.committed
                     generated_output = emitted_tracker.has_content_block()
                     complete_tool_salvageable = (
                         generated_output
@@ -619,16 +621,13 @@ class AnthropicMessagesTransport(BaseProvider):
                             tool_schemas_by_name(request)
                         )
                     )
-                    if (
-                        not committed
-                        and stream_opened
-                        and is_retryable_stream_error(error)
-                        and not complete_tool_salvageable
-                        and early_retries < EARLY_TRANSPARENT_MAX_RETRIES
-                    ):
-                        early_retries += 1
-                        holdback.discard()
-                        holdback = RecoveryHoldbackBuffer()
+                    decision = recovery_session.advance_failure(
+                        error,
+                        stream_opened=stream_opened,
+                        generated_output=generated_output,
+                        complete_tool_salvageable=complete_tool_salvageable,
+                    )
+                    if decision.action == StreamFailureAction.EARLY_RETRY:
                         if response is not None and not response.is_closed:
                             await _maybe_await_aclose(response)
                         response = None
@@ -637,19 +636,9 @@ class AnthropicMessagesTransport(BaseProvider):
                         )
                         emitted_tracker = EmittedNativeSseTracker()
                         sent_any_event = False
-                        trace_event(
-                            stage="provider",
-                            event="provider.recovery.early_retry",
-                            source="provider",
-                            provider=self._provider_name,
-                            request_id=request_id,
-                            attempt=early_retries,
-                            max_attempts=EARLY_TRANSPARENT_TOTAL_ATTEMPTS,
-                            exc_type=type(error).__name__,
-                        )
                         continue
 
-                    if generated_output and is_retryable_stream_error(error):
+                    if decision.action == StreamFailureAction.MIDSTREAM_RECOVERY:
                         try:
                             recovery_events = await self._native_recovery_events(
                                 body=body,
@@ -671,10 +660,9 @@ class AnthropicMessagesTransport(BaseProvider):
                             )
                             recovery_events = None
                         if recovery_events is not None:
-                            if not committed:
-                                for event in holdback.flush():
-                                    sent_any_event = True
-                                    yield event
+                            for event in recovery_session.flush_uncommitted(decision):
+                                sent_any_event = True
+                                yield event
                             for event in recovery_events:
                                 yield event
                             return
@@ -695,11 +683,15 @@ class AnthropicMessagesTransport(BaseProvider):
                         provider=self._provider_name,
                         error_message=error_message,
                         exc_type=type(error).__name__,
-                        mid_stream=sent_any_event or committed or holdback.has_buffered,
+                        mid_stream=(
+                            sent_any_event
+                            or decision.committed
+                            or decision.has_buffered
+                        ),
                     )
-                    if committed or holdback.has_buffered:
-                        if not committed:
-                            for event in holdback.flush():
+                    if decision.committed or decision.has_buffered:
+                        if not decision.committed:
+                            for event in recovery_session.flush():
                                 sent_any_event = True
                                 yield event
                         for event in emitted_tracker.iter_close_unclosed_blocks():
@@ -712,7 +704,7 @@ class AnthropicMessagesTransport(BaseProvider):
                         ):
                             yield event
                     else:
-                        holdback.discard()
+                        recovery_session.discard()
                         for event in self._emit_error_events(
                             request=request,
                             input_tokens=input_tokens,
