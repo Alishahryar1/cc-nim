@@ -71,6 +71,34 @@ def is_prefix_detection_request(request_data: MessagesRequest) -> tuple[bool, st
     return False, ""
 
 
+def is_safety_classifier_request(request_data: MessagesRequest) -> bool:
+    """Check if this is a Claude Code auto-mode safety-classifier request.
+
+    Auto mode sends a dedicated request asking a classifier to decide whether a
+    tool call is safe to auto-approve. Claude Code wraps the action under review
+    in a ``<transcript>`` block and parses the verdict from a literal
+    ``<block>yes</block>`` / ``<block>no</block>`` tag in the response. These
+    requests carry no tools.
+
+    Reasoning ("thinking") models can answer in a native channel/JSON format
+    (e.g. ``{"block":"no"}``) instead of that exact XML tag, which the classifier
+    parser cannot read and reports as the model being temporarily unavailable.
+    Detecting the request lets the proxy keep the model's output in the
+    plain-text format the classifier expects.
+    """
+    if request_data.tools:
+        return False
+
+    system_text = (
+        extract_text_from_content(request_data.system) if request_data.system else ""
+    )
+    messages_text = "".join(
+        extract_text_from_content(message.content) for message in request_data.messages
+    )
+    combined = f"{system_text}\n{messages_text}"
+    return "<transcript>" in combined and "<block>" in combined
+
+
 def is_suggestion_mode_request(request_data: MessagesRequest) -> bool:
     """Check if this is a suggestion mode request.
 

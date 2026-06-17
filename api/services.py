@@ -5,6 +5,7 @@ from __future__ import annotations
 import traceback
 import uuid
 from collections.abc import AsyncIterator, Callable
+from dataclasses import replace
 from typing import Any
 
 from fastapi import HTTPException
@@ -29,7 +30,8 @@ from core.trace import api_messages_request_snapshot, trace_event, traced_async_
 from providers.base import BaseProvider
 from providers.exceptions import InvalidRequestError, ProviderError
 
-from .model_router import ModelRouter
+from .detection import is_safety_classifier_request
+from .model_router import ModelRouter, RoutedMessagesRequest
 from .models.anthropic import MessagesRequest, TokenCountRequest
 from .models.openai_responses import OpenAIResponsesRequest
 from .models.responses import TokenCountResponse
@@ -122,12 +124,41 @@ class ClaudeProxyService:
         self._model_router = model_router or ModelRouter(settings)
         self._token_counter = token_counter
 
+    @staticmethod
+    def _disable_thinking_for_safety_classifier(
+        routed: RoutedMessagesRequest,
+    ) -> RoutedMessagesRequest:
+        """Force plain-text output for auto-mode safety-classifier requests.
+
+        Claude Code's classifier parses a literal ``<block>yes</block>`` tag from
+        the response. With thinking enabled, reasoning models can emit the verdict
+        in a native channel/JSON format the parser cannot read, which Claude Code
+        reports as the model being temporarily unavailable. Thinking is
+        unnecessary for the short classifier verdict, so disable it here without
+        affecting normal requests.
+        """
+        if not routed.resolved.thinking_enabled:
+            return routed
+        if not is_safety_classifier_request(routed.request):
+            return routed
+        trace_event(
+            stage="routing",
+            event="api.optimization.safety_classifier_no_thinking",
+            source="api",
+            model=routed.request.model,
+        )
+        return RoutedMessagesRequest(
+            request=routed.request,
+            resolved=replace(routed.resolved, thinking_enabled=False),
+        )
+
     def create_message(self, request_data: MessagesRequest) -> object:
         """Create a message response or streaming response."""
         try:
             _require_non_empty_messages(request_data.messages)
 
             routed = self._model_router.resolve_messages_request(request_data)
+            routed = self._disable_thinking_for_safety_classifier(routed)
             if routed.resolved.provider_id in _OPENAI_CHAT_UPSTREAM_IDS:
                 tool_err = openai_chat_upstream_server_tool_error(
                     routed.request,

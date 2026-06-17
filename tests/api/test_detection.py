@@ -5,6 +5,7 @@ from unittest.mock import patch
 from api.detection import (
     is_filepath_extraction_request,
     is_prefix_detection_request,
+    is_safety_classifier_request,
 )
 from api.models.anthropic import Message, MessagesRequest
 
@@ -50,6 +51,50 @@ class TestIsPrefixDetectionRequest:
             is_req, cmd = is_prefix_detection_request(req)
         assert is_req is False
         assert cmd == ""
+
+
+class TestIsSafetyClassifierRequest:
+    _SYSTEM = "You are a security monitor. Respond with <block>yes</block> or <block>no</block>."
+    _USER = (
+        "<transcript>\nUser: review the repo\n"
+        "WebFetch https://example.com: fetch\n</transcript>\n<block> immediately."
+    )
+
+    def test_classifier_request_detected(self):
+        """System + transcript + <block> markers and no tools -> True."""
+        req = _make_request(self._USER, system=self._SYSTEM)
+        assert is_safety_classifier_request(req) is True
+
+    def test_markers_split_across_system_and_user(self):
+        """<transcript> in user and <block> in system still matches."""
+        req = _make_request(
+            "<transcript>\nWebFetch x\n</transcript>", system=self._SYSTEM
+        )
+        assert is_safety_classifier_request(req) is True
+
+    def test_request_with_tools_is_not_classifier(self):
+        """Classifier requests carry no tools; presence of tools -> False."""
+        req = _make_request(self._USER, system=self._SYSTEM, tools=[{"name": "search"}])
+        assert is_safety_classifier_request(req) is False
+
+    def test_missing_transcript_marker(self):
+        """No <transcript> marker -> False."""
+        req = _make_request(
+            "<block> immediately, no transcript here", system=self._SYSTEM
+        )
+        assert is_safety_classifier_request(req) is False
+
+    def test_missing_block_marker(self):
+        """No <block> marker -> False."""
+        req = _make_request(
+            "<transcript>\nWebFetch x\n</transcript>", system="just chatting"
+        )
+        assert is_safety_classifier_request(req) is False
+
+    def test_ordinary_request_is_not_classifier(self):
+        """A normal user message is not a classifier request."""
+        req = _make_request("hola, ¿quién eres?")
+        assert is_safety_classifier_request(req) is False
 
 
 class TestIsFilepathExtractionRequest:
