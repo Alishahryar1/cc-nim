@@ -12,7 +12,7 @@ show_usage() {
 Usage: ci.sh [options]
 
 Runs the same local checks enforced by GitHub CI (.github/workflows/tests.yml).
-Requires uv on PATH.
+Requires uv on PATH when running ruff, ty, or pytest checks.
 
 Checks (in order):
   suppressions   Ban # type: ignore / # ty: ignore suppressions
@@ -108,6 +108,20 @@ assert_uv_available() {
     fi
 }
 
+selected_checks_need_uv() {
+    if [ "$dry_run" -ne 0 ]; then
+        return 1
+    fi
+
+    for check_id in $CHECK_ORDER; do
+        if should_run_check "$check_id" && [ "$check_id" != "suppressions" ]; then
+            return 0
+        fi
+    done
+
+    return 1
+}
+
 run_suppressions() {
     step "Ban type ignore suppressions"
     print_command grep -rE '# type: ignore|# ty: ignore' --include='*.py' . \
@@ -183,7 +197,9 @@ parse_args() {
 }
 
 parse_args "$@"
-assert_uv_available
+if selected_checks_need_uv; then
+    assert_uv_available
+fi
 
 for check_id in $CHECK_ORDER; do
     if should_run_check "$check_id"; then

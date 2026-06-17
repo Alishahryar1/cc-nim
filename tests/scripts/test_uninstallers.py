@@ -205,7 +205,8 @@ def test_uninstall_sh_generic_uv_failure_does_not_delete_fcc_home(
 
     assert result.returncode != 0
     assert fcc_home.exists()
-    assert "aborting before deleting ~/.fcc" in result.stderr
+    assert "failed with exit code 42" in result.stderr
+    assert "before deleting ~/.fcc" in result.stderr
 
 
 def test_uninstall_sh_missing_tool_still_deletes_fcc_home(tmp_path: Path) -> None:

@@ -1,5 +1,9 @@
+import os
+import shutil
 import subprocess
 from pathlib import Path
+
+import pytest
 
 
 def _repo_root() -> Path:
@@ -26,6 +30,33 @@ def _braced_body(text: str, declaration: str) -> str:
     raise AssertionError(f"Unclosed function body for {declaration}")
 
 
+def _path_without_uv() -> str:
+    uv_names = ("uv", "uv.exe", "uv.cmd", "uv.bat")
+    entries = []
+    for raw_entry in os.environ.get("PATH", "").split(os.pathsep):
+        if not raw_entry:
+            continue
+        entry = Path(raw_entry)
+        if any((entry / name).exists() for name in uv_names):
+            continue
+        entries.append(raw_entry)
+    return os.pathsep.join(entries)
+
+
+def _shell_interpreter() -> str:
+    sh = shutil.which("sh")
+    if sh is None:
+        pytest.skip("sh is not available on this platform")
+    return sh
+
+
+def _powershell_interpreter() -> str:
+    pwsh = shutil.which("pwsh") or shutil.which("powershell")
+    if pwsh is None:
+        pytest.skip("PowerShell is not available on this platform")
+    return pwsh
+
+
 def test_ci_sh_runs_ci_checks_in_order() -> None:
     text = _script_text("ci.sh")
 
@@ -45,6 +76,47 @@ def test_ci_sh_runs_ci_checks_in_order() -> None:
     assert "npm" not in text
     assert "smoke/" not in text
     assert "uv self update" not in text
+
+
+def test_ci_sh_dry_run_does_not_require_uv() -> None:
+    result = subprocess.run(
+        [
+            _shell_interpreter(),
+            str(_repo_root() / "scripts" / "ci.sh"),
+            "--only",
+            "pytest",
+            "--dry-run",
+        ],
+        cwd=_repo_root(),
+        env={**os.environ, "PATH": _path_without_uv()},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "+ uv run pytest -v --tb=short" in result.stdout
+    assert "uv is required" not in result.stderr
+
+
+def test_ci_sh_suppression_only_does_not_require_uv() -> None:
+    result = subprocess.run(
+        [
+            _shell_interpreter(),
+            str(_repo_root() / "scripts" / "ci.sh"),
+            "--only",
+            "suppressions",
+        ],
+        cwd=_repo_root(),
+        env={**os.environ, "PATH": _path_without_uv()},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "Ban type ignore suppressions" in result.stdout
+    assert "uv is required" not in result.stderr
 
 
 def test_ci_sh_is_tracked_executable() -> None:
@@ -96,6 +168,51 @@ def test_ci_ps1_runs_ci_checks_in_order() -> None:
     assert "npm" not in text
     assert "smoke/" not in text
     assert "uv self update" not in text
+
+
+def test_ci_ps1_dry_run_does_not_require_uv() -> None:
+    result = subprocess.run(
+        [
+            _powershell_interpreter(),
+            "-NoProfile",
+            "-File",
+            str(_repo_root() / "scripts" / "ci.ps1"),
+            "-Only",
+            "pytest",
+            "-DryRun",
+        ],
+        cwd=_repo_root(),
+        env={**os.environ, "PATH": _path_without_uv()},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "+ uv run pytest -v --tb=short" in result.stdout
+    assert "uv is required" not in result.stderr
+
+
+def test_ci_ps1_suppression_only_does_not_require_uv() -> None:
+    result = subprocess.run(
+        [
+            _powershell_interpreter(),
+            "-NoProfile",
+            "-File",
+            str(_repo_root() / "scripts" / "ci.ps1"),
+            "-Only",
+            "suppressions",
+        ],
+        cwd=_repo_root(),
+        env={**os.environ, "PATH": _path_without_uv()},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert "Ban type ignore suppressions" in result.stdout
+    assert "uv is required" not in result.stderr
 
 
 def test_ci_ps1_fail_fast_runs_checks_sequentially() -> None:

@@ -23,7 +23,7 @@ function Show-Usage {
 Usage: ci.ps1 [options]
 
 Runs the same local checks enforced by GitHub CI (.github/workflows/tests.yml).
-Requires uv on PATH.
+Requires uv on PATH when running ruff, ty, or pytest checks.
 
 Checks (in order):
   suppressions   Ban # type: ignore / # ty: ignore suppressions
@@ -109,6 +109,20 @@ function Assert-UvAvailable {
     }
 }
 
+function Test-SelectedChecksNeedUv {
+    if ($DryRun) {
+        return $false
+    }
+
+    foreach ($checkId in $CheckOrder) {
+        if ((Test-ShouldRunCheck $checkId) -and $checkId -ne "suppressions") {
+            return $true
+        }
+    }
+
+    return $false
+}
+
 function Invoke-SuppressionsCheck {
     Write-Step "Ban type ignore suppressions"
     $pattern = '# type: ignore|# ty: ignore'
@@ -181,7 +195,9 @@ foreach ($checkId in $Skip) {
     Assert-ValidCheckId $checkId
 }
 
-Assert-UvAvailable
+if (Test-SelectedChecksNeedUv) {
+    Assert-UvAvailable
+}
 
 foreach ($checkId in $CheckOrder) {
     if (Test-ShouldRunCheck $checkId) {
