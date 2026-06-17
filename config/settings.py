@@ -157,6 +157,9 @@ class Settings(BaseSettings):
     model_opus: str | None = Field(default=None, validation_alias="MODEL_OPUS")
     model_sonnet: str | None = Field(default=None, validation_alias="MODEL_SONNET")
     model_haiku: str | None = Field(default=None, validation_alias="MODEL_HAIKU")
+    model_fallback_vision: str | None = Field(
+        default=None, validation_alias="MODEL_FALLBACK_VISION"
+    )
 
     # ==================== Per-Provider Proxy ====================
     nvidia_nim_proxy: str = Field(default="", validation_alias="NVIDIA_NIM_PROXY")
@@ -312,6 +315,7 @@ class Settings(BaseSettings):
         "model_opus",
         "model_sonnet",
         "model_haiku",
+        "model_fallback_vision",
         "enable_opus_thinking",
         "enable_sonnet_thinking",
         "enable_haiku_thinking",
@@ -403,7 +407,9 @@ class Settings(BaseSettings):
             )
         return v
 
-    @field_validator("model", "model_opus", "model_sonnet", "model_haiku")
+    @field_validator(
+        "model", "model_opus", "model_sonnet", "model_haiku", "model_fallback_vision"
+    )
     @classmethod
     def validate_model_format(cls, v: str | None) -> str | None:
         if v is None:
@@ -479,6 +485,7 @@ class Settings(BaseSettings):
             ("MODEL_OPUS", self.model_opus),
             ("MODEL_SONNET", self.model_sonnet),
             ("MODEL_HAIKU", self.model_haiku),
+            ("MODEL_FALLBACK_VISION", self.model_fallback_vision),
         )
         sources_by_ref: dict[str, list[str]] = {}
         for source, model_ref in candidates:

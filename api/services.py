@@ -107,6 +107,83 @@ def _log_unexpected_service_exception(
         logger.error("{} exc_type={}", context, type(exc).__name__)
 
 
+def _has_image_block(messages: list[Any]) -> bool:
+    """Check if any message contains an image block."""
+    for msg in messages:
+        content = getattr(msg, "content", None)
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    if block.get("type") == "image":
+                        return True
+                else:
+                    if getattr(block, "type", None) == "image":
+                        return True
+        elif isinstance(content, dict) and content.get("type") == "image":
+            return True
+    return False
+
+
+def _sanitize_old_images(messages: list[Any]) -> None:
+    """Keep only the very last image block in the entire history to comply with 1-image limits of provider models."""
+    image_count = 0
+    for msg in messages:
+        content = getattr(msg, "content", None)
+        if isinstance(content, list):
+            for block in content:
+                if isinstance(block, dict):
+                    if block.get("type") == "image":
+                        image_count += 1
+                else:
+                    if getattr(block, "type", None) == "image":
+                        image_count += 1
+        elif isinstance(content, dict) and content.get("type") == "image":
+            image_count += 1
+
+    if image_count <= 1:
+        return
+
+    images_seen = 0
+    for msg in messages:
+        content = getattr(msg, "content", None)
+        if isinstance(content, list):
+            new_content = []
+            for block in content:
+                is_image = False
+                if isinstance(block, dict):
+                    if block.get("type") == "image":
+                        is_image = True
+                else:
+                    if getattr(block, "type", None) == "image":
+                        is_image = True
+
+                if is_image:
+                    images_seen += 1
+                    if images_seen < image_count:
+                        from api.models.anthropic import ContentBlockText
+
+                        new_content.append(
+                            ContentBlockText(
+                                type="text",
+                                text="[Prior image block removed to comply with 1-image limit]",
+                            )
+                        )
+                    else:
+                        new_content.append(block)
+                else:
+                    new_content.append(block)
+            msg.content = new_content
+        elif isinstance(content, dict) and content.get("type") == "image":
+            images_seen += 1
+            if images_seen < image_count:
+                from api.models.anthropic import ContentBlockText
+
+                msg.content = ContentBlockText(
+                    type="text",
+                    text="[Prior image block removed to comply with 1-image limit]",
+                )
+
+
 def _require_non_empty_messages(messages: list[Any]) -> None:
     if not messages:
         raise InvalidRequestError("messages cannot be empty")
@@ -133,6 +210,53 @@ class ClaudeProxyService:
             _require_non_empty_messages(request_data.messages)
 
             routed = self._model_router.resolve_messages_request(request_data)
+
+            if _has_image_block(request_data.messages):
+                provider_model_lower = routed.resolved.provider_model.lower()
+                vision_keywords = (
+                    "vision",
+                    "vl",
+                    "gemini",
+                    "kimi",
+                    "omni",
+                    "claude-3",
+                    "gpt-4",
+                    "pixtral",
+                    "clip",
+                    "siglip",
+                )
+                is_vision_capable = any(
+                    kw in provider_model_lower for kw in vision_keywords
+                )
+                if not is_vision_capable and self._settings.model_fallback_vision:
+                    fallback_ref = self._settings.model_fallback_vision
+                    fallback_provider = Settings.parse_provider_type(fallback_ref)
+                    fallback_model = Settings.parse_model_name(fallback_ref)
+                    fallback_thinking = self._settings.resolve_thinking(fallback_model)
+
+                    logger.info(
+                        "Image detected in request but model '{}' is not vision-capable. "
+                        "Dynamically falling back to vision model: {}",
+                        routed.resolved.provider_model,
+                        fallback_ref,
+                    )
+
+                    # Re-route the request
+                    routed.request.model = fallback_model
+                    _sanitize_old_images(routed.request.messages)
+                    from .model_router import ResolvedModel, RoutedMessagesRequest
+
+                    new_resolved = ResolvedModel(
+                        original_model=routed.resolved.original_model,
+                        provider_id=fallback_provider,
+                        provider_model=fallback_model,
+                        provider_model_ref=fallback_ref,
+                        thinking_enabled=fallback_thinking,
+                    )
+                    routed = RoutedMessagesRequest(
+                        request=routed.request, resolved=new_resolved
+                    )
+
             if routed.resolved.provider_id in _OPENAI_CHAT_UPSTREAM_IDS:
                 tool_err = openai_chat_upstream_server_tool_error(
                     routed.request,
