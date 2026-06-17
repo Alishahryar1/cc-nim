@@ -792,7 +792,7 @@ class OpenAIChatTransport(BaseProvider):
                         and sse.blocks.has_emitted_tool_block()
                         and self._all_started_tools_complete(sse, request)
                     )
-                    decision = recovery_session.classify_failure(
+                    decision = recovery_session.advance_failure(
                         e,
                         stream_opened=stream_opened,
                         generated_output=generated_output,
@@ -829,7 +829,7 @@ class OpenAIChatTransport(BaseProvider):
                             )
                             recovery_events = None
                         if recovery_events is not None:
-                            for event in recovery_session.flush_if_uncommitted():
+                            for event in recovery_session.flush_uncommitted(decision):
                                 yield event
                             for event in recovery_events:
                                 yield event

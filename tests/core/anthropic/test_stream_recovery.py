@@ -43,11 +43,11 @@ def test_retryable_stream_error_classifies_transport_and_http_status() -> None:
     )
 
 
-def test_stream_recovery_session_classifies_early_retry_and_discards_holdback() -> None:
+def test_stream_recovery_session_advances_early_retry_and_discards_holdback() -> None:
     session = StreamRecoverySession(provider_name="TEST", request_id="REQ")
 
     assert session.push("hidden") == []
-    decision = session.classify_failure(
+    decision = session.advance_failure(
         httpx.ReadError("early cutoff"),
         stream_opened=True,
         generated_output=True,
@@ -66,7 +66,7 @@ def test_stream_recovery_session_respects_early_retry_limit() -> None:
     session = StreamRecoverySession(provider_name="TEST", request_id=None)
 
     for attempt in range(1, EARLY_TRANSPARENT_MAX_RETRIES + 1):
-        decision = session.classify_failure(
+        decision = session.advance_failure(
             httpx.ReadError("cutoff"),
             stream_opened=True,
             generated_output=False,
@@ -75,7 +75,7 @@ def test_stream_recovery_session_respects_early_retry_limit() -> None:
         assert decision.action == StreamFailureAction.EARLY_RETRY
         assert decision.early_retry_attempt == attempt
 
-    decision = session.classify_failure(
+    decision = session.advance_failure(
         httpx.ReadError("cutoff"),
         stream_opened=True,
         generated_output=False,
@@ -90,8 +90,8 @@ def test_stream_recovery_session_classifies_midstream_recovery_after_commit() ->
     session = StreamRecoverySession(provider_name="TEST", request_id=None)
 
     assert session.push("event: content_block_delta\n\n") == []
-    assert session.flush_if_uncommitted() == ["event: content_block_delta\n\n"]
-    decision = session.classify_failure(
+    assert session.flush() == ["event: content_block_delta\n\n"]
+    decision = session.advance_failure(
         httpx.ReadError("midstream cutoff"),
         stream_opened=True,
         generated_output=True,
@@ -101,7 +101,31 @@ def test_stream_recovery_session_classifies_midstream_recovery_after_commit() ->
     assert decision.action == StreamFailureAction.MIDSTREAM_RECOVERY
     assert decision.retryable
     assert decision.committed
-    assert session.flush_if_uncommitted() == []
+    assert session.flush_uncommitted(decision) == []
+
+
+def test_stream_recovery_session_flushes_uncommitted_midstream_decision() -> None:
+    session = StreamRecoverySession(provider_name="TEST", request_id=None)
+
+    assert session.push("event: content_block_delta\n\n") == []
+    decision = session.advance_failure(
+        httpx.ReadError("midstream cutoff"),
+        stream_opened=True,
+        generated_output=True,
+        complete_tool_salvageable=True,
+    )
+
+    assert decision.action == StreamFailureAction.MIDSTREAM_RECOVERY
+    assert not decision.committed
+    assert decision.has_buffered
+    assert not session.committed
+    assert session.has_buffered
+
+    assert session.flush_uncommitted(decision) == ["event: content_block_delta\n\n"]
+    assert not decision.committed
+    assert decision.has_buffered
+    assert session.committed
+    assert not session.has_buffered
 
 
 def test_stream_recovery_session_non_retryable_error_is_final() -> None:
@@ -113,7 +137,7 @@ def test_stream_recovery_session_non_retryable_error_is_final() -> None:
     )
     session = StreamRecoverySession(provider_name="TEST", request_id=None)
 
-    decision = session.classify_failure(
+    decision = session.advance_failure(
         error,
         stream_opened=True,
         generated_output=True,

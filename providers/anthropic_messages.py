@@ -621,7 +621,7 @@ class AnthropicMessagesTransport(BaseProvider):
                             tool_schemas_by_name(request)
                         )
                     )
-                    decision = recovery_session.classify_failure(
+                    decision = recovery_session.advance_failure(
                         error,
                         stream_opened=stream_opened,
                         generated_output=generated_output,
@@ -660,7 +660,7 @@ class AnthropicMessagesTransport(BaseProvider):
                             )
                             recovery_events = None
                         if recovery_events is not None:
-                            for event in recovery_session.flush_if_uncommitted():
+                            for event in recovery_session.flush_uncommitted(decision):
                                 sent_any_event = True
                                 yield event
                             for event in recovery_events:

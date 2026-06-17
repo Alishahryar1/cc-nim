@@ -24,7 +24,7 @@ class StreamFailureAction(StrEnum):
 
 @dataclass(frozen=True, slots=True)
 class StreamFailureDecision:
-    """Decision snapshot for one provider stream failure."""
+    """Failure-state snapshot for the current provider stream transition."""
 
     action: StreamFailureAction
     retryable: bool
@@ -62,9 +62,9 @@ class StreamRecoverySession:
         """Commit and return held events."""
         return self._holdback.flush()
 
-    def flush_if_uncommitted(self) -> list[str]:
-        """Commit held events only if nothing has reached the client yet."""
-        if self.committed:
+    def flush_uncommitted(self, decision: StreamFailureDecision) -> list[str]:
+        """Commit held events when the decision snapshot is still uncommitted."""
+        if decision.committed:
             return []
         return self.flush()
 
@@ -72,7 +72,7 @@ class StreamRecoverySession:
         """Drop held events without committing them."""
         self._holdback.discard()
 
-    def classify_failure(
+    def advance_failure(
         self,
         error: BaseException,
         *,
@@ -80,7 +80,7 @@ class StreamRecoverySession:
         generated_output: bool,
         complete_tool_salvageable: bool,
     ) -> StreamFailureDecision:
-        """Classify a stream failure and apply shared early-retry state changes."""
+        """Consume a stream failure and apply shared recovery state changes."""
         committed = self.committed
         has_buffered = self.has_buffered
         retryable = is_retryable_stream_error(error)
