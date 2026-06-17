@@ -9,6 +9,7 @@ from api.models.anthropic import Message, MessagesRequest
 from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from providers.base import ProviderConfig
 from providers.defaults import MINIMAX_DEFAULT_BASE
+from providers.exceptions import InvalidRequestError
 from providers.minimax import MinimaxProvider
 
 
@@ -151,6 +152,18 @@ def test_respects_global_thinking_disable():
     )
     body = provider._build_request_body(request)
     assert "thinking" not in body
+
+
+def test_build_request_body_rejects_extra_body(minimax_provider):
+    request = MessagesRequest.model_validate(
+        {
+            "model": "MiniMax-M3",
+            "messages": [{"role": "user", "content": "x"}],
+            "extra_body": {"foo": "bar"},
+        }
+    )
+    with pytest.raises(InvalidRequestError, match="does not support extra_body"):
+        minimax_provider._build_request_body(request)
 
 
 @pytest.mark.asyncio

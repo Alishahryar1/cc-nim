@@ -10,6 +10,7 @@ from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from core.anthropic.native_messages_request import (
     build_base_native_anthropic_request_body,
 )
+from providers.exceptions import InvalidRequestError
 
 
 def build_request_body(request_data: Any, *, thinking_enabled: bool) -> dict:
@@ -25,6 +26,14 @@ def build_request_body(request_data: Any, *, thinking_enabled: bool) -> dict:
         default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
         thinking_enabled=thinking_enabled,
     )
+    # MiniMax mirrors Anthropic's native Messages endpoint; extra_body is not
+    # forwarded by the upstream proxy, so reject it explicitly to match Z.ai
+    # and other Anthropic-compat providers and surface client misuse early.
+    extra = getattr(request_data, "extra_body", None)
+    if extra:
+        raise InvalidRequestError(
+            "MiniMax native Messages API does not support extra_body on requests."
+        )
     body["stream"] = True
 
     logger.debug(
