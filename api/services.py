@@ -30,6 +30,8 @@ from core.trace import api_messages_request_snapshot, trace_event, traced_async_
 from providers.base import BaseProvider
 from providers.exceptions import InvalidRequestError, ProviderError
 
+from api.agent_governor import AgentGovernor, GovernorAction
+
 from .model_router import ModelRouter
 from .models.anthropic import MessagesRequest, TokenCountRequest
 from .models.openai_responses import OpenAIResponsesRequest
@@ -121,11 +123,13 @@ class ClaudeProxyService:
         provider_getter: ProviderGetter,
         model_router: ModelRouter | None = None,
         token_counter: TokenCounter = get_token_count,
+        agent_governor: AgentGovernor | None = None,
     ):
         self._settings = settings
         self._provider_getter = provider_getter
         self._model_router = model_router or ModelRouter(settings)
         self._token_counter = token_counter
+        self._agent_governor = agent_governor or AgentGovernor()
 
     def create_message(self, request_data: MessagesRequest) -> object:
         """Create a message response or streaming response."""
@@ -140,6 +144,27 @@ class ClaudeProxyService:
                 )
                 if tool_err is not None:
                     raise InvalidRequestError(tool_err)
+
+            # Agent governor: weak-model loop prevention + tool culling.
+            governor_request_id = f"req_{uuid.uuid4().hex[:12]}"
+            verdict = self._agent_governor.review(
+                routed.request,
+                request_id=governor_request_id,
+                provider_id=routed.resolved.provider_id,
+            )
+            if verdict.action == GovernorAction.ABORT:
+                if verdict.short_circuit_response is None:
+                    raise RuntimeError(
+                        "Governor returned ABORT without a short-circuit response"
+                    )
+                return verdict.short_circuit_response
+            if verdict.action == GovernorAction.AUGMENT and verdict.augmented_request is not None:
+                from api.model_router import RoutedMessagesRequest
+
+                routed = RoutedMessagesRequest(
+                    request=verdict.augmented_request,
+                    resolved=routed.resolved,
+                )
 
             if self._settings.enable_web_server_tools and is_web_server_tool_request(
                 routed.request
