@@ -155,7 +155,10 @@ class AnthropicMessagesTransport(BaseProvider):
 
     def _request_headers(self) -> dict[str, str]:
         """Return headers for the native messages request."""
-        return {"Content-Type": "application/json"}
+        headers: dict[str, str] = {"Content-Type": "application/json"}
+        if self._api_key:
+            headers["Authorization"] = f"Bearer {self._api_key}"
+        return headers
 
     def _build_request_body(
         self, request: Any, thinking_enabled: bool | None = None
