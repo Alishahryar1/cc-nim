@@ -16,12 +16,12 @@ dependencies = [
     "pydantic>=2.13.4",
     "python-dotenv>=1.2.2",
     "tiktoken>=0.13.0",
-    "python-telegram-bot>=22.7",
+    "python-telegram-bot>=22.8",
     "discord.py>=2.7.1",
     "pydantic-settings>=2.14.1",
-    "openai>=2.41.0",
+    "openai>=2.43.0",
     "loguru>=0.7.0",
-    "aiohttp>=3.14.0",
+    "aiohttp>=3.14.1",
     "jsonschema>=4.25.0",
 ]
 
@@ -34,14 +34,14 @@ fcc-codex = "cli.entrypoints:launch_codex"
 
 [project.optional-dependencies]
 voice = [
-    "grpcio>=1.81.0",
-    "grpcio-tools>=1.81.0",
+    "grpcio>=1.81.1",
+    "grpcio-tools>=1.81.1",
     "nvidia-riva-client>=2.26.0",
 ]
 voice_local = [
     "torch>=2.12.0",
-    "transformers>=5.10.2",
-    "accelerate>=1.13.0",
+    "transformers>=5.12.1",
+    "accelerate>=1.14.0",
     "librosa>=0.10.0",
 ]
 
@@ -64,11 +64,11 @@ explicit = true
 
 [dependency-groups]
 dev = [
-    "pytest>=9.0.3",
+    "pytest>=9.1.0",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
-    "ty>=0.0.44",
-    "ruff>=0.15.16",
+    "ty>=0.0.49",
+    "ruff>=0.15.17",
     "pytest-xdist>=3.8.0",
 ]
 
