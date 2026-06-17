@@ -103,7 +103,9 @@ Console scripts are registered in [pyproject.toml](pyproject.toml):
 install or update the uv tool plus optional voice extras. [scripts/uninstall.sh](scripts/uninstall.sh)
 and [scripts/uninstall.ps1](scripts/uninstall.ps1) remove only the FCC uv tool and always
 delete the managed `~/.fcc/` tree from [config/paths.py](config/paths.py); they do not remove
-uv, Claude Code, Codex, or uv-managed Python runtimes.
+uv, Claude Code, Codex, or uv-managed Python runtimes. [scripts/ci.sh](scripts/ci.sh) and
+[scripts/ci.ps1](scripts/ci.ps1) mirror [.github/workflows/tests.yml](.github/workflows/tests.yml)
+for local pre-push verification.
 
 [cli/entrypoints.py](cli/entrypoints.py) starts the FastAPI server with Uvicorn.
 `serve()` migrates legacy env files when needed, loads cached settings, runs a

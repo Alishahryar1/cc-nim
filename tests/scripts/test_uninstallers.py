@@ -32,7 +32,7 @@ def test_uninstall_sh_removes_uv_tool_and_purges_fcc_home() -> None:
 
     assert "Does not remove uv, Claude Code, Codex" in text
     assert "uv tool uninstall" in tool_body
-    assert "PACKAGE_NAME=\"free-claude-code\"" in text
+    assert 'PACKAGE_NAME="free-claude-code"' in text
     assert "uv not found on PATH; skipping uv tool uninstall." in tool_body
     assert "rm -rf" in purge_body
     assert ".fcc" in purge_body

@@ -56,7 +56,7 @@ These paths count as production (runtime, packaging, or install surface):
 - `api/`, `cli/`, `config/`, `core/`, `messaging/`, `providers/`
 - `.env.example`
 - `pyproject.toml` (dependencies, scripts, packaging)
-- `scripts/install.sh`, `scripts/install.ps1`, `scripts/uninstall.sh`, `scripts/uninstall.ps1`
+- `scripts/install.sh`, `scripts/install.ps1`, `scripts/uninstall.sh`, `scripts/uninstall.ps1`, `scripts/ci.sh`, `scripts/ci.ps1`
 
 These do **not** require a version bump on their own:
 
