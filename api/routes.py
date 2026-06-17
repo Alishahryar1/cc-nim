@@ -1,3 +1,10 @@
+# ruff: noqa: E402
+
+
+def _sanitize_breaking_tools(request_data):
+    return request_data
+
+
 """FastAPI route handlers."""
 
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
@@ -17,6 +24,115 @@ from .models.responses import ModelResponse, ModelsListResponse
 from .services import ClaudeProxyService
 
 router = APIRouter()
+
+
+def _sanitize_breaking_tools(request_data):
+    """Comprehensive Sanitizer: Strips unsupported tools, safeguards beta tools,
+    neutralizes invalid tool choices, clears high-latency thinking budgets,
+    and appends anti-stall system instructions safely.
+    """
+    try:
+        # Check object attributes
+        if hasattr(request_data, "thinking"):
+            request_data.thinking = None
+        # Check dictionary-style request items
+        if isinstance(request_data, dict) and "thinking" in request_data:
+            request_data["thinking"] = None
+        elif hasattr(request_data, "__dict__") and "thinking" in request_data.__dict__:
+            request_data.__dict__["thinking"] = None
+    except Exception:
+        pass
+
+    tools = getattr(request_data, "tools", None)
+    filtered_tools = []
+    removed_tool_names = []
+
+    if tools:
+        for tool in tools:
+            name = (
+                tool.get("name", "")
+                if isinstance(tool, dict)
+                else getattr(tool, "name", "")
+            )
+            name_str = str(name)
+
+            is_unsupported = (
+                name_str.startswith(("advisor_", "computer_"))
+                or name_str in ("web_search", "web_search_tool")
+                or name_str.startswith("web_search_tool_")
+            )
+
+            if name and is_unsupported:
+                removed_tool_names.append(name_str)
+                continue
+            filtered_tools.append(tool)
+
+    if not removed_tool_names:
+        return request_data
+
+    final_tools = filtered_tools if (tools and filtered_tools) else None
+    final_tool_choice = getattr(request_data, "tool_choice", None)
+
+    if (
+        final_tool_choice
+        and isinstance(final_tool_choice, dict)
+        and final_tool_choice.get("type") == "tool"
+        and final_tool_choice.get("name") in removed_tool_names
+    ):
+        logger.warning(
+            f"Stripping named tool_choice pointing to removed tool: {final_tool_choice.get('name')}"
+        )
+        final_tool_choice = None
+
+    if not final_tools:
+        final_tool_choice = None
+
+    logger.info(
+        f"Sanitized tools {removed_tool_names} from client payload. Remaining tools: {len(filtered_tools)}"
+    )
+
+    system_directive = "\n\n[System Note: Execute alternative tools immediately. Do not explain, speculate, or apologize for missing tools.]"
+    current_system = getattr(request_data, "system", "")
+
+    if isinstance(current_system, str):
+        updated_system = (
+            current_system + system_directive
+            if current_system
+            else system_directive.strip()
+        )
+    elif isinstance(current_system, list):
+        updated_system = [
+            *current_system,
+            {"type": "text", "text": system_directive.strip()},
+        ]
+    elif current_system is None:
+        updated_system = system_directive.strip()
+    else:
+        updated_system = current_system
+
+    try:
+        request_data.tools = final_tools
+        if hasattr(request_data, "system"):
+            request_data.system = updated_system
+        if hasattr(request_data, "tool_choice"):
+            request_data.tool_choice = final_tool_choice
+    except Exception as e:
+        logger.warning(f"Failed to modify attributes directly: {e}. Using model_copy.")
+        update_fields = {"tools": final_tools, "system": updated_system}
+        if hasattr(request_data, "tool_choice"):
+            update_fields["tool_choice"] = final_tool_choice
+        if hasattr(request_data, "thinking"):
+            update_fields["thinking"] = None
+        try:
+            request_data = request_data.model_copy(update=update_fields)
+        except Exception as fallback_err:
+            logger.error(
+                f"Critical: Payload sanitization completely collapsed. Direct assignment failed, "
+                f"and model_copy fallback was rejected by schema validation. Error: {fallback_err}"
+            )
+
+    return request_data
+
 
 DISCOVERED_MODEL_CREATED_AT = "1970-01-01T00:00:00Z"
 
@@ -171,7 +287,40 @@ async def create_message(
     _auth=Depends(require_api_key),
 ):
     """Create a message (always streaming)."""
-    return service.create_message(request_data)
+    request_data = _sanitize_breaking_tools(request_data)
+
+    try:
+        # Primary Routing Path (e.g., NVIDIA NIM)
+        return service.create_message(request_data)
+    except Exception as primary_err:
+        # Pass client-side validation exceptions straight through without failover triggers
+        if (
+            "InvalidRequestError" in type(primary_err).__name__
+            or getattr(primary_err, "status_code", None) == 400
+        ):
+            raise
+        logger.warning(
+            f"Primary provider failed or throttled: {primary_err}. Initiating high-capacity fallback recovery..."
+        )
+
+        # Programmatic Failover Config: Route down to OpenRouter Free or a stable secondary slug
+        fallback_model = "open_router/qwen/qwen-coder-32b-vision:free"
+
+        if hasattr(request_data, "model"):
+            request_data.model = fallback_model
+        # Execute the secondary network request against the fallback provider
+        return service.create_message(request_data)
+
+        try:
+            if hasattr(request_data, "model_copy"):
+                request_data = request_data.model_copy(update={"model": fallback_model})
+        except Exception:
+            pass
+
+        logger.info(
+            f"Rerouting payload burst down to fallback runner: {fallback_model}"
+        )
+        return service.create_message(request_data)
 
 
 @router.api_route("/v1/messages", methods=["HEAD", "OPTIONS"])
@@ -203,6 +352,7 @@ async def count_tokens(
     _auth=Depends(require_api_key),
 ):
     """Count tokens for a request."""
+    request_data = _sanitize_breaking_tools(request_data)
     return service.count_tokens(request_data)
 
 
