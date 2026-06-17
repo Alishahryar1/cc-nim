@@ -1,3 +1,4 @@
+import subprocess
 from pathlib import Path
 
 
@@ -44,6 +45,18 @@ def test_ci_sh_runs_ci_checks_in_order() -> None:
     assert "npm" not in text
     assert "smoke/" not in text
     assert "uv self update" not in text
+
+
+def test_ci_sh_is_tracked_executable() -> None:
+    result = subprocess.run(
+        ["git", "ls-files", "--stage", "scripts/ci.sh"],
+        cwd=_repo_root(),
+        text=True,
+        capture_output=True,
+        check=True,
+    )
+
+    assert result.stdout.startswith("100755 ")
 
 
 def test_ci_sh_fail_fast_runs_checks_sequentially() -> None:

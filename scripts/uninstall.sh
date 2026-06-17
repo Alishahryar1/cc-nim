@@ -57,6 +57,14 @@ run() {
     fi
 }
 
+is_missing_uv_tool_error() {
+    normalized=$(printf '%s' "$1" | tr '[:upper:]' '[:lower:]')
+    case "$normalized" in
+        *"not installed"* | *"no tool"* | *"nothing to uninstall"*) return 0 ;;
+        *) return 1 ;;
+    esac
+}
+
 add_path_entry() {
     [ -n "$1" ] || return 0
     case ":$PATH:" in
@@ -122,9 +130,18 @@ uninstall_free_claude_code() {
 
     print_command uv tool uninstall "$PACKAGE_NAME"
     if [ "$dry_run" -eq 0 ]; then
-        if ! uv tool uninstall "$PACKAGE_NAME" >/dev/null 2>&1; then
-            printf 'Free Claude Code uv tool not installed or already removed; skipping uv tool uninstall.\n'
+        if output=$(uv tool uninstall "$PACKAGE_NAME" 2>&1); then
+            return 0
         fi
+        status=$?
+        if is_missing_uv_tool_error "$output"; then
+            printf 'Free Claude Code uv tool not installed or already removed; skipping uv tool uninstall.\n'
+            return 0
+        fi
+        if [ -n "$output" ]; then
+            printf '%s\n' "$output" >&2
+        fi
+        fail "uv tool uninstall $PACKAGE_NAME failed with exit code $status; aborting before deleting ~/.fcc."
     fi
 }
 

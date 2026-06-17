@@ -1,4 +1,10 @@
+import os
+import shutil
+import stat
+import subprocess
 from pathlib import Path
+
+import pytest
 
 
 def _repo_root() -> Path:
@@ -25,6 +31,10 @@ def _braced_body(text: str, declaration: str) -> str:
     raise AssertionError(f"Unclosed function body for {declaration}")
 
 
+def _shell_path_with_mock(bin_dir: Path) -> str:
+    return f"{bin_dir}:/usr/bin:/bin"
+
+
 def test_uninstall_sh_removes_uv_tool_and_purges_fcc_home() -> None:
     text = _script_text("uninstall.sh")
     tool_body = _braced_body(text, "uninstall_free_claude_code()")
@@ -34,6 +44,8 @@ def test_uninstall_sh_removes_uv_tool_and_purges_fcc_home() -> None:
     assert "uv tool uninstall" in tool_body
     assert 'PACKAGE_NAME="free-claude-code"' in text
     assert "uv not found on PATH; skipping uv tool uninstall." in tool_body
+    assert "is_missing_uv_tool_error" in tool_body
+    assert "aborting before deleting ~/.fcc." in tool_body
     assert "rm -rf" in purge_body
     assert ".fcc" in purge_body
     assert "npm uninstall" not in text
@@ -73,7 +85,10 @@ def test_uninstall_ps1_removes_uv_tool_and_purges_fcc_home() -> None:
     assert "uv tool uninstall" in tool_body
     assert '$PackageName = "free-claude-code"' in text
     assert "uv not found on PATH; skipping uv tool uninstall." in tool_body
+    assert "Test-MissingUvToolError" in tool_body
+    assert "aborting before deleting ~/.fcc." in tool_body
     assert "Remove-Item" in purge_body
+    assert purge_body.count("Remove-Item -LiteralPath") == 1
     assert '$FccHomeDirname = ".fcc"' in text
     assert "npm uninstall" not in text
     assert "uv self uninstall" not in text
@@ -100,3 +115,222 @@ def test_uninstall_ps1_fails_when_fcc_commands_are_running() -> None:
         'Write-Step "Checking for running Free Claude Code processes"\n'
         "Assert-NoFccProcessesRunning" in text
     )
+
+
+def test_uninstall_sh_missing_tool_detection_is_narrow() -> None:
+    text = _script_text("uninstall.sh")
+    detector_body = _braced_body(text, "is_missing_uv_tool_error()")
+
+    assert "not installed" in detector_body
+    assert "no tool" in detector_body
+    assert "nothing to uninstall" in detector_body
+    assert "permission denied" not in detector_body
+    assert "locked" not in detector_body
+
+
+def test_uninstall_ps1_missing_tool_detection_is_narrow() -> None:
+    text = _script_text("uninstall.ps1")
+    detector_body = _braced_body(text, "function Test-MissingUvToolError")
+
+    assert "not installed" in detector_body
+    assert "no tool" in detector_body
+    assert "nothing to uninstall" in detector_body
+    assert "permission denied" not in detector_body
+    assert "locked" not in detector_body
+
+
+def test_uninstall_sh_generic_uv_failure_does_not_delete_fcc_home(
+    tmp_path: Path,
+) -> None:
+    sh = shutil.which("sh")
+    if sh is None:
+        pytest.skip("sh is not available on this platform")
+
+    home = tmp_path / "home"
+    fcc_home = home / ".fcc"
+    bin_dir = home / ".local" / "bin"
+    fcc_home.mkdir(parents=True)
+    bin_dir.mkdir(parents=True)
+    uv = bin_dir / "uv"
+    uv.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' 'permission denied while removing tool' >&2\n"
+        "exit 42\n",
+        encoding="utf-8",
+    )
+    uv.chmod(uv.stat().st_mode | stat.S_IXUSR)
+
+    result = subprocess.run(
+        [sh, str(_repo_root() / "scripts" / "uninstall.sh")],
+        cwd=_repo_root(),
+        env={**os.environ, "HOME": str(home), "PATH": _shell_path_with_mock(bin_dir)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert fcc_home.exists()
+    assert "aborting before deleting ~/.fcc" in result.stderr
+
+
+def test_uninstall_sh_missing_tool_still_deletes_fcc_home(tmp_path: Path) -> None:
+    sh = shutil.which("sh")
+    if sh is None:
+        pytest.skip("sh is not available on this platform")
+
+    home = tmp_path / "home"
+    fcc_home = home / ".fcc"
+    bin_dir = home / ".local" / "bin"
+    fcc_home.mkdir(parents=True)
+    bin_dir.mkdir(parents=True)
+    uv = bin_dir / "uv"
+    uv.write_text(
+        "#!/bin/sh\n"
+        "printf '%s\\n' 'tool free-claude-code is not installed' >&2\n"
+        "exit 2\n",
+        encoding="utf-8",
+    )
+    uv.chmod(uv.stat().st_mode | stat.S_IXUSR)
+
+    result = subprocess.run(
+        [sh, str(_repo_root() / "scripts" / "uninstall.sh")],
+        cwd=_repo_root(),
+        env={**os.environ, "HOME": str(home), "PATH": _shell_path_with_mock(bin_dir)},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert not fcc_home.exists()
+
+
+def test_uninstall_sh_missing_uv_still_deletes_fcc_home(tmp_path: Path) -> None:
+    sh = shutil.which("sh")
+    if sh is None:
+        pytest.skip("sh is not available on this platform")
+
+    home = tmp_path / "home"
+    fcc_home = home / ".fcc"
+    empty_bin = tmp_path / "empty-bin"
+    fcc_home.mkdir(parents=True)
+    empty_bin.mkdir()
+
+    result = subprocess.run(
+        [sh, str(_repo_root() / "scripts" / "uninstall.sh")],
+        cwd=_repo_root(),
+        env={
+            **os.environ,
+            "HOME": str(home),
+            "PATH": f"{empty_bin}:/usr/bin:/bin",
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert not fcc_home.exists()
+    assert "uv not found on PATH; skipping uv tool uninstall." in result.stdout
+
+
+def test_uninstall_ps1_generic_uv_failure_does_not_delete_fcc_home(
+    tmp_path: Path,
+) -> None:
+    pwsh = shutil.which("pwsh") or shutil.which("powershell")
+    if pwsh is None:
+        pytest.skip("PowerShell is not available on this platform")
+
+    home = tmp_path / "home"
+    fcc_home = home / ".fcc"
+    bin_dir = home / ".local" / "bin"
+    fcc_home.mkdir(parents=True)
+    bin_dir.mkdir(parents=True)
+    uv = bin_dir / "uv.cmd"
+    uv.write_text(
+        "@echo off\necho permission denied while removing tool 1>&2\nexit /b 42\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-File", str(_repo_root() / "scripts" / "uninstall.ps1")],
+        cwd=_repo_root(),
+        env={
+            **os.environ,
+            "HOME": str(home),
+            "USERPROFILE": str(home),
+            "PATH": os.pathsep.join((str(bin_dir), os.environ.get("PATH", ""))),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode != 0
+    assert fcc_home.exists()
+    assert "aborting before deleting ~/.fcc" in result.stderr
+
+
+def test_uninstall_ps1_missing_tool_still_deletes_fcc_home(tmp_path: Path) -> None:
+    pwsh = shutil.which("pwsh") or shutil.which("powershell")
+    if pwsh is None:
+        pytest.skip("PowerShell is not available on this platform")
+
+    home = tmp_path / "home"
+    fcc_home = home / ".fcc"
+    bin_dir = home / ".local" / "bin"
+    fcc_home.mkdir(parents=True)
+    bin_dir.mkdir(parents=True)
+    uv = bin_dir / "uv.cmd"
+    uv.write_text(
+        "@echo off\necho tool free-claude-code is not installed 1>&2\nexit /b 2\n",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-File", str(_repo_root() / "scripts" / "uninstall.ps1")],
+        cwd=_repo_root(),
+        env={
+            **os.environ,
+            "HOME": str(home),
+            "USERPROFILE": str(home),
+            "PATH": os.pathsep.join((str(bin_dir), os.environ.get("PATH", ""))),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert not fcc_home.exists()
+
+
+def test_uninstall_ps1_missing_uv_still_deletes_fcc_home(tmp_path: Path) -> None:
+    pwsh = shutil.which("pwsh") or shutil.which("powershell")
+    if pwsh is None:
+        pytest.skip("PowerShell is not available on this platform")
+
+    home = tmp_path / "home"
+    fcc_home = home / ".fcc"
+    empty_bin = tmp_path / "empty-bin"
+    fcc_home.mkdir(parents=True)
+    empty_bin.mkdir()
+
+    result = subprocess.run(
+        [pwsh, "-NoProfile", "-File", str(_repo_root() / "scripts" / "uninstall.ps1")],
+        cwd=_repo_root(),
+        env={
+            **os.environ,
+            "HOME": str(home),
+            "USERPROFILE": str(home),
+            "PATH": str(empty_bin),
+        },
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert not fcc_home.exists()
+    assert "uv not found on PATH; skipping uv tool uninstall." in result.stdout

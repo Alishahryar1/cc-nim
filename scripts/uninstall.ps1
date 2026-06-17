@@ -48,19 +48,15 @@ function Format-Argument {
     return "'" + ($Value -replace "'", "''") + "'"
 }
 
-function Invoke-UninstallCommand {
-    param(
-        [string] $FilePath,
-        [string[]] $Arguments = @()
+function Test-MissingUvToolError {
+    param([string] $Output)
+
+    $normalized = $Output.ToLowerInvariant()
+    return (
+        $normalized.Contains("not installed") -or
+        $normalized.Contains("no tool") -or
+        $normalized.Contains("nothing to uninstall")
     )
-
-    $parts = @($FilePath) + $Arguments
-    $commandText = ($parts | ForEach-Object { Format-Argument ([string] $_) }) -join " "
-    Write-Host "+ $commandText"
-
-    if (-not $DryRun) {
-        & $FilePath @Arguments
-    }
 }
 
 function Add-PathEntry {
@@ -114,10 +110,19 @@ function Uninstall-FreeClaudeCode {
         $previousErrorActionPreference = $ErrorActionPreference
         $ErrorActionPreference = "Continue"
         try {
-            & uv tool uninstall $PackageName 2>$null
-            if ($LASTEXITCODE -ne 0) {
-                Write-Host "Free Claude Code uv tool not installed or already removed; skipping uv tool uninstall."
+            $output = (& uv tool uninstall $PackageName 2>&1 | Out-String).Trim()
+            $exitCode = $LASTEXITCODE
+            if ($exitCode -eq 0) {
+                return
             }
+            if (Test-MissingUvToolError -Output $output) {
+                Write-Host "Free Claude Code uv tool not installed or already removed; skipping uv tool uninstall."
+                return
+            }
+            if (-not [string]::IsNullOrWhiteSpace($output)) {
+                [Console]::Error.WriteLine($output)
+            }
+            throw "uv tool uninstall $PackageName failed with exit code $exitCode; aborting before deleting ~/.fcc."
         }
         finally {
             $ErrorActionPreference = $previousErrorActionPreference
@@ -132,12 +137,14 @@ function Purge-FccHome {
         return
     }
 
-    Invoke-UninstallCommand -FilePath "Remove-Item" -Arguments @(
+    $commandText = @(
+        "Remove-Item",
         "-LiteralPath",
-        $fccHome,
+        (Format-Argument $fccHome),
         "-Recurse",
         "-Force"
-    )
+    ) -join " "
+    Write-Host "+ $commandText"
 
     if (-not $DryRun) {
         Remove-Item -LiteralPath $fccHome -Recurse -Force
