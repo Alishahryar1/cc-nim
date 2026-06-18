@@ -15,6 +15,8 @@ from core.anthropic.stream_contracts import (
 )
 from providers.base import ProviderConfig
 from providers.nvidia_nim import NvidiaNimProvider
+from providers.transports.openai_chat.recovery import OpenAIChatRecovery
+from providers.transports.openai_chat.tool_calls import OpenAIToolCallAssembler
 from tests.provider_request_mocks import make_openai_compat_stream_request
 
 
@@ -44,6 +46,12 @@ def _make_provider():
         rate_window=60,
     )
     return NvidiaNimProvider(config, nim_settings=NimSettings())
+
+
+def _make_tool_assembler(provider: NvidiaNimProvider) -> OpenAIToolCallAssembler:
+    return OpenAIToolCallAssembler(
+        record_extra_content=provider._record_tool_call_extra_content
+    )
 
 
 def _make_provider_with_thinking_enabled(enabled: bool):
@@ -672,8 +680,8 @@ class TestStreamingExceptionHandling:
                 return_value=stream_mock,
             ),
             patch.object(
-                provider,
-                "_collect_recovery_text",
+                OpenAIChatRecovery,
+                "collect_text",
                 new_callable=AsyncMock,
                 return_value=("world", ""),
             ),
@@ -681,12 +689,13 @@ class TestStreamingExceptionHandling:
             events = await _collect_stream(provider, request)
 
         parsed = parse_sse_text("".join(events))
-        text = "".join(
+        text_deltas = [
             event.data.get("delta", {}).get("text", "")
             for event in parsed
             if event.event == "content_block_delta"
-        )
-        assert text == "hello world"
+        ]
+        assert text_deltas == ["hello wor", "ld"]
+        assert "".join(text_deltas) == "hello world"
         assert any(
             event.event == "message_delta"
             and event.data.get("delta", {}).get("stop_reason") == "end_turn"
@@ -724,8 +733,8 @@ class TestStreamingExceptionHandling:
                 return_value=stream_mock,
             ),
             patch.object(
-                provider,
-                "_collect_recovery_text",
+                OpenAIChatRecovery,
+                "collect_text",
                 new_callable=AsyncMock,
                 return_value=('"ok"}', ""),
             ),
@@ -775,7 +784,7 @@ class TestStreamingExceptionHandling:
 
 
 class TestProcessToolCall:
-    """Tests for _process_tool_call method."""
+    """Tests for OpenAI tool-call assembly."""
 
     def test_tool_call_with_id(self):
         """Tool call with id starts a tool block."""
@@ -788,7 +797,7 @@ class TestProcessToolCall:
             "id": "call_123",
             "function": {"name": "search", "arguments": '{"q": "test"}'},
         }
-        events = list(provider._process_tool_call(tc, sse))
+        events = list(_make_tool_assembler(provider).process_tool_call(tc, sse))
         event_text = "".join(events)
         assert "tool_use" in event_text
         assert "search" in event_text
@@ -815,9 +824,9 @@ class TestProcessToolCall:
             "id": "call_split",
             "function": {"name": None, "arguments": "{}"},
         }
-        b1 = "".join(provider._process_tool_call(t1, sse))
-        b2 = "".join(provider._process_tool_call(t2, sse))
-        b3 = "".join(provider._process_tool_call(t3, sse))
+        b1 = "".join(_make_tool_assembler(provider).process_tool_call(t1, sse))
+        b2 = "".join(_make_tool_assembler(provider).process_tool_call(t2, sse))
+        b3 = "".join(_make_tool_assembler(provider).process_tool_call(t3, sse))
         combined = b1 + b2 + b3
         assert "call_split" in combined
         assert "Grep" in combined
@@ -839,8 +848,8 @@ class TestProcessToolCall:
             "id": "call_buf",
             "function": {"name": "Read", "arguments": "1}"},
         }
-        b1 = "".join(provider._process_tool_call(t1, sse))
-        b2 = "".join(provider._process_tool_call(t2, sse))
+        b1 = "".join(_make_tool_assembler(provider).process_tool_call(t1, sse))
+        b2 = "".join(_make_tool_assembler(provider).process_tool_call(t2, sse))
         assert b1 == ""
         combined = b2
         assert "Read" in combined
@@ -858,7 +867,7 @@ class TestProcessToolCall:
             "id": None,
             "function": {"name": "test", "arguments": "{}"},
         }
-        events = list(provider._process_tool_call(tc, sse))
+        events = list(_make_tool_assembler(provider).process_tool_call(tc, sse))
         event_text = "".join(events)
         assert "tool_" in event_text
 
@@ -874,7 +883,7 @@ class TestProcessToolCall:
             "id": "call_task",
             "function": {"name": "Task", "arguments": args},
         }
-        events = list(provider._process_tool_call(tc, sse))
+        events = list(_make_tool_assembler(provider).process_tool_call(tc, sse))
         event_text = "".join(events)
         # The intercepted args should have run_in_background=false
         assert "false" in event_text.lower()
@@ -896,11 +905,11 @@ class TestProcessToolCall:
             "function": {"name": None, "arguments": ' "prompt": "test"}'},
         }
 
-        events1 = list(provider._process_tool_call(tc1, sse))
+        events1 = list(_make_tool_assembler(provider).process_tool_call(tc1, sse))
         assert len(events1) > 0
         assert "false" not in "".join(events1).lower()
 
-        events2 = list(provider._process_tool_call(tc2, sse))
+        events2 = list(_make_tool_assembler(provider).process_tool_call(tc2, sse))
         event_text = "".join(events1 + events2)
         assert "false" in event_text.lower()
 
@@ -915,11 +924,11 @@ class TestProcessToolCall:
             "id": "call_task2",
             "function": {"name": "Task", "arguments": "not json"},
         }
-        events = list(provider._process_tool_call(tc, sse))
+        events = list(_make_tool_assembler(provider).process_tool_call(tc, sse))
         assert len(events) > 0
 
         with caplog.at_level("WARNING"):
-            flushed = list(provider._flush_task_arg_buffers(sse))
+            flushed = list(_make_tool_assembler(provider).flush_task_arg_buffers(sse))
         assert len(flushed) > 0
         assert "{}" in "".join(flushed)
         assert any("Task args invalid JSON" in r.message for r in caplog.records)
@@ -935,7 +944,7 @@ class TestProcessToolCall:
             "id": "call_neg",
             "function": {"name": "test", "arguments": "{}"},
         }
-        events = list(provider._process_tool_call(tc, sse))
+        events = list(_make_tool_assembler(provider).process_tool_call(tc, sse))
         # Should not crash, should still emit events
         assert len(events) > 0
 
@@ -950,7 +959,7 @@ class TestProcessToolCall:
             "id": "call_none",
             "function": {"name": "test", "arguments": "{}"},
         }
-        events = list(provider._process_tool_call(tc, sse))
+        events = list(_make_tool_assembler(provider).process_tool_call(tc, sse))
         event_text = "".join(events)
 
         assert "tool_use" in event_text
@@ -967,7 +976,7 @@ class TestProcessToolCall:
             "id": "call_args",
             "function": {"name": "grep", "arguments": '{"pattern": "test"}'},
         }
-        events = list(provider._process_tool_call(tc, sse))
+        events = list(_make_tool_assembler(provider).process_tool_call(tc, sse))
         event_text = "".join(events)
         assert "input_json_delta" in event_text
 
@@ -1094,9 +1103,9 @@ class TestStreamChunkEdgeCases:
             "function": {"name": None, "arguments": " never valid }"},
         }
 
-        events1 = list(provider._process_tool_call(tc1, sse))
-        events2 = list(provider._process_tool_call(tc2, sse))
-        flushed = list(provider._flush_task_arg_buffers(sse))
+        events1 = list(_make_tool_assembler(provider).process_tool_call(tc1, sse))
+        events2 = list(_make_tool_assembler(provider).process_tool_call(tc2, sse))
+        flushed = list(_make_tool_assembler(provider).flush_task_arg_buffers(sse))
 
         event_text = "".join(events1 + events2 + flushed)
         assert "tool_use" in event_text

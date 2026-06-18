@@ -60,8 +60,7 @@ def test_removed_env_migration_e2e(smoke_config: SmokeConfig, tmp_path) -> None:
         timeout=smoke_config.timeout_s,
         check=False,
     )
-    assert result.returncode != 0
-    assert "NIM_ENABLE_THINKING has been removed" in (result.stderr + result.stdout)
+    assert result.returncode == 0, result.stderr
 
 
 @pytest.mark.smoke_target("config")

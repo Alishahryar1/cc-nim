@@ -12,13 +12,16 @@ from core.anthropic.native_sse_block_policy import (
     parse_native_sse_event,
     transform_native_sse_block_event,
 )
-from providers.anthropic_messages import AnthropicMessagesTransport, StreamChunkMode
 from providers.base import ProviderConfig
 from providers.defaults import OPENROUTER_DEFAULT_BASE
 from providers.model_listing import (
     ProviderModelInfo,
     extract_openrouter_tool_model_ids,
     extract_openrouter_tool_model_infos,
+)
+from providers.transports.anthropic_messages import (
+    AnthropicMessagesTransport,
+    StreamChunkMode,
 )
 
 from .request import build_request_body

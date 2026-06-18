@@ -6,7 +6,7 @@ from typing import Any
 
 from providers.base import ProviderConfig
 from providers.defaults import CEREBRAS_DEFAULT_BASE
-from providers.openai_compat import OpenAIChatTransport
+from providers.transports.openai_chat import OpenAIChatTransport
 
 from .request import build_request_body
 

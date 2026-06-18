@@ -9,7 +9,7 @@ from loguru import logger
 from config.nim import NimSettings
 from providers.base import ProviderConfig
 from providers.defaults import NVIDIA_NIM_DEFAULT_BASE
-from providers.openai_compat import OpenAIChatTransport
+from providers.transports.openai_chat import OpenAIChatTransport
 
 from .request import (
     body_without_nim_tool_argument_aliases,

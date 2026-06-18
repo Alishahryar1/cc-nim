@@ -8,7 +8,7 @@ sanitized credential keys (e.g. ``api_key``, ``authorization``).
 from __future__ import annotations
 
 import asyncio
-from collections.abc import AsyncIterator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from typing import Any
 
 from loguru import logger
@@ -116,7 +116,7 @@ async def traced_async_stream(
     chunk_event: str | None = None,
     chunk_interval: int = 250,
     extra: Mapping[str, Any] | None = None,
-) -> AsyncIterator[str]:
+) -> AsyncGenerator[str]:
     """Emit TRACE rows when a text stream completes, fails, cancels, or periodically."""
     common = dict(extra or {})
     count = 0
@@ -136,6 +136,8 @@ async def traced_async_stream(
                     **common,
                 )
             yield chunk
+    except GeneratorExit:
+        raise
     except asyncio.CancelledError:
         interrupted = True
         trace_event(
@@ -161,7 +163,7 @@ async def traced_async_stream(
             **common,
         )
         raise
-    except BaseException as exc:
+    except Exception as exc:
         interrupted = True
         trace_event(
             stage=stage,
