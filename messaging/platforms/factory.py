@@ -21,6 +21,7 @@ class MessagingPlatformOptions:
 
     telegram_bot_token: str | None = None
     allowed_telegram_user_id: str | None = None
+    telegram_proxy: str | None = None
     discord_bot_token: str | None = None
     allowed_discord_channels: str | None = None
     voice_note_enabled: bool = True
@@ -63,6 +64,7 @@ def create_messaging_platform(
         return TelegramPlatform(
             bot_token=bot_token,
             allowed_user_id=opts.allowed_telegram_user_id,
+            telegram_proxy=opts.telegram_proxy,
             voice_note_enabled=opts.voice_note_enabled,
             whisper_model=opts.whisper_model,
             whisper_device=opts.whisper_device,

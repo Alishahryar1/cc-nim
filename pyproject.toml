@@ -16,11 +16,11 @@ dependencies = [
     "pydantic>=2.13.4",
     "python-dotenv>=1.2.2",
     "tiktoken>=0.13.0",
-    "python-telegram-bot>=22.7",
     "discord.py>=2.7.1",
     "pydantic-settings>=2.14.1",
     "openai>=2.41.0",
     "loguru>=0.7.0",
+    "python-telegram-bot[socks]>=22.7",
     "aiohttp>=3.14.0",
     "jsonschema>=4.25.0",
 ]

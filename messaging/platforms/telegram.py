@@ -61,6 +61,7 @@ class TelegramPlatform(MessagingPlatform):
         self,
         bot_token: str | None = None,
         allowed_user_id: str | None = None,
+        telegram_proxy: str | None = None,
         *,
         voice_note_enabled: bool = True,
         whisper_model: str = "base",
@@ -79,6 +80,7 @@ class TelegramPlatform(MessagingPlatform):
 
         self.bot_token = bot_token
         self.allowed_user_id = allowed_user_id
+        self.telegram_proxy = telegram_proxy
 
         if not self.bot_token:
             # We don't raise here to allow instantiation for testing/conditional logic,
@@ -170,13 +172,21 @@ class TelegramPlatform(MessagingPlatform):
         if not self.bot_token:
             raise ValueError("TELEGRAM_BOT_TOKEN is required")
 
-        # Configure request with longer timeouts
-        request = HTTPXRequest(
-            connection_pool_size=8, connect_timeout=30.0, read_timeout=30.0
-        )
-
-        # Build Application
-        builder = Application.builder().token(self.bot_token).request(request)
+        builder = Application.builder().token(self.bot_token)
+        if self.telegram_proxy and self.telegram_proxy.strip():
+            request = HTTPXRequest(
+                connection_pool_size=8, connect_timeout=30.0, read_timeout=30.0, proxy=self.telegram_proxy
+            )
+            update_request = HTTPXRequest(
+                connection_pool_size=8, connect_timeout=30.0, read_timeout=30.0, proxy=self.telegram_proxy
+            )
+            builder.request(request).get_updates_request(update_request)
+        else:
+            request = HTTPXRequest(
+                connection_pool_size=8, connect_timeout=30.0, read_timeout=30.0
+            )
+            builder.request(request)
+        
         self._application = builder.build()
 
         # Register Internal Handlers

@@ -283,6 +283,7 @@ class Settings(BaseSettings):
     # ==================== Bot Wrapper Config ====================
     telegram_bot_token: str | None = None
     allowed_telegram_user_id: str | None = None
+    telegram_proxy: str | None = None
     discord_bot_token: str | None = Field(
         default=None, validation_alias="DISCORD_BOT_TOKEN"
     )
@@ -307,6 +308,7 @@ class Settings(BaseSettings):
     @field_validator(
         "telegram_bot_token",
         "allowed_telegram_user_id",
+        "telegram_proxy",
         "discord_bot_token",
         "allowed_discord_channels",
         "model_opus",

@@ -588,6 +588,13 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         session_sensitive=True,
     ),
     ConfigFieldSpec(
+        "TELEGRAM_PROXY",
+        "Telegram Proxy",
+        "messaging",
+        settings_attr="telegram_proxy",
+        session_sensitive=True,
+    ),
+    ConfigFieldSpec(
         "DISCORD_BOT_TOKEN",
         "Discord Bot Token",
         "messaging",
