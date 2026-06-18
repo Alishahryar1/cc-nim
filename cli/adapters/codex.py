@@ -429,16 +429,16 @@ def _response_item_key(
     output_index: int | None = None,
 ) -> str | None:
     item_type = item.get("type")
-    for key in ("id", "call_id"):
-        value = item.get(key)
-        if isinstance(value, str) and value:
-            return f"{item_type}:{value}"
     if (
         item_type == "message"
         and response_scope is not None
         and output_index is not None
     ):
         return _response_output_index_key(item_type, response_scope, output_index)
+    for key in ("id", "call_id"):
+        value = item.get(key)
+        if isinstance(value, str) and value:
+            return f"{item_type}:{value}"
     return None
 
 

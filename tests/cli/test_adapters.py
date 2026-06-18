@@ -438,6 +438,61 @@ def test_codex_adapter_dedupes_output_index_only_message_done() -> None:
     assert item_done_events == []
 
 
+def test_codex_adapter_prefers_streamed_output_index_for_final_message_id() -> None:
+    state = CliParseState()
+    item = {
+        "type": "message",
+        "id": "msg_1",
+        "content": [{"type": "output_text", "text": "hi"}],
+    }
+
+    delta_events = list(
+        CODEX_CLI_ADAPTER.parse_stdout_line(
+            json.dumps(
+                {
+                    "type": "response.output_text.delta",
+                    "output_index": 0,
+                    "delta": "hi",
+                }
+            ),
+            state,
+        )
+    )
+    item_done_events = list(
+        CODEX_CLI_ADAPTER.parse_stdout_line(
+            json.dumps(
+                {
+                    "type": "response.output_item.done",
+                    "output_index": 0,
+                    "item": item,
+                }
+            ),
+            state,
+        )
+    )
+    completed_events = list(
+        CODEX_CLI_ADAPTER.parse_stdout_line(
+            json.dumps(
+                {
+                    "type": "response.completed",
+                    "response": {"output": [item]},
+                }
+            ),
+            state,
+        )
+    )
+
+    assert delta_events == [
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "hi"},
+        }
+    ]
+    assert item_done_events == []
+    assert completed_events == []
+
+
 def test_codex_adapter_dedupes_output_index_only_completed_message() -> None:
     state = CliParseState()
     item = {
