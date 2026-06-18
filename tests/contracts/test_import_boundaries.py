@@ -240,6 +240,24 @@ def test_messaging_workflow_uses_split_runtime_owners() -> None:
     assert offenders == []
 
 
+def test_messaging_platforms_use_shared_outbox_and_voice_flow() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    platforms_root = repo_root / "messaging" / "platforms"
+
+    assert (platforms_root / "outbox.py").exists()
+    assert (platforms_root / "voice_flow.py").exists()
+
+    for adapter in {
+        platforms_root / "telegram.py",
+        platforms_root / "discord.py",
+    }:
+        text = adapter.read_text(encoding="utf-8")
+        assert "PlatformOutbox" in text
+        assert "VoiceNoteFlow" in text
+        assert "from ..voice" not in text
+        assert "NamedTemporaryFile" not in text
+
+
 def _imports_matching(
     roots: list[Path], *, forbidden_prefixes: tuple[str, ...]
 ) -> list[str]:

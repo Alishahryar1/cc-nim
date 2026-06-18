@@ -488,6 +488,17 @@ Messaging is optional. [api/runtime.py](api/runtime.py) calls
 If `MESSAGING_PLATFORM` is `none`, or if the selected platform token is missing,
 the messaging bridge is skipped.
 
+Platform adapters in [messaging/platforms/telegram.py](messaging/platforms/telegram.py)
+and [messaging/platforms/discord.py](messaging/platforms/discord.py) are thin SDK
+shells: they own client lifecycle, event extraction, SDK retries, attachment
+download, and raw send/edit/delete calls. Shared delivery policy lives in
+[messaging/platforms/outbox.py](messaging/platforms/outbox.py), which owns queued
+send/edit/delete, dedup keys, limiter delegation, and fire-and-forget behavior.
+Shared voice-note orchestration lives in
+[messaging/platforms/voice_flow.py](messaging/platforms/voice_flow.py), which owns
+pending voice registration, temp-file cleanup, transcription, cancellation, error
+replies, and the handoff to `IncomingMessage`.
+
 [messaging/workflow.py](messaging/workflow.py) contains `MessagingWorkflow`, the
 platform-agnostic coordinator. It owns dependencies, callback wiring, stop/clear
 side effects, render settings, and shutdown-visible state.

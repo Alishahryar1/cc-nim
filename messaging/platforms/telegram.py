@@ -7,8 +7,6 @@ Implements MessagingPlatform for Telegram using python-telegram-bot.
 import asyncio
 import contextlib
 import os
-import tempfile
-from pathlib import Path
 
 # Opt-in to future behavior for python-telegram-bot (retry_after as timedelta)
 # This must be set BEFORE importing telegram.error
@@ -27,8 +25,9 @@ if TYPE_CHECKING:
 
 from ..models import IncomingMessage
 from ..rendering.telegram_markdown import escape_md_v2, format_status
-from ..voice import PendingVoiceRegistry, VoiceTranscriptionService
 from .base import MessagingPlatform
+from .outbox import PlatformOutbox
+from .voice_flow import VoiceNoteFlow, VoiceNoteRequest, audio_suffix_from_metadata
 
 # Optional import - python-telegram-bot may not be installed
 try:
@@ -92,15 +91,55 @@ class TelegramPlatform(MessagingPlatform):
         )
         self._connected = False
         self._limiter: Any | None = None  # Will be MessagingRateLimiter
-        # Pending voice transcriptions: (chat_id, msg_id) -> (voice_msg_id, status_msg_id)
-        self._pending_voice = PendingVoiceRegistry()
-        self._voice_transcription = VoiceTranscriptionService(
+
+        async def send_operation(
+            chat_id: str,
+            text: str,
+            reply_to: str | None,
+            parse_mode: str | None,
+            message_thread_id: str | None,
+        ) -> str:
+            return await self.send_message(
+                chat_id,
+                text,
+                reply_to,
+                parse_mode,
+                message_thread_id,
+            )
+
+        async def edit_operation(
+            chat_id: str,
+            message_id: str,
+            text: str,
+            parse_mode: str | None,
+        ) -> None:
+            await self.edit_message(chat_id, message_id, text, parse_mode)
+
+        async def delete_operation(chat_id: str, message_id: str) -> None:
+            await self.delete_message(chat_id, message_id)
+
+        async def delete_many_operation(
+            chat_id: str,
+            message_ids: list[str],
+        ) -> None:
+            await self.delete_messages(chat_id, message_ids)
+
+        self._outbox = PlatformOutbox(
+            get_limiter=lambda: self._limiter,
+            send=send_operation,
+            edit=edit_operation,
+            delete=delete_operation,
+            delete_many=delete_many_operation,
+        )
+        self._voice_flow = VoiceNoteFlow(
+            voice_note_enabled=voice_note_enabled,
+            whisper_model=whisper_model,
+            whisper_device=whisper_device,
             hf_token=hf_token,
             nvidia_nim_api_key=nvidia_nim_api_key,
+            log_raw_messaging_content=log_raw_messaging_content,
+            log_api_error_tracebacks=log_api_error_tracebacks,
         )
-        self._voice_note_enabled = voice_note_enabled
-        self._whisper_model = whisper_model
-        self._whisper_device = whisper_device
         self._messaging_rate_limit = messaging_rate_limit
         self._messaging_rate_window = messaging_rate_window
         self._log_raw_messaging_content = log_raw_messaging_content
@@ -110,17 +149,21 @@ class TelegramPlatform(MessagingPlatform):
         self, chat_id: str, voice_msg_id: str, status_msg_id: str
     ) -> None:
         """Register a voice note as pending transcription (for /clear reply during transcription)."""
-        await self._pending_voice.register(chat_id, voice_msg_id, status_msg_id)
+        await self._voice_flow.register_pending_voice(
+            chat_id,
+            voice_msg_id,
+            status_msg_id,
+        )
 
     async def cancel_pending_voice(
         self, chat_id: str, reply_id: str
     ) -> tuple[str, str] | None:
         """Cancel a pending voice transcription. Returns (voice_msg_id, status_msg_id) if found."""
-        return await self._pending_voice.cancel(chat_id, reply_id)
+        return await self._voice_flow.cancel_pending_voice(chat_id, reply_id)
 
     async def _is_voice_still_pending(self, chat_id: str, voice_msg_id: str) -> bool:
         """Check if a voice note is still pending (not cancelled)."""
-        return await self._pending_voice.is_pending(chat_id, voice_msg_id)
+        return await self._voice_flow.is_voice_still_pending(chat_id, voice_msg_id)
 
     async def start(self) -> None:
         """Initialize and connect to Telegram."""
@@ -277,7 +320,7 @@ class TelegramPlatform(MessagingPlatform):
                     return await func(*args, **kwargs)
                 raise
 
-    async def send_message(
+    async def _send_message_raw(
         self,
         chat_id: str,
         text: str,
@@ -305,7 +348,24 @@ class TelegramPlatform(MessagingPlatform):
 
         return await self._with_retry(_do_send, parse_mode=parse_mode)
 
-    async def edit_message(
+    async def send_message(
+        self,
+        chat_id: str,
+        text: str,
+        reply_to: str | None = None,
+        parse_mode: str | None = "MarkdownV2",
+        message_thread_id: str | None = None,
+    ) -> str:
+        """Send a message to a chat."""
+        return await self._send_message_raw(
+            chat_id,
+            text,
+            reply_to,
+            parse_mode,
+            message_thread_id,
+        )
+
+    async def _edit_message_raw(
         self,
         chat_id: str,
         message_id: str,
@@ -328,7 +388,17 @@ class TelegramPlatform(MessagingPlatform):
 
         await self._with_retry(_do_edit, parse_mode=parse_mode)
 
-    async def delete_message(
+    async def edit_message(
+        self,
+        chat_id: str,
+        message_id: str,
+        text: str,
+        parse_mode: str | None = "MarkdownV2",
+    ) -> None:
+        """Edit an existing message."""
+        await self._edit_message_raw(chat_id, message_id, text, parse_mode)
+
+    async def _delete_message_raw(
         self,
         chat_id: str,
         message_id: str,
@@ -344,7 +414,15 @@ class TelegramPlatform(MessagingPlatform):
 
         await self._with_retry(_do_delete)
 
-    async def delete_messages(self, chat_id: str, message_ids: list[str]) -> None:
+    async def delete_message(
+        self,
+        chat_id: str,
+        message_id: str,
+    ) -> None:
+        """Delete a message from a chat."""
+        await self._delete_message_raw(chat_id, message_id)
+
+    async def _delete_messages_raw(self, chat_id: str, message_ids: list[str]) -> None:
         """Delete multiple messages (best-effort)."""
         if not message_ids:
             return
@@ -372,7 +450,11 @@ class TelegramPlatform(MessagingPlatform):
             return
 
         for mid in message_ids:
-            await self.delete_message(chat_id, mid)
+            await self._delete_message_raw(chat_id, mid)
+
+    async def delete_messages(self, chat_id: str, message_ids: list[str]) -> None:
+        """Delete multiple messages (best-effort)."""
+        await self._delete_messages_raw(chat_id, message_ids)
 
     async def queue_send_message(
         self,
@@ -384,22 +466,14 @@ class TelegramPlatform(MessagingPlatform):
         message_thread_id: str | None = None,
     ) -> str | None:
         """Enqueue a message to be sent (using limiter)."""
-        # Note: Bot API handles limits better, but we still use our limiter for nice queuing
-        if not self._limiter:
-            return await self.send_message(
-                chat_id, text, reply_to, parse_mode, message_thread_id
-            )
-
-        async def _send():
-            return await self.send_message(
-                chat_id, text, reply_to, parse_mode, message_thread_id
-            )
-
-        if fire_and_forget:
-            self._limiter.fire_and_forget(_send)
-            return None
-        else:
-            return await self._limiter.enqueue(_send)
+        return await self._outbox.queue_send_message(
+            chat_id,
+            text,
+            reply_to,
+            parse_mode,
+            fire_and_forget,
+            message_thread_id,
+        )
 
     async def queue_edit_message(
         self,
@@ -410,17 +484,13 @@ class TelegramPlatform(MessagingPlatform):
         fire_and_forget: bool = True,
     ) -> None:
         """Enqueue a message edit."""
-        if not self._limiter:
-            return await self.edit_message(chat_id, message_id, text, parse_mode)
-
-        async def _edit():
-            return await self.edit_message(chat_id, message_id, text, parse_mode)
-
-        dedup_key = f"edit:{chat_id}:{message_id}"
-        if fire_and_forget:
-            self._limiter.fire_and_forget(_edit, dedup_key=dedup_key)
-        else:
-            await self._limiter.enqueue(_edit, dedup_key=dedup_key)
+        await self._outbox.queue_edit_message(
+            chat_id,
+            message_id,
+            text,
+            parse_mode,
+            fire_and_forget,
+        )
 
     async def queue_delete_message(
         self,
@@ -429,17 +499,7 @@ class TelegramPlatform(MessagingPlatform):
         fire_and_forget: bool = True,
     ) -> None:
         """Enqueue a message delete."""
-        if not self._limiter:
-            return await self.delete_message(chat_id, message_id)
-
-        async def _delete():
-            return await self.delete_message(chat_id, message_id)
-
-        dedup_key = f"del:{chat_id}:{message_id}"
-        if fire_and_forget:
-            self._limiter.fire_and_forget(_delete, dedup_key=dedup_key)
-        else:
-            await self._limiter.enqueue(_delete, dedup_key=dedup_key)
+        await self._outbox.queue_delete_message(chat_id, message_id, fire_and_forget)
 
     async def queue_delete_messages(
         self,
@@ -448,28 +508,15 @@ class TelegramPlatform(MessagingPlatform):
         fire_and_forget: bool = True,
     ) -> None:
         """Enqueue a bulk delete (if supported) or a sequence of deletes."""
-        if not message_ids:
-            return
-
-        if not self._limiter:
-            return await self.delete_messages(chat_id, message_ids)
-
-        async def _bulk():
-            return await self.delete_messages(chat_id, message_ids)
-
-        # Dedup by the chunk content; okay to be coarse here.
-        dedup_key = f"del_bulk:{chat_id}:{hash(tuple(message_ids))}"
-        if fire_and_forget:
-            self._limiter.fire_and_forget(_bulk, dedup_key=dedup_key)
-        else:
-            await self._limiter.enqueue(_bulk, dedup_key=dedup_key)
+        await self._outbox.queue_delete_messages(
+            chat_id,
+            message_ids,
+            fire_and_forget,
+        )
 
     def fire_and_forget(self, task: Awaitable[Any]) -> None:
         """Execute a coroutine without awaiting it."""
-        if asyncio.iscoroutine(task):
-            _ = asyncio.create_task(task)
-        else:
-            _ = asyncio.ensure_future(task)
+        self._outbox.fire_and_forget(task)
 
     def on_message(
         self,
@@ -578,123 +625,64 @@ class TelegramPlatform(MessagingPlatform):
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
         """Handle incoming voice messages."""
+        message = update.message
+        effective_user = update.effective_user
+        effective_chat = update.effective_chat
         if (
-            not update.message
-            or not update.message.voice
-            or not update.effective_user
-            or not update.effective_chat
+            message is None
+            or message.voice is None
+            or effective_user is None
+            or effective_chat is None
         ):
             return
+        voice = message.voice
 
-        if not self._voice_note_enabled:
-            await update.message.reply_text("Voice notes are disabled.")
+        async def _reply_text(text: str) -> None:
+            await message.reply_text(text)
+
+        if await self._voice_flow.reply_if_disabled(_reply_text):
             return
 
-        user_id = str(update.effective_user.id)
-        chat_id = str(update.effective_chat.id)
+        user_id = str(effective_user.id)
+        chat_id = str(effective_chat.id)
 
         if self.allowed_user_id and user_id != str(self.allowed_user_id).strip():
             logger.warning(f"Unauthorized voice access attempt from {user_id}")
             return
 
-        if not self._message_handler:
-            return
-
         thread_id = (
-            str(update.message.message_thread_id)
-            if getattr(update.message, "message_thread_id", None) is not None
+            str(message.message_thread_id)
+            if getattr(message, "message_thread_id", None) is not None
             else None
         )
-        status_msg_id = await self.queue_send_message(
-            chat_id,
-            format_status("⏳", "Transcribing voice note..."),
-            reply_to=str(update.message.message_id),
-            parse_mode="MarkdownV2",
-            fire_and_forget=False,
-            message_thread_id=thread_id,
-        )
-
-        message_id = str(update.message.message_id)
-        await self._register_pending_voice(chat_id, message_id, str(status_msg_id))
+        message_id = str(message.message_id)
         reply_to = (
-            str(update.message.reply_to_message.message_id)
-            if update.message.reply_to_message
+            str(message.reply_to_message.message_id)
+            if message.reply_to_message
             else None
         )
 
-        voice = update.message.voice
-        suffix = ".ogg"
-        if voice.mime_type and "mpeg" in voice.mime_type:
-            suffix = ".mp3"
-        elif voice.mime_type and "mp4" in voice.mime_type:
-            suffix = ".mp4"
-
-        with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp:
-            tmp_path = Path(tmp.name)
-
-        try:
+        async def _download_to(tmp_path) -> None:
             tg_file = await context.bot.get_file(voice.file_id)
             await tg_file.download_to_drive(custom_path=str(tmp_path))
 
-            transcribed = await self._voice_transcription.transcribe(
-                tmp_path,
-                voice.mime_type or "audio/ogg",
-                whisper_model=self._whisper_model,
-                whisper_device=self._whisper_device,
-            )
-
-            if not await self._is_voice_still_pending(chat_id, message_id):
-                await self.queue_delete_message(chat_id, str(status_msg_id))
-                return
-
-            await self._pending_voice.complete(chat_id, message_id, str(status_msg_id))
-
-            incoming = IncomingMessage(
-                text=transcribed,
+        await self._voice_flow.handle(
+            VoiceNoteRequest(
+                platform="telegram",
                 chat_id=chat_id,
                 user_id=user_id,
                 message_id=message_id,
-                platform="telegram",
-                reply_to_message_id=reply_to,
-                message_thread_id=thread_id,
                 raw_event=update,
-                status_message_id=status_msg_id,
-            )
-
-            if self._log_raw_messaging_content:
-                logger.info(
-                    "TELEGRAM_VOICE: chat_id={} message_id={} transcribed={!r}",
-                    chat_id,
-                    message_id,
-                    (
-                        transcribed[:80] + "..."
-                        if len(transcribed) > 80
-                        else transcribed
-                    ),
-                )
-            else:
-                logger.info(
-                    "TELEGRAM_VOICE: chat_id={} message_id={} transcribed_len={}",
-                    chat_id,
-                    message_id,
-                    len(transcribed),
-                )
-
-            await self._message_handler(incoming)
-        except ValueError as e:
-            await update.message.reply_text(format_user_error_preview(e))
-        except ImportError as e:
-            await update.message.reply_text(format_user_error_preview(e))
-        except Exception as e:
-            if self._log_api_error_tracebacks:
-                logger.error("Voice transcription failed: {}", e)
-            else:
-                logger.error(
-                    "Voice transcription failed: exc_type={}", type(e).__name__
-                )
-            await update.message.reply_text(
-                "Could not transcribe voice note. Please try again or send text."
-            )
-        finally:
-            with contextlib.suppress(OSError):
-                tmp_path.unlink(missing_ok=True)
+                content_type=voice.mime_type or "audio/ogg",
+                temp_suffix=audio_suffix_from_metadata(content_type=voice.mime_type),
+                status_text=format_status("⏳", "Transcribing voice note..."),
+                status_parse_mode="MarkdownV2",
+                message_thread_id=thread_id,
+                reply_to_message_id=reply_to,
+                download_to=_download_to,
+                reply_text=_reply_text,
+            ),
+            message_handler=self._message_handler,
+            queue_send_message=self.queue_send_message,
+            queue_delete_message=self.queue_delete_message,
+        )
