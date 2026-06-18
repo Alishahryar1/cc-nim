@@ -165,7 +165,9 @@ async def test_native_stream_5xx_retry_exhausted(provider_config, status_code, s
         async def _slot():
             yield
 
-        with patch("providers.anthropic_messages.GlobalRateLimiter") as mock_gl:
+        with patch(
+            "providers.transports.anthropic_messages.transport.GlobalRateLimiter"
+        ) as mock_gl:
             instance = mock_gl.get_scoped_instance.return_value
             real = GlobalRateLimiter(
                 rate_limit=100,
@@ -216,7 +218,9 @@ async def test_non_retryable_4xx_http_error_not_retried(provider_config):
         async def _slot():
             yield
 
-        with patch("providers.anthropic_messages.GlobalRateLimiter") as mock_gl:
+        with patch(
+            "providers.transports.anthropic_messages.transport.GlobalRateLimiter"
+        ) as mock_gl:
             instance = mock_gl.get_scoped_instance.return_value
 
             async def _passthrough(fn, *args, **kwargs):

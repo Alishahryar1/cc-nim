@@ -191,7 +191,7 @@ def test_create_provider_instantiates_each_builtin():
     }
 
     with (
-        patch("providers.openai_compat.AsyncOpenAI"),
+        patch("providers.transports.openai_chat.transport.AsyncOpenAI"),
         patch("httpx.AsyncClient"),
     ):
         for provider_id, provider_cls in cases.items():
@@ -202,7 +202,7 @@ def test_provider_registry_caches_by_provider_id():
     registry = ProviderRegistry()
     settings = _make_settings()
 
-    with patch("providers.openai_compat.AsyncOpenAI"):
+    with patch("providers.transports.openai_chat.transport.AsyncOpenAI"):
         first = registry.get("nvidia_nim", settings)
         second = registry.get("nvidia_nim", settings)
 

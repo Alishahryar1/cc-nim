@@ -11,6 +11,8 @@ import uuid
 
 from loguru import logger
 
+from .adapters.base import ClientCliAdapter
+from .adapters.registry import get_client_cli_adapter
 from .session import CLISession
 
 
@@ -31,6 +33,7 @@ class CLISessionManager:
         claude_bin: str = "claude",
         auth_token: str = "",
         *,
+        client_cli_adapter: ClientCliAdapter | None = None,
         log_raw_cli_diagnostics: bool = False,
         log_messaging_error_details: bool = False,
     ):
@@ -49,6 +52,7 @@ class CLISessionManager:
         self.plans_directory = plans_directory
         self.claude_bin = claude_bin
         self.auth_token = auth_token
+        self._client_cli_adapter = client_cli_adapter or get_client_cli_adapter()
         self._log_raw_cli_diagnostics = log_raw_cli_diagnostics
         self._log_messaging_error_details = log_messaging_error_details
 
@@ -85,6 +89,7 @@ class CLISessionManager:
                 plans_directory=self.plans_directory,
                 claude_bin=self.claude_bin,
                 auth_token=self.auth_token,
+                client_cli_adapter=self._client_cli_adapter,
                 log_raw_cli_diagnostics=self._log_raw_cli_diagnostics,
             )
             self._pending_sessions[temp_id] = new_session

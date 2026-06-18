@@ -1,11 +1,14 @@
 %%{init: {"theme": "base", "themeVariables": {"fontFamily": "Inter, ui-sans-serif, system-ui, Segoe UI, Arial", "background": "transparent", "primaryTextColor": "#172033", "lineColor": "#718096"}}}%%
 flowchart LR
-    client(["Claude Code<br/>CLI / IDE / Bots"])
-    api["Anthropic-compatible API<br/>/v1/messages, /v1/models"]
+    claudeClient(["Claude Code<br/>CLI / VS Code / JetBrains / Bots"])
+    codexClient(["Codex CLI<br/>VS Code extension"])
+    messagesApi["Anthropic API<br/>/v1/messages, /v1/models"]
+    responsesApi["OpenAI Responses API<br/>/v1/responses"]
 
     subgraph proxy["Free Claude Code Proxy :8082"]
         admin["Local Admin UI<br/>keys, models, status"]
         config[("Managed Config<br/>~/.fcc/.env")]
+        convert["Responses Converter<br/>OpenAI to Anthropic"]
         router{"Model Router<br/>Opus / Sonnet / Haiku"}
         optimize["Request Optimizations<br/>cheap local probes"]
         normalize["Protocol Normalizer<br/>streaming, tools, thinking"]
@@ -26,8 +29,11 @@ flowchart LR
         ollama(["Ollama"])
     end
 
-    client -->|"Anthropic Messages"| api
-    api --> router
+    claudeClient -->|"Anthropic Messages"| messagesApi
+    codexClient -->|"OpenAI Responses"| responsesApi
+    messagesApi --> router
+    responsesApi --> convert
+    convert --> router
     admin --> config
     config --> router
     router --> optimize
@@ -43,9 +49,9 @@ flowchart LR
     classDef transform fill:#dcfce7,stroke:#16a34a,stroke-width:2px,color:#14532d;
     classDef provider fill:#fff7ed,stroke:#ea580c,stroke-width:2px,color:#7c2d12;
 
-    class client client;
-    class api api;
+    class claudeClient,codexClient client;
+    class messagesApi,responsesApi api;
     class admin,router proxy;
     class config config;
-    class optimize,normalize,adapters transform;
+    class convert,optimize,normalize,adapters transform;
     class nim,kimi,wafer,openrouter,deepseek,lmstudio,llamacpp,ollama provider;

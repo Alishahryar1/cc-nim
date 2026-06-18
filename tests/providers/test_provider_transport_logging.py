@@ -8,9 +8,9 @@ import pytest
 
 from config.constants import NATIVE_MESSAGES_ERROR_BODY_LOG_CAP_BYTES
 from config.nim import NimSettings
-from providers.anthropic_messages import AnthropicMessagesTransport
 from providers.base import ProviderConfig
 from providers.nvidia_nim import NvidiaNimProvider
+from providers.transports.anthropic_messages import stream as native_stream
 from tests.provider_request_mocks import make_openai_compat_stream_request
 from tests.providers.test_anthropic_messages import (
     FakeResponse,
@@ -39,7 +39,9 @@ def mock_rate_limiter():
     async def _slot():
         yield
 
-    with patch("providers.anthropic_messages.GlobalRateLimiter") as mock:
+    with patch(
+        "providers.transports.anthropic_messages.transport.GlobalRateLimiter"
+    ) as mock:
         instance = mock.get_scoped_instance.return_value
 
         async def _passthrough(fn, *args, **kwargs):
@@ -170,7 +172,7 @@ async def test_native_stream_failure_logs_exclude_exception_str_by_default(
         ]
     )
 
-    async def boom(_self, _response):
+    async def boom(_response):
         raise RuntimeError("SECRET_DETAIL")
         if False:
             yield ""
@@ -183,7 +185,7 @@ async def test_native_stream_failure_logs_exclude_exception_str_by_default(
             new_callable=AsyncMock,
             return_value=response,
         ),
-        patch.object(AnthropicMessagesTransport, "_iter_sse_events", boom),
+        patch.object(native_stream, "iter_sse_events", boom),
         caplog.at_level(logging.ERROR),
     ):
         _ = [e async for e in provider.stream_response(req)]

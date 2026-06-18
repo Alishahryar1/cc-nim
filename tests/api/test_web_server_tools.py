@@ -21,6 +21,7 @@ from api.web_tools.outbound import (
 )
 from api.web_tools.request import is_web_server_tool_request
 from api.web_tools.streaming import stream_web_server_tool_response
+from config.provider_catalog import PROVIDER_CATALOG
 from config.settings import Settings
 from core.anthropic.stream_contracts import (
     assert_anthropic_stream_contract,
@@ -33,6 +34,16 @@ from providers.exceptions import InvalidRequestError
 _STRICT_EGRESS = WebFetchEgressPolicy(
     allow_private_network_targets=False,
     allowed_schemes=frozenset({"http", "https"}),
+)
+_OPENAI_CHAT_PROVIDER_IDS = tuple(
+    provider_id
+    for provider_id, descriptor in PROVIDER_CATALOG.items()
+    if descriptor.transport_type == "openai_chat"
+)
+_ANTHROPIC_MESSAGES_PROVIDER_IDS = tuple(
+    provider_id
+    for provider_id, descriptor in PROVIDER_CATALOG.items()
+    if descriptor.transport_type == "anthropic_messages"
 )
 
 
@@ -94,14 +105,17 @@ def test_web_server_tool_not_detected_when_forced_name_missing_from_tools():
     assert not is_web_server_tool_request(request)
 
 
-def test_service_rejects_forced_server_tool_on_openai_when_disabled():
+@pytest.mark.parametrize("provider_id", _OPENAI_CHAT_PROVIDER_IDS)
+def test_service_rejects_forced_server_tool_on_openai_when_disabled(
+    provider_id: str,
+):
     """OpenAI Chat upstreams cannot run forced server tools without the local handler."""
     settings = Settings()
     assert settings.enable_web_server_tools is False
     service = ClaudeProxyService(
         settings,
         provider_getter=lambda _: MagicMock(),
-        model_router=FixedProviderModelRouter(settings, "nvidia_nim"),
+        model_router=FixedProviderModelRouter(settings, provider_id),
     )
     request = MessagesRequest(
         model="claude-haiku-4-5-20251001",
@@ -579,12 +593,15 @@ async def test_drain_response_body_capped_stops_after_first_chunk_when_oversized
     assert chunk_calls["n"] == 1
 
 
-def test_service_rejects_listed_server_tools_on_openai_chat() -> None:
+@pytest.mark.parametrize("provider_id", _OPENAI_CHAT_PROVIDER_IDS)
+def test_service_rejects_listed_server_tools_on_openai_chat(
+    provider_id: str,
+) -> None:
     settings = Settings()
     service = ClaudeProxyService(
         settings,
         provider_getter=lambda _: MagicMock(),
-        model_router=FixedProviderModelRouter(settings, "nvidia_nim"),
+        model_router=FixedProviderModelRouter(settings, provider_id),
     )
     request = MessagesRequest(
         model="m",
@@ -596,8 +613,11 @@ def test_service_rejects_listed_server_tools_on_openai_chat() -> None:
         service.create_message(request)
 
 
-def test_listed_server_tools_routed_on_open_router() -> None:
-    """Native Anthropic transport may receive listed server tool definitions."""
+@pytest.mark.parametrize("provider_id", _ANTHROPIC_MESSAGES_PROVIDER_IDS)
+def test_listed_server_tools_routed_on_anthropic_messages_providers(
+    provider_id: str,
+) -> None:
+    """Native Anthropic transports may receive listed server tool definitions."""
     settings = Settings()
 
     async def fake_stream(*_a, **_k):
@@ -609,7 +629,7 @@ def test_listed_server_tools_routed_on_open_router() -> None:
     service = ClaudeProxyService(
         settings,
         provider_getter=lambda _: mock_provider,
-        model_router=FixedProviderModelRouter(settings, "open_router"),
+        model_router=FixedProviderModelRouter(settings, provider_id),
     )
     request = MessagesRequest(
         model="m",
@@ -621,8 +641,11 @@ def test_listed_server_tools_routed_on_open_router() -> None:
     mock_provider.preflight_stream.assert_called()
 
 
-def test_listed_server_tools_routed_on_zai() -> None:
-    """Z.ai uses native Anthropic Messages; listed server tools are not OpenAI-chat blocked."""
+@pytest.mark.parametrize("provider_id", _ANTHROPIC_MESSAGES_PROVIDER_IDS)
+def test_forced_server_tools_routed_on_anthropic_messages_providers_when_local_disabled(
+    provider_id: str,
+) -> None:
+    """Native Anthropic transports may receive forced server tools when local tools are off."""
     settings = Settings()
 
     async def fake_stream(*_a, **_k):
@@ -634,13 +657,14 @@ def test_listed_server_tools_routed_on_zai() -> None:
     service = ClaudeProxyService(
         settings,
         provider_getter=lambda _: mock_provider,
-        model_router=FixedProviderModelRouter(settings, "zai"),
+        model_router=FixedProviderModelRouter(settings, provider_id),
     )
     request = MessagesRequest(
         model="m",
         max_tokens=20,
         messages=[Message(role="user", content="q")],
         tools=[Tool(name="web_search", type="web_search_20250305")],
+        tool_choice={"type": "tool", "name": "web_search"},
     )
     service.create_message(request)
     mock_provider.preflight_stream.assert_called()

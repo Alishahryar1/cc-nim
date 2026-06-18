@@ -29,7 +29,9 @@ def mock_rate_limiter():
     async def _slot():
         yield
 
-    with patch("providers.anthropic_messages.GlobalRateLimiter") as mock:
+    with patch(
+        "providers.transports.anthropic_messages.transport.GlobalRateLimiter"
+    ) as mock:
         instance = mock.get_scoped_instance.return_value
 
         async def _passthrough(fn, *args, **kwargs):

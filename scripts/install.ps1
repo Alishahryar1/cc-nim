@@ -21,7 +21,7 @@ function Show-Usage {
     @"
 Usage: install.ps1 [options]
 
-Installs Claude Code if missing, installs or updates uv, Python 3.14.0, and Free Claude Code.
+Installs Claude Code and Codex if missing, installs or updates uv, Python 3.14.0, and Free Claude Code.
 
 Options:
   -VoiceNim              Install NVIDIA NIM voice transcription support.
@@ -292,6 +292,16 @@ function Install-ClaudeIfMissing {
     Invoke-InstallCommand -FilePath "npm" -Arguments @("install", "-g", "@anthropic-ai/claude-code")
 }
 
+function Install-CodexIfMissing {
+    if (Get-Command codex -ErrorAction SilentlyContinue) {
+        Write-Host "Codex already found on PATH; skipping install."
+        return
+    }
+
+    Assert-CommandAvailable "npm"
+    Invoke-InstallCommand -FilePath "npm" -Arguments @("install", "-g", "@openai/codex")
+}
+
 function Install-OrUpdateUv {
     Add-UvToPath
 
@@ -368,6 +378,9 @@ if ((-not [string]::IsNullOrWhiteSpace($TorchBackend)) -and (-not ($VoiceLocal -
 Write-Step "Installing Claude Code if missing"
 Install-ClaudeIfMissing
 
+Write-Step "Installing Codex if missing"
+Install-CodexIfMissing
+
 Write-Step "Installing uv if missing, updating if present"
 Install-OrUpdateUv
 
@@ -379,3 +392,5 @@ Install-FreeClaudeCode
 
 Write-Host ""
 Write-Host "Free Claude Code is installed. Start the proxy with: fcc-server"
+Write-Host "Run Claude Code with: fcc-claude"
+Write-Host "Run Codex with: fcc-codex"

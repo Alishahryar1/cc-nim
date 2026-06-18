@@ -30,7 +30,7 @@ def test_install_sh_installs_claude_only_when_missing() -> None:
     body = _braced_body(text, "install_claude_if_missing()")
     main = text[text.index('parse_args "$@"') :]
 
-    assert "Installs Claude Code if missing" in text
+    assert "Installs Claude Code and Codex if missing" in text
     assert "if command -v claude >/dev/null 2>&1; then" in body
     assert "Claude Code already found on PATH; skipping install." in body
     assert "require_command npm" in body
@@ -39,6 +39,23 @@ def test_install_sh_installs_claude_only_when_missing() -> None:
     assert body.index("return 0") < body.index("run npm install")
     assert 'step "Installing Claude Code if missing"\ninstall_claude_if_missing' in main
     assert "npm install -g @anthropic-ai/claude-code" not in main
+
+
+def test_install_sh_installs_codex_only_when_missing() -> None:
+    text = _script_text("install.sh")
+    body = _braced_body(text, "install_codex_if_missing()")
+    main = text[text.index('parse_args "$@"') :]
+
+    assert "if command -v codex >/dev/null 2>&1; then" in body
+    assert "Codex already found on PATH; skipping install." in body
+    assert "require_command npm" in body
+    assert "run npm install -g @openai/codex" in body
+    assert body.index("command -v codex") < body.index("run npm install")
+    assert body.index("return 0") < body.index("run npm install")
+    assert 'step "Installing Codex if missing"\ninstall_codex_if_missing' in main
+    assert "npm install -g @openai/codex" not in main
+    assert "fcc-claude" in text
+    assert "fcc-codex" in text
 
 
 def test_install_sh_installs_missing_uv_without_self_update() -> None:
@@ -93,7 +110,7 @@ def test_install_ps1_installs_claude_only_when_missing() -> None:
     text = _script_text("install.ps1")
     body = _braced_body(text, "function Install-ClaudeIfMissing")
 
-    assert "Installs Claude Code if missing" in text
+    assert "Installs Claude Code and Codex if missing" in text
     assert "if (Get-Command claude -ErrorAction SilentlyContinue)" in body
     assert "Claude Code already found on PATH; skipping install." in body
     assert 'Assert-CommandAvailable "npm"' in body
@@ -107,6 +124,24 @@ def test_install_ps1_installs_claude_only_when_missing() -> None:
         'Write-Step "Installing Claude Code if missing"\nInstall-ClaudeIfMissing'
         in text
     )
+
+
+def test_install_ps1_installs_codex_only_when_missing() -> None:
+    text = _script_text("install.ps1")
+    body = _braced_body(text, "function Install-CodexIfMissing")
+
+    assert "if (Get-Command codex -ErrorAction SilentlyContinue)" in body
+    assert "Codex already found on PATH; skipping install." in body
+    assert 'Assert-CommandAvailable "npm"' in body
+    assert (
+        'Invoke-InstallCommand -FilePath "npm" '
+        '-Arguments @("install", "-g", "@openai/codex")'
+    ) in body
+    assert body.index("Get-Command codex") < body.index("Invoke-InstallCommand")
+    assert body.index("return") < body.index("Invoke-InstallCommand")
+    assert 'Write-Step "Installing Codex if missing"\nInstall-CodexIfMissing' in text
+    assert "fcc-claude" in text
+    assert "fcc-codex" in text
 
 
 def test_install_ps1_installs_missing_uv_without_self_update() -> None:

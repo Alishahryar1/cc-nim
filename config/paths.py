@@ -9,6 +9,7 @@ LEGACY_XDG_CONFIG_DIRNAME = ".config"
 CLAUDE_WORKSPACE_DIRNAME = "agent_workspace"
 FCC_LOGS_DIRNAME = "logs"
 SERVER_LOG_FILENAME = "server.log"
+CODEX_MODEL_CATALOG_FILENAME = "codex-model-catalog.json"
 
 
 def config_dir_path() -> Path:
@@ -43,3 +44,9 @@ def server_log_path() -> Path:
     """Return the canonical server log path."""
 
     return config_dir_path() / FCC_LOGS_DIRNAME / SERVER_LOG_FILENAME
+
+
+def codex_model_catalog_path() -> Path:
+    """Return the generated Codex model catalog path."""
+
+    return config_dir_path() / CODEX_MODEL_CATALOG_FILENAME

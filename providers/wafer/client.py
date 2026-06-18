@@ -2,9 +2,9 @@
 
 from typing import Any
 
-from providers.anthropic_messages import AnthropicMessagesTransport
 from providers.base import ProviderConfig
 from providers.defaults import WAFER_DEFAULT_BASE
+from providers.transports.anthropic_messages import AnthropicMessagesTransport
 
 _ANTHROPIC_VERSION = "2023-06-01"
 

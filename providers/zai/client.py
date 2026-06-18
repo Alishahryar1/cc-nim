@@ -4,9 +4,9 @@ from __future__ import annotations
 
 from typing import Any
 
-from providers.anthropic_messages import AnthropicMessagesTransport
 from providers.base import ProviderConfig
 from providers.defaults import ZAI_DEFAULT_BASE
+from providers.transports.anthropic_messages import AnthropicMessagesTransport
 
 from .request import build_request_body
 

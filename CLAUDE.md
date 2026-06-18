@@ -10,10 +10,13 @@
 - Current uv ruff formatter is set to py314 which has supports multiple exception types without paranthesis (except TypeError, ValueError:)
 - Read `.env.example` for environment variables.
 - All CI checks must pass; failing checks block merge.
-- Add tests for new changes (including edge cases), then run `uv run pytest`.
-- Run checks in this order: `uv run ruff format`, `uv run ruff check`, `uv run ty check`, `uv run pytest`.
+- Add tests for new changes (including edge cases).
+- Before pushing, prefer `./scripts/ci.sh` (macOS/Linux) or `.\scripts\ci.ps1` (Windows) to run all GitHub CI checks locally; requires `uv` on PATH.
+- Use `--only` / `--skip` (PowerShell: `-Only` / `-Skip`) to run a subset when iterating; use `--dry-run` to print commands without running them.
+- When formatting is needed, run `uv run ruff format` first; the CI scripts run `ruff format --check` and do not rewrite files.
+- Fall back to individual commands only when debugging one failure: `uv run ruff format --check`, `uv run ruff check`, `uv run ty check`, `uv run pytest -v --tb=short`.
 - Do not add `# type: ignore` or `# ty: ignore`; fix the underlying type issue.
-- All 5 checks are enforced in `tests.yml` on push/merge (parallel jobs: suppression grep, ruff-format, ruff-check, ty, pytest).
+- All 5 checks are mirrored in `scripts/ci.sh` / `scripts/ci.ps1` and enforced in `tests.yml` on push/merge (parallel jobs: suppression grep, ruff-format, ruff-check, ty, pytest).
 - Branch protection: set **required status checks** to **all** of those statuses (e.g. **Ban type ignore suppressions**, **ruff-format**, **ruff-check**, **ty**, **pytest**—use the exact labels GitHub shows, which may be prefixed with **CI /**). Remove **ci** from required checks if it was previously added for the old gate job.
 
 ## IDENTITY & CONTEXT
@@ -40,7 +43,7 @@
 1. **ANALYZE**: Read relevant files. Do not guess.
 2. **PLAN**: Map out the logic. Identify root cause or required changes. Order changes by dependency.
 3. **EXECUTE**: Fix the cause, not the symptom. Execute incrementally with clear commits.
-4. **VERIFY**: Run ci checks and relevant smoke tests. Confirm the fix via logs or output.
+4. **VERIFY**: Run `./scripts/ci.sh` or `.\scripts\ci.ps1`, plus relevant smoke tests when needed. Confirm the fix via logs or output.
 5. **SPECIFICITY**: Do exactly as much as asked; nothing more, nothing less.
 6. **PROPAGATION**: Changes impact multiple files; propagate updates correctly.
 7. **VERSION**: If the commit touches production files on `main`, bump semver in the same commit (see [Versioning](#versioning-main)).
@@ -56,7 +59,7 @@ These paths count as production (runtime, packaging, or install surface):
 - `api/`, `cli/`, `config/`, `core/`, `messaging/`, `providers/`
 - `.env.example`
 - `pyproject.toml` (dependencies, scripts, packaging)
-- `scripts/install.sh`, `scripts/install.ps1`
+- `scripts/install.sh`, `scripts/install.ps1`, `scripts/uninstall.sh`, `scripts/uninstall.ps1`, `scripts/ci.sh`, `scripts/ci.ps1`
 
 These do **not** require a version bump on their own:
 

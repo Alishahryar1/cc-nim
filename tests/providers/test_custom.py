@@ -51,7 +51,7 @@ def mock_rate_limiter():
     async def _slot():
         yield
 
-    with patch("providers.openai_compat.GlobalRateLimiter") as mock:
+    with patch("providers.transports.openai_chat.transport.GlobalRateLimiter") as mock:
         instance = mock.get_scoped_instance.return_value
 
         async def _passthrough(fn, *args, **kwargs):
@@ -68,7 +68,7 @@ def custom_provider(custom_config: ProviderConfig) -> CustomProvider:
 
 
 def test_init_uses_configured_base_url_and_key(custom_config: ProviderConfig) -> None:
-    with patch("providers.openai_compat.AsyncOpenAI") as mock_openai:
+    with patch("providers.transports.openai_chat.transport.AsyncOpenAI") as mock_openai:
         provider = CustomProvider(custom_config)
         assert provider._api_key == "test_custom_key"
         assert provider._base_url == _CUSTOM_BASE

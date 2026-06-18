@@ -2,10 +2,10 @@
 
 import httpx
 
-from providers.anthropic_messages import AnthropicMessagesTransport
 from providers.base import ProviderConfig
 from providers.defaults import OLLAMA_DEFAULT_BASE
 from providers.model_listing import extract_ollama_model_ids
+from providers.transports.anthropic_messages import AnthropicMessagesTransport
 
 
 class OllamaProvider(AnthropicMessagesTransport):

@@ -62,7 +62,7 @@ def _response(status_code: int, payload: object) -> httpx.Response:
 @pytest.mark.asyncio
 async def test_nim_lists_openai_compatible_model_ids() -> None:
     config = ProviderConfig(api_key="test-key")
-    with patch("providers.openai_compat.AsyncOpenAI"):
+    with patch("providers.transports.openai_chat.transport.AsyncOpenAI"):
         provider = NvidiaNimProvider(config, nim_settings=NimSettings())
 
     with patch.object(

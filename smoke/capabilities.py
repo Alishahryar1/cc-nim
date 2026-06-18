@@ -60,6 +60,24 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
     ),
     CapabilityContract(
         "api_compatibility",
+        "responses_api",
+        "drop_in_codex_replacement",
+        "api.services.ClaudeProxyService.create_response",
+        "OpenAI Responses requests from Codex",
+        "Responses SSE or JSON response",
+        "OpenAI-shaped error or conversion error",
+        (
+            "tests/api/test_openai_responses.py",
+            "tests/core/openai_responses/test_sse.py",
+            "tests/cli/test_adapters.py",
+        ),
+        (
+            "test_probe_and_models_routes",
+            "test_provider_codex_responses_text_e2e",
+        ),
+    ),
+    CapabilityContract(
+        "api_compatibility",
         "client_extensions",
         "vscode_extension",
         "api.services.ClaudeProxyService",
@@ -246,8 +264,8 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         "removed_env_migration",
         "config.settings.Settings",
         "NIM_ENABLE_THINKING or ENABLE_THINKING in env or dotenv",
-        "startup validation error with rename guidance",
-        "application fails fast",
+        "startup succeeds and stale keys do not change thinking defaults",
+        "removed key ignored",
         ("tests/config/test_config.py",),
     ),
     CapabilityContract(
@@ -416,6 +434,20 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
             "test_nvidia_nim_cli_matrix_e2e",
             "test_openrouter_free_cli_matrix_e2e",
         ),
+    ),
+    CapabilityContract(
+        "cli",
+        "codex_cli_drop_in",
+        "drop_in_codex_replacement",
+        "cli.adapters.codex.CodexCliAdapter",
+        "Codex CLI binary and fcc provider env",
+        "Responses config and JSONL event mapping",
+        "stderr/error event and process cleanup",
+        (
+            "tests/cli/test_adapters.py",
+            "tests/cli/test_entrypoints.py",
+        ),
+        (),
     ),
     CapabilityContract(
         "extensibility",
