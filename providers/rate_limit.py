@@ -231,6 +231,7 @@ class GlobalRateLimiter:
         base_delay: float = 2.0,
         max_delay: float = 60.0,
         jitter: float = 1.0,
+        before_retry: Callable[[Exception, int, int], bool] | None = None,
         **kwargs: Any,
     ) -> Any:
         """Execute an async callable with rate limiting and retry on transient limits.
@@ -264,6 +265,11 @@ class GlobalRateLimiter:
                 status = retryable_upstream_status(e)
                 if status is None:
                     raise
+
+                if before_retry is not None and before_retry(
+                    e, attempt + 1, total_attempts
+                ):
+                    continue
 
                 label = (
                     "Rate limited (429)"

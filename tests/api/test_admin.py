@@ -25,6 +25,7 @@ def _set_home(monkeypatch, tmp_path: Path) -> None:
 def _clear_process_config(monkeypatch) -> None:
     for key in (
         "MODEL",
+        "API_KEY_ROTATION_MODE",
         "NVIDIA_NIM_API_KEY",
         "OPENROUTER_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
@@ -101,6 +102,7 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     body = response.json()
     keys = {field["key"] for field in body["fields"]}
     assert "ANTHROPIC_AUTH_TOKEN" in keys
+    assert "API_KEY_ROTATION_MODE" in keys
     assert "OPENROUTER_API_KEY" in keys
     assert "FIREWORKS_API_KEY" in keys
     assert "GEMINI_API_KEY" in keys
@@ -116,6 +118,12 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     assert auth_field["secret"] is True
     assert auth_field["value"] == MASKED_SECRET
     assert auth_field["source"] == "template"
+    rotation_field = next(
+        field for field in body["fields"] if field["key"] == "API_KEY_ROTATION_MODE"
+    )
+    assert rotation_field["type"] == "select"
+    assert rotation_field["value"] == "round_robin"
+    assert rotation_field["options"] == ["round_robin", "failover_on_limit"]
 
 
 def test_admin_config_preserves_managed_env_source_contract(monkeypatch, tmp_path):
@@ -151,6 +159,22 @@ def test_admin_validate_rejects_bad_model_shape(monkeypatch, tmp_path):
     assert any("provider type" in error for error in body["errors"])
 
 
+def test_admin_validate_rejects_bad_api_key_rotation_mode(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_app(lifespan_enabled=False)
+
+    response = _local_client(app).post(
+        "/admin/api/config/validate",
+        json={"values": {"API_KEY_ROTATION_MODE": "always_random"}},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["valid"] is False
+    assert any("API_KEY_ROTATION_MODE" in error for error in body["errors"])
+
+
 def test_admin_apply_writes_complete_managed_env_and_masks_preview(
     monkeypatch, tmp_path
 ):
@@ -163,6 +187,7 @@ def test_admin_apply_writes_complete_managed_env_and_masks_preview(
         json={
             "values": {
                 "MODEL": "open_router/test-model",
+                "API_KEY_ROTATION_MODE": "failover_on_limit",
                 "OPENROUTER_API_KEY": "router-secret",
             }
         },
@@ -175,6 +200,7 @@ def test_admin_apply_writes_complete_managed_env_and_masks_preview(
     env_file = tmp_path / ".fcc" / ".env"
     text = env_file.read_text("utf-8")
     assert "MODEL=open_router/test-model" in text
+    assert "API_KEY_ROTATION_MODE=failover_on_limit" in text
     assert "OPENROUTER_API_KEY=router-secret" in text
     assert "ANTHROPIC_AUTH_TOKEN=" in text
     assert body["restart"] == {

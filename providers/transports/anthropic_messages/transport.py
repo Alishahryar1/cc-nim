@@ -22,6 +22,7 @@ from providers.error_mapping import (
     map_error,
     user_visible_message_for_mapped_provider_error,
 )
+from providers.key_rotation import is_limit_error
 from providers.model_listing import (
     ProviderModelInfo,
     extract_openai_model_ids,
@@ -189,6 +190,43 @@ class AnthropicMessagesTransport(BaseProvider):
                 if not send_response.is_closed:
                     await maybe_await_aclose(send_response)
         return send_response
+
+    async def _validated_stream_send_with_key(
+        self, body: dict, *, req_tag: str, api_key: str
+    ) -> httpx.Response:
+        with self._using_api_key(api_key):
+            return await self._validated_stream_send(body, req_tag=req_tag)
+
+    async def _validated_stream_send_with_rotation(
+        self, body: dict, *, req_tag: str
+    ) -> httpx.Response:
+        api_key = self._key_for_new_request()
+
+        def before_retry(error: Exception, _attempt: int, _max_attempts: int) -> bool:
+            nonlocal api_key
+            if not is_limit_error(error):
+                return False
+            next_key = self._next_key_after_limit(api_key)
+            if next_key is None:
+                raise error
+            api_key = next_key
+            return True
+
+        if not self._uses_api_key_failover():
+            return await self._global_rate_limiter.execute_with_retry(
+                self._validated_stream_send_with_key,
+                body,
+                req_tag=req_tag,
+                api_key=api_key,
+            )
+
+        return await self._global_rate_limiter.execute_with_retry(
+            self._validated_stream_send_with_key,
+            body,
+            req_tag=req_tag,
+            api_key=api_key,
+            before_retry=before_retry,
+        )
 
     def _emit_error_events(
         self,

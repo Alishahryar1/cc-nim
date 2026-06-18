@@ -107,8 +107,7 @@ class AnthropicMessagesStreamRunner:
                 stream_opened = False
                 try:
                     response = (
-                        await self._transport._global_rate_limiter.execute_with_retry(
-                            self._transport._validated_stream_send,
+                        await self._transport._validated_stream_send_with_rotation(
                             body,
                             req_tag=req_tag,
                         )

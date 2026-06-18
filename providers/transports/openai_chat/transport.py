@@ -16,6 +16,7 @@ from providers.error_mapping import (
     map_error,
     user_visible_message_for_mapped_provider_error,
 )
+from providers.key_rotation import is_limit_error
 from providers.model_listing import extract_openai_model_ids
 from providers.rate_limit import GlobalRateLimiter
 
@@ -109,10 +110,36 @@ class OpenAIChatTransport(BaseProvider):
 
     async def _create_stream(self, body: dict) -> tuple[Any, dict]:
         """Create a streaming chat completion, optionally retrying once."""
+        api_key = self._key_for_new_request()
+
+        def before_retry(error: Exception, _attempt: int, _max_attempts: int) -> bool:
+            nonlocal api_key
+            if not is_limit_error(error):
+                return False
+            next_key = self._next_key_after_limit(api_key)
+            if next_key is None:
+                raise error
+            api_key = next_key
+            return True
+
+        async def create_stream(create_body: dict[str, Any]) -> Any:
+            client = (
+                self._client
+                if api_key == self._api_key
+                else self._client.with_options(api_key=api_key)
+            )
+            return await client.chat.completions.create(**create_body, stream=True)
+
+        execute_kwargs: dict[str, Any] = {}
+        if self._uses_api_key_failover():
+            execute_kwargs["before_retry"] = before_retry
+
         try:
             create_body = self._prepare_create_body(body)
             stream = await self._global_rate_limiter.execute_with_retry(
-                self._client.chat.completions.create, **create_body, stream=True
+                create_stream,
+                create_body,
+                **execute_kwargs,
             )
             return stream, body
         except Exception as error:
@@ -122,7 +149,9 @@ class OpenAIChatTransport(BaseProvider):
 
             create_retry_body = self._prepare_create_body(retry_body)
             stream = await self._global_rate_limiter.execute_with_retry(
-                self._client.chat.completions.create, **create_retry_body, stream=True
+                create_stream,
+                create_retry_body,
+                **execute_kwargs,
             )
             return stream, retry_body
 

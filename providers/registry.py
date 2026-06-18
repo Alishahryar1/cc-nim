@@ -10,6 +10,7 @@ from contextlib import suppress
 import httpx
 from loguru import logger
 
+from config.api_key_rotation import ApiKeyRotationMode
 from config.provider_catalog import (
     PROVIDER_CATALOG,
     SUPPORTED_PROVIDER_IDS,
@@ -181,6 +182,14 @@ def _credential_for(descriptor: ProviderDescriptor, settings: Settings) -> str:
     return ""
 
 
+def _api_key_rotation_mode(settings: Settings) -> ApiKeyRotationMode:
+    value = getattr(settings, "api_key_rotation_mode", ApiKeyRotationMode.ROUND_ROBIN)
+    try:
+        return ApiKeyRotationMode(value)
+    except ValueError:
+        return ApiKeyRotationMode.ROUND_ROBIN
+
+
 def _require_credential(descriptor: ProviderDescriptor, credential: str) -> None:
     if descriptor.credential_env is None:
         return
@@ -203,6 +212,7 @@ def build_provider_config(
     proxy = _string_attr(settings, descriptor.proxy_attr)
     return ProviderConfig(
         api_key=credential,
+        api_key_rotation_mode=_api_key_rotation_mode(settings),
         base_url=base_url or descriptor.default_base_url,
         rate_limit=settings.provider_rate_limit,
         rate_window=settings.provider_rate_window,

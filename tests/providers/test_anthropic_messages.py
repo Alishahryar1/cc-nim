@@ -10,6 +10,7 @@ from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from core.anthropic.sse import format_sse_event
 from core.anthropic.stream_contracts import event_index, parse_sse_text
 from providers.base import ProviderConfig
+from providers.key_rotation import ApiKeyRotationMode
 from providers.transports.anthropic_messages import AnthropicMessagesTransport
 from providers.transports.anthropic_messages.recovery import AnthropicMessagesRecovery
 from tests.stream_contract import assert_canonical_stream_error_envelope
@@ -24,7 +25,11 @@ class NativeProvider(AnthropicMessagesTransport):
         )
 
     def _request_headers(self) -> dict[str, str]:
-        return {"Content-Type": "application/json", "X-Test": "1"}
+        return {
+            "Content-Type": "application/json",
+            "X-Test": "1",
+            "Authorization": f"Bearer {self._current_api_key()}",
+        }
 
 
 class MockRequest:
@@ -148,6 +153,62 @@ def test_init_configures_httpx_client(provider_config):
     assert timeout.connect == 5.0
 
 
+@pytest.mark.asyncio
+async def test_stream_rotates_native_request_key_in_round_robin_mode(provider_config):
+    provider = NativeProvider(
+        provider_config.model_copy(
+            update={
+                "api_key": "key-a,key-b",
+                "api_key_rotation_mode": ApiKeyRotationMode.ROUND_ROBIN,
+            }
+        )
+    )
+    req = MockRequest()
+    responses = [
+        FakeResponse(
+            lines=[
+                "event: message_start",
+                'data: {"type":"message_start"}',
+                "",
+                "event: message_stop",
+                'data: {"type":"message_stop"}',
+                "",
+            ]
+        ),
+        FakeResponse(
+            lines=[
+                "event: message_start",
+                'data: {"type":"message_start"}',
+                "",
+                "event: message_stop",
+                'data: {"type":"message_stop"}',
+                "",
+            ]
+        ),
+    ]
+
+    with (
+        patch.object(
+            provider._client,
+            "build_request",
+            wraps=provider._client.build_request,
+        ) as mock_build,
+        patch.object(
+            provider._client,
+            "send",
+            new_callable=AsyncMock,
+            side_effect=responses,
+        ),
+    ):
+        assert [event async for event in provider.stream_response(req)]
+        assert [event async for event in provider.stream_response(req)]
+
+    auth_headers = [
+        call.kwargs["headers"]["Authorization"] for call in mock_build.call_args_list
+    ]
+    assert auth_headers == ["Bearer key-a", "Bearer key-b"]
+
+
 def test_default_request_body_strips_internal_fields(provider_config):
     provider = NativeProvider(provider_config)
 
@@ -217,6 +278,7 @@ async def test_stream_uses_retry_builds_request_and_closes_response(
     assert response.is_closed
     assert mock_build.call_args.args[:2] == ("POST", "/messages")
     assert mock_build.call_args.kwargs["headers"] == {
+        "Authorization": "Bearer test-key",
         "Content-Type": "application/json",
         "X-Test": "1",
     }

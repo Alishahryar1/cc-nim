@@ -154,6 +154,8 @@ fcc-codex
 
 Pick one provider, enter its key or local URL in the Admin UI, and set `MODEL` to a provider-prefixed model slug. `MODEL` is the fallback. `MODEL_OPUS`, `MODEL_SONNET`, and `MODEL_HAIKU` can override routing for Claude Code's model tiers.
 
+For remote providers, you may paste multiple API keys into a provider key field by separating them with commas, for example `OPENROUTER_API_KEY=key1,key2,key3`. Set `API_KEY_ROTATION_MODE` in the Admin UI to `round_robin` to use the next key on each request, or `failover_on_limit` to keep the first key until an upstream rate-limit response and then retry with the next key.
+
 <a id="nvidia-nim-provider"></a>
 
 ### 1. [NVIDIA NIM](https://build.nvidia.com/)

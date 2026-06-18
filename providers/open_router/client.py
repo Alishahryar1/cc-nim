@@ -54,14 +54,14 @@ class OpenRouterProvider(AnthropicMessagesTransport):
         """Return OpenRouter's Anthropic-compatible messages headers."""
         return {
             "Accept": "text/event-stream",
-            "Authorization": f"Bearer {self._api_key}",
+            "Authorization": f"Bearer {self._current_api_key()}",
             "Content-Type": "application/json",
             "anthropic-version": _ANTHROPIC_VERSION,
         }
 
     def _model_list_headers(self) -> dict[str, str]:
         """Return OpenRouter's OpenAI-compatible model-list headers."""
-        return {"Authorization": f"Bearer {self._api_key}"}
+        return {"Authorization": f"Bearer {self._current_api_key()}"}
 
     def _extract_model_ids_from_model_list_payload(
         self, payload: Any

@@ -11,6 +11,7 @@ from dotenv import dotenv_values
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
+from .api_key_rotation import ApiKeyRotationMode
 from .constants import HTTP_CONNECT_TIMEOUT_DEFAULT
 from .nim import NimSettings
 from .paths import default_claude_workspace_path, managed_env_path
@@ -182,6 +183,10 @@ class Settings(BaseSettings):
     )
     provider_max_concurrency: int = Field(
         default=5, validation_alias="PROVIDER_MAX_CONCURRENCY"
+    )
+    api_key_rotation_mode: ApiKeyRotationMode = Field(
+        default=ApiKeyRotationMode.ROUND_ROBIN,
+        validation_alias="API_KEY_ROTATION_MODE",
     )
     enable_model_thinking: bool = Field(
         default=True, validation_alias="ENABLE_MODEL_THINKING"

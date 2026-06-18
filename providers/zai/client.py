@@ -35,12 +35,12 @@ class ZaiProvider(AnthropicMessagesTransport):
         return {
             "Accept": "text/event-stream",
             "Content-Type": "application/json",
-            "x-api-key": self._api_key,
+            "x-api-key": self._current_api_key(),
             "anthropic-version": _ANTHROPIC_VERSION,
         }
 
     def _model_list_headers(self) -> dict[str, str]:
         return {
-            "x-api-key": self._api_key,
+            "x-api-key": self._current_api_key(),
             "anthropic-version": _ANTHROPIC_VERSION,
         }

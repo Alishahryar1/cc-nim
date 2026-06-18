@@ -35,7 +35,7 @@ class DeepSeekProvider(AnthropicMessagesTransport):
         return {
             "Accept": "text/event-stream",
             "Content-Type": "application/json",
-            "x-api-key": self._api_key,
+            "x-api-key": self._current_api_key(),
         }
 
     async def _send_model_list_request(self) -> httpx.Response:
@@ -48,4 +48,4 @@ class DeepSeekProvider(AnthropicMessagesTransport):
         return await self._client.get(url, headers=self._model_list_headers())
 
     def _model_list_headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self._api_key}"}
+        return {"Authorization": f"Bearer {self._current_api_key()}"}

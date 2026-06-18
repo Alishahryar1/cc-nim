@@ -503,6 +503,19 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         default="5",
     ),
     ConfigFieldSpec(
+        "API_KEY_ROTATION_MODE",
+        "API Key Rotation Mode",
+        "runtime",
+        "select",
+        settings_attr="api_key_rotation_mode",
+        default="round_robin",
+        options=("round_robin", "failover_on_limit"),
+        description=(
+            "Use comma-separated provider API keys. Round-robin rotates each request; "
+            "failover switches keys only after an upstream rate-limit response."
+        ),
+    ),
+    ConfigFieldSpec(
         "HTTP_READ_TIMEOUT",
         "HTTP Read Timeout",
         "runtime",

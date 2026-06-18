@@ -37,7 +37,7 @@ class KimiProvider(AnthropicMessagesTransport):
     def _request_headers(self) -> dict[str, str]:
         return {
             "Accept": "text/event-stream",
-            "Authorization": f"Bearer {self._api_key}",
+            "Authorization": f"Bearer {self._current_api_key()}",
             "Content-Type": "application/json",
             "anthropic-version": _ANTHROPIC_VERSION,
         }
@@ -50,4 +50,4 @@ class KimiProvider(AnthropicMessagesTransport):
         )
 
     def _model_list_headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self._api_key}"}
+        return {"Authorization": f"Bearer {self._current_api_key()}"}
