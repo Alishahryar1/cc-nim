@@ -346,6 +346,56 @@ def test_codex_adapter_parses_response_text_delta() -> None:
     ]
 
 
+def test_codex_adapter_marks_streamed_message_items_seen() -> None:
+    state = CliParseState()
+    item = {
+        "type": "message",
+        "id": "msg1",
+        "content": [{"type": "output_text", "text": "hi"}],
+    }
+
+    delta_events = list(
+        CODEX_CLI_ADAPTER.parse_stdout_line(
+            json.dumps(
+                {
+                    "type": "response.output_text.delta",
+                    "item_id": "msg1",
+                    "output_index": 0,
+                    "delta": "hi",
+                }
+            ),
+            state,
+        )
+    )
+    item_done_events = list(
+        CODEX_CLI_ADAPTER.parse_stdout_line(
+            json.dumps({"type": "response.output_item.done", "item": item}),
+            state,
+        )
+    )
+    completed_events = list(
+        CODEX_CLI_ADAPTER.parse_stdout_line(
+            json.dumps(
+                {
+                    "type": "response.completed",
+                    "response": {"output": [item]},
+                }
+            ),
+            state,
+        )
+    )
+
+    assert delta_events == [
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "hi"},
+        }
+    ]
+    assert item_done_events == []
+    assert completed_events == []
+
+
 def test_codex_adapter_parses_response_reasoning_text_delta() -> None:
     events = list(
         CODEX_CLI_ADAPTER.parse_stdout_line(
@@ -475,6 +525,33 @@ def test_codex_adapter_dedupes_output_item_done_against_completed_output() -> No
         }
     ]
     assert completed_events == []
+
+
+def test_codex_adapter_completed_output_is_fallback_for_unseen_message_item() -> None:
+    item = {
+        "type": "message",
+        "id": "msg1",
+        "content": [{"type": "output_text", "text": "hi"}],
+    }
+
+    events = list(
+        CODEX_CLI_ADAPTER.parse_stdout_line(
+            json.dumps(
+                {
+                    "type": "response.completed",
+                    "response": {"output": [item]},
+                }
+            ),
+            CliParseState(),
+        )
+    )
+
+    assert events == [
+        {
+            "type": "assistant",
+            "message": {"content": [{"type": "text", "text": "hi"}]},
+        }
+    ]
 
 
 def test_codex_adapter_completed_output_is_fallback_for_unseen_tool_item() -> None:

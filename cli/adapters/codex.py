@@ -250,6 +250,7 @@ def _codex_event_to_parser_events(
         yield {"type": "error", "error": {"message": _event_message(event)}}
         return
     if event_type == "response.output_text.delta":
+        _mark_streamed_message_item_seen(event, state)
         yield {
             "type": "content_block_delta",
             "index": 0,
@@ -363,6 +364,14 @@ def _mark_response_item_unseen(item: Mapping[str, Any], state: CliParseState) ->
         return False
     state.responses_seen_item_ids.add(item_key)
     return True
+
+
+def _mark_streamed_message_item_seen(
+    event: Mapping[str, Any], state: CliParseState
+) -> None:
+    item_id = event.get("item_id")
+    if isinstance(item_id, str) and item_id:
+        state.responses_seen_item_ids.add(f"message:{item_id}")
 
 
 def _response_item_key(item: Mapping[str, Any]) -> str | None:
