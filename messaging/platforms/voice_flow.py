@@ -66,18 +66,20 @@ def audio_suffix_from_metadata(
     normalized_filename = (filename or "").lower()
     normalized_content_type = (content_type or "").lower()
 
-    for extension in AUDIO_EXTENSIONS:
-        if normalized_filename.endswith(extension):
-            return extension
-
-    if "m4a" in normalized_filename:
+    if "m4a" in normalized_content_type:
         return ".m4a"
     if "mp4" in normalized_content_type:
+        if normalized_filename.endswith(".m4a"):
+            return ".m4a"
         return ".mp4"
     if "mpeg" in normalized_content_type or "mp3" in normalized_content_type:
         return ".mp3"
     if "wav" in normalized_content_type:
         return ".wav"
+
+    for extension in AUDIO_EXTENSIONS:
+        if normalized_filename.endswith(extension):
+            return extension
     return default
 
 
@@ -171,6 +173,7 @@ class VoiceNoteFlow:
             request.message_id,
             status_msg_id_text,
         )
+        handed_off = False
 
         with tempfile.NamedTemporaryFile(
             suffix=request.temp_suffix, delete=False
@@ -199,6 +202,7 @@ class VoiceNoteFlow:
                 request.message_id,
                 status_msg_id_text,
             )
+            handed_off = True
 
             incoming = IncomingMessage(
                 text=transcribed,
@@ -217,12 +221,30 @@ class VoiceNoteFlow:
             await message_handler(incoming)
             return True
         except ValueError as e:
+            await self._clear_failed_pending_voice(
+                request,
+                status_msg_id_text,
+                queue_delete_message,
+                handed_off=handed_off,
+            )
             await request.reply_text(format_user_error_preview(e))
             return True
         except ImportError as e:
+            await self._clear_failed_pending_voice(
+                request,
+                status_msg_id_text,
+                queue_delete_message,
+                handed_off=handed_off,
+            )
             await request.reply_text(format_user_error_preview(e))
             return True
         except Exception as e:
+            await self._clear_failed_pending_voice(
+                request,
+                status_msg_id_text,
+                queue_delete_message,
+                handed_off=handed_off,
+            )
             if self._log_api_error_tracebacks:
                 logger.error("Voice transcription failed: {}", e)
             else:
@@ -235,6 +257,23 @@ class VoiceNoteFlow:
         finally:
             with contextlib.suppress(OSError):
                 tmp_path.unlink(missing_ok=True)
+
+    async def _clear_failed_pending_voice(
+        self,
+        request: VoiceNoteRequest,
+        status_msg_id: str,
+        queue_delete_message: QueueDelete,
+        *,
+        handed_off: bool,
+    ) -> None:
+        await self.complete_pending_voice(
+            request.chat_id,
+            request.message_id,
+            status_msg_id,
+        )
+        if not handed_off:
+            with contextlib.suppress(Exception):
+                await queue_delete_message(request.chat_id, status_msg_id)
 
     def _log_transcription(self, request: VoiceNoteRequest, transcribed: str) -> None:
         label = request.platform.upper()
