@@ -161,6 +161,7 @@ def test_openai_responses_uses_adapter_boundary() -> None:
 
     assert not (responses_root / "conversion.py").exists()
     assert not (responses_root / "sse.py").exists()
+    assert not (responses_root / "output.py").exists()
     for filename in {
         "adapter.py",
         "anthropic_sse.py",
@@ -169,7 +170,6 @@ def test_openai_responses_uses_adapter_boundary() -> None:
         "ids.py",
         "input.py",
         "items.py",
-        "output.py",
         "reasoning.py",
         "stream.py",
         "stream_state.py",
@@ -195,6 +195,14 @@ def test_openai_responses_uses_adapter_boundary() -> None:
                 rel = path.relative_to(repo_root)
                 offenders.append(f"{rel}: {imported}")
     assert sorted(offenders) == []
+
+    adapter_text = (responses_root / "adapter.py").read_text(encoding="utf-8")
+    for deleted_api in {
+        "from_anthropic_message",
+        "collect_from_anthropic_sse",
+        "iter_sse_from_anthropic_message",
+    }:
+        assert deleted_api not in adapter_text
 
 
 def _imports_matching(

@@ -349,19 +349,22 @@ hooks, client setup, and model listing.
 [core/openai_responses/](core/openai_responses/) owns OpenAI Responses support:
 
 - the `OpenAIResponsesAdapter` facade used by the API layer;
+- streaming-only `/v1/responses` support for Codex/FCC workflows;
 - Responses request conversion into Anthropic Messages payloads;
-- Anthropic message response conversion into Responses objects;
 - Anthropic SSE conversion into Responses SSE;
 - OpenAI-compatible error envelopes.
 
-The package is split by protocol responsibility. Request conversion, complete
-response conversion, stream transformation, Anthropic SSE parsing, Responses SSE
-event formatting, output item construction, tool identity mapping, reasoning
-mapping, ID generation, and error envelope construction each live behind the
-adapter boundary. `stream.py` is the public streaming entrypoint; `stream_state.py`
-owns the block-indexed Responses output ledger used to preserve streamed item
-order, pending block finalization, and terminal response lifecycle events. API
-code should depend on the adapter, not on those internal module owners directly.
+The package intentionally does not implement the full OpenAI Responses surface.
+FCC accepts omitted `stream` or `stream: true`; `stream: false` is rejected with
+an OpenAI-shaped client error because installed FCC/Codex workflows only need
+streaming. Request conversion, stream transformation, Anthropic SSE parsing,
+Responses SSE event formatting, output item construction, tool identity mapping,
+reasoning mapping, ID generation, and error envelope construction each live
+behind the adapter boundary. `stream.py` is the public streaming entrypoint;
+`stream_state.py` owns the block-indexed Responses output ledger used to
+preserve streamed item order, pending block finalization, and terminal response
+lifecycle events. API code should depend on the adapter, not on those internal
+module owners directly.
 
 Responses custom tools are also boundary-owned. The adapter accepts native
 Responses `custom` tool declarations, represents them internally as Anthropic

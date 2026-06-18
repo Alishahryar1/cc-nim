@@ -10,7 +10,6 @@ from typing import Any
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 from loguru import logger
-from pydantic import BaseModel
 
 from config.provider_catalog import PROVIDER_CATALOG
 from config.settings import Settings
@@ -243,11 +242,99 @@ class ClaudeProxyService:
         """Create an OpenAI Responses-compatible response through the provider router."""
 
         request_payload = request_data.model_dump(mode="json", exclude_none=True)
+        if request_data.stream is False:
+            invalid_request = InvalidRequestError(
+                "FCC /v1/responses supports streaming only; omit stream or set stream=true."
+            )
+            return JSONResponse(
+                status_code=invalid_request.status_code,
+                content=self._responses_adapter.error_payload(
+                    message=invalid_request.message,
+                    error_type=invalid_request.error_type,
+                ),
+            )
+
         try:
             anthropic_payload = self._responses_adapter.to_anthropic_payload(
                 request_payload
             )
-            result = self.create_message(MessagesRequest(**anthropic_payload))
+            response_request = MessagesRequest(**anthropic_payload)
+            _require_non_empty_messages(response_request.messages)
+            routed = self._model_router.resolve_messages_request(response_request)
+
+            if routed.resolved.provider_id in _OPENAI_CHAT_UPSTREAM_IDS:
+                tool_err = openai_chat_upstream_server_tool_error(
+                    routed.request,
+                    web_tools_enabled=self._settings.enable_web_server_tools,
+                )
+                if tool_err is not None:
+                    raise InvalidRequestError(tool_err)
+
+            provider = self._provider_getter(routed.resolved.provider_id)
+            provider.preflight_stream(
+                routed.request,
+                thinking_enabled=routed.resolved.thinking_enabled,
+            )
+
+            trace_event(
+                stage="routing",
+                event="api.route.resolved",
+                source="api",
+                provider_id=routed.resolved.provider_id,
+                provider_model=routed.resolved.provider_model,
+                provider_model_ref=routed.resolved.provider_model_ref,
+                gateway_model=routed.request.model,
+                thinking_enabled=routed.resolved.thinking_enabled,
+                wire_api="responses",
+            )
+
+            request_id = f"req_{uuid.uuid4().hex[:12]}"
+            with logger.contextualize(request_id=request_id):
+                trace_event(
+                    stage="ingress",
+                    event="api.responses.request.received",
+                    source="api",
+                    message_count=len(routed.request.messages),
+                    snapshot=api_messages_request_snapshot(routed.request),
+                )
+
+                if self._settings.log_raw_api_payloads:
+                    logger.debug(
+                        "FULL_RESPONSES_PAYLOAD [{}]: {}",
+                        request_id,
+                        request_payload,
+                    )
+
+                input_tokens = self._token_counter(
+                    routed.request.messages,
+                    routed.request.system,
+                    routed.request.tools,
+                )
+
+                streamed = traced_async_stream(
+                    provider.stream_response(
+                        routed.request,
+                        input_tokens=input_tokens,
+                        request_id=request_id,
+                        thinking_enabled=routed.resolved.thinking_enabled,
+                    ),
+                    stage="egress",
+                    source="api",
+                    complete_event="api.responses.stream_completed",
+                    interrupted_event="api.responses.stream_interrupted",
+                    chunk_event=None,
+                    extra={
+                        "request_id": request_id,
+                        "provider_id": routed.resolved.provider_id,
+                        "gateway_model": routed.request.model,
+                    },
+                )
+                return openai_responses_sse_streaming_response(
+                    self._responses_adapter.iter_sse_from_anthropic(
+                        streamed,
+                        request_payload,
+                    )
+                )
         except OpenAIResponsesAdapter.ConversionError as exc:
             invalid_request = InvalidRequestError(str(exc))
             return JSONResponse(
@@ -265,34 +352,19 @@ class ClaudeProxyService:
                     error_type=exc.error_type,
                 ),
             )
-
-        if request_data.stream is False:
-            if isinstance(result, StreamingResponse):
-                return await self._responses_adapter.collect_from_anthropic_sse(
-                    result.body_iterator,
-                    request_payload,
-                )
-            return self._responses_adapter.from_anthropic_message(
-                _model_dump_json(result),
-                request_payload,
+        except Exception as e:
+            _log_unexpected_service_exception(
+                self._settings,
+                e,
+                context="CREATE_RESPONSE_ERROR",
             )
-
-        if isinstance(result, StreamingResponse):
-            return openai_responses_sse_streaming_response(
-                self._responses_adapter.iter_sse_from_anthropic(
-                    result.body_iterator,
-                    request_payload,
-                )
+            return JSONResponse(
+                status_code=_http_status_for_unexpected_service_exception(e),
+                content=self._responses_adapter.error_payload(
+                    message=get_user_facing_error_message(e),
+                    error_type="api_error",
+                ),
             )
-
-        return openai_responses_sse_streaming_response(
-            _iter_static_response_sse(
-                self._responses_adapter.iter_sse_from_anthropic_message(
-                    _model_dump_json(result),
-                    request_payload,
-                )
-            )
-        )
 
     def count_tokens(self, request_data: TokenCountRequest) -> TokenCountResponse:
         """Count tokens for a request after applying configured model routing."""
@@ -336,17 +408,3 @@ class ClaudeProxyService:
                     status_code=_http_status_for_unexpected_service_exception(e),
                     detail=get_user_facing_error_message(e),
                 ) from e
-
-
-def _model_dump_json(value: object) -> dict[str, Any]:
-    if isinstance(value, BaseModel):
-        dumped = value.model_dump(mode="json")
-        return dumped if isinstance(dumped, dict) else {}
-    if isinstance(value, dict):
-        return {str(key): item for key, item in value.items()}
-    return {}
-
-
-async def _iter_static_response_sse(chunks: list[str]) -> AsyncIterator[str]:
-    for chunk in chunks:
-        yield chunk

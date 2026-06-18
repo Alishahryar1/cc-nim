@@ -55,7 +55,6 @@ def test_create_response_stream_routes_through_provider(
         json={
             "model": "nvidia_nim/test-model",
             "input": "Hello",
-            "stream": True,
             "max_output_tokens": 32,
         },
     )
@@ -76,10 +75,35 @@ def test_create_response_stream_routes_through_provider(
     assert routed.max_tokens == 32
 
 
-def test_create_response_non_stream_collects_response(
+def test_create_response_stream_bypasses_local_message_optimizations() -> None:
+    provider = FakeProvider(_anthropic_text_stream("Provider response"))
+    app = create_app(lifespan_enabled=False)
+    with (
+        patch("api.dependencies.resolve_provider", return_value=provider),
+        patch(
+            "api.services.try_optimizations",
+            side_effect=AssertionError("Responses must not use message optimizations"),
+        ),
+        TestClient(app) as client,
+    ):
+        response = client.post(
+            "/v1/responses",
+            json={
+                "model": "nvidia_nim/test-model",
+                "input": "quota check",
+            },
+        )
+
+    assert response.status_code == 200
+    completed = parse_sse_text(response.text)[-1].data["response"]
+    assert completed["output"][0]["content"][0]["text"] == "Provider response"
+    assert provider.requests[0].messages[0].content == "quota check"
+
+
+def test_create_response_stream_false_returns_openai_error(
     responses_client: tuple[TestClient, FakeProvider],
 ) -> None:
-    client, _provider = responses_client
+    client, provider = responses_client
 
     response = client.post(
         "/v1/responses",
@@ -90,11 +114,11 @@ def test_create_response_non_stream_collects_response(
         },
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 400
     payload = response.json()
-    assert payload["object"] == "response"
-    assert payload["status"] == "completed"
-    assert payload["output"][0]["content"][0]["text"] == "Hello from provider"
+    assert payload["error"]["type"] == "invalid_request_error"
+    assert "streaming only" in payload["error"]["message"]
+    assert provider.requests == []
 
 
 def test_create_response_stream_preserves_interleaved_reasoning_order() -> None:
@@ -136,31 +160,6 @@ def test_create_response_stream_preserves_interleaved_reasoning_order() -> None:
     assert completed["output"][2]["arguments"] == '{"value":"FCC"}'
     assert completed["output"][3]["content"][0]["text"] == "second thought"
     assert completed["output"][4]["content"][0]["text"] == "final answer"
-
-
-def test_create_response_non_stream_preserves_reasoning_items() -> None:
-    provider = FakeProvider(_anthropic_reasoning_text_stream())
-    app = create_app(lifespan_enabled=False)
-    with (
-        patch("api.dependencies.resolve_provider", return_value=provider),
-        TestClient(app) as client,
-    ):
-        response = client.post(
-            "/v1/responses",
-            json={
-                "model": "nvidia_nim/test-model",
-                "input": "Think then answer",
-                "stream": False,
-            },
-        )
-
-    assert response.status_code == 200
-    payload = response.json()
-    assert [item["type"] for item in payload["output"]] == ["reasoning", "message"]
-    assert payload["output"][0]["content"] == [
-        {"type": "reasoning_text", "text": "provider reasoning"}
-    ]
-    assert payload["output"][1]["content"][0]["text"] == "provider answer"
 
 
 def test_create_response_tool_stream_emits_function_call() -> None:

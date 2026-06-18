@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator
+from typing import Any
 
 import pytest
 
@@ -157,7 +158,7 @@ async def test_anthropic_error_stream_converts_to_response_failed_event() -> Non
 
 @pytest.mark.asyncio
 async def test_split_usage_deltas_are_accumulated() -> None:
-    response = await _ADAPTER.collect_from_anthropic_sse(
+    response = await _completed_response_from_sse(
         _aiter(
             [
                 *_anthropic_text_stream("usage")[:-2],
@@ -180,7 +181,7 @@ async def test_split_usage_deltas_are_accumulated() -> None:
                 format_sse_event("message_stop", {"type": "message_stop"}),
             ]
         ),
-        {"model": "nvidia_nim/test-model", "stream": False},
+        {"model": "nvidia_nim/test-model", "stream": True},
     )
 
     assert response["usage"] == {
@@ -194,7 +195,7 @@ async def test_split_usage_deltas_are_accumulated() -> None:
     ("request_payload", "tool_name", "partial_json", "expected_type", "expected_field"),
     [
         (
-            {"model": "nvidia_nim/test-model", "stream": False},
+            {"model": "nvidia_nim/test-model", "stream": True},
             "echo",
             '{"value":"FCC"}',
             "function_call",
@@ -203,7 +204,7 @@ async def test_split_usage_deltas_are_accumulated() -> None:
         (
             {
                 "model": "nvidia_nim/test-model",
-                "stream": False,
+                "stream": True,
                 "tools": [{"type": "custom", "name": "apply_patch"}],
             },
             "apply_patch",
@@ -224,10 +225,10 @@ async def test_pending_tool_blocks_flush_on_message_stop_and_eof(
     stream = _anthropic_tool_stream(
         tool_name=tool_name, partial_json=partial_json, include_block_stop=False
     )
-    message_stop_response = await _ADAPTER.collect_from_anthropic_sse(
+    message_stop_response = await _completed_response_from_sse(
         _aiter(stream), request_payload
     )
-    eof_response = await _ADAPTER.collect_from_anthropic_sse(
+    eof_response = await _completed_response_from_sse(
         _aiter(stream[:-1]), request_payload
     )
 
@@ -269,9 +270,9 @@ async def test_overlapping_text_and_tool_blocks_keep_reserved_output_indexes() -
 
 @pytest.mark.asyncio
 async def test_overlapping_text_blocks_do_not_merge_content_by_index() -> None:
-    response = await _ADAPTER.collect_from_anthropic_sse(
+    response = await _completed_response_from_sse(
         _aiter(_overlapping_text_stream()),
-        {"model": "nvidia_nim/test-model", "stream": False},
+        {"model": "nvidia_nim/test-model", "stream": True},
     )
 
     assert [item["content"][0]["text"] for item in response["output"]] == [
@@ -280,21 +281,19 @@ async def test_overlapping_text_blocks_do_not_merge_content_by_index() -> None:
     ]
 
 
-@pytest.mark.asyncio
-async def test_collect_non_stream_response_from_anthropic_sse() -> None:
-    response = await _ADAPTER.collect_from_anthropic_sse(
-        _aiter(_anthropic_text_stream("Non-stream")),
-        {"model": "deepseek/deepseek-chat", "stream": False},
-    )
-
-    assert response["status"] == "completed"
-    assert response["model"] == "deepseek/deepseek-chat"
-    assert response["output"][0]["content"][0]["text"] == "Non-stream"
-
-
 async def _collect_sse(chunks: AsyncIterator[str]) -> str:
     parts = [chunk async for chunk in chunks]
     return "".join(parts)
+
+
+async def _completed_response_from_sse(
+    chunks: AsyncIterator[str],
+    request: dict[str, object],
+) -> dict[str, Any]:
+    text = await _collect_sse(_ADAPTER.iter_sse_from_anthropic(chunks, request))
+    events = parse_sse_text(text)
+    assert events[-1].event == "response.completed"
+    return events[-1].data["response"]
 
 
 async def _aiter(chunks: list[str]) -> AsyncIterator[str]:
