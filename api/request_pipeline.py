@@ -1,4 +1,4 @@
-"""Application services for the Claude-compatible API."""
+"""API request pipeline for routing, intercepts, and provider execution."""
 
 from __future__ import annotations
 
@@ -20,7 +20,7 @@ from core.trace import api_messages_request_snapshot, trace_event, traced_async_
 from providers.base import BaseProvider
 from providers.exceptions import InvalidRequestError, ProviderError
 
-from .model_router import ModelRouter
+from .model_router import ModelRouter, RoutedMessagesRequest
 from .models.anthropic import MessagesRequest, TokenCountRequest
 from .models.openai_responses import OpenAIResponsesRequest
 from .models.responses import TokenCountResponse
@@ -33,10 +33,10 @@ from .web_tools.request import (
 from .web_tools.streaming import stream_web_server_tool_response
 
 TokenCounter = Callable[[list[Any], str | list[Any] | None, list[Any] | None], int]
-
 ProviderGetter = Callable[[str], BaseProvider]
+MessageIntercept = Callable[[RoutedMessagesRequest], object | None]
 
-# Providers that use ``/chat/completions`` + Anthropic-to-OpenAI conversion (not native Messages).
+# Providers that use ``/chat/completions`` + Anthropic-to-OpenAI conversion.
 _OPENAI_CHAT_UPSTREAM_IDS = frozenset(
     provider_id
     for provider_id, descriptor in PROVIDER_CATALOG.items()
@@ -44,10 +44,8 @@ _OPENAI_CHAT_UPSTREAM_IDS = frozenset(
 )
 
 
-def anthropic_sse_streaming_response(
-    body: AsyncIterator[str],
-) -> StreamingResponse:
-    """Return a :class:`StreamingResponse` for Anthropic-style SSE streams."""
+def anthropic_sse_streaming_response(body: AsyncIterator[str]) -> StreamingResponse:
+    """Return a streaming response for Anthropic-style SSE streams."""
     return StreamingResponse(
         body,
         media_type="text/event-stream",
@@ -66,19 +64,19 @@ def openai_responses_sse_streaming_response(
     )
 
 
-def _http_status_for_unexpected_service_exception(_exc: BaseException) -> int:
-    """HTTP status for uncaught non-provider failures (stable client contract)."""
+def _http_status_for_unexpected_pipeline_exception(_exc: BaseException) -> int:
+    """HTTP status for uncaught non-provider failures."""
     return 500
 
 
-def _log_unexpected_service_exception(
+def _log_unexpected_pipeline_exception(
     settings: Settings,
     exc: BaseException,
     *,
     context: str,
     request_id: str | None = None,
 ) -> None:
-    """Log service-layer failures without echoing exception text unless opted in."""
+    """Log API failures without echoing exception text unless opted in."""
     if settings.log_api_error_tracebacks:
         if request_id is not None:
             logger.error("{} request_id={}: {}", context, request_id, exc)
@@ -102,8 +100,8 @@ def _require_non_empty_messages(messages: list[Any]) -> None:
         raise InvalidRequestError("messages cannot be empty")
 
 
-class ClaudeProxyService:
-    """Coordinate request optimization, model routing, token count, and providers."""
+class ApiRequestPipeline:
+    """Coordinate API request intercepts, routing, and provider stream execution."""
 
     def __init__(
         self,
@@ -112,135 +110,50 @@ class ClaudeProxyService:
         model_router: ModelRouter | None = None,
         token_counter: TokenCounter = get_token_count,
         responses_adapter: OpenAIResponsesAdapter | None = None,
-    ):
+    ) -> None:
         self._settings = settings
         self._provider_getter = provider_getter
         self._model_router = model_router or ModelRouter(settings)
         self._token_counter = token_counter
         self._responses_adapter = responses_adapter or OpenAIResponsesAdapter()
+        self._message_intercepts: tuple[MessageIntercept, ...] = (
+            self._intercept_web_server_tool,
+            self._intercept_local_optimization,
+        )
 
     def create_message(self, request_data: MessagesRequest) -> object:
-        """Create a message response or streaming response."""
+        """Create an Anthropic-compatible message response."""
         try:
             _require_non_empty_messages(request_data.messages)
-
             routed = self._model_router.resolve_messages_request(request_data)
-            if routed.resolved.provider_id in _OPENAI_CHAT_UPSTREAM_IDS:
-                tool_err = openai_chat_upstream_server_tool_error(
-                    routed.request,
-                    web_tools_enabled=self._settings.enable_web_server_tools,
-                )
-                if tool_err is not None:
-                    raise InvalidRequestError(tool_err)
+            self._reject_unsupported_server_tools(routed)
 
-            if self._settings.enable_web_server_tools and is_web_server_tool_request(
-                routed.request
-            ):
-                input_tokens = self._token_counter(
-                    routed.request.messages, routed.request.system, routed.request.tools
-                )
-                trace_event(
-                    stage="routing",
-                    event="api.optimization.web_server_tool",
-                    source="api",
-                    model=routed.request.model,
-                )
-                egress = WebFetchEgressPolicy(
-                    allow_private_network_targets=self._settings.web_fetch_allow_private_networks,
-                    allowed_schemes=self._settings.web_fetch_allowed_scheme_set(),
-                )
-                return anthropic_sse_streaming_response(
-                    stream_web_server_tool_response(
-                        routed.request,
-                        input_tokens=input_tokens,
-                        web_fetch_egress=egress,
-                        verbose_client_errors=self._settings.log_api_error_tracebacks,
-                    ),
-                )
+            intercepted = self._run_message_intercepts(routed)
+            if intercepted is not None:
+                return intercepted
 
-            optimized = try_optimizations(routed.request, self._settings)
-            if optimized is not None:
-                trace_event(
-                    stage="routing",
-                    event="api.optimization.short_circuit",
-                    source="api",
-                    model=routed.request.model,
-                )
-                return optimized
             logger.debug("No optimization matched, routing to provider")
-
-            provider = self._provider_getter(routed.resolved.provider_id)
-            provider.preflight_stream(
-                routed.request,
-                thinking_enabled=routed.resolved.thinking_enabled,
-            )
-
-            trace_event(
-                stage="routing",
-                event="api.route.resolved",
-                source="api",
-                provider_id=routed.resolved.provider_id,
-                provider_model=routed.resolved.provider_model,
-                provider_model_ref=routed.resolved.provider_model_ref,
-                gateway_model=routed.request.model,
-                thinking_enabled=routed.resolved.thinking_enabled,
-            )
-
-            request_id = f"req_{uuid.uuid4().hex[:12]}"
-            trace_event(
-                stage="ingress",
-                event="api.request.received",
-                source="api",
-                message_count=len(routed.request.messages),
-                snapshot=api_messages_request_snapshot(routed.request),
-                request_id=request_id,
-            )
-
-            if self._settings.log_raw_api_payloads:
-                logger.debug(
-                    "FULL_PAYLOAD [{}]: {}", request_id, routed.request.model_dump()
+            return anthropic_sse_streaming_response(
+                self._provider_stream(
+                    routed,
+                    wire_api="messages",
+                    raw_log_label="FULL_PAYLOAD",
+                    raw_log_payload=routed.request.model_dump(),
                 )
-
-            input_tokens = self._token_counter(
-                routed.request.messages,
-                routed.request.system,
-                routed.request.tools,
             )
-
-            streamed = traced_async_stream(
-                provider.stream_response(
-                    routed.request,
-                    input_tokens=input_tokens,
-                    request_id=request_id,
-                    thinking_enabled=routed.resolved.thinking_enabled,
-                ),
-                stage="egress",
-                source="api",
-                complete_event="api.response.stream_completed",
-                interrupted_event="api.response.stream_interrupted",
-                chunk_event=None,
-                extra={
-                    "request_id": request_id,
-                    "provider_id": routed.resolved.provider_id,
-                    "gateway_model": routed.request.model,
-                },
-            )
-            return anthropic_sse_streaming_response(streamed)
-
         except ProviderError:
             raise
         except Exception as e:
-            _log_unexpected_service_exception(
+            _log_unexpected_pipeline_exception(
                 self._settings, e, context="CREATE_MESSAGE_ERROR"
             )
             raise HTTPException(
-                status_code=_http_status_for_unexpected_service_exception(e),
+                status_code=_http_status_for_unexpected_pipeline_exception(e),
                 detail=get_user_facing_error_message(e),
             ) from e
 
     async def create_response(self, request_data: OpenAIResponsesRequest) -> object:
-        """Create an OpenAI Responses-compatible response through the provider router."""
-
+        """Create a streaming OpenAI Responses-compatible response."""
         request_payload = request_data.model_dump(mode="json", exclude_none=True)
         if request_data.stream is False:
             invalid_request = InvalidRequestError(
@@ -261,73 +174,13 @@ class ClaudeProxyService:
             response_request = MessagesRequest(**anthropic_payload)
             _require_non_empty_messages(response_request.messages)
             routed = self._model_router.resolve_messages_request(response_request)
+            self._reject_unsupported_server_tools(routed)
 
-            if routed.resolved.provider_id in _OPENAI_CHAT_UPSTREAM_IDS:
-                tool_err = openai_chat_upstream_server_tool_error(
-                    routed.request,
-                    web_tools_enabled=self._settings.enable_web_server_tools,
-                )
-                if tool_err is not None:
-                    raise InvalidRequestError(tool_err)
-
-            provider = self._provider_getter(routed.resolved.provider_id)
-            provider.preflight_stream(
-                routed.request,
-                thinking_enabled=routed.resolved.thinking_enabled,
-            )
-
-            trace_event(
-                stage="routing",
-                event="api.route.resolved",
-                source="api",
-                provider_id=routed.resolved.provider_id,
-                provider_model=routed.resolved.provider_model,
-                provider_model_ref=routed.resolved.provider_model_ref,
-                gateway_model=routed.request.model,
-                thinking_enabled=routed.resolved.thinking_enabled,
+            streamed = self._provider_stream(
+                routed,
                 wire_api="responses",
-            )
-
-            request_id = f"req_{uuid.uuid4().hex[:12]}"
-            trace_event(
-                stage="ingress",
-                event="api.responses.request.received",
-                source="api",
-                message_count=len(routed.request.messages),
-                snapshot=api_messages_request_snapshot(routed.request),
-                request_id=request_id,
-            )
-
-            if self._settings.log_raw_api_payloads:
-                logger.debug(
-                    "FULL_RESPONSES_PAYLOAD [{}]: {}",
-                    request_id,
-                    request_payload,
-                )
-
-            input_tokens = self._token_counter(
-                routed.request.messages,
-                routed.request.system,
-                routed.request.tools,
-            )
-
-            streamed = traced_async_stream(
-                provider.stream_response(
-                    routed.request,
-                    input_tokens=input_tokens,
-                    request_id=request_id,
-                    thinking_enabled=routed.resolved.thinking_enabled,
-                ),
-                stage="egress",
-                source="api",
-                complete_event="api.responses.stream_completed",
-                interrupted_event="api.responses.stream_interrupted",
-                chunk_event=None,
-                extra={
-                    "request_id": request_id,
-                    "provider_id": routed.resolved.provider_id,
-                    "gateway_model": routed.request.model,
-                },
+                raw_log_label="FULL_RESPONSES_PAYLOAD",
+                raw_log_payload=request_payload,
             )
             return openai_responses_sse_streaming_response(
                 self._responses_adapter.iter_sse_from_anthropic(
@@ -353,13 +206,13 @@ class ClaudeProxyService:
                 ),
             )
         except Exception as e:
-            _log_unexpected_service_exception(
+            _log_unexpected_pipeline_exception(
                 self._settings,
                 e,
                 context="CREATE_RESPONSE_ERROR",
             )
             return JSONResponse(
-                status_code=_http_status_for_unexpected_service_exception(e),
+                status_code=_http_status_for_unexpected_pipeline_exception(e),
                 content=self._responses_adapter.error_payload(
                     message=get_user_facing_error_message(e),
                     error_type="api_error",
@@ -398,13 +251,151 @@ class ClaudeProxyService:
             except ProviderError:
                 raise
             except Exception as e:
-                _log_unexpected_service_exception(
+                _log_unexpected_pipeline_exception(
                     self._settings,
                     e,
                     context="COUNT_TOKENS_ERROR",
                     request_id=request_id,
                 )
                 raise HTTPException(
-                    status_code=_http_status_for_unexpected_service_exception(e),
+                    status_code=_http_status_for_unexpected_pipeline_exception(e),
                     detail=get_user_facing_error_message(e),
                 ) from e
+
+    def _reject_unsupported_server_tools(self, routed: RoutedMessagesRequest) -> None:
+        if routed.resolved.provider_id not in _OPENAI_CHAT_UPSTREAM_IDS:
+            return
+        tool_err = openai_chat_upstream_server_tool_error(
+            routed.request,
+            web_tools_enabled=self._settings.enable_web_server_tools,
+        )
+        if tool_err is not None:
+            raise InvalidRequestError(tool_err)
+
+    def _run_message_intercepts(self, routed: RoutedMessagesRequest) -> object | None:
+        for intercept in self._message_intercepts:
+            result = intercept(routed)
+            if result is not None:
+                return result
+        return None
+
+    def _intercept_web_server_tool(
+        self, routed: RoutedMessagesRequest
+    ) -> object | None:
+        if not self._settings.enable_web_server_tools:
+            return None
+        if not is_web_server_tool_request(routed.request):
+            return None
+
+        input_tokens = self._token_counter(
+            routed.request.messages, routed.request.system, routed.request.tools
+        )
+        trace_event(
+            stage="routing",
+            event="api.optimization.web_server_tool",
+            source="api",
+            model=routed.request.model,
+        )
+        egress = WebFetchEgressPolicy(
+            allow_private_network_targets=self._settings.web_fetch_allow_private_networks,
+            allowed_schemes=self._settings.web_fetch_allowed_scheme_set(),
+        )
+        return anthropic_sse_streaming_response(
+            stream_web_server_tool_response(
+                routed.request,
+                input_tokens=input_tokens,
+                web_fetch_egress=egress,
+                verbose_client_errors=self._settings.log_api_error_tracebacks,
+            ),
+        )
+
+    def _intercept_local_optimization(
+        self, routed: RoutedMessagesRequest
+    ) -> object | None:
+        optimized = try_optimizations(routed.request, self._settings)
+        if optimized is None:
+            return None
+        trace_event(
+            stage="routing",
+            event="api.optimization.short_circuit",
+            source="api",
+            model=routed.request.model,
+        )
+        return optimized
+
+    def _provider_stream(
+        self,
+        routed: RoutedMessagesRequest,
+        *,
+        wire_api: str,
+        raw_log_label: str,
+        raw_log_payload: Any,
+    ) -> AsyncIterator[str]:
+        provider = self._provider_getter(routed.resolved.provider_id)
+        provider.preflight_stream(
+            routed.request,
+            thinking_enabled=routed.resolved.thinking_enabled,
+        )
+
+        route_trace: dict[str, Any] = {
+            "stage": "routing",
+            "event": "api.route.resolved",
+            "source": "api",
+            "provider_id": routed.resolved.provider_id,
+            "provider_model": routed.resolved.provider_model,
+            "provider_model_ref": routed.resolved.provider_model_ref,
+            "gateway_model": routed.request.model,
+            "thinking_enabled": routed.resolved.thinking_enabled,
+        }
+        if wire_api == "responses":
+            route_trace["wire_api"] = "responses"
+        trace_event(**route_trace)
+
+        request_id = f"req_{uuid.uuid4().hex[:12]}"
+        trace_event(
+            stage="ingress",
+            event=(
+                "api.responses.request.received"
+                if wire_api == "responses"
+                else "api.request.received"
+            ),
+            source="api",
+            message_count=len(routed.request.messages),
+            snapshot=api_messages_request_snapshot(routed.request),
+            request_id=request_id,
+        )
+
+        if self._settings.log_raw_api_payloads:
+            logger.debug(f"{raw_log_label} [{{}}]: {{}}", request_id, raw_log_payload)
+
+        input_tokens = self._token_counter(
+            routed.request.messages,
+            routed.request.system,
+            routed.request.tools,
+        )
+        return traced_async_stream(
+            provider.stream_response(
+                routed.request,
+                input_tokens=input_tokens,
+                request_id=request_id,
+                thinking_enabled=routed.resolved.thinking_enabled,
+            ),
+            stage="egress",
+            source="api",
+            complete_event=(
+                "api.responses.stream_completed"
+                if wire_api == "responses"
+                else "api.response.stream_completed"
+            ),
+            interrupted_event=(
+                "api.responses.stream_interrupted"
+                if wire_api == "responses"
+                else "api.response.stream_interrupted"
+            ),
+            chunk_event=None,
+            extra={
+                "request_id": request_id,
+                "provider_id": routed.resolved.provider_id,
+                "gateway_model": routed.request.model,
+            },
+        )

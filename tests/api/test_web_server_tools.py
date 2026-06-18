@@ -7,7 +7,7 @@ import pytest
 import api.web_tools.constants as web_tool_constants
 from api.model_router import ModelRouter, ResolvedModel, RoutedMessagesRequest
 from api.models.anthropic import Message, MessagesRequest, Tool
-from api.services import ClaudeProxyService
+from api.request_pipeline import ApiRequestPipeline
 from api.web_tools import egress as web_egress
 from api.web_tools.egress import (
     WebFetchEgressPolicy,
@@ -112,7 +112,7 @@ def test_service_rejects_forced_server_tool_on_openai_when_disabled(
     """OpenAI Chat upstreams cannot run forced server tools without the local handler."""
     settings = Settings()
     assert settings.enable_web_server_tools is False
-    service = ClaudeProxyService(
+    service = ApiRequestPipeline(
         settings,
         provider_getter=lambda _: MagicMock(),
         model_router=FixedProviderModelRouter(settings, provider_id),
@@ -598,7 +598,7 @@ def test_service_rejects_listed_server_tools_on_openai_chat(
     provider_id: str,
 ) -> None:
     settings = Settings()
-    service = ClaudeProxyService(
+    service = ApiRequestPipeline(
         settings,
         provider_getter=lambda _: MagicMock(),
         model_router=FixedProviderModelRouter(settings, provider_id),
@@ -626,7 +626,7 @@ def test_listed_server_tools_routed_on_anthropic_messages_providers(
 
     mock_provider = MagicMock()
     mock_provider.stream_response = fake_stream
-    service = ClaudeProxyService(
+    service = ApiRequestPipeline(
         settings,
         provider_getter=lambda _: mock_provider,
         model_router=FixedProviderModelRouter(settings, provider_id),
@@ -654,7 +654,7 @@ def test_forced_server_tools_routed_on_anthropic_messages_providers_when_local_d
 
     mock_provider = MagicMock()
     mock_provider.stream_response = fake_stream
-    service = ClaudeProxyService(
+    service = ApiRequestPipeline(
         settings,
         provider_getter=lambda _: mock_provider,
         model_router=FixedProviderModelRouter(settings, provider_id),

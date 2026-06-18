@@ -81,7 +81,7 @@ def test_create_response_stream_bypasses_local_message_optimizations() -> None:
     with (
         patch("api.dependencies.resolve_provider", return_value=provider),
         patch(
-            "api.services.try_optimizations",
+            "api.request_pipeline.try_optimizations",
             side_effect=AssertionError("Responses must not use message optimizations"),
         ),
         TestClient(app) as client,

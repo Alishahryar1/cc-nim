@@ -32,9 +32,9 @@ flowchart LR
     Bots[Discord or Telegram Bots] --> Messaging[Messaging Bridge]
     Messaging --> ClientCLI[Managed Client CLI Sessions]
     ClientCLI --> ProxyAPI
-    ProxyAPI --> Service[ClaudeProxyService]
-    Service --> Router[ModelRouter]
-    Service --> Providers[ProviderRegistry]
+    ProxyAPI --> Pipeline[ApiRequestPipeline]
+    Pipeline --> Router[ModelRouter]
+    Pipeline --> Providers[ProviderRegistry]
     Providers --> OpenAIChat[OpenAI Chat Providers]
     Providers --> NativeAnthropic[Anthropic Messages Providers]
 ```
@@ -43,8 +43,8 @@ flowchart LR
 
 The installable wheel packages are declared in [pyproject.toml](pyproject.toml):
 
-- [api/](api/) owns the FastAPI app, route handlers, request orchestration,
-  admin APIs, local optimizations, and server-tool handling.
+- [api/](api/) owns the FastAPI app, route handlers, request pipeline, model
+  catalog, admin APIs, local optimizations, and server-tool handling.
 - [cli/](cli/) owns console entrypoints, client CLI launchers, process/session
   management, and client adapter contracts.
 - [config/](config/) owns settings, provider metadata, filesystem paths,
@@ -105,10 +105,10 @@ The current package boundaries are intentional, but several modules still carry
 large orchestration responsibilities. Treat these as refactor targets, not as
 new places to add unrelated behavior:
 
-- [api/services.py](api/services.py) coordinates routing, optimizations, local
-  server tools, provider execution, and Responses adaptation. Future changes
-  should keep route handlers thin and move separable use-case logic behind small
-  helpers.
+- [api/request_pipeline.py](api/request_pipeline.py) coordinates routing,
+  message-only intercepts, provider execution, token counting, and Responses
+  adaptation. Keep route handlers thin and keep new pre-provider behavior as
+  explicit pipeline intercepts.
 - [providers/transports/](providers/transports/) owns provider transport
   families. The OpenAI-chat and native Anthropic transport packages split thin
   transport bases from per-request stream runners, recovery event construction,
@@ -221,38 +221,39 @@ proxy auth is disabled. Otherwise the token may be supplied through `x-api-key`,
 `Authorization: Bearer ...`, or `anthropic-auth-token`. Comparisons use
 constant-time matching.
 
-`ClaudeProxyService` in [api/services.py](api/services.py) coordinates request
-handling. It validates non-empty messages, resolves models, handles local server
-tools and optimizations, resolves a provider, preflights the upstream request,
-then streams Anthropic SSE back to the caller.
+`ApiRequestPipeline` in
+[api/request_pipeline.py](api/request_pipeline.py) coordinates request handling.
+It validates non-empty messages, resolves models, runs explicit message-only
+intercepts for local server tools and optimizations, resolves a provider,
+preflights the upstream request, then streams Anthropic SSE back to the caller.
 
 ```mermaid
 sequenceDiagram
     participant Client
     participant Route as FastAPIRoute
-    participant Service as ClaudeProxyService
+    participant Pipeline as ApiRequestPipeline
     participant Router as ModelRouter
     participant Registry as ProviderRegistry
     participant Provider
 
     Client->>Route: POST /v1/messages
     Route->>Route: require_api_key
-    Route->>Service: create_message
-    Service->>Router: resolve model and thinking
-    Service->>Service: server tools or optimizations
-    Service->>Registry: resolve provider
+    Route->>Pipeline: create_message
+    Pipeline->>Router: resolve model and thinking
+    Pipeline->>Pipeline: server tools or optimizations
+    Pipeline->>Registry: resolve provider
     Registry->>Provider: cached or new provider
-    Service->>Provider: preflight_stream
-    Service->>Provider: stream_response
+    Pipeline->>Provider: preflight_stream
+    Pipeline->>Provider: stream_response
     Provider-->>Client: Anthropic SSE events
 ```
 
-OpenAI Responses uses the same core route. `create_response()` delegates
-Responses protocol work to the `OpenAIResponsesAdapter` in
+OpenAI Responses uses the same provider execution path without message-only
+intercepts. `create_response()` delegates Responses protocol work to the
+`OpenAIResponsesAdapter` in
 [core/openai_responses/adapter.py](core/openai_responses/adapter.py). The adapter
-converts the Responses payload into an Anthropic Messages payload, lets the
-service reuse `create_message()`, then converts the final response or SSE stream
-back to Responses format.
+converts the Responses payload into an Anthropic Messages payload before
+provider execution, then converts Anthropic SSE back to Responses SSE.
 
 ## Model Routing
 
