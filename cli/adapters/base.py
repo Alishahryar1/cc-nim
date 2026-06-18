@@ -32,7 +32,9 @@ class CliParseState:
 
     log_raw_cli_diagnostics: bool = False
     session_id_extracted: bool = False
-    responses_seen_item_ids: set[str] = field(default_factory=set)
+    responses_seen_output_keys: set[str] = field(default_factory=set)
+    responses_current_output_scope: str | None = None
+    responses_next_implicit_output_scope: int = 0
 
 
 class ClientCliAdapter(Protocol):

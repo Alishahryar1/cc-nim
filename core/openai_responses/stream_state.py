@@ -70,7 +70,6 @@ class ResponsesStreamAssembler:
         self._output_slots: list[dict[str, Any] | None] = []
         self._active_blocks: dict[int, _BlockState] = {}
         self._fallback_text_index = -1
-        self._stop_reason: str | None = None
         self._input_tokens: int | None = None
         self._output_tokens: int | None = None
         self._started = False
@@ -125,8 +124,6 @@ class ResponsesStreamAssembler:
     def complete_response(self) -> list[str]:
         chunks = self._flush_active_blocks()
         self.final_response = self.response_payload(status="completed")
-        if self._stop_reason:
-            self.final_response["stop_reason"] = self._stop_reason
         chunks.append(
             format_response_sse_event(
                 "response.completed",
@@ -238,11 +235,6 @@ class ResponsesStreamAssembler:
         return self._complete_block(state)
 
     def _handle_message_delta(self, data: Mapping[str, Any]) -> None:
-        delta = data.get("delta")
-        if isinstance(delta, dict):
-            stop_reason = delta.get("stop_reason")
-            if isinstance(stop_reason, str) and stop_reason:
-                self._stop_reason = stop_reason
         usage = data.get("usage")
         if not isinstance(usage, dict):
             return

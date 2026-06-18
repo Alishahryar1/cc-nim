@@ -189,6 +189,7 @@ async def test_split_usage_deltas_are_accumulated() -> None:
         "output_tokens": 7,
         "total_tokens": 18,
     }
+    assert "stop_reason" not in response
 
 
 @pytest.mark.parametrize(

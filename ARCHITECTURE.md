@@ -364,7 +364,8 @@ behind the adapter boundary. `stream.py` is the public streaming entrypoint;
 `stream_state.py` owns the block-indexed Responses output ledger used to
 preserve streamed item order, pending block finalization, and terminal response
 lifecycle events. API code should depend on the adapter, not on those internal
-module owners directly.
+module owners directly. Responses output payloads stay OpenAI-shaped; Anthropic
+terminal metadata is used internally only when it affects streamed behavior.
 
 Responses custom tools are also boundary-owned. The adapter accepts native
 Responses `custom` tool declarations, represents them internally as Anthropic
