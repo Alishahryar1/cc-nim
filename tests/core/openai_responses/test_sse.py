@@ -223,6 +223,25 @@ async def test_reasoning_usage_detail_is_capped_at_output_tokens() -> None:
 
 
 @pytest.mark.asyncio
+async def test_reasoning_usage_detail_omits_zero_capped_count() -> None:
+    response = await _completed_response_from_sse(
+        _aiter(
+            _anthropic_reasoning_stream(
+                "reasoning text exists without reported output tokens",
+                output_tokens=None,
+            )
+        ),
+        {"model": "nvidia_nim/test-model", "stream": True},
+    )
+
+    assert response["usage"] == {
+        "input_tokens": 3,
+        "output_tokens": 0,
+        "total_tokens": 3,
+    }
+
+
+@pytest.mark.asyncio
 async def test_text_only_usage_omits_reasoning_usage_detail() -> None:
     response = await _completed_response_from_sse(
         _aiter(_anthropic_text_stream("plain text only")),
@@ -440,8 +459,12 @@ def _anthropic_tool_stream(
 def _anthropic_reasoning_stream(
     reasoning: str,
     *,
-    output_tokens: int = 20,
+    output_tokens: int | None = 20,
 ) -> list[str]:
+    usage = {"input_tokens": 3}
+    if output_tokens is not None:
+        usage["output_tokens"] = output_tokens
+
     return [
         format_sse_event("message_start", {"type": "message_start", "message": {}}),
         format_sse_event(
@@ -469,7 +492,7 @@ def _anthropic_reasoning_stream(
             {
                 "type": "message_delta",
                 "delta": {"stop_reason": "end_turn", "stop_sequence": None},
-                "usage": {"input_tokens": 3, "output_tokens": output_tokens},
+                "usage": usage,
             },
         ),
         format_sse_event("message_stop", {"type": "message_stop"}),

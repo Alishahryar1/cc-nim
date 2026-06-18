@@ -608,9 +608,10 @@ class ResponsesStreamAssembler:
             "output_tokens": output_tokens,
             "total_tokens": input_tokens + output_tokens,
         }
-        if self._reasoning_tokens_estimate:
+        capped_reasoning_tokens = min(self._reasoning_tokens_estimate, output_tokens)
+        if capped_reasoning_tokens:
             usage["output_tokens_details"] = {
-                "reasoning_tokens": min(self._reasoning_tokens_estimate, output_tokens)
+                "reasoning_tokens": capped_reasoning_tokens
             }
         return usage
 
