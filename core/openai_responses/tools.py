@@ -86,7 +86,18 @@ def convert_tool_choice(value: Any) -> dict[str, Any] | None:
                     name, namespace=namespace
                 ),
             }
-        if choice_type in {"auto", "any", "tool"}:
+        if choice_type == "tool":
+            namespace = optional_str(value.get("namespace"))
+            name = optional_str(value.get("name"))
+            if name:
+                return {
+                    "type": "tool",
+                    "name": responses_tool_name_to_anthropic_name(
+                        name, namespace=namespace
+                    ),
+                }
+            return dict(value)
+        if choice_type in {"auto", "any"}:
             return dict(value)
     raise ResponsesConversionError(f"Unsupported Responses tool_choice: {value!r}")
 

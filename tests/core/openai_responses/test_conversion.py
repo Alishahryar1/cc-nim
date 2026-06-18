@@ -179,6 +179,35 @@ def test_responses_namespace_tools_flatten_for_anthropic() -> None:
     assert payload["tool_choice"] == {"type": "tool", "name": "mcp__node_repl__js"}
 
 
+def test_responses_namespaced_tool_choice_type_tool_flattens_for_anthropic() -> None:
+    payload = _ADAPTER.to_anthropic_payload(
+        {
+            "model": "nvidia_nim/test-model",
+            "input": "Use JS",
+            "tools": [
+                {
+                    "type": "namespace",
+                    "name": "mcp__node_repl",
+                    "tools": [
+                        {
+                            "type": "function",
+                            "name": "js",
+                            "parameters": {"type": "object", "properties": {}},
+                        }
+                    ],
+                }
+            ],
+            "tool_choice": {
+                "type": "tool",
+                "namespace": "mcp__node_repl",
+                "name": "js",
+            },
+        }
+    )
+
+    assert payload["tool_choice"] == {"type": "tool", "name": "mcp__node_repl__js"}
+
+
 def test_responses_custom_tool_converts_to_anthropic_string_tool() -> None:
     payload = _ADAPTER.to_anthropic_payload(
         {

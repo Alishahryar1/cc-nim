@@ -172,6 +172,7 @@ def test_openai_responses_uses_adapter_boundary() -> None:
         "output.py",
         "reasoning.py",
         "stream.py",
+        "stream_state.py",
         "tools.py",
     }:
         assert (responses_root / filename).exists()

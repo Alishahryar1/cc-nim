@@ -66,7 +66,11 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         "OpenAI Responses requests from Codex",
         "Responses SSE or JSON response",
         "OpenAI-shaped error or conversion error",
-        ("tests/api/test_openai_responses.py",),
+        (
+            "tests/api/test_openai_responses.py",
+            "tests/core/openai_responses/test_sse.py",
+            "tests/cli/test_adapters.py",
+        ),
         (
             "test_probe_and_models_routes",
             "test_provider_codex_responses_text_e2e",

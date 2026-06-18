@@ -67,6 +67,19 @@ The main ownership rule is that shared Anthropic and Responses protocol behavior
 belongs in [core/](core/). Provider modules should use neutral helpers rather
 than importing behavior from another provider-specific module.
 
+## Customer-Facing Contract
+
+FCC optimizes for installed user workflows, not internal compatibility. The
+behavior that must be preserved is that `fcc-server`, `fcc-cloud`, `fcc-claude`,
+`fcc-codex`, Claude Code, Codex, and configured messaging bridges run correctly
+for real prompts against supported providers.
+
+Internal modules, class designs, helper APIs, route implementations, and tests
+are not stable contracts. Refactors may replace or remove them when doing so
+simplifies the system, improves correctness, or better matches these
+architecture boundaries. When tests primarily encode an obsolete internal shape,
+update the tests to assert the customer-facing behavior instead.
+
 ## Design Pressure And Refactor Targets
 
 The current package boundaries are intentional, but several modules still carry
@@ -345,8 +358,10 @@ The package is split by protocol responsibility. Request conversion, complete
 response conversion, stream transformation, Anthropic SSE parsing, Responses SSE
 event formatting, output item construction, tool identity mapping, reasoning
 mapping, ID generation, and error envelope construction each live behind the
-adapter boundary. API code should depend on the adapter, not on those internal
-module owners directly.
+adapter boundary. `stream.py` is the public streaming entrypoint; `stream_state.py`
+owns the block-indexed Responses output ledger used to preserve streamed item
+order, pending block finalization, and terminal response lifecycle events. API
+code should depend on the adapter, not on those internal module owners directly.
 
 Responses custom tools are also boundary-owned. The adapter accepts native
 Responses `custom` tool declarations, represents them internally as Anthropic

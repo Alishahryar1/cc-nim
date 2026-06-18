@@ -281,6 +281,49 @@ def test_create_response_accepts_codex_custom_tool_request() -> None:
     assert call["input"] == "*** Begin Patch"
 
 
+def test_create_response_stream_provider_error_returns_response_failed() -> None:
+    provider = FakeProvider(
+        [
+            format_sse_event(
+                "error",
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "api_error",
+                        "message": "provider failed",
+                    },
+                },
+            )
+        ]
+    )
+    app = create_app(lifespan_enabled=False)
+    with (
+        patch("api.dependencies.resolve_provider", return_value=provider),
+        TestClient(app) as client,
+    ):
+        response = client.post(
+            "/v1/responses",
+            json={
+                "model": "nvidia_nim/test-model",
+                "input": "Hello",
+                "stream": True,
+            },
+        )
+
+    assert response.status_code == 200
+    events = parse_sse_text(response.text)
+    assert [event.event for event in events] == ["response.created", "response.failed"]
+    failed = events[-1].data["response"]
+    assert failed["id"] == events[0].data["response"]["id"]
+    assert failed["status"] == "failed"
+    assert failed["error"] == {
+        "message": "provider failed",
+        "type": "api_error",
+        "param": None,
+        "code": None,
+    }
+
+
 def test_create_response_replays_prior_reasoning_as_reasoning_content() -> None:
     provider = FakeProvider(_anthropic_text_stream("done"))
     app = create_app(lifespan_enabled=False)

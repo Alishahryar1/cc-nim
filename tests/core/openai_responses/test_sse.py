@@ -126,7 +126,7 @@ async def test_anthropic_custom_tool_stream_converts_to_custom_tool_call() -> No
 
 
 @pytest.mark.asyncio
-async def test_anthropic_error_stream_converts_to_responses_error_event() -> None:
+async def test_anthropic_error_stream_converts_to_response_failed_event() -> None:
     text = await _collect_sse(
         _ADAPTER.iter_sse_from_anthropic(
             _aiter(
@@ -149,8 +149,135 @@ async def test_anthropic_error_stream_converts_to_responses_error_event() -> Non
 
     events = parse_sse_text(text)
     assert events[0].event == "response.created"
-    assert events[1].event == "error"
-    assert events[1].data["error"]["message"] == "upstream failed"
+    assert events[1].event == "response.failed"
+    failed = events[1].data["response"]
+    assert failed["status"] == "failed"
+    assert failed["error"]["message"] == "upstream failed"
+
+
+@pytest.mark.asyncio
+async def test_split_usage_deltas_are_accumulated() -> None:
+    response = await _ADAPTER.collect_from_anthropic_sse(
+        _aiter(
+            [
+                *_anthropic_text_stream("usage")[:-2],
+                format_sse_event(
+                    "message_delta",
+                    {
+                        "type": "message_delta",
+                        "delta": {"stop_reason": "end_turn"},
+                        "usage": {"input_tokens": 11},
+                    },
+                ),
+                format_sse_event(
+                    "message_delta",
+                    {
+                        "type": "message_delta",
+                        "delta": {},
+                        "usage": {"output_tokens": 7},
+                    },
+                ),
+                format_sse_event("message_stop", {"type": "message_stop"}),
+            ]
+        ),
+        {"model": "nvidia_nim/test-model", "stream": False},
+    )
+
+    assert response["usage"] == {
+        "input_tokens": 11,
+        "output_tokens": 7,
+        "total_tokens": 18,
+    }
+
+
+@pytest.mark.parametrize(
+    ("request_payload", "tool_name", "partial_json", "expected_type", "expected_field"),
+    [
+        (
+            {"model": "nvidia_nim/test-model", "stream": False},
+            "echo",
+            '{"value":"FCC"}',
+            "function_call",
+            ("arguments", '{"value":"FCC"}'),
+        ),
+        (
+            {
+                "model": "nvidia_nim/test-model",
+                "stream": False,
+                "tools": [{"type": "custom", "name": "apply_patch"}],
+            },
+            "apply_patch",
+            '{"input":"*** Begin Patch"}',
+            "custom_tool_call",
+            ("input", "*** Begin Patch"),
+        ),
+    ],
+)
+@pytest.mark.asyncio
+async def test_pending_tool_blocks_flush_on_message_stop_and_eof(
+    request_payload: dict[str, object],
+    tool_name: str,
+    partial_json: str,
+    expected_type: str,
+    expected_field: tuple[str, str],
+) -> None:
+    stream = _anthropic_tool_stream(
+        tool_name=tool_name, partial_json=partial_json, include_block_stop=False
+    )
+    message_stop_response = await _ADAPTER.collect_from_anthropic_sse(
+        _aiter(stream), request_payload
+    )
+    eof_response = await _ADAPTER.collect_from_anthropic_sse(
+        _aiter(stream[:-1]), request_payload
+    )
+
+    for response in (message_stop_response, eof_response):
+        call = response["output"][0]
+        assert call["type"] == expected_type
+        assert call[expected_field[0]] == expected_field[1]
+
+
+@pytest.mark.asyncio
+async def test_overlapping_text_and_tool_blocks_keep_reserved_output_indexes() -> None:
+    text = await _collect_sse(
+        _ADAPTER.iter_sse_from_anthropic(
+            _aiter(_overlapping_text_tool_stream()),
+            {"model": "nvidia_nim/test-model", "stream": True},
+        )
+    )
+
+    events = parse_sse_text(text)
+    item_events = [
+        (event.event, event.data["output_index"])
+        for event in events
+        if event.event in {"response.output_item.added", "response.output_item.done"}
+    ]
+    assert item_events == [
+        ("response.output_item.added", 0),
+        ("response.output_item.added", 1),
+        ("response.output_item.done", 1),
+        ("response.output_item.done", 0),
+    ]
+    completed = events[-1].data["response"]
+    assert [item["type"] for item in completed["output"]] == [
+        "message",
+        "function_call",
+    ]
+    assert completed["output"][0]["content"][0]["text"] == "text"
+    assert completed["output"][1]["arguments"] == '{"value":"FCC"}'
+
+
+@pytest.mark.asyncio
+async def test_overlapping_text_blocks_do_not_merge_content_by_index() -> None:
+    response = await _ADAPTER.collect_from_anthropic_sse(
+        _aiter(_overlapping_text_stream()),
+        {"model": "nvidia_nim/test-model", "stream": False},
+    )
+
+    assert [item["content"][0]["text"] for item in response["output"]] == [
+        "A1-A2",
+        "B1-B2",
+    ]
 
 
 @pytest.mark.asyncio
@@ -211,9 +338,12 @@ def _anthropic_text_stream(text: str) -> list[str]:
 
 
 def _anthropic_tool_stream(
-    tool_name: str = "echo", partial_json: str = '{"value":"FCC"}'
+    tool_name: str = "echo",
+    partial_json: str = '{"value":"FCC"}',
+    *,
+    include_block_stop: bool = True,
 ) -> list[str]:
-    return [
+    chunks = [
         format_sse_event("message_start", {"type": "message_start", "message": {}}),
         format_sse_event(
             "content_block_start",
@@ -239,6 +369,77 @@ def _anthropic_tool_stream(
                 },
             },
         ),
+    ]
+    if include_block_stop:
+        chunks.append(
+            format_sse_event(
+                "content_block_stop",
+                {"type": "content_block_stop", "index": 0},
+            )
+        )
+    chunks.extend(
+        [
+            format_sse_event(
+                "message_delta",
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": "tool_use", "stop_sequence": None},
+                    "usage": {"input_tokens": 3, "output_tokens": 4},
+                },
+            ),
+            format_sse_event("message_stop", {"type": "message_stop"}),
+        ]
+    )
+    return chunks
+
+
+def _overlapping_text_tool_stream() -> list[str]:
+    return [
+        format_sse_event("message_start", {"type": "message_start", "message": {}}),
+        format_sse_event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""},
+            },
+        ),
+        format_sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "text"},
+            },
+        ),
+        format_sse_event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": 1,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "echo",
+                    "input": {},
+                },
+            },
+        ),
+        format_sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 1,
+                "delta": {
+                    "type": "input_json_delta",
+                    "partial_json": '{"value":"FCC"}',
+                },
+            },
+        ),
+        format_sse_event(
+            "content_block_stop",
+            {"type": "content_block_stop", "index": 1},
+        ),
         format_sse_event(
             "content_block_stop",
             {"type": "content_block_stop", "index": 0},
@@ -250,6 +451,69 @@ def _anthropic_tool_stream(
                 "delta": {"stop_reason": "tool_use", "stop_sequence": None},
                 "usage": {"input_tokens": 3, "output_tokens": 4},
             },
+        ),
+        format_sse_event("message_stop", {"type": "message_stop"}),
+    ]
+
+
+def _overlapping_text_stream() -> list[str]:
+    return [
+        format_sse_event("message_start", {"type": "message_start", "message": {}}),
+        format_sse_event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""},
+            },
+        ),
+        format_sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "A1-"},
+            },
+        ),
+        format_sse_event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": 1,
+                "content_block": {"type": "text", "text": ""},
+            },
+        ),
+        format_sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 1,
+                "delta": {"type": "text_delta", "text": "B1-"},
+            },
+        ),
+        format_sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "A2"},
+            },
+        ),
+        format_sse_event(
+            "content_block_stop",
+            {"type": "content_block_stop", "index": 0},
+        ),
+        format_sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 1,
+                "delta": {"type": "text_delta", "text": "B2"},
+            },
+        ),
+        format_sse_event(
+            "content_block_stop",
+            {"type": "content_block_stop", "index": 1},
         ),
         format_sse_event("message_stop", {"type": "message_stop"}),
     ]

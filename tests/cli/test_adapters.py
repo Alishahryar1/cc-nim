@@ -431,6 +431,90 @@ def test_codex_adapter_parses_completed_custom_tool_call_item() -> None:
     ]
 
 
+def test_codex_adapter_dedupes_output_item_done_against_completed_output() -> None:
+    state = CliParseState()
+    item = {
+        "type": "custom_tool_call",
+        "id": "ctc_1",
+        "call_id": "call_1",
+        "name": "apply_patch",
+        "input": "*** Begin Patch",
+    }
+
+    item_done_events = list(
+        CODEX_CLI_ADAPTER.parse_stdout_line(
+            json.dumps({"type": "response.output_item.done", "item": item}),
+            state,
+        )
+    )
+    completed_events = list(
+        CODEX_CLI_ADAPTER.parse_stdout_line(
+            json.dumps(
+                {
+                    "type": "response.completed",
+                    "response": {"output": [item]},
+                }
+            ),
+            state,
+        )
+    )
+
+    assert item_done_events == [
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "call_1",
+                        "name": "apply_patch",
+                        "input": {"input": "*** Begin Patch"},
+                    }
+                ]
+            },
+        }
+    ]
+    assert completed_events == []
+
+
+def test_codex_adapter_completed_output_is_fallback_for_unseen_tool_item() -> None:
+    item = {
+        "type": "function_call",
+        "id": "fc_1",
+        "call_id": "call_1",
+        "name": "echo",
+        "arguments": '{"value":"FCC"}',
+    }
+
+    events = list(
+        CODEX_CLI_ADAPTER.parse_stdout_line(
+            json.dumps(
+                {
+                    "type": "response.completed",
+                    "response": {"output": [item]},
+                }
+            ),
+            CliParseState(),
+        )
+    )
+
+    assert events == [
+        {
+            "type": "assistant",
+            "message": {
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": "call_1",
+                        "name": "echo",
+                        "input": {"value": "FCC"},
+                    }
+                ]
+            },
+        }
+    ]
+
+
 def test_codex_adapter_reasoning_summary_delta_remains_raw() -> None:
     events = list(
         CODEX_CLI_ADAPTER.parse_stdout_line(
