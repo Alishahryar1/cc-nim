@@ -145,6 +145,21 @@ class TelegramPlatform(MessagingPlatform):
         self._log_raw_messaging_content = log_raw_messaging_content
         self._log_api_error_tracebacks = log_api_error_tracebacks
 
+    def _is_authorized(self, user_id: str) -> bool:
+        """Return whether ``user_id`` may drive the bot.
+
+        Fails closed: when no allowlist is configured the bot rejects everyone,
+        mirroring the Discord adapter (see
+        :meth:`messaging.platforms.discord.DiscordPlatform._on_discord_message`,
+        which drops all traffic when ``allowed_channel_ids`` is empty). Without
+        this guard an empty ``allowed_telegram_user_id`` would let any Telegram
+        user reach a ``claude --dangerously-skip-permissions`` session.
+        """
+        allowed = (self.allowed_user_id or "").strip()
+        if not allowed:
+            return False
+        return user_id == allowed
+
     async def _register_pending_voice(
         self, chat_id: str, voice_msg_id: str, status_msg_id: str
     ) -> None:
@@ -169,6 +184,12 @@ class TelegramPlatform(MessagingPlatform):
         """Initialize and connect to Telegram."""
         if not self.bot_token:
             raise ValueError("TELEGRAM_BOT_TOKEN is required")
+
+        if not (self.allowed_user_id or "").strip():
+            logger.warning(
+                "ALLOWED_TELEGRAM_USER_ID is not set; the Telegram bot will reject "
+                "all messages. Set it to your numeric Telegram user id to enable the bot."
+            )
 
         # Configure request with longer timeouts
         request = HTTPXRequest(
@@ -554,8 +575,8 @@ class TelegramPlatform(MessagingPlatform):
         user_id = str(update.effective_user.id)
         chat_id = str(update.effective_chat.id)
 
-        # Security check
-        if self.allowed_user_id and user_id != str(self.allowed_user_id).strip():
+        # Security check (fail closed: no allowlist -> reject everyone)
+        if not self._is_authorized(user_id):
             logger.warning(f"Unauthorized access attempt from {user_id}")
             return
 
@@ -646,7 +667,7 @@ class TelegramPlatform(MessagingPlatform):
         user_id = str(effective_user.id)
         chat_id = str(effective_chat.id)
 
-        if self.allowed_user_id and user_id != str(self.allowed_user_id).strip():
+        if not self._is_authorized(user_id):
             logger.warning(f"Unauthorized voice access attempt from {user_id}")
             return
 

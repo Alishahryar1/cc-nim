@@ -113,3 +113,57 @@ async def test_on_telegram_message_unauthorized(telegram_platform):
     await telegram_platform._on_telegram_message(mock_update, MagicMock())
 
     handler.assert_not_called()
+
+
+@pytest.mark.parametrize("allowed", [None, "", "   "])
+def test_is_authorized_fails_closed_without_allowlist(allowed):
+    """No allowlist must reject everyone (fail closed), mirroring Discord."""
+    with patch("messaging.platforms.telegram.TELEGRAM_AVAILABLE", True):
+        platform = TelegramPlatform(bot_token="test_token", allowed_user_id=allowed)
+    assert platform._is_authorized("12345") is False
+    assert platform._is_authorized("") is False
+
+
+def test_is_authorized_matches_allowlisted_user():
+    with patch("messaging.platforms.telegram.TELEGRAM_AVAILABLE", True):
+        platform = TelegramPlatform(bot_token="test_token", allowed_user_id=" 12345 ")
+    assert platform._is_authorized("12345") is True
+    assert platform._is_authorized("99999") is False
+
+
+@pytest.mark.asyncio
+async def test_on_telegram_message_rejected_when_no_allowlist():
+    """An empty allowlist must not fall through to the handler (the bypass bug)."""
+    with patch("messaging.platforms.telegram.TELEGRAM_AVAILABLE", True):
+        platform = TelegramPlatform(bot_token="test_token", allowed_user_id=None)
+    handler = AsyncMock()
+    platform.on_message(handler)
+
+    mock_update = MagicMock()
+    mock_update.message.text = "hello"
+    mock_update.message.message_id = 1
+    mock_update.effective_user.id = 12345
+    mock_update.effective_chat.id = 6789
+    mock_update.message.reply_to_message = None
+
+    await platform._on_telegram_message(mock_update, MagicMock())
+
+    handler.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_on_telegram_voice_rejected_when_no_allowlist():
+    with patch("messaging.platforms.telegram.TELEGRAM_AVAILABLE", True):
+        platform = TelegramPlatform(bot_token="test_token", allowed_user_id=None)
+    handler = AsyncMock()
+    platform.on_message(handler)
+
+    mock_update = MagicMock()
+    mock_update.message.voice = MagicMock()
+    mock_update.message.message_id = 1
+    mock_update.effective_user.id = 12345
+    mock_update.effective_chat.id = 6789
+
+    await platform._on_telegram_voice(mock_update, MagicMock())
+
+    handler.assert_not_called()
