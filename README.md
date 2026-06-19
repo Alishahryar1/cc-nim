@@ -100,7 +100,7 @@ The default model is already set to `nvidia_nim/nvidia/nemotron-3-super-120b-a12
 fcc-claude
 ```
 
-`fcc-claude` reads the current configured port and auth token each time it starts, sets the Claude Code environment variables (including a 190k-token `CLAUDE_CODE_AUTO_COMPACT_WINDOW` for auto-compaction), and then launches the real `claude` command.
+`fcc-claude` reads the current configured port and auth token each time it starts, sets the Claude Code environment variables (including a `CLAUDE_CODE_AUTO_COMPACT_WINDOW` for auto-compaction — 190k by default, configurable to 1000000 for 1M-context models), and then launches the real `claude` command.
 
 ## Choose A Provider
 
@@ -263,14 +263,19 @@ Browse models at [fireworks.ai/models](https://fireworks.ai/models).
 
 Get an API key at [Z.ai/manage-apikey/apikey-list](https://z.ai/manage-apikey/apikey-list).
 
-In the Admin UI, paste it into `ZAI_API_KEY`, then set `MODEL` to a Z.ai model slug such as `zai/glm-5.2`.
+In the Admin UI, paste it into `ZAI_API_KEY`, then set `MODEL` to a Z.ai model slug such as `zai/glm-5.2[1m]`.
 
 This provider calls Z.ai's **Anthropic-compatible** Messages API (`https://api.z.ai/api/anthropic/v1/messages`). The former OpenAI Coding Plan base (`https://api.z.ai/api/coding/paas/v4`) is **not** used by this gateway.
 
 Popular examples:
 
-- `zai/glm-5.2`
+- `zai/glm-5.2[1m]` — GLM-5.2 with the 1M-token context window
+- `zai/glm-5.2` — GLM-5.2 with the default (~200K) context
 - `zai/glm-5-turbo`
+
+To use the 1M window end-to-end, also raise the client auto-compaction window (`CLAUDE_CODE_AUTO_COMPACT_WINDOW=1000000`) — otherwise Claude Code summarizes the conversation at ~190K tokens and the 1M window is never filled.
+
+GLM-5.2 reasoning depth defaults to `reasoning_effort=max` (z.ai's recommendation for coding); set `ZAI_REASONING_EFFORT=high` (or empty to disable) to change it.
 
 #### Z.ai MCP servers
 
@@ -320,7 +325,7 @@ In the Admin UI, keep or update `OLLAMA_BASE_URL`, then set `MODEL` to the same 
 
 Each model tier can use a different provider by setting `MODEL_OPUS`, `MODEL_SONNET`, and `MODEL_HAIKU` in the Admin UI. Leave a tier blank to inherit `MODEL`.
 
-For example, you can route Opus to `nvidia_nim/moonshotai/kimi-k2.5`, Sonnet to `open_router/deepseek/deepseek-r1-0528:free`, Haiku to `lmstudio/unsloth/GLM-4.7-Flash-GGUF`, and keep the fallback `MODEL` on `zai/glm-5.2`.
+For example, you can route Opus to `nvidia_nim/moonshotai/kimi-k2.5`, Sonnet to `open_router/deepseek/deepseek-r1-0528:free`, Haiku to `lmstudio/unsloth/GLM-4.7-Flash-GGUF`, and keep the fallback `MODEL` on `zai/glm-5.2[1m]`.
 
 ## Connect Claude Code
 
@@ -332,7 +337,7 @@ For terminal use, prefer the installed launcher:
 fcc-claude
 ```
 
-Keep `fcc-server` running while you work. The Admin UI manages proxy config, restarts the server when runtime settings change, and `fcc-claude` reads the current Admin UI-managed port and auth token every time it starts. It also sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW` to `190000` for auto-compaction.
+Keep `fcc-server` running while you work. The Admin UI manages proxy config, restarts the server when runtime settings change, and `fcc-claude` reads the current Admin UI-managed port and auth token every time it starts. It also sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW` for auto-compaction (`190000` by default; raise to `1000000` to use a 1M-context model such as `zai/glm-5.2[1m]`).
 
 ### 2. VS Code Extension
 
@@ -516,7 +521,7 @@ Run them in that order before pushing. CI enforces the same checks.
 
 - `fcc-server`: starts the proxy with configured host and port.
 - `fcc-init`: optional advanced scaffold for `~/.fcc/.env`; prefer the **Admin UI** for normal configuration.
-- `fcc-claude`: launches Claude Code with the configured local proxy URL, auth token, model discovery flag, and a 190k `CLAUDE_CODE_AUTO_COMPACT_WINDOW` for auto-compaction.
+- `fcc-claude`: launches Claude Code with the configured local proxy URL, auth token, model discovery flag, and a `CLAUDE_CODE_AUTO_COMPACT_WINDOW` for auto-compaction (190k default, configurable for 1M-context models).
 - `free-claude-code`: compatibility alias for `fcc-server`.
 
 ### 5. Extending

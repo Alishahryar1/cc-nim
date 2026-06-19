@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from api.models.anthropic import MessagesRequest
+from api.models.anthropic import Message, MessagesRequest
 from core.anthropic import (
     AnthropicToOpenAIConverter,
     OpenAIConversionError,
@@ -57,6 +57,63 @@ def test_convert_system_prompt_list_text():
 
 def test_convert_system_prompt_none():
     assert AnthropicToOpenAIConverter.convert_system_prompt(None) is None
+
+
+# --- System Role in Messages Array Tests ---
+
+
+def test_convert_system_role_message_str():
+    """System role messages in the messages array pass through as role: system."""
+    messages = [
+        MockMessage("user", "hello"),
+        MockMessage("system", "You are helpful"),
+        MockMessage("user", "what is 2+2"),
+    ]
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+    assert len(result) == 3
+    assert result[0] == {"role": "user", "content": "hello"}
+    assert result[1] == {"role": "system", "content": "You are helpful"}
+    assert result[2] == {"role": "user", "content": "what is 2+2"}
+
+
+def test_convert_system_role_message_list():
+    """System role messages with list content are flattened to text."""
+    messages = [
+        MockMessage(
+            "system",
+            [
+                MockBlock(type="text", text="Part A"),
+                MockBlock(type="text", text="Part B"),
+            ],
+        ),
+        MockMessage("user", "hello"),
+    ]
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+    assert len(result) == 2
+    assert result[0] == {"role": "system", "content": "Part A\n\nPart B"}
+    assert result[1] == {"role": "user", "content": "hello"}
+
+
+def test_build_base_request_body_with_system_role_in_messages():
+    """System role messages in the array are preserved alongside top-level system."""
+    request = MessagesRequest(
+        model="test-model",
+        messages=[
+            Message(role="user", content="hello"),
+            Message(role="system", content="Be concise"),
+            Message(role="user", content="what is 2+2"),
+        ],
+        system="Base prompt",
+        max_tokens=100,
+    )
+    body = build_base_request_body(request)
+    msgs = body["messages"]
+    assert msgs[0]["role"] == "system"
+    assert msgs[0]["content"] == "Base prompt"
+    assert msgs[1]["role"] == "user"
+    assert msgs[2]["role"] == "system"
+    assert msgs[2]["content"] == "Be concise"
+    assert msgs[3]["role"] == "user"
 
 
 # --- Tool Conversion Tests ---

@@ -9,6 +9,7 @@ from typing import Any
 
 from loguru import logger
 
+from config.constants import CLAUDE_CODE_AUTO_COMPACT_WINDOW_DEFAULT
 from core.trace import trace_event
 
 from .process_registry import kill_pid_tree_best_effort, register_pid, unregister_pid
@@ -27,6 +28,7 @@ class ClaudeCliConfig:
     plans_directory: str | None = None
     claude_bin: str = "claude"
     auth_token: str = ""
+    auto_compact_window: int = CLAUDE_CODE_AUTO_COMPACT_WINDOW_DEFAULT
 
 
 class CLISession:
@@ -41,6 +43,7 @@ class CLISession:
         claude_bin: str = "claude",
         auth_token: str = "",
         *,
+        auto_compact_window: int = CLAUDE_CODE_AUTO_COMPACT_WINDOW_DEFAULT,
         log_raw_cli_diagnostics: bool = False,
     ):
         self.config = ClaudeCliConfig(
@@ -50,6 +53,7 @@ class CLISession:
             plans_directory=plans_directory,
             claude_bin=claude_bin,
             auth_token=auth_token,
+            auto_compact_window=auto_compact_window,
         )
         self.workspace = self.config.workspace_path
         self.api_url = self.config.api_url
@@ -119,7 +123,9 @@ class CLISession:
             else:
                 env["ANTHROPIC_BASE_URL"] = self.api_url
             env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1"
-            env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = "190000"
+            env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(
+                self.config.auto_compact_window
+            )
             env.pop("ANTHROPIC_API_KEY", None)
             if token := self.auth_token.strip():
                 env["ANTHROPIC_AUTH_TOKEN"] = token

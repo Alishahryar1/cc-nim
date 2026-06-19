@@ -182,7 +182,9 @@ def _claude_child_env(
     env.pop("ANTHROPIC_API_KEY", None)
     env["ANTHROPIC_BASE_URL"] = local_proxy_root_url(settings)
     env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1"
-    env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = "190000"
+    env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = str(
+        settings.claude_code_auto_compact_window
+    )
     if token := settings.anthropic_auth_token.strip():
         env["ANTHROPIC_AUTH_TOKEN"] = token
     return env

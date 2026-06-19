@@ -11,7 +11,10 @@ from dotenv import dotenv_values
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from .constants import HTTP_CONNECT_TIMEOUT_DEFAULT
+from .constants import (
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW_DEFAULT,
+    HTTP_CONNECT_TIMEOUT_DEFAULT,
+)
 from .nim import NimSettings
 from .paths import default_claude_workspace_path, managed_env_path
 from .provider_ids import SUPPORTED_PROVIDER_IDS
@@ -187,6 +190,14 @@ class Settings(BaseSettings):
     model_opus: str | None = Field(default=None, validation_alias="MODEL_OPUS")
     model_sonnet: str | None = Field(default=None, validation_alias="MODEL_SONNET")
     model_haiku: str | None = Field(default=None, validation_alias="MODEL_HAIKU")
+
+    # ==================== Claude Code Client Tuning ====================
+    # Auto-compaction window (tokens) the local proxy advertises to Claude Code.
+    # Raise to 1000000 to use a 1M-context model such as zai/glm-5.2[1m].
+    claude_code_auto_compact_window: int = Field(
+        default=CLAUDE_CODE_AUTO_COMPACT_WINDOW_DEFAULT,
+        validation_alias="CLAUDE_CODE_AUTO_COMPACT_WINDOW",
+    )
 
     # ==================== Per-Provider Proxy ====================
     nvidia_nim_proxy: str = Field(default="", validation_alias="NVIDIA_NIM_PROXY")

@@ -6,7 +6,8 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from api.models.anthropic import Message, MessagesRequest
-from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from config.constants import ZAI_DEFAULT_MAX_OUTPUT_TOKENS
+from core.anthropic.native_messages_request import _extract_system_messages
 from providers.base import ProviderConfig
 from providers.defaults import ZAI_DEFAULT_BASE
 from providers.exceptions import InvalidRequestError
@@ -54,6 +55,68 @@ def test_init(zai_config):
     assert mock_client.called
 
 
+# --- _extract_system_messages unit tests ---
+
+
+def test_extract_system_messages_no_system():
+    messages = [{"role": "user", "content": "hello"}]
+    clean, system = _extract_system_messages(messages, None)
+    assert clean == messages
+    assert system is None
+
+
+def test_extract_system_messages_with_inline_system():
+    messages = [
+        {"role": "user", "content": "hello"},
+        {"role": "system", "content": "Be helpful"},
+        {"role": "user", "content": "bye"},
+    ]
+    clean, system = _extract_system_messages(messages, None)
+    assert len(clean) == 2
+    assert all(m["role"] in ("user", "assistant") for m in clean)
+    assert system == "Be helpful"
+
+
+def test_extract_system_messages_merges_with_top_level():
+    messages = [
+        {"role": "system", "content": "Inline"},
+        {"role": "user", "content": "hello"},
+    ]
+    clean, system = _extract_system_messages(messages, "Top level")
+    assert len(clean) == 1
+    assert "Top level" in system
+    assert "Inline" in system
+
+
+def test_extract_system_messages_list_content():
+    messages = [
+        {
+            "role": "system",
+            "content": [
+                {"type": "text", "text": "Part A"},
+                {"type": "text", "text": "Part B"},
+            ],
+        },
+        {"role": "user", "content": "hello"},
+    ]
+    clean, system = _extract_system_messages(messages, None)
+    assert len(clean) == 1
+    assert "Part A" in system
+    assert "Part B" in system
+
+
+def test_extract_system_messages_empty_system_skipped():
+    messages = [
+        {"role": "system", "content": ""},
+        {"role": "system", "content": "   "},
+        {"role": "system", "content": "Real system"},
+        {"role": "user", "content": "hello"},
+    ]
+    clean, system = _extract_system_messages(messages, None)
+    assert len(clean) == 1
+    assert system == "Real system"
+
+
 def test_request_headers(zai_provider):
     h = zai_provider._request_headers()
     assert h["x-api-key"] == "test_zai_key"
@@ -83,7 +146,75 @@ def test_build_request_body_default_max_tokens(zai_provider):
         messages=[Message(role="user", content="x")],
     )
     body = zai_provider._build_request_body(request)
-    assert body["max_tokens"] == ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+    assert body["max_tokens"] == ZAI_DEFAULT_MAX_OUTPUT_TOKENS
+
+
+def test_build_request_body_default_reasoning_effort_max(monkeypatch, zai_config):
+    """GLM-5.x effort defaults to max (z.ai's recommendation for coding)."""
+    monkeypatch.delenv("ZAI_REASONING_EFFORT", raising=False)
+    provider = ZaiProvider(zai_config)
+    request = MessagesRequest(
+        model="glm-5.2",
+        max_tokens=100,
+        messages=[Message(role="user", content="hi")],
+    )
+    body = provider._build_request_body(request)
+    assert body["reasoning_effort"] == "max"
+
+
+def test_build_request_body_reasoning_effort_high(monkeypatch, zai_config):
+    monkeypatch.setenv("ZAI_REASONING_EFFORT", "high")
+    provider = ZaiProvider(zai_config)
+    request = MessagesRequest(
+        model="glm-5.2",
+        max_tokens=100,
+        messages=[Message(role="user", content="hi")],
+    )
+    body = provider._build_request_body(request)
+    assert body["reasoning_effort"] == "high"
+
+
+def test_build_request_body_reasoning_effort_disabled_when_blank(
+    monkeypatch, zai_config
+):
+    monkeypatch.setenv("ZAI_REASONING_EFFORT", "")
+    provider = ZaiProvider(zai_config)
+    request = MessagesRequest(
+        model="glm-5.2",
+        max_tokens=100,
+        messages=[Message(role="user", content="hi")],
+    )
+    body = provider._build_request_body(request)
+    assert "reasoning_effort" not in body
+
+
+def test_build_request_body_reasoning_effort_skipped_when_thinking_disabled(
+    monkeypatch, zai_config
+):
+    """Effort is only sent when thinking is enabled."""
+    monkeypatch.delenv("ZAI_REASONING_EFFORT", raising=False)
+    provider = ZaiProvider(zai_config)
+    request = MessagesRequest.model_validate(
+        {
+            "model": "glm-5.2",
+            "max_tokens": 100,
+            "messages": [{"role": "user", "content": "hi"}],
+            "thinking": {"enabled": False},
+        }
+    )
+    body = provider._build_request_body(request)
+    assert "reasoning_effort" not in body
+
+
+def test_build_request_body_glm_5_2_1m_alias_preserved(zai_provider):
+    """The [1m] context opt-in suffix survives routing into the upstream model."""
+    request = MessagesRequest(
+        model="glm-5.2[1m]",
+        max_tokens=100,
+        messages=[Message(role="user", content="hi")],
+    )
+    body = zai_provider._build_request_body(request)
+    assert body["model"] == "glm-5.2[1m]"
 
 
 def test_build_request_body_rejects_extra_body(zai_provider):
@@ -159,6 +290,58 @@ def test_build_request_body_mcp_injection_preserves_client_servers(zai_provider)
     assert {"web-search-prime", "zread"}.issubset(set(names))
     assert names.count("web-reader") == 1
     assert body["mcp_servers"][1]["url"] == "https://y/mcp"
+
+
+def test_build_request_body_extracts_system_role_from_messages(zai_provider):
+    """System role messages in the array are hoisted to the top-level system field."""
+    request = MessagesRequest(
+        model="glm-5.2",
+        max_tokens=100,
+        messages=[
+            Message(role="user", content="hello"),
+            Message(role="system", content="Be concise"),
+            Message(role="user", content="what is 2+2"),
+        ],
+    )
+    body = zai_provider._build_request_body(request)
+    assert all(m["role"] in ("user", "assistant") for m in body["messages"]), (
+        f"Found non-user/assistant role in messages: {body['messages']}"
+    )
+    assert "Be concise" in body["system"]
+
+
+def test_build_request_body_merges_system_role_with_top_level_system(zai_provider):
+    """Inline system messages are merged with the top-level system field."""
+    request = MessagesRequest(
+        model="glm-5.2",
+        max_tokens=100,
+        messages=[
+            Message(role="system", content="Inline system"),
+            Message(role="user", content="hello"),
+        ],
+        system="Top-level system",
+    )
+    body = zai_provider._build_request_body(request)
+    assert "Top-level system" in body["system"]
+    assert "Inline system" in body["system"]
+    assert len(body["messages"]) == 1
+    assert body["messages"][0]["role"] == "user"
+
+
+def test_build_request_body_system_role_no_top_level_system(zai_provider):
+    """Inline system message becomes the system field when no top-level system."""
+    request = MessagesRequest(
+        model="glm-5.2",
+        max_tokens=100,
+        messages=[
+            Message(role="system", content="Only inline system"),
+            Message(role="user", content="hello"),
+        ],
+    )
+    body = zai_provider._build_request_body(request)
+    assert body["system"] == "Only inline system"
+    assert len(body["messages"]) == 1
+    assert body["messages"][0]["role"] == "user"
 
 
 @pytest.mark.asyncio

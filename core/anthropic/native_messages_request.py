@@ -185,6 +185,63 @@ def sanitize_native_messages_thinking_policy(
     return sanitized_messages
 
 
+def _extract_system_messages(messages: list[Any], system: Any) -> tuple[list[Any], Any]:
+    """Extract ``role: system`` messages from the array into the ``system`` field.
+
+    Some Claude Code clients send system prompts as messages with ``role: system``
+    in the ``messages`` array instead of (or in addition to) the top-level ``system``
+    field.  The native Anthropic Messages API only accepts ``user`` and ``assistant``
+    roles in ``messages``, so we must hoist system messages out.
+    """
+    system_parts: list[str] = []
+    clean_messages: list[Any] = []
+
+    for message in messages:
+        role = (
+            message.get("role")
+            if isinstance(message, dict)
+            else getattr(message, "role", None)
+        )
+        if role == "system":
+            content = (
+                message.get("content")
+                if isinstance(message, dict)
+                else getattr(message, "content", None)
+            )
+            if isinstance(content, str) and content.strip():
+                system_parts.append(content.strip())
+            elif isinstance(content, list):
+                for block in content:
+                    if isinstance(block, dict) and block.get("type") == "text":
+                        text = block.get("text", "")
+                        if text.strip():
+                            system_parts.append(text.strip())
+            continue
+        clean_messages.append(message)
+
+    if not system_parts:
+        return messages, system
+
+    merged_system = "\n\n".join(system_parts)
+    if system:
+        if isinstance(system, str):
+            if system.strip():
+                merged_system = f"{system.strip()}\n\n{merged_system}"
+        elif isinstance(system, list):
+            existing_parts: list[str] = []
+            for block in system:
+                if isinstance(block, dict) and block.get("type") == "text":
+                    text = block.get("text", "")
+                    if text.strip():
+                        existing_parts.append(text.strip())
+            if existing_parts:
+                merged_system = (
+                    f"{chr(10) + chr(10).join(existing_parts)}\n\n{merged_system}"
+                )
+
+    return clean_messages, merged_system
+
+
 def _normalize_system_prompt_for_openrouter(system: Any) -> Any:
     """Flatten Claude SDK system blocks for OpenRouter's native endpoint."""
     if not isinstance(system, list):
@@ -236,10 +293,16 @@ def build_base_native_anthropic_request_body(
         body["max_tokens"] = default_max_tokens
 
     if "messages" in body:
+        body["messages"], body["system"] = _extract_system_messages(
+            body["messages"],
+            body.get("system"),
+        )
         body["messages"] = sanitize_native_messages_thinking_policy(
             body["messages"],
             thinking_enabled=thinking_enabled,
         )
+        if "system" not in body or body["system"] is None:
+            body.pop("system", None)
 
     return body
 
@@ -264,12 +327,19 @@ def build_openrouter_native_request_body(
         validate_openrouter_extra_body(request_extra)
         body.update(request_extra)
 
+    body["messages"], body["system"] = _extract_system_messages(
+        body.get("messages", []),
+        body.get("system"),
+    )
     body["messages"] = sanitize_native_messages_thinking_policy(
         body.get("messages"),
         thinking_enabled=thinking_enabled,
     )
     if "system" in body:
-        body["system"] = _normalize_system_prompt_for_openrouter(body["system"])
+        if body["system"] is not None:
+            body["system"] = _normalize_system_prompt_for_openrouter(body["system"])
+        else:
+            body.pop("system", None)
     body["stream"] = True
     if body.get("max_tokens") is None:
         body["max_tokens"] = default_max_tokens

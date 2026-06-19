@@ -92,7 +92,7 @@ class SystemContent(_AnthropicBlockBase):
 # Message Types
 # =============================================================================
 class Message(BaseModel):
-    role: Literal["user", "assistant"]
+    role: Literal["user", "assistant", "system"]
     content: (
         str
         | list[

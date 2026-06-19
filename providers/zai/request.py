@@ -6,7 +6,7 @@ from typing import Any
 
 from loguru import logger
 
-from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from config.constants import ZAI_DEFAULT_MAX_OUTPUT_TOKENS
 from core.anthropic.native_messages_request import (
     build_base_native_anthropic_request_body,
 )
@@ -23,7 +23,7 @@ def build_request_body(request_data: Any, *, thinking_enabled: bool) -> dict:
 
     body = build_base_native_anthropic_request_body(
         request_data,
-        default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        default_max_tokens=ZAI_DEFAULT_MAX_OUTPUT_TOKENS,
         thinking_enabled=thinking_enabled,
     )
     extra = getattr(request_data, "extra_body", None)

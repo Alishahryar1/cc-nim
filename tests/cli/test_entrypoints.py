@@ -310,6 +310,17 @@ def test_claude_child_env_targets_current_proxy_config() -> None:
     assert "ANTHROPIC_API_KEY" not in env
 
 
+def test_claude_child_env_threads_custom_auto_compact_window() -> None:
+    """A configured window (e.g. 1M for glm-5.2[1m]) reaches the child env verbatim."""
+    from cli.entrypoints import _claude_child_env
+
+    settings = _launcher_settings()
+    settings.claude_code_auto_compact_window = 1000000
+    env = _claude_child_env(settings, {})
+
+    assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "1000000"
+
+
 def test_claude_child_env_removes_blank_configured_auth_token() -> None:
     from cli.entrypoints import _claude_child_env
 

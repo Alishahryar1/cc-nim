@@ -251,6 +251,7 @@ class AppRuntime:
             plans_directory=plans_directory,
             claude_bin=self.settings.claude_cli_bin,
             auth_token=getattr(self.settings, "anthropic_auth_token", ""),
+            auto_compact_window=self.settings.claude_code_auto_compact_window,
             log_raw_cli_diagnostics=self.settings.log_raw_cli_diagnostics,
             log_messaging_error_details=self.settings.log_messaging_error_details,
         )

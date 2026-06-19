@@ -8,6 +8,7 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from config.constants import CLAUDE_CODE_AUTO_COMPACT_WINDOW_DEFAULT
 from config.settings import Settings
 from providers.exceptions import ServiceUnavailableError
 from providers.registry import ProviderRegistry
@@ -19,6 +20,7 @@ _RUNTIME_EXTRAS = {
     "hf_token": "",
     "nvidia_nim_api_key": "",
     "claude_cli_bin": "claude",
+    "claude_code_auto_compact_window": CLAUDE_CODE_AUTO_COMPACT_WINDOW_DEFAULT,
     "uses_process_anthropic_auth_token": lambda: False,
     "messaging_rate_limit": 1,
     "messaging_rate_window": 1.0,

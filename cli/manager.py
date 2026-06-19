@@ -11,6 +11,8 @@ import uuid
 
 from loguru import logger
 
+from config.constants import CLAUDE_CODE_AUTO_COMPACT_WINDOW_DEFAULT
+
 from .session import CLISession
 
 
@@ -31,6 +33,7 @@ class CLISessionManager:
         claude_bin: str = "claude",
         auth_token: str = "",
         *,
+        auto_compact_window: int = CLAUDE_CODE_AUTO_COMPACT_WINDOW_DEFAULT,
         log_raw_cli_diagnostics: bool = False,
         log_messaging_error_details: bool = False,
     ):
@@ -42,6 +45,7 @@ class CLISessionManager:
             api_url: API URL for the proxy
             allowed_dirs: Directories the CLI is allowed to access
             plans_directory: Directory for Claude Code CLI plan files (passed via --settings)
+            auto_compact_window: Claude Code auto-compaction window (tokens)
         """
         self.workspace = workspace_path
         self.api_url = api_url
@@ -49,6 +53,7 @@ class CLISessionManager:
         self.plans_directory = plans_directory
         self.claude_bin = claude_bin
         self.auth_token = auth_token
+        self.auto_compact_window = auto_compact_window
         self._log_raw_cli_diagnostics = log_raw_cli_diagnostics
         self._log_messaging_error_details = log_messaging_error_details
 
@@ -85,6 +90,7 @@ class CLISessionManager:
                 plans_directory=self.plans_directory,
                 claude_bin=self.claude_bin,
                 auth_token=self.auth_token,
+                auto_compact_window=self.auto_compact_window,
                 log_raw_cli_diagnostics=self._log_raw_cli_diagnostics,
             )
             self._pending_sessions[temp_id] = new_session

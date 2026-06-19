@@ -537,6 +537,36 @@ class TestCLISession:
             assert "ANTHROPIC_API_KEY" not in env
 
     @pytest.mark.asyncio
+    async def test_start_task_threads_custom_auto_compact_window(self):
+        """A custom auto_compact_window (e.g. 1M for glm-5.2[1m]) reaches child env."""
+        from cli.session import CLISession
+
+        session = CLISession(
+            "/tmp",
+            "http://localhost:8082/v1",
+            auth_token="proxy-token",
+            auto_compact_window=1000000,
+        )
+
+        mock_process = AsyncMock()
+        mock_process.stdout.read.side_effect = [b""]
+        mock_process.stderr.read.return_value = b""
+        mock_process.wait.return_value = 0
+
+        with (
+            patch.dict(os.environ, {"ANTHROPIC_API_KEY": "official-key"}, clear=False),
+            patch(
+                "asyncio.create_subprocess_exec", new_callable=AsyncMock
+            ) as mock_exec,
+        ):
+            mock_exec.return_value = mock_process
+            async for _ in session.start_task("test"):
+                pass
+
+            env = mock_exec.call_args.kwargs["env"]
+            assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "1000000"
+
+    @pytest.mark.asyncio
     async def test_start_task_removes_stale_auth_token_when_proxy_auth_blank(self):
         """Test start_task does not leak inherited Claude auth into proxy calls."""
         from cli.session import CLISession
