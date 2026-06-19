@@ -1,37 +1,28 @@
-"""Claude Code CLI session management."""
+"""Managed Claude Code subprocess session."""
 
 import asyncio
 import os
 from collections.abc import AsyncGenerator
-from dataclasses import dataclass, field
-from typing import Any
 
 from loguru import logger
 
+from cli.process_registry import kill_pid_tree_best_effort, register_pid, unregister_pid
 from core.trace import trace_event
 
-from .adapters.base import ClientCliAdapter, CliParseState, CliTaskRequest
-from .adapters.registry import get_client_cli_adapter
-from .process_registry import kill_pid_tree_best_effort, register_pid, unregister_pid
+from .claude import (
+    ManagedClaudeConfig,
+    ManagedClaudeParseState,
+    ManagedClaudeTaskRequest,
+    build_managed_claude_invocation,
+    parse_managed_claude_stdout_line,
+)
 
 # Cap stderr capture so a runaway child cannot exhaust memory; pipe is still drained.
 _MAX_STDERR_CAPTURE_BYTES = 256 * 1024
 
 
-@dataclass(frozen=True, slots=True)
-class ClaudeCliConfig:
-    """Configuration for a managed Claude CLI subprocess."""
-
-    workspace_path: str
-    api_url: str
-    allowed_dirs: list[str] = field(default_factory=list)
-    plans_directory: str | None = None
-    claude_bin: str = "claude"
-    auth_token: str = ""
-
-
-class CLISession:
-    """Manages a single persistent Claude Code CLI subprocess."""
+class ManagedClaudeSession:
+    """Manages a single persistent Claude Code subprocess."""
 
     def __init__(
         self,
@@ -42,10 +33,9 @@ class CLISession:
         claude_bin: str = "claude",
         auth_token: str = "",
         *,
-        client_cli_adapter: ClientCliAdapter | None = None,
         log_raw_cli_diagnostics: bool = False,
     ):
-        self.config = ClaudeCliConfig(
+        self.config = ManagedClaudeConfig(
             workspace_path=os.path.normpath(os.path.abspath(workspace_path)),
             api_url=api_url,
             allowed_dirs=[os.path.normpath(d) for d in (allowed_dirs or [])],
@@ -59,7 +49,6 @@ class CLISession:
         self.plans_directory = self.config.plans_directory
         self.claude_bin = self.config.claude_bin
         self.auth_token = self.config.auth_token
-        self._client_cli_adapter = client_cli_adapter or get_client_cli_adapter()
         self._log_raw_cli_diagnostics = log_raw_cli_diagnostics
         self.process: asyncio.subprocess.Process | None = None
         self.current_session_id: str | None = None
@@ -114,9 +103,9 @@ class CLISession:
         """
         async with self._cli_lock:
             self._is_busy = True
-            invocation = self._client_cli_adapter.build_task_invocation(
+            invocation = build_managed_claude_invocation(
                 config=self.config,
-                request=CliTaskRequest(
+                request=ManagedClaudeTaskRequest(
                     prompt=prompt,
                     session_id=session_id,
                     fork_session=fork_session,
@@ -125,9 +114,9 @@ class CLISession:
             )
 
             trace_event(
-                stage=self._client_cli_adapter.trace_stage,
-                event=self._client_cli_adapter.process_launch_event,
-                source=self._client_cli_adapter.trace_source,
+                stage="claude_cli",
+                event="claude_cli.process.launch",
+                source="claude_cli",
                 **invocation.trace_metadata,
             )
 
@@ -146,7 +135,7 @@ class CLISession:
                     yield {"type": "exit", "code": 1}
                     return
 
-                parse_state = CliParseState(
+                parse_state = ManagedClaudeParseState(
                     log_raw_cli_diagnostics=self._log_raw_cli_diagnostics
                 )
                 buffer = bytearray()
@@ -231,19 +220,15 @@ class CLISession:
                     unregister_pid(self.process.pid)
 
     async def _handle_line_gen(
-        self, line_str: str, parse_state: CliParseState
+        self, line_str: str, parse_state: ManagedClaudeParseState
     ) -> AsyncGenerator[dict]:
         """Process a single line and yield events."""
-        for event in self._client_cli_adapter.parse_stdout_line(line_str, parse_state):
+        for event in parse_managed_claude_stdout_line(line_str, parse_state):
             if isinstance(event, dict) and event.get("type") == "session_info":
                 session_id = event.get("session_id")
                 if isinstance(session_id, str):
                     self.current_session_id = session_id
             yield event
-
-    def _extract_session_id(self, event: Any) -> str | None:
-        """Extract session ID from CLI event."""
-        return self._client_cli_adapter.extract_session_id(event)
 
     async def stop(self):
         """Stop the CLI process."""

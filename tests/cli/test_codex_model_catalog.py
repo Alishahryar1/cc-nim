@@ -9,7 +9,7 @@ from typing import Any, cast
 
 import pytest
 
-from cli.codex_model_catalog import (
+from cli.launchers.codex_model_catalog import (
     build_codex_model_catalog,
     write_codex_model_catalog,
 )

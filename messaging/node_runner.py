@@ -12,7 +12,7 @@ from core.trace import trace_event
 
 from .event_parser import parse_cli_event
 from .node_event_pipeline import handle_session_info_event, process_parsed_cli_event
-from .platforms.base import MessagingPlatform, SessionManagerInterface
+from .platforms.base import ManagedClaudeSessionManagerProtocol, MessagingPlatform
 from .safe_diagnostics import format_exception_for_log
 from .session import SessionStore
 from .transcript import RenderCtx, TranscriptBuffer
@@ -27,7 +27,7 @@ class MessagingNodeRunner:
         self,
         *,
         platform: MessagingPlatform,
-        cli_manager: SessionManagerInterface,
+        cli_manager: ManagedClaudeSessionManagerProtocol,
         session_store: SessionStore,
         get_tree_queue: Callable[[], TreeQueueManager],
         format_status: Callable[[str, str, str | None], str],

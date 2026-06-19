@@ -10,7 +10,7 @@ from loguru import logger
 from core.trace import trace_event
 
 from .cli_event_constants import TRANSCRIPT_EVENT_TYPES, get_status_for_event
-from .platforms.base import SessionManagerInterface
+from .platforms.base import ManagedClaudeSessionManagerProtocol
 from .safe_diagnostics import text_len_hint
 from .session import SessionStore
 from .transcript import TranscriptBuffer
@@ -24,7 +24,7 @@ async def handle_session_info_event(
     captured_session_id: str | None,
     temp_session_id: str | None,
     *,
-    cli_manager: SessionManagerInterface,
+    cli_manager: ManagedClaudeSessionManagerProtocol,
     session_store: SessionStore,
 ) -> tuple[str | None, str | None]:
     """Handle session_info event; return updated (captured_session_id, temp_session_id)."""

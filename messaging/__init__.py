@@ -2,20 +2,24 @@
 
 from .event_parser import parse_cli_event
 from .models import IncomingMessage
-from .platforms.base import CLISession, MessagingPlatform, SessionManagerInterface
+from .platforms.base import (
+    ManagedClaudeSessionManagerProtocol,
+    ManagedClaudeSessionProtocol,
+    MessagingPlatform,
+)
 from .session import SessionStore
 from .trees import MessageNode, MessageState, MessageTree, TreeQueueManager
 from .workflow import MessagingWorkflow
 
 __all__ = [
-    "CLISession",
     "IncomingMessage",
+    "ManagedClaudeSessionManagerProtocol",
+    "ManagedClaudeSessionProtocol",
     "MessageNode",
     "MessageState",
     "MessageTree",
     "MessagingPlatform",
     "MessagingWorkflow",
-    "SessionManagerInterface",
     "SessionStore",
     "TreeQueueManager",
     "parse_cli_event",

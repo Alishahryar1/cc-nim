@@ -17,7 +17,7 @@ from providers.exceptions import ServiceUnavailableError
 from providers.registry import ProviderRegistry
 
 if TYPE_CHECKING:
-    from cli.manager import CLISessionManager
+    from cli.managed import ManagedClaudeSessionManager
     from messaging.platforms.base import MessagingPlatform
     from messaging.session import SessionStore
     from messaging.workflow import MessagingWorkflow
@@ -90,7 +90,7 @@ class AppRuntime:
     _provider_registry: ProviderRegistry | None = field(default=None, init=False)
     messaging_platform: MessagingPlatform | None = None
     messaging_workflow: MessagingWorkflow | None = None
-    cli_manager: CLISessionManager | None = None
+    cli_manager: ManagedClaudeSessionManager | None = None
 
     @classmethod
     def for_app(
@@ -224,7 +224,7 @@ class AppRuntime:
                 )
 
     async def _start_messaging_workflow(self) -> None:
-        from cli.manager import CLISessionManager
+        from cli.managed import ManagedClaudeSessionManager
         from messaging.session import SessionStore
         from messaging.workflow import MessagingWorkflow
 
@@ -244,7 +244,7 @@ class AppRuntime:
             os.path.join(self.settings.claude_workspace, "plans")
         )
         plans_directory = os.path.relpath(plans_dir_abs, workspace)
-        self.cli_manager = CLISessionManager(
+        self.cli_manager = ManagedClaudeSessionManager(
             workspace_path=workspace,
             api_url=api_url,
             allowed_dirs=allowed_dirs,

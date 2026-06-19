@@ -128,8 +128,8 @@ Console scripts are registered in [pyproject.toml](pyproject.toml):
 
 - `fcc-server` and `free-claude-code` call `cli.entrypoints:serve`.
 - `fcc-init` calls `cli.entrypoints:init`.
-- `fcc-claude` calls `cli.entrypoints:launch_claude`.
-- `fcc-codex` calls `cli.entrypoints:launch_codex`.
+- `fcc-claude` calls `cli.launchers.claude:launch`.
+- `fcc-codex` calls `cli.launchers.codex:launch`.
 
 [scripts/install.sh](scripts/install.sh) and [scripts/install.ps1](scripts/install.ps1)
 install or update the uv tool plus optional voice extras. [scripts/uninstall.sh](scripts/uninstall.sh)
@@ -442,25 +442,19 @@ conversion. Forced `web_search` or `web_fetch` requests are handled locally when
 `ENABLE_WEB_SERVER_TOOLS` is true; otherwise OpenAI-chat upstreams reject them
 and native Anthropic Messages transports may receive them.
 
-## CLI Launchers And Client Adapter Boundary
+## CLI Launchers And Managed Claude
 
-[cli/adapters/base.py](cli/adapters/base.py) defines `ClientCliAdapter`, the
-boundary for building subprocess commands, building launcher environments,
-parsing stdout lines, and extracting persistent session IDs.
-
-[cli/adapters/claude.py](cli/adapters/claude.py) implements the Claude Code
-adapter:
+[cli/launchers/claude.py](cli/launchers/claude.py) owns the installed
+`fcc-claude` launcher:
 
 - `fcc-claude` strips inherited `ANTHROPIC_*` variables, sets
   `ANTHROPIC_BASE_URL`, enables gateway model discovery, configures the
   auto-compact window, and always sets `ANTHROPIC_AUTH_TOKEN`. Blank proxy auth
   becomes the local-only `fcc-no-auth` sentinel so Claude Code reaches the proxy
   instead of stopping at its login gate.
-- Managed task invocations set `ANTHROPIC_API_URL`, `ANTHROPIC_BASE_URL`,
-  gateway model discovery, non-interactive terminal settings, optional
-  `--resume`, optional `--fork-session`, and `--output-format stream-json`.
 
-[cli/adapters/codex.py](cli/adapters/codex.py) implements the Codex adapter:
+[cli/launchers/codex.py](cli/launchers/codex.py) owns the installed
+`fcc-codex` launcher:
 
 - `fcc-codex` strips official OpenAI and Codex credential variables.
 - It creates an ephemeral `fcc` model provider with `wire_api = "responses"` and
@@ -470,15 +464,18 @@ adapter:
   native `/model` picker lists FCC provider slugs. Catalog generation is
   fail-open: launch continues with a warning if the catalog cannot be prepared.
 - It stores the proxy auth token in `FCC_CODEX_API_KEY` for Codex to read.
-- Managed task invocations use Codex JSON output and map Responses events into
-  the messaging parser event shape.
-- Codex `response.reasoning_text.delta` events are converted into the shared
-  Anthropic-style `thinking_delta` parser shape; summary reasoning events remain
-  raw unless a future feature selects them as the proxy wire shape.
 
-[cli/manager.py](cli/manager.py) coordinates multiple `CLISession` instances so
-separate conversations can run in separate client CLI processes while replies
-reuse or fork existing sessions.
+[cli/managed/](cli/managed/) owns managed Claude Code subprocesses used by
+Discord and Telegram messaging. Managed task invocations set
+`ANTHROPIC_API_URL`, `ANTHROPIC_BASE_URL`, gateway model discovery,
+non-interactive terminal settings, optional `--resume`, optional
+`--fork-session`, and `--output-format stream-json`. The managed session parser
+extracts persistent Claude session IDs and yields Claude stream-json events to
+the messaging event parser.
+
+Codex is supported through `fcc-codex` and Codex extensions. FCC does not keep an
+internal managed-Codex session runner because no user-facing messaging setting
+selects Codex for Discord or Telegram.
 
 ## Messaging Architecture
 
@@ -536,8 +533,8 @@ sequenceDiagram
     participant Intake as MessagingTurnIntake
     participant Queue as TreeQueueManager
     participant Runner as MessagingNodeRunner
-    participant Manager as CLISessionManager
-    participant CLI as ClientCLI
+    participant Manager as ManagedClaudeSessionManager
+    participant CLI as ClaudeCode
     participant Proxy as LocalProxy
 
     Platform->>Workflow: IncomingMessage
@@ -621,16 +618,18 @@ when maintainers want branch-level assurance.
    updated in place.
 5. Add tests under [tests/api/](tests/api/) or [tests/config/](tests/config/).
 
-### Add A Client Adapter
+### Add Or Change A Client Surface
 
-1. Implement the `ClientCliAdapter` protocol from
-   [cli/adapters/base.py](cli/adapters/base.py).
-2. Register selection behavior in [cli/adapters/registry.py](cli/adapters/registry.py).
-3. Ensure launcher env construction strips conflicting upstream credentials.
-4. Ensure managed task parsing emits the event shapes expected by
+1. For an installed wrapper, add or update a launcher under
+   [cli/launchers/](cli/launchers/) and keep credential stripping local to that
+   client.
+2. For messaging-managed execution, update [cli/managed/](cli/managed/) only
+   when Discord or Telegram should actually run a different managed client.
+3. Ensure managed task parsing emits the event shapes expected by
    [messaging/event_parser.py](messaging/event_parser.py) and
    [messaging/node_event_pipeline.py](messaging/node_event_pipeline.py).
-5. Add CLI adapter and session-manager tests under [tests/cli/](tests/cli/).
+4. Add launcher, managed-session, and customer-flow tests under
+   [tests/cli/](tests/cli/) and [tests/messaging/](tests/messaging/).
 
 ### Add A Messaging Platform
 

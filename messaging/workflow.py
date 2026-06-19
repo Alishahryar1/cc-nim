@@ -8,7 +8,7 @@ from core.trace import trace_event
 
 from .models import IncomingMessage
 from .node_runner import MessagingNodeRunner
-from .platforms.base import MessagingPlatform, SessionManagerInterface
+from .platforms.base import ManagedClaudeSessionManagerProtocol, MessagingPlatform
 from .rendering.profiles import build_rendering_profile
 from .safe_diagnostics import format_exception_for_log
 from .session import SessionStore
@@ -28,7 +28,7 @@ class MessagingWorkflow:
     def __init__(
         self,
         platform: MessagingPlatform,
-        cli_manager: SessionManagerInterface,
+        cli_manager: ManagedClaudeSessionManagerProtocol,
         session_store: SessionStore,
         *,
         debug_platform_edits: bool = False,
