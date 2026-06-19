@@ -214,9 +214,13 @@ async def probe_root():
 
 
 @router.get("/health")
-async def health():
-    """Health check endpoint."""
-    return {"status": "healthy"}
+async def health(request: Request):
+    """Health check endpoint with last activity timestamp."""
+    last_activity = getattr(request.app.state, "last_activity_epoch", None)
+    return {
+        "status": "healthy",
+        "last_activity_epoch": last_activity,
+    }
 
 
 @router.api_route("/health", methods=["HEAD", "OPTIONS"])

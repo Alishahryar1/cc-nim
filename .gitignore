@@ -16,3 +16,4 @@ llama_cache
 .smoke-results
 .vscode
 server.*
+.gstack/

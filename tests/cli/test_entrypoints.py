@@ -439,3 +439,93 @@ def test_launch_claude_unreachable_proxy_exits_with_hint(
     captured = capsys.readouterr()
     assert "http://127.0.0.1:9393" in captured.err
     assert "fcc-server" in captured.err
+
+
+def test_server_is_stale_returns_false_when_health_unreachable() -> None:
+    from cli.entrypoints import _server_is_stale
+
+    with patch("cli.entrypoints._fetch_health", return_value=None):
+        assert _server_is_stale("http://127.0.0.1:9999") is False
+
+
+def test_server_is_stale_returns_false_when_no_last_activity() -> None:
+    from cli.entrypoints import _server_is_stale
+
+    with patch(
+        "cli.entrypoints._fetch_health",
+        return_value={"status": "healthy"},
+    ):
+        assert _server_is_stale("http://127.0.0.1:9999") is False
+
+
+def test_server_is_stale_returns_false_when_recently_active() -> None:
+    import time as _time
+
+    from cli.entrypoints import _server_is_stale
+
+    with patch(
+        "cli.entrypoints._fetch_health",
+        return_value={"status": "healthy", "last_activity_epoch": _time.monotonic()},
+    ):
+        assert _server_is_stale("http://127.0.0.1:9999") is False
+
+
+def test_server_is_stale_returns_true_when_idle_beyond_threshold() -> None:
+    import time as _time
+
+    from cli.entrypoints import SERVER_STALE_THRESHOLD_SECONDS, _server_is_stale
+
+    old_epoch = _time.monotonic() - SERVER_STALE_THRESHOLD_SECONDS - 1
+    with patch(
+        "cli.entrypoints._fetch_health",
+        return_value={"status": "healthy", "last_activity_epoch": old_epoch},
+    ):
+        assert _server_is_stale("http://127.0.0.1:9999") is True
+
+
+def test_launch_claude_restarts_stale_server_before_preflight() -> None:
+    from cli.entrypoints import launch_claude
+
+    settings = _launcher_settings(port=9191, token="proxy-token")
+
+    with (
+        patch("cli.entrypoints.get_settings", return_value=settings),
+        patch("cli.entrypoints._server_is_stale", return_value=True),
+        patch("cli.entrypoints._restart_stale_server") as restart,
+        patch("cli.entrypoints._preflight_proxy", return_value=None),
+        patch("cli.entrypoints.shutil.which", return_value="resolved-claude.cmd"),
+        patch("cli.entrypoints.subprocess.Popen") as popen,
+        patch("cli.entrypoints.register_pid"),
+        patch("cli.entrypoints.unregister_pid"),
+        pytest.raises(SystemExit),
+    ):
+        process = popen.return_value
+        process.pid = 12345
+        process.wait.return_value = 0
+        launch_claude([])
+
+    restart.assert_called_once_with(settings)
+
+
+def test_launch_claude_skips_restart_when_not_stale() -> None:
+    from cli.entrypoints import launch_claude
+
+    settings = _launcher_settings(port=9191, token="proxy-token")
+
+    with (
+        patch("cli.entrypoints.get_settings", return_value=settings),
+        patch("cli.entrypoints._server_is_stale", return_value=False),
+        patch("cli.entrypoints._restart_stale_server") as restart,
+        patch("cli.entrypoints._preflight_proxy", return_value=None),
+        patch("cli.entrypoints.shutil.which", return_value="resolved-claude.cmd"),
+        patch("cli.entrypoints.subprocess.Popen") as popen,
+        patch("cli.entrypoints.register_pid"),
+        patch("cli.entrypoints.unregister_pid"),
+        pytest.raises(SystemExit),
+    ):
+        process = popen.return_value
+        process.pid = 12345
+        process.wait.return_value = 0
+        launch_claude([])
+
+    restart.assert_not_called()

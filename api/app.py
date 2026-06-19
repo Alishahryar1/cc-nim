@@ -1,5 +1,6 @@
 """FastAPI application factory and configuration."""
 
+import time
 import traceback
 from contextlib import asynccontextmanager
 from typing import Any
@@ -96,6 +97,14 @@ def create_app(*, lifespan_enabled: bool = True) -> FastAPI:
     if lifespan_enabled:
         app_kwargs["lifespan"] = lifespan
     app = FastAPI(**app_kwargs)
+    app.state.last_activity_epoch = time.monotonic()
+
+    @app.middleware("http")
+    async def track_activity(request: Request, call_next):
+        """Record the monotonic time of the last completed request."""
+        response = await call_next(request)
+        app.state.last_activity_epoch = time.monotonic()
+        return response
 
     @app.middleware("http")
     async def trace_http_correlation(request: Request, call_next):

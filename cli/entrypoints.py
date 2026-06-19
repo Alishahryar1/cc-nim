@@ -2,8 +2,10 @@
 
 from __future__ import annotations
 
+import json
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import threading
@@ -11,6 +13,7 @@ import time
 import webbrowser
 from collections.abc import Mapping, Sequence
 from pathlib import Path
+from typing import Any
 from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
@@ -30,6 +33,7 @@ from config.settings import Settings, get_settings
 PROXY_PREFLIGHT_PATH = "/health"
 PROXY_PREFLIGHT_TIMEOUT_SECONDS = 1.5
 SERVER_GRACEFUL_SHUTDOWN_SECONDS = 5
+SERVER_STALE_THRESHOLD_SECONDS = 120 * 60  # 120 minutes
 
 
 def _load_env_template() -> str:
@@ -210,11 +214,105 @@ def _preflight_proxy(proxy_root_url: str) -> str | None:
     return None
 
 
+def _fetch_health(proxy_root_url: str) -> dict[str, Any] | None:
+    """Return the parsed /health JSON or None on failure."""
+    url = f"{proxy_root_url.rstrip('/')}{PROXY_PREFLIGHT_PATH}"
+    request = Request(url, method="GET")
+    try:
+        with urlopen(request, timeout=PROXY_PREFLIGHT_TIMEOUT_SECONDS) as response:
+            if 200 <= response.getcode() < 300:
+                body = response.read()
+                return json.loads(body)
+    except Exception:
+        pass
+    return None
+
+
+def _server_is_stale(proxy_root_url: str) -> bool:
+    """Return True when the server is up but has been idle beyond the threshold."""
+    health = _fetch_health(proxy_root_url)
+    if health is None:
+        return False
+    last_activity = health.get("last_activity_epoch")
+    if last_activity is None:
+        return False
+    idle_seconds = time.monotonic() - last_activity
+    return idle_seconds > SERVER_STALE_THRESHOLD_SECONDS
+
+
+def _restart_stale_server(settings: Settings) -> None:
+    """Kill the stale server process and start a fresh one in the background."""
+    proxy_root_url = local_proxy_root_url(settings)
+    port = settings.port
+    print(
+        f"Server is stale (idle > {SERVER_STALE_THRESHOLD_SECONDS // 60}min), restarting...",
+        file=sys.stderr,
+    )
+    # Find and kill the process bound to our port.
+    try:
+        result = subprocess.run(
+            ["lsof", "-ti", f":{port}"],
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+        pids = result.stdout.strip().split()
+        for pid_str in pids:
+            pid = int(pid_str.strip())
+            if pid != os.getpid():
+                os.kill(pid, signal.SIGTERM)
+    except Exception:
+        pass
+
+    # Wait briefly for the port to free up.
+    deadline = time.monotonic() + 5.0
+    while time.monotonic() < deadline:
+        if _preflight_proxy(proxy_root_url) is not None:
+            break
+        time.sleep(0.3)
+
+    # Start the server in the background.
+    server_bin = shutil.which("fcc-server")
+    if server_bin is None:
+        # Fall back to the Python module invocation.
+        subprocess.Popen(
+            [sys.executable, "-m", "cli.entrypoints"],
+            env={**os.environ, "_FCC_SERVE": "1"},
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+    else:
+        subprocess.Popen(
+            [server_bin],
+            start_new_session=True,
+            stdout=subprocess.DEVNULL,
+            stderr=subprocess.DEVNULL,
+        )
+
+    # Wait for the new server to become healthy.
+    deadline = time.monotonic() + 15.0
+    while time.monotonic() < deadline:
+        if _preflight_proxy(proxy_root_url) is None:
+            print("Server restarted successfully", file=sys.stderr)
+            return
+        time.sleep(0.3)
+    print(
+        "Server restart may not have completed; proceeding anyway",
+        file=sys.stderr,
+    )
+
+
 def launch_claude(argv: Sequence[str] | None = None) -> None:
     """Launch Claude Code with Free Claude Code proxy environment variables."""
 
     settings = get_settings()
     proxy_root_url = local_proxy_root_url(settings)
+
+    # Check if the running server is stale and restart it if so.
+    if _server_is_stale(proxy_root_url):
+        _restart_stale_server(settings)
+
     if error := _preflight_proxy(proxy_root_url):
         print(
             f"Free Claude Code proxy is not reachable at {proxy_root_url}: {error}",
