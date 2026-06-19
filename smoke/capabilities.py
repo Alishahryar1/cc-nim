@@ -456,7 +456,7 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         "extensible_provider_platform_abcs",
         "providers.registry and messaging.platforms.factory",
         "new provider/platform implementations",
-        "registered BaseProvider or MessagingPlatform",
+        "registered BaseProvider or messaging component bundle",
         "unknown platform returns None; unknown provider errors",
         (
             "tests/contracts/test_feature_manifest.py",

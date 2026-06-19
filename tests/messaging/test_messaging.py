@@ -1,7 +1,7 @@
 """Tests for messaging/ module."""
 
 import json
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -43,15 +43,32 @@ class TestMessagingModels:
         assert msg.reply_to_message_id == "100"
 
 
-class TestMessagingBase:
-    """Test MessagingPlatform ABC."""
+class TestMessagingPorts:
+    """Test explicit messaging platform component ports."""
 
-    def test_platform_is_abstract(self):
-        """Verify MessagingPlatform cannot be instantiated."""
-        from messaging.platforms.base import MessagingPlatform
+    def test_components_bundle_runtime_and_outbound(self):
+        """Verify the factory handoff shape is explicit."""
+        from messaging.platforms.ports import MessagingPlatformComponents
 
-        with pytest.raises(TypeError):
-            MessagingPlatform()
+        runtime = MagicMock()
+        runtime.name = "telegram"
+        runtime.start = AsyncMock()
+        runtime.stop = AsyncMock()
+        runtime.on_message = MagicMock()
+        outbound = MagicMock()
+        outbound.queue_send_message = AsyncMock()
+        outbound.queue_edit_message = AsyncMock()
+        outbound.queue_delete_message = AsyncMock()
+        outbound.queue_delete_messages = AsyncMock()
+        outbound.fire_and_forget = MagicMock()
+        components = MessagingPlatformComponents(
+            name="telegram",
+            runtime=runtime,
+            outbound=outbound,
+            voice_cancellation=None,
+        )
+        assert components.runtime is runtime
+        assert components.outbound is outbound
 
 
 class TestSessionStore:

@@ -244,18 +244,27 @@ def test_messaging_platforms_use_shared_outbox_and_voice_flow() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     platforms_root = repo_root / "messaging" / "platforms"
 
+    assert not (platforms_root / "base.py").exists()
+    assert (platforms_root / "ports.py").exists()
     assert (platforms_root / "outbox.py").exists()
     assert (platforms_root / "voice_flow.py").exists()
 
-    for adapter in {
+    for runtime in {
         platforms_root / "telegram.py",
         platforms_root / "discord.py",
     }:
-        text = adapter.read_text(encoding="utf-8")
-        assert "PlatformOutbox" in text
+        text = runtime.read_text(encoding="utf-8")
+        assert "PlatformOutbox" not in text
         assert "VoiceNoteFlow" in text
         assert "from ..voice" not in text
         assert "NamedTemporaryFile" not in text
+
+    for messenger in {
+        platforms_root / "telegram_io.py",
+        platforms_root / "discord_io.py",
+    }:
+        text = messenger.read_text(encoding="utf-8")
+        assert "PlatformOutbox" in text
 
 
 def test_cli_surfaces_are_explicit_launchers_and_managed_claude() -> None:
@@ -297,13 +306,16 @@ def test_cli_surfaces_are_explicit_launchers_and_managed_claude() -> None:
         assert '"190000"' not in text
         assert '"fcc-no-auth"' not in text
 
-    messaging_base_text = (repo_root / "messaging" / "platforms" / "base.py").read_text(
-        encoding="utf-8"
+    messaging_protocols_text = (
+        repo_root / "messaging" / "managed_protocols.py"
+    ).read_text(encoding="utf-8")
+    assert "class ManagedClaudeSessionProtocol(Protocol)" in messaging_protocols_text
+    assert "class ManagedClaudeSession(Protocol)" not in messaging_protocols_text
+    assert (
+        "class ManagedClaudeSessionManagerProtocol(Protocol)"
+        in messaging_protocols_text
     )
-    assert "class ManagedClaudeSessionProtocol(Protocol)" in messaging_base_text
-    assert "class ManagedClaudeSession(Protocol)" not in messaging_base_text
-    assert "class ManagedClaudeSessionManagerProtocol(Protocol)" in messaging_base_text
-    assert "class SessionManagerInterface(Protocol)" not in messaging_base_text
+    assert "class SessionManagerInterface(Protocol)" not in messaging_protocols_text
     for path in {
         repo_root / "messaging" / "__init__.py",
         repo_root / "messaging" / "platforms" / "__init__.py",

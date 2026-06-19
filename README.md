@@ -578,7 +578,7 @@ free-claude-code/
 ├── core/                  # Shared Anthropic protocol helpers, SSE, OpenAI Responses
 │   └── openai_responses/  # Responses ↔ Anthropic conversion and SSE mapping
 ├── providers/             # Provider transports, registry, rate limiting
-├── messaging/             # Discord/Telegram adapters, sessions, voice
+├── messaging/             # Discord/Telegram runtimes, outbound ports, voice
 ├── cli/                   # Package entry points and client CLI process management
 ├── config/                # Settings, provider catalog, logging
 └── tests/                 # Unit and contract tests
@@ -640,7 +640,7 @@ CI also enforces a ban on `# type: ignore` / `# ty: ignore` suppressions; `scrip
 - Add Anthropic Messages providers by extending `AnthropicMessagesTransport`.
 - Extend OpenAI Responses conversion in `core/openai_responses/` when Codex adds new request or stream shapes.
 - Register provider metadata in `config.provider_catalog` and factory wiring in `providers.registry`.
-- Add messaging platforms by implementing the `MessagingPlatform` interface in `messaging/`.
+- Add messaging platforms by wiring runtime, outbound, and inbound-normalizer ports in `messaging/platforms/`.
 
 ## Contributing
 

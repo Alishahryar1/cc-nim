@@ -10,7 +10,12 @@ from messaging.workflow import MessagingWorkflow
 
 @pytest.fixture
 def handler(mock_platform, mock_cli_manager, mock_session_store):
-    return MessagingWorkflow(mock_platform, mock_cli_manager, mock_session_store)
+    return MessagingWorkflow(
+        mock_platform,
+        mock_cli_manager,
+        mock_session_store,
+        voice_cancellation=mock_platform,
+    )
 
 
 @pytest.mark.asyncio

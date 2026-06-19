@@ -486,17 +486,31 @@ selects Codex for Discord or Telegram.
 ## Messaging Architecture
 
 Messaging is optional. [api/runtime.py](api/runtime.py) calls
-`create_messaging_platform()` from
+`create_messaging_components()` from
 [messaging/platforms/factory.py](messaging/platforms/factory.py) during startup.
 If `MESSAGING_PLATFORM` is `none`, or if the selected platform token is missing,
 the messaging bridge is skipped.
 
-Platform adapters in [messaging/platforms/telegram.py](messaging/platforms/telegram.py)
-and [messaging/platforms/discord.py](messaging/platforms/discord.py) are thin SDK
-shells: they own client lifecycle, event extraction, SDK retries, attachment
-download, and raw send/edit/delete calls. Shared delivery policy lives in
-[messaging/platforms/outbox.py](messaging/platforms/outbox.py), which owns queued
-send/edit/delete, dedup keys, limiter delegation, and fire-and-forget behavior.
+The platform factory returns a `MessagingPlatformComponents` bundle from
+[messaging/platforms/ports.py](messaging/platforms/ports.py): a
+`MessagingRuntime` for lifecycle and inbound callbacks, an `OutboundMessenger`
+for queued sends/edits/deletes, and an optional `VoiceCancellation` port for
+reply-scoped `/clear` during voice transcription. Workflow code depends on
+these ports, not on Telegram or Discord SDK objects.
+
+Runtime adapters in
+[messaging/platforms/telegram.py](messaging/platforms/telegram.py) and
+[messaging/platforms/discord.py](messaging/platforms/discord.py) own SDK client
+lifecycle, event subscription, inbound handoff, and voice-note handoff. Inbound
+normalization lives in
+[messaging/platforms/telegram_inbound.py](messaging/platforms/telegram_inbound.py)
+and [messaging/platforms/discord_inbound.py](messaging/platforms/discord_inbound.py).
+Outbound SDK calls live in
+[messaging/platforms/telegram_io.py](messaging/platforms/telegram_io.py) and
+[messaging/platforms/discord_io.py](messaging/platforms/discord_io.py). Shared
+delivery policy lives in [messaging/platforms/outbox.py](messaging/platforms/outbox.py),
+which owns queued send/edit/delete, dedup keys, limiter delegation, and
+fire-and-forget behavior.
 Shared voice-note orchestration lives in
 [messaging/platforms/voice_flow.py](messaging/platforms/voice_flow.py), which owns
 pending voice registration, temp-file cleanup, transcription, cancellation, error
@@ -517,7 +531,7 @@ and session cleanup.
 
 [messaging/command_context.py](messaging/command_context.py) defines the typed
 dependency surface for `/stop`, `/clear`, and `/stats`; commands should not
-depend on the concrete workflow object.
+depend on the concrete workflow object or on platform SDK runtimes.
 
 [messaging/trees/manager.py](messaging/trees/manager.py) preserves
 per-conversation ordering with tree-aware queues. Replies become child nodes, and
@@ -534,7 +548,8 @@ uses debounced atomic writes and flushes pending saves on shutdown.
 
 ```mermaid
 sequenceDiagram
-    participant Platform as DiscordOrTelegram
+    participant Runtime as DiscordOrTelegramRuntime
+    participant Outbound as OutboundMessenger
     participant Workflow as MessagingWorkflow
     participant Intake as MessagingTurnIntake
     participant Queue as TreeQueueManager
@@ -543,7 +558,7 @@ sequenceDiagram
     participant CLI as ClaudeCode
     participant Proxy as LocalProxy
 
-    Platform->>Workflow: IncomingMessage
+    Runtime->>Workflow: IncomingMessage
     Workflow->>Intake: handle inbound turn
     Intake->>Queue: create or extend message tree
     Queue->>Runner: process node in order
@@ -551,7 +566,7 @@ sequenceDiagram
     Manager->>CLI: launch JSON stream task
     CLI->>Proxy: provider-backed API calls
     CLI-->>Runner: parsed stdout events
-    Runner-->>Platform: status and transcript updates
+    Runner-->>Outbound: status and transcript updates
 ```
 
 ## Observability, Diagnostics, And Safety
@@ -639,15 +654,20 @@ when maintainers want branch-level assurance.
 
 ### Add A Messaging Platform
 
-1. Implement `MessagingPlatform` from
-   [messaging/platforms/base.py](messaging/platforms/base.py).
-2. Add construction logic to
+1. Implement a `MessagingRuntime`, `OutboundMessenger`, and inbound normalizer
+   under [messaging/platforms/](messaging/platforms/).
+2. Reuse [messaging/platforms/outbox.py](messaging/platforms/outbox.py) for
+   queued outbound delivery and
+   [messaging/platforms/voice_flow.py](messaging/platforms/voice_flow.py) for
+   voice-note handoff when the platform supports audio.
+3. Add construction logic to
    [messaging/platforms/factory.py](messaging/platforms/factory.py).
-3. Add settings and admin fields for tokens, allowlists, and platform-specific
+4. Add settings and admin fields for tokens, allowlists, and platform-specific
    runtime options.
-4. Add rendering profile support in
+5. Add rendering profile support in
    [messaging/rendering/profiles.py](messaging/rendering/profiles.py) if needed.
-5. Add fake-platform deterministic tests and optional live smoke targets.
+6. Add deterministic runtime/outbound/workflow tests and optional live smoke
+   targets.
 
 ### Add Protocol Behavior
 
