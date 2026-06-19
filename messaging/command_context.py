@@ -4,7 +4,7 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from .platforms.base import MessagingPlatform, SessionManagerInterface
+from .platforms.base import ManagedClaudeSessionManagerProtocol, MessagingPlatform
 from .session import SessionStore
 from .transcript import RenderCtx
 from .trees import MessageNode, MessageTree, TreeQueueManager
@@ -14,7 +14,7 @@ class MessagingCommandContext(Protocol):
     """Operations commands need from the messaging workflow."""
 
     platform: MessagingPlatform
-    cli_manager: SessionManagerInterface
+    cli_manager: ManagedClaudeSessionManagerProtocol
     session_store: SessionStore
 
     @property

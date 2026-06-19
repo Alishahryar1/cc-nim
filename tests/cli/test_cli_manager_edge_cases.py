@@ -3,23 +3,17 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 
-def _fake_client_cli_adapter():
-    adapter = MagicMock()
-    adapter.id = "fake"
-    return adapter
-
-
 @pytest.mark.asyncio
 async def test_register_real_session_id_moves_pending_to_active_and_maps():
-    from cli.manager import CLISessionManager
+    from cli.managed.manager import ManagedClaudeSessionManager
 
-    with patch("cli.manager.CLISession") as mock_session_cls:
+    with patch("cli.managed.manager.ManagedClaudeSession") as mock_session_cls:
         mock_session = MagicMock()
         mock_session.is_busy = False
         mock_session.stop = AsyncMock(return_value=True)
         mock_session_cls.return_value = mock_session
 
-        manager = CLISessionManager(
+        manager = ManagedClaudeSessionManager(
             workspace_path="/tmp", api_url="http://x/v1", auth_token="proxy-token"
         )
         session, temp_id, is_new = await manager.get_or_create_session()
@@ -40,24 +34,26 @@ async def test_register_real_session_id_moves_pending_to_active_and_maps():
 
 @pytest.mark.asyncio
 async def test_register_real_session_id_missing_temp_id_returns_false():
-    from cli.manager import CLISessionManager
+    from cli.managed.manager import ManagedClaudeSessionManager
 
-    manager = CLISessionManager(workspace_path="/tmp", api_url="http://x/v1")
+    manager = ManagedClaudeSessionManager(workspace_path="/tmp", api_url="http://x/v1")
     ok = await manager.register_real_session_id("missing", "real_1")
     assert ok is False
 
 
 @pytest.mark.asyncio
 async def test_remove_session_pending_stops_and_returns_true():
-    from cli.manager import CLISessionManager
+    from cli.managed.manager import ManagedClaudeSessionManager
 
-    with patch("cli.manager.CLISession") as mock_session_cls:
+    with patch("cli.managed.manager.ManagedClaudeSession") as mock_session_cls:
         mock_session = MagicMock()
         mock_session.is_busy = False
         mock_session.stop = AsyncMock(return_value=True)
         mock_session_cls.return_value = mock_session
 
-        manager = CLISessionManager(workspace_path="/tmp", api_url="http://x/v1")
+        manager = ManagedClaudeSessionManager(
+            workspace_path="/tmp", api_url="http://x/v1"
+        )
         _, temp_id, _ = await manager.get_or_create_session()
 
         removed = await manager.remove_session(temp_id)
@@ -67,15 +63,17 @@ async def test_remove_session_pending_stops_and_returns_true():
 
 @pytest.mark.asyncio
 async def test_remove_session_active_removes_temp_mapping():
-    from cli.manager import CLISessionManager
+    from cli.managed.manager import ManagedClaudeSessionManager
 
-    with patch("cli.manager.CLISession") as mock_session_cls:
+    with patch("cli.managed.manager.ManagedClaudeSession") as mock_session_cls:
         mock_session = MagicMock()
         mock_session.is_busy = False
         mock_session.stop = AsyncMock(return_value=True)
         mock_session_cls.return_value = mock_session
 
-        manager = CLISessionManager(workspace_path="/tmp", api_url="http://x/v1")
+        manager = ManagedClaudeSessionManager(
+            workspace_path="/tmp", api_url="http://x/v1"
+        )
         _, temp_id, _ = await manager.get_or_create_session()
         await manager.register_real_session_id(temp_id, "real_1")
 
@@ -90,9 +88,9 @@ async def test_remove_session_active_removes_temp_mapping():
 
 @pytest.mark.asyncio
 async def test_stop_all_handles_stop_exceptions():
-    from cli.manager import CLISessionManager
+    from cli.managed.manager import ManagedClaudeSessionManager
 
-    manager = CLISessionManager(workspace_path="/tmp", api_url="http://x/v1")
+    manager = ManagedClaudeSessionManager(workspace_path="/tmp", api_url="http://x/v1")
 
     s1 = MagicMock()
     s1.stop = AsyncMock(side_effect=RuntimeError("boom"))
@@ -110,23 +108,3 @@ async def test_stop_all_handles_stop_exceptions():
     s2.stop.assert_awaited_once()
     assert manager.get_stats()["active_sessions"] == 0
     assert manager.get_stats()["pending_sessions"] == 0
-
-
-@pytest.mark.asyncio
-async def test_get_or_create_session_passes_client_cli_adapter():
-    from cli.manager import CLISessionManager
-
-    adapter = _fake_client_cli_adapter()
-    with patch("cli.manager.CLISession") as mock_session_cls:
-        mock_session = MagicMock()
-        mock_session.is_busy = False
-        mock_session_cls.return_value = mock_session
-
-        manager = CLISessionManager(
-            workspace_path="/tmp",
-            api_url="http://x/v1",
-            client_cli_adapter=adapter,
-        )
-        await manager.get_or_create_session()
-
-        assert mock_session_cls.call_args.kwargs["client_cli_adapter"] is adapter

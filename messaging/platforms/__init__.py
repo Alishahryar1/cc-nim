@@ -1,11 +1,15 @@
 """Messaging platform adapters (Telegram, Discord, etc.)."""
 
-from .base import CLISession, MessagingPlatform, SessionManagerInterface
+from .base import (
+    ManagedClaudeSessionManagerProtocol,
+    ManagedClaudeSessionProtocol,
+    MessagingPlatform,
+)
 from .factory import create_messaging_platform
 
 __all__ = [
-    "CLISession",
+    "ManagedClaudeSessionManagerProtocol",
+    "ManagedClaudeSessionProtocol",
     "MessagingPlatform",
-    "SessionManagerInterface",
     "create_messaging_platform",
 ]

@@ -2,11 +2,11 @@ from __future__ import annotations
 
 from pathlib import Path
 
-from cli.session import CLISession
+from cli.managed.session import ManagedClaudeSession
 
 
 def test_cli_session_owns_typed_runner_config(tmp_path: Path) -> None:
-    session = CLISession(
+    session = ManagedClaudeSession(
         workspace_path=str(tmp_path),
         api_url="http://127.0.0.1:8082/v1",
         allowed_dirs=[str(tmp_path)],
