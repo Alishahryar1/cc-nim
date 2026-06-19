@@ -427,6 +427,12 @@ common low-value client requests before they reach a provider:
 The service runs these only after model routing and after local server-tool
 handling. Each optimization is controlled by settings flags.
 
+Claude Code auto-mode safety-classifier requests are a message-only routing
+policy, not a short-circuit response. After routing, the pipeline detects the
+narrow classifier prompt shape and forces thinking off before provider execution
+so Claude Code receives a parser-readable `<block>yes</block>` or
+`<block>no</block>` verdict.
+
 Local `web_search` and `web_fetch` handling lives under
 [api/web_tools/](api/web_tools/). When `ENABLE_WEB_SERVER_TOOLS` is true, the
 service can stream local Anthropic server-tool responses without sending the

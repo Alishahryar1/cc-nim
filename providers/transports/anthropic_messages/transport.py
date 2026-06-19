@@ -119,6 +119,15 @@ class AnthropicMessagesTransport(BaseProvider):
     ) -> dict:
         """Build a native Anthropic request body."""
         thinking_enabled = self._is_thinking_enabled(request, thinking_enabled)
+        return self._build_request_body_with_resolved_thinking(
+            request,
+            thinking_enabled=thinking_enabled,
+        )
+
+    def _build_request_body_with_resolved_thinking(
+        self, request: Any, *, thinking_enabled: bool
+    ) -> dict:
+        """Build a native Anthropic request body after thinking is resolved."""
         return build_base_native_anthropic_request_body(
             request,
             default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,

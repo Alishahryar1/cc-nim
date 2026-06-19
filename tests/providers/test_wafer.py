@@ -1,6 +1,7 @@
 """Tests for Wafer native Anthropic Messages provider."""
 
 from contextlib import asynccontextmanager
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -41,6 +42,18 @@ class FakeResponse:
             text=self._text,
         )
         response.raise_for_status()
+
+
+class CountingWaferProvider(WaferProvider):
+    def __init__(self, config: ProviderConfig):
+        super().__init__(config)
+        self.thinking_checks = 0
+
+    def _is_thinking_enabled(
+        self, request: Any, thinking_enabled: bool | None = None
+    ) -> bool:
+        self.thinking_checks += 1
+        return super()._is_thinking_enabled(request, thinking_enabled)
 
 
 @pytest.fixture
@@ -145,7 +158,22 @@ def test_build_request_body_drops_reasoning_effort_none(wafer_provider):
     assert body["thinking"] == {"type": "enabled"}
 
 
-def test_build_request_body_keeps_upstream_thinking_enabled_when_client_disables_it(
+def test_build_request_body_honors_effective_no_thinking(
+    wafer_provider,
+):
+    request = MessagesRequest.model_validate(
+        {
+            "model": "DeepSeek-V4-Pro",
+            "messages": [{"role": "user", "content": "Explore the codebase."}],
+        }
+    )
+
+    body = wafer_provider._build_request_body(request, thinking_enabled=False)
+
+    assert body["thinking"] == {"type": "disabled"}
+
+
+def test_build_request_body_preserves_request_disabled_thinking(
     wafer_provider,
 ):
     request = MessagesRequest.model_validate(
@@ -156,9 +184,51 @@ def test_build_request_body_keeps_upstream_thinking_enabled_when_client_disables
         }
     )
 
+    body = wafer_provider._build_request_body(request, thinking_enabled=True)
+
+    assert body["thinking"] == {"type": "disabled"}
+
+
+def test_build_request_body_resolves_thinking_once(wafer_config):
+    provider = CountingWaferProvider(wafer_config)
+    request = MessagesRequest.model_validate(
+        {
+            "model": "DeepSeek-V4-Pro",
+            "messages": [{"role": "user", "content": "Explore the codebase."}],
+        }
+    )
+
+    body = provider._build_request_body(request, thinking_enabled=False)
+
+    assert body["thinking"] == {"type": "disabled"}
+    assert provider.thinking_checks == 1
+
+
+def test_build_request_body_classifier_no_thinking_uses_disabled_payload(
+    wafer_provider,
+):
+    request = MessagesRequest.model_validate(
+        {
+            "model": "DeepSeek-V4-Pro",
+            "system": (
+                "You are a security monitor. Respond with <block>yes</block> "
+                "or <block>no</block>."
+            ),
+            "messages": [
+                {
+                    "role": "user",
+                    "content": (
+                        "<transcript>\nWebFetch https://example.com\n"
+                        "</transcript>\n<block> immediately."
+                    ),
+                }
+            ],
+        }
+    )
+
     body = wafer_provider._build_request_body(request, thinking_enabled=False)
 
-    assert body["thinking"] == {"type": "enabled"}
+    assert body["thinking"] == {"type": "disabled"}
 
 
 @pytest.mark.asyncio

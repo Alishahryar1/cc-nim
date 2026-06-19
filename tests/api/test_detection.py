@@ -5,6 +5,7 @@ from unittest.mock import patch
 from api.detection import (
     is_filepath_extraction_request,
     is_prefix_detection_request,
+    is_safety_classifier_request,
 )
 from api.models.anthropic import Message, MessagesRequest
 
@@ -50,6 +51,47 @@ class TestIsPrefixDetectionRequest:
             is_req, cmd = is_prefix_detection_request(req)
         assert is_req is False
         assert cmd == ""
+
+
+class TestIsSafetyClassifierRequest:
+    _SYSTEM = (
+        "You are a security monitor. Respond with <block>yes</block> "
+        "or <block>no</block>."
+    )
+    _USER = (
+        "<transcript>\nUser: review the repo\n"
+        "WebFetch https://example.com: fetch\n</transcript>\n<block> immediately."
+    )
+
+    def test_classifier_request_detected(self):
+        req = _make_request(self._USER, system=self._SYSTEM)
+        assert is_safety_classifier_request(req) is True
+
+    def test_markers_split_across_system_and_user(self):
+        req = _make_request(
+            "<transcript>\nWebFetch x\n</transcript>", system=self._SYSTEM
+        )
+        assert is_safety_classifier_request(req) is True
+
+    def test_request_with_tools_is_not_classifier(self):
+        req = _make_request(self._USER, system=self._SYSTEM, tools=[{"name": "search"}])
+        assert is_safety_classifier_request(req) is False
+
+    def test_missing_transcript_marker(self):
+        req = _make_request("<block> immediately", system=self._SYSTEM)
+        assert is_safety_classifier_request(req) is False
+
+    def test_missing_verdict_instruction(self):
+        req = _make_request(
+            "<transcript>\nWebFetch x\n</transcript>", system="just chatting"
+        )
+        assert is_safety_classifier_request(req) is False
+
+    def test_xml_content_without_verdict_instruction(self):
+        req = _make_request(
+            "Explain this format: <transcript> ... </transcript> and a <block> tag."
+        )
+        assert is_safety_classifier_request(req) is False
 
 
 class TestIsFilepathExtractionRequest:

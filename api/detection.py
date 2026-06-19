@@ -1,7 +1,7 @@
 """Request detection utilities for API optimizations.
 
-Detects quota checks, title generation, prefix detection, suggestion mode,
-and filepath extraction requests to enable fast-path responses.
+Detects quota checks, title generation, prefix detection, safety classifier,
+suggestion mode, and filepath extraction requests to enable targeted handling.
 """
 
 from core.anthropic import extract_text_from_content
@@ -69,6 +69,22 @@ def is_prefix_detection_request(request_data: MessagesRequest) -> tuple[bool, st
             return False, ""
 
     return False, ""
+
+
+def is_safety_classifier_request(request_data: MessagesRequest) -> bool:
+    """Return whether this is Claude Code's auto-mode safety classifier prompt."""
+    if request_data.tools:
+        return False
+
+    system_text = (
+        extract_text_from_content(request_data.system) if request_data.system else ""
+    )
+    messages_text = "".join(
+        extract_text_from_content(message.content) for message in request_data.messages
+    )
+    combined = f"{system_text}\n{messages_text}"
+    has_verdict_instruction = "yes</block>" in combined or "no</block>" in combined
+    return "<transcript>" in combined and has_verdict_instruction
 
 
 def is_suggestion_mode_request(request_data: MessagesRequest) -> bool:
