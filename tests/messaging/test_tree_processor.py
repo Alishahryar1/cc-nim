@@ -6,7 +6,7 @@ import pytest
 
 from messaging.models import IncomingMessage
 from messaging.trees.data import MessageNode, MessageState, MessageTree
-from messaging.trees.queue_manager import TreeQueueProcessor
+from messaging.trees.processor import TreeQueueProcessor
 
 
 @pytest.fixture
@@ -159,6 +159,69 @@ async def test_process_next_with_item(tree_processor, sample_tree):
 
 
 @pytest.mark.asyncio
+async def test_process_next_skips_stale_id_and_runs_next_valid_node(sample_tree):
+    queue_updated = AsyncMock()
+    node_started = AsyncMock()
+    processor = TreeQueueProcessor(
+        queue_update_callback=queue_updated,
+        node_started_callback=node_started,
+    )
+    release = asyncio.Event()
+
+    valid_incoming = IncomingMessage(
+        text="valid",
+        chat_id="chat123",
+        user_id="user456",
+        message_id="valid_node",
+        platform="telegram",
+        reply_to_message_id=sample_tree.root_id,
+    )
+    await sample_tree.add_node(
+        "valid_node",
+        valid_incoming,
+        "valid_status",
+        sample_tree.root_id,
+    )
+    await sample_tree._queue.put("missing_node")
+    await sample_tree._queue.put("valid_node")
+
+    async def node_processor(node_id, node):
+        await release.wait()
+
+    await processor._process_next(sample_tree, node_processor)
+
+    assert sample_tree._is_processing is True
+    assert sample_tree._current_node_id == "valid_node"
+    node_started.assert_awaited_once_with(sample_tree, "valid_node")
+    queue_updated.assert_awaited_once_with(sample_tree)
+
+    release.set()
+    if sample_tree._current_task:
+        await sample_tree._current_task
+
+
+@pytest.mark.asyncio
+async def test_process_next_drains_all_stale_ids_without_wedging(sample_tree):
+    queue_updated = AsyncMock()
+    node_started = AsyncMock()
+    processor = TreeQueueProcessor(
+        queue_update_callback=queue_updated,
+        node_started_callback=node_started,
+    )
+    sample_tree._is_processing = True
+    await sample_tree._queue.put("missing_one")
+    await sample_tree._queue.put("missing_two")
+
+    await processor._process_next(sample_tree, AsyncMock())
+
+    assert sample_tree._is_processing is False
+    assert sample_tree._current_node_id is None
+    assert sample_tree._queue.qsize() == 0
+    node_started.assert_not_awaited()
+    queue_updated.assert_awaited_once_with(sample_tree)
+
+
+@pytest.mark.asyncio
 async def test_process_next_triggers_queue_update(sample_tree):
     callback = AsyncMock()
     processor = TreeQueueProcessor(queue_update_callback=callback)
@@ -176,9 +239,24 @@ async def test_process_next_triggers_node_started(sample_tree):
     node_started = AsyncMock()
     processor = TreeQueueProcessor(node_started_callback=node_started)
 
+    incoming = IncomingMessage(
+        text="next",
+        chat_id="chat123",
+        user_id="user456",
+        message_id="next_node",
+        platform="telegram",
+        reply_to_message_id=sample_tree.root_id,
+    )
+    await sample_tree.add_node(
+        "next_node", incoming, "next_status", sample_tree.root_id
+    )
     await sample_tree._queue.put("next_node")
-    sample_tree.get_node = MagicMock(return_value=None)
 
     await processor._process_next(sample_tree, AsyncMock())
 
     node_started.assert_awaited_once_with(sample_tree, "next_node")
+
+    if sample_tree._current_task:
+        sample_tree._current_task.cancel()
+        with contextlib.suppress(asyncio.CancelledError):
+            await sample_tree._current_task

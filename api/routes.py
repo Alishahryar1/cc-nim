@@ -135,8 +135,8 @@ async def list_models(
 @router.post("/stop")
 async def stop_cli(request: Request, _auth=Depends(require_api_key)):
     """Stop all CLI sessions and pending tasks."""
-    handler = getattr(request.app.state, "message_handler", None)
-    if not handler:
+    workflow = getattr(request.app.state, "messaging_workflow", None)
+    if not workflow:
         # Fallback if messaging not initialized
         cli_manager = getattr(request.app.state, "cli_manager", None)
         if cli_manager:
@@ -145,12 +145,12 @@ async def stop_cli(request: Request, _auth=Depends(require_api_key)):
             return {"status": "stopped", "source": "cli_manager"}
         raise HTTPException(status_code=503, detail="Messaging system not initialized")
 
-    count = await handler.stop_all_tasks()
+    count = await workflow.stop_all_tasks()
     trace_event(
         stage="ingress",
-        event="api.cli.stop_via_handler",
+        event="api.cli.stop_via_messaging_workflow",
         source="api",
         cancelled_nodes=count,
     )
-    logger.info("STOP_CLI: source=handler cancelled_count={}", count)
+    logger.info("STOP_CLI: source=messaging_workflow cancelled_count={}", count)
     return {"status": "stopped", "cancelled_count": count}

@@ -313,9 +313,9 @@ def test_app_lifespan_sets_state_and_cleans_up(tmp_path, messaging_enabled):
             return_value=fake_platform if messaging_enabled else None,
         ) as create_platform,
         patch("messaging.session.SessionStore", return_value=session_store),
-        patch("cli.manager.CLISessionManager", return_value=cli_manager),
+        patch("cli.managed.ManagedClaudeSessionManager", return_value=cli_manager),
         patch(
-            "messaging.trees.queue_manager.TreeQueueManager.from_dict",
+            "messaging.trees.TreeQueueManager.from_dict",
             return_value=fake_queue,
         ),
         TestClient(app),
@@ -328,7 +328,7 @@ def test_app_lifespan_sets_state_and_cleans_up(tmp_path, messaging_enabled):
         fake_platform.start.assert_awaited_once()
         fake_platform.stop.assert_awaited_once()
         cli_manager.stop_all.assert_awaited_once()
-        assert getattr(app.state, "message_handler", None) is not None
+        assert getattr(app.state, "messaging_workflow", None) is not None
         session_store.sync_from_tree_data.assert_called_once_with(
             [{"t": 1}],
             {"n": "t"},
@@ -383,7 +383,7 @@ def test_app_lifespan_cleanup_continues_if_platform_stop_raises(tmp_path):
             return_value=fake_platform,
         ),
         patch("messaging.session.SessionStore", return_value=session_store),
-        patch("cli.manager.CLISessionManager", return_value=cli_manager),
+        patch("cli.managed.ManagedClaudeSessionManager", return_value=cli_manager),
         TestClient(app),
     ):
         pass
@@ -560,7 +560,7 @@ def test_app_lifespan_platform_start_exception_cleanup_still_runs(tmp_path):
             return_value=fake_platform,
         ),
         patch("messaging.session.SessionStore", return_value=session_store),
-        patch("cli.manager.CLISessionManager", return_value=cli_manager),
+        patch("cli.managed.ManagedClaudeSessionManager", return_value=cli_manager),
         TestClient(app),
     ):
         pass
@@ -611,7 +611,7 @@ def test_app_lifespan_flush_pending_save_exception_warning_only(tmp_path):
             return_value=fake_platform,
         ),
         patch("messaging.session.SessionStore", return_value=session_store),
-        patch("cli.manager.CLISessionManager", return_value=cli_manager),
+        patch("cli.managed.ManagedClaudeSessionManager", return_value=cli_manager),
         TestClient(app),
     ):
         pass

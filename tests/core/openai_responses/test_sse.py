@@ -192,6 +192,69 @@ async def test_split_usage_deltas_are_accumulated() -> None:
     assert "stop_reason" not in response
 
 
+@pytest.mark.asyncio
+async def test_reasoning_stream_reports_reasoning_usage_detail() -> None:
+    response = await _completed_response_from_sse(
+        _aiter(_anthropic_reasoning_stream("inspect the code before answering")),
+        {"model": "nvidia_nim/test-model", "stream": True},
+    )
+
+    usage = response["usage"]
+    assert usage["input_tokens"] == 3
+    assert usage["output_tokens"] == 20
+    assert usage["total_tokens"] == 23
+    assert usage["output_tokens_details"]["reasoning_tokens"] > 0
+
+
+@pytest.mark.asyncio
+async def test_reasoning_usage_detail_is_capped_at_output_tokens() -> None:
+    response = await _completed_response_from_sse(
+        _aiter(
+            _anthropic_reasoning_stream(
+                "this reasoning text is intentionally long enough to exceed one token",
+                output_tokens=1,
+            )
+        ),
+        {"model": "nvidia_nim/test-model", "stream": True},
+    )
+
+    assert response["usage"]["output_tokens"] == 1
+    assert response["usage"]["output_tokens_details"]["reasoning_tokens"] == 1
+
+
+@pytest.mark.asyncio
+async def test_reasoning_usage_detail_omits_zero_capped_count() -> None:
+    response = await _completed_response_from_sse(
+        _aiter(
+            _anthropic_reasoning_stream(
+                "reasoning text exists without reported output tokens",
+                output_tokens=None,
+            )
+        ),
+        {"model": "nvidia_nim/test-model", "stream": True},
+    )
+
+    assert response["usage"] == {
+        "input_tokens": 3,
+        "output_tokens": 0,
+        "total_tokens": 3,
+    }
+
+
+@pytest.mark.asyncio
+async def test_text_only_usage_omits_reasoning_usage_detail() -> None:
+    response = await _completed_response_from_sse(
+        _aiter(_anthropic_text_stream("plain text only")),
+        {"model": "nvidia_nim/test-model", "stream": True},
+    )
+
+    assert response["usage"] == {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7,
+    }
+
+
 @pytest.mark.parametrize(
     ("request_payload", "tool_name", "partial_json", "expected_type", "expected_field"),
     [
@@ -391,6 +454,49 @@ def _anthropic_tool_stream(
         ]
     )
     return chunks
+
+
+def _anthropic_reasoning_stream(
+    reasoning: str,
+    *,
+    output_tokens: int | None = 20,
+) -> list[str]:
+    usage = {"input_tokens": 3}
+    if output_tokens is not None:
+        usage["output_tokens"] = output_tokens
+
+    return [
+        format_sse_event("message_start", {"type": "message_start", "message": {}}),
+        format_sse_event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "thinking", "thinking": ""},
+            },
+        ),
+        format_sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "thinking_delta", "thinking": reasoning},
+            },
+        ),
+        format_sse_event(
+            "content_block_stop",
+            {"type": "content_block_stop", "index": 0},
+        ),
+        format_sse_event(
+            "message_delta",
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                "usage": usage,
+            },
+        ),
+        format_sse_event("message_stop", {"type": "message_stop"}),
+    ]
 
 
 def _overlapping_text_tool_stream() -> list[str]:

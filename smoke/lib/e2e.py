@@ -27,10 +27,10 @@ from core.anthropic.stream_contracts import (
     parse_sse_lines,
     text_content,
 )
-from messaging.handler import ClaudeMessageHandler
 from messaging.models import IncomingMessage
 from messaging.platforms.base import MessagingPlatform
 from messaging.session import SessionStore
+from messaging.workflow import MessagingWorkflow
 from smoke.lib.config import ProviderModel, SmokeConfig, auth_headers
 from smoke.lib.server import RunningServer, start_server
 from smoke.lib.skips import fail_missing_env
@@ -506,7 +506,7 @@ class FakePlatformDriver:
     platform: FakePlatform = field(init=False)
     cli_manager: FakeCLIManager = field(init=False)
     session_store: SessionStore = field(init=False)
-    handler: ClaudeMessageHandler = field(init=False)
+    workflow: MessagingWorkflow = field(init=False)
 
     def __post_init__(self) -> None:
         self.platform = FakePlatform(self.platform_name)
@@ -514,10 +514,10 @@ class FakePlatformDriver:
         self.session_store = SessionStore(
             storage_path=str(self.tmp_path / f"{self.platform_name}-sessions.json")
         )
-        self.handler = ClaudeMessageHandler(
+        self.workflow = MessagingWorkflow(
             self.platform, self.cli_manager, self.session_store
         )
-        self.platform.on_message(self.handler.handle_message)
+        self.platform.on_message(self.workflow.handle_message)
 
     async def send(
         self,
@@ -549,7 +549,7 @@ class FakePlatformDriver:
         raise AssertionError("fake platform did not become idle")
 
     def _all_tree_nodes_terminal(self) -> bool:
-        data = self.handler.tree_queue.to_dict()
+        data = self.workflow.tree_queue.to_dict()
         for tree in data.get("trees", {}).values():
             nodes = tree.get("nodes", {}) if isinstance(tree, dict) else {}
             for node in nodes.values():

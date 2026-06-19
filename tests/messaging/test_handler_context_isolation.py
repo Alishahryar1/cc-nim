@@ -2,8 +2,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from messaging.handler import ClaudeMessageHandler
 from messaging.trees.data import MessageState
+from messaging.workflow import MessagingWorkflow
 
 
 async def _gen_session(events):
@@ -13,7 +13,7 @@ async def _gen_session(events):
 
 @pytest.fixture
 def handler(mock_platform, mock_cli_manager, mock_session_store):
-    return ClaudeMessageHandler(mock_platform, mock_cli_manager, mock_session_store)
+    return MessagingWorkflow(mock_platform, mock_cli_manager, mock_session_store)
 
 
 @pytest.mark.asyncio
@@ -65,8 +65,8 @@ async def test_sibling_replies_fork_from_parent_session_id(
         side_effect=_get_or_create_session
     )
 
-    await handler._process_node("R1", r1_node)
-    await handler._process_node("R2", r2_node)
+    await handler.node_runner.process_node("R1", r1_node)
+    await handler.node_runner.process_node("R2", r2_node)
 
     # Both siblings must resume from the same parent session and fork.
     assert calls[0][0] == "R1"
@@ -119,7 +119,7 @@ async def test_grandchild_reply_forks_from_branch_session(
         side_effect=_get_or_create_session
     )
 
-    await handler._process_node("R1", r1_node)
+    await handler.node_runner.process_node("R1", r1_node)
     assert r1_node.session_id == "sess_R1"
 
     # Grandchild C1 replies to R1 and must fork from sess_R1, not sess_A.
@@ -150,7 +150,7 @@ async def test_grandchild_reply_forks_from_branch_session(
         side_effect=_get_or_create_session_c1
     )
 
-    await handler._process_node("C1", c1_node)
+    await handler.node_runner.process_node("C1", c1_node)
 
     # The last call should be for C1 and must resume from sess_R1.
     assert calls[-1][0] == "C1"

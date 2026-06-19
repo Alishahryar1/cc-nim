@@ -1,27 +1,19 @@
-"""
-CLI Session Manager for Multi-Instance Claude CLI Support
-
-Manages a pool of CLISession instances, each handling one conversation.
-This enables true parallel processing where multiple conversations run
-simultaneously in separate CLI processes.
-"""
+"""Managed Claude Code session pool for messaging."""
 
 import asyncio
 import uuid
 
 from loguru import logger
 
-from .adapters.base import ClientCliAdapter
-from .adapters.registry import get_client_cli_adapter
-from .session import CLISession
+from .session import ManagedClaudeSession
 
 
-class CLISessionManager:
+class ManagedClaudeSessionManager:
     """
-    Manages multiple CLISession instances for parallel conversation processing.
+    Manages multiple Claude Code sessions for parallel conversation processing.
 
-    Each new conversation gets its own CLISession with its own subprocess.
-    Replies to existing conversations reuse the same CLISession instance.
+    Each new conversation gets its own subprocess. Replies to existing
+    conversations reuse the same session instance.
     """
 
     def __init__(
@@ -33,7 +25,6 @@ class CLISessionManager:
         claude_bin: str = "claude",
         auth_token: str = "",
         *,
-        client_cli_adapter: ClientCliAdapter | None = None,
         log_raw_cli_diagnostics: bool = False,
         log_messaging_error_details: bool = False,
     ):
@@ -52,24 +43,23 @@ class CLISessionManager:
         self.plans_directory = plans_directory
         self.claude_bin = claude_bin
         self.auth_token = auth_token
-        self._client_cli_adapter = client_cli_adapter or get_client_cli_adapter()
         self._log_raw_cli_diagnostics = log_raw_cli_diagnostics
         self._log_messaging_error_details = log_messaging_error_details
 
-        self._sessions: dict[str, CLISession] = {}
-        self._pending_sessions: dict[str, CLISession] = {}
+        self._sessions: dict[str, ManagedClaudeSession] = {}
+        self._pending_sessions: dict[str, ManagedClaudeSession] = {}
         self._temp_to_real: dict[str, str] = {}
         self._real_to_temp: dict[str, str] = {}
         self._lock = asyncio.Lock()
 
     async def get_or_create_session(
         self, session_id: str | None = None
-    ) -> tuple[CLISession, str, bool]:
+    ) -> tuple[ManagedClaudeSession, str, bool]:
         """
         Get an existing session or create a new one.
 
         Returns:
-            Tuple of (CLISession instance, session_id, is_new_session)
+            Tuple of (session instance, session_id, is_new_session)
         """
         async with self._lock:
             if session_id:
@@ -82,14 +72,13 @@ class CLISessionManager:
 
             temp_id = session_id if session_id else f"pending_{uuid.uuid4().hex[:8]}"
 
-            new_session = CLISession(
+            new_session = ManagedClaudeSession(
                 workspace_path=self.workspace,
                 api_url=self.api_url,
                 allowed_dirs=self.allowed_dirs,
                 plans_directory=self.plans_directory,
                 claude_bin=self.claude_bin,
                 auth_token=self.auth_token,
-                client_cli_adapter=self._client_cli_adapter,
                 log_raw_cli_diagnostics=self._log_raw_cli_diagnostics,
             )
             self._pending_sessions[temp_id] = new_session

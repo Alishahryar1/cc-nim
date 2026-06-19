@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from messaging.trees.queue_manager import MessageState
+from messaging.trees import MessageState
 from smoke.lib.e2e import FakePlatformDriver, default_cli_events
 
 pytestmark = [pytest.mark.live, pytest.mark.smoke_target("messaging")]
@@ -17,7 +17,7 @@ async def test_messaging_fake_full_flow_e2e(platform_name: str, tmp_path) -> Non
 
     incoming = await driver.send("Please inspect README.", message_id="root_1")
 
-    tree = driver.handler.tree_queue.get_tree_for_node(incoming.message_id)
+    tree = driver.workflow.tree_queue.get_tree_for_node(incoming.message_id)
     assert tree is not None
     node = tree.get_node(incoming.message_id)
     assert node is not None
@@ -91,7 +91,7 @@ async def test_tree_threading_e2e(platform_name: str, tmp_path) -> None:
         "branch prompt", message_id="branch_1", reply_to=root.message_id
     )
 
-    tree = driver.handler.tree_queue.get_tree_for_node(root.message_id)
+    tree = driver.workflow.tree_queue.get_tree_for_node(root.message_id)
     assert tree is not None
     branch_node = tree.get_node(branch.message_id)
     assert branch_node is not None

@@ -15,6 +15,13 @@ def tmp_store(tmp_path):
     return SessionStore(storage_path=path)
 
 
+def _tree_node(node_id: str, status_message_id: str) -> dict:
+    return {
+        "node_id": node_id,
+        "status_message_id": status_message_id,
+    }
+
+
 class TestSessionStoreLoadEdgeCases:
     """Tests for loading corrupted/malformed data."""
 
@@ -88,6 +95,73 @@ class TestSessionStoreSaveEdgeCases:
             pytest.raises(OSError),
         ):
             tmp_store._write_data(tmp_store._snapshot())
+
+
+class TestSessionStoreTreeMappings:
+    def test_save_tree_rebuilds_lookup_ids_for_that_root(self, tmp_path):
+        path = str(tmp_path / "sessions.json")
+        store = SessionStore(storage_path=path)
+        store.register_node("unrelated_status", "other_root")
+
+        store.save_tree(
+            "root",
+            {
+                "root_id": "root",
+                "nodes": {
+                    "root": _tree_node("root", "root_status"),
+                    "child": _tree_node("child", "child_status"),
+                },
+            },
+        )
+
+        mapping = store.get_node_mapping()
+        assert mapping["root"] == "root"
+        assert mapping["root_status"] == "root"
+        assert mapping["child"] == "root"
+        assert mapping["child_status"] == "root"
+
+        store.save_tree(
+            "root",
+            {
+                "root_id": "root",
+                "nodes": {
+                    "root": _tree_node("root", "root_status"),
+                },
+            },
+        )
+
+        mapping = store.get_node_mapping()
+        assert mapping["root"] == "root"
+        assert mapping["root_status"] == "root"
+        assert "child" not in mapping
+        assert "child_status" not in mapping
+        assert mapping["unrelated_status"] == "other_root"
+
+    def test_remove_tree_removes_all_lookup_ids_for_that_root(self, tmp_path):
+        path = str(tmp_path / "sessions.json")
+        store = SessionStore(storage_path=path)
+        store.register_node("old_status", "root")
+        store.register_node("unrelated_status", "other_root")
+        store.save_tree(
+            "root",
+            {
+                "root_id": "root",
+                "nodes": {
+                    "root": _tree_node("root", "root_status"),
+                    "child": _tree_node("child", "child_status"),
+                },
+            },
+        )
+
+        store.remove_tree("root")
+
+        mapping = store.get_node_mapping()
+        assert "root" not in mapping
+        assert "root_status" not in mapping
+        assert "child" not in mapping
+        assert "child_status" not in mapping
+        assert "old_status" not in mapping
+        assert mapping["unrelated_status"] == "other_root"
 
 
 class TestSessionStoreAtomicWrites:

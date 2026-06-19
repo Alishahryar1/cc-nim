@@ -1,11 +1,12 @@
 """Tests for tree-based message queue system."""
 
 import asyncio
+from unittest.mock import AsyncMock
 
 import pytest
 
 from messaging.models import IncomingMessage
-from messaging.trees.queue_manager import (
+from messaging.trees import (
     MessageNode,
     MessageState,
     MessageTree,
@@ -562,6 +563,90 @@ class TestTreeQueueManager:
         assert sibling_node.state == MessageState.PENDING
 
     @pytest.mark.asyncio
+    async def test_cancel_node_refreshes_queue_positions_for_remaining_nodes(self):
+        """Reply-scoped stop refreshes queued siblings after removing one queued node."""
+        queue_updated = AsyncMock()
+        manager = TreeQueueManager(queue_update_callback=queue_updated)
+
+        root_incoming = IncomingMessage(
+            text="Root", chat_id="1", user_id="1", message_id="root", platform="test"
+        )
+        tree = await manager.create_tree("root", root_incoming, "s1")
+
+        first_incoming = IncomingMessage(
+            text="First",
+            chat_id="1",
+            user_id="1",
+            message_id="queued_first",
+            platform="test",
+            reply_to_message_id="root",
+        )
+        await manager.add_to_tree("root", "queued_first", first_incoming, "s2")
+
+        second_incoming = IncomingMessage(
+            text="Second",
+            chat_id="1",
+            user_id="1",
+            message_id="queued_second",
+            platform="test",
+            reply_to_message_id="root",
+        )
+        await manager.add_to_tree("root", "queued_second", second_incoming, "s3")
+
+        async with tree.with_lock():
+            tree.set_processing_state("root", True)
+            tree.put_queue_unlocked("queued_first")
+            tree.put_queue_unlocked("queued_second")
+
+        cancelled = await manager.cancel_node("queued_first")
+
+        assert [node.node_id for node in cancelled] == ["queued_first"]
+        assert await tree.get_queue_snapshot() == ["queued_second"]
+        queue_updated.assert_awaited_once_with(tree)
+
+    @pytest.mark.asyncio
+    async def test_cancel_branch_refreshes_queue_positions_for_remaining_nodes(self):
+        """Reply-scoped clear refreshes queued siblings after removing a queued branch."""
+        queue_updated = AsyncMock()
+        manager = TreeQueueManager(queue_update_callback=queue_updated)
+
+        root_incoming = IncomingMessage(
+            text="Root", chat_id="1", user_id="1", message_id="root", platform="test"
+        )
+        tree = await manager.create_tree("root", root_incoming, "s1")
+
+        child_incoming = IncomingMessage(
+            text="Child",
+            chat_id="1",
+            user_id="1",
+            message_id="queued_first",
+            platform="test",
+            reply_to_message_id="root",
+        )
+        await manager.add_to_tree("root", "queued_first", child_incoming, "s2")
+
+        sibling_incoming = IncomingMessage(
+            text="Sibling",
+            chat_id="1",
+            user_id="1",
+            message_id="queued_second",
+            platform="test",
+            reply_to_message_id="root",
+        )
+        await manager.add_to_tree("root", "queued_second", sibling_incoming, "s3")
+
+        async with tree.with_lock():
+            tree.set_processing_state("root", True)
+            tree.put_queue_unlocked("queued_first")
+            tree.put_queue_unlocked("queued_second")
+
+        cancelled = await manager.cancel_branch("queued_first")
+
+        assert [node.node_id for node in cancelled] == ["queued_first"]
+        assert await tree.get_queue_snapshot() == ["queued_second"]
+        queue_updated.assert_awaited_once_with(tree)
+
+    @pytest.mark.asyncio
     async def test_remove_branch_non_root(self):
         """Test remove_branch removes only the subtree when branch is not root."""
         manager = TreeQueueManager()
@@ -593,6 +678,48 @@ class TestTreeQueueManager:
         assert "child" not in tree.get_root().children_ids
 
     @pytest.mark.asyncio
+    async def test_remove_branch_unregisters_status_message_mappings(self):
+        """Removing a branch removes node and status lookup keys."""
+        manager = TreeQueueManager()
+
+        root_incoming = IncomingMessage(
+            text="Root", chat_id="1", user_id="1", message_id="root", platform="test"
+        )
+        await manager.create_tree("root", root_incoming, "s1")
+
+        child_incoming = IncomingMessage(
+            text="Child",
+            chat_id="1",
+            user_id="1",
+            message_id="child",
+            platform="test",
+            reply_to_message_id="root",
+        )
+        await manager.add_to_tree("root", "child", child_incoming, "s2")
+        manager.register_node("s2", "root")
+
+        grandchild_incoming = IncomingMessage(
+            text="Grandchild",
+            chat_id="1",
+            user_id="1",
+            message_id="grandchild",
+            platform="test",
+            reply_to_message_id="child",
+        )
+        await manager.add_to_tree("child", "grandchild", grandchild_incoming, "s3")
+        manager.register_node("s3", "root")
+
+        removed, root_id, removed_entire = await manager.remove_branch("child")
+
+        assert {node.node_id for node in removed} == {"child", "grandchild"}
+        assert root_id == "root"
+        assert removed_entire is False
+        assert manager.get_tree_for_node("child") is None
+        assert manager.get_tree_for_node("grandchild") is None
+        assert manager.get_tree_for_node("s2") is None
+        assert manager.get_tree_for_node("s3") is None
+
+    @pytest.mark.asyncio
     async def test_remove_branch_root_removes_tree(self):
         """Test remove_branch when branch is root removes entire tree."""
         manager = TreeQueueManager()
@@ -609,6 +736,25 @@ class TestTreeQueueManager:
         assert removed_entire is True
         assert manager.get_tree("root") is None
         assert manager.get_tree_for_node("root") is None
+
+    @pytest.mark.asyncio
+    async def test_remove_branch_root_unregisters_status_message_mapping(self):
+        """Removing an entire tree removes root status lookup keys too."""
+        manager = TreeQueueManager()
+
+        root_incoming = IncomingMessage(
+            text="Root", chat_id="1", user_id="1", message_id="root", platform="test"
+        )
+        await manager.create_tree("root", root_incoming, "s1")
+        manager.register_node("s1", "root")
+
+        removed, root_id, removed_entire = await manager.remove_branch("root")
+
+        assert [node.node_id for node in removed] == ["root"]
+        assert root_id == "root"
+        assert removed_entire is True
+        assert manager.get_tree_for_node("root") is None
+        assert manager.get_tree_for_node("s1") is None
 
 
 class TestSessionStoreTrees:

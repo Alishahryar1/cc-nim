@@ -174,8 +174,8 @@ def test_cli_scripts_are_registered() -> None:
     scripts = pyproject["project"]["scripts"]
     assert scripts["fcc-server"] == "cli.entrypoints:serve"
     assert scripts["free-claude-code"] == "cli.entrypoints:serve"
-    assert scripts["fcc-claude"] == "cli.entrypoints:launch_claude"
-    assert scripts["fcc-codex"] == "cli.entrypoints:launch_codex"
+    assert scripts["fcc-claude"] == "cli.launchers.claude:launch"
+    assert scripts["fcc-codex"] == "cli.launchers.codex:launch"
 
 
 def test_schedule_open_admin_browser_opens_when_health_ready(
@@ -199,7 +199,7 @@ def test_schedule_open_admin_browser_opens_when_health_ready(
 
     with (
         patch.object(entrypoints.threading, "Thread", ImmediateThread),
-        patch.object(entrypoints, "_preflight_proxy", return_value=None),
+        patch.object(entrypoints, "preflight_proxy", return_value=None),
         patch.object(
             entrypoints.webbrowser,
             "open",
@@ -309,11 +309,12 @@ def test_serve_handles_keyboard_interrupt_without_traceback() -> None:
 
 
 def test_claude_child_env_targets_current_proxy_config() -> None:
-    from cli.entrypoints import _claude_child_env
+    from cli.launchers.claude import build_claude_launcher_env
 
-    env = _claude_child_env(
-        _launcher_settings(port=9090, token=" proxy-token "),
-        {
+    env = build_claude_launcher_env(
+        proxy_root_url="http://127.0.0.1:9090",
+        auth_token=" proxy-token ",
+        base_env={
             "PATH": "keep",
             "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
             "ANTHROPIC_AUTH_TOKEN": "old-token",
@@ -330,11 +331,12 @@ def test_claude_child_env_targets_current_proxy_config() -> None:
 
 
 def test_claude_child_env_uses_sentinel_for_blank_configured_auth_token() -> None:
-    from cli.entrypoints import _claude_child_env
+    from cli.launchers.claude import build_claude_launcher_env
 
-    env = _claude_child_env(
-        _launcher_settings(token=""),
-        {
+    env = build_claude_launcher_env(
+        proxy_root_url="http://127.0.0.1:8082",
+        auth_token="",
+        base_env={
             "ANTHROPIC_AUTH_TOKEN": "inherited-token",
             "ANTHROPIC_API_KEY": "official-key",
         },
@@ -347,7 +349,7 @@ def test_claude_child_env_uses_sentinel_for_blank_configured_auth_token() -> Non
 def test_launch_claude_passes_args_and_child_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    from cli.entrypoints import launch_claude
+    from cli.launchers.claude import launch
 
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "old-token")
@@ -355,19 +357,18 @@ def test_launch_claude_passes_args_and_child_env(
     settings = _launcher_settings(port=9191, token="proxy-token")
 
     with (
-        patch("cli.entrypoints.get_settings", return_value=settings),
-        patch("cli.entrypoints._preflight_proxy", return_value=None),
-        patch("cli.entrypoints.shutil.which", return_value="resolved-claude.cmd"),
-        patch("cli.entrypoints.urlopen") as urlopen,
-        patch("cli.entrypoints.subprocess.Popen") as popen,
-        patch("cli.entrypoints.register_pid") as register_pid,
-        patch("cli.entrypoints.unregister_pid") as unregister_pid,
+        patch("cli.launchers.claude.get_settings", return_value=settings),
+        patch("cli.launchers.claude.preflight_proxy", return_value=None),
+        patch("cli.launchers.common.shutil.which", return_value="resolved-claude.cmd"),
+        patch("cli.launchers.common.subprocess.Popen") as popen,
+        patch("cli.launchers.common.register_pid") as register_pid,
+        patch("cli.launchers.common.unregister_pid") as unregister_pid,
         pytest.raises(SystemExit) as exc_info,
     ):
         process = popen.return_value
         process.pid = 12345
         process.wait.return_value = 7
-        launch_claude(["--model", "sonnet"])
+        launch(["--model", "sonnet"])
 
     assert exc_info.value.code == 7
     popen.assert_called_once()
@@ -380,14 +381,13 @@ def test_launch_claude_passes_args_and_child_env(
     assert child_env["KEEP_ME"] == "yes"
     register_pid.assert_called_once_with(12345)
     unregister_pid.assert_called_once_with(12345)
-    urlopen.assert_not_called()
 
 
 def test_launch_codex_passes_responses_config_and_child_env(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    from cli.entrypoints import launch_codex
+    from cli.launchers.codex import launch
 
     monkeypatch.setenv("OPENAI_API_KEY", "official-key")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
@@ -419,20 +419,22 @@ def test_launch_codex_passes_responses_config_and_child_env(
         )
 
     with (
-        patch("cli.entrypoints.get_settings", return_value=settings),
-        patch("cli.entrypoints._preflight_proxy", return_value=None),
-        patch("cli.entrypoints.shutil.which", return_value="resolved-codex.cmd"),
-        patch("cli.entrypoints.codex_model_catalog_path", return_value=catalog_path),
-        patch("cli.entrypoints.urlopen", side_effect=fake_urlopen),
-        patch("cli.entrypoints.subprocess.Popen") as popen,
-        patch("cli.entrypoints.register_pid") as register_pid,
-        patch("cli.entrypoints.unregister_pid") as unregister_pid,
+        patch("cli.launchers.codex.get_settings", return_value=settings),
+        patch("cli.launchers.codex.preflight_proxy", return_value=None),
+        patch("cli.launchers.common.shutil.which", return_value="resolved-codex.cmd"),
+        patch(
+            "cli.launchers.codex.codex_model_catalog_path", return_value=catalog_path
+        ),
+        patch("cli.launchers.codex.urlopen", side_effect=fake_urlopen),
+        patch("cli.launchers.common.subprocess.Popen") as popen,
+        patch("cli.launchers.common.register_pid") as register_pid,
+        patch("cli.launchers.common.unregister_pid") as unregister_pid,
         pytest.raises(SystemExit) as exc_info,
     ):
         process = popen.return_value
         process.pid = 12345
         process.wait.return_value = 0
-        launch_codex(["exec", "hello"])
+        launch(["exec", "hello"])
 
     assert exc_info.value.code == 0
     command = popen.call_args.args[0]
@@ -464,28 +466,28 @@ def test_launch_codex_catalog_failure_warns_and_continues(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,
 ) -> None:
-    from cli.entrypoints import launch_codex
+    from cli.launchers.codex import launch
 
     settings = _launcher_settings(port=9191, token="proxy-token")
 
     with (
-        patch("cli.entrypoints.get_settings", return_value=settings),
-        patch("cli.entrypoints._preflight_proxy", return_value=None),
-        patch("cli.entrypoints.shutil.which", return_value="resolved-codex.cmd"),
+        patch("cli.launchers.codex.get_settings", return_value=settings),
+        patch("cli.launchers.codex.preflight_proxy", return_value=None),
+        patch("cli.launchers.common.shutil.which", return_value="resolved-codex.cmd"),
         patch(
-            "cli.entrypoints.codex_model_catalog_path",
+            "cli.launchers.codex.codex_model_catalog_path",
             return_value=tmp_path / "codex-model-catalog.json",
         ),
-        patch("cli.entrypoints.urlopen", side_effect=URLError("boom")),
-        patch("cli.entrypoints.subprocess.Popen") as popen,
-        patch("cli.entrypoints.register_pid"),
-        patch("cli.entrypoints.unregister_pid"),
+        patch("cli.launchers.codex.urlopen", side_effect=URLError("boom")),
+        patch("cli.launchers.common.subprocess.Popen") as popen,
+        patch("cli.launchers.common.register_pid"),
+        patch("cli.launchers.common.unregister_pid"),
         pytest.raises(SystemExit) as exc_info,
     ):
         process = popen.return_value
         process.pid = 12345
         process.wait.return_value = 0
-        launch_codex(["exec", "hello"])
+        launch(["exec", "hello"])
 
     assert exc_info.value.code == 0
     command = popen.call_args.args[0]
@@ -496,25 +498,25 @@ def test_launch_codex_catalog_failure_warns_and_continues(
 
 
 def test_launch_claude_keyboard_interrupt_kills_child_tree() -> None:
-    from cli.entrypoints import launch_claude
+    from cli.launchers.claude import launch
 
     settings = _launcher_settings(port=9191, token="proxy-token")
 
     with (
-        patch("cli.entrypoints.get_settings", return_value=settings),
-        patch("cli.entrypoints._preflight_proxy", return_value=None),
-        patch("cli.entrypoints.shutil.which", return_value="resolved-claude.cmd"),
-        patch("cli.entrypoints.subprocess.Popen") as popen,
-        patch("cli.entrypoints.register_pid"),
-        patch("cli.entrypoints.kill_pid_tree_best_effort") as kill_tree,
-        patch("cli.entrypoints.unregister_pid") as unregister_pid,
+        patch("cli.launchers.claude.get_settings", return_value=settings),
+        patch("cli.launchers.claude.preflight_proxy", return_value=None),
+        patch("cli.launchers.common.shutil.which", return_value="resolved-claude.cmd"),
+        patch("cli.launchers.common.subprocess.Popen") as popen,
+        patch("cli.launchers.common.register_pid"),
+        patch("cli.launchers.common.kill_pid_tree_best_effort") as kill_tree,
+        patch("cli.launchers.common.unregister_pid") as unregister_pid,
         pytest.raises(KeyboardInterrupt),
     ):
         process = popen.return_value
         process.pid = 12345
         process.wait.side_effect = [KeyboardInterrupt, 0]
 
-        launch_claude([])
+        launch([])
 
     kill_tree.assert_called_once_with(12345)
     unregister_pid.assert_called_once_with(12345)
@@ -523,17 +525,17 @@ def test_launch_claude_keyboard_interrupt_kills_child_tree() -> None:
 def test_launch_claude_exits_when_command_cannot_be_resolved(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from cli.entrypoints import launch_claude
+    from cli.launchers.claude import launch
 
     settings = _launcher_settings()
     with (
-        patch("cli.entrypoints.get_settings", return_value=settings),
-        patch("cli.entrypoints._preflight_proxy", return_value=None),
-        patch("cli.entrypoints.shutil.which", return_value=None),
-        patch("cli.entrypoints.subprocess.Popen") as popen,
+        patch("cli.launchers.claude.get_settings", return_value=settings),
+        patch("cli.launchers.claude.preflight_proxy", return_value=None),
+        patch("cli.launchers.common.shutil.which", return_value=None),
+        patch("cli.launchers.common.subprocess.Popen") as popen,
         pytest.raises(SystemExit) as exc_info,
     ):
-        launch_claude([])
+        launch([])
 
     assert exc_info.value.code == 127
     popen.assert_not_called()
@@ -545,19 +547,21 @@ def test_launch_claude_exits_when_command_cannot_be_resolved(
 def test_launch_claude_unreachable_proxy_exits_with_hint(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    from cli.entrypoints import launch_claude
+    from cli.launchers.claude import launch
 
     settings = _launcher_settings(port=9393)
     with (
-        patch("cli.entrypoints.get_settings", return_value=settings),
-        patch("cli.entrypoints._preflight_proxy", return_value="connection refused"),
-        patch("cli.entrypoints.subprocess.run") as run,
+        patch("cli.launchers.claude.get_settings", return_value=settings),
+        patch(
+            "cli.launchers.claude.preflight_proxy", return_value="connection refused"
+        ),
+        patch("cli.launchers.common.subprocess.Popen") as popen,
         pytest.raises(SystemExit) as exc_info,
     ):
-        launch_claude([])
+        launch([])
 
     assert exc_info.value.code == 1
-    run.assert_not_called()
+    popen.assert_not_called()
     captured = capsys.readouterr()
     assert "http://127.0.0.1:9393" in captured.err
     assert "fcc-server" in captured.err

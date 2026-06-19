@@ -12,8 +12,8 @@ from ..models import IncomingMessage
 
 
 @runtime_checkable
-class CLISession(Protocol):
-    """Protocol for CLI session - avoid circular import from cli package."""
+class ManagedClaudeSessionProtocol(Protocol):
+    """Protocol for managed Claude sessions - avoid circular imports."""
 
     def start_task(
         self, prompt: str, session_id: str | None = None, fork_session: bool = False
@@ -24,16 +24,14 @@ class CLISession(Protocol):
 
 
 @runtime_checkable
-class SessionManagerInterface(Protocol):
+class ManagedClaudeSessionManagerProtocol(Protocol):
     """
-    Protocol for session managers to avoid tight coupling with cli package.
-
-    Implementations: CLISessionManager
+    Protocol for managed Claude session managers to avoid tight coupling.
     """
 
     async def get_or_create_session(
         self, session_id: str | None = None
-    ) -> tuple[CLISession, str, bool]:
+    ) -> tuple[ManagedClaudeSessionProtocol, str, bool]:
         """
         Get an existing session or create a new one.
 

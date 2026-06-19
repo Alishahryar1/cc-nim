@@ -240,6 +240,36 @@ class SessionStore:
 
     # ==================== Tree Methods ====================
 
+    @staticmethod
+    def _tree_lookup_ids(tree_data: dict) -> set[str]:
+        """Return lookup IDs represented by serialized tree nodes."""
+        lookup_ids: set[str] = set()
+        nodes = tree_data.get("nodes", {})
+        if not isinstance(nodes, dict):
+            return lookup_ids
+
+        for node_key, node_data in nodes.items():
+            lookup_ids.add(str(node_key))
+            if not isinstance(node_data, dict):
+                continue
+            node_id = node_data.get("node_id")
+            if node_id is not None:
+                lookup_ids.add(str(node_id))
+            status_message_id = node_data.get("status_message_id")
+            if status_message_id is not None:
+                lookup_ids.add(str(status_message_id))
+        return lookup_ids
+
+    def _remove_tree_lookup_ids_unlocked(self, root_id: str) -> None:
+        """Remove all lookup IDs currently pointing at a root. Caller holds lock."""
+        stale_lookup_ids = [
+            lookup_id
+            for lookup_id, mapped_root_id in self._node_to_tree.items()
+            if mapped_root_id == root_id
+        ]
+        for lookup_id in stale_lookup_ids:
+            self._node_to_tree.pop(lookup_id, None)
+
     def save_tree(self, root_id: str, tree_data: dict) -> None:
         """
         Save a message tree.
@@ -251,9 +281,9 @@ class SessionStore:
         with self._lock:
             self._trees[root_id] = tree_data
 
-            # Update node-to-tree mapping
-            for node_id in tree_data.get("nodes", {}):
-                self._node_to_tree[node_id] = root_id
+            self._remove_tree_lookup_ids_unlocked(root_id)
+            for lookup_id in self._tree_lookup_ids(tree_data):
+                self._node_to_tree[lookup_id] = root_id
 
             self._schedule_save()
             logger.debug(f"Saved tree {root_id}")
@@ -281,8 +311,7 @@ class SessionStore:
         with self._lock:
             tree_data = self._trees.pop(root_id, None)
             if tree_data:
-                for node_id in tree_data.get("nodes", {}):
-                    self._node_to_tree.pop(node_id, None)
+                self._remove_tree_lookup_ids_unlocked(root_id)
                 self._schedule_save()
 
     def get_all_trees(self) -> dict[str, dict]:

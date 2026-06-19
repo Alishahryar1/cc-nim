@@ -1,7 +1,6 @@
 """Command handlers for messaging platform commands (/stop, /stats, /clear).
 
-Extracted from ClaudeMessageHandler to keep handler.py focused on
-core message processing logic.
+Commands depend on MessagingCommandContext instead of the concrete workflow.
 """
 
 from __future__ import annotations
@@ -10,13 +9,14 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from .command_context import MessagingCommandContext
+
 if TYPE_CHECKING:
-    from messaging.handler import ClaudeMessageHandler
     from messaging.models import IncomingMessage
 
 
 async def handle_stop_command(
-    handler: ClaudeMessageHandler, incoming: IncomingMessage
+    handler: MessagingCommandContext, incoming: IncomingMessage
 ) -> None:
     """Handle /stop command from messaging platform."""
     # Reply-scoped stop: reply "/stop" to stop only that task.
@@ -68,7 +68,7 @@ async def handle_stop_command(
 
 
 async def handle_stats_command(
-    handler: ClaudeMessageHandler, incoming: IncomingMessage
+    handler: MessagingCommandContext, incoming: IncomingMessage
 ) -> None:
     """Handle /stats command."""
     stats = handler.cli_manager.get_stats()
@@ -91,7 +91,7 @@ async def handle_stats_command(
 
 
 async def _delete_message_ids(
-    handler: ClaudeMessageHandler, chat_id: str, msg_ids: set[str]
+    handler: MessagingCommandContext, chat_id: str, msg_ids: set[str]
 ) -> None:
     """Best-effort delete messages by ID. Sorts numeric IDs descending."""
     if not msg_ids:
@@ -126,7 +126,7 @@ async def _delete_message_ids(
 
 
 async def _handle_clear_branch(
-    handler: ClaudeMessageHandler,
+    handler: MessagingCommandContext,
     incoming: IncomingMessage,
     branch_root_id: str,
 ) -> None:
@@ -178,7 +178,7 @@ async def _handle_clear_branch(
 
 
 async def handle_clear_command(
-    handler: ClaudeMessageHandler, incoming: IncomingMessage
+    handler: MessagingCommandContext, incoming: IncomingMessage
 ) -> None:
     """
     Handle /clear command.

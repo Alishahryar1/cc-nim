@@ -26,6 +26,7 @@ from .tools import (
     custom_tool_input_text_from_arguments,
     responses_tool_identity_from_anthropic_name,
 )
+from .usage import estimate_text_tokens
 
 
 @dataclass(slots=True)
@@ -72,6 +73,7 @@ class ResponsesStreamAssembler:
         self._fallback_text_index = -1
         self._input_tokens: int | None = None
         self._output_tokens: int | None = None
+        self._reasoning_tokens_estimate = 0
         self._started = False
         self.terminal = False
         self.final_response: dict[str, Any] | None = None
@@ -434,6 +436,7 @@ class ResponsesStreamAssembler:
         chunks: list[str] = []
         text = "".join(state.text_parts)
         if text:
+            self._reasoning_tokens_estimate += estimate_text_tokens(text)
             chunks.append(
                 format_response_sse_event(
                     "response.reasoning_text.done",
@@ -595,16 +598,22 @@ class ResponsesStreamAssembler:
     def _output(self) -> list[dict[str, Any]]:
         return [item for item in self._output_slots if item is not None]
 
-    def _usage(self) -> dict[str, int] | None:
+    def _usage(self) -> dict[str, Any] | None:
         if self._input_tokens is None and self._output_tokens is None:
             return None
         input_tokens = self._input_tokens or 0
         output_tokens = self._output_tokens or 0
-        return {
+        usage: dict[str, Any] = {
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
             "total_tokens": input_tokens + output_tokens,
         }
+        capped_reasoning_tokens = min(self._reasoning_tokens_estimate, output_tokens)
+        if capped_reasoning_tokens:
+            usage["output_tokens_details"] = {
+                "reasoning_tokens": capped_reasoning_tokens
+            }
+        return usage
 
     def _safe_index(self, index: int | None) -> int:
         if index is not None:

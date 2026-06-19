@@ -65,8 +65,9 @@ def test_ci_sh_runs_ci_checks_in_order() -> None:
     assert "Fix the underlying type errors instead" in text
     assert "--exclude-dir=.venv" in text
     assert "--exclude-dir=.git" in text
-    assert "uv run ruff format --check" in text
-    assert "uv run ruff check" in text
+    assert "uv run ruff format" in text
+    assert "uv run ruff format --check" not in text
+    assert "uv run ruff check --fix" in text
     assert "uv run ty check" in text
     assert "uv run pytest -v --tb=short" in text
     assert "--only" in text
@@ -96,6 +97,36 @@ def test_ci_sh_dry_run_does_not_require_uv() -> None:
 
     assert result.returncode == 0
     assert "+ uv run pytest -v --tb=short" in result.stdout
+    assert "uv is required" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("check_id", "command"),
+    [
+        ("ruff-format", "+ uv run ruff format"),
+        ("ruff-check", "+ uv run ruff check --fix"),
+    ],
+)
+def test_ci_sh_dry_run_prints_local_ruff_repair_commands(
+    check_id: str, command: str
+) -> None:
+    result = subprocess.run(
+        [
+            _shell_interpreter(),
+            str(_repo_root() / "scripts" / "ci.sh"),
+            "--only",
+            check_id,
+            "--dry-run",
+        ],
+        cwd=_repo_root(),
+        env={**os.environ, "PATH": _path_without_uv()},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert command in result.stdout
     assert "uv is required" not in result.stderr
 
 
@@ -159,7 +190,9 @@ def test_ci_ps1_runs_ci_checks_in_order() -> None:
     assert "Fix the underlying type errors instead" in text
     assert ".venv" in text
     assert ".git" in text
-    assert '"format", "--check"' in text
+    assert '"run", "ruff", "format"' in text
+    assert '"format", "--check"' not in text
+    assert '"run", "ruff", "check", "--fix"' in text
     assert '"-v", "--tb=short"' in text
     assert "-Only" in text
     assert "-Skip" in text
@@ -190,6 +223,38 @@ def test_ci_ps1_dry_run_does_not_require_uv() -> None:
 
     assert result.returncode == 0
     assert "+ uv run pytest -v --tb=short" in result.stdout
+    assert "uv is required" not in result.stderr
+
+
+@pytest.mark.parametrize(
+    ("check_id", "command"),
+    [
+        ("ruff-format", "+ uv run ruff format"),
+        ("ruff-check", "+ uv run ruff check --fix"),
+    ],
+)
+def test_ci_ps1_dry_run_prints_local_ruff_repair_commands(
+    check_id: str, command: str
+) -> None:
+    result = subprocess.run(
+        [
+            _powershell_interpreter(),
+            "-NoProfile",
+            "-File",
+            str(_repo_root() / "scripts" / "ci.ps1"),
+            "-Only",
+            check_id,
+            "-DryRun",
+        ],
+        cwd=_repo_root(),
+        env={**os.environ, "PATH": _path_without_uv()},
+        text=True,
+        capture_output=True,
+        check=False,
+    )
+
+    assert result.returncode == 0
+    assert command in result.stdout
     assert "uv is required" not in result.stderr
 
 

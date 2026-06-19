@@ -628,7 +628,9 @@ uv run uvicorn server:app --host 0.0.0.0 --port 8082
 
 ### 3. Commands
 
-Run all GitHub CI checks locally (requires `uv` on PATH):
+Run the local CI sequence (requires `uv` on PATH). The local scripts format
+Python files and apply autofixable Ruff lint fixes before type checking and
+tests:
 
 ```bash
 ./scripts/ci.sh
@@ -640,14 +642,17 @@ Run all GitHub CI checks locally (requires `uv` on PATH):
 
 Useful flags: `--only pytest`, `--skip pytest`, `--dry-run` (PowerShell: `-Only pytest`, `-Skip pytest`, `-DryRun`).
 
-Or run individual checks manually:
+Or run individual repair/check commands manually:
 
 ```bash
-uv run ruff format --check
-uv run ruff check
+uv run ruff format
+uv run ruff check --fix
 uv run ty check
 uv run pytest -v --tb=short
 ```
+
+GitHub CI remains check-only for Ruff with `uv run ruff format --check` and
+`uv run ruff check`, so required status checks verify committed code.
 
 CI also enforces a ban on `# type: ignore` / `# ty: ignore` suppressions; `scripts/ci.sh` and `scripts/ci.ps1` run that grep too.
 

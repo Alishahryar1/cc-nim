@@ -114,10 +114,10 @@ new places to add unrelated behavior:
   transport bases from per-request stream runners, recovery event construction,
   and transport-specific parsing. Shared protocol rules should continue moving
   toward [core/](core/) when they are not provider-specific.
-- [messaging/handler.py](messaging/handler.py) owns command dispatch, tree
-  queueing, CLI session execution, transcript updates, and persistence
-  coordination. New platform-specific behavior should stay in platform or
-  rendering modules.
+- [messaging/workflow.py](messaging/workflow.py) coordinates messaging runtime
+  dependencies. Inbound turn intake, queued node execution, slash command
+  dependencies, and tree queue internals live in separate modules so new
+  behavior has one owner instead of growing the workflow object.
 - [api/admin_config.py](api/admin_config.py) owns the admin config manifest,
   validation, env rendering, and status metadata. Keep it data-driven, and split
   only around cohesive admin responsibilities.
@@ -128,8 +128,8 @@ Console scripts are registered in [pyproject.toml](pyproject.toml):
 
 - `fcc-server` and `free-claude-code` call `cli.entrypoints:serve`.
 - `fcc-init` calls `cli.entrypoints:init`.
-- `fcc-claude` calls `cli.entrypoints:launch_claude`.
-- `fcc-codex` calls `cli.entrypoints:launch_codex`.
+- `fcc-claude` calls `cli.launchers.claude:launch`.
+- `fcc-codex` calls `cli.launchers.codex:launch`.
 
 [scripts/install.sh](scripts/install.sh) and [scripts/install.ps1](scripts/install.ps1)
 install or update the uv tool plus optional voice extras. [scripts/uninstall.sh](scripts/uninstall.sh)
@@ -442,25 +442,19 @@ conversion. Forced `web_search` or `web_fetch` requests are handled locally when
 `ENABLE_WEB_SERVER_TOOLS` is true; otherwise OpenAI-chat upstreams reject them
 and native Anthropic Messages transports may receive them.
 
-## CLI Launchers And Client Adapter Boundary
+## CLI Launchers And Managed Claude
 
-[cli/adapters/base.py](cli/adapters/base.py) defines `ClientCliAdapter`, the
-boundary for building subprocess commands, building launcher environments,
-parsing stdout lines, and extracting persistent session IDs.
-
-[cli/adapters/claude.py](cli/adapters/claude.py) implements the Claude Code
-adapter:
+[cli/launchers/claude.py](cli/launchers/claude.py) owns the installed
+`fcc-claude` launcher:
 
 - `fcc-claude` strips inherited `ANTHROPIC_*` variables, sets
   `ANTHROPIC_BASE_URL`, enables gateway model discovery, configures the
   auto-compact window, and always sets `ANTHROPIC_AUTH_TOKEN`. Blank proxy auth
   becomes the local-only `fcc-no-auth` sentinel so Claude Code reaches the proxy
   instead of stopping at its login gate.
-- Managed task invocations set `ANTHROPIC_API_URL`, `ANTHROPIC_BASE_URL`,
-  gateway model discovery, non-interactive terminal settings, optional
-  `--resume`, optional `--fork-session`, and `--output-format stream-json`.
 
-[cli/adapters/codex.py](cli/adapters/codex.py) implements the Codex adapter:
+[cli/launchers/codex.py](cli/launchers/codex.py) owns the installed
+`fcc-codex` launcher:
 
 - `fcc-codex` strips official OpenAI and Codex credential variables.
 - It creates an ephemeral `fcc` model provider with `wire_api = "responses"` and
@@ -470,15 +464,18 @@ adapter:
   native `/model` picker lists FCC provider slugs. Catalog generation is
   fail-open: launch continues with a warning if the catalog cannot be prepared.
 - It stores the proxy auth token in `FCC_CODEX_API_KEY` for Codex to read.
-- Managed task invocations use Codex JSON output and map Responses events into
-  the messaging parser event shape.
-- Codex `response.reasoning_text.delta` events are converted into the shared
-  Anthropic-style `thinking_delta` parser shape; summary reasoning events remain
-  raw unless a future feature selects them as the proxy wire shape.
 
-[cli/manager.py](cli/manager.py) coordinates multiple `CLISession` instances so
-separate conversations can run in separate client CLI processes while replies
-reuse or fork existing sessions.
+[cli/managed/](cli/managed/) owns managed Claude Code subprocesses used by
+Discord and Telegram messaging. Managed task invocations set
+`ANTHROPIC_API_URL`, `ANTHROPIC_BASE_URL`, gateway model discovery,
+non-interactive terminal settings, optional `--resume`, optional
+`--fork-session`, and `--output-format stream-json`. The managed session parser
+extracts persistent Claude session IDs and yields Claude stream-json events to
+the messaging event parser.
+
+Codex is supported through `fcc-codex` and Codex extensions. FCC does not keep an
+internal managed-Codex session runner because no user-facing messaging setting
+selects Codex for Discord or Telegram.
 
 ## Messaging Architecture
 
@@ -488,16 +485,42 @@ Messaging is optional. [api/runtime.py](api/runtime.py) calls
 If `MESSAGING_PLATFORM` is `none`, or if the selected platform token is missing,
 the messaging bridge is skipped.
 
-[messaging/handler.py](messaging/handler.py) contains `ClaudeMessageHandler`, the
-platform-agnostic orchestration layer. It receives `IncomingMessage` objects,
-dispatches commands, filters its own status messages, creates or extends a
-message tree, queues work, runs a managed client CLI session, parses CLI events,
-updates transcripts, and persists conversation state.
+Platform adapters in [messaging/platforms/telegram.py](messaging/platforms/telegram.py)
+and [messaging/platforms/discord.py](messaging/platforms/discord.py) are thin SDK
+shells: they own client lifecycle, event extraction, SDK retries, attachment
+download, and raw send/edit/delete calls. Shared delivery policy lives in
+[messaging/platforms/outbox.py](messaging/platforms/outbox.py), which owns queued
+send/edit/delete, dedup keys, limiter delegation, and fire-and-forget behavior.
+Shared voice-note orchestration lives in
+[messaging/platforms/voice_flow.py](messaging/platforms/voice_flow.py), which owns
+pending voice registration, temp-file cleanup, transcription, cancellation, error
+replies, and the handoff to `IncomingMessage`.
 
-[messaging/trees/queue_manager.py](messaging/trees/queue_manager.py) preserves
+[messaging/workflow.py](messaging/workflow.py) contains `MessagingWorkflow`, the
+platform-agnostic coordinator. It owns dependencies, callback wiring, stop/clear
+side effects, render settings, and shutdown-visible state.
+
+[messaging/turn_intake.py](messaging/turn_intake.py) owns inbound message
+recording, slash command dispatch, status-echo filtering, reply resolution, tree
+creation/extension, initial status messages, persistence, and enqueueing.
+
+[messaging/node_runner.py](messaging/node_runner.py) owns managed CLI session
+lifecycle for queued nodes: parent-session fork/resume, session registration,
+CLI event parsing, transcript/status updates, cancellation, error propagation,
+and session cleanup.
+
+[messaging/command_context.py](messaging/command_context.py) defines the typed
+dependency surface for `/stop`, `/clear`, and `/stats`; commands should not
+depend on the concrete workflow object.
+
+[messaging/trees/manager.py](messaging/trees/manager.py) preserves
 per-conversation ordering with tree-aware queues. Replies become child nodes, and
 each tree processes one node at a time while separate trees can progress
-independently.
+independently. [messaging/trees/repository.py](messaging/trees/repository.py)
+owns the in-memory tree/node index, and
+[messaging/trees/processor.py](messaging/trees/processor.py) owns async queue
+processing. [messaging/trees/data.py](messaging/trees/data.py) owns the persisted
+`MessageNode` and `MessageTree` JSON shape.
 
 [messaging/session.py](messaging/session.py) persists trees, node-to-tree
 mappings, and message IDs to a JSON file under the managed agent workspace. It
@@ -506,20 +529,23 @@ uses debounced atomic writes and flushes pending saves on shutdown.
 ```mermaid
 sequenceDiagram
     participant Platform as DiscordOrTelegram
-    participant Handler as ClaudeMessageHandler
+    participant Workflow as MessagingWorkflow
+    participant Intake as MessagingTurnIntake
     participant Queue as TreeQueueManager
-    participant Manager as CLISessionManager
-    participant CLI as ClientCLI
+    participant Runner as MessagingNodeRunner
+    participant Manager as ManagedClaudeSessionManager
+    participant CLI as ClaudeCode
     participant Proxy as LocalProxy
 
-    Platform->>Handler: IncomingMessage
-    Handler->>Queue: create or extend message tree
-    Queue->>Handler: process node in order
-    Handler->>Manager: get_or_create_session
+    Platform->>Workflow: IncomingMessage
+    Workflow->>Intake: handle inbound turn
+    Intake->>Queue: create or extend message tree
+    Queue->>Runner: process node in order
+    Runner->>Manager: get_or_create_session
     Manager->>CLI: launch JSON stream task
     CLI->>Proxy: provider-backed API calls
-    CLI-->>Handler: parsed stdout events
-    Handler-->>Platform: status and transcript updates
+    CLI-->>Runner: parsed stdout events
+    Runner-->>Platform: status and transcript updates
 ```
 
 ## Observability, Diagnostics, And Safety
@@ -592,16 +618,18 @@ when maintainers want branch-level assurance.
    updated in place.
 5. Add tests under [tests/api/](tests/api/) or [tests/config/](tests/config/).
 
-### Add A Client Adapter
+### Add Or Change A Client Surface
 
-1. Implement the `ClientCliAdapter` protocol from
-   [cli/adapters/base.py](cli/adapters/base.py).
-2. Register selection behavior in [cli/adapters/registry.py](cli/adapters/registry.py).
-3. Ensure launcher env construction strips conflicting upstream credentials.
-4. Ensure managed task parsing emits the event shapes expected by
+1. For an installed wrapper, add or update a launcher under
+   [cli/launchers/](cli/launchers/) and keep credential stripping local to that
+   client.
+2. For messaging-managed execution, update [cli/managed/](cli/managed/) only
+   when Discord or Telegram should actually run a different managed client.
+3. Ensure managed task parsing emits the event shapes expected by
    [messaging/event_parser.py](messaging/event_parser.py) and
    [messaging/node_event_pipeline.py](messaging/node_event_pipeline.py).
-5. Add CLI adapter and session-manager tests under [tests/cli/](tests/cli/).
+4. Add launcher, managed-session, and customer-flow tests under
+   [tests/cli/](tests/cli/) and [tests/messaging/](tests/messaging/).
 
 ### Add A Messaging Platform
 
@@ -645,3 +673,4 @@ Update this file when a change adds or meaningfully changes:
 Docs-only changes to this file do not require a semver bump. Production code
 changes still follow the versioning rules in [AGENTS.md](AGENTS.md) and
 [CLAUDE.md](CLAUDE.md).
+

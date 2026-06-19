@@ -1,337 +1,14 @@
-"""Tree-based message queue: index, async node processor, and public manager API."""
+"""Public manager API for tree-based messaging queues."""
 
 import asyncio
 from collections.abc import Awaitable, Callable
 
 from loguru import logger
 
-from config.settings import get_settings
-from core.anthropic import get_user_facing_error_message
-
 from ..models import IncomingMessage
-from ..safe_diagnostics import format_exception_for_log
 from .data import MessageNode, MessageState, MessageTree
-
-
-class TreeRepository:
-    """
-    In-memory index of trees and node-to-root mappings.
-
-    Used only by :class:`TreeQueueManager`; kept as a named type for tests.
-    """
-
-    def __init__(self) -> None:
-        self._trees: dict[str, MessageTree] = {}  # root_id -> tree
-        self._node_to_tree: dict[str, str] = {}  # node_id -> root_id
-
-    def get_tree(self, root_id: str) -> MessageTree | None:
-        """Get a tree by its root ID."""
-        return self._trees.get(root_id)
-
-    def get_tree_for_node(self, node_id: str) -> MessageTree | None:
-        """Get the tree containing a given node."""
-        root_id = self._node_to_tree.get(node_id)
-        if not root_id:
-            return None
-        return self._trees.get(root_id)
-
-    def get_node(self, node_id: str) -> MessageNode | None:
-        """Get a node from any tree."""
-        tree = self.get_tree_for_node(node_id)
-        return tree.get_node(node_id) if tree else None
-
-    def add_tree(self, root_id: str, tree: MessageTree) -> None:
-        """Add a new tree to the repository."""
-        self._trees[root_id] = tree
-        self._node_to_tree[root_id] = root_id
-        logger.debug("TREE_REPO: add_tree root_id={}", root_id)
-
-    def register_node(self, node_id: str, root_id: str) -> None:
-        """Register a node ID to a tree."""
-        self._node_to_tree[node_id] = root_id
-        logger.debug("TREE_REPO: register_node node_id={} root_id={}", node_id, root_id)
-
-    def has_node(self, node_id: str) -> bool:
-        """Check if a node is registered in any tree."""
-        return node_id in self._node_to_tree
-
-    def tree_count(self) -> int:
-        """Get the number of trees in the repository."""
-        return len(self._trees)
-
-    def is_tree_busy(self, root_id: str) -> bool:
-        """Check if a tree is currently processing."""
-        tree = self._trees.get(root_id)
-        return tree.is_processing if tree else False
-
-    def is_node_tree_busy(self, node_id: str) -> bool:
-        """Check if the tree containing a node is busy."""
-        tree = self.get_tree_for_node(node_id)
-        return tree.is_processing if tree else False
-
-    def get_queue_size(self, node_id: str) -> int:
-        """Get queue size for the tree containing a node."""
-        tree = self.get_tree_for_node(node_id)
-        return tree.get_queue_size() if tree else 0
-
-    def resolve_parent_node_id(self, msg_id: str) -> str | None:
-        """
-        Resolve a message ID to the actual parent node ID.
-
-        Handles the case where msg_id is a status message ID
-        (which maps to the tree but isn't an actual node).
-
-        Returns:
-            The node_id to use as parent, or None if not found
-        """
-        tree = self.get_tree_for_node(msg_id)
-        if not tree:
-            return None
-
-        if tree.has_node(msg_id):
-            return msg_id
-
-        node = tree.find_node_by_status_message(msg_id)
-        if node:
-            return node.node_id
-
-        return None
-
-    def get_pending_children(self, node_id: str) -> list[MessageNode]:
-        """
-        Get all pending child nodes (recursively) of a given node.
-
-        Used for error propagation - when a node fails, its pending
-        children should also be marked as failed.
-        """
-        tree = self.get_tree_for_node(node_id)
-        if not tree:
-            return []
-
-        pending: list[MessageNode] = []
-        stack = [node_id]
-
-        while stack:
-            current_id = stack.pop()
-            node = tree.get_node(current_id)
-            if not node:
-                continue
-            for child_id in node.children_ids:
-                child = tree.get_node(child_id)
-                if child and child.state == MessageState.PENDING:
-                    pending.append(child)
-                    stack.append(child_id)
-
-        return pending
-
-    def all_trees(self) -> list[MessageTree]:
-        """Get all trees in the repository."""
-        return list(self._trees.values())
-
-    def tree_ids(self) -> list[str]:
-        """Get all tree root IDs."""
-        return list(self._trees.keys())
-
-    def unregister_nodes(self, node_ids: list[str]) -> None:
-        """Remove node IDs from the node-to-tree mapping."""
-        for nid in node_ids:
-            self._node_to_tree.pop(nid, None)
-
-    def remove_tree(self, root_id: str) -> MessageTree | None:
-        """
-        Remove a tree and all its node mappings from the repository.
-
-        Returns:
-            The removed tree, or None if not found.
-        """
-        tree = self._trees.pop(root_id, None)
-        if not tree:
-            return None
-        for node in tree.all_nodes():
-            self._node_to_tree.pop(node.node_id, None)
-        logger.debug("TREE_REPO: remove_tree root_id={}", root_id)
-        return tree
-
-    def get_message_ids_for_chat(self, platform: str, chat_id: str) -> set[str]:
-        """Get all message IDs (incoming + status) for a given platform/chat."""
-        msg_ids: set[str] = set()
-        for tree in self._trees.values():
-            for node in tree.all_nodes():
-                if str(node.incoming.platform) == str(platform) and str(
-                    node.incoming.chat_id
-                ) == str(chat_id):
-                    if node.incoming.message_id is not None:
-                        msg_ids.add(str(node.incoming.message_id))
-                    if node.status_message_id:
-                        msg_ids.add(str(node.status_message_id))
-        return msg_ids
-
-    def to_dict(self) -> dict:
-        """Serialize all trees."""
-        return {
-            "trees": {rid: tree.to_dict() for rid, tree in self._trees.items()},
-            "node_to_tree": self._node_to_tree.copy(),
-        }
-
-    @classmethod
-    def from_dict(cls, data: dict) -> TreeRepository:
-        """Deserialize from dictionary."""
-        repo = cls()
-        for root_id, tree_data in data.get("trees", {}).items():
-            repo._trees[root_id] = MessageTree.from_dict(tree_data)
-        repo._node_to_tree = data.get("node_to_tree", {})
-        return repo
-
-
-class TreeQueueProcessor:
-    """
-    Per-tree async queue processing (one manager owns one processor instance).
-    """
-
-    def __init__(
-        self,
-        queue_update_callback: Callable[[MessageTree], Awaitable[None]] | None = None,
-        node_started_callback: Callable[[MessageTree, str], Awaitable[None]]
-        | None = None,
-    ) -> None:
-        self._queue_update_callback = queue_update_callback
-        self._node_started_callback = node_started_callback
-
-    def set_queue_update_callback(
-        self,
-        queue_update_callback: Callable[[MessageTree], Awaitable[None]] | None,
-    ) -> None:
-        """Update the callback used to refresh queue positions."""
-        self._queue_update_callback = queue_update_callback
-
-    def set_node_started_callback(
-        self,
-        node_started_callback: Callable[[MessageTree, str], Awaitable[None]] | None,
-    ) -> None:
-        """Update the callback used when a queued node starts processing."""
-        self._node_started_callback = node_started_callback
-
-    async def _notify_queue_updated(self, tree: MessageTree) -> None:
-        """Invoke queue update callback if set."""
-        if not self._queue_update_callback:
-            return
-        try:
-            await self._queue_update_callback(tree)
-        except Exception as e:
-            d = get_settings().log_messaging_error_details
-            logger.warning(
-                "Queue update callback failed: {}",
-                format_exception_for_log(e, log_full_message=d),
-            )
-
-    async def _notify_node_started(self, tree: MessageTree, node_id: str) -> None:
-        """Invoke node started callback if set."""
-        if not self._node_started_callback:
-            return
-        try:
-            await self._node_started_callback(tree, node_id)
-        except Exception as e:
-            d = get_settings().log_messaging_error_details
-            logger.warning(
-                "Node started callback failed: {}",
-                format_exception_for_log(e, log_full_message=d),
-            )
-
-    async def process_node(
-        self,
-        tree: MessageTree,
-        node: MessageNode,
-        processor: Callable[[str, MessageNode], Awaitable[None]],
-    ) -> None:
-        """Process a single node and then check the queue."""
-        if node.state == MessageState.ERROR:
-            logger.info(
-                f"Skipping node {node.node_id} as it is already in state {node.state}"
-            )
-            await self._process_next(tree, processor)
-            return
-
-        try:
-            await processor(node.node_id, node)
-        except asyncio.CancelledError:
-            logger.info(f"Task for node {node.node_id} was cancelled")
-            raise
-        except Exception as e:
-            d = get_settings().log_messaging_error_details
-            logger.error(
-                "Error processing node {}: {}",
-                node.node_id,
-                format_exception_for_log(e, log_full_message=d),
-            )
-            await tree.update_state(
-                node.node_id,
-                MessageState.ERROR,
-                error_message=get_user_facing_error_message(e),
-            )
-        finally:
-            async with tree.with_lock():
-                tree.clear_current_node()
-            await self._process_next(tree, processor)
-
-    async def _process_next(
-        self,
-        tree: MessageTree,
-        processor: Callable[[str, MessageNode], Awaitable[None]],
-    ) -> None:
-        """Process the next message in queue, if any."""
-        next_node_id = None
-        async with tree.with_lock():
-            next_node_id = await tree.dequeue()
-
-            if not next_node_id:
-                tree.set_processing_state(None, False)
-                logger.debug(f"Tree {tree.root_id} queue empty, marking as free")
-                return
-
-            tree.set_processing_state(next_node_id, True)
-            logger.info(f"Processing next queued node {next_node_id}")
-
-            node = tree.get_node(next_node_id)
-            if node:
-                tree.set_current_task(
-                    asyncio.create_task(self.process_node(tree, node, processor))
-                )
-
-        if next_node_id:
-            await self._notify_node_started(tree, next_node_id)
-            await self._notify_queue_updated(tree)
-
-    async def enqueue_and_start(
-        self,
-        tree: MessageTree,
-        node_id: str,
-        processor: Callable[[str, MessageNode], Awaitable[None]],
-    ) -> bool:
-        """
-        Enqueue a node or start processing immediately.
-
-        Returns:
-            True if queued, False if processing immediately
-        """
-        async with tree.with_lock():
-            if tree.is_processing:
-                tree.put_queue_unlocked(node_id)
-                queue_size = tree.get_queue_size()
-                logger.info(f"Queued node {node_id}, position {queue_size}")
-                return True
-            else:
-                tree.set_processing_state(node_id, True)
-
-                node = tree.get_node(node_id)
-                if node:
-                    tree.set_current_task(
-                        asyncio.create_task(self.process_node(tree, node, processor))
-                    )
-                return False
-
-    def cancel_current(self, tree: MessageTree) -> bool:
-        """Cancel the currently running task in a tree."""
-        return tree.cancel_current_task()
+from .processor import TreeQueueProcessor
+from .repository import TreeRepository
 
 
 class TreeQueueManager:
@@ -598,8 +275,9 @@ class TreeQueueManager:
             if tree.is_current_node(node_id):
                 self._processor.cancel_current(tree)
 
+            removed_from_queue = False
             try:
-                tree.remove_from_queue(node_id)
+                removed_from_queue = tree.remove_from_queue(node_id)
             except Exception:
                 logger.debug(
                     "Failed to remove node from queue; will rely on state=ERROR"
@@ -607,7 +285,10 @@ class TreeQueueManager:
 
             tree.set_node_error_sync(node, "Cancelled by user")
 
-            return [node]
+        if removed_from_queue:
+            await self._processor.notify_queue_updated(tree)
+
+        return [node]
 
     async def cancel_all(self) -> list[MessageNode]:
         """Cancel all messages in all trees."""
@@ -665,6 +346,7 @@ class TreeQueueManager:
 
         branch_ids = set(tree.get_descendants(branch_root_id))
         cancelled: list[MessageNode] = []
+        removed_from_queue = False
 
         async with tree.with_lock():
             for nid in branch_ids:
@@ -680,12 +362,16 @@ class TreeQueueManager:
                     tree.set_node_error_sync(node, "Cancelled by user")
                     cancelled.append(node)
                 else:
-                    tree.remove_from_queue(nid)
+                    removed_from_queue = (
+                        tree.remove_from_queue(nid) or removed_from_queue
+                    )
                     tree.set_node_error_sync(node, "Cancelled by user")
                     cancelled.append(node)
 
         if cancelled:
             logger.info(f"Cancelled {len(cancelled)} nodes in branch {branch_root_id}")
+        if removed_from_queue:
+            await self._processor.notify_queue_updated(tree)
         return cancelled
 
     async def remove_branch(
@@ -715,7 +401,7 @@ class TreeQueueManager:
         async with tree.with_lock():
             removed = tree.remove_branch(branch_root_id)
 
-        self._repository.unregister_nodes([n.node_id for n in removed])
+        self._repository.unregister_node_lookups(removed)
         return (removed, root_id, False)
 
     def get_message_ids_for_chat(self, platform: str, chat_id: str) -> set[str]:
@@ -744,6 +430,4 @@ class TreeQueueManager:
 
 __all__ = [
     "TreeQueueManager",
-    "TreeQueueProcessor",
-    "TreeRepository",
 ]

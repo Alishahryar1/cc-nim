@@ -85,9 +85,9 @@ def llamacpp_provider(provider_config):
 
 @pytest.fixture
 def mock_cli_session():
-    from messaging.platforms.base import CLISession
+    from messaging.platforms.base import ManagedClaudeSessionProtocol
 
-    session = MagicMock(spec=CLISession)
+    session = MagicMock(spec=ManagedClaudeSessionProtocol)
     session.start_task = MagicMock()  # This will return an async generator
     session.is_busy = False
     return session
@@ -95,9 +95,9 @@ def mock_cli_session():
 
 @pytest.fixture
 def mock_cli_manager():
-    from messaging.platforms.base import SessionManagerInterface
+    from messaging.platforms.base import ManagedClaudeSessionManagerProtocol
 
-    manager = MagicMock(spec=SessionManagerInterface)
+    manager = MagicMock(spec=ManagedClaudeSessionManagerProtocol)
     manager.get_or_create_session = AsyncMock()
     manager.register_real_session_id = AsyncMock(return_value=True)
     manager.stop_all = AsyncMock()

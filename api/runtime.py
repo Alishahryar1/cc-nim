@@ -17,10 +17,10 @@ from providers.exceptions import ServiceUnavailableError
 from providers.registry import ProviderRegistry
 
 if TYPE_CHECKING:
-    from cli.manager import CLISessionManager
-    from messaging.handler import ClaudeMessageHandler
+    from cli.managed import ManagedClaudeSessionManager
     from messaging.platforms.base import MessagingPlatform
     from messaging.session import SessionStore
+    from messaging.workflow import MessagingWorkflow
 
 _SHUTDOWN_TIMEOUT_S = 5.0
 
@@ -89,8 +89,8 @@ class AppRuntime:
     settings: Settings
     _provider_registry: ProviderRegistry | None = field(default=None, init=False)
     messaging_platform: MessagingPlatform | None = None
-    message_handler: ClaudeMessageHandler | None = None
-    cli_manager: CLISessionManager | None = None
+    messaging_workflow: MessagingWorkflow | None = None
+    cli_manager: ManagedClaudeSessionManager | None = None
 
     @classmethod
     def for_app(
@@ -140,9 +140,9 @@ class AppRuntime:
 
     async def shutdown(self) -> None:
         verbose = self.settings.log_api_error_tracebacks
-        if self.message_handler is not None:
+        if self.messaging_workflow is not None:
             try:
-                self.message_handler.session_store.flush_pending_save()
+                self.messaging_workflow.session_store.flush_pending_save()
             except Exception as e:
                 if verbose:
                     logger.warning("Session store flush on shutdown: {}", e)
@@ -201,7 +201,7 @@ class AppRuntime:
             )
 
             if self.messaging_platform:
-                await self._start_message_handler()
+                await self._start_messaging_workflow()
 
         except ImportError as e:
             if self.settings.log_api_error_tracebacks:
@@ -223,10 +223,10 @@ class AppRuntime:
                     type(e).__name__,
                 )
 
-    async def _start_message_handler(self) -> None:
-        from cli.manager import CLISessionManager
-        from messaging.handler import ClaudeMessageHandler
+    async def _start_messaging_workflow(self) -> None:
+        from cli.managed import ManagedClaudeSessionManager
         from messaging.session import SessionStore
+        from messaging.workflow import MessagingWorkflow
 
         workspace = (
             os.path.abspath(self.settings.allowed_dir)
@@ -244,7 +244,7 @@ class AppRuntime:
             os.path.join(self.settings.claude_workspace, "plans")
         )
         plans_directory = os.path.relpath(plans_dir_abs, workspace)
-        self.cli_manager = CLISessionManager(
+        self.cli_manager = ManagedClaudeSessionManager(
             workspace_path=workspace,
             api_url=api_url,
             allowed_dirs=allowed_dirs,
@@ -261,7 +261,7 @@ class AppRuntime:
         )
         platform = self.messaging_platform
         assert platform is not None
-        self.message_handler = ClaudeMessageHandler(
+        self.messaging_workflow = MessagingWorkflow(
             platform=platform,
             cli_manager=self.cli_manager,
             session_store=session_store,
@@ -273,39 +273,39 @@ class AppRuntime:
         )
         self._restore_tree_state(session_store)
 
-        platform.on_message(self.message_handler.handle_message)
+        platform.on_message(self.messaging_workflow.handle_message)
         await platform.start()
-        logger.info(f"{platform.name} platform started with message handler")
+        logger.info(f"{platform.name} platform started with messaging workflow")
 
     def _restore_tree_state(self, session_store: SessionStore) -> None:
         saved_trees = session_store.get_all_trees()
         if not saved_trees:
             return
-        if self.message_handler is None:
+        if self.messaging_workflow is None:
             return
 
         logger.info(f"Restoring {len(saved_trees)} conversation trees...")
-        from messaging.trees.queue_manager import TreeQueueManager
+        from messaging.trees import TreeQueueManager
 
-        self.message_handler.replace_tree_queue(
+        self.messaging_workflow.replace_tree_queue(
             TreeQueueManager.from_dict(
                 {
                     "trees": saved_trees,
                     "node_to_tree": session_store.get_node_mapping(),
                 },
-                queue_update_callback=self.message_handler.update_queue_positions,
-                node_started_callback=self.message_handler.mark_node_processing,
+                queue_update_callback=self.messaging_workflow.update_queue_positions,
+                node_started_callback=self.messaging_workflow.mark_node_processing,
             )
         )
-        if self.message_handler.tree_queue.cleanup_stale_nodes() > 0:
-            tree_data = self.message_handler.tree_queue.to_dict()
+        if self.messaging_workflow.tree_queue.cleanup_stale_nodes() > 0:
+            tree_data = self.messaging_workflow.tree_queue.to_dict()
             session_store.sync_from_tree_data(
                 tree_data["trees"], tree_data["node_to_tree"]
             )
 
     def _publish_state(self) -> None:
         self.app.state.messaging_platform = self.messaging_platform
-        self.app.state.message_handler = self.message_handler
+        self.app.state.messaging_workflow = self.messaging_workflow
         self.app.state.cli_manager = self.cli_manager
 
     async def _shutdown_limiter(self) -> None:

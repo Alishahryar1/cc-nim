@@ -5,8 +5,8 @@ import asyncio
 import pytest
 
 from messaging.models import IncomingMessage
+from messaging.trees import TreeQueueManager
 from messaging.trees.data import MessageNode, MessageState, MessageTree
-from messaging.trees.queue_manager import TreeQueueManager
 
 
 def _make_incoming(text: str = "hello", msg_id: str = "m1") -> IncomingMessage:
