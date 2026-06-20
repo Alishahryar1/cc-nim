@@ -433,12 +433,13 @@ def test_admin_apply_restart_required_reports_manual_fallback(monkeypatch, tmp_p
     }
 
 
-def test_admin_apply_defers_sync_when_only_port_changes(
+def test_admin_apply_syncs_live_url_on_port_change(
     monkeypatch, tmp_path
 ):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
     app = create_app(lifespan_enabled=False)
+    app.state.live_proxy_root_url = "http://127.0.0.1:8082"
 
     with patch("api.admin_routes.sync_claude_settings") as sync_settings:
         response = _local_client(app).post(
@@ -447,15 +448,19 @@ def test_admin_apply_defers_sync_when_only_port_changes(
         )
 
     assert response.status_code == 200
-    sync_settings.assert_not_called()
+    # The sync uses the live address the proxy is still bound to, not the new
+    # pending port, so agent workers never point at a not-yet-serving proxy.
+    sync_settings.assert_called_once()
+    assert sync_settings.call_args.kwargs["proxy_root_url"] == "http://127.0.0.1:8082"
 
 
-def test_admin_apply_defers_sync_for_mixed_restart_and_non_restart_fields(
+def test_admin_apply_syncs_token_with_live_url_on_mixed_fields(
     monkeypatch, tmp_path
 ):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
     app = create_app(lifespan_enabled=False)
+    app.state.live_proxy_root_url = "http://127.0.0.1:8082"
 
     with patch("api.admin_routes.sync_claude_settings") as sync_settings:
         response = _local_client(app).post(
@@ -464,9 +469,12 @@ def test_admin_apply_defers_sync_for_mixed_restart_and_non_restart_fields(
         )
 
     assert response.status_code == 200
-    # PORT is a pending restart field, so the sync is deferred to the serve()
-    # supervisor after the new server is live; the token is applied then.
-    sync_settings.assert_not_called()
+    # Token reaches workers immediately (the sync runs now, not deferred), paired
+    # with the live (old) address so there is no auth failure and no premature
+    # port; the new port is written by the serve() supervisor after restart.
+    sync_settings.assert_called_once()
+    assert sync_settings.call_args.kwargs["proxy_root_url"] == "http://127.0.0.1:8082"
+    assert "auth_token" in sync_settings.call_args.kwargs
 
 
 def test_admin_apply_syncs_claude_settings_for_non_restart_fields(
@@ -508,12 +516,13 @@ def test_admin_apply_syncs_when_restart_field_submitted_unchanged(
     sync_settings.assert_called_once()
 
 
-def test_admin_apply_defers_sync_when_restart_pending_from_previous_apply(
+def test_admin_apply_syncs_live_url_when_restart_pending_from_previous_apply(
     monkeypatch, tmp_path
 ):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
     app = create_app(lifespan_enabled=False)
+    app.state.live_proxy_root_url = "http://127.0.0.1:8082"
     app.state.admin_pending_fields = ["PORT"]
 
     with patch("api.admin_routes.sync_claude_settings") as sync_settings:
@@ -523,9 +532,12 @@ def test_admin_apply_defers_sync_when_restart_pending_from_previous_apply(
         )
 
     assert response.status_code == 200
-    # A PORT restart from a previous apply is still pending, so a later
-    # token-only apply must defer to avoid writing a not-yet-serving address.
-    sync_settings.assert_not_called()
+    # Even with a PORT restart pending from a previous apply, the token sync runs
+    # now against the live address, so the token stays current and the address
+    # keeps pointing at the proxy that is actually serving.
+    sync_settings.assert_called_once()
+    assert sync_settings.call_args.kwargs["proxy_root_url"] == "http://127.0.0.1:8082"
+    assert "auth_token" in sync_settings.call_args.kwargs
 
 
 def test_admin_process_env_values_are_locked_and_not_written(monkeypatch, tmp_path):

@@ -115,6 +115,7 @@ def _run_supervised_server(settings: Settings, *, open_admin_browser: bool) -> b
 
     app = create_app(lifespan_enabled=False)
     app.state.admin_restart_callback = request_restart
+    app.state.live_proxy_root_url = local_proxy_root_url(settings)
     asgi_app = GracefulLifespanApp(app)
     config = uvicorn.Config(
         asgi_app,

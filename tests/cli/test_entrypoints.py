@@ -261,6 +261,11 @@ def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
     assert len(servers) == 2
     get_settings.cache_clear.assert_called_once()
     kill_all.assert_called_once()
+    from api.admin_urls import local_proxy_root_url
+
+    assert servers[0].config.app.app.state.live_proxy_root_url == (
+        local_proxy_root_url(settings)
+    )
 
 
 def test_serve_syncs_claude_settings_on_each_start() -> None:
