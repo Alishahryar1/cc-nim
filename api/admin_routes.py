@@ -128,13 +128,18 @@ async def apply_admin_config(
     # fresh settings, so a pending HOST/PORT change never points workers at a
     # proxy that is not serving yet. The new address is written by the serve()
     # supervisor once the restarted server is live.
-    live_proxy_root_url = getattr(
-        request.app.state, "live_proxy_root_url", None
-    ) or local_proxy_root_url(fresh_settings)
-    sync_claude_settings(
-        proxy_root_url=live_proxy_root_url,
-        auth_token=fresh_settings.anthropic_auth_token,
-    )
+    # Skip persistent sync when the token comes only from the process environment
+    # (e.g. ANTHROPIC_AUTH_TOKEN=temp fcc-server) so shell-only secrets are never
+    # written into ~/.claude/settings.json and left there after the server restarts
+    # without that token.
+    if not fresh_settings.uses_process_anthropic_auth_token():
+        live_proxy_root_url = getattr(
+            request.app.state, "live_proxy_root_url", None
+        ) or local_proxy_root_url(fresh_settings)
+        sync_claude_settings(
+            proxy_root_url=live_proxy_root_url,
+            auth_token=fresh_settings.anthropic_auth_token,
+        )
     restart = _restart_metadata(result["pending_fields"], request)
     result["restart"] = restart
     if restart["required"] and restart["automatic"]:

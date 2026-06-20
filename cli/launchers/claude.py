@@ -31,10 +31,11 @@ def launch(argv: Sequence[str] | None = None) -> None:
         print("Start it in another terminal with: fcc-server", file=sys.stderr)
         raise SystemExit(1)
 
-    sync_claude_settings(
-        proxy_root_url=proxy_root_url,
-        auth_token=settings.anthropic_auth_token,
-    )
+    if not settings.uses_process_anthropic_auth_token():
+        sync_claude_settings(
+            proxy_root_url=proxy_root_url,
+            auth_token=settings.anthropic_auth_token,
+        )
 
     binary_name = claude_binary_name(settings)
     binary_path = resolve_client_binary(

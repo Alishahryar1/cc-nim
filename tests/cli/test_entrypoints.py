@@ -284,11 +284,26 @@ def test_serve_syncs_claude_settings_on_each_start() -> None:
         ),
         patch.object(entrypoints, "kill_all_best_effort"),
         patch.object(entrypoints, "sync_claude_settings") as sync_settings,
+        patch.object(Settings, "uses_process_anthropic_auth_token", new=lambda self: False),
     ):
         entrypoints.serve()
 
     # One sync per server start: initial boot plus the post-restart boot.
     assert sync_settings.call_count == 2
+
+
+def test_serve_start_sync_skips_for_process_token() -> None:
+    from cli import entrypoints
+
+    settings = _launcher_settings()
+
+    with (
+        patch.object(Settings, "uses_process_anthropic_auth_token", new=lambda self: True),
+        patch.object(entrypoints, "sync_claude_settings") as sync_settings,
+    ):
+        entrypoints._sync_claude_settings_on_start(settings)
+
+    sync_settings.assert_not_called()
 
 
 def test_serve_migrates_legacy_env_before_loading_settings(tmp_path: Path) -> None:
@@ -391,6 +406,7 @@ def test_launch_claude_passes_args_and_child_env(
         patch("cli.launchers.claude.get_settings", return_value=settings),
         patch("cli.launchers.claude.preflight_proxy", return_value=None),
         patch("cli.launchers.claude.sync_claude_settings") as sync_settings,
+        patch.object(Settings, "uses_process_anthropic_auth_token", new=lambda self: False),
         patch("cli.launchers.common.shutil.which", return_value="resolved-claude.cmd"),
         patch("cli.launchers.common.subprocess.Popen") as popen,
         patch("cli.launchers.common.register_pid") as register_pid,
@@ -417,6 +433,34 @@ def test_launch_claude_passes_args_and_child_env(
     assert child_env["KEEP_ME"] == "yes"
     register_pid.assert_called_once_with(12345)
     unregister_pid.assert_called_once_with(12345)
+
+
+def test_launch_claude_skips_sync_when_token_from_process_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cli.launchers.claude import launch
+
+    settings = _launcher_settings(port=9191, token="proxy-token")
+
+    with (
+        patch("cli.launchers.claude.get_settings", return_value=settings),
+        patch("cli.launchers.claude.preflight_proxy", return_value=None),
+        patch("cli.launchers.claude.sync_claude_settings") as sync_settings,
+        patch.object(Settings, "uses_process_anthropic_auth_token", new=lambda self: True),
+        patch("cli.launchers.common.shutil.which", return_value="resolved-claude.cmd"),
+        patch("cli.launchers.common.subprocess.Popen") as popen,
+        patch("cli.launchers.common.register_pid"),
+        patch("cli.launchers.common.unregister_pid"),
+        pytest.raises(SystemExit),
+    ):
+        process = popen.return_value
+        process.pid = 12345
+        process.wait.return_value = 0
+        launch([])
+
+    sync_settings.assert_not_called()
+    child_env = popen.call_args.kwargs["env"]
+    assert child_env["ANTHROPIC_AUTH_TOKEN"] == "proxy-token"
 
 
 def test_launch_codex_passes_responses_config_and_child_env(

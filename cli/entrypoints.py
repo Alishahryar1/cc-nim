@@ -45,6 +45,8 @@ def _load_env_template() -> str:
 
 def _sync_claude_settings_on_start(settings: Settings) -> None:
     """Best-effort: align ~/.claude/settings.json with this server's live address."""
+    if settings.uses_process_anthropic_auth_token():
+        return
     sync_claude_settings(
         proxy_root_url=local_proxy_root_url(settings),
         auth_token=settings.anthropic_auth_token,

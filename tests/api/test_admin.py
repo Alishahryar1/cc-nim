@@ -540,6 +540,26 @@ def test_admin_apply_syncs_live_url_when_restart_pending_from_previous_apply(
     assert "auth_token" in sync_settings.call_args.kwargs
 
 
+def test_admin_apply_skips_sync_when_token_from_process_env(
+    monkeypatch, tmp_path
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    # Simulate shell-only token: set in process env, not in any .env file
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "temp-shell-token")
+    app = create_app(lifespan_enabled=False)
+
+    with patch("api.admin_routes.sync_claude_settings") as sync_settings:
+        response = _local_client(app).post(
+            "/admin/api/config/apply",
+            json={"values": {"ANTHROPIC_AUTH_TOKEN": "temp-shell-token"}},
+        )
+
+    assert response.status_code == 200
+    # Shell-only token must never be persisted into ~/.claude/settings.json
+    sync_settings.assert_not_called()
+
+
 def test_admin_process_env_values_are_locked_and_not_written(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
