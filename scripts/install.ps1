@@ -73,6 +73,43 @@ function Invoke-UvInstaller {
     }
 }
 
+function Add-PersistedPathEntry {
+    param([string] $PathEntry)
+
+    if ($DryRun) {
+        Write-Host "+ [PATH] would persist '$PathEntry' to your permanent user PATH"
+        return
+    }
+
+    try {
+        $separator = [IO.Path]::PathSeparator
+        $persistedPath = [Environment]::GetEnvironmentVariable("Path", [EnvironmentVariableTarget]::User)
+
+        $persistedEntries = @()
+        if (-not [string]::IsNullOrEmpty($persistedPath)) {
+            $persistedEntries = $persistedPath -split [regex]::Escape([string] $separator)
+        }
+
+        if ($persistedEntries -contains $PathEntry) {
+            return
+        }
+
+        $newPersistedPath = if ([string]::IsNullOrEmpty($persistedPath)) {
+            $PathEntry
+        }
+        else {
+            "$persistedPath$separator$PathEntry"
+        }
+
+        [Environment]::SetEnvironmentVariable("Path", $newPersistedPath, [EnvironmentVariableTarget]::User)
+        Write-Host "Persisted '$PathEntry' to your permanent user PATH."
+    }
+    catch {
+        Write-Host "Warning: could not persist '$PathEntry' to your permanent PATH automatically ($($_.Exception.Message))."
+        Write-Host "Add it manually via System Properties > Environment Variables if commands aren't found in new terminals."
+    }
+}
+
 function Add-PathEntry {
     param([string] $PathEntry)
 
@@ -89,11 +126,32 @@ function Add-PathEntry {
     if ($entries -notcontains $PathEntry) {
         $env:Path = "$PathEntry$separator$env:Path"
     }
+
+    # Make the change permanent too, not just for this running process.
+    Add-PersistedPathEntry $PathEntry
 }
 
 function Add-UvToPath {
     Add-PathEntry (Join-Path $HOME ".local\bin")
     Add-PathEntry (Join-Path $HOME ".cargo\bin")
+}
+
+function Add-UvToolBinDirToPath {
+    if ($DryRun) {
+        return
+    }
+
+    $probe = Invoke-ProbeCommand -FilePath "uv" -Arguments @("tool", "dir", "--bin")
+    if ($probe.ExitCode -ne 0) {
+        return
+    }
+
+    $toolBinDir = $probe.Output.Trim()
+    if ([string]::IsNullOrWhiteSpace($toolBinDir)) {
+        return
+    }
+
+    Add-PathEntry $toolBinDir
 }
 
 function Assert-CommandAvailable {
@@ -370,6 +428,8 @@ function Get-PackageSpec {
 }
 
 function Install-FreeClaudeCode {
+    Add-UvToolBinDirToPath
+
     $packageSpec = Get-PackageSpec
     $toolArgs = @("tool", "install", "--force")
 
