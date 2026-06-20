@@ -163,10 +163,9 @@ class DiscordRuntime:
 
         incoming = discord_text_message_from_event(
             message,
-            allowed_channel_ids=self.allowed_channel_ids,
             log_raw_messaging_content=self._log_raw_messaging_content,
         )
-        if incoming is None or self._message_handler is None:
+        if self._message_handler is None:
             return
 
         try:

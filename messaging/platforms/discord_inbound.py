@@ -33,19 +33,10 @@ def get_audio_attachment(message: Any) -> Any | None:
 def discord_text_message_from_event(
     message: Any,
     *,
-    allowed_channel_ids: set[str],
     log_raw_messaging_content: bool,
-) -> IncomingMessage | None:
+) -> IncomingMessage:
     """Normalize a Discord message into an incoming text message."""
-    if message.author.bot:
-        return None
-
     channel_id = str(message.channel.id)
-    if not allowed_channel_ids or channel_id not in allowed_channel_ids:
-        return None
-    if not message.content:
-        return None
-
     message_id = str(message.id)
     reply_to = (
         str(message.reference.message_id)

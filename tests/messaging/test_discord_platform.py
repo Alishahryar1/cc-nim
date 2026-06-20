@@ -10,7 +10,10 @@ from messaging.platforms.discord import (
     DiscordRuntime,
     _get_discord,
 )
-from messaging.platforms.discord_inbound import parse_allowed_channels
+from messaging.platforms.discord_inbound import (
+    discord_text_message_from_event,
+    parse_allowed_channels,
+)
 from messaging.platforms.discord_io import truncate_discord_message
 
 
@@ -49,6 +52,31 @@ class TestParseAllowedChannels:
 
     def test_empty_parts_ignored(self):
         assert parse_allowed_channels("111,,222,") == {"111", "222"}
+
+
+class TestDiscordInbound:
+    def test_text_message_normalizes_accepted_event(self):
+        msg = MagicMock()
+        msg.author.id = 456
+        msg.author.display_name = "User"
+        msg.content = "hello"
+        msg.channel.id = 123
+        msg.id = 789
+        msg.reference.message_id = 555
+
+        incoming = discord_text_message_from_event(
+            msg,
+            log_raw_messaging_content=False,
+        )
+
+        assert incoming.text == "hello"
+        assert incoming.chat_id == "123"
+        assert incoming.user_id == "456"
+        assert incoming.message_id == "789"
+        assert incoming.platform == "discord"
+        assert incoming.reply_to_message_id == "555"
+        assert incoming.username == "User"
+        assert incoming.raw_event is msg
 
 
 @pytest.mark.skipif(not DISCORD_AVAILABLE, reason="discord.py not installed")
