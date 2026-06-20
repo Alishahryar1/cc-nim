@@ -13,6 +13,7 @@ import uvicorn
 
 from api.admin_urls import local_admin_url, local_proxy_root_url
 from api.app import GracefulLifespanApp, create_app
+from cli.claude_settings_sync import sync_claude_settings
 from cli.launchers.common import preflight_proxy
 from cli.process_registry import (
     kill_all_best_effort,
@@ -69,25 +70,36 @@ def _admin_browser_open_enabled() -> bool:
     return raw not in {"", "0", "false", "no"}
 
 
-def _schedule_open_admin_browser(settings: Settings) -> None:
-    """After /health succeeds, open the admin UI in the default browser (daemon thread)."""
+def _schedule_on_server_ready(settings: Settings, *, open_admin_browser: bool) -> None:
+    """After /health succeeds, sync ~/.claude/settings.json and optionally open the browser.
 
-    if not _admin_browser_open_enabled():
-        return
+    Runs in a daemon thread so the main server loop is not blocked. Syncing is
+    deferred until the server is confirmed reachable so that a failed bind does not
+    overwrite settings.json with a proxy URL that is not serving yet.
+    """
 
-    admin_url = local_admin_url(settings)
     proxy_root_url = local_proxy_root_url(settings)
+    should_open_browser = open_admin_browser and _admin_browser_open_enabled()
+    admin_url = local_admin_url(settings) if should_open_browser else ""
+    skip_sync = settings.uses_process_anthropic_auth_token()
+    auth_token = settings.anthropic_auth_token
 
-    def open_when_ready() -> None:
+    def on_ready() -> None:
         deadline = time.monotonic() + 30.0
         while time.monotonic() < deadline:
             if preflight_proxy(proxy_root_url) is None:
-                webbrowser.open(admin_url)
+                if should_open_browser:
+                    webbrowser.open(admin_url)
+                if not skip_sync:
+                    sync_claude_settings(
+                        proxy_root_url=proxy_root_url,
+                        auth_token=auth_token,
+                    )
                 return
             time.sleep(0.15)
 
     threading.Thread(
-        target=open_when_ready, name="fcc-open-admin-browser", daemon=True
+        target=on_ready, name="fcc-server-ready", daemon=True
     ).start()
 
 
@@ -105,6 +117,7 @@ def _run_supervised_server(settings: Settings, *, open_admin_browser: bool) -> b
 
     app = create_app(lifespan_enabled=False)
     app.state.admin_restart_callback = request_restart
+    app.state.live_proxy_root_url = local_proxy_root_url(settings)
     asgi_app = GracefulLifespanApp(app)
     config = uvicorn.Config(
         asgi_app,
@@ -115,8 +128,7 @@ def _run_supervised_server(settings: Settings, *, open_admin_browser: bool) -> b
     )
     server = uvicorn.Server(config)
     server_holder["server"] = server
-    if open_admin_browser:
-        _schedule_open_admin_browser(settings)
+    _schedule_on_server_ready(settings, open_admin_browser=open_admin_browser)
     server.run()
     return restart_requested
 

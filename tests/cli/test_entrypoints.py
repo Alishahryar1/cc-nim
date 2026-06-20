@@ -178,7 +178,7 @@ def test_cli_scripts_are_registered() -> None:
     assert scripts["fcc-codex"] == "cli.launchers.codex:launch"
 
 
-def test_schedule_open_admin_browser_opens_when_health_ready(
+def test_schedule_on_server_ready_opens_browser_when_health_ready(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Opening /admin runs after /health preflight succeeds."""
@@ -206,13 +206,15 @@ def test_schedule_open_admin_browser_opens_when_health_ready(
             side_effect=lambda url: opened_urls.append(url),
         ),
         patch.object(entrypoints.time, "sleep"),
+        patch.object(entrypoints, "sync_claude_settings"),
+        patch.object(Settings, "uses_process_anthropic_auth_token", new=lambda self: False),
     ):
-        entrypoints._schedule_open_admin_browser(settings)
+        entrypoints._schedule_on_server_ready(settings, open_admin_browser=True)
 
     assert opened_urls == [local_admin_url(settings)]
 
 
-def test_schedule_open_admin_browser_skips_when_disabled(
+def test_schedule_on_server_ready_skips_browser_when_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("FCC_OPEN_BROWSER", "0")
@@ -220,10 +222,14 @@ def test_schedule_open_admin_browser_skips_when_disabled(
 
     settings = _launcher_settings()
 
-    with patch.object(entrypoints.threading, "Thread") as thread_cls:
-        entrypoints._schedule_open_admin_browser(settings)
+    with (
+        patch.object(entrypoints.threading, "Thread") as thread_cls,
+        patch.object(Settings, "uses_process_anthropic_auth_token", new=lambda self: False),
+    ):
+        entrypoints._schedule_on_server_ready(settings, open_admin_browser=True)
 
-    thread_cls.assert_not_called()
+    # Thread is always started (for the settings sync); browser just won't open inside it.
+    thread_cls.assert_called_once()
 
 
 def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
@@ -252,7 +258,8 @@ def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
         patch.object(entrypoints, "get_settings", get_settings),
         patch.object(entrypoints.uvicorn, "Config", side_effect=fake_config),
         patch.object(entrypoints.uvicorn, "Server", side_effect=FakeServer),
-        patch.object(entrypoints, "_schedule_open_admin_browser"),
+        patch.object(entrypoints, "_schedule_on_server_ready"),
+        patch.object(entrypoints, "sync_claude_settings"),
         patch.object(entrypoints, "kill_all_best_effort") as kill_all,
     ):
         entrypoints.serve()
@@ -260,6 +267,60 @@ def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
     assert len(servers) == 2
     get_settings.cache_clear.assert_called_once()
     kill_all.assert_called_once()
+    from api.admin_urls import local_proxy_root_url
+
+    assert servers[0].config.app.app.state.live_proxy_root_url == (
+        local_proxy_root_url(settings)
+    )
+
+
+def _make_sync_thread_class():
+    """Return a Thread replacement that runs target() synchronously in start()."""
+
+    class SyncThread:
+        def __init__(self, target, name="", daemon=False):
+            self._target = target
+
+        def start(self):
+            self._target()
+
+    return SyncThread
+
+
+def test_schedule_on_server_ready_syncs_when_server_reachable() -> None:
+    from cli import entrypoints
+
+    settings = _launcher_settings()
+
+    with (
+        patch.object(entrypoints, "preflight_proxy", return_value=None),
+        patch.object(entrypoints, "sync_claude_settings") as sync_settings,
+        patch.object(entrypoints.threading, "Thread", _make_sync_thread_class()),
+        patch.object(Settings, "uses_process_anthropic_auth_token", new=lambda self: False),
+        patch.object(entrypoints, "webbrowser"),
+    ):
+        entrypoints._schedule_on_server_ready(settings, open_admin_browser=False)
+
+    sync_settings.assert_called_once_with(
+        proxy_root_url="http://127.0.0.1:8082",
+        auth_token="freecc",
+    )
+
+
+def test_schedule_on_server_ready_skips_sync_for_process_token() -> None:
+    from cli import entrypoints
+
+    settings = _launcher_settings()
+
+    with (
+        patch.object(entrypoints, "preflight_proxy", return_value=None),
+        patch.object(entrypoints, "sync_claude_settings") as sync_settings,
+        patch.object(entrypoints.threading, "Thread", _make_sync_thread_class()),
+        patch.object(Settings, "uses_process_anthropic_auth_token", new=lambda self: True),
+    ):
+        entrypoints._schedule_on_server_ready(settings, open_admin_browser=False)
+
+    sync_settings.assert_not_called()
 
 
 def test_serve_migrates_legacy_env_before_loading_settings(tmp_path: Path) -> None:
@@ -276,6 +337,7 @@ def test_serve_migrates_legacy_env_before_loading_settings(tmp_path: Path) -> No
         patch("pathlib.Path.home", return_value=tmp_path),
         patch.object(entrypoints, "get_settings", get_settings),
         patch.object(entrypoints, "_run_supervised_server", return_value=False),
+        patch.object(entrypoints, "sync_claude_settings"),
         patch.object(entrypoints, "kill_all_best_effort"),
     ):
         entrypoints.serve()
@@ -300,6 +362,7 @@ def test_serve_handles_keyboard_interrupt_without_traceback() -> None:
             "_run_supervised_server",
             side_effect=KeyboardInterrupt,
         ),
+        patch.object(entrypoints, "sync_claude_settings"),
         patch.object(entrypoints, "kill_all_best_effort") as kill_all,
     ):
         entrypoints.serve()
@@ -359,6 +422,8 @@ def test_launch_claude_passes_args_and_child_env(
     with (
         patch("cli.launchers.claude.get_settings", return_value=settings),
         patch("cli.launchers.claude.preflight_proxy", return_value=None),
+        patch("cli.launchers.claude.sync_claude_settings") as sync_settings,
+        patch.object(Settings, "uses_process_anthropic_auth_token", new=lambda self: False),
         patch("cli.launchers.common.shutil.which", return_value="resolved-claude.cmd"),
         patch("cli.launchers.common.subprocess.Popen") as popen,
         patch("cli.launchers.common.register_pid") as register_pid,
@@ -370,6 +435,10 @@ def test_launch_claude_passes_args_and_child_env(
         process.wait.return_value = 7
         launch(["--model", "sonnet"])
 
+    sync_settings.assert_called_once_with(
+        proxy_root_url="http://127.0.0.1:9191",
+        auth_token="proxy-token",
+    )
     assert exc_info.value.code == 7
     popen.assert_called_once()
     assert popen.call_args.args[0] == ["resolved-claude.cmd", "--model", "sonnet"]
@@ -381,6 +450,34 @@ def test_launch_claude_passes_args_and_child_env(
     assert child_env["KEEP_ME"] == "yes"
     register_pid.assert_called_once_with(12345)
     unregister_pid.assert_called_once_with(12345)
+
+
+def test_launch_claude_skips_sync_when_token_from_process_env(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from cli.launchers.claude import launch
+
+    settings = _launcher_settings(port=9191, token="proxy-token")
+
+    with (
+        patch("cli.launchers.claude.get_settings", return_value=settings),
+        patch("cli.launchers.claude.preflight_proxy", return_value=None),
+        patch("cli.launchers.claude.sync_claude_settings") as sync_settings,
+        patch.object(Settings, "uses_process_anthropic_auth_token", new=lambda self: True),
+        patch("cli.launchers.common.shutil.which", return_value="resolved-claude.cmd"),
+        patch("cli.launchers.common.subprocess.Popen") as popen,
+        patch("cli.launchers.common.register_pid"),
+        patch("cli.launchers.common.unregister_pid"),
+        pytest.raises(SystemExit),
+    ):
+        process = popen.return_value
+        process.pid = 12345
+        process.wait.return_value = 0
+        launch([])
+
+    sync_settings.assert_not_called()
+    child_env = popen.call_args.kwargs["env"]
+    assert child_env["ANTHROPIC_AUTH_TOKEN"] == "proxy-token"
 
 
 def test_launch_codex_passes_responses_config_and_child_env(
@@ -505,6 +602,7 @@ def test_launch_claude_keyboard_interrupt_kills_child_tree() -> None:
     with (
         patch("cli.launchers.claude.get_settings", return_value=settings),
         patch("cli.launchers.claude.preflight_proxy", return_value=None),
+        patch("cli.launchers.claude.sync_claude_settings"),
         patch("cli.launchers.common.shutil.which", return_value="resolved-claude.cmd"),
         patch("cli.launchers.common.subprocess.Popen") as popen,
         patch("cli.launchers.common.register_pid"),
@@ -531,6 +629,7 @@ def test_launch_claude_exits_when_command_cannot_be_resolved(
     with (
         patch("cli.launchers.claude.get_settings", return_value=settings),
         patch("cli.launchers.claude.preflight_proxy", return_value=None),
+        patch("cli.launchers.claude.sync_claude_settings"),
         patch("cli.launchers.common.shutil.which", return_value=None),
         patch("cli.launchers.common.subprocess.Popen") as popen,
         pytest.raises(SystemExit) as exc_info,

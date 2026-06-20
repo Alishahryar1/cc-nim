@@ -50,3 +50,9 @@ def codex_model_catalog_path() -> Path:
     """Return the generated Codex model catalog path."""
 
     return config_dir_path() / CODEX_MODEL_CATALOG_FILENAME
+
+
+def claude_settings_path() -> Path:
+    """Return Claude Code's user settings.json path."""
+
+    return Path.home() / ".claude" / "settings.json"

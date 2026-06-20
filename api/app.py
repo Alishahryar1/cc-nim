@@ -20,6 +20,7 @@ from core.trace import extract_claude_session_id_from_headers, trace_event
 from providers.exceptions import ProviderError
 
 from .admin_routes import router as admin_router
+from .admin_urls import local_proxy_root_url
 from .routes import router
 from .runtime import AppRuntime, startup_failure_message
 from .validation_log import summarize_request_validation_body
@@ -97,6 +98,11 @@ def create_app(*, lifespan_enabled: bool = True) -> FastAPI:
     if lifespan_enabled:
         app_kwargs["lifespan"] = lifespan
     app = FastAPI(**app_kwargs)
+    # Record the address this app is bound to at startup so admin apply syncs
+    # ~/.claude/settings.json with the live proxy URL rather than a pending
+    # HOST/PORT that is not serving yet. The serve() supervisor refreshes this
+    # on each (re)start; entry points that bypass it still get a sane value here.
+    app.state.live_proxy_root_url = local_proxy_root_url(settings)
 
     @app.middleware("http")
     async def trace_http_correlation(request: Request, call_next):

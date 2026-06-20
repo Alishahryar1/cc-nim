@@ -142,6 +142,8 @@ fcc-claude
 
 `fcc-claude` reads the current configured port and auth token each time it starts, sets the Claude Code environment variables (including a 190k-token `CLAUDE_CODE_AUTO_COMPACT_WINDOW` for auto-compaction), and then launches the real `claude` command. When proxy auth is disabled, it still passes `ANTHROPIC_AUTH_TOKEN=fcc-no-auth` so newer Claude Code versions do not stop at their local login gate before contacting the proxy.
 
+`fcc-claude agents` spawns background workers as plain `claude` processes without inheriting the launcher's env. `fcc-claude` now auto-syncs the same proxy env into `~/.claude/settings.json` on each launch (and when Admin config is applied) so agent workers can reach the proxy without `/login` prompts.
+
 **Codex**
 
 ```bash
@@ -367,6 +369,8 @@ fcc-claude
 ```
 
 The Admin UI manages proxy config, restarts the server when runtime settings change, and `fcc-claude` reads the current Admin UI-managed port and auth token every time it starts. It also sets `CLAUDE_CODE_AUTO_COMPACT_WINDOW` to `190000` for auto-compaction. When proxy auth is blank, `fcc-claude` injects `ANTHROPIC_AUTH_TOKEN=fcc-no-auth` only to satisfy Claude Code's local login check; the proxy still treats blank auth as disabled.
+
+For `fcc-claude agents`, the same proxy env is persisted into `~/.claude/settings.json` automatically so daemon workers inherit it.
 
 ### 2. Codex CLI
 

@@ -13,6 +13,8 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from api.admin_urls import local_proxy_root_url
+from cli.claude_settings_sync import sync_claude_settings
 from config.settings import Settings
 from config.settings import get_settings as get_cached_settings
 from providers.registry import ProviderRegistry
@@ -113,11 +115,31 @@ async def apply_admin_config(
     background_tasks: BackgroundTasks,
 ):
     require_loopback_admin(request)
-    result = write_managed_env(_filtered_values(payload.values))
+    filtered = _filtered_values(payload.values)
+    result = write_managed_env(filtered)
     if not result["applied"]:
         return result
 
     get_cached_settings.cache_clear()
+    fresh_settings = get_cached_settings()
+    # Always sync so token changes reach agent workers immediately (the proxy
+    # validates the new token live, without a restart). Use the address the
+    # running proxy is actually bound to (captured at server start) rather than
+    # fresh settings, so a pending HOST/PORT change never points workers at a
+    # proxy that is not serving yet. The new address is written by the serve()
+    # supervisor once the restarted server is live.
+    # Skip persistent sync when the token comes only from the process environment
+    # (e.g. ANTHROPIC_AUTH_TOKEN=temp fcc-server) so shell-only secrets are never
+    # written into ~/.claude/settings.json and left there after the server restarts
+    # without that token.
+    if not fresh_settings.uses_process_anthropic_auth_token():
+        live_proxy_root_url = getattr(
+            request.app.state, "live_proxy_root_url", None
+        ) or local_proxy_root_url(fresh_settings)
+        sync_claude_settings(
+            proxy_root_url=live_proxy_root_url,
+            auth_token=fresh_settings.anthropic_auth_token,
+        )
     restart = _restart_metadata(result["pending_fields"], request)
     result["restart"] = restart
     if restart["required"] and restart["automatic"]:
