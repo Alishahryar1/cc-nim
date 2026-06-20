@@ -13,6 +13,7 @@ import uvicorn
 
 from api.admin_urls import local_admin_url, local_proxy_root_url
 from api.app import GracefulLifespanApp, create_app
+from cli.claude_settings_sync import sync_claude_settings
 from cli.launchers.common import preflight_proxy
 from cli.process_registry import (
     kill_all_best_effort,
@@ -42,6 +43,14 @@ def _load_env_template() -> str:
     raise FileNotFoundError("Could not find bundled or source .env.example template.")
 
 
+def _sync_claude_settings_on_start(settings: Settings) -> None:
+    """Best-effort: align ~/.claude/settings.json with this server's live address."""
+    sync_claude_settings(
+        proxy_root_url=local_proxy_root_url(settings),
+        auth_token=settings.anthropic_auth_token,
+    )
+
+
 def serve() -> None:
     """Start the FastAPI server (registered as `fcc-server` script)."""
     opened_admin_browser = False
@@ -50,6 +59,7 @@ def serve() -> None:
             while True:
                 _migrate_legacy_env_if_missing()
                 settings = get_settings()
+                _sync_claude_settings_on_start(settings)
                 if not _run_supervised_server(
                     settings, open_admin_browser=not opened_admin_browser
                 ):

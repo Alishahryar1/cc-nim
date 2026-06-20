@@ -253,6 +253,7 @@ def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
         patch.object(entrypoints.uvicorn, "Config", side_effect=fake_config),
         patch.object(entrypoints.uvicorn, "Server", side_effect=FakeServer),
         patch.object(entrypoints, "_schedule_open_admin_browser"),
+        patch.object(entrypoints, "sync_claude_settings"),
         patch.object(entrypoints, "kill_all_best_effort") as kill_all,
     ):
         entrypoints.serve()
@@ -260,6 +261,29 @@ def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
     assert len(servers) == 2
     get_settings.cache_clear.assert_called_once()
     kill_all.assert_called_once()
+
+
+def test_serve_syncs_claude_settings_on_each_start() -> None:
+    from cli import entrypoints
+
+    settings = _launcher_settings()
+    get_settings = MagicMock(return_value=settings)
+    get_settings.cache_clear = MagicMock()
+
+    with (
+        patch.object(entrypoints, "get_settings", get_settings),
+        patch.object(
+            entrypoints,
+            "_run_supervised_server",
+            side_effect=[True, False],
+        ),
+        patch.object(entrypoints, "kill_all_best_effort"),
+        patch.object(entrypoints, "sync_claude_settings") as sync_settings,
+    ):
+        entrypoints.serve()
+
+    # One sync per server start: initial boot plus the post-restart boot.
+    assert sync_settings.call_count == 2
 
 
 def test_serve_migrates_legacy_env_before_loading_settings(tmp_path: Path) -> None:
@@ -276,6 +300,7 @@ def test_serve_migrates_legacy_env_before_loading_settings(tmp_path: Path) -> No
         patch("pathlib.Path.home", return_value=tmp_path),
         patch.object(entrypoints, "get_settings", get_settings),
         patch.object(entrypoints, "_run_supervised_server", return_value=False),
+        patch.object(entrypoints, "sync_claude_settings"),
         patch.object(entrypoints, "kill_all_best_effort"),
     ):
         entrypoints.serve()
@@ -300,6 +325,7 @@ def test_serve_handles_keyboard_interrupt_without_traceback() -> None:
             "_run_supervised_server",
             side_effect=KeyboardInterrupt,
         ),
+        patch.object(entrypoints, "sync_claude_settings"),
         patch.object(entrypoints, "kill_all_best_effort") as kill_all,
     ):
         entrypoints.serve()

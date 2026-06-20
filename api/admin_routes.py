@@ -121,11 +121,16 @@ async def apply_admin_config(
         return result
 
     get_cached_settings.cache_clear()
-    # Sync immediately unless the changeset is exclusively PORT/HOST restart fields.
-    # For PORT/HOST-only changes the proxy is still on the old port until restart
-    # completes; the next fcc-claude launch will re-sync with the new address.
-    _RESTART_ONLY_FIELDS = frozenset({"HOST", "PORT"})
-    if not set(filtered.keys()) <= _RESTART_ONLY_FIELDS:
+    # Defer the sync only while a HOST/PORT restart is actually pending: either
+    # from this apply (result["pending_fields"]) or from an earlier apply still
+    # awaiting a manual restart (app.state.admin_pending_fields). Writing the new
+    # address now would point agent workers at a proxy that is not serving yet.
+    # A pending restart is repaired by the serve() supervisor on the next start.
+    _RESTART_FIELDS = frozenset({"HOST", "PORT"})
+    pending_now = set(result["pending_fields"])
+    pending_before = set(getattr(request.app.state, "admin_pending_fields", []))
+    restart_pending = (pending_now | pending_before) & _RESTART_FIELDS
+    if not restart_pending:
         fresh_settings = get_cached_settings()
         sync_claude_settings(
             proxy_root_url=local_proxy_root_url(fresh_settings),

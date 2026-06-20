@@ -450,7 +450,7 @@ def test_admin_apply_defers_sync_when_only_port_changes(
     sync_settings.assert_not_called()
 
 
-def test_admin_apply_syncs_claude_settings_on_mixed_restart_and_non_restart_fields(
+def test_admin_apply_defers_sync_for_mixed_restart_and_non_restart_fields(
     monkeypatch, tmp_path
 ):
     _set_home(monkeypatch, tmp_path)
@@ -464,7 +464,9 @@ def test_admin_apply_syncs_claude_settings_on_mixed_restart_and_non_restart_fiel
         )
 
     assert response.status_code == 200
-    sync_settings.assert_called_once()
+    # PORT is a pending restart field, so the sync is deferred to the serve()
+    # supervisor after the new server is live; the token is applied then.
+    sync_settings.assert_not_called()
 
 
 def test_admin_apply_syncs_claude_settings_for_non_restart_fields(
@@ -482,6 +484,48 @@ def test_admin_apply_syncs_claude_settings_for_non_restart_fields(
 
     assert response.status_code == 200
     sync_settings.assert_called_once()
+
+
+def test_admin_apply_syncs_when_restart_field_submitted_unchanged(
+    monkeypatch, tmp_path
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_app(lifespan_enabled=False)
+    client = _local_client(app)
+
+    current_port = client.get("/admin/api/status").json()["port"]
+
+    with patch("api.admin_routes.sync_claude_settings") as sync_settings:
+        response = client.post(
+            "/admin/api/config/apply",
+            json={"values": {"PORT": str(current_port)}},
+        )
+
+    assert response.status_code == 200
+    # PORT submitted with its existing value yields no pending restart, so the
+    # sync must still run to repair a stale/missing settings.json.
+    sync_settings.assert_called_once()
+
+
+def test_admin_apply_defers_sync_when_restart_pending_from_previous_apply(
+    monkeypatch, tmp_path
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_app(lifespan_enabled=False)
+    app.state.admin_pending_fields = ["PORT"]
+
+    with patch("api.admin_routes.sync_claude_settings") as sync_settings:
+        response = _local_client(app).post(
+            "/admin/api/config/apply",
+            json={"values": {"ANTHROPIC_AUTH_TOKEN": "new-token"}},
+        )
+
+    assert response.status_code == 200
+    # A PORT restart from a previous apply is still pending, so a later
+    # token-only apply must defer to avoid writing a not-yet-serving address.
+    sync_settings.assert_not_called()
 
 
 def test_admin_process_env_values_are_locked_and_not_written(monkeypatch, tmp_path):
