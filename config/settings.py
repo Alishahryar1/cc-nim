@@ -76,6 +76,10 @@ def _env_file_override(model_config: Mapping[str, Any], key: str) -> str | None:
 
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
+    # ==================== Xiaomi MiMo Config ====================
+    xiaomi_api_key: str = Field(default="", validation_alias="XIAOMI_API_KEY")
+    xiaomi_base_url: str = Field(default="https://api.xiaomimimo.com/v1", validation_alias="XIAOMI_BASE_URL")
+    xiaomi_proxy: str = Field(default="", validation_alias="XIAOMI_PROXY")
 
     # ==================== OpenRouter Config ====================
     open_router_api_key: str = Field(default="", validation_alias="OPENROUTER_API_KEY")

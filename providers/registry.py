@@ -32,6 +32,12 @@ ProviderFactory = Callable[[ProviderConfig, Settings], BaseProvider]
 PROVIDER_DESCRIPTORS: dict[str, ProviderDescriptor] = PROVIDER_CATALOG
 
 
+def _create_xiaomi(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+    from providers.xiaomi import XiaomiProvider
+
+    return XiaomiProvider(config)
+
+
 def _create_nvidia_nim(config: ProviderConfig, settings: Settings) -> BaseProvider:
     from providers.nvidia_nim import NvidiaNimProvider
 
@@ -137,6 +143,7 @@ def _create_cerebras(config: ProviderConfig, _settings: Settings) -> BaseProvide
 
 
 PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
+    "xiaomi": _create_xiaomi,
     "nvidia_nim": _create_nvidia_nim,
     "open_router": _create_open_router,
     "gemini": _create_gemini,

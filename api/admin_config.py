@@ -118,6 +118,28 @@ SECTIONS: tuple[ConfigSectionSpec, ...] = (
 
 FIELDS: tuple[ConfigFieldSpec, ...] = (
     ConfigFieldSpec(
+        "XIAOMI_API_KEY",
+        "Xiaomi MiMo API Key",
+        "providers",
+        "secret",
+        settings_attr="xiaomi_api_key",
+        secret=True,
+    ),
+    ConfigFieldSpec(
+        "XIAOMI_BASE_URL",
+        "Xiaomi Base URL",
+        "providers",
+        "text",
+        settings_attr="xiaomi_base_url",
+    ),
+    ConfigFieldSpec(
+        "XIAOMI_PROXY",
+        "Xiaomi Proxy",
+        "providers",
+        "text",
+        settings_attr="xiaomi_proxy",
+    ),
+    ConfigFieldSpec(
         "NVIDIA_NIM_API_KEY",
         "NVIDIA NIM API Key",
         "providers",

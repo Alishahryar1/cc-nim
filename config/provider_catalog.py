@@ -13,6 +13,7 @@ TransportType = Literal["openai_chat", "anthropic_messages"]
 
 # Default upstream base URLs (also re-exported via :mod:`providers.defaults`)
 NVIDIA_NIM_DEFAULT_BASE = "https://integrate.api.nvidia.com/v1"
+XIAOMI_DEFAULT_BASE = "https://api.xiaomimimo.com/v1"
 # Moonshot Kimi Anthropic-compatible Messages API (POST …/messages).
 KIMI_DEFAULT_BASE = "https://api.moonshot.ai/anthropic/v1"
 WAFER_DEFAULT_BASE = "https://pass.wafer.ai/v1"
@@ -55,6 +56,17 @@ class ProviderDescriptor:
 
 
 PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
+    "xiaomi": ProviderDescriptor(
+        provider_id="xiaomi",
+        transport_type="openai_chat",
+        credential_env="XIAOMI_API_KEY",
+        credential_url="https://platform.xiaomimimo.com/",
+        credential_attr="xiaomi_api_key",
+        default_base_url=XIAOMI_DEFAULT_BASE,
+        base_url_attr="xiaomi_base_url",
+        proxy_attr="xiaomi_proxy",
+        capabilities=("chat", "streaming", "tools", "thinking", "rate_limit"),
+    ),
     "nvidia_nim": ProviderDescriptor(
         provider_id="nvidia_nim",
         transport_type="openai_chat",
