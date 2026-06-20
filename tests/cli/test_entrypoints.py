@@ -359,6 +359,7 @@ def test_launch_claude_passes_args_and_child_env(
     with (
         patch("cli.launchers.claude.get_settings", return_value=settings),
         patch("cli.launchers.claude.preflight_proxy", return_value=None),
+        patch("cli.launchers.claude.sync_claude_settings") as sync_settings,
         patch("cli.launchers.common.shutil.which", return_value="resolved-claude.cmd"),
         patch("cli.launchers.common.subprocess.Popen") as popen,
         patch("cli.launchers.common.register_pid") as register_pid,
@@ -370,6 +371,10 @@ def test_launch_claude_passes_args_and_child_env(
         process.wait.return_value = 7
         launch(["--model", "sonnet"])
 
+    sync_settings.assert_called_once_with(
+        proxy_root_url="http://127.0.0.1:9191",
+        auth_token="proxy-token",
+    )
     assert exc_info.value.code == 7
     popen.assert_called_once()
     assert popen.call_args.args[0] == ["resolved-claude.cmd", "--model", "sonnet"]
