@@ -253,6 +253,75 @@ def test_sync_restricts_settings_file_permissions(
     assert mode == stat.S_IRUSR | stat.S_IWUSR
 
 
-def test_should_defer_claude_settings_sync_when_port_changes() -> None:
+@pytest.mark.skipif(os.name == "nt", reason="Unix file modes are not enforced on Windows")
+def test_sync_hardens_permissions_on_up_to_date_file(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _redirect_home(monkeypatch, tmp_path)
+    settings_path = _settings_path(tmp_path)
+    desired_env = build_fcc_claude_env("http://127.0.0.1:8082", "proxy-token")
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(json.dumps({"env": desired_env}), encoding="utf-8")
+    os.chmod(settings_path, 0o666)
+
+    changed = sync_claude_settings(
+        proxy_root_url="http://127.0.0.1:8082",
+        auth_token="proxy-token",
+        settings_path=settings_path,
+    )
+
+    assert changed is False
+    mode = stat.S_IMODE(settings_path.stat().st_mode)
+    assert mode == stat.S_IRUSR | stat.S_IWUSR
+
+
+def test_sync_uses_unique_temp_files_for_concurrent_writes(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    import threading
+
+    _redirect_home(monkeypatch, tmp_path)
+    settings_path = _settings_path(tmp_path)
+    settings_path.parent.mkdir(parents=True)
+    temp_names: list[str] = []
+    original_replace = os.replace
+
+    def capturing_replace(src: str, dst: str) -> None:
+        temp_names.append(str(src))
+        original_replace(src, dst)
+
+    monkeypatch.setattr(os, "replace", capturing_replace)
+
+    barrier = threading.Barrier(2)
+
+    def sync_worker(token: str) -> None:
+        barrier.wait()
+        sync_claude_settings(
+            proxy_root_url="http://127.0.0.1:8082",
+            auth_token=token,
+            settings_path=settings_path,
+        )
+
+    threads = [
+        threading.Thread(target=sync_worker, args=("token-a",)),
+        threading.Thread(target=sync_worker, args=("token-b",)),
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert len(temp_names) == 2
+    assert temp_names[0] != temp_names[1], "Concurrent syncs must use distinct temp files"
+    payload = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert payload["env"]["ANTHROPIC_AUTH_TOKEN"] in ("token-a", "token-b")
+
+
+def test_should_defer_claude_settings_sync_when_port_or_host_changes() -> None:
     assert should_defer_claude_settings_sync(["PORT"]) is True
+    assert should_defer_claude_settings_sync(["HOST"]) is True
+    assert should_defer_claude_settings_sync(["HOST", "PORT"]) is True
     assert should_defer_claude_settings_sync(["ANTHROPIC_AUTH_TOKEN"]) is False
+    assert should_defer_claude_settings_sync([]) is False

@@ -6,6 +6,7 @@ import json
 import os
 import stat
 import sys
+import tempfile
 from pathlib import Path
 
 from cli.claude_env import CLAUDE_CODE_AUTO_COMPACT_WINDOW, claude_auth_token
@@ -37,7 +38,7 @@ def build_fcc_claude_env(proxy_root_url: str, auth_token: str) -> dict[str, str]
 def should_defer_claude_settings_sync(pending_fields: list[str]) -> bool:
     """Return whether Claude settings sync should wait until proxy restart."""
 
-    return "PORT" in pending_fields
+    return bool({"HOST", "PORT"}.intersection(pending_fields))
 
 
 def _warn(message: str) -> None:
@@ -132,15 +133,21 @@ def sync_claude_settings(
     updated_settings["env"] = merged_env
 
     if path.is_file() and settings == updated_settings:
+        _restrict_settings_permissions(path)
         return False
 
     try:
         path.parent.mkdir(parents=True, exist_ok=True)
-        temp_path = path.with_suffix(path.suffix + ".tmp")
-        temp_path.write_text(
-            json.dumps(updated_settings, indent=2) + "\n",
+        with tempfile.NamedTemporaryFile(
+            mode="w",
             encoding="utf-8",
-        )
+            dir=path.parent,
+            prefix=".fcc-",
+            suffix=".tmp",
+            delete=False,
+        ) as tmp_file:
+            tmp_file.write(json.dumps(updated_settings, indent=2) + "\n")
+            temp_path = Path(tmp_file.name)
         _restrict_settings_permissions(temp_path)
         os.replace(temp_path, path)
         _restrict_settings_permissions(path)

@@ -433,7 +433,7 @@ def test_admin_apply_restart_required_reports_manual_fallback(monkeypatch, tmp_p
     }
 
 
-def test_admin_apply_defers_claude_settings_sync_when_port_changes(
+def test_admin_apply_syncs_claude_settings_on_port_change(
     monkeypatch, tmp_path
 ):
     _set_home(monkeypatch, tmp_path)
@@ -447,7 +447,24 @@ def test_admin_apply_defers_claude_settings_sync_when_port_changes(
         )
 
     assert response.status_code == 200
-    sync_settings.assert_not_called()
+    sync_settings.assert_called_once()
+
+
+def test_admin_apply_syncs_claude_settings_on_mixed_restart_and_non_restart_fields(
+    monkeypatch, tmp_path
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_app(lifespan_enabled=False)
+
+    with patch("api.admin_routes.sync_claude_settings") as sync_settings:
+        response = _local_client(app).post(
+            "/admin/api/config/apply",
+            json={"values": {"PORT": "9093", "ANTHROPIC_AUTH_TOKEN": "new-token"}},
+        )
+
+    assert response.status_code == 200
+    sync_settings.assert_called_once()
 
 
 def test_admin_apply_syncs_claude_settings_for_non_restart_fields(
