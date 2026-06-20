@@ -178,7 +178,7 @@ def test_cli_scripts_are_registered() -> None:
     assert scripts["fcc-codex"] == "cli.launchers.codex:launch"
 
 
-def test_schedule_open_admin_browser_opens_when_health_ready(
+def test_schedule_on_server_ready_opens_browser_when_health_ready(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     """Opening /admin runs after /health preflight succeeds."""
@@ -206,13 +206,15 @@ def test_schedule_open_admin_browser_opens_when_health_ready(
             side_effect=lambda url: opened_urls.append(url),
         ),
         patch.object(entrypoints.time, "sleep"),
+        patch.object(entrypoints, "sync_claude_settings"),
+        patch.object(Settings, "uses_process_anthropic_auth_token", new=lambda self: False),
     ):
-        entrypoints._schedule_open_admin_browser(settings)
+        entrypoints._schedule_on_server_ready(settings, open_admin_browser=True)
 
     assert opened_urls == [local_admin_url(settings)]
 
 
-def test_schedule_open_admin_browser_skips_when_disabled(
+def test_schedule_on_server_ready_skips_browser_when_disabled(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.setenv("FCC_OPEN_BROWSER", "0")
@@ -220,10 +222,14 @@ def test_schedule_open_admin_browser_skips_when_disabled(
 
     settings = _launcher_settings()
 
-    with patch.object(entrypoints.threading, "Thread") as thread_cls:
-        entrypoints._schedule_open_admin_browser(settings)
+    with (
+        patch.object(entrypoints.threading, "Thread") as thread_cls,
+        patch.object(Settings, "uses_process_anthropic_auth_token", new=lambda self: False),
+    ):
+        entrypoints._schedule_on_server_ready(settings, open_admin_browser=True)
 
-    thread_cls.assert_not_called()
+    # Thread is always started (for the settings sync); browser just won't open inside it.
+    thread_cls.assert_called_once()
 
 
 def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
@@ -252,7 +258,7 @@ def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
         patch.object(entrypoints, "get_settings", get_settings),
         patch.object(entrypoints.uvicorn, "Config", side_effect=fake_config),
         patch.object(entrypoints.uvicorn, "Server", side_effect=FakeServer),
-        patch.object(entrypoints, "_schedule_open_admin_browser"),
+        patch.object(entrypoints, "_schedule_on_server_ready"),
         patch.object(entrypoints, "sync_claude_settings"),
         patch.object(entrypoints, "kill_all_best_effort") as kill_all,
     ):
@@ -268,40 +274,51 @@ def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
     )
 
 
-def test_serve_syncs_claude_settings_on_each_start() -> None:
+def _make_sync_thread_class():
+    """Return a Thread replacement that runs target() synchronously in start()."""
+
+    class SyncThread:
+        def __init__(self, target, name="", daemon=False):
+            self._target = target
+
+        def start(self):
+            self._target()
+
+    return SyncThread
+
+
+def test_schedule_on_server_ready_syncs_when_server_reachable() -> None:
     from cli import entrypoints
 
     settings = _launcher_settings()
-    get_settings = MagicMock(return_value=settings)
-    get_settings.cache_clear = MagicMock()
 
     with (
-        patch.object(entrypoints, "get_settings", get_settings),
-        patch.object(
-            entrypoints,
-            "_run_supervised_server",
-            side_effect=[True, False],
-        ),
-        patch.object(entrypoints, "kill_all_best_effort"),
+        patch.object(entrypoints, "preflight_proxy", return_value=None),
         patch.object(entrypoints, "sync_claude_settings") as sync_settings,
+        patch.object(entrypoints.threading, "Thread", _make_sync_thread_class()),
         patch.object(Settings, "uses_process_anthropic_auth_token", new=lambda self: False),
+        patch.object(entrypoints, "webbrowser"),
     ):
-        entrypoints.serve()
+        entrypoints._schedule_on_server_ready(settings, open_admin_browser=False)
 
-    # One sync per server start: initial boot plus the post-restart boot.
-    assert sync_settings.call_count == 2
+    sync_settings.assert_called_once_with(
+        proxy_root_url="http://127.0.0.1:8082",
+        auth_token="freecc",
+    )
 
 
-def test_serve_start_sync_skips_for_process_token() -> None:
+def test_schedule_on_server_ready_skips_sync_for_process_token() -> None:
     from cli import entrypoints
 
     settings = _launcher_settings()
 
     with (
-        patch.object(Settings, "uses_process_anthropic_auth_token", new=lambda self: True),
+        patch.object(entrypoints, "preflight_proxy", return_value=None),
         patch.object(entrypoints, "sync_claude_settings") as sync_settings,
+        patch.object(entrypoints.threading, "Thread", _make_sync_thread_class()),
+        patch.object(Settings, "uses_process_anthropic_auth_token", new=lambda self: True),
     ):
-        entrypoints._sync_claude_settings_on_start(settings)
+        entrypoints._schedule_on_server_ready(settings, open_admin_browser=False)
 
     sync_settings.assert_not_called()
 
