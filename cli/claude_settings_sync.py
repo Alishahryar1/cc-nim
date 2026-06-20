@@ -87,13 +87,13 @@ def _load_settings_object(path: Path) -> dict[str, object] | None:
 
 def _merge_fcc_env(
     existing_env: dict[str, object], desired_fcc_env: dict[str, str]
-) -> dict[str, str]:
-    merged_env = {
+) -> dict[str, object]:
+    merged_env: dict[str, object] = {
         key: value
         for key, value in existing_env.items()
         if isinstance(key, str)
-        and isinstance(value, str)
         and not key.startswith("ANTHROPIC_")
+        and key not in FCC_CLAUDE_ENV_KEYS
     }
     merged_env.update(desired_fcc_env)
     return merged_env
@@ -136,12 +136,16 @@ def sync_claude_settings(
         _restrict_settings_permissions(path)
         return False
 
+    # Resolve symlinks so os.replace writes to the real file, not the link path.
+    write_path = path.resolve() if path.is_symlink() else path
+
+    temp_path: Path | None = None
     try:
-        path.parent.mkdir(parents=True, exist_ok=True)
+        write_path.parent.mkdir(parents=True, exist_ok=True)
         with tempfile.NamedTemporaryFile(
             mode="w",
             encoding="utf-8",
-            dir=path.parent,
+            dir=write_path.parent,
             prefix=".fcc-",
             suffix=".tmp",
             delete=False,
@@ -149,12 +153,18 @@ def sync_claude_settings(
             tmp_file.write(json.dumps(updated_settings, indent=2) + "\n")
             temp_path = Path(tmp_file.name)
         _restrict_settings_permissions(temp_path)
-        os.replace(temp_path, path)
-        _restrict_settings_permissions(path)
+        os.replace(temp_path, write_path)
+        temp_path = None  # successfully installed — do not unlink
+        _restrict_settings_permissions(write_path)
     except OSError as exc:
         _warn(
             f"Warning: could not write {path} ({exc}); skipping FCC Claude settings sync."
         )
+        if temp_path is not None:
+            try:
+                temp_path.unlink(missing_ok=True)
+            except OSError:
+                pass
         return False
 
     return True

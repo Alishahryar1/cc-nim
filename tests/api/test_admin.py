@@ -433,7 +433,7 @@ def test_admin_apply_restart_required_reports_manual_fallback(monkeypatch, tmp_p
     }
 
 
-def test_admin_apply_syncs_claude_settings_on_port_change(
+def test_admin_apply_defers_sync_when_only_port_changes(
     monkeypatch, tmp_path
 ):
     _set_home(monkeypatch, tmp_path)
@@ -447,7 +447,7 @@ def test_admin_apply_syncs_claude_settings_on_port_change(
         )
 
     assert response.status_code == 200
-    sync_settings.assert_called_once()
+    sync_settings.assert_not_called()
 
 
 def test_admin_apply_syncs_claude_settings_on_mixed_restart_and_non_restart_fields(

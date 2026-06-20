@@ -115,16 +115,22 @@ async def apply_admin_config(
     background_tasks: BackgroundTasks,
 ):
     require_loopback_admin(request)
-    result = write_managed_env(_filtered_values(payload.values))
+    filtered = _filtered_values(payload.values)
+    result = write_managed_env(filtered)
     if not result["applied"]:
         return result
 
     get_cached_settings.cache_clear()
-    fresh_settings = get_cached_settings()
-    sync_claude_settings(
-        proxy_root_url=local_proxy_root_url(fresh_settings),
-        auth_token=fresh_settings.anthropic_auth_token,
-    )
+    # Sync immediately unless the changeset is exclusively PORT/HOST restart fields.
+    # For PORT/HOST-only changes the proxy is still on the old port until restart
+    # completes; the next fcc-claude launch will re-sync with the new address.
+    _RESTART_ONLY_FIELDS = frozenset({"HOST", "PORT"})
+    if not set(filtered.keys()) <= _RESTART_ONLY_FIELDS:
+        fresh_settings = get_cached_settings()
+        sync_claude_settings(
+            proxy_root_url=local_proxy_root_url(fresh_settings),
+            auth_token=fresh_settings.anthropic_auth_token,
+        )
     restart = _restart_metadata(result["pending_fields"], request)
     result["restart"] = restart
     if restart["required"] and restart["automatic"]:

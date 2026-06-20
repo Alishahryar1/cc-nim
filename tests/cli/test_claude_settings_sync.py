@@ -325,3 +325,85 @@ def test_should_defer_claude_settings_sync_when_port_or_host_changes() -> None:
     assert should_defer_claude_settings_sync(["HOST", "PORT"]) is True
     assert should_defer_claude_settings_sync(["ANTHROPIC_AUTH_TOKEN"]) is False
     assert should_defer_claude_settings_sync([]) is False
+
+
+@pytest.mark.skipif(os.name == "nt", reason="Symlinks require elevated privileges on Windows")
+def test_sync_follows_symlink_to_write_resolved_target(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _redirect_home(monkeypatch, tmp_path)
+    real_file = tmp_path / "dotfiles" / "claude_settings.json"
+    real_file.parent.mkdir(parents=True)
+    real_file.write_text(json.dumps({}), encoding="utf-8")
+
+    settings_path = _settings_path(tmp_path)
+    settings_path.parent.mkdir(parents=True)
+    settings_path.symlink_to(real_file)
+
+    sync_claude_settings(
+        proxy_root_url="http://127.0.0.1:8082",
+        auth_token="proxy-token",
+        settings_path=settings_path,
+    )
+
+    assert settings_path.is_symlink(), "symlink must not be replaced by a regular file"
+    payload = json.loads(real_file.read_text(encoding="utf-8"))
+    assert payload["env"]["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:8082"
+
+
+def test_sync_cleans_up_temp_file_on_replace_failure(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _redirect_home(monkeypatch, tmp_path)
+    settings_path = _settings_path(tmp_path)
+    settings_path.parent.mkdir(parents=True)
+
+    def failing_replace(src: str, dst: str) -> None:
+        raise OSError("simulated replace failure")
+
+    monkeypatch.setattr(os, "replace", failing_replace)
+
+    sync_claude_settings(
+        proxy_root_url="http://127.0.0.1:8082",
+        auth_token="proxy-token",
+        settings_path=settings_path,
+    )
+
+    leftover = list(settings_path.parent.glob(".fcc-*.tmp"))
+    assert leftover == [], f"Temp file(s) leaked: {leftover}"
+
+
+def test_sync_preserves_non_string_env_entries(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    _redirect_home(monkeypatch, tmp_path)
+    settings_path = _settings_path(tmp_path)
+    settings_path.parent.mkdir(parents=True)
+    settings_path.write_text(
+        json.dumps(
+            {
+                "env": {
+                    "MY_FLAG": True,
+                    "TIMEOUT": 30,
+                    "SOME_STRING": "keep-me",
+                    "ANTHROPIC_BASE_URL": "old-url",
+                }
+            }
+        ),
+        encoding="utf-8",
+    )
+
+    sync_claude_settings(
+        proxy_root_url="http://127.0.0.1:8082",
+        auth_token="proxy-token",
+        settings_path=settings_path,
+    )
+
+    payload = json.loads(settings_path.read_text(encoding="utf-8"))
+    assert payload["env"]["MY_FLAG"] is True
+    assert payload["env"]["TIMEOUT"] == 30
+    assert payload["env"]["SOME_STRING"] == "keep-me"
+    assert payload["env"]["ANTHROPIC_BASE_URL"] == "http://127.0.0.1:8082"
