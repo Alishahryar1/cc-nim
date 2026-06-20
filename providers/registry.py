@@ -78,7 +78,6 @@ def _create_llamacpp(config: ProviderConfig, _settings: Settings) -> BaseProvide
 
 def _create_ollama(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     from providers.ollama import OllamaProvider
-
     return OllamaProvider(config)
 
 
@@ -193,7 +192,7 @@ def _require_credential(descriptor: ProviderDescriptor, credential: str) -> None
 
 
 def build_provider_config(
-    descriptor: ProviderDescriptor, settings: Settings
+    provider_id: str, descriptor: ProviderDescriptor, settings: Settings
 ) -> ProviderConfig:
     credential = _credential_for(descriptor, settings)
     _require_credential(descriptor, credential)
@@ -201,7 +200,8 @@ def build_provider_config(
         settings, descriptor.base_url_attr, descriptor.default_base_url or ""
     )
     proxy = _string_attr(settings, descriptor.proxy_attr)
-    return ProviderConfig(
+    
+    config = ProviderConfig(
         api_key=credential,
         base_url=base_url or descriptor.default_base_url,
         rate_limit=settings.provider_rate_limit,
@@ -215,6 +215,13 @@ def build_provider_config(
         log_raw_sse_events=settings.log_raw_sse_events,
         log_api_error_tracebacks=settings.log_api_error_tracebacks,
     )
+    
+    # Add Ollama cloud-specific fields (only for ollama provider)
+    if provider_id == "ollama":
+        config.ollama_use_cloud = settings.ollama_use_cloud
+        config.ollama_api_key = settings.ollama_api_key
+    
+    return config
 
 
 def create_provider(provider_id: str, settings: Settings) -> BaseProvider:
@@ -225,7 +232,7 @@ def create_provider(provider_id: str, settings: Settings) -> BaseProvider:
             f"Unknown provider_type: '{provider_id}'. Supported: '{supported}'"
         )
 
-    config = build_provider_config(descriptor, settings)
+    config = build_provider_config(provider_id, descriptor, settings)  # Changed: added provider_id
     factory = PROVIDER_FACTORIES.get(provider_id)
     if factory is None:
         raise AssertionError(f"Unhandled provider descriptor: {provider_id}")

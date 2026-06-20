@@ -271,6 +271,28 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         "providers",
         settings_attr="ollama_base_url",
         default="http://localhost:11434",
+        description="Local Ollama server URL (http://localhost:11434) or cloud URL (https://ollama.com)",
+    ),
+    ConfigFieldSpec(
+        "OLLAMA_USE_CLOUD",
+        "Use Ollama Cloud",
+        "providers",
+        "boolean",
+        settings_attr="ollama_use_cloud",
+        default="false",
+        description="Enable to use Ollama Cloud API instead of local server",
+    ),
+    ConfigFieldSpec(
+        "OLLAMA_API_KEY",
+        "Ollama Cloud API Key",
+        "providers",
+        "secret",
+        settings_attr="ollama_api_key",
+        secret=True,
+        description=(
+            "Ollama Cloud API key from [ollama.com/settings/keys]("
+            "https://ollama.com/settings/keys); only required when Use Ollama Cloud is enabled."
+        ),
     ),
     ConfigFieldSpec(
         "NVIDIA_NIM_PROXY",

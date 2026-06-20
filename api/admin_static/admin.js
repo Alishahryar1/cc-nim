@@ -110,8 +110,52 @@ async function load() {
   await refreshLocalStatus();
   updateDirtyState();
   showMessage("");
+  setupOllamaCloudToggle();
+}
+// Add this function after the existing code (around line 400)
+// Add this function after the existing code (around line 400)
+function setupOllamaCloudToggle() {
+    // Find the Ollama cloud checkbox and base URL field
+    const cloudCheckbox = document.querySelector('[data-key="OLLAMA_USE_CLOUD"] input');
+    const baseUrlField = document.querySelector('[data-key="OLLAMA_BASE_URL"] input');
+    const apiKeyField = document.querySelector('[data-key="OLLAMA_API_KEY"] input');
+    
+    if (!cloudCheckbox) return;
+    
+    function updateOllamaFields() {
+        if (cloudCheckbox.checked) {
+            // Cloud mode: set cloud URL
+            if (baseUrlField && (baseUrlField.value === "http://localhost:11434" || baseUrlField.value === "")) {
+                baseUrlField.value = "https://ollama.com";
+                // Trigger change event to mark as dirty
+                baseUrlField.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+            if (apiKeyField) {
+                apiKeyField.placeholder = "Required for cloud mode";
+                apiKeyField.required = true;
+            }
+        } else {
+            // Local mode: restore local URL
+            if (baseUrlField && baseUrlField.value === "https://ollama.com") {
+                baseUrlField.value = "http://localhost:11434";
+                // Trigger change event to mark as dirty
+                baseUrlField.dispatchEvent(new Event('input', { bubbles: true }));
+            }
+            if (apiKeyField) {
+                apiKeyField.placeholder = "Not required for local mode";
+                apiKeyField.required = false;
+            }
+        }
+    }
+    
+    // Add event listener
+    cloudCheckbox.addEventListener('change', updateOllamaFields);
+    
+    // Initialize on page load
+    updateOllamaFields();
 }
 
+// setupOllamaCloudToggle();
 function renderNav() {
   const nav = byId("sectionNav");
   nav.innerHTML = "";

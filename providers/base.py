@@ -29,6 +29,8 @@ class ProviderConfig(BaseModel):
     proxy: str = ""
     log_raw_sse_events: bool = False
     log_api_error_tracebacks: bool = False
+    ollama_use_cloud: bool = False
+    ollama_api_key: str = ""
 
 
 class BaseProvider(ABC):
