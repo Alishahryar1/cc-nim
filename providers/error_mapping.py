@@ -205,6 +205,13 @@ def format_provider_error_message(
     else:
         lines = [f"Upstream provider {provider_name} returned an error."]
 
+    # Add actionable hints for common auth errors
+    if detail.status_code in (401, 403):
+        lines.append(
+            "\nTip: Verify your API key in the .env file and restart the proxy. "
+            "Ensure the key is active and has not expired."
+        )
+
     category = detail.error_type_hint or _provider_error_category(mapped)
     if category:
         lines.append(f"Category: {category}")

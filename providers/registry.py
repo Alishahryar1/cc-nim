@@ -177,7 +177,7 @@ def _credential_for(descriptor: ProviderDescriptor, settings: Settings) -> str:
     if descriptor.static_credential is not None:
         return descriptor.static_credential
     if descriptor.credential_attr:
-        return _string_attr(settings, descriptor.credential_attr)
+        return _string_attr(settings, descriptor.credential_attr).strip()
     return ""
 
 
@@ -186,9 +186,17 @@ def _require_credential(descriptor: ProviderDescriptor, credential: str) -> None
         return
     if credential and credential.strip():
         return
-    message = f"{descriptor.credential_env} is not set. Add it to your .env file."
+    env_var = descriptor.credential_env or "API_KEY"
+    message = (
+        f"{env_var} is not set or empty.\n\n"
+        "1) Set it in your .env file\n"
+    )
     if descriptor.credential_url:
-        message = f"{message} Get a key at {descriptor.credential_url}"
+        message += f"2) Get a key at: {descriptor.credential_url}\n"
+    message += (
+        "3) Restart the proxy after updating .env\n\n"
+        f"Current value length: {len(credential)} chars"
+    )
     raise AuthenticationError(message)
 
 
