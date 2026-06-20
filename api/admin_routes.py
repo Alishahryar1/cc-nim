@@ -14,7 +14,10 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
 from api.admin_urls import local_proxy_root_url
-from cli.claude_settings_sync import sync_claude_settings
+from cli.claude_settings_sync import (
+    should_defer_claude_settings_sync,
+    sync_claude_settings,
+)
 from config.settings import Settings
 from config.settings import get_settings as get_cached_settings
 from providers.registry import ProviderRegistry
@@ -120,12 +123,13 @@ async def apply_admin_config(
         return result
 
     get_cached_settings.cache_clear()
-    fresh_settings = get_cached_settings()
-    sync_claude_settings(
-        proxy_root_url=local_proxy_root_url(fresh_settings),
-        auth_token=fresh_settings.anthropic_auth_token,
-    )
     restart = _restart_metadata(result["pending_fields"], request)
+    if not should_defer_claude_settings_sync(result["pending_fields"]):
+        fresh_settings = get_cached_settings()
+        sync_claude_settings(
+            proxy_root_url=local_proxy_root_url(fresh_settings),
+            auth_token=fresh_settings.anthropic_auth_token,
+        )
     result["restart"] = restart
     if restart["required"] and restart["automatic"]:
         callback = request.app.state.admin_restart_callback

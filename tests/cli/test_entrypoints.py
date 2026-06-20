@@ -510,6 +510,7 @@ def test_launch_claude_keyboard_interrupt_kills_child_tree() -> None:
     with (
         patch("cli.launchers.claude.get_settings", return_value=settings),
         patch("cli.launchers.claude.preflight_proxy", return_value=None),
+        patch("cli.launchers.claude.sync_claude_settings"),
         patch("cli.launchers.common.shutil.which", return_value="resolved-claude.cmd"),
         patch("cli.launchers.common.subprocess.Popen") as popen,
         patch("cli.launchers.common.register_pid"),
@@ -536,6 +537,7 @@ def test_launch_claude_exits_when_command_cannot_be_resolved(
     with (
         patch("cli.launchers.claude.get_settings", return_value=settings),
         patch("cli.launchers.claude.preflight_proxy", return_value=None),
+        patch("cli.launchers.claude.sync_claude_settings"),
         patch("cli.launchers.common.shutil.which", return_value=None),
         patch("cli.launchers.common.subprocess.Popen") as popen,
         pytest.raises(SystemExit) as exc_info,
