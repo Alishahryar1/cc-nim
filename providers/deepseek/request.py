@@ -136,6 +136,29 @@ def _walk_block_list_for_unsupported(blocks: Any, *, where: str) -> None:
             )
 
 
+def _strip_server_listed_tools(data: dict[str, Any]) -> None:
+    """Remove web_search / web_fetch tool definitions that DeepSeek cannot process.
+
+    Newer Claude Code versions list these tools in every request. Stripping them
+    silently (with a warning) keeps the request valid instead of failing outright.
+    """
+    tools = data.get("tools")
+    if not isinstance(tools, list):
+        return
+    filtered = [t for t in tools if not (isinstance(t, dict) and _is_server_listed_tool(t))]
+    dropped = len(tools) - len(filtered)
+    if dropped:
+        logger.warning(
+            "DEEPSEEK_REQUEST: stripped {} unsupported server tool definition(s) "
+            "(web_search / web_fetch).",
+            dropped,
+        )
+        if filtered:
+            data["tools"] = filtered
+        else:
+            data.pop("tools", None)
+
+
 def _validate_deepseek_native_request_dict(data: dict[str, Any]) -> None:
     mcp = data.get("mcp_servers")
     if mcp:
@@ -393,6 +416,7 @@ def build_request_body(request_data: Any, *, thinking_enabled: bool) -> dict:
     data = dump_raw_messages_request(request_data)
     if "messages" in data:
         data["messages"] = _strip_unsupported_attachment_blocks(data["messages"])
+    _strip_server_listed_tools(data)
     _validate_deepseek_native_request_dict(data)
     data.pop("extra_body", None)
     _downgrade_forced_tool_choice(data)
