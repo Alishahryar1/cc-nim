@@ -29,7 +29,7 @@ from providers.error_mapping import (
     map_error,
     user_visible_message_for_mapped_provider_error,
 )
-from providers.exceptions import ModelListResponseError
+from providers.exceptions import ModelListResponseError, PreStreamProviderError
 from providers.model_listing import (
     ProviderModelInfo,
     extract_openai_model_ids,
@@ -355,6 +355,7 @@ class AnthropicMessagesTransport(BaseProvider):
         *,
         request_id: str | None = None,
         thinking_enabled: bool | None = None,
+        raise_on_prestream_error: bool = False,
     ) -> AsyncIterator[str]:
         """Stream response via a native Anthropic-compatible messages endpoint."""
         tag = self._provider_name
@@ -450,6 +451,11 @@ class AnthropicMessagesTransport(BaseProvider):
                         log_raw_sse_events=self._config.log_raw_sse_events,
                     ):
                         yield event
+                elif raise_on_prestream_error:
+                    # No client-visible event emitted yet: let the orchestration
+                    # layer retry this turn on a fallback model/provider instead
+                    # of surfacing the error to the client.
+                    raise PreStreamProviderError(error_message) from error
                 else:
                     for event in self._emit_error_events(
                         request=request,

@@ -6,7 +6,7 @@ from unittest.mock import patch
 import httpx
 from fastapi.testclient import TestClient
 
-from api.admin_config import MASKED_SECRET
+from api.admin_config import MASKED_SECRET, env_keys
 from api.admin_urls import local_admin_url
 from api.app import create_app
 from config.settings import Settings
@@ -23,11 +23,12 @@ def _set_home(monkeypatch, tmp_path: Path) -> None:
 
 
 def _clear_process_config(monkeypatch) -> None:
-    for key in (
-        "MODEL",
-        "NVIDIA_NIM_API_KEY",
-        "OPENROUTER_API_KEY",
-        "ANTHROPIC_AUTH_TOKEN",
+    # Clear every admin-managed field key (env_keys()) plus a few non-field
+    # process settings, so tests are isolated from whatever the developer/CI
+    # environment exports. Without clearing e.g. an exported DEEPSEEK_API_KEY,
+    # it shadows the repo .env and is recorded with source "process", which the
+    # first-apply migration skips — making the migration test env-dependent.
+    extra_keys = {
         "FCC_ENV_FILE",
         "HOST",
         "PORT",
@@ -35,7 +36,8 @@ def _clear_process_config(monkeypatch) -> None:
         "ZAI_BASE_URL",
         "CLAUDE_WORKSPACE",
         "CLAUDE_CLI_BIN",
-    ):
+    }
+    for key in env_keys() | extra_keys:
         monkeypatch.delenv(key, raising=False)
 
 

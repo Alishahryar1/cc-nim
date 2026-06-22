@@ -325,8 +325,15 @@ class OpenAIChatTransport(BaseProvider):
         *,
         request_id: str | None = None,
         thinking_enabled: bool | None = None,
+        raise_on_prestream_error: bool = False,
     ) -> AsyncIterator[str]:
-        """Stream response in Anthropic SSE format."""
+        """Stream response in Anthropic SSE format.
+
+        ``raise_on_prestream_error`` is accepted for interface parity but has no
+        effect here: this transport emits ``message_start`` before sending the
+        upstream request, so there is no pre-stream window in which to fail over.
+        """
+        _ = raise_on_prestream_error
         with logger.contextualize(request_id=request_id):
             async for event in self._stream_response_impl(
                 request, input_tokens, request_id, thinking_enabled=thinking_enabled

@@ -172,6 +172,28 @@ class Settings(BaseSettings):
     model_sonnet: str | None = Field(default=None, validation_alias="MODEL_SONNET")
     model_haiku: str | None = Field(default=None, validation_alias="MODEL_HAIKU")
 
+    # Failover overrides: used when the primary model for a tier fails BEFORE
+    # emitting any content (upstream 429/5xx/timeout/connection). Same tier
+    # classification as the routing overrides; per-tier value wins, else the
+    # global MODEL_FALLBACK, else no failover. Only the anthropic_messages
+    # transport (e.g. open_router) can fail over cleanly.
+    model_fallback: str | None = Field(default=None, validation_alias="MODEL_FALLBACK")
+    model_opus_fallback: str | None = Field(
+        default=None, validation_alias="MODEL_OPUS_FALLBACK"
+    )
+    model_sonnet_fallback: str | None = Field(
+        default=None, validation_alias="MODEL_SONNET_FALLBACK"
+    )
+    model_haiku_fallback: str | None = Field(
+        default=None, validation_alias="MODEL_HAIKU_FALLBACK"
+    )
+
+    # Vision model override: when image/document blocks are detected in a
+    # request, route to this provider/model (e.g. OpenRouter → Claude Opus 4.8).
+    # If not set, requests with vision content are routed normally (and will
+    # fail if the regular provider doesn't support images, e.g. DeepSeek).
+    model_vision: str | None = Field(default=None, validation_alias="VISION_MODEL")
+
     # ==================== Per-Provider Proxy ====================
     nvidia_nim_proxy: str = Field(default="", validation_alias="NVIDIA_NIM_PROXY")
     open_router_proxy: str = Field(default="", validation_alias="OPENROUTER_PROXY")
@@ -202,6 +224,9 @@ class Settings(BaseSettings):
     )
     enable_haiku_thinking: bool | None = Field(
         default=None, validation_alias="ENABLE_HAIKU_THINKING"
+    )
+    enable_vision_thinking: bool | None = Field(
+        default=None, validation_alias="ENABLE_VISION_THINKING"
     )
 
     # ==================== HTTP Client Timeouts ====================
@@ -328,9 +353,11 @@ class Settings(BaseSettings):
         "model_opus",
         "model_sonnet",
         "model_haiku",
+        "model_vision",
         "enable_opus_thinking",
         "enable_sonnet_thinking",
         "enable_haiku_thinking",
+        "enable_vision_thinking",
         mode="before",
     )
     @classmethod
@@ -413,7 +440,7 @@ class Settings(BaseSettings):
             )
         return v
 
-    @field_validator("model", "model_opus", "model_sonnet", "model_haiku")
+    @field_validator("model", "model_opus", "model_sonnet", "model_haiku", "model_vision")
     @classmethod
     def validate_model_format(cls, v: str | None) -> str | None:
         if v is None:
@@ -482,6 +509,22 @@ class Settings(BaseSettings):
             return self.model_sonnet
         return self.model
 
+    def resolve_model_fallback(self, claude_model_name: str) -> str | None:
+        """Resolve the optional failover model for an incoming Claude model name.
+
+        Mirrors :meth:`resolve_model` tier classification but for the
+        ``MODEL_*_FALLBACK`` overrides; returns ``MODEL_FALLBACK`` as the global
+        default, or ``None`` when no failover is configured for this tier.
+        """
+        name_lower = claude_model_name.lower()
+        if "opus" in name_lower and self.model_opus_fallback is not None:
+            return self.model_opus_fallback
+        if "haiku" in name_lower and self.model_haiku_fallback is not None:
+            return self.model_haiku_fallback
+        if "sonnet" in name_lower and self.model_sonnet_fallback is not None:
+            return self.model_sonnet_fallback
+        return self.model_fallback
+
     def configured_chat_model_refs(self) -> tuple[ConfiguredChatModelRef, ...]:
         """Return unique configured chat provider/model refs with source env keys."""
         candidates = (
@@ -489,6 +532,11 @@ class Settings(BaseSettings):
             ("MODEL_OPUS", self.model_opus),
             ("MODEL_SONNET", self.model_sonnet),
             ("MODEL_HAIKU", self.model_haiku),
+            ("VISION_MODEL", self.model_vision),
+            ("MODEL_FALLBACK", self.model_fallback),
+            ("MODEL_OPUS_FALLBACK", self.model_opus_fallback),
+            ("MODEL_SONNET_FALLBACK", self.model_sonnet_fallback),
+            ("MODEL_HAIKU_FALLBACK", self.model_haiku_fallback),
         )
         sources_by_ref: dict[str, list[str]] = {}
         for source, model_ref in candidates:

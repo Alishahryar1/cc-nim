@@ -9,6 +9,7 @@ from loguru import logger
 from config.provider_ids import SUPPORTED_PROVIDER_IDS
 from config.settings import Settings
 
+from .content_scanner import has_vision_content
 from .gateway_model_ids import decode_gateway_model_id
 from .models.anthropic import MessagesRequest, TokenCountRequest
 
@@ -26,6 +27,8 @@ class ResolvedModel:
 class RoutedMessagesRequest:
     request: MessagesRequest
     resolved: ResolvedModel
+    fallback_request: MessagesRequest | None = None
+    fallback_resolved: ResolvedModel | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -105,14 +108,115 @@ class ModelRouter:
             return None, None, None
         return provider_id, provider_model, None
 
+    def resolve_vision_aware(
+        self, request: MessagesRequest
+    ) -> ResolvedModel:
+        """Resolve model with vision-aware routing.
+
+        When the request contains image/document blocks AND a ``VISION_MODEL``
+        is configured, route to the vision-capable provider so DeepSeek
+        (which lacks vision support) is bypassed for these requests.
+
+        Falls back to normal ``resolve()`` when no vision content is detected
+        or no ``VISION_MODEL`` is configured.
+        """
+        vision_model_ref = self._settings.model_vision
+
+        if vision_model_ref is not None:
+            # Serialize messages to dicts for scanning.  MessagesRequest
+            # stores messages as Pydantic models; model_dump() gives us
+            # plain dicts for the content scanner.
+            raw_messages = [
+                msg.model_dump() if hasattr(msg, "model_dump") else msg
+                for msg in request.messages
+            ]
+            if has_vision_content(raw_messages):
+                vision_thinking = (
+                    self._settings.enable_vision_thinking
+                    if self._settings.enable_vision_thinking is not None
+                    else False
+                )
+                provider_id = Settings.parse_provider_type(vision_model_ref)
+                provider_model = Settings.parse_model_name(vision_model_ref)
+                logger.info(
+                    "VISION_ROUTING: {} image/document blocks detected → "
+                    "provider={} model={} thinking={}",
+                    sum(
+                        1
+                        for m in raw_messages
+                        if isinstance(m.get("content"), list)
+                        and any(
+                            b.get("type") in ("image", "document")
+                            for b in m["content"]
+                            if isinstance(b, dict)
+                        )
+                    ),
+                    provider_id,
+                    provider_model,
+                    vision_thinking,
+                )
+                return ResolvedModel(
+                    original_model=request.model,
+                    provider_id=provider_id,
+                    provider_model=provider_model,
+                    provider_model_ref=vision_model_ref,
+                    thinking_enabled=vision_thinking,
+                )
+
+        # No vision content or no VISION_MODEL configured → normal routing.
+        return self.resolve(request.model)
+
+    def _resolve_fallback(
+        self, original_model: str, primary: ResolvedModel
+    ) -> ResolvedModel | None:
+        """Resolve the optional failover route for an incoming Claude model name."""
+        ref = self._settings.resolve_model_fallback(original_model)
+        if ref is None:
+            return None
+        provider_id = Settings.parse_provider_type(ref)
+        provider_model = Settings.parse_model_name(ref)
+        # Failing over to the same provider+model would be pointless.
+        if (
+            provider_id == primary.provider_id
+            and provider_model == primary.provider_model
+        ):
+            return None
+        return ResolvedModel(
+            original_model=original_model,
+            provider_id=provider_id,
+            provider_model=provider_model,
+            provider_model_ref=ref,
+            thinking_enabled=self._settings.resolve_thinking(original_model),
+        )
+
     def resolve_messages_request(
         self, request: MessagesRequest
     ) -> RoutedMessagesRequest:
-        """Return an internal routed request context."""
-        resolved = self.resolve(request.model)
+        """Return an internal routed request context (vision-aware), with an
+        optional failover route resolved from the ``MODEL_*_FALLBACK`` overrides."""
+        resolved = self.resolve_vision_aware(request)
         routed = request.model_copy(deep=True)
         routed.model = resolved.provider_model
-        return RoutedMessagesRequest(request=routed, resolved=resolved)
+
+        # Vision routing has its own dedicated target; do not apply tier failover.
+        is_vision_route = (
+            self._settings.model_vision is not None
+            and resolved.provider_model_ref == self._settings.model_vision
+        )
+        fallback_resolved = (
+            None if is_vision_route else self._resolve_fallback(request.model, resolved)
+        )
+        fallback_request: MessagesRequest | None = None
+        if fallback_resolved is not None:
+            fallback_request = request.model_copy(deep=True)
+            fallback_request.model = fallback_resolved.provider_model
+
+        return RoutedMessagesRequest(
+            request=routed,
+            resolved=resolved,
+            fallback_request=fallback_request,
+            fallback_resolved=fallback_resolved,
+        )
 
     def resolve_token_count_request(
         self, request: TokenCountRequest

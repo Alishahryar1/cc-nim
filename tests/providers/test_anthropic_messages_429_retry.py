@@ -195,6 +195,57 @@ async def test_native_stream_5xx_retry_exhausted(provider_config, status_code, s
 
 
 @pytest.mark.asyncio
+async def test_prestream_error_raises_when_failover_requested(provider_config):
+    """With raise_on_prestream_error=True, a pre-stream failure raises
+    PreStreamProviderError instead of emitting an in-stream error envelope."""
+    from providers.exceptions import PreStreamProviderError
+
+    GlobalRateLimiter.reset_instance()
+    try:
+
+        @asynccontextmanager
+        async def _slot():
+            yield
+
+        with patch("providers.anthropic_messages.GlobalRateLimiter") as mock_gl:
+            instance = mock_gl.get_scoped_instance.return_value
+
+            async def _passthrough(fn, *args, **kwargs):
+                return await fn(*args, **kwargs)
+
+            instance.execute_with_retry = AsyncMock(side_effect=_passthrough)
+            instance.concurrency_slot.side_effect = _slot
+
+            provider = NativeProvider(provider_config)
+            req = MockRequest()
+            err = FakeResponse(status_code=400, text="Bad Request")
+
+            with (
+                patch.object(
+                    provider._client, "build_request", return_value=MagicMock()
+                ),
+                patch.object(
+                    provider._client,
+                    "send",
+                    new_callable=AsyncMock,
+                    return_value=err,
+                ) as mock_send,
+            ):
+                with pytest.raises(PreStreamProviderError):
+                    [
+                        e
+                        async for e in provider.stream_response(
+                            req, raise_on_prestream_error=True
+                        )
+                    ]
+
+            mock_send.assert_awaited_once()
+            assert err.is_closed
+    finally:
+        GlobalRateLimiter.reset_instance()
+
+
+@pytest.mark.asyncio
 async def test_non_retryable_4xx_http_error_not_retried(provider_config):
     """HTTP 400 from upstream is not retried; single send (passthrough limiter)."""
     GlobalRateLimiter.reset_instance()

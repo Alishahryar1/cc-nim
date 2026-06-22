@@ -48,6 +48,84 @@ def test_model_router_applies_opus_override(settings):
     assert request.model == "claude-opus-4-20250514"
 
 
+def _clear_fallbacks(settings):
+    settings.model_fallback = None
+    settings.model_opus_fallback = None
+    settings.model_sonnet_fallback = None
+    settings.model_haiku_fallback = None
+
+
+def test_model_router_resolves_tier_fallback(settings):
+    settings.model_haiku = "open_router/openai/gpt-oss-120b"
+    _clear_fallbacks(settings)
+    settings.model_haiku_fallback = "open_router/z-ai/glm-4.7-flash"
+
+    routed = ModelRouter(settings).resolve_messages_request(
+        MessagesRequest(
+            model="claude-3-5-haiku-20241022",
+            max_tokens=100,
+            messages=[Message(role="user", content="hi")],
+        )
+    )
+
+    assert routed.request.model == "openai/gpt-oss-120b"
+    assert routed.fallback_resolved is not None
+    assert routed.fallback_resolved.provider_id == "open_router"
+    assert routed.fallback_resolved.provider_model == "z-ai/glm-4.7-flash"
+    assert routed.fallback_request is not None
+    assert routed.fallback_request.model == "z-ai/glm-4.7-flash"
+
+
+def test_model_router_global_fallback_applies_to_tier(settings):
+    settings.model_sonnet = "open_router/qwen/qwen3-coder-flash"
+    _clear_fallbacks(settings)
+    settings.model_fallback = "deepseek/deepseek-v4-pro"
+
+    routed = ModelRouter(settings).resolve_messages_request(
+        MessagesRequest(
+            model="claude-sonnet-4-20250514",
+            max_tokens=100,
+            messages=[Message(role="user", content="hi")],
+        )
+    )
+
+    assert routed.fallback_resolved is not None
+    assert routed.fallback_resolved.provider_id == "deepseek"
+    assert routed.fallback_resolved.provider_model == "deepseek-v4-pro"
+
+
+def test_model_router_no_fallback_when_unset(settings):
+    settings.model_haiku = "open_router/openai/gpt-oss-120b"
+    _clear_fallbacks(settings)
+
+    routed = ModelRouter(settings).resolve_messages_request(
+        MessagesRequest(
+            model="claude-3-5-haiku-20241022",
+            max_tokens=100,
+            messages=[Message(role="user", content="hi")],
+        )
+    )
+
+    assert routed.fallback_resolved is None
+    assert routed.fallback_request is None
+
+
+def test_model_router_skips_fallback_identical_to_primary(settings):
+    settings.model_haiku = "open_router/openai/gpt-oss-120b"
+    _clear_fallbacks(settings)
+    settings.model_haiku_fallback = "open_router/openai/gpt-oss-120b"
+
+    routed = ModelRouter(settings).resolve_messages_request(
+        MessagesRequest(
+            model="claude-3-5-haiku-20241022",
+            max_tokens=100,
+            messages=[Message(role="user", content="hi")],
+        )
+    )
+
+    assert routed.fallback_resolved is None
+
+
 def test_model_router_resolves_per_model_thinking(settings):
     settings.enable_model_thinking = False
     settings.enable_opus_thinking = True

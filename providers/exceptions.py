@@ -78,6 +78,24 @@ class OverloadedError(ProviderError):
         )
 
 
+class PreStreamProviderError(ProviderError):
+    """Raised when a request fails BEFORE any SSE event reaches the client.
+
+    Signals the orchestration layer that no client-visible content was emitted
+    yet, so the turn can be cleanly retried on a fallback model/provider. Only
+    raised when ``stream_response(..., raise_on_prestream_error=True)`` is set;
+    otherwise the provider emits the error as a normal in-stream message.
+    """
+
+    def __init__(self, message: str, status_code: int = 502, raw_error: Any = None):
+        super().__init__(
+            message,
+            status_code=status_code,
+            error_type="api_error",
+            raw_error=raw_error,
+        )
+
+
 class APIError(ProviderError):
     """Raised when the provider returns a generic API error."""
 

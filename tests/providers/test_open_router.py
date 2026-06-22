@@ -128,7 +128,10 @@ def test_init_uses_configurable_timeouts():
         assert timeout.connect == 5.0
 
 
-def test_build_request_body_is_native_anthropic(open_router_provider):
+def test_build_request_body_is_native_anthropic(open_router_provider, monkeypatch):
+    # Isolate from the language/banner injection so the system assertion is exact.
+    monkeypatch.delenv("EXTRA_SYSTEM_PROMPT", raising=False)
+    monkeypatch.setenv("ENABLE_ROUTING_BANNER", "false")
     req = MockRequest()
     body = open_router_provider._build_request_body(req)
 
@@ -281,7 +284,10 @@ def test_build_request_body_preserves_signed_thinking_history(open_router_provid
     ]
 
 
-def test_build_request_body_flattens_system_blocks(open_router_provider):
+def test_build_request_body_flattens_system_blocks(open_router_provider, monkeypatch):
+    # Isolate from the language/banner injection so the system assertion is exact.
+    monkeypatch.delenv("EXTRA_SYSTEM_PROMPT", raising=False)
+    monkeypatch.setenv("ENABLE_ROUTING_BANNER", "false")
     req = MockRequest(
         system=[
             {"type": "text", "text": "First system block."},
@@ -292,6 +298,24 @@ def test_build_request_body_flattens_system_blocks(open_router_provider):
     body = open_router_provider._build_request_body(req)
 
     assert body["system"] == "First system block.\n\nSecond system block."
+
+
+def test_build_request_body_injects_language_and_banner(
+    open_router_provider, monkeypatch
+):
+    """EXTRA_SYSTEM_PROMPT and the routing banner are appended to ``system`` as a
+    string (parity with DeepSeek/Z.ai), preserving the original prompt as prefix."""
+    monkeypatch.setenv("EXTRA_SYSTEM_PROMPT", "Responde SIEMPRE en español.")
+    monkeypatch.setenv("ENABLE_ROUTING_BANNER", "true")
+    req = MockRequest()
+
+    body = open_router_provider._build_request_body(req)
+
+    system = body["system"]
+    assert isinstance(system, str)
+    assert system.startswith("System prompt")
+    assert "Responde SIEMPRE en español." in system
+    assert "🤖 Modelo: step-3.5-flash:free | Thinking:" in system
 
 
 @pytest.mark.asyncio
