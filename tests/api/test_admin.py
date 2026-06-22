@@ -480,6 +480,36 @@ def test_admin_first_apply_migrates_repo_env(monkeypatch, tmp_path):
     assert "DEEPSEEK_API_KEY=deepseek-secret" in managed_text
 
 
+def test_admin_apply_refreshes_model_list_after_registry_rebuild(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_app(lifespan_enabled=False)
+
+    from unittest.mock import MagicMock
+
+    from config.settings import Settings
+    from providers.registry import ProviderRegistry
+
+    mock_refresh = MagicMock()
+    monkeypatch.setattr(ProviderRegistry, "start_model_list_refresh", mock_refresh)
+
+    response = _local_client(app).post(
+        "/admin/api/config/apply",
+        json={
+            "values": {
+                "MODEL": "open_router/test-model",
+                "OPENROUTER_API_KEY": "router-secret",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json()["applied"] is True
+    mock_refresh.assert_called_once()
+    args, _ = mock_refresh.call_args
+    assert isinstance(args[0], Settings)
+
+
 def test_admin_local_provider_status_reports_reachable(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
