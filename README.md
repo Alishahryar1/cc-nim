@@ -328,7 +328,7 @@ Use this when you already run a **self-hosted or private OpenAI-compatible API**
 In the Admin UI **Providers** view, set:
 
 - `CUSTOM_URL_PROVIDER` — base URL including `/v1` (for example `http://host:3001/v1`)
-- `CUSTOM_API_KEY` — Bearer token for that gateway
+- `CUSTOM_API_KEY` — Bearer token when your gateway requires auth (leave blank for auth-free gateways)
 
 Then set `MODEL` to a slug prefixed with `custom/`. Everything after the first `/` is sent upstream unchanged, so upstream ids may contain slashes or tags:
 

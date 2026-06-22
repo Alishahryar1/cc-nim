@@ -278,6 +278,23 @@ def _referenced_provider_ids(settings: Settings) -> frozenset[str]:
     return frozenset(ref.provider_id for ref in settings.configured_chat_model_refs())
 
 
+def _provider_configured_for_discovery(
+    descriptor: ProviderDescriptor, settings: Settings
+) -> bool:
+    """Return whether a provider has enough config to query ``/v1/models``."""
+    if descriptor.credential_optional:
+        if descriptor.base_url_attr is not None:
+            return bool(_string_attr(settings, descriptor.base_url_attr).strip())
+        return bool(_credential_for(descriptor, settings).strip())
+    if descriptor.credential_env is None:
+        return False
+    if not _credential_for(descriptor, settings).strip():
+        return False
+    if descriptor.base_url_attr is not None:
+        return bool(_string_attr(settings, descriptor.base_url_attr).strip())
+    return True
+
+
 def _model_list_provider_ids_for_settings(settings: Settings) -> tuple[str, ...]:
     """Return providers worth discovering for this process configuration."""
     referenced_provider_ids = _referenced_provider_ids(settings)
@@ -287,15 +304,7 @@ def _model_list_provider_ids_for_settings(settings: Settings) -> tuple[str, ...]
             if provider_id in referenced_provider_ids:
                 provider_ids.append(provider_id)
             continue
-        if (
-            descriptor.credential_env is not None
-            and _credential_for(descriptor, settings).strip()
-        ):
-            if (
-                descriptor.base_url_attr is not None
-                and not _string_attr(settings, descriptor.base_url_attr).strip()
-            ):
-                continue
+        if _provider_configured_for_discovery(descriptor, settings):
             provider_ids.append(provider_id)
     return tuple(provider_ids)
 

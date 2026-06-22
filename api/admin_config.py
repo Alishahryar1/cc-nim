@@ -260,7 +260,8 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         secret=True,
         description=(
             "Bearer token for your custom OpenAI-compatible backend "
-            "(``Authorization: Bearer …`` on ``/v1/chat/completions``)."
+            "(``Authorization: Bearer …`` on ``/v1/chat/completions``). "
+            "Optional when the gateway does not require auth."
         ),
     ),
     ConfigFieldSpec(
