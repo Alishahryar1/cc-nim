@@ -189,7 +189,7 @@ def _credential_for(descriptor: ProviderDescriptor, settings: Settings) -> str:
 
 
 def _require_credential(descriptor: ProviderDescriptor, credential: str) -> None:
-    if descriptor.credential_env is None:
+    if descriptor.credential_env is None or descriptor.credential_optional:
         return
     if credential and credential.strip():
         return

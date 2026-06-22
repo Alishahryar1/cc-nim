@@ -11,14 +11,6 @@ from core.anthropic.conversion import OpenAIConversionError
 from providers.exceptions import InvalidRequestError
 
 
-def _normalize_max_completion_tokens(body: dict[str, Any]) -> None:
-    if "max_completion_tokens" in body:
-        body.pop("max_tokens", None)
-        return
-    if "max_tokens" in body and body["max_tokens"] is not None:
-        body["max_completion_tokens"] = body.pop("max_tokens")
-
-
 def build_request_body(request_data: Any, *, thinking_enabled: bool) -> dict:
     """Build OpenAI-format request body from an Anthropic request."""
     logger.debug(
@@ -39,8 +31,6 @@ def build_request_body(request_data: Any, *, thinking_enabled: bool) -> dict:
     request_extra = getattr(request_data, "extra_body", None)
     if isinstance(request_extra, dict) and request_extra:
         body["extra_body"] = dict(request_extra)
-
-    _normalize_max_completion_tokens(body)
 
     logger.debug(
         "CUSTOM_PROVIDER_REQUEST: conversion done model={} msgs={} tools={}",

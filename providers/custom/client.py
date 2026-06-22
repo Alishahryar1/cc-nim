@@ -21,15 +21,12 @@ class CustomProvider(OpenAIChatTransport):
                 "CUSTOM_URL_PROVIDER is not set. "
                 "Add it in the Admin UI Providers section."
             )
-        if not (config.api_key or "").strip():
-            raise AuthenticationError(
-                "CUSTOM_API_KEY is not set. Add it in the Admin UI Providers section."
-            )
+        api_key = (config.api_key or "").strip() or "unused"
         super().__init__(
             config,
             provider_name="CUSTOM",
             base_url=base_url,
-            api_key=config.api_key,
+            api_key=api_key,
         )
 
     def _build_request_body(

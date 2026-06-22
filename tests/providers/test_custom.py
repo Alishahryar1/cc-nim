@@ -81,10 +81,11 @@ def test_init_rejects_missing_base_url() -> None:
         CustomProvider(config)
 
 
-def test_init_rejects_missing_api_key() -> None:
-    config = ProviderConfig(api_key="", base_url=_CUSTOM_BASE)
-    with pytest.raises(AuthenticationError, match="CUSTOM_API_KEY"):
-        CustomProvider(config)
+def test_init_allows_empty_api_key() -> None:
+    with patch("providers.transports.openai_chat.transport.AsyncOpenAI") as mock_openai:
+        provider = CustomProvider(ProviderConfig(api_key="", base_url=_CUSTOM_BASE))
+        assert provider._api_key == "unused"
+        mock_openai.assert_called_once()
 
 
 def test_build_request_body_basic(custom_provider: CustomProvider) -> None:
@@ -93,7 +94,18 @@ def test_build_request_body_basic(custom_provider: CustomProvider) -> None:
 
     assert body["model"] == "x/example-model:tag"
     assert body["messages"][0]["role"] == "system"
-    assert "max_completion_tokens" in body
+    assert body["max_tokens"] == 100
+    assert "max_completion_tokens" not in body
+
+
+def test_build_request_body_omits_max_tokens_when_unset(
+    custom_provider: CustomProvider,
+) -> None:
+    req = MockRequest(max_tokens=None)
+    body = custom_provider._build_request_body(req)
+
+    assert "max_tokens" not in body
+    assert "max_completion_tokens" not in body
 
 
 def test_build_request_body_preserves_slashes_in_model_name(
