@@ -8,7 +8,11 @@ import pytest
 
 from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from core.anthropic.sse import format_sse_event
-from core.anthropic.stream_contracts import event_index, parse_sse_text
+from core.anthropic.stream_contracts import (
+    assert_anthropic_stream_contract,
+    event_index,
+    parse_sse_text,
+)
 from providers.anthropic_messages import AnthropicMessagesTransport
 from providers.base import ProviderConfig
 from providers.exceptions import PreStreamProviderError
@@ -439,3 +443,263 @@ async def test_guarded_stream_with_content_flushes_and_streams(provider_config):
     assert blob.index("message_start") < blob.index("content_block_start")
     assert "Hola" in blob
     assert "message_stop" in blob
+
+
+# --- Truncated tool_use / incomplete-stream repair -------------------------
+
+
+def _msg_start(mid: str = "msg_tool") -> str:
+    return format_sse_event(
+        "message_start",
+        {
+            "type": "message_start",
+            "message": {
+                "id": mid,
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": "test-model",
+                "stop_reason": None,
+                "stop_sequence": None,
+                "usage": {"input_tokens": 5, "output_tokens": 1},
+            },
+        },
+    )
+
+
+def _text_block(index: int, text: str) -> list[str]:
+    return [
+        format_sse_event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": index,
+                "content_block": {"type": "text", "text": ""},
+            },
+        ),
+        format_sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {"type": "text_delta", "text": text},
+            },
+        ),
+        format_sse_event(
+            "content_block_stop", {"type": "content_block_stop", "index": index}
+        ),
+    ]
+
+
+def _tool_block(index: int, *, with_stop: bool) -> list[str]:
+    blobs = [
+        format_sse_event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": index,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "toolu_xyz",
+                    "name": "Edit",
+                    "input": {},
+                },
+            },
+        ),
+        format_sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {"type": "input_json_delta", "partial_json": '{"path":"'},
+            },
+        ),
+        format_sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": index,
+                "delta": {"type": "input_json_delta", "partial_json": 'a.txt"}'},
+            },
+        ),
+    ]
+    if with_stop:
+        blobs.append(
+            format_sse_event(
+                "content_block_stop", {"type": "content_block_stop", "index": index}
+            )
+        )
+    return blobs
+
+
+def _msg_delta() -> str:
+    return format_sse_event(
+        "message_delta",
+        {"type": "message_delta", "delta": {"stop_reason": "tool_use"}},
+    )
+
+
+def _msg_stop() -> str:
+    return format_sse_event("message_stop", {"type": "message_stop"})
+
+
+def _as_lines(blobs: list[str]) -> list[str]:
+    lines: list[str] = []
+    for blob in blobs:
+        lines.extend(blob.splitlines())
+    return lines
+
+
+def _patched_stream(provider, response):
+    return (
+        patch.object(provider._client, "build_request", return_value=MagicMock()),
+        patch.object(
+            provider._client, "send", new_callable=AsyncMock, return_value=response
+        ),
+    )
+
+
+@pytest.mark.asyncio
+async def test_truncated_tool_use_as_first_content_raises_prestream(provider_config):
+    """A tool_use cut off mid-stream (no content_block_stop, no message_stop), as
+    the first content, must surface as PreStreamProviderError so the turn retries —
+    the truncated tool call is never relayed to the client."""
+    provider = NativeProvider(provider_config)
+    req = MockRequest()
+    response = FakeResponse(lines=_as_lines([_msg_start(), *_tool_block(0, with_stop=False)]))
+
+    build, send = _patched_stream(provider, response)
+    with build, send, pytest.raises(PreStreamProviderError):
+        _ = [
+            e
+            async for e in provider.stream_response(
+                req, request_id="REQ_TOOL", raise_on_prestream_error=True
+            )
+        ]
+    assert response.is_closed
+
+
+@pytest.mark.asyncio
+async def test_truncated_tool_use_after_text_emits_clean_error_tail(provider_config):
+    """When text already reached the client and a following tool_use is truncated,
+    the client gets the text + a well-formed error tail (message_stop) and NEVER a
+    partial tool call."""
+    provider = NativeProvider(provider_config)
+    req = MockRequest()
+    response = FakeResponse(
+        lines=_as_lines(
+            [_msg_start(), *_text_block(0, "Voy a editar"), *_tool_block(1, with_stop=False)]
+        )
+    )
+
+    build, send = _patched_stream(provider, response)
+    with build, send:
+        events = [
+            e
+            async for e in provider.stream_response(
+                req, raise_on_prestream_error=True
+            )
+        ]
+
+    blob = "".join(events)
+    assert "Voy a editar" in blob  # earlier text delivered
+    assert "input_json_delta" not in blob  # truncated tool call NOT relayed
+    assert "message_stop" in blob  # well-formed terminator
+    assert_anthropic_stream_contract(parse_sse_text(blob), allow_error=True)
+
+
+@pytest.mark.asyncio
+async def test_complete_tool_use_streams_unchanged(provider_config):
+    """A complete tool_use passes through intact with a terminal message_stop."""
+    provider = NativeProvider(provider_config)
+    req = MockRequest()
+    response = FakeResponse(
+        lines=_as_lines(
+            [_msg_start(), *_tool_block(0, with_stop=True), _msg_delta(), _msg_stop()]
+        )
+    )
+
+    build, send = _patched_stream(provider, response)
+    with build, send:
+        events = [
+            e
+            async for e in provider.stream_response(
+                req, raise_on_prestream_error=True
+            )
+        ]
+
+    blob = "".join(events)
+    assert "input_json_delta" in blob  # full tool input delivered
+    assert "message_stop" in blob
+    assert_anthropic_stream_contract(parse_sse_text(blob))
+
+
+@pytest.mark.asyncio
+async def test_clean_end_without_message_stop_open_block_is_repaired(provider_config):
+    """Stream ends cleanly mid text block (no message_stop): repaired into a
+    well-formed stream with an error tail instead of leaking a half-message."""
+    provider = NativeProvider(provider_config)
+    req = MockRequest()
+    # text block left open, stream ends without message_stop and without exception
+    open_text = [
+        format_sse_event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""},
+            },
+        ),
+        format_sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "respuesta parcial"},
+            },
+        ),
+    ]
+    response = FakeResponse(lines=_as_lines([_msg_start(), *open_text]))
+
+    build, send = _patched_stream(provider, response)
+    with build, send:
+        events = [
+            e
+            async for e in provider.stream_response(
+                req, raise_on_prestream_error=True
+            )
+        ]
+
+    blob = "".join(events)
+    assert "respuesta parcial" in blob
+    assert "message_stop" in blob
+    assert_anthropic_stream_contract(parse_sse_text(blob), allow_error=True)
+
+
+@pytest.mark.asyncio
+async def test_clean_end_only_missing_message_stop_closes_cleanly(provider_config):
+    """All blocks closed and message_delta seen but message_stop lost: the stream
+    is closed cleanly (terminal message_stop added, no spurious error block, no
+    duplicate message_delta)."""
+    provider = NativeProvider(provider_config)
+    req = MockRequest()
+    response = FakeResponse(
+        lines=_as_lines([_msg_start(), *_text_block(0, "completa"), _msg_delta()])
+    )
+
+    build, send = _patched_stream(provider, response)
+    with build, send:
+        events = [
+            e
+            async for e in provider.stream_response(
+                req, raise_on_prestream_error=True
+            )
+        ]
+
+    blob = "".join(events)
+    parsed = parse_sse_text(blob)
+    starts = [e for e in parsed if e.event == "content_block_start"]
+    assert len(starts) == 1  # no spurious error block added
+    assert sum(1 for e in parsed if e.event == "message_delta") == 1  # no duplicate
+    assert parsed[-1].event == "message_stop"
+    assert_anthropic_stream_contract(parsed)

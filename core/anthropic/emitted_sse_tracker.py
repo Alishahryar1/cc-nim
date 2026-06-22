@@ -24,6 +24,14 @@ class EmittedNativeSseTracker:
         # stream. Used by the transport to distinguish a real response from an
         # intermittent "empty completion" (HTTP 200 with no content blocks).
         self.saw_content_block_start = False
+        # True once a terminal ``message_stop`` has been emitted. A stream that
+        # opened content but never reaches this flag was cut short upstream;
+        # the transport repairs it instead of leaking a half-message the client
+        # rejects as "stream closed before completion".
+        self.saw_message_stop = False
+        # True once a ``message_delta`` (stop_reason/usage) has been emitted, so
+        # a repair tail can avoid emitting a duplicate one.
+        self.saw_message_delta = False
 
     def feed(self, chunk: str) -> None:
         """Record SSE frames completed by ``chunk`` (handles splitting across reads)."""
@@ -65,6 +73,19 @@ class EmittedNativeSseTracker:
             else:
                 with suppress(ValueError):
                     self._open_stack.remove(idx)
+            return
+
+        if event.event == "message_delta":
+            self.saw_message_delta = True
+            return
+
+        if event.event == "message_stop":
+            self.saw_message_stop = True
+
+    @property
+    def has_open_blocks(self) -> bool:
+        """True when a content block was started but not yet stopped."""
+        return bool(self._open_stack)
 
     def next_content_index(self) -> int:
         """Next unused content block index based on emitted starts."""
@@ -99,4 +120,29 @@ class EmittedNativeSseTracker:
         sse.blocks.next_index = self.next_content_index()
         yield from sse.emit_error(error_message)
         yield sse.message_delta("end_turn", 1)
+        yield sse.message_stop()
+
+    def iter_clean_close_tail(
+        self,
+        *,
+        request: Any,
+        input_tokens: int,
+        log_raw_sse_events: bool,
+    ) -> Iterator[str]:
+        """Emit a terminal ``message_stop`` (and ``message_delta`` if not already seen).
+
+        Used when every content block closed normally but the upstream dropped
+        before its terminal frame: the content is complete, so no error block is
+        added — just the well-formed terminator the client SDK requires.
+        """
+        mid = self.message_id or f"msg_{uuid.uuid4()}"
+        model = self.model or (getattr(request, "model", "") or "")
+        sse = SSEBuilder(
+            mid,
+            model,
+            input_tokens,
+            log_raw_events=log_raw_sse_events,
+        )
+        if not self.saw_message_delta:
+            yield sse.message_delta("end_turn", 1)
         yield sse.message_stop()

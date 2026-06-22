@@ -22,6 +22,10 @@ from core.anthropic.native_sse_block_policy import (
     NativeSseBlockPolicyState,
     transform_native_sse_block_event,
 )
+from core.anthropic.tool_use_buffer import (
+    IncompleteUpstreamStreamError,
+    buffer_incomplete_tool_use,
+)
 from core.trace import provider_native_messages_body_snapshot, trace_event
 from providers.base import BaseProvider, ProviderConfig
 from providers.error_mapping import (
@@ -291,6 +295,14 @@ class AnthropicMessagesTransport(BaseProvider):
         )
         return self._format_error_message(base, request_id)
 
+    def _incomplete_stream_message(self, request_id: str | None) -> str:
+        """User-facing note for an upstream stream cut short before its terminator."""
+        base = (
+            f"Upstream provider {self._provider_name} ended the response stream "
+            "before completion (no terminal message_stop)."
+        )
+        return self._format_error_message(base, request_id)
+
     def _get_error_message(self, error: Exception, request_id: str | None) -> str:
         """Map an exception into a user-facing provider error message."""
         mapped_error = map_error(error, rate_limiter=self._global_rate_limiter)
@@ -421,10 +433,19 @@ class AnthropicMessagesTransport(BaseProvider):
                 lead_buffer: list[str] = []
                 content_started = not guard_empty
 
-                async for chunk in self._iter_stream_chunks(
-                    response,
-                    state=state,
-                    thinking_enabled=thinking_enabled,
+                # Hold each ``tool_use`` block until it is complete: a truncated
+                # tool call (DeepSeek dropping the socket mid ``Edit``/``Write``)
+                # never reaches the client. If the upstream ends with a tool_use
+                # still open, ``buffer_incomplete_tool_use`` raises
+                # ``IncompleteUpstreamStreamError`` — handled like any mid-stream
+                # transport failure below (clean retry or error tail), so the
+                # partial tool call is dropped rather than relayed.
+                async for chunk in buffer_incomplete_tool_use(
+                    self._iter_stream_chunks(
+                        response,
+                        state=state,
+                        thinking_enabled=thinking_enabled,
+                    )
                 ):
                     emitted_tracker.feed(chunk)
                     if not content_started:
@@ -461,6 +482,47 @@ class AnthropicMessagesTransport(BaseProvider):
                     raise PreStreamProviderError(
                         self._empty_completion_message(request_id)
                     )
+
+                if (
+                    emitted_tracker.saw_content_block_start
+                    and not emitted_tracker.saw_message_stop
+                ):
+                    # Upstream opened content but closed the stream WITHOUT a
+                    # terminal message_stop (e.g. DeepSeek dropping the socket
+                    # mid-message, no exception raised). Repair into a well-formed
+                    # stream so the client SDK does not abort the turn with
+                    # "stream closed before completion". An open block means the
+                    # content itself was truncated → honest error tail; all blocks
+                    # closed means only the terminator was lost → clean close with
+                    # no spurious error text.
+                    had_open = emitted_tracker.has_open_blocks
+                    trace_event(
+                        stage="provider",
+                        event="provider.response.incomplete_stream",
+                        source="provider",
+                        provider=self._provider_name,
+                        gateway_model=request.model,
+                        downstream_model=body.get("model"),
+                        had_open_blocks=had_open,
+                    )
+                    for event in emitted_tracker.iter_close_unclosed_blocks():
+                        yield event
+                    if had_open:
+                        for event in emitted_tracker.iter_midstream_error_tail(
+                            self._incomplete_stream_message(request_id),
+                            request=request,
+                            input_tokens=input_tokens,
+                            log_raw_sse_events=self._config.log_raw_sse_events,
+                        ):
+                            yield event
+                    else:
+                        for event in emitted_tracker.iter_clean_close_tail(
+                            request=request,
+                            input_tokens=input_tokens,
+                            log_raw_sse_events=self._config.log_raw_sse_events,
+                        ):
+                            yield event
+                    return
 
                 trace_event(
                     stage="provider",
