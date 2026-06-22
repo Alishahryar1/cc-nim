@@ -9,7 +9,7 @@ import subprocess
 import time
 import uuid
 import wave
-from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator, Sequence
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -28,7 +28,6 @@ from core.anthropic.stream_contracts import (
     text_content,
 )
 from messaging.models import IncomingMessage
-from messaging.platforms.base import MessagingPlatform
 from messaging.session import SessionStore
 from messaging.workflow import MessagingWorkflow
 from smoke.lib.config import ProviderModel, SmokeConfig, auth_headers
@@ -306,7 +305,7 @@ class ClientProtocolDriver:
         )
 
 
-class FakePlatform(MessagingPlatform):
+class FakePlatform:
     """In-memory platform that exercises the real message handler."""
 
     def __init__(self, name: str) -> None:
@@ -423,7 +422,7 @@ class FakePlatform(MessagingPlatform):
     async def queue_delete_messages(
         self,
         chat_id: str,
-        message_ids: Sequence[str],
+        message_ids: list[str],
         fire_and_forget: bool = True,
     ) -> None:
         for message_id in message_ids:
@@ -438,9 +437,9 @@ class FakePlatform(MessagingPlatform):
         )
 
     async def cancel_pending_voice(
-        self, chat_id: str, voice_message_id: str
+        self, chat_id: str, reply_id: str
     ) -> tuple[str, str] | None:
-        return self._pending_voice.pop((chat_id, voice_message_id), None)
+        return self._pending_voice.pop((chat_id, reply_id), None)
 
 
 class FakeCLISession:
@@ -515,7 +514,11 @@ class FakePlatformDriver:
             storage_path=str(self.tmp_path / f"{self.platform_name}-sessions.json")
         )
         self.workflow = MessagingWorkflow(
-            self.platform, self.cli_manager, self.session_store
+            self.platform,
+            self.cli_manager,
+            self.session_store,
+            platform_name=self.platform_name,
+            voice_cancellation=self.platform,
         )
         self.platform.on_message(self.workflow.handle_message)
 

@@ -3,13 +3,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from telegram.error import NetworkError, RetryAfter, TelegramError
 
-from messaging.platforms.telegram import TelegramPlatform
+from messaging.platforms.telegram import TelegramRuntime
 
 
 @pytest.fixture
 def telegram_platform():
     with patch("messaging.platforms.telegram.TELEGRAM_AVAILABLE", True):
-        platform = TelegramPlatform(bot_token="test_token", allowed_user_id="12345")
+        platform = TelegramRuntime(bot_token="test_token", allowed_user_id="12345")
         return platform
 
 
@@ -31,7 +31,7 @@ async def test_telegram_retry_on_network_error(telegram_platform):
 
     # We need to patch asyncio.sleep to speed up the test
     with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
-        msg_id = await telegram_platform.send_message("chat_1", "hello")
+        msg_id = await telegram_platform.outbound.send_message("chat_1", "hello")
 
         assert msg_id == "999"
         assert mock_bot.send_message.call_count == 3
@@ -51,7 +51,7 @@ async def test_telegram_retry_on_retry_after(telegram_platform):
     telegram_platform._application.bot = mock_bot
 
     with patch("asyncio.sleep", AsyncMock()) as mock_sleep:
-        msg_id = await telegram_platform.send_message("chat_1", "hello")
+        msg_id = await telegram_platform.outbound.send_message("chat_1", "hello")
 
         assert msg_id == "1000"
         assert mock_bot.send_message.call_count == 2
@@ -69,7 +69,7 @@ async def test_telegram_no_retry_on_bad_request(telegram_platform):
     telegram_platform._application.bot = mock_bot
 
     with pytest.raises(TelegramError):
-        await telegram_platform.send_message("chat_1", "hello")
+        await telegram_platform.outbound.send_message("chat_1", "hello")
 
     assert mock_bot.send_message.call_count == 1
 

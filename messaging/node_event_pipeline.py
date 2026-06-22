@@ -10,7 +10,7 @@ from loguru import logger
 from core.trace import trace_event
 
 from .cli_event_constants import TRANSCRIPT_EVENT_TYPES, get_status_for_event
-from .platforms.base import ManagedClaudeSessionManagerProtocol
+from .managed_protocols import ManagedClaudeSessionManagerProtocol
 from .safe_diagnostics import text_len_hint
 from .session import SessionStore
 from .transcript import TranscriptBuffer

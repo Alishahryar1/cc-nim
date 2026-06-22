@@ -11,8 +11,9 @@ from core.anthropic import format_user_error_preview, get_user_facing_error_mess
 from core.trace import trace_event
 
 from .event_parser import parse_cli_event
+from .managed_protocols import ManagedClaudeSessionManagerProtocol
 from .node_event_pipeline import handle_session_info_event, process_parsed_cli_event
-from .platforms.base import ManagedClaudeSessionManagerProtocol, MessagingPlatform
+from .platforms.ports import OutboundMessenger
 from .safe_diagnostics import format_exception_for_log
 from .session import SessionStore
 from .transcript import RenderCtx, TranscriptBuffer
@@ -26,7 +27,8 @@ class MessagingNodeRunner:
     def __init__(
         self,
         *,
-        platform: MessagingPlatform,
+        platform_name: str,
+        outbound: OutboundMessenger,
         cli_manager: ManagedClaudeSessionManagerProtocol,
         session_store: SessionStore,
         get_tree_queue: Callable[[], TreeQueueManager],
@@ -39,7 +41,8 @@ class MessagingNodeRunner:
         log_raw_cli_diagnostics: bool = False,
         log_messaging_error_details: bool = False,
     ) -> None:
-        self.platform = platform
+        self.platform_name = platform_name
+        self.outbound = outbound
         self.cli_manager = cli_manager
         self.session_store = session_store
         self._get_tree_queue = get_tree_queue
@@ -103,7 +106,7 @@ class MessagingNodeRunner:
         last_status: str | None = None
 
         parent_session_id = None
-        platform_nm = getattr(self.platform, "name", "messaging")
+        platform_nm = self.platform_name
         if tree and node.parent_id:
             parent_session_id = tree.get_parent_session_id(node_id)
             if parent_session_id:
@@ -117,7 +120,7 @@ class MessagingNodeRunner:
                 )
 
         editor = ThrottledTranscriptEditor(
-            platform=self.platform,
+            outbound=self.outbound,
             parse_mode=self._get_parse_mode(),
             get_limit_chars=self._get_limit_chars,
             transcript=transcript,
@@ -329,8 +332,8 @@ class MessagingNodeRunner:
         if affected:
             self._save_tree(tree_queue.get_tree_for_node(node_id))
         for child in affected[1:]:
-            self.platform.fire_and_forget(
-                self.platform.queue_edit_message(
+            self.outbound.fire_and_forget(
+                self.outbound.queue_edit_message(
                     child.incoming.chat_id,
                     child.status_message_id,
                     self._format_status("❌", "Cancelled:", child_status_text),

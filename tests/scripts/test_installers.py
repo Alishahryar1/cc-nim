@@ -1,4 +1,8 @@
+import shutil
+import subprocess
 from pathlib import Path
+
+import pytest
 
 
 def _repo_root() -> Path:
@@ -196,8 +200,92 @@ def test_install_ps1_updates_uv_with_detected_source() -> None:
 def test_install_ps1_validates_minimum_uv_version() -> None:
     text = _script_text("install.ps1")
     validate_body = _braced_body(text, "function Assert-MinUvVersion")
+    get_version_body = _braced_body(text, "function Get-InstalledUvVersion")
 
     assert '$MinUvVersion = "0.11.0"' in text
     assert '"self", "version", "--short"' in text
+    assert "Convert-UvVersionOutput $selfVersionProbe.Output" in get_version_body
+    assert "Convert-UvVersionOutput $versionProbe.Output" in get_version_body
+    assert ".Output.Trim()" not in get_version_body
     assert "[version]" in text
     assert "uv $MinUvVersion or newer is required" in validate_body
+
+
+def test_install_ps1_parses_uv_version_probe_outputs(tmp_path: Path) -> None:
+    powershell = shutil.which("pwsh") or shutil.which("powershell")
+    if powershell is None:
+        pytest.skip("PowerShell is not available")
+
+    text = _script_text("install.ps1")
+    convert_body = _braced_body(text, "function Convert-UvVersionOutput")
+    get_version_body = _braced_body(text, "function Get-InstalledUvVersion")
+    compare_body = _braced_body(text, "function Test-UvVersionAtLeast")
+    script = f"""
+Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+function Convert-UvVersionOutput {{
+{convert_body}
+}}
+function Get-InstalledUvVersion {{
+{get_version_body}
+}}
+function Test-UvVersionAtLeast {{
+{compare_body}
+}}
+
+$script:Mode = "self-long"
+function Invoke-ProbeCommand {{
+    param(
+        [string] $FilePath,
+        [string[]] $Arguments = @()
+    )
+
+    $joined = $Arguments -join " "
+    if ($script:Mode -eq "self-long" -and $joined -eq "self version --short") {{
+        return [pscustomobject] @{{ ExitCode = 0; Output = "0.11.7 (9d177269e 2026-06-05 x86_64-pc-windows-msvc)" }}
+    }}
+    if ($script:Mode -eq "fallback-long" -and $joined -eq "self version --short") {{
+        return [pscustomobject] @{{ ExitCode = 1; Output = "" }}
+    }}
+    if ($script:Mode -eq "fallback-long" -and $joined -eq "--version") {{
+        return [pscustomobject] @{{ ExitCode = 0; Output = "uv 0.11.7 (9d177269e 2026-06-05 x86_64-pc-windows-msvc)" }}
+    }}
+    if ($script:Mode -eq "bad") {{
+        return [pscustomobject] @{{ ExitCode = 0; Output = "not a uv version" }}
+    }}
+    throw "Unexpected probe: $joined"
+}}
+
+if ((Convert-UvVersionOutput "0.11.7") -ne "0.11.7") {{ throw "clean version parse failed" }}
+if ((Convert-UvVersionOutput "uv 0.11.7 (9d177269e 2026)") -ne "0.11.7") {{ throw "uv --version parse failed" }}
+if ((Convert-UvVersionOutput "0.11.7 (9d177269e 2026)") -ne "0.11.7") {{ throw "self version parse failed" }}
+if ((Convert-UvVersionOutput "not a uv version") -ne "") {{ throw "bad output should not parse" }}
+
+$script:Mode = "self-long"
+if ((Get-InstalledUvVersion) -ne "0.11.7") {{ throw "self version normalization failed" }}
+$script:Mode = "fallback-long"
+if ((Get-InstalledUvVersion) -ne "0.11.7") {{ throw "fallback version normalization failed" }}
+if (-not (Test-UvVersionAtLeast -Version "0.11.7 (9d177269e 2026)" -Minimum "0.11.0")) {{ throw "version comparison failed" }}
+
+$script:Mode = "bad"
+try {{
+    Get-InstalledUvVersion | Out-Null
+    throw "bad version did not fail"
+}}
+catch {{
+    if ($_.Exception.Message -ne "Unable to determine uv version.") {{
+        throw
+    }}
+}}
+"""
+    script_path = tmp_path / "test-install-uv-version.ps1"
+    script_path.write_text(script, encoding="utf-8")
+
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-File", str(script_path)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr

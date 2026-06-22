@@ -23,9 +23,19 @@ class WaferProvider(AnthropicMessagesTransport):
         self, request: Any, thinking_enabled: bool | None = None
     ) -> dict:
         """Build native body; Wafer rejects omitted thinking as ``reasoning_effort=none``."""
-        body = super()._build_request_body(request, thinking_enabled=thinking_enabled)
+        effective_thinking_enabled = self._is_thinking_enabled(
+            request, thinking_enabled
+        )
+        body = self._build_request_body_with_resolved_thinking(
+            request,
+            thinking_enabled=effective_thinking_enabled,
+        )
         if "thinking" not in body:
-            body["thinking"] = {"type": "enabled"}
+            body["thinking"] = (
+                {"type": "enabled"}
+                if effective_thinking_enabled
+                else {"type": "disabled"}
+            )
         return body
 
     def _request_headers(self) -> dict[str, str]:

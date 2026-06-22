@@ -39,6 +39,26 @@ def _app_settings(**kwargs):
     return SimpleNamespace(**data)
 
 
+def _fake_messaging_components(runtime: MagicMock | None = None) -> SimpleNamespace:
+    runtime = runtime or MagicMock()
+    runtime.name = getattr(runtime, "name", "fake")
+    runtime.on_message = getattr(runtime, "on_message", MagicMock())
+    runtime.start = getattr(runtime, "start", AsyncMock())
+    runtime.stop = getattr(runtime, "stop", AsyncMock())
+    outbound = MagicMock()
+    outbound.queue_send_message = AsyncMock(return_value="msg")
+    outbound.queue_edit_message = AsyncMock()
+    outbound.queue_delete_message = AsyncMock()
+    outbound.queue_delete_messages = AsyncMock()
+    outbound.fire_and_forget = MagicMock()
+    return SimpleNamespace(
+        name=runtime.name,
+        runtime=runtime,
+        outbound=outbound,
+        voice_cancellation=None,
+    )
+
+
 def test_warn_if_process_auth_token_logs_warning():
     api_runtime_mod = importlib.import_module("api.runtime")
     settings = cast(
@@ -94,7 +114,7 @@ async def test_runtime_startup_logs_admin_url_without_printed_server_banner(tmp_
         patch.object(ProviderRegistry, "start_model_list_refresh"),
         patch.object(ProviderRegistry, "cleanup", new=AsyncMock()),
         patch(
-            "messaging.platforms.factory.create_messaging_platform",
+            "messaging.platforms.factory.create_messaging_components",
             return_value=None,
         ),
     ):
@@ -286,6 +306,7 @@ def test_app_lifespan_sets_state_and_cleans_up(tmp_path, messaging_enabled):
     fake_platform.on_message = MagicMock()
     fake_platform.start = AsyncMock()
     fake_platform.stop = AsyncMock()
+    fake_components = _fake_messaging_components(fake_platform)
 
     session_store = MagicMock()
     session_store.get_all_trees.return_value = [{"t": 1}] if messaging_enabled else []
@@ -309,9 +330,9 @@ def test_app_lifespan_sets_state_and_cleans_up(tmp_path, messaging_enabled):
         patch.object(api_app_mod, "get_settings", return_value=settings),
         patch.object(ProviderRegistry, "cleanup", new=registry_cleanup),
         patch(
-            "messaging.platforms.factory.create_messaging_platform",
-            return_value=fake_platform if messaging_enabled else None,
-        ) as create_platform,
+            "messaging.platforms.factory.create_messaging_components",
+            return_value=fake_components if messaging_enabled else None,
+        ) as create_components,
         patch("messaging.session.SessionStore", return_value=session_store),
         patch("cli.managed.ManagedClaudeSessionManager", return_value=cli_manager),
         patch(
@@ -323,7 +344,7 @@ def test_app_lifespan_sets_state_and_cleans_up(tmp_path, messaging_enabled):
         pass
 
     if messaging_enabled:
-        create_platform.assert_called_once()
+        create_components.assert_called_once()
         fake_platform.on_message.assert_called_once()
         fake_platform.start.assert_awaited_once()
         fake_platform.stop.assert_awaited_once()
@@ -337,7 +358,7 @@ def test_app_lifespan_sets_state_and_cleans_up(tmp_path, messaging_enabled):
         fake_platform.start.assert_not_awaited()
         fake_platform.stop.assert_not_awaited()
         cli_manager.stop_all.assert_not_awaited()
-        assert getattr(app.state, "messaging_platform", "missing") is None
+        assert getattr(app.state, "messaging_runtime", "missing") is None
 
     registry_cleanup.assert_awaited_once()
 
@@ -364,6 +385,7 @@ def test_app_lifespan_cleanup_continues_if_platform_stop_raises(tmp_path):
     fake_platform.on_message = MagicMock()
     fake_platform.start = AsyncMock()
     fake_platform.stop = AsyncMock(side_effect=RuntimeError("stop failed"))
+    fake_components = _fake_messaging_components(fake_platform)
 
     session_store = MagicMock()
     session_store.get_all_trees.return_value = []
@@ -379,8 +401,8 @@ def test_app_lifespan_cleanup_continues_if_platform_stop_raises(tmp_path):
         patch.object(api_app_mod, "get_settings", return_value=settings),
         patch.object(ProviderRegistry, "cleanup", new=registry_cleanup),
         patch(
-            "messaging.platforms.factory.create_messaging_platform",
-            return_value=fake_platform,
+            "messaging.platforms.factory.create_messaging_components",
+            return_value=fake_components,
         ),
         patch("messaging.session.SessionStore", return_value=session_store),
         patch("cli.managed.ManagedClaudeSessionManager", return_value=cli_manager),
@@ -421,16 +443,16 @@ async def test_runtime_startup_validation_failure_does_not_block_server(tmp_path
         patch.object(ProviderRegistry, "cleanup", new=cleanup),
         patch.object(api_runtime_mod.logger, "warning") as log_warning,
         patch(
-            "messaging.platforms.factory.create_messaging_platform",
+            "messaging.platforms.factory.create_messaging_components",
             return_value=None,
-        ) as create_platform,
+        ) as create_components,
     ):
         await runtime.startup()
         await runtime.shutdown()
 
     validation.assert_awaited_once_with(settings)
     cleanup.assert_awaited_once()
-    create_platform.assert_called_once()
+    create_components.assert_called_once()
     logged = " ".join(
         str(arg) for call in log_warning.call_args_list for arg in call.args
     )
@@ -507,14 +529,14 @@ def test_app_lifespan_messaging_import_error_no_crash(tmp_path, caplog):
         patch.object(api_app_mod, "get_settings", return_value=settings),
         patch.object(ProviderRegistry, "cleanup", new=registry_cleanup),
         patch(
-            "messaging.platforms.factory.create_messaging_platform",
+            "messaging.platforms.factory.create_messaging_components",
             side_effect=ImportError("discord not installed"),
         ),
         TestClient(app),
     ):
         pass
 
-    assert getattr(app.state, "messaging_platform", None) is None
+    assert getattr(app.state, "messaging_runtime", None) is None
     registry_cleanup.assert_awaited_once()
 
 
@@ -541,6 +563,7 @@ def test_app_lifespan_platform_start_exception_cleanup_still_runs(tmp_path):
     fake_platform.on_message = MagicMock()
     fake_platform.start = AsyncMock(side_effect=RuntimeError("start failed"))
     fake_platform.stop = AsyncMock()
+    fake_components = _fake_messaging_components(fake_platform)
 
     session_store = MagicMock()
     session_store.get_all_trees.return_value = []
@@ -556,8 +579,8 @@ def test_app_lifespan_platform_start_exception_cleanup_still_runs(tmp_path):
         patch.object(api_app_mod, "get_settings", return_value=settings),
         patch.object(ProviderRegistry, "cleanup", new=registry_cleanup),
         patch(
-            "messaging.platforms.factory.create_messaging_platform",
-            return_value=fake_platform,
+            "messaging.platforms.factory.create_messaging_components",
+            return_value=fake_components,
         ),
         patch("messaging.session.SessionStore", return_value=session_store),
         patch("cli.managed.ManagedClaudeSessionManager", return_value=cli_manager),
@@ -591,6 +614,7 @@ def test_app_lifespan_flush_pending_save_exception_warning_only(tmp_path):
     fake_platform.on_message = MagicMock()
     fake_platform.start = AsyncMock()
     fake_platform.stop = AsyncMock()
+    fake_components = _fake_messaging_components(fake_platform)
 
     session_store = MagicMock()
     session_store.get_all_trees.return_value = []
@@ -607,8 +631,8 @@ def test_app_lifespan_flush_pending_save_exception_warning_only(tmp_path):
         patch.object(api_app_mod, "get_settings", return_value=settings),
         patch.object(ProviderRegistry, "cleanup", new=registry_cleanup),
         patch(
-            "messaging.platforms.factory.create_messaging_platform",
-            return_value=fake_platform,
+            "messaging.platforms.factory.create_messaging_components",
+            return_value=fake_components,
         ),
         patch("messaging.session.SessionStore", return_value=session_store),
         patch("cli.managed.ManagedClaudeSessionManager", return_value=cli_manager),

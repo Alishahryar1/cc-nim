@@ -18,7 +18,7 @@ from providers.registry import ProviderRegistry
 
 if TYPE_CHECKING:
     from cli.managed import ManagedClaudeSessionManager
-    from messaging.platforms.base import MessagingPlatform
+    from messaging.platforms.ports import MessagingPlatformComponents, MessagingRuntime
     from messaging.session import SessionStore
     from messaging.workflow import MessagingWorkflow
 
@@ -88,7 +88,7 @@ class AppRuntime:
     app: FastAPI
     settings: Settings
     _provider_registry: ProviderRegistry | None = field(default=None, init=False)
-    messaging_platform: MessagingPlatform | None = None
+    messaging_runtime: MessagingRuntime | None = None
     messaging_workflow: MessagingWorkflow | None = None
     cli_manager: ManagedClaudeSessionManager | None = None
 
@@ -153,10 +153,10 @@ class AppRuntime:
                     )
 
         logger.info("Shutdown requested, cleaning up...")
-        if self.messaging_platform:
+        if self.messaging_runtime:
             await best_effort(
-                "messaging_platform.stop",
-                self.messaging_platform.stop(),
+                "messaging_runtime.stop",
+                self.messaging_runtime.stop(),
                 log_verbose_errors=verbose,
             )
         if self.cli_manager:
@@ -178,10 +178,10 @@ class AppRuntime:
         try:
             from messaging.platforms.factory import (
                 MessagingPlatformOptions,
-                create_messaging_platform,
+                create_messaging_components,
             )
 
-            self.messaging_platform = create_messaging_platform(
+            components = create_messaging_components(
                 self.settings.messaging_platform,
                 MessagingPlatformOptions(
                     telegram_bot_token=self.settings.telegram_bot_token,
@@ -200,8 +200,8 @@ class AppRuntime:
                 ),
             )
 
-            if self.messaging_platform:
-                await self._start_messaging_workflow()
+            if components:
+                await self._start_messaging_workflow(components)
 
         except ImportError as e:
             if self.settings.log_api_error_tracebacks:
@@ -223,7 +223,9 @@ class AppRuntime:
                     type(e).__name__,
                 )
 
-    async def _start_messaging_workflow(self) -> None:
+    async def _start_messaging_workflow(
+        self, components: MessagingPlatformComponents
+    ) -> None:
         from cli.managed import ManagedClaudeSessionManager
         from messaging.session import SessionStore
         from messaging.workflow import MessagingWorkflow
@@ -259,10 +261,11 @@ class AppRuntime:
             storage_path=os.path.join(data_path, "sessions.json"),
             message_log_cap=self.settings.max_message_log_entries_per_chat,
         )
-        platform = self.messaging_platform
-        assert platform is not None
+        self.messaging_runtime = components.runtime
         self.messaging_workflow = MessagingWorkflow(
-            platform=platform,
+            platform_name=components.name,
+            outbound=components.outbound,
+            voice_cancellation=components.voice_cancellation,
             cli_manager=self.cli_manager,
             session_store=session_store,
             debug_platform_edits=self.settings.debug_platform_edits,
@@ -273,9 +276,9 @@ class AppRuntime:
         )
         self._restore_tree_state(session_store)
 
-        platform.on_message(self.messaging_workflow.handle_message)
-        await platform.start()
-        logger.info(f"{platform.name} platform started with messaging workflow")
+        components.runtime.on_message(self.messaging_workflow.handle_message)
+        await components.runtime.start()
+        logger.info("{} platform started with messaging workflow", components.name)
 
     def _restore_tree_state(self, session_store: SessionStore) -> None:
         saved_trees = session_store.get_all_trees()
@@ -304,7 +307,7 @@ class AppRuntime:
             )
 
     def _publish_state(self) -> None:
-        self.app.state.messaging_platform = self.messaging_platform
+        self.app.state.messaging_runtime = self.messaging_runtime
         self.app.state.messaging_workflow = self.messaging_workflow
         self.app.state.cli_manager = self.cli_manager
 

@@ -6,9 +6,10 @@ from loguru import logger
 
 from core.trace import trace_event
 
+from .managed_protocols import ManagedClaudeSessionManagerProtocol
 from .models import IncomingMessage
 from .node_runner import MessagingNodeRunner
-from .platforms.base import ManagedClaudeSessionManagerProtocol, MessagingPlatform
+from .platforms.ports import OutboundMessenger, VoiceCancellation
 from .rendering.profiles import build_rendering_profile
 from .safe_diagnostics import format_exception_for_log
 from .session import SessionStore
@@ -27,25 +28,30 @@ class MessagingWorkflow:
 
     def __init__(
         self,
-        platform: MessagingPlatform,
+        outbound: OutboundMessenger,
         cli_manager: ManagedClaudeSessionManagerProtocol,
         session_store: SessionStore,
         *,
+        platform_name: str | None = None,
+        voice_cancellation: VoiceCancellation | None = None,
         debug_platform_edits: bool = False,
         debug_subagent_stack: bool = False,
         log_raw_messaging_content: bool = False,
         log_raw_cli_diagnostics: bool = False,
         log_messaging_error_details: bool = False,
     ):
-        self.platform = platform
+        self.platform_name = platform_name or "messaging"
+        self.outbound = outbound
+        self.voice_cancellation = voice_cancellation
         self.cli_manager = cli_manager
         self.session_store = session_store
         self._log_messaging_error_details = log_messaging_error_details
         self._tree_queue = TreeQueueManager()
-        self._rendering_profile = build_rendering_profile(platform.name)
+        self._rendering_profile = build_rendering_profile(self.platform_name)
 
         self.node_runner = MessagingNodeRunner(
-            platform=platform,
+            platform_name=self.platform_name,
+            outbound=outbound,
             cli_manager=cli_manager,
             session_store=session_store,
             get_tree_queue=lambda: self._tree_queue,
@@ -59,7 +65,8 @@ class MessagingWorkflow:
             log_messaging_error_details=log_messaging_error_details,
         )
         self.turn_intake = MessagingTurnIntake(
-            platform=platform,
+            platform_name=self.platform_name,
+            outbound=outbound,
             session_store=session_store,
             command_context=self,
             get_tree_queue=lambda: self._tree_queue,
@@ -105,11 +112,10 @@ class MessagingWorkflow:
         """
         Main entry point for handling an incoming platform message.
         """
-        platform_name = getattr(self.platform, "name", "messaging")
         trace_event(
             stage="ingress",
             event="turn.received",
-            source=platform_name,
+            source=self.platform_name,
             chat_id=incoming.chat_id,
             platform_message_id=incoming.message_id,
             reply_to_message_id=incoming.reply_to_message_id,
@@ -182,8 +188,8 @@ class MessagingWorkflow:
         """Update status messages and persist tree state for cancelled nodes."""
         trees_to_save: dict[str, MessageTree] = {}
         for node in nodes:
-            self.platform.fire_and_forget(
-                self.platform.queue_edit_message(
+            self.outbound.fire_and_forget(
+                self.outbound.queue_edit_message(
                     node.incoming.chat_id,
                     node.status_message_id,
                     self.format_status("⏹", "Stopped."),

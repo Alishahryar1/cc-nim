@@ -5,6 +5,7 @@ from __future__ import annotations
 import traceback
 import uuid
 from collections.abc import AsyncIterator, Callable
+from dataclasses import replace
 from typing import Any
 
 from fastapi import HTTPException
@@ -20,6 +21,7 @@ from core.trace import api_messages_request_snapshot, trace_event, traced_async_
 from providers.base import BaseProvider
 from providers.exceptions import InvalidRequestError, ProviderError
 
+from .detection import is_safety_classifier_request
 from .model_router import ModelRouter, RoutedMessagesRequest
 from .models.anthropic import MessagesRequest, TokenCountRequest
 from .models.openai_responses import OpenAIResponsesRequest
@@ -126,6 +128,7 @@ class ApiRequestPipeline:
         try:
             _require_non_empty_messages(request_data.messages)
             routed = self._model_router.resolve_messages_request(request_data)
+            routed = self._apply_message_routing_policies(routed)
             self._reject_unsupported_server_tools(routed)
 
             intercepted = self._run_message_intercepts(routed)
@@ -271,6 +274,26 @@ class ApiRequestPipeline:
         )
         if tool_err is not None:
             raise InvalidRequestError(tool_err)
+
+    def _apply_message_routing_policies(
+        self, routed: RoutedMessagesRequest
+    ) -> RoutedMessagesRequest:
+        if not is_safety_classifier_request(routed.request):
+            return routed
+        changed = routed.resolved.thinking_enabled
+        trace_event(
+            stage="routing",
+            event="api.optimization.safety_classifier_no_thinking",
+            source="api",
+            model=routed.request.model,
+            changed=changed,
+        )
+        if not changed:
+            return routed
+        return RoutedMessagesRequest(
+            request=routed.request,
+            resolved=replace(routed.resolved, thinking_enabled=False),
+        )
 
     def _run_message_intercepts(self, routed: RoutedMessagesRequest) -> object | None:
         for intercept in self._message_intercepts:

@@ -1,15 +1,18 @@
-"""Messaging platform adapters (Telegram, Discord, etc.)."""
+"""Messaging platform runtimes and ports."""
 
-from .base import (
-    ManagedClaudeSessionManagerProtocol,
-    ManagedClaudeSessionProtocol,
-    MessagingPlatform,
+from .factory import MessagingPlatformOptions, create_messaging_components
+from .ports import (
+    MessagingPlatformComponents,
+    MessagingRuntime,
+    OutboundMessenger,
+    VoiceCancellation,
 )
-from .factory import create_messaging_platform
 
 __all__ = [
-    "ManagedClaudeSessionManagerProtocol",
-    "ManagedClaudeSessionProtocol",
-    "MessagingPlatform",
-    "create_messaging_platform",
+    "MessagingPlatformComponents",
+    "MessagingPlatformOptions",
+    "MessagingRuntime",
+    "OutboundMessenger",
+    "VoiceCancellation",
+    "create_messaging_components",
 ]
