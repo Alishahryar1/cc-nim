@@ -1102,9 +1102,10 @@ def _target_values_with_updates(updates: Mapping[str, Any]) -> dict[str, str]:
             {key: val for key, val in managed_values.items() if key in values}
         )
     else:
-        for key, entry in state.items():
-            if entry["source"] in {"repo_env", "template", "default"}:
-                values[key] = str(entry["value"])
+        repo_values = _dotenv_values_from_file(repo_env_path())
+        for key, val in repo_values.items():
+            if key in values:
+                values[key] = val
 
     for key, value in updates.items():
         field = FIELD_BY_KEY.get(key)
