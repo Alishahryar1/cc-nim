@@ -278,3 +278,113 @@ def test_model_router_logs_mapping(settings):
     assert "MODEL MAPPING" in args[0]
     assert args[1] == "claude-2.1"
     assert args[2] == "fallback-model"
+
+
+# ==================== Vision failover (VISION_MODEL_FALLBACK) ====================
+
+_IMAGE_BLOCK = {
+    "type": "image",
+    "source": {"type": "base64", "media_type": "image/png", "data": "aGVsbG8="},
+}
+
+
+def _vision_request(model="claude-opus-4-20250514"):
+    return MessagesRequest(
+        model=model,
+        max_tokens=100,
+        messages=[
+            Message(
+                role="user",
+                content=[{"type": "text", "text": "describe"}, _IMAGE_BLOCK],
+            )
+        ],
+    )
+
+
+def test_model_router_vision_fallback_applies(settings):
+    settings.model_vision = "open_router/google/gemini-2.5-flash"
+    settings.model_vision_fallback = "open_router/google/gemini-2.5-pro"
+    settings.enable_vision_thinking = None
+
+    routed = ModelRouter(settings).resolve_messages_request(_vision_request())
+
+    # Primary is the dedicated vision target.
+    assert routed.request.model == "google/gemini-2.5-flash"
+    assert routed.resolved.provider_model_ref == "open_router/google/gemini-2.5-flash"
+    # Fallback is the dedicated vision fallback (vision-capable), not a tier one.
+    assert routed.fallback_resolved is not None
+    assert routed.fallback_resolved.provider_id == "open_router"
+    assert routed.fallback_resolved.provider_model == "google/gemini-2.5-pro"
+    assert routed.fallback_resolved.thinking_enabled is False
+    assert routed.fallback_request is not None
+    assert routed.fallback_request.model == "google/gemini-2.5-pro"
+
+
+def test_model_router_no_vision_fallback_when_unset(settings):
+    settings.model_vision = "open_router/google/gemini-2.5-flash"
+    settings.model_vision_fallback = None
+
+    routed = ModelRouter(settings).resolve_messages_request(_vision_request())
+
+    assert routed.request.model == "google/gemini-2.5-flash"
+    assert routed.fallback_resolved is None
+    assert routed.fallback_request is None
+
+
+def test_model_router_vision_fallback_skips_identical_to_primary(settings):
+    settings.model_vision = "open_router/google/gemini-2.5-flash"
+    settings.model_vision_fallback = "open_router/google/gemini-2.5-flash"
+
+    routed = ModelRouter(settings).resolve_messages_request(_vision_request())
+
+    assert routed.fallback_resolved is None
+    assert routed.fallback_request is None
+
+
+def test_model_router_vision_route_ignores_tier_fallback(settings):
+    # Even with an opus tier fallback configured, a vision request must use the
+    # dedicated VISION_MODEL_FALLBACK, never the tier MODEL_*_FALLBACK chain.
+    settings.model_vision = "open_router/google/gemini-2.5-flash"
+    settings.model_vision_fallback = "open_router/google/gemini-2.5-pro"
+    _clear_fallbacks(settings)
+    settings.model_opus_fallback = "deepseek/deepseek-v4-pro"
+
+    routed = ModelRouter(settings).resolve_messages_request(
+        _vision_request(model="claude-opus-4-20250514")
+    )
+
+    assert routed.fallback_resolved is not None
+    assert routed.fallback_resolved.provider_id == "open_router"
+    assert routed.fallback_resolved.provider_model == "google/gemini-2.5-pro"
+
+
+def test_model_router_vision_thinking_applies_to_fallback(settings):
+    settings.model_vision = "open_router/google/gemini-2.5-flash"
+    settings.model_vision_fallback = "open_router/anthropic/claude-sonnet-4.6"
+    settings.enable_vision_thinking = True
+
+    routed = ModelRouter(settings).resolve_messages_request(_vision_request())
+
+    assert routed.fallback_resolved is not None
+    assert routed.fallback_resolved.thinking_enabled is True
+
+
+def test_model_router_non_vision_request_ignores_vision_fallback(settings):
+    # A request WITHOUT image content uses the tier fallback chain even when
+    # VISION_MODEL_FALLBACK is configured.
+    settings.model_vision = "open_router/google/gemini-2.5-flash"
+    settings.model_vision_fallback = "open_router/google/gemini-2.5-pro"
+    settings.model_opus = "deepseek/deepseek-v4-pro"
+    _clear_fallbacks(settings)
+    settings.model_opus_fallback = "open_router/anthropic/claude-sonnet-4.6"
+
+    routed = ModelRouter(settings).resolve_messages_request(
+        MessagesRequest(
+            model="claude-opus-4-20250514",
+            max_tokens=100,
+            messages=[Message(role="user", content="no image here")],
+        )
+    )
+
+    assert routed.fallback_resolved is not None
+    assert routed.fallback_resolved.provider_model == "anthropic/claude-sonnet-4.6"

@@ -194,6 +194,15 @@ class Settings(BaseSettings):
     # fail if the regular provider doesn't support images, e.g. DeepSeek).
     model_vision: str | None = Field(default=None, validation_alias="VISION_MODEL")
 
+    # Vision failover: used when the primary VISION_MODEL fails BEFORE emitting
+    # any content (upstream 429/5xx/timeout/connection/400). MUST itself be a
+    # vision-capable model (the request carries image/document blocks). The
+    # vision path is a dedicated target, so it does NOT use the tier
+    # MODEL_*_FALLBACK chain — only this override.
+    model_vision_fallback: str | None = Field(
+        default=None, validation_alias="VISION_MODEL_FALLBACK"
+    )
+
     # ==================== Per-Provider Proxy ====================
     nvidia_nim_proxy: str = Field(default="", validation_alias="NVIDIA_NIM_PROXY")
     open_router_proxy: str = Field(default="", validation_alias="OPENROUTER_PROXY")
@@ -533,6 +542,7 @@ class Settings(BaseSettings):
             ("MODEL_SONNET", self.model_sonnet),
             ("MODEL_HAIKU", self.model_haiku),
             ("VISION_MODEL", self.model_vision),
+            ("VISION_MODEL_FALLBACK", self.model_vision_fallback),
             ("MODEL_FALLBACK", self.model_fallback),
             ("MODEL_OPUS_FALLBACK", self.model_opus_fallback),
             ("MODEL_SONNET_FALLBACK", self.model_sonnet_fallback),

@@ -189,22 +189,61 @@ class ModelRouter:
             thinking_enabled=self._settings.resolve_thinking(original_model),
         )
 
+    def _resolve_vision_fallback(
+        self, primary: ResolvedModel
+    ) -> ResolvedModel | None:
+        """Resolve the optional failover route for the vision path.
+
+        Vision requests carry image/document blocks, so the fallback MUST itself
+        be a vision-capable model. Configured solely via ``VISION_MODEL_FALLBACK``
+        (the vision path has a dedicated target and does not use the tier
+        ``MODEL_*_FALLBACK`` chain). Returns ``None`` when unset or when it would
+        resolve to the same provider+model as the primary vision target (a no-op).
+        """
+        ref = self._settings.model_vision_fallback
+        if ref is None:
+            return None
+        provider_id = Settings.parse_provider_type(ref)
+        provider_model = Settings.parse_model_name(ref)
+        if (
+            provider_id == primary.provider_id
+            and provider_model == primary.provider_model
+        ):
+            return None
+        vision_thinking = (
+            self._settings.enable_vision_thinking
+            if self._settings.enable_vision_thinking is not None
+            else False
+        )
+        return ResolvedModel(
+            original_model=primary.original_model,
+            provider_id=provider_id,
+            provider_model=provider_model,
+            provider_model_ref=ref,
+            thinking_enabled=vision_thinking,
+        )
+
     def resolve_messages_request(
         self, request: MessagesRequest
     ) -> RoutedMessagesRequest:
         """Return an internal routed request context (vision-aware), with an
-        optional failover route resolved from the ``MODEL_*_FALLBACK`` overrides."""
+        optional failover route. Vision routes fail over to
+        ``VISION_MODEL_FALLBACK`` (must be vision-capable); all other routes use
+        the tier ``MODEL_*_FALLBACK`` overrides."""
         resolved = self.resolve_vision_aware(request)
         routed = request.model_copy(deep=True)
         routed.model = resolved.provider_model
 
-        # Vision routing has its own dedicated target; do not apply tier failover.
+        # Vision routing has its own dedicated target with a dedicated fallback
+        # (VISION_MODEL_FALLBACK); it does not use the tier MODEL_*_FALLBACK chain.
         is_vision_route = (
             self._settings.model_vision is not None
             and resolved.provider_model_ref == self._settings.model_vision
         )
         fallback_resolved = (
-            None if is_vision_route else self._resolve_fallback(request.model, resolved)
+            self._resolve_vision_fallback(resolved)
+            if is_vision_route
+            else self._resolve_fallback(request.model, resolved)
         )
         fallback_request: MessagesRequest | None = None
         if fallback_resolved is not None:
