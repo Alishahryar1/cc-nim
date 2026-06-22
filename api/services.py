@@ -12,7 +12,11 @@ from fastapi.responses import StreamingResponse
 from loguru import logger
 
 from config.settings import Settings
-from core.anthropic import get_token_count, get_user_facing_error_message
+from core.anthropic import (
+    get_token_count,
+    get_user_facing_error_message,
+    iter_provider_stream_error_sse_events,
+)
 from core.anthropic.sse import ANTHROPIC_SSE_RESPONSE_HEADERS
 from core.trace import api_messages_request_snapshot, trace_event, traced_async_stream
 from providers.base import BaseProvider
@@ -191,17 +195,25 @@ class ClaudeProxyService:
                     routed.request.tools,
                 )
 
-                if routed.fallback_resolved is not None:
-                    base_stream = self._stream_with_failover(
-                        routed, request_id=request_id, input_tokens=input_tokens
-                    )
-                else:
-                    base_stream = provider.stream_response(
-                        routed.request,
-                        input_tokens=input_tokens,
-                        request_id=request_id,
-                        thinking_enabled=routed.resolved.thinking_enabled,
-                    )
+                # Build the primary stream eagerly so any synchronous
+                # provider-construction error surfaces inside this try block
+                # (→ HTTPException) instead of mid-stream. Real providers are
+                # async generators (construction never raises); the retry
+                # wrapper handles in-stream pre-stream failures and empty
+                # completions.
+                primary_stream = provider.stream_response(
+                    routed.request,
+                    input_tokens=input_tokens,
+                    request_id=request_id,
+                    thinking_enabled=routed.resolved.thinking_enabled,
+                    raise_on_prestream_error=True,
+                )
+                base_stream = self._stream_with_failover(
+                    routed,
+                    primary_stream,
+                    request_id=request_id,
+                    input_tokens=input_tokens,
+                )
 
                 streamed = traced_async_stream(
                     base_stream,
@@ -232,32 +244,46 @@ class ClaudeProxyService:
     async def _stream_with_failover(
         self,
         routed: RoutedMessagesRequest,
+        primary_stream: AsyncIterator[str],
         *,
         request_id: str,
         input_tokens: int,
     ) -> AsyncIterator[str]:
-        """Stream the primary model; on a pre-stream failure (nothing emitted to
-        the client yet) transparently retry the turn once on the fallback model.
+        """Stream the primary model; on a pre-stream failure transparently retry
+        the turn once, then guarantee a well-formed stream to the client.
 
-        Only the primary attempt requests ``raise_on_prestream_error``; the
-        fallback emits its own in-stream error if it also fails, so the client
-        always receives a well-formed stream.
+        ``primary_stream`` is the already-constructed primary attempt (built by
+        the caller so synchronous construction errors surface there).
+
+        A "pre-stream failure" is any error — or an intermittent empty 200
+        completion (no content blocks) — that occurs before a single content
+        block reaches the client, surfaced by the provider as
+        :class:`PreStreamProviderError` (only when ``raise_on_prestream_error``
+        is set). Because nothing was emitted yet, the turn is safe to retry:
+
+        * on the configured tier fallback model when one is set, otherwise
+        * on the SAME model (empty completions are transient; a fresh attempt
+          almost always succeeds).
+
+        If the retry ALSO fails pre-stream, a clean Anthropic error stream is
+        emitted so the client never receives an empty or malformed body.
         """
-        primary = self._provider_getter(routed.resolved.provider_id)
         try:
-            async for chunk in primary.stream_response(
-                routed.request,
-                input_tokens=input_tokens,
-                request_id=request_id,
-                thinking_enabled=routed.resolved.thinking_enabled,
-                raise_on_prestream_error=True,
-            ):
+            async for chunk in primary_stream:
                 yield chunk
             return
         except PreStreamProviderError as exc:
-            fallback = routed.fallback_resolved
-            if fallback is None or routed.fallback_request is None:
-                raise
+            if (
+                routed.fallback_resolved is not None
+                and routed.fallback_request is not None
+            ):
+                retry_resolved = routed.fallback_resolved
+                retry_request = routed.fallback_request
+                same_model = False
+            else:
+                retry_resolved = routed.resolved
+                retry_request = routed.request
+                same_model = True
             trace_event(
                 stage="routing",
                 event="api.route.failover",
@@ -265,29 +291,59 @@ class ClaudeProxyService:
                 request_id=request_id,
                 primary_provider=routed.resolved.provider_id,
                 primary_model=routed.resolved.provider_model,
-                fallback_provider=fallback.provider_id,
-                fallback_model=fallback.provider_model,
+                fallback_provider=retry_resolved.provider_id,
+                fallback_model=retry_resolved.provider_model,
+                same_model=same_model,
                 reason=exc.message,
             )
             logger.warning(
                 "FAILOVER request_id={}: primary {}/{} failed pre-stream ({}); "
-                "retrying on {}/{}",
+                "retrying on {}/{}{}",
                 request_id,
                 routed.resolved.provider_id,
                 routed.resolved.provider_model,
                 exc.message,
-                fallback.provider_id,
-                fallback.provider_model,
+                retry_resolved.provider_id,
+                retry_resolved.provider_model,
+                " (same model)" if same_model else "",
             )
 
-        fallback_provider = self._provider_getter(fallback.provider_id)
-        async for chunk in fallback_provider.stream_response(
-            routed.fallback_request,
-            input_tokens=input_tokens,
-            request_id=request_id,
-            thinking_enabled=fallback.thinking_enabled,
-        ):
-            yield chunk
+        retry_provider = self._provider_getter(retry_resolved.provider_id)
+        try:
+            async for chunk in retry_provider.stream_response(
+                retry_request,
+                input_tokens=input_tokens,
+                request_id=request_id,
+                thinking_enabled=retry_resolved.thinking_enabled,
+                raise_on_prestream_error=True,
+            ):
+                yield chunk
+        except PreStreamProviderError as exc2:
+            logger.error(
+                "FAILOVER request_id={}: retry on {}/{} also failed pre-stream "
+                "({}); emitting clean error stream to client",
+                request_id,
+                retry_resolved.provider_id,
+                retry_resolved.provider_model,
+                exc2.message,
+            )
+            trace_event(
+                stage="routing",
+                event="api.route.failover_exhausted",
+                source="api",
+                request_id=request_id,
+                retry_provider=retry_resolved.provider_id,
+                retry_model=retry_resolved.provider_model,
+                reason=exc2.message,
+            )
+            for event in iter_provider_stream_error_sse_events(
+                request=retry_request,
+                input_tokens=input_tokens,
+                error_message=exc2.message,
+                sent_any_event=False,
+                log_raw_sse_events=self._settings.log_raw_sse_events,
+            ):
+                yield event
 
     def count_tokens(self, request_data: TokenCountRequest) -> TokenCountResponse:
         """Count tokens for a request after applying configured model routing."""

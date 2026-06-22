@@ -11,7 +11,37 @@ from core.anthropic.sse import format_sse_event
 from core.anthropic.stream_contracts import event_index, parse_sse_text
 from providers.anthropic_messages import AnthropicMessagesTransport
 from providers.base import ProviderConfig
+from providers.exceptions import PreStreamProviderError
 from tests.stream_contract import assert_canonical_stream_error_envelope
+
+
+def _content_less_stream_lines() -> list[str]:
+    """An HTTP-200 stream that opens NO content block (DeepSeek empty completion)."""
+    msg_start = format_sse_event(
+        "message_start",
+        {
+            "type": "message_start",
+            "message": {
+                "id": "msg_empty",
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": "test-model",
+                "stop_reason": None,
+                "stop_sequence": None,
+                "usage": {"input_tokens": 5, "output_tokens": 0},
+            },
+        },
+    )
+    msg_delta = format_sse_event(
+        "message_delta",
+        {"type": "message_delta", "delta": {"stop_reason": "end_turn"}},
+    )
+    msg_stop = format_sse_event("message_stop", {"type": "message_stop"})
+    lines: list[str] = []
+    for blob in (msg_start, msg_delta, msg_stop):
+        lines.extend(blob.splitlines())
+    return lines
 
 
 class NativeProvider(AnthropicMessagesTransport):
@@ -292,3 +322,120 @@ async def test_midstream_error_closes_open_block_and_uses_fresh_content_index(
     assert event_index(starts[0]) == 0
     assert event_index(starts[-1]) == 1
     assert {event_index(e) for e in parsed if e.event == "content_block_stop"} == {0, 1}
+
+
+@pytest.mark.asyncio
+async def test_empty_completion_raises_prestream_error_when_guarded(provider_config):
+    """A content-less 200 stream raises PreStreamProviderError when the caller
+    opts into pre-stream-error handling (so orchestration can retry)."""
+    provider = NativeProvider(provider_config)
+    req = MockRequest()
+    response = FakeResponse(lines=_content_less_stream_lines())
+
+    with (
+        patch.object(provider._client, "build_request", return_value=MagicMock()),
+        patch.object(
+            provider._client, "send", new_callable=AsyncMock, return_value=response
+        ),pytest.raises(PreStreamProviderError)
+    ):
+        _ = [
+            e
+            async for e in provider.stream_response(
+                req, request_id="REQ_EMPTY", raise_on_prestream_error=True
+            )
+        ]
+
+    # Upstream response is still closed despite the raise.
+    assert response.is_closed
+
+
+@pytest.mark.asyncio
+async def test_empty_completion_relayed_as_is_without_guard(provider_config):
+    """Default behaviour (no guard) is unchanged: a content-less stream is
+    relayed verbatim — preserves backward compatibility for direct callers."""
+    provider = NativeProvider(provider_config)
+    req = MockRequest()
+    response = FakeResponse(lines=_content_less_stream_lines())
+
+    with (
+        patch.object(provider._client, "build_request", return_value=MagicMock()),
+        patch.object(
+            provider._client, "send", new_callable=AsyncMock, return_value=response
+        ),
+    ):
+        events = [e async for e in provider.stream_response(req)]
+
+    blob = "".join(events)
+    assert "message_start" in blob
+    assert "message_stop" in blob
+    assert "content_block_start" not in blob
+
+
+@pytest.mark.asyncio
+async def test_guarded_stream_with_content_flushes_and_streams(provider_config):
+    """With the guard ON and real content present, the buffered leading events
+    are flushed and the full stream is delivered in order."""
+    provider = NativeProvider(provider_config)
+    req = MockRequest()
+    msg_start = format_sse_event(
+        "message_start",
+        {
+            "type": "message_start",
+            "message": {
+                "id": "msg_ok",
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": "test-model",
+                "stop_reason": None,
+                "stop_sequence": None,
+                "usage": {"input_tokens": 5, "output_tokens": 1},
+            },
+        },
+    )
+    block_start = format_sse_event(
+        "content_block_start",
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "text", "text": ""},
+        },
+    )
+    block_delta = format_sse_event(
+        "content_block_delta",
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "Hola"},
+        },
+    )
+    block_stop = format_sse_event(
+        "content_block_stop", {"type": "content_block_stop", "index": 0}
+    )
+    msg_delta = format_sse_event(
+        "message_delta",
+        {"type": "message_delta", "delta": {"stop_reason": "end_turn"}},
+    )
+    msg_stop = format_sse_event("message_stop", {"type": "message_stop"})
+    lines: list[str] = []
+    for blob in (msg_start, block_start, block_delta, block_stop, msg_delta, msg_stop):
+        lines.extend(blob.splitlines())
+    response = FakeResponse(lines=lines)
+
+    with (
+        patch.object(provider._client, "build_request", return_value=MagicMock()),
+        patch.object(
+            provider._client, "send", new_callable=AsyncMock, return_value=response
+        ),
+    ):
+        events = [
+            e
+            async for e in provider.stream_response(
+                req, raise_on_prestream_error=True
+            )
+        ]
+
+    blob = "".join(events)
+    assert blob.index("message_start") < blob.index("content_block_start")
+    assert "Hola" in blob
+    assert "message_stop" in blob

@@ -20,6 +20,10 @@ class EmittedNativeSseTracker:
         self._max_index = -1
         self.message_id: str | None = None
         self.model: str = ""
+        # True once any ``content_block_start`` has been observed in the emitted
+        # stream. Used by the transport to distinguish a real response from an
+        # intermittent "empty completion" (HTTP 200 with no content blocks).
+        self.saw_content_block_start = False
 
     def feed(self, chunk: str) -> None:
         """Record SSE frames completed by ``chunk`` (handles splitting across reads)."""
@@ -51,6 +55,7 @@ class EmittedNativeSseTracker:
             idx = event_index(event)
             self._max_index = max(self._max_index, idx)
             self._open_stack.append(idx)
+            self.saw_content_block_start = True
             return
 
         if event.event == "content_block_stop":

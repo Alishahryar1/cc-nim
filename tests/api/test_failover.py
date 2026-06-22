@@ -1,4 +1,6 @@
-"""ClaudeProxyService._stream_with_failover: transparent retry on pre-stream failure."""
+"""ClaudeProxyService._stream_with_failover: transparent retry on pre-stream
+failure (transport error OR empty 200 completion), with same-model retry when no
+distinct tier fallback is configured, and a guaranteed well-formed stream."""
 
 from collections.abc import AsyncIterator
 
@@ -12,10 +14,20 @@ from providers.exceptions import PreStreamProviderError
 
 
 class FakeProvider:
-    """Provider double: optionally fails pre-stream when failover is requested."""
+    """Provider double keyed by model.
 
-    def __init__(self, fail_prestream: bool):
-        self._fail_prestream = fail_prestream
+    ``fail_models`` always fail pre-stream (when the failover flag is set);
+    ``fail_times`` fail pre-stream the first N attempts then succeed — modelling
+    a transient empty completion that clears on retry.
+    """
+
+    def __init__(
+        self,
+        fail_models: set[str] | None = None,
+        fail_times: dict[str, int] | None = None,
+    ):
+        self._fail_models = fail_models or set()
+        self._fail_times = dict(fail_times or {})
         self.calls: list[tuple[str, bool]] = []
 
     async def stream_response(
@@ -28,8 +40,17 @@ class FakeProvider:
         raise_on_prestream_error: bool = False,
     ) -> AsyncIterator[str]:
         self.calls.append((request.model, raise_on_prestream_error))
-        if raise_on_prestream_error and self._fail_prestream:
-            raise PreStreamProviderError("simulated pre-stream failure")
+        should_fail = False
+        if raise_on_prestream_error:
+            if request.model in self._fail_models:
+                should_fail = True
+            elif self._fail_times.get(request.model, 0) > 0:
+                self._fail_times[request.model] -= 1
+                should_fail = True
+        if should_fail:
+            raise PreStreamProviderError(
+                f"simulated pre-stream failure for {request.model}"
+            )
         for event in (
             "event: message_start\n",
             f'data: {{"model":"{request.model}"}}\n',
@@ -38,7 +59,7 @@ class FakeProvider:
             yield event
 
 
-def _routed() -> RoutedMessagesRequest:
+def _routed(*, with_fallback: bool) -> RoutedMessagesRequest:
     primary = ResolvedModel(
         original_model="claude-3-5-haiku-20241022",
         provider_id="open_router",
@@ -46,13 +67,21 @@ def _routed() -> RoutedMessagesRequest:
         provider_model_ref="open_router/openai/gpt-oss-120b",
         thinking_enabled=False,
     )
-    fallback = ResolvedModel(
-        original_model="claude-3-5-haiku-20241022",
-        provider_id="open_router",
-        provider_model="z-ai/glm-4.7-flash",
-        provider_model_ref="open_router/z-ai/glm-4.7-flash",
-        thinking_enabled=False,
-    )
+    fallback_resolved = None
+    fallback_request = None
+    if with_fallback:
+        fallback_resolved = ResolvedModel(
+            original_model="claude-3-5-haiku-20241022",
+            provider_id="open_router",
+            provider_model="z-ai/glm-4.7-flash",
+            provider_model_ref="open_router/z-ai/glm-4.7-flash",
+            thinking_enabled=False,
+        )
+        fallback_request = MessagesRequest(
+            model="z-ai/glm-4.7-flash",
+            max_tokens=100,
+            messages=[Message(role="user", content="hi")],
+        )
     return RoutedMessagesRequest(
         request=MessagesRequest(
             model="openai/gpt-oss-120b",
@@ -60,12 +89,8 @@ def _routed() -> RoutedMessagesRequest:
             messages=[Message(role="user", content="hi")],
         ),
         resolved=primary,
-        fallback_request=MessagesRequest(
-            model="z-ai/glm-4.7-flash",
-            max_tokens=100,
-            messages=[Message(role="user", content="hi")],
-        ),
-        fallback_resolved=fallback,
+        fallback_request=fallback_request,
+        fallback_resolved=fallback_resolved,
     )
 
 
@@ -78,39 +103,101 @@ def _service(provider: FakeProvider) -> ClaudeProxyService:
     )
 
 
-@pytest.mark.asyncio
-async def test_failover_switches_to_fallback_on_prestream_error():
-    provider = FakeProvider(fail_prestream=True)
-    service = _service(provider)
-
-    events = [
+async def _collect(
+    service: ClaudeProxyService, provider: FakeProvider, routed
+) -> list[str]:
+    primary_stream = provider.stream_response(
+        routed.request,
+        input_tokens=0,
+        request_id="req_test",
+        thinking_enabled=routed.resolved.thinking_enabled,
+        raise_on_prestream_error=True,
+    )
+    return [
         e
         async for e in service._stream_with_failover(
-            _routed(), request_id="req_test", input_tokens=0
+            routed, primary_stream, request_id="req_test", input_tokens=0
         )
     ]
 
-    # Primary attempted with the failover flag, then fallback streamed.
+
+@pytest.mark.asyncio
+async def test_failover_switches_to_distinct_fallback_on_prestream_error():
+    provider = FakeProvider(fail_models={"openai/gpt-oss-120b"})
+    service = _service(provider)
+
+    events = await _collect(service, provider, _routed(with_fallback=True))
+
+    # Primary attempted with the failover flag, then distinct fallback streamed.
     assert provider.calls == [
         ("openai/gpt-oss-120b", True),
-        ("z-ai/glm-4.7-flash", False),
+        ("z-ai/glm-4.7-flash", True),
     ]
     assert any('"model":"z-ai/glm-4.7-flash"' in e for e in events)
     assert not any('"model":"openai/gpt-oss-120b"' in e for e in events)
 
 
 @pytest.mark.asyncio
-async def test_failover_not_triggered_when_primary_succeeds():
-    provider = FakeProvider(fail_prestream=False)
+async def test_same_model_retry_when_no_fallback_configured():
+    # No distinct fallback; primary fails once then succeeds (transient empty).
+    provider = FakeProvider(fail_times={"openai/gpt-oss-120b": 1})
     service = _service(provider)
 
-    events = [
-        e
-        async for e in service._stream_with_failover(
-            _routed(), request_id="req_test", input_tokens=0
-        )
-    ]
+    events = await _collect(service, provider, _routed(with_fallback=False))
 
-    # Only the primary was called; no fallback attempt.
+    assert provider.calls == [
+        ("openai/gpt-oss-120b", True),
+        ("openai/gpt-oss-120b", True),
+    ]
+    assert any('"model":"openai/gpt-oss-120b"' in e for e in events)
+
+
+@pytest.mark.asyncio
+async def test_failover_not_triggered_when_primary_succeeds():
+    provider = FakeProvider()
+    service = _service(provider)
+
+    events = await _collect(service, provider, _routed(with_fallback=True))
+
+    # Only the primary was called; no retry attempt.
     assert provider.calls == [("openai/gpt-oss-120b", True)]
     assert any('"model":"openai/gpt-oss-120b"' in e for e in events)
+
+
+@pytest.mark.asyncio
+async def test_both_attempts_fail_emits_clean_error_stream():
+    # Primary AND fallback both fail pre-stream: client must still get a
+    # well-formed Anthropic stream (never an empty/malformed body).
+    provider = FakeProvider(
+        fail_models={"openai/gpt-oss-120b", "z-ai/glm-4.7-flash"}
+    )
+    service = _service(provider)
+
+    events = await _collect(service, provider, _routed(with_fallback=True))
+
+    assert provider.calls == [
+        ("openai/gpt-oss-120b", True),
+        ("z-ai/glm-4.7-flash", True),
+    ]
+    blob = "".join(events)
+    assert "message_start" in blob
+    assert "message_stop" in blob
+    assert "simulated pre-stream failure for z-ai/glm-4.7-flash" in blob
+
+
+@pytest.mark.asyncio
+async def test_same_model_retry_exhausted_emits_clean_error_stream():
+    # No fallback and the same model keeps failing: still a clean error stream
+    # (and exactly one retry — no infinite loop).
+    provider = FakeProvider(fail_models={"openai/gpt-oss-120b"})
+    service = _service(provider)
+
+    events = await _collect(service, provider, _routed(with_fallback=False))
+
+    assert provider.calls == [
+        ("openai/gpt-oss-120b", True),
+        ("openai/gpt-oss-120b", True),
+    ]
+    blob = "".join(events)
+    assert "message_start" in blob
+    assert "message_stop" in blob

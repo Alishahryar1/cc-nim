@@ -283,6 +283,14 @@ class AnthropicMessagesTransport(BaseProvider):
             return f"{base_message}\nRequest ID: {request_id}"
         return base_message
 
+    def _empty_completion_message(self, request_id: str | None) -> str:
+        """User-facing message for an upstream 200 with no content blocks."""
+        base = (
+            f"Upstream provider {self._provider_name} returned an empty completion "
+            "(HTTP 200 with no content blocks)."
+        )
+        return self._format_error_message(base, request_id)
+
     def _get_error_message(self, error: Exception, request_id: str | None) -> str:
         """Map an exception into a user-facing provider error message."""
         mapped_error = map_error(error, rate_limiter=self._global_rate_limiter)
@@ -400,17 +408,59 @@ class AnthropicMessagesTransport(BaseProvider):
 
                 chunk_count = 0
                 chunk_bytes = 0
+                # When the orchestration layer can retry the turn
+                # (``raise_on_prestream_error``), hold back the leading
+                # non-content events (message_start / ping) until the first
+                # content block arrives. If the upstream completes a 200 stream
+                # WITHOUT ever opening a content block — DeepSeek's intermittent
+                # "empty completion" — nothing has been yielded to the client
+                # yet, so we raise :class:`PreStreamProviderError` for a clean
+                # retry instead of relaying a content-less body the client
+                # rejects as "empty or malformed response (HTTP 200)".
+                guard_empty = raise_on_prestream_error
+                lead_buffer: list[str] = []
+                content_started = not guard_empty
 
                 async for chunk in self._iter_stream_chunks(
                     response,
                     state=state,
                     thinking_enabled=thinking_enabled,
                 ):
+                    emitted_tracker.feed(chunk)
+                    if not content_started:
+                        lead_buffer.append(chunk)
+                        if emitted_tracker.saw_content_block_start:
+                            content_started = True
+                            for buffered in lead_buffer:
+                                chunk_count += 1
+                                chunk_bytes += len(
+                                    buffered.encode("utf-8", errors="replace")
+                                )
+                                sent_any_event = True
+                                yield buffered
+                            lead_buffer.clear()
+                        continue
                     chunk_count += 1
                     chunk_bytes += len(chunk.encode("utf-8", errors="replace"))
                     sent_any_event = True
-                    emitted_tracker.feed(chunk)
                     yield chunk
+
+                if guard_empty and not content_started:
+                    # Buffered the whole upstream stream; it never opened a
+                    # content block. Nothing was yielded to the client, so the
+                    # turn can be retried cleanly on the orchestration layer.
+                    trace_event(
+                        stage="provider",
+                        event="provider.response.empty_completion",
+                        source="provider",
+                        provider=self._provider_name,
+                        gateway_model=request.model,
+                        downstream_model=body.get("model"),
+                        sse_events_buffered=len(lead_buffer),
+                    )
+                    raise PreStreamProviderError(
+                        self._empty_completion_message(request_id)
+                    )
 
                 trace_event(
                     stage="provider",
@@ -422,6 +472,11 @@ class AnthropicMessagesTransport(BaseProvider):
                     sse_bytes_out=chunk_bytes,
                 )
 
+            except PreStreamProviderError:
+                # Empty-completion signal raised above: nothing was yielded to
+                # the client. Propagate for the orchestration layer to retry;
+                # the ``finally`` still closes the upstream response.
+                raise
             except Exception as error:
                 if not isinstance(error, httpx.HTTPStatusError):
                     self._log_stream_transport_error(
