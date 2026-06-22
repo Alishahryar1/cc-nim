@@ -86,6 +86,12 @@ def _create_opencode(config: ProviderConfig, _settings: Settings) -> BaseProvide
     return OpenCodeProvider(config)
 
 
+def _create_zai_anthropic(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+    from providers.zai_anthropic import ZaiAnthropicProvider
+
+    return ZaiAnthropicProvider(config)
+
+
 def _create_zai(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     from providers.zai import ZaiProvider
 
@@ -108,6 +114,7 @@ PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "kimi": _create_kimi,
     "wafer": _create_wafer,
     "opencode": _create_opencode,
+    "zai_anthropic": _create_zai_anthropic,
     "zai": _create_zai,
     "fireworks": _create_fireworks,
 }

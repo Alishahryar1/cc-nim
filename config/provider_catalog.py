@@ -25,6 +25,7 @@ LMSTUDIO_DEFAULT_BASE = "http://localhost:1234/v1"
 LLAMACPP_DEFAULT_BASE = "http://localhost:8080/v1"
 OLLAMA_DEFAULT_BASE = "http://localhost:11434"
 OPENCODE_DEFAULT_BASE = "https://opencode.ai/zen/v1"
+ZAI_ANTHROPIC_DEFAULT_BASE = "https://api.z.ai/api/anthropic"
 ZAI_DEFAULT_BASE = "https://api.z.ai/api/coding/paas/v4"
 
 
@@ -136,6 +137,16 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         default_base_url=OPENCODE_DEFAULT_BASE,
         proxy_attr="opencode_proxy",
         capabilities=("chat", "streaming", "tools", "thinking", "rate_limit"),
+    ),
+    "zai_anthropic": ProviderDescriptor(
+        provider_id="zai_anthropic",
+        transport_type="anthropic_messages",
+        credential_env="ZAI_API_KEY",
+        credential_url="https://z.ai",
+        credential_attr="zai_api_key",
+        default_base_url=ZAI_ANTHROPIC_DEFAULT_BASE,
+        proxy_attr="zai_proxy",
+        capabilities=("chat", "streaming", "tools", "thinking", "native_anthropic"),
     ),
     "zai": ProviderDescriptor(
         provider_id="zai",

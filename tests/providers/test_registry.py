@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from config.nim import NimSettings
-from config.provider_catalog import ZAI_DEFAULT_BASE
+from config.provider_catalog import ZAI_ANTHROPIC_DEFAULT_BASE, ZAI_DEFAULT_BASE
 from config.provider_ids import SUPPORTED_PROVIDER_IDS
 from providers.deepseek import DeepSeekProvider
 from providers.exceptions import UnknownProviderTypeError
@@ -23,6 +23,7 @@ from providers.registry import (
 )
 from providers.wafer import WaferProvider
 from providers.zai import ZaiProvider
+from providers.zai_anthropic import ZaiAnthropicProvider
 
 
 def _make_settings(**overrides):
@@ -109,6 +110,26 @@ def test_zai_provider_config_ignores_stale_base_url_setting():
     assert config.base_url == ZAI_DEFAULT_BASE
 
 
+def test_zai_anthropic_descriptor_uses_native_anthropic():
+    descriptor = PROVIDER_DESCRIPTORS["zai_anthropic"]
+
+    assert descriptor.transport_type == "anthropic_messages"
+    assert descriptor.default_base_url == ZAI_ANTHROPIC_DEFAULT_BASE
+    assert "native_anthropic" in descriptor.capabilities
+    assert descriptor.credential_env == "ZAI_API_KEY"
+
+
+def test_zai_anthropic_provider_config_uses_anthropic_endpoint():
+    descriptor = PROVIDER_DESCRIPTORS["zai_anthropic"]
+
+    config = build_provider_config(
+        descriptor,
+        _make_settings(),
+    )
+
+    assert config.base_url == ZAI_ANTHROPIC_DEFAULT_BASE
+
+
 def test_create_provider_uses_native_openrouter_by_default():
     with patch("httpx.AsyncClient"):
         provider = create_provider("open_router", _make_settings())
@@ -126,6 +147,7 @@ def test_create_provider_instantiates_each_builtin():
         "ollama": OllamaProvider,
         "wafer": WaferProvider,
         "opencode": OpenCodeProvider,
+        "zai_anthropic": ZaiAnthropicProvider,
         "zai": ZaiProvider,
     }
 
