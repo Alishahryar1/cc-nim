@@ -1314,7 +1314,7 @@ def provider_config_status(
             base_url = _value_for_settings_attr(state, descriptor.base_url_attr)
         has_url = bool(base_url.strip()) or descriptor.base_url_attr is None
 
-        if not has_key:
+        if not has_key and not descriptor.credential_optional:
             status = "missing_key"
             label = "Missing key"
         elif not has_url:
