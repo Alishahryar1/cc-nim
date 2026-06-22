@@ -16,6 +16,7 @@ from smoke.lib.config import (
     OPT_IN_TARGETS,
     PROVIDER_SMOKE_DEFAULT_MODELS,
     TARGET_REQUIRED_ENV,
+    ProviderModel,
     SmokeConfig,
     nvidia_nim_cli_model_refs,
     openrouter_free_cli_model_refs,
@@ -144,6 +145,28 @@ def test_wafer_provider_configuration_uses_api_key(monkeypatch) -> None:
     models = config.provider_smoke_models()
     assert models[0].provider == "wafer"
     assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["wafer"]
+
+
+def test_custom_provider_configuration_uses_url(monkeypatch) -> None:
+    monkeypatch.setenv("FCC_SMOKE_MODEL_CUSTOM", "custom/my-model")
+    config = _smoke_config(
+        settings=_settings(
+            model="nvidia_nim/test",
+            ollama_base_url="",
+            custom_api_key="sk-test",
+            custom_url_provider="http://gateway.test/v1",
+        ),
+        provider_matrix=frozenset({"custom"}),
+    )
+
+    assert config.has_provider_configuration("custom")
+    assert config.provider_smoke_models() == [
+        ProviderModel(
+            provider="custom",
+            full_model="custom/my-model",
+            source="FCC_SMOKE_MODEL_CUSTOM",
+        )
+    ]
 
 
 def test_provider_smoke_model_override_accepts_model_name_without_prefix(
