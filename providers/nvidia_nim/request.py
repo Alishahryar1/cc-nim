@@ -8,7 +8,9 @@ from loguru import logger
 
 from config.nim import NimSettings
 from core.anthropic import (
+    NO_VISION,
     ReasoningReplayMode,
+    VisionCapabilityProtocol,
     build_base_request_body,
     set_if_not_none,
 )
@@ -345,8 +347,19 @@ def clone_body_without_reasoning_content(body: dict[str, Any]) -> dict[str, Any]
     return cloned_body
 
 
+class _NimVisionCapability:
+    """Vision capability sourced from NimSettings.vision_enabled."""
+
+    def __init__(self, *, enabled: bool) -> None:
+        self._enabled = enabled
+
+    @property
+    def enabled(self) -> bool:
+        return self._enabled
+
+
 def build_request_body(
-    request_data: Any, nim: NimSettings, *, thinking_enabled: bool
+    request_data: Any, nim: NimSettings, *, thinking_enabled: bool, vision: VisionCapabilityProtocol = NO_VISION
 ) -> dict:
     """Build OpenAI-format request body from Anthropic request."""
     logger.debug(
@@ -360,6 +373,7 @@ def build_request_body(
             reasoning_replay=ReasoningReplayMode.REASONING_CONTENT
             if thinking_enabled
             else ReasoningReplayMode.DISABLED,
+            vision=vision,
         )
     except OpenAIConversionError as exc:
         raise InvalidRequestError(str(exc)) from exc
