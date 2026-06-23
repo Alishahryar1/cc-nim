@@ -25,15 +25,22 @@ class VisionCapabilityProtocol(Protocol):
     def enabled(self) -> bool: ...
 
 
-class _NoVision:
-    """Sentinel: vision is disabled (default for all OpenAI-compatible transports)."""
+class _VisionCapability:
+    """Concrete vision capability with an explicit enabled flag.
+
+    Used by providers that opt into image input; default transports return
+    :data:`NO_VISION` instead.
+    """
+
+    def __init__(self, *, enabled: bool) -> None:
+        self._enabled = enabled
 
     @property
     def enabled(self) -> bool:
-        return False
+        return self._enabled
 
 
-NO_VISION: VisionCapabilityProtocol = _NoVision()
+NO_VISION: VisionCapabilityProtocol = _VisionCapability(enabled=False)
 
 
 def convert_anthropic_image_to_openai_image_url(block: Any) -> dict[str, Any]:
@@ -100,6 +107,19 @@ def _strip_inner_images_from_tool_result(
         else:
             rewritten.append(item)
     return rewritten, dropped
+
+
+def _build_user_multipart(parts: list[dict[str, Any]]) -> dict[str, Any]:
+    """Build a single ``role: user`` message from collected text/image content parts.
+
+    Visited by :meth:`AnthropicToOpenAIConverter._convert_user_message` to keep text
+    and image_url content parts in one message per the OpenAI vision spec. When the
+    parts contain only a single text segment, the content is still emitted as a
+    string to match the converter's text-only fast path elsewhere.
+    """
+    if len(parts) == 1 and parts[0].get("type") == "text":
+        return {"role": "user", "content": parts[0]["text"]}
+    return {"role": "user", "content": list(parts)}
 
 
 class ReasoningReplayMode(StrEnum):
@@ -508,37 +528,30 @@ class AnthropicToOpenAIConverter:
             }
 
         result: list[dict[str, Any]] = []
-        text_parts: list[str] = []
+        parts: list[dict[str, Any]] = []
         cleared = False
 
-        def flush_text() -> None:
-            if text_parts:
-                result.append({"role": "user", "content": "\n".join(text_parts)})
-                text_parts.clear()
+        def flush_parts() -> None:
+            if parts:
+                result.append(_build_user_multipart(parts))
+                parts.clear()
 
         for block in content:
             block_type = get_block_type(block)
             if block_type == "text":
-                text_parts.append(get_block_attr(block, "text", ""))
+                text = get_block_attr(block, "text", "")
+                if text:
+                    parts.append({"type": "text", "text": text})
             elif block_type == "image":
-                if vision.enabled:
-                    flush_text()
-                    result.append(
-                        {
-                            "role": "user",
-                            "content": [
-                                convert_anthropic_image_to_openai_image_url(block)
-                            ],
-                        }
-                    )
-                else:
+                if not vision.enabled:
                     raise OpenAIConversionError(
                         "User message image blocks are not supported for OpenAI chat "
                         "conversion; use a vision-capable native Anthropic provider or "
                         "extend the converter."
                     )
+                parts.append(convert_anthropic_image_to_openai_image_url(block))
             elif block_type == "tool_result":
-                flush_text()
+                flush_parts()
                 raw_content = get_block_attr(block, "content", "")
                 new_content, dropped = _strip_inner_images_from_tool_result(raw_content)
                 if dropped > 0:
@@ -572,7 +585,7 @@ class AnthropicToOpenAIConverter:
             else:
                 pass
 
-        flush_text()
+        flush_parts()
         return {"messages": result, "cleared_pending": cleared}
 
     @staticmethod
@@ -582,37 +595,33 @@ class AnthropicToOpenAIConverter:
         vision: VisionCapabilityProtocol = NO_VISION,
     ) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
-        text_parts: list[str] = []
+        # Mixed text/image parts collected into a single multi-part content array.
+        # Emitted as one OpenAI ``role: user`` message when non-empty, matching the
+        # OpenAI vision spec rather than splitting into consecutive user messages.
+        parts: list[dict[str, Any]] = []
 
-        def flush_text() -> None:
-            if text_parts:
-                result.append({"role": "user", "content": "\n".join(text_parts)})
-                text_parts.clear()
+        def flush_parts() -> None:
+            if parts:
+                result.append(_build_user_multipart(parts))
+                parts.clear()
 
         for block in content:
             block_type = get_block_type(block)
 
             if block_type == "text":
-                text_parts.append(get_block_attr(block, "text", ""))
+                text = get_block_attr(block, "text", "")
+                if text:
+                    parts.append({"type": "text", "text": text})
             elif block_type == "image":
-                if vision.enabled:
-                    flush_text()
-                    result.append(
-                        {
-                            "role": "user",
-                            "content": [
-                                convert_anthropic_image_to_openai_image_url(block)
-                            ],
-                        }
-                    )
-                else:
+                if not vision.enabled:
                     raise OpenAIConversionError(
                         "User message image blocks are not supported for OpenAI chat "
                         "conversion; use a vision-capable native Anthropic provider or "
                         "extend the converter."
                     )
+                parts.append(convert_anthropic_image_to_openai_image_url(block))
             elif block_type == "tool_result":
-                flush_text()
+                flush_parts()
                 raw_content = get_block_attr(block, "content", "")
                 new_content, dropped = _strip_inner_images_from_tool_result(raw_content)
                 if dropped > 0:
@@ -632,7 +641,7 @@ class AnthropicToOpenAIConverter:
                     }
                 )
 
-        flush_text()
+        flush_parts()
         return result
 
     @staticmethod

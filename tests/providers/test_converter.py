@@ -888,9 +888,12 @@ def test_convert_user_message_text_then_image():
     result = AnthropicToOpenAIConverter.convert_messages(
         messages, vision=_EnabledVision()
     )
-    assert len(result) == 2
-    assert result[0] == {"role": "user", "content": "describe this"}
-    assert result[1]["content"][0]["type"] == "image_url"
+    assert len(result) == 1
+    assert result[0]["role"] == "user"
+    parts = result[0]["content"]
+    assert isinstance(parts, list)
+    assert {"type": "text", "text": "describe this"} in parts
+    assert any(p["type"] == "image_url" for p in parts if isinstance(p, dict))
 
 
 def test_convert_user_message_text_image_text():
@@ -911,14 +914,17 @@ def test_convert_user_message_text_image_text():
     result = AnthropicToOpenAIConverter.convert_messages(
         messages, vision=_EnabledVision()
     )
-    assert len(result) == 3
-    assert result[0] == {"role": "user", "content": "first"}
-    assert result[1]["content"][0]["type"] == "image_url"
-    assert result[2] == {"role": "user", "content": "second"}
+    assert len(result) == 1
+    assert result[0]["role"] == "user"
+    parts = result[0]["content"]
+    assert isinstance(parts, list)
+    assert {"type": "text", "text": "first"} in parts
+    assert {"type": "text", "text": "second"} in parts
+    assert any(p["type"] == "image_url" for p in parts if isinstance(p, dict))
 
 
 def test_convert_user_message_two_images():
-    """vision=ON: two adjacent images → two separate image_url user messages."""
+    """vision=ON: two adjacent images merge into a single multi-part user message."""
     content = [
         MockBlock(
             type="image",
@@ -941,13 +947,23 @@ def test_convert_user_message_two_images():
     result = AnthropicToOpenAIConverter.convert_messages(
         messages, vision=_EnabledVision()
     )
-    assert len(result) == 2
-    assert result[0]["content"][0]["type"] == "image_url"
-    assert result[1]["content"][0]["type"] == "image_url"
+    assert len(result) == 1
+    assert result[0]["role"] == "user"
+    assert isinstance(result[0]["content"], list)
+    image_parts = [
+        part
+        for part in result[0]["content"]
+        if isinstance(part, dict) and part.get("type") == "image_url"
+    ]
+    assert len(image_parts) == 2
 
 
 def test_convert_user_message_with_injection_image_vision_on():
-    """vision=ON inside _convert_user_message_with_injection (deferred-assistant path)."""
+    """vision=ON inside _convert_user_message_with_injection (deferred-assistant path).
+
+    The trailing image merges with the post-tool text into a single multi-part
+    user message (text in content array, no separate image-only message).
+    """
     # Create a pending context, but this test focuses on image conversion only
     _PendingAfterTools(
         remaining_tool_ids={"call_z"},
@@ -973,19 +989,16 @@ def test_convert_user_message_with_injection_image_vision_on():
     result = AnthropicToOpenAIConverter.convert_messages(
         messages, vision=_EnabledVision()
     )
-    # tool_result + deferred-assistant + image user message
     tool_msgs = [m for m in result if m["role"] == "tool"]
-    image_msgs = [
-        m
-        for m in result
-        if m["role"] == "user"
-        and isinstance(m.get("content"), list)
-        and any(
-            p.get("type") == "image_url" for p in m["content"] if isinstance(p, dict)
-        )
-    ]
+    # One tool message + one merged multipart user message (text+image)
+    user_msgs = [m for m in result if m["role"] == "user"]
     assert len(tool_msgs) == 1
-    assert len(image_msgs) == 1
+    assert len(user_msgs) == 1
+    assert isinstance(user_msgs[0]["content"], list)
+    assert any(
+        isinstance(part, dict) and part.get("type") == "image_url"
+        for part in user_msgs[0]["content"]
+    )
 
 
 # --- T5: _strip_inner_images_from_tool_result ---

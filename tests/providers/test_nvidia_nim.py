@@ -13,9 +13,14 @@ from providers.exceptions import InvalidRequestError
 from providers.nvidia_nim import NvidiaNimProvider
 from providers.nvidia_nim.request import (
     NIM_TOOL_ARGUMENT_ALIASES_KEY,
-    _NimVisionCapability,
     build_request_body,
 )
+
+
+class _NimVisionCapabilityStub:
+    """Stand-in for a vision-enabled capability; mirrors VisionCapabilityProtocol.enabled=True."""
+
+    enabled = True
 
 
 # Mock data classes
@@ -840,7 +845,7 @@ def test_nvidia_nim_build_request_body_image_passes_through_when_vision_on():
         ],
     )
     body = build_request_body(
-        req, nim, thinking_enabled=False, vision=_NimVisionCapability(enabled=True)
+        req, nim, thinking_enabled=False, vision=_NimVisionCapabilityStub()
     )
     user_msgs = [m for m in body["messages"] if m["role"] == "user"]
     image_parts = [

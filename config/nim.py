@@ -37,11 +37,19 @@ class NimSettings(BaseModel):
     request_id: str | None = None
     vision_enabled: bool = Field(
         False,
-        alias="NVIDIA_NIM_VISION_ENABLED",
         description="Enable vision (image input) handling for vision-capable NIM models.",
     )
 
     model_config = ConfigDict(extra="forbid", populate_by_name=True)
+
+    def with_vision_enabled(self, enabled: bool) -> NimSettings:
+        """Return a copy of ``NimSettings`` with ``vision_enabled`` replaced.
+
+        Encapsulates vision flag mutation so external callers (e.g. Settings
+        validators that read from the environment) don't need to touch internal
+        pydantic state directly.
+        """
+        return self.model_copy(update={"vision_enabled": enabled})
 
     @field_validator("top_k", mode="before")
     @classmethod

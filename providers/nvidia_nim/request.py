@@ -347,17 +347,6 @@ def clone_body_without_reasoning_content(body: dict[str, Any]) -> dict[str, Any]
     return cloned_body
 
 
-class _NimVisionCapability:
-    """Vision capability sourced from NimSettings.vision_enabled."""
-
-    def __init__(self, *, enabled: bool) -> None:
-        self._enabled = enabled
-
-    @property
-    def enabled(self) -> bool:
-        return self._enabled
-
-
 def build_request_body(
     request_data: Any,
     nim: NimSettings,

@@ -7,7 +7,7 @@ import openai
 from loguru import logger
 
 from config.nim import NimSettings
-from core.anthropic import NO_VISION, VisionCapabilityProtocol
+from core.anthropic import NO_VISION, VisionCapabilityProtocol, _VisionCapability
 from providers.base import ProviderConfig
 from providers.defaults import NVIDIA_NIM_DEFAULT_BASE
 from providers.transports.openai_chat import OpenAIChatTransport
@@ -37,9 +37,7 @@ class NvidiaNimProvider(OpenAIChatTransport):
     def _vision_capability(self) -> VisionCapabilityProtocol:
         """NIM vision capability sourced from NimSettings."""
         if self._nim_settings.vision_enabled:
-            from .request import _NimVisionCapability
-
-            return _NimVisionCapability(enabled=True)
+            return _VisionCapability(enabled=True)
         return NO_VISION
 
     def _build_request_body(

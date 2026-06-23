@@ -435,9 +435,18 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def bind_nvidia_nim_vision_env(self) -> Settings:
+        """Apply ``NVIDIA_NIM_VISION_ENABLED`` env var to ``NimSettings``.
+
+        Env reading is centralised here (rather than via a Pydantic alias on
+        ``NimSettings.vision_enabled``) because ``NimSettings`` is a plain
+        ``BaseModel`` and would not auto-load the env. Mutation goes through
+        ``NimSettings.with_vision_enabled()`` to respect encapsulation.
+        """
         env_value = os.environ.get("NVIDIA_NIM_VISION_ENABLED")
         if env_value is not None:
-            self.nim.vision_enabled = env_value.lower() in ("true", "1", "yes")
+            self.nim = self.nim.with_vision_enabled(
+                env_value.lower() in ("true", "1", "yes")
+            )
         return self
 
     @model_validator(mode="after")

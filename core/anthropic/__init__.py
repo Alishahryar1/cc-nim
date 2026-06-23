@@ -7,6 +7,7 @@ from .conversion import (
     OpenAIConversionError,
     ReasoningReplayMode,
     VisionCapabilityProtocol,
+    _VisionCapability,  # noqa: F401  --  re-exported for provider vision wiring
     build_base_request_body,
     convert_anthropic_image_to_openai_image_url,
 )
