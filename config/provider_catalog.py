@@ -234,6 +234,8 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     "ollama": ProviderDescriptor(
         provider_id="ollama",
         transport_type="anthropic_messages",
+        credential_attr="ollama_api_key",
+        credential_url="https://ollama.com/settings/keys",
         static_credential="ollama",
         default_base_url=OLLAMA_DEFAULT_BASE,
         base_url_attr="ollama_base_url",

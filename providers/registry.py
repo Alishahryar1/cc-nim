@@ -174,10 +174,12 @@ def _string_attr(settings: Settings, attr_name: str | None, default: str = "") -
 
 
 def _credential_for(descriptor: ProviderDescriptor, settings: Settings) -> str:
+    if descriptor.credential_attr:
+        value = _string_attr(settings, descriptor.credential_attr)
+        if value:
+            return value
     if descriptor.static_credential is not None:
         return descriptor.static_credential
-    if descriptor.credential_attr:
-        return _string_attr(settings, descriptor.credential_attr)
     return ""
 
 

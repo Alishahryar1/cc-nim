@@ -146,6 +146,8 @@ class Settings(BaseSettings):
         default="http://localhost:11434",
         validation_alias="OLLAMA_BASE_URL",
     )
+    # Optional: required for Ollama cloud (https://ollama.com); local Ollama needs no key.
+    ollama_api_key: str = Field(default="", validation_alias="OLLAMA_API_KEY")
 
     # ==================== Model ====================
     # All Claude model requests are mapped to this single model (fallback)

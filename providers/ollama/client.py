@@ -19,6 +19,13 @@ class OllamaProvider(AnthropicMessagesTransport):
         )
         self._api_key = config.api_key or "ollama"
 
+    def _request_headers(self) -> dict[str, str]:
+        return {
+            "Accept": "text/event-stream",
+            "Authorization": f"Bearer {self._api_key}",
+            "Content-Type": "application/json",
+        }
+
     async def _send_stream_request(self, body: dict) -> httpx.Response:
         """Create a streaming native Anthropic messages response."""
         request = self._client.build_request(
@@ -31,7 +38,10 @@ class OllamaProvider(AnthropicMessagesTransport):
 
     async def _send_model_list_request(self) -> httpx.Response:
         """Query Ollama's native local model-list endpoint."""
-        return await self._client.get(f"{self._base_url}/api/tags")
+        return await self._client.get(
+            f"{self._base_url}/api/tags",
+            headers={"Authorization": f"Bearer {self._api_key}"},
+        )
 
     def _extract_model_ids_from_model_list_payload(
         self, payload: object

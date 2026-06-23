@@ -47,6 +47,7 @@ def _make_settings(**overrides):
     mock.lm_studio_base_url = "http://localhost:1234/v1"
     mock.llamacpp_base_url = "http://localhost:8080/v1"
     mock.ollama_base_url = "http://localhost:11434"
+    mock.ollama_api_key = ""
     mock.nvidia_nim_proxy = ""
     mock.open_router_proxy = ""
     mock.lmstudio_proxy = ""
@@ -154,6 +155,24 @@ def test_build_provider_config_opencode_go_uses_opencode_api_key() -> None:
     config = build_provider_config(descriptor, settings)
 
     assert config.api_key == "shared-opencode-token"
+
+
+def test_build_provider_config_ollama_falls_back_to_static_credential() -> None:
+    descriptor = PROVIDER_CATALOG["ollama"]
+    settings = _make_settings(ollama_api_key="")
+
+    config = build_provider_config(descriptor, settings)
+
+    assert config.api_key == "ollama"
+
+
+def test_build_provider_config_ollama_uses_configured_api_key() -> None:
+    descriptor = PROVIDER_CATALOG["ollama"]
+    settings = _make_settings(ollama_api_key="cloud-token")
+
+    config = build_provider_config(descriptor, settings)
+
+    assert config.api_key == "cloud-token"
 
 
 def test_create_provider_uses_native_openrouter_by_default():
