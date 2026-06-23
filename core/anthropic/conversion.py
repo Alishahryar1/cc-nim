@@ -4,7 +4,7 @@ import json
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import Any, Protocol, runtime_checkable
 
 from pydantic import BaseModel
 
@@ -14,6 +14,73 @@ from .utils import set_if_not_none
 
 class OpenAIConversionError(Exception):
     """Raised when Anthropic content cannot be converted to OpenAI chat without data loss."""
+
+
+@runtime_checkable
+class VisionCapabilityProtocol(Protocol):
+    """Protocol for vision capability injection into the converter."""
+
+    @property
+    def enabled(self) -> bool: ...
+
+
+class _NoVision:
+    """Sentinel: vision is disabled (default for all OpenAI-compatible transports)."""
+
+    @property
+    def enabled(self) -> bool:
+        return False
+
+
+NO_VISION: VisionCapabilityProtocol = _NoVision()
+
+
+def convert_anthropic_image_to_openai_image_url(block: Any) -> dict[str, Any]:
+    """Convert an Anthropic image block to an OpenAI ``image_url`` content-part dict.
+
+    Raises ``OpenAIConversionError`` for malformed or unsupported image blocks.
+    """
+    source = get_block_attr(block, "source", None)
+    if source is None:
+        raise OpenAIConversionError("image block missing source")
+
+    source_type = get_block_attr(source, "type", None) or (
+        source.get("type") if isinstance(source, dict) else None
+    )
+    if source_type == "base64":
+        media_type = get_block_attr(source, "media_type", None) or (
+            source.get("media_type") if isinstance(source, dict) else None
+        )
+        if not isinstance(media_type, str) or not media_type.startswith("image/"):
+            raise OpenAIConversionError(
+                f"image base64 source requires image/* media_type, got {media_type!r}"
+            )
+        data = get_block_attr(source, "data", None) or (
+            source.get("data") if isinstance(source, dict) else None
+        )
+        if not data:
+            raise OpenAIConversionError(
+                "image base64 source requires non-empty data"
+            )
+        return {
+            "type": "image_url",
+            "image_url": {"url": f"data:{media_type};base64,{data}"},
+        }
+    if source_type == "url":
+        url = get_block_attr(source, "url", None) or (
+            source.get("url") if isinstance(source, dict) else None
+        )
+        if not url:
+            raise OpenAIConversionError(
+                "image url source requires non-empty url"
+            )
+        return {
+            "type": "image_url",
+            "image_url": {"url": url},
+        }
+    raise OpenAIConversionError(
+        f"unsupported image source.type={source_type!r}"
+    )
 
 
 class ReasoningReplayMode(StrEnum):

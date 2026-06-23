@@ -662,6 +662,137 @@ def test_openai_build_rejects_unknown_top_level_extras() -> None:
         build_base_request_body(req)
 
 
+# --- Vision Conversion Tests (T1: convert_anthropic_image_to_openai_image_url) ---
+
+from core.anthropic.conversion import (
+    NO_VISION,
+    VisionCapabilityProtocol,
+    convert_anthropic_image_to_openai_image_url,
+)
+
+
+class _EnabledVision:
+    """Stub for vision=ON in converter tests."""
+
+    enabled = True
+
+
+class _DisabledVision:
+    """Stub for vision=OFF in converter tests."""
+
+    enabled = False
+
+
+def test_vision_capability_protocol_no_vision_is_disabled():
+    assert NO_VISION.enabled is False
+
+
+def test_convert_image_base64_png():
+    block = MockBlock(
+        type="image",
+        source={"type": "base64", "media_type": "image/png", "data": "abc"},
+    )
+    result = convert_anthropic_image_to_openai_image_url(block)
+    assert result == {
+        "type": "image_url",
+        "image_url": {"url": "data:image/png;base64,abc"},
+    }
+
+
+def test_convert_image_base64_jpeg():
+    block = MockBlock(
+        type="image",
+        source={"type": "base64", "media_type": "image/jpeg", "data": "x"},
+    )
+    result = convert_anthropic_image_to_openai_image_url(block)
+    assert result == {
+        "type": "image_url",
+        "image_url": {"url": "data:image/jpeg;base64,x"},
+    }
+
+
+def test_convert_image_url_source():
+    block = MockBlock(
+        type="image",
+        source={"type": "url", "url": "https://example.com/img.png"},
+    )
+    result = convert_anthropic_image_to_openai_image_url(block)
+    assert result == {
+        "type": "image_url",
+        "image_url": {"url": "https://example.com/img.png"},
+    }
+
+
+def test_convert_image_pydantic_model_source():
+    """Pydantic-style object with attributes (not dict) also works."""
+
+    class _Source:
+        type = "url"
+        url = "https://example.com/a.png"
+
+    block = MockBlock(type="image", source=_Source())
+    result = convert_anthropic_image_to_openai_image_url(block)
+    assert result == {
+        "type": "image_url",
+        "image_url": {"url": "https://example.com/a.png"},
+    }
+
+
+def test_convert_image_missing_source_raises():
+    block = MockBlock(type="image")
+    with pytest.raises(OpenAIConversionError, match="image block missing source"):
+        convert_anthropic_image_to_openai_image_url(block)
+
+
+def test_convert_image_base64_missing_media_type_raises():
+    block = MockBlock(
+        type="image",
+        source={"type": "base64", "data": "abc"},
+    )
+    with pytest.raises(OpenAIConversionError, match="image.* media_type"):
+        convert_anthropic_image_to_openai_image_url(block)
+
+
+def test_convert_image_base64_non_image_media_type_raises():
+    block = MockBlock(
+        type="image",
+        source={"type": "base64", "media_type": "text/plain", "data": "abc"},
+    )
+    with pytest.raises(OpenAIConversionError, match="image.* media_type"):
+        convert_anthropic_image_to_openai_image_url(block)
+
+
+def test_convert_image_base64_empty_data_raises():
+    block = MockBlock(
+        type="image",
+        source={"type": "base64", "media_type": "image/png", "data": ""},
+    )
+    with pytest.raises(OpenAIConversionError, match="non-empty data"):
+        convert_anthropic_image_to_openai_image_url(block)
+
+
+def test_convert_image_url_empty_url_raises():
+    block = MockBlock(
+        type="image",
+        source={"type": "url", "url": ""},
+    )
+    with pytest.raises(OpenAIConversionError, match="non-empty url"):
+        convert_anthropic_image_to_openai_image_url(block)
+
+
+def test_convert_image_url_missing_url_raises():
+    block = MockBlock(type="image", source={"type": "url"})
+    with pytest.raises(OpenAIConversionError, match="non-empty url"):
+        convert_anthropic_image_to_openai_image_url(block)
+
+
+def test_convert_image_unsupported_source_type_raises():
+    block = MockBlock(type="image", source={"type": "file"})
+    with pytest.raises(OpenAIConversionError, match="unsupported image source.type"):
+        convert_anthropic_image_to_openai_image_url(block)
+
+
+
 @pytest.mark.parametrize(
     "content",
     [
