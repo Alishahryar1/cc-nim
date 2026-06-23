@@ -668,6 +668,7 @@ from core.anthropic.conversion import (
     NO_VISION,
     VisionCapabilityProtocol,
     _PendingAfterTools,
+    _strip_inner_images_from_tool_result,
     convert_anthropic_image_to_openai_image_url,
 )
 
@@ -992,3 +993,49 @@ def test_convert_user_message_with_injection_image_vision_on():
     ]
     assert len(tool_msgs) == 1
     assert len(image_msgs) == 1
+
+
+# --- T5: _strip_inner_images_from_tool_result ---
+
+
+def test_strip_drops_images_inside_tool_result_and_warns():
+    inner = [
+        {"type": "text", "text": "screenshot below:"},
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "abc"}},
+        {"type": "text", "text": "end"},
+    ]
+    result, dropped = _strip_inner_images_from_tool_result(inner)
+    assert dropped == 1
+    assert result[0] == {"type": "text", "text": "screenshot below:"}
+    assert result[1]["type"] == "text"
+    assert "omitted" in result[1]["text"]
+    assert result[2] == {"type": "text", "text": "end"}
+
+
+def test_strip_no_op_on_string_content():
+    result, dropped = _strip_inner_images_from_tool_result("just a string")
+    assert result == "just a string"
+    assert dropped == 0
+
+
+def test_strip_no_op_when_no_images():
+    inner = [
+        {"type": "text", "text": "all text"},
+    ]
+    result, dropped = _strip_inner_images_from_tool_result(inner)
+    assert result == inner
+    assert dropped == 0
+
+
+def test_strip_preserves_other_blocks():
+    inner = [
+        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "A"}},
+        {"type": "text", "text": "between"},
+        {"type": "image", "source": {"type": "url", "url": "https://x.com/i.png"}},
+    ]
+    result, dropped = _strip_inner_images_from_tool_result(inner)
+    assert dropped == 2
+    assert len(result) == 3
+    assert result[0]["type"] == "text"
+    assert result[1] == {"type": "text", "text": "between"}
+    assert result[2]["type"] == "text"

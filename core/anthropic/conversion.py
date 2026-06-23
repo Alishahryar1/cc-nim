@@ -2,6 +2,8 @@
 
 import json
 from copy import deepcopy
+
+from loguru import logger
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
@@ -81,6 +83,38 @@ def convert_anthropic_image_to_openai_image_url(block: Any) -> dict[str, Any]:
     raise OpenAIConversionError(
         f"unsupported image source.type={source_type!r}"
     )
+
+
+_TOOL_RESULT_IMAGE_PLACEHOLDER_TEXT = (
+    "[attachment omitted: image stripped from tool_result for OpenAI compat]"
+)
+
+_TOOL_RESULT_IMAGE_PLACEHOLDER_BLOCK: dict[str, Any] = {
+    "type": "text",
+    "text": _TOOL_RESULT_IMAGE_PLACEHOLDER_TEXT,
+}
+
+
+def _strip_inner_images_from_tool_result(
+    raw_content: Any,
+) -> tuple[Any, int]:
+    """Replace ``image`` blocks inside a tool_result content list with a placeholder.
+
+    Returns ``(rewritten_content, count_of_replacements)``.  When ``raw_content``
+    is a plain string (the common case), this is a no-op returning ``(content, 0)``.
+    """
+    if not isinstance(raw_content, list):
+        return raw_content, 0
+
+    dropped = 0
+    rewritten: list[Any] = []
+    for item in raw_content:
+        if isinstance(item, dict) and item.get("type") == "image":
+            rewritten.append(_TOOL_RESULT_IMAGE_PLACEHOLDER_BLOCK)
+            dropped += 1
+        else:
+            rewritten.append(item)
+    return rewritten, dropped
 
 
 class ReasoningReplayMode(StrEnum):
@@ -514,8 +548,17 @@ class AnthropicToOpenAIConverter:
                     )
             elif block_type == "tool_result":
                 flush_text()
-                tool_content = get_block_attr(block, "content", "")
-                serialized = _serialize_tool_result_content(tool_content)
+                raw_content = get_block_attr(block, "content", "")
+                new_content, dropped = _strip_inner_images_from_tool_result(raw_content)
+                if dropped > 0:
+                    logger.warning(
+                        "OPENAI_CONVERSION: dropped {} image(s) from tool_result content "
+                        "(vision={}) — OpenAI tool messages only carry string content; "
+                        "use a native Anthropic provider if image-in-tool_result is required.",
+                        dropped,
+                        vision.enabled,
+                    )
+                serialized = _serialize_tool_result_content(new_content)
                 tuid = get_block_attr(block, "tool_use_id")
                 tuid_s = str(tuid) if tuid is not None else ""
                 result.append(
@@ -575,8 +618,17 @@ class AnthropicToOpenAIConverter:
                     )
             elif block_type == "tool_result":
                 flush_text()
-                tool_content = get_block_attr(block, "content", "")
-                serialized = _serialize_tool_result_content(tool_content)
+                raw_content = get_block_attr(block, "content", "")
+                new_content, dropped = _strip_inner_images_from_tool_result(raw_content)
+                if dropped > 0:
+                    logger.warning(
+                        "OPENAI_CONVERSION: dropped {} image(s) from tool_result content "
+                        "(vision={}) — OpenAI tool messages only carry string content; "
+                        "use a native Anthropic provider if image-in-tool_result is required.",
+                        dropped,
+                        vision.enabled,
+                    )
+                serialized = _serialize_tool_result_content(new_content)
                 result.append(
                     {
                         "role": "tool",
