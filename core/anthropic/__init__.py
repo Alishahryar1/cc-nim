@@ -2,10 +2,13 @@
 
 from .content import extract_text_from_content, get_block_attr, get_block_type
 from .conversion import (
+    NO_VISION,
     AnthropicToOpenAIConverter,
     OpenAIConversionError,
     ReasoningReplayMode,
+    VisionCapabilityProtocol,
     build_base_request_body,
+    convert_anthropic_image_to_openai_image_url,
 )
 from .errors import (
     append_request_id,
@@ -26,12 +29,15 @@ __all__ = [
     "ContentChunk",
     "ContentType",
     "HeuristicToolParser",
+    "NO_VISION",
     "OpenAIConversionError",
     "ReasoningReplayMode",
     "SSEBuilder",
     "ThinkTagParser",
+    "VisionCapabilityProtocol",
     "append_request_id",
     "build_base_request_body",
+    "convert_anthropic_image_to_openai_image_url",
     "extract_text_from_content",
     "format_sse_event",
     "format_user_error_preview",

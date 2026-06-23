@@ -1039,3 +1039,57 @@ def test_strip_preserves_other_blocks():
     assert result[0]["type"] == "text"
     assert result[1] == {"type": "text", "text": "between"}
     assert result[2]["type"] == "text"
+
+
+# --- T3: build_base_request_body vision= kwarg ---
+
+
+def test_build_base_request_body_default_vision_is_off():
+    """Calling build_base_request_body without vision= and giving an image block raises."""
+    req = MessagesRequest(
+        model="test-model",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image", "source": {"type": "url", "url": "https://x.com/i.png"}},
+                    {"type": "text", "text": "what is this?"},
+                ],
+            }
+        ],
+        max_tokens=100,
+    )
+    with pytest.raises(OpenAIConversionError):
+        build_base_request_body(req)
+
+
+def test_build_base_request_body_vision_on_passes_through():
+    """vision=ON: image block ends up as image_url content part in the body."""
+    req = MessagesRequest(
+        model="test-model",
+        messages=[
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "image",
+                        "source": {
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": "abc",
+                        },
+                    },
+                    {"type": "text", "text": "describe"},
+                ],
+            }
+        ],
+        max_tokens=100,
+    )
+    body = build_base_request_body(req, vision=_EnabledVision())
+    user_msgs = [m for m in body["messages"] if m["role"] == "user"]
+    image_parts = [
+        m for m in user_msgs
+        if isinstance(m.get("content"), list)
+        and any(p.get("type") == "image_url" for p in m["content"] if isinstance(p, dict))
+    ]
+    assert len(image_parts) >= 1
