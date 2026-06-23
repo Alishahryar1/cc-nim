@@ -45,20 +45,14 @@ def convert_anthropic_image_to_openai_image_url(block: Any) -> dict[str, Any]:
     if source is None:
         raise OpenAIConversionError("image block missing source")
 
-    source_type = get_block_attr(source, "type", None) or (
-        source.get("type") if isinstance(source, dict) else None
-    )
+    source_type = get_block_attr(source, "type", None)
     if source_type == "base64":
-        media_type = get_block_attr(source, "media_type", None) or (
-            source.get("media_type") if isinstance(source, dict) else None
-        )
+        media_type = get_block_attr(source, "media_type", None)
         if not isinstance(media_type, str) or not media_type.startswith("image/"):
             raise OpenAIConversionError(
                 f"image base64 source requires image/* media_type, got {media_type!r}"
             )
-        data = get_block_attr(source, "data", None) or (
-            source.get("data") if isinstance(source, dict) else None
-        )
+        data = get_block_attr(source, "data", None)
         if not data:
             raise OpenAIConversionError("image base64 source requires non-empty data")
         return {
@@ -66,9 +60,7 @@ def convert_anthropic_image_to_openai_image_url(block: Any) -> dict[str, Any]:
             "image_url": {"url": f"data:{media_type};base64,{data}"},
         }
     if source_type == "url":
-        url = get_block_attr(source, "url", None) or (
-            source.get("url") if isinstance(source, dict) else None
-        )
+        url = get_block_attr(source, "url", None)
         if not url:
             raise OpenAIConversionError("image url source requires non-empty url")
         return {
