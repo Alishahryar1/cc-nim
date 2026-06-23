@@ -100,8 +100,7 @@ def _strip_inner_images_from_tool_result(
 
     dropped = 0
     rewritten: list[Any] = []
-    for item in raw_content:
-        if isinstance(item, dict) and item.get("type") == "image":
+        if get_block_type(item) == "image":
             rewritten.append(_TOOL_RESULT_IMAGE_PLACEHOLDER_BLOCK)
             dropped += 1
         else:
@@ -113,12 +112,12 @@ def _build_user_multipart(parts: list[dict[str, Any]]) -> dict[str, Any]:
     """Build a single ``role: user`` message from collected text/image content parts.
 
     Visited by :meth:`AnthropicToOpenAIConverter._convert_user_message` to keep text
-    and image_url content parts in one message per the OpenAI vision spec. When the
-    parts contain only a single text segment, the content is still emitted as a
-    string to match the converter's text-only fast path elsewhere.
+    and image_url content parts in one message per the OpenAI vision spec. When all
+    parts are plain text, content is emitted as a joined string to match the
+    converter's text-only fast path and preserve compatibility with non-vision providers.
     """
-    if len(parts) == 1 and parts[0].get("type") == "text":
-        return {"role": "user", "content": parts[0]["text"]}
+    if all(p.get("type") == "text" for p in parts):
+        return {"role": "user", "content": "\n".join(p["text"] for p in parts)}
     return {"role": "user", "content": list(parts)}
 
 

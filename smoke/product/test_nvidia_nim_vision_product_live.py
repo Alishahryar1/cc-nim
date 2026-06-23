@@ -24,9 +24,9 @@ def test_nim_vision_base64_image_succeeds(
     if not smoke_config.has_provider_configuration("nvidia_nim"):
         pytest.skip("missing_env: NVIDIA_NIM_API_KEY is not configured")
 
-    provider_models = smoke_config.nvidia_nim_cli_models()
-    if not provider_models:
-        pytest.skip("missing_env: no NVIDIA NIM vision smoke models configured")
+    vision_model = os.getenv("FCC_SMOKE_NIM_VISION_MODEL")
+    if not vision_model:
+        pytest.skip("missing_env: FCC_SMOKE_NIM_VISION_MODEL is not configured")
 
     provider_model = provider_models[0]
 

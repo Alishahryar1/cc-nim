@@ -442,7 +442,9 @@ class Settings(BaseSettings):
         ``BaseModel`` and would not auto-load the env. Mutation goes through
         ``NimSettings.with_vision_enabled()`` to respect encapsulation.
         """
-        env_value = os.environ.get("NVIDIA_NIM_VISION_ENABLED")
+        env_value = _env_file_override(self.model_config, "NVIDIA_NIM_VISION_ENABLED")
+        if env_value is None:
+            env_value = os.environ.get("NVIDIA_NIM_VISION_ENABLED")
         if env_value is not None:
             self.nim = self.nim.with_vision_enabled(
                 env_value.lower() in ("true", "1", "yes")
