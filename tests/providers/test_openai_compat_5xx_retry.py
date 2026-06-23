@@ -7,6 +7,7 @@ import pytest
 from httpx import Request, Response
 
 from config.nim import NimSettings
+from core.anthropic import VisionCapabilityProtocol
 from providers.base import ProviderConfig
 from providers.nvidia_nim import NvidiaNimProvider
 from providers.rate_limit import GlobalRateLimiter
@@ -113,14 +114,11 @@ async def test_nim_stream_openai_5xx_exhausted_emits_user_message(
         GlobalRateLimiter.reset_instance()
 
 
-from core.anthropic import NO_VISION, VisionCapabilityProtocol
-
-
 def test_default_vision_capability_is_no_vision():
     """Base OpenAIChatTransport._vision_capability() returns NO_VISION by default."""
     # Use a minimal concrete subclass since OpenAIChatTransport is abstract
-    from providers.transports.openai_chat import OpenAIChatTransport
     from providers.base import ProviderConfig
+    from providers.transports.openai_chat import OpenAIChatTransport
 
     class _StubTransport(OpenAIChatTransport):
         def _build_request_body(self, request, thinking_enabled=None):

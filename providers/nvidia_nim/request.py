@@ -359,7 +359,11 @@ class _NimVisionCapability:
 
 
 def build_request_body(
-    request_data: Any, nim: NimSettings, *, thinking_enabled: bool, vision: VisionCapabilityProtocol = NO_VISION
+    request_data: Any,
+    nim: NimSettings,
+    *,
+    thinking_enabled: bool,
+    vision: VisionCapabilityProtocol = NO_VISION,
 ) -> dict:
     """Build OpenAI-format request body from Anthropic request."""
     logger.debug(

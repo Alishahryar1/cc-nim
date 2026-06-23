@@ -2,12 +2,11 @@
 
 import json
 from copy import deepcopy
-
-from loguru import logger
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any, Protocol, runtime_checkable
 
+from loguru import logger
 from pydantic import BaseModel
 
 from .content import get_block_attr, get_block_type
@@ -61,9 +60,7 @@ def convert_anthropic_image_to_openai_image_url(block: Any) -> dict[str, Any]:
             source.get("data") if isinstance(source, dict) else None
         )
         if not data:
-            raise OpenAIConversionError(
-                "image base64 source requires non-empty data"
-            )
+            raise OpenAIConversionError("image base64 source requires non-empty data")
         return {
             "type": "image_url",
             "image_url": {"url": f"data:{media_type};base64,{data}"},
@@ -73,16 +70,12 @@ def convert_anthropic_image_to_openai_image_url(block: Any) -> dict[str, Any]:
             source.get("url") if isinstance(source, dict) else None
         )
         if not url:
-            raise OpenAIConversionError(
-                "image url source requires non-empty url"
-            )
+            raise OpenAIConversionError("image url source requires non-empty url")
         return {
             "type": "image_url",
             "image_url": {"url": url},
         }
-    raise OpenAIConversionError(
-        f"unsupported image source.type={source_type!r}"
-    )
+    raise OpenAIConversionError(f"unsupported image source.type={source_type!r}")
 
 
 _TOOL_RESULT_IMAGE_PLACEHOLDER_TEXT = (
@@ -367,7 +360,9 @@ class AnthropicToOpenAIConverter:
                                 pending = None
                     else:
                         result.extend(
-                            AnthropicToOpenAIConverter._convert_user_message(content, vision=vision)
+                            AnthropicToOpenAIConverter._convert_user_message(
+                                content, vision=vision
+                            )
                         )
             else:
                 if role == "user" and pending is not None and pending.needs_deferred():
@@ -536,10 +531,14 @@ class AnthropicToOpenAIConverter:
             elif block_type == "image":
                 if vision.enabled:
                     flush_text()
-                    result.append({
-                        "role": "user",
-                        "content": [convert_anthropic_image_to_openai_image_url(block)],
-                    })
+                    result.append(
+                        {
+                            "role": "user",
+                            "content": [
+                                convert_anthropic_image_to_openai_image_url(block)
+                            ],
+                        }
+                    )
                 else:
                     raise OpenAIConversionError(
                         "User message image blocks are not supported for OpenAI chat "
@@ -606,10 +605,14 @@ class AnthropicToOpenAIConverter:
             elif block_type == "image":
                 if vision.enabled:
                     flush_text()
-                    result.append({
-                        "role": "user",
-                        "content": [convert_anthropic_image_to_openai_image_url(block)],
-                    })
+                    result.append(
+                        {
+                            "role": "user",
+                            "content": [
+                                convert_anthropic_image_to_openai_image_url(block)
+                            ],
+                        }
+                    )
                 else:
                     raise OpenAIConversionError(
                         "User message image blocks are not supported for OpenAI chat "

@@ -38,6 +38,7 @@ class NvidiaNimProvider(OpenAIChatTransport):
         """NIM vision capability sourced from NimSettings."""
         if self._nim_settings.vision_enabled:
             from .request import _NimVisionCapability
+
             return _NimVisionCapability(enabled=True)
         return NO_VISION
 

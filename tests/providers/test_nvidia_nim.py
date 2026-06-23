@@ -6,9 +6,16 @@ import pytest
 from httpx import Request, Response
 
 from config.nim import NimSettings
+from core.anthropic import VisionCapabilityProtocol
+from providers.base import ProviderConfig
 from providers.defaults import NVIDIA_NIM_DEFAULT_BASE
+from providers.exceptions import InvalidRequestError
 from providers.nvidia_nim import NvidiaNimProvider
-from providers.nvidia_nim.request import NIM_TOOL_ARGUMENT_ALIASES_KEY
+from providers.nvidia_nim.request import (
+    NIM_TOOL_ARGUMENT_ALIASES_KEY,
+    _NimVisionCapability,
+    build_request_body,
+)
 
 
 # Mock data classes
@@ -784,15 +791,6 @@ async def test_stream_response_bad_request_without_reasoning_budget_does_not_ret
 
 # --- Task 7: NIM vision wiring tests ---
 
-from core.anthropic import NO_VISION, VisionCapabilityProtocol
-from config.nim import NimSettings
-from providers.base import ProviderConfig
-from providers.nvidia_nim.client import NvidiaNimProvider
-from providers.nvidia_nim.request import build_request_body, _NimVisionCapability
-from core.anthropic.conversion import OpenAIConversionError
-from providers.exceptions import InvalidRequestError
-import pytest
-
 
 def test_nvidia_nim_vision_capability_off_when_setting_false():
     """NvidiaNimProvider with vision_enabled=False returns capability with enabled=False."""
@@ -841,12 +839,17 @@ def test_nvidia_nim_build_request_body_image_passes_through_when_vision_on():
             )
         ],
     )
-    body = build_request_body(req, nim, thinking_enabled=False, vision=_NimVisionCapability(enabled=True))
+    body = build_request_body(
+        req, nim, thinking_enabled=False, vision=_NimVisionCapability(enabled=True)
+    )
     user_msgs = [m for m in body["messages"] if m["role"] == "user"]
     image_parts = [
-        m for m in user_msgs
+        m
+        for m in user_msgs
         if isinstance(m.get("content"), list)
-        and any(p.get("type") == "image_url" for p in m["content"] if isinstance(p, dict))
+        and any(
+            p.get("type") == "image_url" for p in m["content"] if isinstance(p, dict)
+        )
     ]
     assert len(image_parts) >= 1
 

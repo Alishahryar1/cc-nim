@@ -6,8 +6,6 @@ Requires NVIDIA_NIM_API_KEY and a vision-capable model configured in smoke confi
 
 from __future__ import annotations
 
-import base64
-
 import pytest
 
 from smoke.lib.config import SmokeConfig
@@ -16,9 +14,7 @@ from smoke.lib.e2e import SmokeServerDriver
 pytestmark = [pytest.mark.live, pytest.mark.smoke_target("nvidia_nim_vision")]
 
 # 1x1 black PNG (base64-encoded)
-_BLACK_1X1_PNG_B64 = (
-    "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
-)
+_BLACK_1X1_PNG_B64 = "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg=="
 
 
 def test_nim_vision_base64_image_succeeds(

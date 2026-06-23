@@ -4,10 +4,16 @@ import pytest
 
 from api.models.anthropic import MessagesRequest
 from core.anthropic import (
+    NO_VISION,
     AnthropicToOpenAIConverter,
     OpenAIConversionError,
     ReasoningReplayMode,
     build_base_request_body,
+)
+from core.anthropic.conversion import (
+    _PendingAfterTools,
+    _strip_inner_images_from_tool_result,
+    convert_anthropic_image_to_openai_image_url,
 )
 
 # --- Mock Classes ---
@@ -664,14 +670,6 @@ def test_openai_build_rejects_unknown_top_level_extras() -> None:
 
 # --- Vision Conversion Tests (T1: convert_anthropic_image_to_openai_image_url) ---
 
-from core.anthropic.conversion import (
-    NO_VISION,
-    VisionCapabilityProtocol,
-    _PendingAfterTools,
-    _strip_inner_images_from_tool_result,
-    convert_anthropic_image_to_openai_image_url,
-)
-
 
 class _EnabledVision:
     """Stub for vision=ON in converter tests."""
@@ -751,7 +749,7 @@ def test_convert_image_base64_missing_media_type_raises():
         type="image",
         source={"type": "base64", "data": "abc"},
     )
-    with pytest.raises(OpenAIConversionError, match="image.* media_type"):
+    with pytest.raises(OpenAIConversionError, match=r"image.* media_type"):
         convert_anthropic_image_to_openai_image_url(block)
 
 
@@ -760,7 +758,7 @@ def test_convert_image_base64_non_image_media_type_raises():
         type="image",
         source={"type": "base64", "media_type": "text/plain", "data": "abc"},
     )
-    with pytest.raises(OpenAIConversionError, match="image.* media_type"):
+    with pytest.raises(OpenAIConversionError, match=r"image.* media_type"):
         convert_anthropic_image_to_openai_image_url(block)
 
 
@@ -790,9 +788,8 @@ def test_convert_image_url_missing_url_raises():
 
 def test_convert_image_unsupported_source_type_raises():
     block = MockBlock(type="image", source={"type": "file"})
-    with pytest.raises(OpenAIConversionError, match="unsupported image source.type"):
+    with pytest.raises(OpenAIConversionError, match=r"unsupported image source\.type"):
         convert_anthropic_image_to_openai_image_url(block)
-
 
 
 @pytest.mark.parametrize(
@@ -828,9 +825,7 @@ def test_convert_user_message_image_vision_off_explicit():
     ]
     messages = [MockMessage("user", content)]
     with pytest.raises(OpenAIConversionError):
-        AnthropicToOpenAIConverter.convert_messages(
-            messages, vision=_DisabledVision()
-        )
+        AnthropicToOpenAIConverter.convert_messages(messages, vision=_DisabledVision())
 
 
 def test_convert_user_message_image_vision_on_base64():
@@ -873,10 +868,7 @@ def test_convert_user_message_image_vision_on_url():
     )
     assert len(result) == 1
     assert result[0]["content"][0]["type"] == "image_url"
-    assert (
-        result[0]["content"][0]["image_url"]["url"]
-        == "https://example.com/x.png"
-    )
+    assert result[0]["content"][0]["image_url"]["url"] == "https://example.com/x.png"
 
 
 def test_convert_user_message_text_then_image():
@@ -956,7 +948,8 @@ def test_convert_user_message_two_images():
 
 def test_convert_user_message_with_injection_image_vision_on():
     """vision=ON inside _convert_user_message_with_injection (deferred-assistant path)."""
-    pending = _PendingAfterTools(
+    # Create a pending context, but this test focuses on image conversion only
+    _PendingAfterTools(
         remaining_tool_ids={"call_z"},
         deferred_blocks=[MockBlock(type="text", text="after tool")],
         reasoning_replay=ReasoningReplayMode.THINK_TAGS,
@@ -1001,7 +994,10 @@ def test_convert_user_message_with_injection_image_vision_on():
 def test_strip_drops_images_inside_tool_result_and_warns():
     inner = [
         {"type": "text", "text": "screenshot below:"},
-        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "abc"}},
+        {
+            "type": "image",
+            "source": {"type": "base64", "media_type": "image/png", "data": "abc"},
+        },
         {"type": "text", "text": "end"},
     ]
     result, dropped = _strip_inner_images_from_tool_result(inner)
@@ -1029,7 +1025,10 @@ def test_strip_no_op_when_no_images():
 
 def test_strip_preserves_other_blocks():
     inner = [
-        {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": "A"}},
+        {
+            "type": "image",
+            "source": {"type": "base64", "media_type": "image/png", "data": "A"},
+        },
         {"type": "text", "text": "between"},
         {"type": "image", "source": {"type": "url", "url": "https://x.com/i.png"}},
     ]
@@ -1052,7 +1051,10 @@ def test_build_base_request_body_default_vision_is_off():
             {
                 "role": "user",
                 "content": [
-                    {"type": "image", "source": {"type": "url", "url": "https://x.com/i.png"}},
+                    {
+                        "type": "image",
+                        "source": {"type": "url", "url": "https://x.com/i.png"},
+                    },
                     {"type": "text", "text": "what is this?"},
                 ],
             }
@@ -1088,8 +1090,11 @@ def test_build_base_request_body_vision_on_passes_through():
     body = build_base_request_body(req, vision=_EnabledVision())
     user_msgs = [m for m in body["messages"] if m["role"] == "user"]
     image_parts = [
-        m for m in user_msgs
+        m
+        for m in user_msgs
         if isinstance(m.get("content"), list)
-        and any(p.get("type") == "image_url" for p in m["content"] if isinstance(p, dict))
+        and any(
+            p.get("type") == "image_url" for p in m["content"] if isinstance(p, dict)
+        )
     ]
     assert len(image_parts) >= 1
