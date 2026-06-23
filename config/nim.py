@@ -35,8 +35,13 @@ class NimSettings(BaseModel):
     min_tokens: int = Field(0, ge=0, description="Minimum tokens in the response.")
     chat_template: str | None = None
     request_id: str | None = None
+    vision_enabled: bool = Field(
+        False,
+        alias="NVIDIA_NIM_VISION_ENABLED",
+        description="Enable vision (image input) handling for vision-capable NIM models.",
+    )
 
-    model_config = ConfigDict(extra="forbid")
+    model_config = ConfigDict(extra="forbid", populate_by_name=True)
 
     @field_validator("top_k", mode="before")
     @classmethod

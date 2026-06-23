@@ -491,3 +491,14 @@ class TestBuildRequestBody:
         body = {"model": "test", "messages": [{"role": "user", "content": "hi"}]}
 
         assert clone_body_without_reasoning_content(body) is None
+
+
+def test_nim_settings_vision_enabled_defaults_false():
+    """vision_enabled defaults to False on NimSettings."""
+    nim = NimSettings()
+    assert nim.vision_enabled is False
+
+
+def test_nim_settings_vision_enabled_can_be_set_true():
+    nim = NimSettings(vision_enabled=True)
+    assert nim.vision_enabled is True
