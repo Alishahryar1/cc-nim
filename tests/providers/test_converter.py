@@ -667,6 +667,7 @@ def test_openai_build_rejects_unknown_top_level_extras() -> None:
 from core.anthropic.conversion import (
     NO_VISION,
     VisionCapabilityProtocol,
+    _PendingAfterTools,
     convert_anthropic_image_to_openai_image_url,
 )
 
@@ -811,3 +812,183 @@ def test_convert_assistant_server_tool_blocks_raise(content) -> None:
     messages = [MockMessage("assistant", content)]
     with pytest.raises(OpenAIConversionError, match="server tool"):
         AnthropicToOpenAIConverter.convert_messages(messages)
+
+
+# --- T2: _convert_user_message image branch ---
+
+
+def test_convert_user_message_image_vision_off_explicit():
+    """Passing vision=OFF explicitly still raises."""
+    content = [
+        MockBlock(
+            type="image",
+            source={"type": "url", "url": "https://example.com/i.png"},
+        )
+    ]
+    messages = [MockMessage("user", content)]
+    with pytest.raises(OpenAIConversionError):
+        AnthropicToOpenAIConverter.convert_messages(
+            messages, vision=_DisabledVision()
+        )
+
+
+def test_convert_user_message_image_vision_on_base64():
+    """vision=ON: single base64 image emits an image_url user message."""
+    content = [
+        MockBlock(
+            type="image",
+            source={
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "abc",
+            },
+        )
+    ]
+    messages = [MockMessage("user", content)]
+    result = AnthropicToOpenAIConverter.convert_messages(
+        messages, vision=_EnabledVision()
+    )
+    assert len(result) == 1
+    assert result[0]["role"] == "user"
+    assert result[0]["content"] == [
+        {
+            "type": "image_url",
+            "image_url": {"url": "data:image/png;base64,abc"},
+        }
+    ]
+
+
+def test_convert_user_message_image_vision_on_url():
+    """vision=ON: URL image emits verbatim."""
+    content = [
+        MockBlock(
+            type="image",
+            source={"type": "url", "url": "https://example.com/x.png"},
+        )
+    ]
+    messages = [MockMessage("user", content)]
+    result = AnthropicToOpenAIConverter.convert_messages(
+        messages, vision=_EnabledVision()
+    )
+    assert len(result) == 1
+    assert result[0]["content"][0]["type"] == "image_url"
+    assert (
+        result[0]["content"][0]["image_url"]["url"]
+        == "https://example.com/x.png"
+    )
+
+
+def test_convert_user_message_text_then_image():
+    """vision=ON: text flushed first, then image as second user message."""
+    content = [
+        MockBlock(type="text", text="describe this"),
+        MockBlock(
+            type="image",
+            source={
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "abc",
+            },
+        ),
+    ]
+    messages = [MockMessage("user", content)]
+    result = AnthropicToOpenAIConverter.convert_messages(
+        messages, vision=_EnabledVision()
+    )
+    assert len(result) == 2
+    assert result[0] == {"role": "user", "content": "describe this"}
+    assert result[1]["content"][0]["type"] == "image_url"
+
+
+def test_convert_user_message_text_image_text():
+    """vision=ON: text, image, text → three separate user messages."""
+    content = [
+        MockBlock(type="text", text="first"),
+        MockBlock(
+            type="image",
+            source={
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "Z",
+            },
+        ),
+        MockBlock(type="text", text="second"),
+    ]
+    messages = [MockMessage("user", content)]
+    result = AnthropicToOpenAIConverter.convert_messages(
+        messages, vision=_EnabledVision()
+    )
+    assert len(result) == 3
+    assert result[0] == {"role": "user", "content": "first"}
+    assert result[1]["content"][0]["type"] == "image_url"
+    assert result[2] == {"role": "user", "content": "second"}
+
+
+def test_convert_user_message_two_images():
+    """vision=ON: two adjacent images → two separate image_url user messages."""
+    content = [
+        MockBlock(
+            type="image",
+            source={
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "A",
+            },
+        ),
+        MockBlock(
+            type="image",
+            source={
+                "type": "base64",
+                "media_type": "image/jpeg",
+                "data": "B",
+            },
+        ),
+    ]
+    messages = [MockMessage("user", content)]
+    result = AnthropicToOpenAIConverter.convert_messages(
+        messages, vision=_EnabledVision()
+    )
+    assert len(result) == 2
+    assert result[0]["content"][0]["type"] == "image_url"
+    assert result[1]["content"][0]["type"] == "image_url"
+
+
+def test_convert_user_message_with_injection_image_vision_on():
+    """vision=ON inside _convert_user_message_with_injection (deferred-assistant path)."""
+    pending = _PendingAfterTools(
+        remaining_tool_ids={"call_z"},
+        deferred_blocks=[MockBlock(type="text", text="after tool")],
+        reasoning_replay=ReasoningReplayMode.THINK_TAGS,
+    )
+    content = [
+        MockBlock(
+            type="tool_result",
+            tool_use_id="call_z",
+            content="ok",
+        ),
+        MockBlock(
+            type="image",
+            source={
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "X",
+            },
+        ),
+    ]
+    messages = [MockMessage("user", content)]
+    result = AnthropicToOpenAIConverter.convert_messages(
+        messages, vision=_EnabledVision()
+    )
+    # tool_result + deferred-assistant + image user message
+    tool_msgs = [m for m in result if m["role"] == "tool"]
+    image_msgs = [
+        m
+        for m in result
+        if m["role"] == "user"
+        and isinstance(m.get("content"), list)
+        and any(
+            p.get("type") == "image_url" for p in m["content"] if isinstance(p, dict)
+        )
+    ]
+    assert len(tool_msgs) == 1
+    assert len(image_msgs) == 1

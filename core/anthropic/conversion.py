@@ -240,6 +240,7 @@ class AnthropicToOpenAIConverter:
         messages: list[Any],
         *,
         reasoning_replay: ReasoningReplayMode = ReasoningReplayMode.THINK_TAGS,
+        vision: VisionCapabilityProtocol = NO_VISION,
     ) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
         pending: _PendingAfterTools | None = None
@@ -320,19 +321,19 @@ class AnthropicToOpenAIConverter:
                             pending = None
                             result.extend(
                                 AnthropicToOpenAIConverter._convert_user_message(
-                                    content
+                                    content, vision=vision
                                 )
                             )
                         else:
                             pieces = AnthropicToOpenAIConverter._convert_user_message_with_injection(
-                                content, pending
+                                content, pending, vision=vision
                             )
                             result.extend(pieces["messages"])
                             if pieces["cleared_pending"]:
                                 pending = None
                     else:
                         result.extend(
-                            AnthropicToOpenAIConverter._convert_user_message(content)
+                            AnthropicToOpenAIConverter._convert_user_message(content, vision=vision)
                         )
             else:
                 if role == "user" and pending is not None and pending.needs_deferred():
@@ -471,12 +472,17 @@ class AnthropicToOpenAIConverter:
 
     @staticmethod
     def _convert_user_message_with_injection(
-        content: list[Any], pending: _PendingAfterTools
+        content: list[Any],
+        pending: _PendingAfterTools,
+        *,
+        vision: VisionCapabilityProtocol = NO_VISION,
     ) -> dict[str, Any]:
         """Convert user list blocks, emitting deferred assistant after all tool results."""
         if not pending.needs_deferred() or not pending.remaining_tool_ids:
             return {
-                "messages": AnthropicToOpenAIConverter._convert_user_message(content),
+                "messages": AnthropicToOpenAIConverter._convert_user_message(
+                    content, vision=vision
+                ),
                 "cleared_pending": False,
             }
 
@@ -494,11 +500,18 @@ class AnthropicToOpenAIConverter:
             if block_type == "text":
                 text_parts.append(get_block_attr(block, "text", ""))
             elif block_type == "image":
-                raise OpenAIConversionError(
-                    "User message image blocks are not supported for OpenAI chat "
-                    "conversion; use a vision-capable native Anthropic provider or "
-                    "extend the converter."
-                )
+                if vision.enabled:
+                    flush_text()
+                    result.append({
+                        "role": "user",
+                        "content": [convert_anthropic_image_to_openai_image_url(block)],
+                    })
+                else:
+                    raise OpenAIConversionError(
+                        "User message image blocks are not supported for OpenAI chat "
+                        "conversion; use a vision-capable native Anthropic provider or "
+                        "extend the converter."
+                    )
             elif block_type == "tool_result":
                 flush_text()
                 tool_content = get_block_attr(block, "content", "")
@@ -529,7 +542,11 @@ class AnthropicToOpenAIConverter:
         return {"messages": result, "cleared_pending": cleared}
 
     @staticmethod
-    def _convert_user_message(content: list[Any]) -> list[dict[str, Any]]:
+    def _convert_user_message(
+        content: list[Any],
+        *,
+        vision: VisionCapabilityProtocol = NO_VISION,
+    ) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
         text_parts: list[str] = []
 
@@ -544,11 +561,18 @@ class AnthropicToOpenAIConverter:
             if block_type == "text":
                 text_parts.append(get_block_attr(block, "text", ""))
             elif block_type == "image":
-                raise OpenAIConversionError(
-                    "User message image blocks are not supported for OpenAI chat "
-                    "conversion; use a vision-capable native Anthropic provider or "
-                    "extend the converter."
-                )
+                if vision.enabled:
+                    flush_text()
+                    result.append({
+                        "role": "user",
+                        "content": [convert_anthropic_image_to_openai_image_url(block)],
+                    })
+                else:
+                    raise OpenAIConversionError(
+                        "User message image blocks are not supported for OpenAI chat "
+                        "conversion; use a vision-capable native Anthropic provider or "
+                        "extend the converter."
+                    )
             elif block_type == "tool_result":
                 flush_text()
                 tool_content = get_block_attr(block, "content", "")
