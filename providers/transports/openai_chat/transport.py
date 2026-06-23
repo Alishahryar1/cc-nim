@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 from openai import AsyncOpenAI
 
-from core.anthropic import SSEBuilder
+from core.anthropic import NO_VISION, SSEBuilder, VisionCapabilityProtocol
 from providers.base import BaseProvider, ProviderConfig
 from providers.error_mapping import (
     extract_provider_error_detail,
@@ -97,6 +97,10 @@ class OpenAIChatTransport(BaseProvider):
     def _prepare_create_body(self, body: dict[str, Any]) -> dict[str, Any]:
         """Return the body passed to the upstream OpenAI-compatible client."""
         return body
+
+    def _vision_capability(self) -> VisionCapabilityProtocol:
+        """Subclasses override to advertise vision support. Default = NO_VISION."""
+        return NO_VISION
 
     def _record_tool_call_extra_content(
         self, tool_call_id: str, extra_content: dict[str, Any]

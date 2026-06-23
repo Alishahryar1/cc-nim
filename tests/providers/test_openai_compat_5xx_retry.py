@@ -111,3 +111,31 @@ async def test_nim_stream_openai_5xx_exhausted_emits_user_message(
         assert expect_substr in blob.lower()
     finally:
         GlobalRateLimiter.reset_instance()
+
+
+from core.anthropic import NO_VISION, VisionCapabilityProtocol
+
+
+def test_default_vision_capability_is_no_vision():
+    """Base OpenAIChatTransport._vision_capability() returns NO_VISION by default."""
+    # Use a minimal concrete subclass since OpenAIChatTransport is abstract
+    from providers.transports.openai_chat import OpenAIChatTransport
+    from providers.base import ProviderConfig
+
+    class _StubTransport(OpenAIChatTransport):
+        def _build_request_body(self, request, thinking_enabled=None):
+            return {}
+
+    config = ProviderConfig(
+        base_url="http://localhost",
+        api_key="test",
+    )
+    transport = _StubTransport(
+        config,
+        provider_name="stub",
+        base_url="http://localhost",
+        api_key="test",
+    )
+    capability = transport._vision_capability()
+    assert isinstance(capability, VisionCapabilityProtocol)
+    assert capability.enabled is False
