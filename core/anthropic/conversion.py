@@ -100,6 +100,7 @@ def _strip_inner_images_from_tool_result(
 
     dropped = 0
     rewritten: list[Any] = []
+    for item in raw_content:
         if get_block_type(item) == "image":
             rewritten.append(_TOOL_RESULT_IMAGE_PLACEHOLDER_BLOCK)
             dropped += 1

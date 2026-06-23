@@ -6,6 +6,8 @@ Requires NVIDIA_NIM_API_KEY and a vision-capable model configured in smoke confi
 
 from __future__ import annotations
 
+import os
+
 import pytest
 
 from smoke.lib.config import SmokeConfig
@@ -28,13 +30,11 @@ def test_nim_vision_base64_image_succeeds(
     if not vision_model:
         pytest.skip("missing_env: FCC_SMOKE_NIM_VISION_MODEL is not configured")
 
-    provider_model = provider_models[0]
-
     with SmokeServerDriver(
         smoke_config,
         name="product-nvidia-nim-vision-base64",
         env_overrides={
-            "MODEL": provider_model.full_model,
+            "MODEL": vision_model,
             "MESSAGING_PLATFORM": "none",
             "NVIDIA_NIM_VISION_ENABLED": "true",
         },
@@ -48,7 +48,7 @@ def test_nim_vision_base64_image_succeeds(
                 "content-type": "application/json",
             },
             json={
-                "model": provider_model.full_model,
+                "model": vision_model,
                 "max_tokens": 256,
                 "messages": [
                     {
