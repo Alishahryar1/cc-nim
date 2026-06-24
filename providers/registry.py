@@ -112,6 +112,12 @@ def _create_zai(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     return ZaiProvider(config)
 
 
+def _create_commandcode(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+    from providers.commandcode import CommandCodeProvider
+
+    return CommandCodeProvider(config)
+
+
 def _create_fireworks(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     from providers.fireworks import FireworksProvider
 
@@ -151,6 +157,7 @@ PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "groq": _create_groq,
     "fireworks": _create_fireworks,
     "zai": _create_zai,
+    "commandcode": _create_commandcode,
     "lmstudio": _create_lmstudio,
     "llamacpp": _create_llamacpp,
     "ollama": _create_ollama,
