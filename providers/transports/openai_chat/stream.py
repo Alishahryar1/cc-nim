@@ -128,7 +128,7 @@ class OpenAIChatStreamRunner:
                             logger.debug("{} finish_reason: {}", tag, finish_reason)
 
                         reasoning = getattr(delta, "reasoning_content", None)
-                        if thinking_enabled and reasoning:
+                        if thinking_enabled and reasoning is not None:
                             for event in hold_events(sse.ensure_thinking_block()):
                                 yield event
                             for event in hold_event(sse.emit_thinking_delta(reasoning)):

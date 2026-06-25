@@ -77,7 +77,7 @@ def _serialize_tool_result_content(tool_content: Any) -> str:
 def _clean_reasoning_content(value: Any) -> str | None:
     if not isinstance(value, str):
         return None
-    return value if value else None
+    return value
 
 
 def _think_tag_content(reasoning: str) -> str:
@@ -384,8 +384,8 @@ class AnthropicToOpenAIConverter:
         if tool_calls:
             msg["tool_calls"] = tool_calls
         if reasoning_replay == ReasoningReplayMode.REASONING_CONTENT:
-            replay_reasoning = reasoning_content or "\n".join(thinking_parts)
-            if replay_reasoning:
+            replay_reasoning = reasoning_content if reasoning_content is not None else "\n".join(thinking_parts)
+            if replay_reasoning is not None:
                 msg["reasoning_content"] = replay_reasoning
 
         return [msg]
