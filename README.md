@@ -91,7 +91,7 @@ Windows PowerShell FCC only:
 irm "https://github.com/tspry/free-claude-code/blob/main/scripts/install-fcc-only.ps1?raw=1" | iex
 ```
 
-##To remove only Free Claude Code (not uv, Claude Code, Codex, or the uv-managed Python runtime):
+#### To remove only Free Claude Code (not uv, Claude Code, Codex, or the uv-managed Python runtime):
 
 macOS/Linux:
 
