@@ -86,7 +86,12 @@ irm "https://github.com/Alishahryar1/free-claude-code/blob/main/scripts/install.
 
 Review the installers at [scripts/install.sh](https://github.com/Alishahryar1/free-claude-code/blob/main/scripts/install.sh) and [scripts/install.ps1](https://github.com/Alishahryar1/free-claude-code/blob/main/scripts/install.ps1). They install Claude Code and Codex when missing, then install or update the proxy. Re-run these commands to update to the latest version.
 
-To remove only Free Claude Code (not uv, Claude Code, Codex, or the uv-managed Python runtime):
+Windows PowerShell FCC only:
+```powershell
+irm "https://github.com/tspry/free-claude-code/blob/main/scripts/install-fcc-only.ps1?raw=1" | iex
+```
+
+##To remove only Free Claude Code (not uv, Claude Code, Codex, or the uv-managed Python runtime):
 
 macOS/Linux:
 
