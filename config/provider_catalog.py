@@ -36,6 +36,7 @@ ZAI_DEFAULT_BASE = "https://api.z.ai/api/anthropic/v1"
 GEMINI_DEFAULT_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GROQ_DEFAULT_BASE = "https://api.groq.com/openai/v1"
 CEREBRAS_DEFAULT_BASE = "https://api.cerebras.ai/v1"
+TELEPUB_VOYAGE_DEFAULT_BASE = "https://voyage.prod.telepub.cn/voyage/api"
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,6 +169,16 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="cerebras_api_key",
         default_base_url=CEREBRAS_DEFAULT_BASE,
         proxy_attr="cerebras_proxy",
+        capabilities=("chat", "streaming", "tools", "thinking", "rate_limit"),
+    ),
+    "telepub_voyage": ProviderDescriptor(
+        provider_id="telepub_voyage",
+        transport_type="openai_chat",
+        credential_env="TELEPUB_VOYAGE_API_KEY",
+        credential_attr="telepub_voyage_api_key",
+        default_base_url=TELEPUB_VOYAGE_DEFAULT_BASE,
+        base_url_attr="telepub_voyage_base_url",
+        proxy_attr="telepub_voyage_proxy",
         capabilities=("chat", "streaming", "tools", "thinking", "rate_limit"),
     ),
     "groq": ProviderDescriptor(

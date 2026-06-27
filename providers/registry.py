@@ -136,6 +136,19 @@ def _create_cerebras(config: ProviderConfig, _settings: Settings) -> BaseProvide
     return CerebrasProvider(config)
 
 
+def _csv_model_ids(raw: str) -> frozenset[str]:
+    if not raw.strip():
+        return frozenset()
+    return frozenset(part.strip() for part in raw.split(",") if part.strip())
+
+
+def _create_telepub_voyage(config: ProviderConfig, settings: Settings) -> BaseProvider:
+    from providers.telepub_voyage import TelepubVoyageProvider
+
+    static_ids = _csv_model_ids(settings.telepub_voyage_models)
+    return TelepubVoyageProvider(config, static_model_ids=static_ids)
+
+
 PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "nvidia_nim": _create_nvidia_nim,
     "open_router": _create_open_router,
@@ -148,6 +161,7 @@ PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "wafer": _create_wafer,
     "kimi": _create_kimi,
     "cerebras": _create_cerebras,
+    "telepub_voyage": _create_telepub_voyage,
     "groq": _create_groq,
     "fireworks": _create_fireworks,
     "zai": _create_zai,

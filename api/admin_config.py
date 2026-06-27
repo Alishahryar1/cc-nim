@@ -252,6 +252,42 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         ),
     ),
     ConfigFieldSpec(
+        "TELEPUB_VOYAGE_API_KEY",
+        "Telepub Voyage API Key",
+        "providers",
+        "secret",
+        settings_attr="telepub_voyage_api_key",
+        secret=True,
+        description=(
+            "Telepub Voyage OpenAI-compatible API key. "
+            "Used with the OpenAI-compatible chat completions at "
+            "voyage.prod.telepub.cn/voyage/api."
+        ),
+    ),
+    ConfigFieldSpec(
+        "TELEPUB_VOYAGE_BASE_URL",
+        "Telepub Voyage Base URL",
+        "providers",
+        "url",
+        settings_attr="telepub_voyage_base_url",
+        description=(
+            "Telepub Voyage OpenAI-compatible base URL. "
+            "Do not append /chat/completions (the SDK adds that path)."
+        ),
+    ),
+    ConfigFieldSpec(
+        "TELEPUB_VOYAGE_MODELS",
+        "Telepub Voyage Models",
+        "providers",
+        "string",
+        settings_attr="telepub_voyage_models",
+        description=(
+            "Comma-separated upstream model ids for Telepub Voyage. "
+            "Merged with GET /models when present. "
+            "Required for startup validation if /models is absent or empty."
+        ),
+    ),
+    ConfigFieldSpec(
         "LM_STUDIO_BASE_URL",
         "LM Studio Base URL",
         "providers",
@@ -404,6 +440,15 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         "providers",
         "secret",
         settings_attr="cerebras_proxy",
+        secret=True,
+        advanced=True,
+    ),
+    ConfigFieldSpec(
+        "TELEPUB_VOYAGE_PROXY",
+        "Telepub Voyage Proxy",
+        "providers",
+        "secret",
+        settings_attr="telepub_voyage_proxy",
         secret=True,
         advanced=True,
     ),
@@ -894,6 +939,12 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
     ConfigFieldSpec(
         "FCC_SMOKE_MODEL_CEREBRAS",
         "Smoke Cerebras Model",
+        "smoke",
+        advanced=True,
+    ),
+    ConfigFieldSpec(
+        "FCC_SMOKE_MODEL_TELEPUB_VOYAGE",
+        "Smoke Telepub Voyage Model",
         "smoke",
         advanced=True,
     ),

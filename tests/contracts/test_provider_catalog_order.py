@@ -16,6 +16,7 @@ _EXPECTED_PROVIDER_ORDER: tuple[str, ...] = (
     "wafer",
     "kimi",
     "cerebras",
+    "telepub_voyage",
     "groq",
     "fireworks",
     "zai",
