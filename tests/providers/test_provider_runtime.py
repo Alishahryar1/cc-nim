@@ -22,12 +22,7 @@ from providers.nvidia_nim import NvidiaNimProvider
 from providers.ollama import OllamaProvider
 from providers.open_router import OpenRouterProvider
 from providers.opencode import OpenCodeProvider
-from providers.registry import (
-    PROVIDER_DESCRIPTORS,
-    ProviderRegistry,
-    build_provider_config,
-    create_provider,
-)
+from providers.runtime import ProviderRuntime, build_provider_config, create_provider
 from providers.wafer import WaferProvider
 from providers.zai import ZaiProvider
 
@@ -74,17 +69,19 @@ def _make_settings(**overrides):
     mock.http_write_timeout = 10.0
     mock.http_connect_timeout = 10.0
     mock.enable_model_thinking = True
+    mock.log_raw_sse_events = False
+    mock.log_api_error_tracebacks = False
     mock.nim = NimSettings()
     for key, value in overrides.items():
         setattr(mock, key, value)
     return mock
 
 
-def test_importing_registry_does_not_eager_load_other_adapters() -> None:
-    """Registry metadata must not import every provider adapter up front."""
+def test_importing_runtime_does_not_eager_load_other_adapters() -> None:
+    """Runtime metadata must not import every provider adapter up front."""
     code = (
         "import sys\n"
-        "import providers.registry\n"
+        "import providers.runtime\n"
         "assert 'providers.open_router' not in sys.modules\n"
     )
     proc = subprocess.run(
@@ -96,16 +93,16 @@ def test_importing_registry_does_not_eager_load_other_adapters() -> None:
     assert proc.returncode == 0, proc.stderr or proc.stdout
 
 
-def test_descriptors_cover_advertised_provider_ids():
-    assert set(PROVIDER_DESCRIPTORS) == set(SUPPORTED_PROVIDER_IDS)
-    for descriptor in PROVIDER_DESCRIPTORS.values():
+def test_provider_catalog_covers_advertised_provider_ids():
+    assert set(PROVIDER_CATALOG) == set(SUPPORTED_PROVIDER_IDS)
+    for descriptor in PROVIDER_CATALOG.values():
         assert descriptor.provider_id
         assert descriptor.transport_type in {"openai_chat", "anthropic_messages"}
         assert descriptor.capabilities
 
 
 def test_ollama_descriptor_uses_native_anthropic_transport():
-    descriptor = PROVIDER_DESCRIPTORS["ollama"]
+    descriptor = PROVIDER_CATALOG["ollama"]
 
     assert descriptor.transport_type == "anthropic_messages"
     assert descriptor.default_base_url == "http://localhost:11434"
@@ -113,14 +110,14 @@ def test_ollama_descriptor_uses_native_anthropic_transport():
 
 
 def test_zai_descriptor_uses_fixed_cloud_base_url():
-    descriptor = PROVIDER_DESCRIPTORS["zai"]
+    descriptor = PROVIDER_CATALOG["zai"]
 
     assert descriptor.default_base_url == ZAI_DEFAULT_BASE
     assert descriptor.base_url_attr is None
 
 
 def test_zai_provider_config_ignores_stale_base_url_setting():
-    descriptor = PROVIDER_DESCRIPTORS["zai"]
+    descriptor = PROVIDER_CATALOG["zai"]
 
     config = build_provider_config(
         descriptor,
@@ -198,13 +195,12 @@ def test_create_provider_instantiates_each_builtin():
             assert isinstance(create_provider(provider_id, settings), provider_cls)
 
 
-def test_provider_registry_caches_by_provider_id():
-    registry = ProviderRegistry()
-    settings = _make_settings()
+def test_provider_runtime_caches_by_provider_id():
+    runtime = ProviderRuntime(_make_settings())
 
     with patch("providers.transports.openai_chat.transport.AsyncOpenAI"):
-        first = registry.get("nvidia_nim", settings)
-        second = registry.get("nvidia_nim", settings)
+        first = runtime.resolve_provider("nvidia_nim")
+        second = runtime.resolve_provider("nvidia_nim")
 
     assert first is second
 
@@ -215,32 +211,34 @@ def test_unknown_provider_raises_unknown_provider_type_error():
 
 
 @pytest.mark.asyncio
-async def test_provider_registry_cleanup_runs_all_even_if_one_fails() -> None:
+async def test_provider_runtime_cleanup_runs_all_even_if_one_fails() -> None:
     """Every provider gets cleanup; cache is cleared even when one raises."""
-    reg = ProviderRegistry()
     p1 = MagicMock()
     p1.cleanup = AsyncMock(side_effect=RuntimeError("first"))
     p2 = MagicMock()
     p2.cleanup = AsyncMock()
-    reg._providers["a"] = p1
-    reg._providers["b"] = p2
+    runtime = ProviderRuntime(_make_settings(), {"a": p1, "b": p2})
+
     with pytest.raises(RuntimeError, match="first"):
-        await reg.cleanup()
+        await runtime.cleanup()
+
     p1.cleanup.assert_awaited_once()
     p2.cleanup.assert_awaited_once()
-    assert reg._providers == {}
+    assert not runtime.is_cached("a")
+    assert not runtime.is_cached("b")
 
 
 @pytest.mark.asyncio
-async def test_provider_registry_cleanup_exceptiongroup_on_multiple_failures() -> None:
-    reg = ProviderRegistry()
+async def test_provider_runtime_cleanup_exceptiongroup_on_multiple_failures() -> None:
     p1 = MagicMock()
     p1.cleanup = AsyncMock(side_effect=RuntimeError("a"))
     p2 = MagicMock()
     p2.cleanup = AsyncMock(side_effect=RuntimeError("b"))
-    reg._providers["x"] = p1
-    reg._providers["y"] = p2
+    runtime = ProviderRuntime(_make_settings(), {"x": p1, "y": p2})
+
     with pytest.raises(ExceptionGroup) as exc_info:
-        await reg.cleanup()
+        await runtime.cleanup()
+
     assert len(exc_info.value.exceptions) == 2
-    assert reg._providers == {}
+    assert not runtime.is_cached("x")
+    assert not runtime.is_cached("y")

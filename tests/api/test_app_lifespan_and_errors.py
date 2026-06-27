@@ -10,7 +10,7 @@ from fastapi.testclient import TestClient
 
 from config.settings import Settings
 from providers.exceptions import ServiceUnavailableError
-from providers.registry import ProviderRegistry
+from providers.runtime import ProviderRuntime
 
 _RUNTIME_EXTRAS = {
     "voice_note_enabled": True,
@@ -110,9 +110,9 @@ async def test_runtime_startup_logs_admin_url_without_printed_server_banner(tmp_
             api_runtime_mod.logging, "getLogger", return_value=uvicorn_logger
         ) as get_logger,
         patch.object(api_runtime_mod.logger, "info") as app_info,
-        patch.object(ProviderRegistry, "validate_configured_models", new=AsyncMock()),
-        patch.object(ProviderRegistry, "start_model_list_refresh"),
-        patch.object(ProviderRegistry, "cleanup", new=AsyncMock()),
+        patch.object(ProviderRuntime, "validate_configured_models", new=AsyncMock()),
+        patch.object(ProviderRuntime, "start_model_list_refresh"),
+        patch.object(ProviderRuntime, "cleanup", new=AsyncMock()),
         patch(
             "messaging.platforms.factory.create_messaging_components",
             return_value=None,
@@ -155,7 +155,7 @@ def test_create_app_provider_error_handler_returns_anthropic_format():
     )
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
-        patch.object(ProviderRegistry, "cleanup", new=AsyncMock()),
+        patch.object(ProviderRuntime, "cleanup", new=AsyncMock()),
     ):
         with TestClient(app) as client:
             resp = client.get("/raise_provider")
@@ -192,7 +192,7 @@ def test_create_app_provider_error_default_logs_exclude_provider_message():
     )
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
-        patch.object(ProviderRegistry, "cleanup", new=AsyncMock()),
+        patch.object(ProviderRuntime, "cleanup", new=AsyncMock()),
         patch.object(api_app_mod.logger, "error") as log_err,
     ):
         with TestClient(app) as client:
@@ -228,7 +228,7 @@ def test_create_app_general_exception_handler_returns_500():
     )
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
-        patch.object(ProviderRegistry, "cleanup", new=AsyncMock()),
+        patch.object(ProviderRuntime, "cleanup", new=AsyncMock()),
     ):
         with TestClient(app, raise_server_exceptions=False) as client:
             resp = client.get("/raise_general")
@@ -265,7 +265,7 @@ def test_create_app_general_exception_default_logs_exclude_exception_message():
     )
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
-        patch.object(ProviderRegistry, "cleanup", new=AsyncMock()),
+        patch.object(ProviderRuntime, "cleanup", new=AsyncMock()),
         patch.object(api_app_mod.logger, "error") as log_err,
     ):
         with TestClient(app, raise_server_exceptions=False) as client:
@@ -325,10 +325,10 @@ def test_app_lifespan_sets_state_and_cleans_up(tmp_path, messaging_enabled):
 
     api_app_mod = importlib.import_module("api.app")
 
-    registry_cleanup = AsyncMock()
+    runtime_cleanup = AsyncMock()
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
-        patch.object(ProviderRegistry, "cleanup", new=registry_cleanup),
+        patch.object(ProviderRuntime, "cleanup", new=runtime_cleanup),
         patch(
             "messaging.platforms.factory.create_messaging_components",
             return_value=fake_components if messaging_enabled else None,
@@ -360,7 +360,7 @@ def test_app_lifespan_sets_state_and_cleans_up(tmp_path, messaging_enabled):
         cli_manager.stop_all.assert_not_awaited()
         assert getattr(app.state, "messaging_runtime", "missing") is None
 
-    registry_cleanup.assert_awaited_once()
+    runtime_cleanup.assert_awaited_once()
 
 
 def test_app_lifespan_cleanup_continues_if_platform_stop_raises(tmp_path):
@@ -396,10 +396,10 @@ def test_app_lifespan_cleanup_continues_if_platform_stop_raises(tmp_path):
     cli_manager.stop_all = AsyncMock()
 
     api_app_mod = importlib.import_module("api.app")
-    registry_cleanup = AsyncMock()
+    runtime_cleanup = AsyncMock()
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
-        patch.object(ProviderRegistry, "cleanup", new=registry_cleanup),
+        patch.object(ProviderRuntime, "cleanup", new=runtime_cleanup),
         patch(
             "messaging.platforms.factory.create_messaging_components",
             return_value=fake_components,
@@ -412,7 +412,7 @@ def test_app_lifespan_cleanup_continues_if_platform_stop_raises(tmp_path):
 
     fake_platform.stop.assert_awaited_once()
     cli_manager.stop_all.assert_awaited_once()
-    registry_cleanup.assert_awaited_once()
+    runtime_cleanup.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -439,8 +439,8 @@ async def test_runtime_startup_validation_failure_does_not_block_server(tmp_path
     validation = AsyncMock(side_effect=ServiceUnavailableError("bad model"))
     cleanup = AsyncMock()
     with (
-        patch.object(ProviderRegistry, "validate_configured_models", new=validation),
-        patch.object(ProviderRegistry, "cleanup", new=cleanup),
+        patch.object(ProviderRuntime, "validate_configured_models", new=validation),
+        patch.object(ProviderRuntime, "cleanup", new=cleanup),
         patch.object(api_runtime_mod.logger, "warning") as log_warning,
         patch(
             "messaging.platforms.factory.create_messaging_components",
@@ -450,7 +450,7 @@ async def test_runtime_startup_validation_failure_does_not_block_server(tmp_path
         await runtime.startup()
         await runtime.shutdown()
 
-    validation.assert_awaited_once_with(settings)
+    validation.assert_awaited_once_with()
     cleanup.assert_awaited_once()
     create_components.assert_called_once()
     logged = " ".join(
@@ -494,8 +494,8 @@ async def test_graceful_asgi_lifespan_model_validation_failure_starts(tmp_path):
     cleanup = AsyncMock()
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
-        patch.object(ProviderRegistry, "validate_configured_models", new=validation),
-        patch.object(ProviderRegistry, "cleanup", new=cleanup),
+        patch.object(ProviderRuntime, "validate_configured_models", new=validation),
+        patch.object(ProviderRuntime, "cleanup", new=cleanup),
     ):
         await app({"type": "lifespan"}, receive, send)
 
@@ -524,10 +524,10 @@ def test_app_lifespan_messaging_import_error_no_crash(tmp_path, caplog):
     )
 
     api_app_mod = importlib.import_module("api.app")
-    registry_cleanup = AsyncMock()
+    runtime_cleanup = AsyncMock()
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
-        patch.object(ProviderRegistry, "cleanup", new=registry_cleanup),
+        patch.object(ProviderRuntime, "cleanup", new=runtime_cleanup),
         patch(
             "messaging.platforms.factory.create_messaging_components",
             side_effect=ImportError("discord not installed"),
@@ -537,7 +537,7 @@ def test_app_lifespan_messaging_import_error_no_crash(tmp_path, caplog):
         pass
 
     assert getattr(app.state, "messaging_runtime", None) is None
-    registry_cleanup.assert_awaited_once()
+    runtime_cleanup.assert_awaited_once()
 
 
 def test_app_lifespan_platform_start_exception_cleanup_still_runs(tmp_path):
@@ -574,10 +574,10 @@ def test_app_lifespan_platform_start_exception_cleanup_still_runs(tmp_path):
     cli_manager.stop_all = AsyncMock()
 
     api_app_mod = importlib.import_module("api.app")
-    registry_cleanup = AsyncMock()
+    runtime_cleanup = AsyncMock()
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
-        patch.object(ProviderRegistry, "cleanup", new=registry_cleanup),
+        patch.object(ProviderRuntime, "cleanup", new=runtime_cleanup),
         patch(
             "messaging.platforms.factory.create_messaging_components",
             return_value=fake_components,
@@ -588,7 +588,7 @@ def test_app_lifespan_platform_start_exception_cleanup_still_runs(tmp_path):
     ):
         pass
 
-    registry_cleanup.assert_awaited_once()
+    runtime_cleanup.assert_awaited_once()
 
 
 def test_app_lifespan_flush_pending_save_exception_warning_only(tmp_path):
@@ -626,10 +626,10 @@ def test_app_lifespan_flush_pending_save_exception_warning_only(tmp_path):
     cli_manager.stop_all = AsyncMock()
 
     api_app_mod = importlib.import_module("api.app")
-    registry_cleanup = AsyncMock()
+    runtime_cleanup = AsyncMock()
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
-        patch.object(ProviderRegistry, "cleanup", new=registry_cleanup),
+        patch.object(ProviderRuntime, "cleanup", new=runtime_cleanup),
         patch(
             "messaging.platforms.factory.create_messaging_components",
             return_value=fake_components,
@@ -641,7 +641,7 @@ def test_app_lifespan_flush_pending_save_exception_warning_only(tmp_path):
         pass
 
     session_store.flush_pending_save.assert_called_once()
-    registry_cleanup.assert_awaited_once()
+    runtime_cleanup.assert_awaited_once()
 
 
 def test_create_app_writes_server_log_under_fcc_home(monkeypatch, tmp_path):

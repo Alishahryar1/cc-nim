@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from config.settings import Settings
-from providers.registry import ProviderRegistry
+from providers.runtime import ProviderRuntime
 
 from .gateway_model_ids import gateway_model_id, no_thinking_gateway_model_id
 from .models.responses import ModelResponse, ModelsListResponse
@@ -51,7 +51,7 @@ SUPPORTED_CLAUDE_MODELS = [
 
 
 def build_models_list_response(
-    settings: Settings, provider_registry: ProviderRegistry | None
+    settings: Settings, provider_runtime: ProviderRuntime | None
 ) -> ModelsListResponse:
     """Return configured, cached, and compatibility model ids."""
     models: list[ModelResponse] = []
@@ -59,8 +59,8 @@ def build_models_list_response(
 
     for ref in settings.configured_chat_model_refs():
         supports_thinking = None
-        if provider_registry is not None:
-            supports_thinking = provider_registry.cached_model_supports_thinking(
+        if provider_runtime is not None:
+            supports_thinking = provider_runtime.cached_model_supports_thinking(
                 ref.provider_id, ref.model_id
             )
         _append_provider_model_variants(
@@ -70,8 +70,8 @@ def build_models_list_response(
             supports_thinking=supports_thinking,
         )
 
-    if provider_registry is not None:
-        for model_info in provider_registry.cached_prefixed_model_infos():
+    if provider_runtime is not None:
+        for model_info in provider_runtime.cached_prefixed_model_infos():
             _append_provider_model_variants(
                 models,
                 seen,

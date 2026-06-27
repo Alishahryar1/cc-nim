@@ -14,7 +14,7 @@ from loguru import logger
 from api.admin_urls import local_admin_url
 from config.settings import Settings, get_settings
 from providers.exceptions import ServiceUnavailableError
-from providers.registry import ProviderRegistry
+from providers.runtime import ProviderRuntime
 
 if TYPE_CHECKING:
     from cli.managed import ManagedClaudeSessionManager
@@ -87,7 +87,7 @@ class AppRuntime:
 
     app: FastAPI
     settings: Settings
-    _provider_registry: ProviderRegistry | None = field(default=None, init=False)
+    _provider_runtime: ProviderRuntime | None = field(default=None, init=False)
     messaging_runtime: MessagingRuntime | None = None
     messaging_workflow: MessagingWorkflow | None = None
     cli_manager: ManagedClaudeSessionManager | None = None
@@ -103,12 +103,12 @@ class AppRuntime:
     async def startup(self) -> None:
         logger.info("Starting Claude Code Proxy...")
         admin_url = local_admin_url(self.settings)
-        self._provider_registry = ProviderRegistry()
-        self.app.state.provider_registry = self._provider_registry
+        self._provider_runtime = ProviderRuntime(self.settings)
+        self.app.state.provider_runtime = self._provider_runtime
         try:
             warn_if_process_auth_token(self.settings)
             await self._validate_configured_models_best_effort()
-            self._provider_registry.start_model_list_refresh(self.settings)
+            self._provider_runtime.start_model_list_refresh()
             await self._start_messaging_if_configured()
             self._publish_state()
             logging.getLogger("uvicorn.error").info(
@@ -117,18 +117,18 @@ class AppRuntime:
         except Exception as exc:
             log_startup_failure(self.settings, exc)
             await best_effort(
-                "provider_registry.cleanup",
-                self._provider_registry.cleanup(),
+                "provider_runtime.cleanup",
+                self._provider_runtime.cleanup(),
                 log_verbose_errors=self.settings.log_api_error_tracebacks,
             )
             raise
 
     async def _validate_configured_models_best_effort(self) -> None:
         """Warm validation status without blocking first-run/admin access."""
-        if self._provider_registry is None:
+        if self._provider_runtime is None:
             return
         try:
-            await self._provider_registry.validate_configured_models(self.settings)
+            await self._provider_runtime.validate_configured_models()
         except ServiceUnavailableError as exc:
             self.app.state.startup_validation_error = exc.message
             logger.warning(
@@ -165,10 +165,10 @@ class AppRuntime:
                 self.cli_manager.stop_all(),
                 log_verbose_errors=verbose,
             )
-        if self._provider_registry is not None:
+        if self._provider_runtime is not None:
             await best_effort(
-                "provider_registry.cleanup",
-                self._provider_registry.cleanup(),
+                "provider_runtime.cleanup",
+                self._provider_runtime.cleanup(),
                 log_verbose_errors=verbose,
             )
         await self._shutdown_limiter()

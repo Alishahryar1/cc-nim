@@ -1,6 +1,6 @@
 """Neutral provider catalog: IDs, credentials, defaults, proxy and capability metadata.
 
-Adapter factories live in :mod:`providers.registry`; this module stays free of
+Adapter factories live in :mod:`providers.runtime.factory`; this module stays free of
 provider implementation imports (see contract tests).
 """
 

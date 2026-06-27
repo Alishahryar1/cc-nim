@@ -15,7 +15,7 @@ from pydantic import BaseModel, Field
 
 from config.settings import Settings
 from config.settings import get_settings as get_cached_settings
-from providers.registry import ProviderRegistry
+from providers.runtime import ProviderRuntime
 
 from .admin_config import (
     FIELD_BY_KEY,
@@ -126,10 +126,10 @@ async def apply_admin_config(
         request.app.state.admin_pending_fields = []
         return result
 
-    old_registry = getattr(request.app.state, "provider_registry", None)
-    if isinstance(old_registry, ProviderRegistry):
-        await old_registry.cleanup()
-    request.app.state.provider_registry = ProviderRegistry()
+    old_runtime = getattr(request.app.state, "provider_runtime", None)
+    if isinstance(old_runtime, ProviderRuntime):
+        await old_runtime.cleanup()
+    request.app.state.provider_runtime = ProviderRuntime(get_cached_settings())
     request.app.state.admin_pending_fields = result["pending_fields"]
     return result
 
@@ -138,12 +138,12 @@ async def apply_admin_config(
 async def admin_status(request: Request):
     require_loopback_admin(request)
     settings = get_cached_settings()
-    registry = getattr(request.app.state, "provider_registry", None)
+    runtime = getattr(request.app.state, "provider_runtime", None)
     cached_models: dict[str, list[str]] = {}
-    if isinstance(registry, ProviderRegistry):
+    if isinstance(runtime, ProviderRuntime):
         cached_models = {
             provider_id: sorted(model_ids)
-            for provider_id, model_ids in registry.cached_model_ids().items()
+            for provider_id, model_ids in runtime.cached_model_ids().items()
         }
     return {
         "status": "running",
@@ -173,12 +173,9 @@ async def local_provider_status(request: Request):
 async def test_provider(provider_id: str, request: Request):
     require_loopback_admin(request)
     settings = get_cached_settings()
-    registry = getattr(request.app.state, "provider_registry", None)
-    if not isinstance(registry, ProviderRegistry):
-        registry = ProviderRegistry()
-        request.app.state.provider_registry = registry
+    runtime = _provider_runtime_for_admin(request, settings)
     try:
-        provider = registry.get(provider_id, settings)
+        provider = runtime.resolve_provider(provider_id)
         infos = await provider.list_model_infos()
     except Exception as exc:
         return {
@@ -186,7 +183,7 @@ async def test_provider(provider_id: str, request: Request):
             "ok": False,
             "error_type": type(exc).__name__,
         }
-    registry.cache_model_infos(provider_id, infos)
+    runtime.cache_model_infos(provider_id, infos)
     return {
         "provider_id": provider_id,
         "ok": True,
@@ -198,17 +195,25 @@ async def test_provider(provider_id: str, request: Request):
 async def refresh_models(request: Request):
     require_loopback_admin(request)
     settings = get_cached_settings()
-    registry = getattr(request.app.state, "provider_registry", None)
-    if not isinstance(registry, ProviderRegistry):
-        registry = ProviderRegistry()
-        request.app.state.provider_registry = registry
-    await registry.refresh_model_list_cache(settings)
+    runtime = _provider_runtime_for_admin(request, settings)
+    await runtime.refresh_model_list_cache()
     return {
         "cached_models": {
             provider_id: sorted(model_ids)
-            for provider_id, model_ids in registry.cached_model_ids().items()
+            for provider_id, model_ids in runtime.cached_model_ids().items()
         }
     }
+
+
+def _provider_runtime_for_admin(
+    request: Request, settings: Settings
+) -> ProviderRuntime:
+    runtime = getattr(request.app.state, "provider_runtime", None)
+    if isinstance(runtime, ProviderRuntime):
+        return runtime
+    runtime = ProviderRuntime(settings)
+    request.app.state.provider_runtime = runtime
+    return runtime
 
 
 def _filtered_values(values: dict[str, Any]) -> dict[str, Any]:

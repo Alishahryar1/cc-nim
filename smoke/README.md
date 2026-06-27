@@ -58,7 +58,7 @@ Default targets do not send real bot messages or load voice backends:
 | `cli` | `fcc-init`, server entrypoint, Claude CLI adaptive thinking, session cleanup | Claude CLI binary and provider only for real CLI |
 | `clients` | VS Code and JetBrains protocol payloads | configured provider |
 | `config` | env precedence, removed-env migration, proxy/timeouts | none |
-| `extensibility` | provider registry and platform factory construction | none |
+| `extensibility` | provider runtime and platform factory construction | none |
 | `messaging` | fake Discord/Telegram full flow, commands, trees, persistence, voice cancel | none |
 | `providers` | multi-turn text, adaptive thinking history, tools, disconnect, errors | configured providers, optional `FCC_SMOKE_MODEL_*` |
 | `tools` | forced tool_use and tool_result continuation | tool-capable configured provider |

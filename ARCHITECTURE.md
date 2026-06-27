@@ -35,7 +35,7 @@ flowchart LR
     ProxyAPI --> Handlers[API Product Handlers]
     Handlers --> Router[ModelRouter]
     Handlers --> Executor[ProviderExecutionService]
-    Executor --> Providers[ProviderRegistry]
+    Executor --> Providers[ProviderRuntime]
     Providers --> OpenAIChat[OpenAI Chat Providers]
     Providers --> NativeAnthropic[Anthropic Messages Providers]
 ```
@@ -156,7 +156,7 @@ reported without noisy Starlette tracebacks.
 [api/runtime.py](api/runtime.py) owns process-lifetime resources through
 `AppRuntime`:
 
-- creates and publishes an app-scoped `ProviderRegistry`;
+- creates and publishes an app-scoped `ProviderRuntime`;
 - validates configured models best-effort without blocking first-run admin access;
 - starts provider model-list refresh;
 - starts optional Discord or Telegram messaging when configured;
@@ -198,7 +198,7 @@ Model routing configuration is tiered:
 and writes managed env updates. [api/admin_routes.py](api/admin_routes.py)
 exposes local-only admin endpoints that load, validate, apply, and test config.
 After an apply, settings are cache-cleared. Depending on the changed fields, the
-server either replaces the app provider registry or asks the supervised server to
+server either replaces the app provider runtime or asks the supervised server to
 restart.
 
 Admin routes call `require_loopback_admin()`, which rejects non-loopback clients
@@ -241,7 +241,7 @@ sequenceDiagram
     participant Handler as ProductHandler
     participant Router as ModelRouter
     participant Exec as ProviderExecution
-    participant Registry as ProviderRegistry
+    participant Runtime as ProviderRuntime
     participant Provider
 
     Client->>Route: POST /v1/messages
@@ -250,8 +250,8 @@ sequenceDiagram
     Handler->>Router: resolve model and thinking
     Handler->>Handler: server tools or optimizations
     Handler->>Exec: stream routed request
-    Exec->>Registry: resolve provider
-    Registry->>Provider: cached or new provider
+    Exec->>Runtime: resolve provider
+    Runtime->>Provider: cached or new provider
     Exec->>Provider: preflight_stream
     Exec->>Provider: stream_response
     Provider-->>Client: Anthropic SSE events
@@ -287,7 +287,7 @@ overrides or the global setting.
 - no-thinking variants when appropriate;
 - built-in Claude model IDs for compatibility with Claude clients.
 
-Provider model discovery is app-scoped through `ProviderRegistry`, which caches
+Provider model discovery is app-scoped through `ProviderRuntime`, which caches
 model IDs and optional thinking capability metadata for the model-list route and
 admin status.
 
@@ -304,10 +304,12 @@ Provider metadata is neutral and centralized in
 `ProviderDescriptor` declares provider ID, transport type, capabilities,
 credential env var, default base URL, settings attribute names, and proxy support.
 
-[providers/registry.py](providers/registry.py) owns provider factories and the
-runtime registry. It validates that descriptors, factories, and supported IDs are
-in sync, builds shared `ProviderConfig`, checks required credentials, creates
-providers lazily, caches them, refreshes model lists, and cleans up transports.
+[providers/runtime/](providers/runtime/) owns the app-scoped provider runtime.
+It validates that descriptors, factories, and supported IDs are in sync, builds
+shared `ProviderConfig`, checks required credentials, creates providers lazily,
+caches them, refreshes model lists, validates configured models, and cleans up
+transports. The package splits factory wiring, config building, provider instance
+cache, model metadata cache, discovery, and validation into separate modules.
 
 [providers/base.py](providers/base.py) defines:
 
@@ -342,7 +344,7 @@ where supported, and returning Anthropic SSE strings to the service layer.
    the setting should be editable in the Admin UI.
 4. Implement the provider under [providers/](providers/) using the appropriate
    shared transport family.
-5. Add a factory in [providers/registry.py](providers/registry.py).
+5. Add a factory in [providers/runtime/factory.py](providers/runtime/factory.py).
 6. Add deterministic tests under [tests/providers/](tests/providers/) and any
    relevant contract tests.
 7. Add smoke coverage or smoke config in [smoke/](smoke/) when the provider can
@@ -697,7 +699,7 @@ Update this file when a change adds or meaningfully changes:
 - a public route or wire protocol;
 - startup, shutdown, or resource ownership;
 - configuration precedence or managed config behavior;
-- provider registry, catalog, or transport architecture;
+- provider runtime, catalog, or transport architecture;
 - model routing or thinking behavior;
 - CLI adapter behavior;
 - messaging platform behavior;

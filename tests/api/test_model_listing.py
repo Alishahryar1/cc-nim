@@ -4,7 +4,7 @@ from api.app import create_app
 from api.dependencies import get_settings
 from config.settings import Settings
 from providers.model_listing import ProviderModelInfo
-from providers.registry import ProviderRegistry
+from providers.runtime import ProviderRuntime
 
 
 def _settings(
@@ -25,10 +25,10 @@ def _settings(
 def test_models_list_includes_configured_refs_cached_provider_models_and_aliases():
     app = create_app(lifespan_enabled=False)
     settings = _settings()
-    registry = ProviderRegistry()
-    registry.cache_model_ids("deepseek", {"deepseek-chat"})
-    registry.cache_model_ids("open_router", {"meta/llama-3.3", "anthropic/claude-opus"})
-    app.state.provider_registry = registry
+    runtime = ProviderRuntime(settings)
+    runtime.cache_model_ids("deepseek", {"deepseek-chat"})
+    runtime.cache_model_ids("open_router", {"meta/llama-3.3", "anthropic/claude-opus"})
+    app.state.provider_runtime = runtime
     app.dependency_overrides[get_settings] = lambda: settings
 
     try:
@@ -72,16 +72,16 @@ def test_models_list_includes_configured_refs_cached_provider_models_and_aliases
 def test_models_list_uses_openrouter_thinking_metadata_for_cached_models():
     app = create_app(lifespan_enabled=False)
     settings = _settings(model_opus=None)
-    registry = ProviderRegistry()
-    registry.cache_model_ids("deepseek", {"deepseek-chat"})
-    registry.cache_model_infos(
+    runtime = ProviderRuntime(settings)
+    runtime.cache_model_ids("deepseek", {"deepseek-chat"})
+    runtime.cache_model_infos(
         "open_router",
         {
             ProviderModelInfo("reasoning-model", supports_thinking=True),
             ProviderModelInfo("plain-model", supports_thinking=False),
         },
     )
-    app.state.provider_registry = registry
+    app.state.provider_runtime = runtime
     app.dependency_overrides[get_settings] = lambda: settings
 
     try:
@@ -104,12 +104,12 @@ def test_models_list_uses_cached_metadata_for_configured_openrouter_refs():
         model_opus=None,
         model_haiku=None,
     )
-    registry = ProviderRegistry()
-    registry.cache_model_infos(
+    runtime = ProviderRuntime(settings)
+    runtime.cache_model_infos(
         "open_router",
         {ProviderModelInfo("plain-model", supports_thinking=False)},
     )
-    app.state.provider_registry = registry
+    app.state.provider_runtime = runtime
     app.dependency_overrides[get_settings] = lambda: settings
 
     try:
@@ -130,9 +130,9 @@ def test_models_list_includes_cached_wafer_models():
         model_opus=None,
         model_haiku=None,
     )
-    registry = ProviderRegistry()
-    registry.cache_model_ids("wafer", {"DeepSeek-V4-Pro", "MiniMax-M2.7"})
-    app.state.provider_registry = registry
+    runtime = ProviderRuntime(settings)
+    runtime.cache_model_ids("wafer", {"DeepSeek-V4-Pro", "MiniMax-M2.7"})
+    app.state.provider_runtime = runtime
     app.dependency_overrides[get_settings] = lambda: settings
 
     try:
@@ -148,7 +148,7 @@ def test_models_list_includes_cached_wafer_models():
     assert "claude-3-freecc-no-thinking/wafer/MiniMax-M2.7" in ids
 
 
-def test_models_list_works_without_provider_registry():
+def test_models_list_works_without_provider_runtime():
     app = create_app(lifespan_enabled=False)
     settings = _settings()
     app.dependency_overrides[get_settings] = lambda: settings

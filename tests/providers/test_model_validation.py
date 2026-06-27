@@ -19,7 +19,7 @@ from providers.model_listing import ProviderModelInfo
 from providers.nvidia_nim import NvidiaNimProvider
 from providers.ollama import OllamaProvider
 from providers.open_router import OpenRouterProvider
-from providers.registry import ProviderRegistry
+from providers.runtime import ProviderRuntime
 from providers.wafer import WaferProvider
 
 
@@ -353,32 +353,34 @@ class FakeProvider(BaseProvider):
 
 
 @pytest.mark.asyncio
-async def test_registry_validation_succeeds_for_all_configured_models() -> None:
-    registry = ProviderRegistry(
+async def test_runtime_validation_succeeds_for_all_configured_models() -> None:
+    settings = _settings(model_opus="open_router/anthropic/claude-opus")
+    runtime = ProviderRuntime(
+        settings,
         {
             "nvidia_nim": FakeProvider(frozenset({"nim-model"})),
             "open_router": FakeProvider(frozenset({"anthropic/claude-opus"})),
-        }
+        },
     )
-    settings = _settings(model_opus="open_router/anthropic/claude-opus")
 
-    await registry.validate_configured_models(settings)
+    await runtime.validate_configured_models()
 
-    assert registry.cached_model_ids() == {
+    assert runtime.cached_model_ids() == {
         "nvidia_nim": frozenset({"nim-model"}),
         "open_router": frozenset({"anthropic/claude-opus"}),
     }
 
 
 @pytest.mark.asyncio
-async def test_registry_validation_reports_missing_model_with_sources() -> None:
-    registry = ProviderRegistry(
-        {"nvidia_nim": FakeProvider(frozenset({"different-model"}))}
-    )
+async def test_runtime_validation_reports_missing_model_with_sources() -> None:
     settings = _settings(model_sonnet="nvidia_nim/nim-model")
+    runtime = ProviderRuntime(
+        settings,
+        {"nvidia_nim": FakeProvider(frozenset({"different-model"}))},
+    )
 
     with pytest.raises(ServiceUnavailableError) as exc_info:
-        await registry.validate_configured_models(settings)
+        await runtime.validate_configured_models()
 
     message = exc_info.value.message
     assert "sources=MODEL,MODEL_SONNET" in message
@@ -388,19 +390,20 @@ async def test_registry_validation_reports_missing_model_with_sources() -> None:
 
 
 @pytest.mark.asyncio
-async def test_registry_validation_aggregates_multiple_failures() -> None:
-    registry = ProviderRegistry(
+async def test_runtime_validation_aggregates_multiple_failures() -> None:
+    settings = _settings(model_opus="open_router/anthropic/claude-opus")
+    runtime = ProviderRuntime(
+        settings,
         {
             "nvidia_nim": FakeProvider(frozenset({"different-model"})),
             "open_router": FakeProvider(
                 error=ModelListResponseError("bad model-list shape")
             ),
-        }
+        },
     )
-    settings = _settings(model_opus="open_router/anthropic/claude-opus")
 
     with pytest.raises(ServiceUnavailableError) as exc_info:
-        await registry.validate_configured_models(settings)
+        await runtime.validate_configured_models()
 
     message = exc_info.value.message
     assert "sources=MODEL provider=nvidia_nim model=nim-model" in message
@@ -412,10 +415,12 @@ async def test_registry_validation_aggregates_multiple_failures() -> None:
 
 
 @pytest.mark.asyncio
-async def test_registry_validation_queries_providers_concurrently() -> None:
+async def test_runtime_validation_queries_providers_concurrently() -> None:
     nim_started = asyncio.Event()
     router_started = asyncio.Event()
-    registry = ProviderRegistry(
+    settings = _settings(model_opus="open_router/anthropic/claude-opus")
+    runtime = ProviderRuntime(
+        settings,
         {
             "nvidia_nim": FakeProvider(
                 frozenset({"nim-model"}),
@@ -427,56 +432,57 @@ async def test_registry_validation_queries_providers_concurrently() -> None:
                 started=router_started,
                 peer_started=nim_started,
             ),
-        }
+        },
     )
-    settings = _settings(model_opus="open_router/anthropic/claude-opus")
 
-    await asyncio.wait_for(registry.validate_configured_models(settings), timeout=1.0)
+    await asyncio.wait_for(runtime.validate_configured_models(), timeout=1.0)
 
 
 @pytest.mark.asyncio
-async def test_registry_refresh_model_list_cache_uses_configured_remote_keys_and_referenced_local() -> (
+async def test_runtime_refresh_model_list_cache_uses_configured_remote_keys_and_referenced_local() -> (
     None
 ):
-    registry = ProviderRegistry(
-        {
-            "open_router": FakeProvider(frozenset({"anthropic/claude-sonnet"})),
-            "lmstudio": FakeProvider(frozenset({"local-qwen"})),
-            "ollama": FakeProvider(frozenset({"llama3.1"})),
-        }
-    )
     settings = _settings(
         model="lmstudio/local-qwen",
         open_router_api_key="open-router-key",
     )
+    runtime = ProviderRuntime(
+        settings,
+        {
+            "open_router": FakeProvider(frozenset({"anthropic/claude-sonnet"})),
+            "lmstudio": FakeProvider(frozenset({"local-qwen"})),
+            "ollama": FakeProvider(frozenset({"llama3.1"})),
+        },
+    )
 
-    await registry.refresh_model_list_cache(settings)
+    await runtime.refresh_model_list_cache()
 
-    assert registry.cached_model_ids() == {
+    assert runtime.cached_model_ids() == {
         "open_router": frozenset({"anthropic/claude-sonnet"}),
         "lmstudio": frozenset({"local-qwen"}),
     }
 
 
 @pytest.mark.asyncio
-async def test_registry_refresh_model_list_cache_keeps_prior_cache_on_failure() -> None:
-    registry = ProviderRegistry(
-        {"nvidia_nim": FakeProvider(error=RuntimeError("upstream down"))}
-    )
-    registry.cache_model_ids("nvidia_nim", {"cached-model"})
+async def test_runtime_refresh_model_list_cache_keeps_prior_cache_on_failure() -> None:
     settings = _settings(
         model="nvidia_nim/cached-model",
         nvidia_nim_api_key="nim-key",
     )
+    runtime = ProviderRuntime(
+        settings,
+        {"nvidia_nim": FakeProvider(error=RuntimeError("upstream down"))},
+    )
+    runtime.cache_model_ids("nvidia_nim", {"cached-model"})
 
-    await registry.refresh_model_list_cache(settings)
+    await runtime.refresh_model_list_cache()
 
-    assert registry.cached_model_ids() == {"nvidia_nim": frozenset({"cached-model"})}
+    assert runtime.cached_model_ids() == {"nvidia_nim": frozenset({"cached-model"})}
 
 
-def test_registry_metadata_cache_exposes_ids_and_prefixed_infos() -> None:
-    registry = ProviderRegistry()
-    registry.cache_model_infos(
+def test_runtime_metadata_cache_exposes_ids_and_prefixed_infos() -> None:
+    runtime = ProviderRuntime(_settings())
+    runtime.cache_model_infos(
         "open_router",
         {
             ProviderModelInfo("reasoning-model", supports_thinking=True),
@@ -484,39 +490,36 @@ def test_registry_metadata_cache_exposes_ids_and_prefixed_infos() -> None:
         },
     )
 
-    assert registry.cached_model_ids() == {
+    assert runtime.cached_model_ids() == {
         "open_router": frozenset({"reasoning-model", "plain-model"})
     }
     assert (
-        registry.cached_model_supports_thinking("open_router", "reasoning-model")
-        is True
+        runtime.cached_model_supports_thinking("open_router", "reasoning-model") is True
     )
-    assert (
-        registry.cached_model_supports_thinking("open_router", "plain-model") is False
-    )
-    assert registry.cached_prefixed_model_infos() == (
+    assert runtime.cached_model_supports_thinking("open_router", "plain-model") is False
+    assert runtime.cached_prefixed_model_infos() == (
         ProviderModelInfo("open_router/plain-model", supports_thinking=False),
         ProviderModelInfo("open_router/reasoning-model", supports_thinking=True),
     )
 
 
-def test_registry_legacy_model_id_cache_keeps_unknown_thinking_support() -> None:
-    registry = ProviderRegistry()
-    registry.cache_model_ids("open_router", {"plain-model"})
+def test_runtime_model_id_cache_keeps_unknown_thinking_support() -> None:
+    runtime = ProviderRuntime(_settings())
+    runtime.cache_model_ids("open_router", {"plain-model"})
 
-    assert registry.cached_model_ids() == {"open_router": frozenset({"plain-model"})}
-    assert registry.cached_model_supports_thinking("open_router", "plain-model") is None
-    assert registry.cached_prefixed_model_infos() == (
+    assert runtime.cached_model_ids() == {"open_router": frozenset({"plain-model"})}
+    assert runtime.cached_model_supports_thinking("open_router", "plain-model") is None
+    assert runtime.cached_prefixed_model_infos() == (
         ProviderModelInfo("open_router/plain-model", supports_thinking=None),
     )
 
 
-def test_registry_cached_prefixed_model_refs_are_deterministic() -> None:
-    registry = ProviderRegistry()
-    registry.cache_model_ids("deepseek", {"deepseek-chat"})
-    registry.cache_model_ids("open_router", {"z-model", "a-model"})
+def test_runtime_cached_prefixed_model_refs_are_deterministic() -> None:
+    runtime = ProviderRuntime(_settings())
+    runtime.cache_model_ids("deepseek", {"deepseek-chat"})
+    runtime.cache_model_ids("open_router", {"z-model", "a-model"})
 
-    assert registry.cached_prefixed_model_refs() == (
+    assert runtime.cached_prefixed_model_refs() == (
         "open_router/a-model",
         "open_router/z-model",
         "deepseek/deepseek-chat",

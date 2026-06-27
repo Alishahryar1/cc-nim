@@ -5,9 +5,10 @@ import subprocess
 
 import pytest
 
+from config.provider_catalog import PROVIDER_CATALOG
 from config.settings import Settings
 from messaging.platforms.factory import create_messaging_components
-from providers.registry import PROVIDER_DESCRIPTORS, build_provider_config
+from providers.runtime import build_provider_config
 from smoke.lib.child_process import cmd_free_claude_code_serve, cmd_python_c
 from smoke.lib.config import SmokeConfig
 from smoke.lib.e2e import SmokeServerDriver
@@ -112,8 +113,9 @@ def test_proxy_timeout_config_e2e(smoke_config: SmokeConfig, tmp_path) -> None:
     env["FCC_ENV_FILE"] = str(env_file)
     script = (
         "from config.settings import Settings; "
-        "from providers.registry import PROVIDER_DESCRIPTORS, build_provider_config; "
-        "s=Settings(); c=build_provider_config(PROVIDER_DESCRIPTORS['open_router'], s); "
+        "from config.provider_catalog import PROVIDER_CATALOG; "
+        "from providers.runtime import build_provider_config; "
+        "s=Settings(); c=build_provider_config(PROVIDER_CATALOG['open_router'], s); "
         "print(c.proxy); print(c.http_read_timeout); "
         "print(c.http_connect_timeout); print(c.http_write_timeout)"
     )
@@ -136,9 +138,9 @@ def test_proxy_timeout_config_e2e(smoke_config: SmokeConfig, tmp_path) -> None:
 
 
 @pytest.mark.smoke_target("extensibility")
-def test_provider_registry_e2e() -> None:
+def test_provider_runtime_config_e2e() -> None:
     settings_kwargs: dict[str, str] = {}
-    for descriptor in PROVIDER_DESCRIPTORS.values():
+    for descriptor in PROVIDER_CATALOG.values():
         if descriptor.credential_attr is not None:
             settings_kwargs[_settings_init_key(descriptor.credential_attr)] = (
                 f"{descriptor.provider_id}-key"
@@ -148,7 +150,7 @@ def test_provider_registry_e2e() -> None:
                 descriptor.default_base_url
             )
     settings = Settings.model_validate(settings_kwargs)
-    for descriptor in PROVIDER_DESCRIPTORS.values():
+    for descriptor in PROVIDER_CATALOG.values():
         config = build_provider_config(descriptor, settings)
         assert config.base_url
         assert config.api_key

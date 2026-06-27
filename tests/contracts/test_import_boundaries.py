@@ -11,7 +11,7 @@ _API_ALLOWED_PROVIDER_MODULES = frozenset(
         "providers",
         "providers.base",
         "providers.exceptions",
-        "providers.registry",
+        "providers.runtime",
     }
 )
 
@@ -56,11 +56,25 @@ def test_core_does_not_import_product_packages() -> None:
 
 def test_provider_catalog_is_single_source_for_supported_ids() -> None:
     from config.provider_catalog import PROVIDER_CATALOG, SUPPORTED_PROVIDER_IDS
-    from providers.registry import PROVIDER_DESCRIPTORS, PROVIDER_FACTORIES
+    from providers.runtime import PROVIDER_FACTORIES
 
     assert tuple(PROVIDER_CATALOG.keys()) == SUPPORTED_PROVIDER_IDS
-    assert PROVIDER_DESCRIPTORS is PROVIDER_CATALOG
     assert set(SUPPORTED_PROVIDER_IDS) == set(PROVIDER_FACTORIES)
+
+
+def test_provider_runtime_replaces_old_registry_module() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+
+    assert not (repo_root / "providers" / "registry.py").exists()
+    assert (repo_root / "providers" / "runtime" / "runtime.py").exists()
+    assert (repo_root / "providers" / "runtime" / "factory.py").exists()
+    assert (repo_root / "providers" / "runtime" / "discovery.py").exists()
+
+    offenders = _imports_matching(
+        [repo_root / "api", repo_root / "tests", repo_root / "smoke"],
+        forbidden_prefixes=("providers.registry",),
+    )
+    assert offenders == []
 
 
 def test_config_does_not_import_non_config_packages() -> None:
