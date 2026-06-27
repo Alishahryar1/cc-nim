@@ -340,7 +340,7 @@ class Settings(BaseSettings):
     def claude_cli_bin(self) -> str:
         """Return the fixed Claude Code binary name."""
 
-        return "claude"
+        return "claude.cmd" if os.name == "nt" else "claude"
 
     @property
     def codex_cli_bin(self) -> str:
