@@ -147,6 +147,11 @@ class Settings(BaseSettings):
         validation_alias="OLLAMA_BASE_URL",
     )
 
+    # ==================== Ollama Cloud Config ====================
+    ollama_cloud_api_key: str = Field(
+        default="", validation_alias="OLLAMA_CLOUD_API_KEY"
+    )
+
     # ==================== Model ====================
     # All Claude model requests are mapped to this single model (fallback)
     # Format: provider_type/model/name

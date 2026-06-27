@@ -28,6 +28,7 @@ CODESTRAL_DEFAULT_BASE = "https://codestral.mistral.ai/v1"
 LMSTUDIO_DEFAULT_BASE = "http://localhost:1234/v1"
 LLAMACPP_DEFAULT_BASE = "http://localhost:8080/v1"
 OLLAMA_DEFAULT_BASE = "http://localhost:11434"
+OLLAMA_CLOUD_DEFAULT_BASE = "https://ollama.com"
 OPENCODE_DEFAULT_BASE = "https://opencode.ai/zen/v1"
 OPENCODE_GO_DEFAULT_BASE = "https://opencode.ai/zen/go/v1"
 # Z.ai Anthropic-compatible Messages API (not OpenAI Coding Plan chat completions).
@@ -244,6 +245,21 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
             "thinking",
             "native_anthropic",
             "local",
+        ),
+    ),
+    "ollama_cloud": ProviderDescriptor(
+        provider_id="ollama_cloud",
+        transport_type="anthropic_messages",
+        credential_env="OLLAMA_CLOUD_API_KEY",
+        credential_url="https://ollama.com/settings/keys",
+        credential_attr="ollama_cloud_api_key",
+        default_base_url=OLLAMA_CLOUD_DEFAULT_BASE,
+        capabilities=(
+            "chat",
+            "streaming",
+            "tools",
+            "thinking",
+            "native_anthropic",
         ),
     ),
 }

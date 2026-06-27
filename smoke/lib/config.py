@@ -50,6 +50,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "lmstudio": "lmstudio/local-model",
     "llamacpp": "llamacpp/local-model",
     "ollama": "ollama/llama3.1",
+    "ollama_cloud": "ollama_cloud/llama3.1",
     "wafer": "wafer/DeepSeek-V4-Pro",
     "opencode": "opencode/gpt-5.3-codex",
     "opencode_go": "opencode_go/minimax-m2.7",
@@ -241,6 +242,8 @@ class SmokeConfig:
             return bool(self.settings.llamacpp_base_url.strip())
         if provider == "ollama":
             return bool(self.settings.ollama_base_url.strip())
+        if provider == "ollama_cloud":
+            return bool(self.settings.ollama_cloud_api_key.strip())
         if provider == "wafer":
             return bool(self.settings.wafer_api_key.strip())
         if provider == "fireworks":

@@ -82,6 +82,12 @@ def _create_ollama(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     return OllamaProvider(config)
 
 
+def _create_ollama_cloud(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+    from providers.ollama_cloud import OllamaCloudProvider
+
+    return OllamaCloudProvider(config)
+
+
 def _create_kimi(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     from providers.kimi import KimiProvider
 
@@ -154,6 +160,7 @@ PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "lmstudio": _create_lmstudio,
     "llamacpp": _create_llamacpp,
     "ollama": _create_ollama,
+    "ollama_cloud": _create_ollama_cloud,
 }
 
 if set(PROVIDER_DESCRIPTORS) != set(SUPPORTED_PROVIDER_IDS) or set(

@@ -66,6 +66,7 @@ function providerName(providerId) {
     lmstudio: "LM Studio",
     llamacpp: "llama.cpp",
     ollama: "Ollama",
+    ollama_cloud: "Ollama Cloud",
     kimi: "Kimi",
     wafer: "Wafer",
     opencode: "OpenCode Zen",

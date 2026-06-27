@@ -273,6 +273,18 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         default="http://localhost:11434",
     ),
     ConfigFieldSpec(
+        "OLLAMA_CLOUD_API_KEY",
+        "Ollama Cloud API Key",
+        "providers",
+        "secret",
+        settings_attr="ollama_cloud_api_key",
+        secret=True,
+        description=(
+            "Ollama Cloud API key from ollama.com/settings/keys. "
+            "Uses Anthropic-compatible Messages API at https://ollama.com."
+        ),
+    ),
+    ConfigFieldSpec(
         "NVIDIA_NIM_PROXY",
         "NVIDIA NIM Proxy",
         "providers",
@@ -840,6 +852,12 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
     ConfigFieldSpec(
         "FCC_SMOKE_MODEL_OLLAMA",
         "Smoke Ollama Model",
+        "smoke",
+        advanced=True,
+    ),
+    ConfigFieldSpec(
+        "FCC_SMOKE_MODEL_OLLAMA_CLOUD",
+        "Smoke Ollama Cloud Model",
         "smoke",
         advanced=True,
     ),
