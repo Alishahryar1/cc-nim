@@ -94,6 +94,31 @@ def test_config_does_not_import_non_config_packages() -> None:
     assert offenders == []
 
 
+def test_settings_stays_schema_only() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    config_root = repo_root / "config"
+
+    assert (config_root / "env_files.py").exists()
+    assert (config_root / "model_refs.py").exists()
+
+    settings_text = (config_root / "settings.py").read_text(encoding="utf-8")
+    for removed_api in {
+        "def resolve_model",
+        "def resolve_thinking",
+        "def configured_chat_model_refs",
+        "def web_fetch_allowed_scheme_set",
+        "def parse_provider_type",
+        "def parse_model_name",
+        "def uses_process_anthropic_auth_token",
+        "def claude_workspace",
+        "def claude_cli_bin",
+        "def codex_cli_bin",
+        "def provider_type",
+        "def model_name",
+    }:
+        assert removed_api not in settings_text
+
+
 _MESSAGING_ALLOWED_PROVIDER_MODULES = frozenset({"providers.nvidia_nim.voice"})
 
 

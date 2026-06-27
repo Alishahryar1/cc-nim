@@ -1,77 +1,19 @@
-"""Centralized configuration using Pydantic Settings."""
+"""Flat application settings schema loaded by Pydantic Settings."""
 
-import os
-from collections.abc import Mapping
-from dataclasses import dataclass
 from functools import lru_cache
-from pathlib import Path
 from typing import Any
 
-from dotenv import dotenv_values
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .constants import HTTP_CONNECT_TIMEOUT_DEFAULT
+from .env_files import (
+    ANTHROPIC_AUTH_TOKEN_ENV,
+    env_file_override,
+    settings_env_files,
+)
 from .nim import NimSettings
-from .paths import default_claude_workspace_path, managed_env_path
 from .provider_ids import SUPPORTED_PROVIDER_IDS
-
-
-@dataclass(frozen=True, slots=True)
-class ConfiguredChatModelRef:
-    """A unique configured chat model reference and the env keys that set it."""
-
-    model_ref: str
-    provider_id: str
-    model_id: str
-    sources: tuple[str, ...]
-
-
-def _env_files() -> tuple[Path, ...]:
-    """Return env file paths in priority order (later overrides earlier)."""
-    files: list[Path] = [
-        Path(".env"),
-        managed_env_path(),
-    ]
-    if explicit := os.environ.get("FCC_ENV_FILE"):
-        files.append(Path(explicit))
-    return tuple(files)
-
-
-def _configured_env_files(model_config: Mapping[str, Any]) -> tuple[Path, ...]:
-    """Return the currently configured env files for Settings."""
-    configured = model_config.get("env_file")
-    if configured is None:
-        return ()
-    if isinstance(configured, (str, Path)):
-        return (Path(configured),)
-    return tuple(Path(item) for item in configured)
-
-
-def _env_file_value(path: Path, key: str) -> str | None:
-    """Return a dotenv value when the file explicitly defines the key."""
-    if not path.is_file():
-        return None
-
-    try:
-        values = dotenv_values(path)
-    except OSError:
-        return None
-
-    if key not in values:
-        return None
-    value = values[key]
-    return "" if value is None else value
-
-
-def _env_file_override(model_config: Mapping[str, Any], key: str) -> str | None:
-    """Return the last configured dotenv value that explicitly defines a key."""
-    configured_value: str | None = None
-    for env_file in _configured_env_files(model_config):
-        value = _env_file_value(env_file, key)
-        if value is not None:
-            configured_value = value
-    return configured_value
 
 
 class Settings(BaseSettings):
@@ -330,24 +272,6 @@ class Settings(BaseSettings):
             return None
         return v
 
-    @property
-    def claude_workspace(self) -> str:
-        """Return the fixed Claude data workspace path."""
-
-        return str(default_claude_workspace_path())
-
-    @property
-    def claude_cli_bin(self) -> str:
-        """Return the fixed Claude Code binary name."""
-
-        return "claude"
-
-    @property
-    def codex_cli_bin(self) -> str:
-        """Return the fixed Codex CLI binary name."""
-
-        return "codex"
-
     @field_validator("whisper_device")
     @classmethod
     def validate_whisper_device(cls, v: str) -> str:
@@ -436,97 +360,13 @@ class Settings(BaseSettings):
     @model_validator(mode="after")
     def prefer_dotenv_anthropic_auth_token(self) -> Settings:
         """Let explicit .env auth config override stale shell/client tokens."""
-        dotenv_value = _env_file_override(self.model_config, "ANTHROPIC_AUTH_TOKEN")
+        dotenv_value = env_file_override(self.model_config, ANTHROPIC_AUTH_TOKEN_ENV)
         if dotenv_value is not None:
             self.anthropic_auth_token = dotenv_value
         return self
 
-    def uses_process_anthropic_auth_token(self) -> bool:
-        """Return whether proxy auth came from process env, not dotenv config."""
-        if _env_file_override(self.model_config, "ANTHROPIC_AUTH_TOKEN") is not None:
-            return False
-        return bool(os.environ.get("ANTHROPIC_AUTH_TOKEN"))
-
-    @property
-    def provider_type(self) -> str:
-        """Extract provider type from the default model string."""
-        return Settings.parse_provider_type(self.model)
-
-    @property
-    def model_name(self) -> str:
-        """Extract the actual model name from the default model string."""
-        return Settings.parse_model_name(self.model)
-
-    def resolve_model(self, claude_model_name: str) -> str:
-        """Resolve a Claude model name to the configured provider/model string.
-
-        Classifies the incoming Claude model (opus/sonnet/haiku) and
-        returns the model-specific override if configured, otherwise the fallback MODEL.
-        """
-        name_lower = claude_model_name.lower()
-        if "opus" in name_lower and self.model_opus is not None:
-            return self.model_opus
-        if "haiku" in name_lower and self.model_haiku is not None:
-            return self.model_haiku
-        if "sonnet" in name_lower and self.model_sonnet is not None:
-            return self.model_sonnet
-        return self.model
-
-    def configured_chat_model_refs(self) -> tuple[ConfiguredChatModelRef, ...]:
-        """Return unique configured chat provider/model refs with source env keys."""
-        candidates = (
-            ("MODEL", self.model),
-            ("MODEL_OPUS", self.model_opus),
-            ("MODEL_SONNET", self.model_sonnet),
-            ("MODEL_HAIKU", self.model_haiku),
-        )
-        sources_by_ref: dict[str, list[str]] = {}
-        for source, model_ref in candidates:
-            if model_ref is None:
-                continue
-            sources_by_ref.setdefault(model_ref, []).append(source)
-
-        return tuple(
-            ConfiguredChatModelRef(
-                model_ref=model_ref,
-                provider_id=Settings.parse_provider_type(model_ref),
-                model_id=Settings.parse_model_name(model_ref),
-                sources=tuple(sources),
-            )
-            for model_ref, sources in sources_by_ref.items()
-        )
-
-    def resolve_thinking(self, claude_model_name: str) -> bool:
-        """Resolve whether thinking is enabled for an incoming Claude model name."""
-        name_lower = claude_model_name.lower()
-        if "opus" in name_lower and self.enable_opus_thinking is not None:
-            return self.enable_opus_thinking
-        if "haiku" in name_lower and self.enable_haiku_thinking is not None:
-            return self.enable_haiku_thinking
-        if "sonnet" in name_lower and self.enable_sonnet_thinking is not None:
-            return self.enable_sonnet_thinking
-        return self.enable_model_thinking
-
-    def web_fetch_allowed_scheme_set(self) -> frozenset[str]:
-        """Return normalized schemes allowed for web_fetch."""
-        return frozenset(
-            part.strip().lower()
-            for part in self.web_fetch_allowed_schemes.split(",")
-            if part.strip()
-        )
-
-    @staticmethod
-    def parse_provider_type(model_string: str) -> str:
-        """Extract provider type from any 'provider/model' string."""
-        return model_string.split("/", 1)[0]
-
-    @staticmethod
-    def parse_model_name(model_string: str) -> str:
-        """Extract model name from any 'provider/model' string."""
-        return model_string.split("/", 1)[1]
-
     model_config = SettingsConfigDict(
-        env_file=_env_files(),
+        env_file=settings_env_files(),
         env_file_encoding="utf-8",
         extra="ignore",
     )

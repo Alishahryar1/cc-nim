@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from loguru import logger
 
+from config.model_refs import parse_provider_type
 from config.settings import Settings
 from core.anthropic import get_token_count
 from core.trace import trace_event
@@ -117,7 +118,7 @@ async def root(
     """Root endpoint."""
     return {
         "status": "ok",
-        "provider": settings.provider_type,
+        "provider": parse_provider_type(settings.model),
         "model": settings.model,
     }
 

@@ -14,7 +14,7 @@ from api.optimization_handlers import try_optimizations
 from api.provider_execution import ProviderExecutionService, TokenCounter
 from api.request_errors import require_non_empty_messages, unexpected_http_exception
 from api.response_streams import anthropic_sse_streaming_response
-from api.web_tools.egress import WebFetchEgressPolicy
+from api.web_tools.egress import WebFetchEgressPolicy, web_fetch_allowed_scheme_set
 from api.web_tools.request import (
     is_web_server_tool_request,
     openai_chat_upstream_server_tool_error,
@@ -146,7 +146,9 @@ class MessagesHandler:
         )
         egress = WebFetchEgressPolicy(
             allow_private_network_targets=self._settings.web_fetch_allow_private_networks,
-            allowed_schemes=self._settings.web_fetch_allowed_scheme_set(),
+            allowed_schemes=web_fetch_allowed_scheme_set(
+                self._settings.web_fetch_allowed_schemes
+            ),
         )
         return anthropic_sse_streaming_response(
             stream_web_server_tool_response(

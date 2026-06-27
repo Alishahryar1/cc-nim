@@ -7,13 +7,16 @@ import sys
 from collections.abc import Mapping, Sequence
 
 from api.admin_urls import local_proxy_root_url
-from cli.claude_env import CLAUDE_CODE_AUTO_COMPACT_WINDOW, claude_auth_token
-from config.settings import Settings, get_settings
+from cli.claude_env import (
+    CLAUDE_BINARY_NAME,
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+    claude_auth_token,
+)
+from config.settings import get_settings
 
 from .common import preflight_proxy, resolve_client_binary, run_client_process
 
 _DISPLAY_NAME = "Claude Code"
-_DEFAULT_BINARY = "claude"
 _INSTALL_HINT = "Install Claude Code with: npm install -g @anthropic-ai/claude-code"
 
 
@@ -30,7 +33,7 @@ def launch(argv: Sequence[str] | None = None) -> None:
         print("Start it in another terminal with: fcc-server", file=sys.stderr)
         raise SystemExit(1)
 
-    binary_name = claude_binary_name(settings)
+    binary_name = claude_binary_name()
     binary_path = resolve_client_binary(
         binary_name=binary_name,
         display_name=_DISPLAY_NAME,
@@ -50,10 +53,10 @@ def launch(argv: Sequence[str] | None = None) -> None:
     )
 
 
-def claude_binary_name(settings: Settings) -> str:
-    """Return the configured Claude Code binary name."""
+def claude_binary_name() -> str:
+    """Return the Claude Code binary name."""
 
-    return settings.claude_cli_bin or _DEFAULT_BINARY
+    return CLAUDE_BINARY_NAME
 
 
 def build_claude_launcher_command(

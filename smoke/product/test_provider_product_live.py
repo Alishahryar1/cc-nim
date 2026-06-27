@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 import pytest
 
+from api.model_router import ModelRouter
 from config.provider_catalog import PROVIDER_CATALOG
 from core.anthropic.stream_contracts import (
     SSEEvent,
@@ -243,7 +244,9 @@ def _provider_smoke_thinking_enabled(
     descriptor = PROVIDER_CATALOG[provider_model.provider]
     return (
         "thinking" in descriptor.capabilities
-        and smoke_config.settings.resolve_thinking("claude-sonnet-4-5-20250929")
+        and ModelRouter(smoke_config.settings)
+        .resolve("claude-sonnet-4-5-20250929")
+        .thinking_enabled
     )
 
 

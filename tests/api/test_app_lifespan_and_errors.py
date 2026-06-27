@@ -13,13 +13,15 @@ from providers.exceptions import ServiceUnavailableError
 from providers.runtime import ProviderRuntime
 
 _RUNTIME_EXTRAS = {
+    "model": "nvidia_nim/test-model",
+    "model_opus": None,
+    "model_sonnet": None,
+    "model_haiku": None,
     "voice_note_enabled": True,
     "whisper_model": "base",
     "whisper_device": "cpu",
     "hf_token": "",
     "nvidia_nim_api_key": "",
-    "claude_cli_bin": "claude",
-    "uses_process_anthropic_auth_token": lambda: False,
     "messaging_rate_limit": 1,
     "messaging_rate_window": 1.0,
     "max_message_log_entries_per_chat": None,
@@ -29,7 +31,6 @@ _RUNTIME_EXTRAS = {
     "log_raw_messaging_content": False,
     "log_raw_cli_diagnostics": False,
     "log_messaging_error_details": False,
-    "configured_chat_model_refs": lambda: (),
 }
 
 
@@ -59,11 +60,18 @@ def _fake_messaging_components(runtime: MagicMock | None = None) -> SimpleNamesp
     )
 
 
-def test_warn_if_process_auth_token_logs_warning():
+@pytest.fixture(autouse=True)
+def _redirect_fcc_home(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+
+def test_warn_if_process_auth_token_logs_warning(monkeypatch):
     api_runtime_mod = importlib.import_module("api.runtime")
-    settings = cast(
-        Settings, SimpleNamespace(uses_process_anthropic_auth_token=lambda: True)
-    )
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "process-token")
+    monkeypatch.setitem(Settings.model_config, "env_file", ())
+    settings = Settings.model_construct()
 
     with patch.object(api_runtime_mod.logger, "warning") as warning:
         api_runtime_mod.warn_if_process_auth_token(settings)
@@ -72,11 +80,13 @@ def test_warn_if_process_auth_token_logs_warning():
     assert "ANTHROPIC_AUTH_TOKEN" in warning.call_args.args[0]
 
 
-def test_warn_if_process_auth_token_skips_explicit_dotenv_config():
+def test_warn_if_process_auth_token_skips_explicit_dotenv_config(monkeypatch, tmp_path):
     api_runtime_mod = importlib.import_module("api.runtime")
-    settings = cast(
-        Settings, SimpleNamespace(uses_process_anthropic_auth_token=lambda: False)
-    )
+    env_file = tmp_path / ".env"
+    env_file.write_text("ANTHROPIC_AUTH_TOKEN=\n", encoding="utf-8")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "process-token")
+    monkeypatch.setitem(Settings.model_config, "env_file", (env_file,))
+    settings = Settings.model_construct()
 
     with patch.object(api_runtime_mod.logger, "warning") as warning:
         api_runtime_mod.warn_if_process_auth_token(settings)

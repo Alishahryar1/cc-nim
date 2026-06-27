@@ -7,6 +7,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from config.model_refs import parse_model_name, parse_provider_type
 from config.provider_catalog import PROVIDER_CATALOG, SUPPORTED_PROVIDER_IDS
 from config.settings import Settings, get_settings
 
@@ -117,7 +118,7 @@ class ProviderModel:
 
     @property
     def model_name(self) -> str:
-        return Settings.parse_model_name(self.full_model)
+        return parse_model_name(self.full_model)
 
 
 @dataclass(frozen=True, slots=True)
@@ -168,7 +169,7 @@ class SmokeConfig:
         for source, model in candidates:
             if not model or model in seen:
                 continue
-            provider = Settings.parse_provider_type(model)
+            provider = parse_provider_type(model)
             if self.provider_matrix and provider not in self.provider_matrix:
                 continue
             if not self.has_provider_configuration(provider):
@@ -300,7 +301,7 @@ def _normalize_provider_model(provider: str, raw_model: str) -> str:
         raise ValueError(msg)
     if "/" not in model:
         return f"{provider}/{model}"
-    prefix = Settings.parse_provider_type(model)
+    prefix = parse_provider_type(model)
     if prefix == provider:
         return model
     if prefix in SUPPORTED_PROVIDER_IDS:

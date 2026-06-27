@@ -9,8 +9,16 @@ from typing import Literal
 
 from dotenv import dotenv_values
 
+from config.env_files import (
+    explicit_env_path as configured_explicit_env_path,
+)
+from config.env_files import (
+    repo_env_path as configured_repo_env_path,
+)
+from config.env_files import (
+    settings_env_files,
+)
 from config.env_template import load_env_template_or_empty
-from config.paths import managed_env_path
 
 from .manifest import FIELDS
 
@@ -27,27 +35,24 @@ SourceType = Literal[
 def repo_env_path() -> Path:
     """Return the repo-local env path."""
 
-    return Path(".env")
+    return configured_repo_env_path()
 
 
 def explicit_env_path() -> Path | None:
     """Return the explicit FCC_ENV_FILE path, when configured."""
 
-    if explicit := os.environ.get("FCC_ENV_FILE"):
-        return Path(explicit)
-    return None
+    return configured_explicit_env_path(os.environ)
 
 
 def configured_env_files() -> tuple[tuple[SourceType, Path], ...]:
     """Return dotenv files in low-to-high precedence order."""
 
-    files: list[tuple[SourceType, Path]] = [
-        ("repo_env", repo_env_path()),
-        ("managed_env", managed_env_path()),
-    ]
-    if explicit := explicit_env_path():
-        files.append(("explicit_env_file", explicit))
-    return tuple(files)
+    source_names: tuple[SourceType, ...] = (
+        "repo_env",
+        "managed_env",
+        "explicit_env_file",
+    )
+    return tuple(zip(source_names, settings_env_files(), strict=False))
 
 
 def dotenv_values_from_text(text: str) -> dict[str, str]:

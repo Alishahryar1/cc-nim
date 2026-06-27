@@ -77,12 +77,14 @@ def test_per_model_thinking_config_e2e(smoke_config: SmokeConfig, tmp_path) -> N
     env = os.environ.copy()
     env["FCC_ENV_FILE"] = str(env_file)
     script = (
+        "from api.model_router import ModelRouter; "
         "from config.settings import Settings; "
         "s=Settings(); "
-        "print(s.resolve_thinking('claude-opus-4-20250514')); "
-        "print(s.resolve_thinking('claude-sonnet-4-20250514')); "
-        "print(s.resolve_thinking('claude-haiku-4-20250514')); "
-        "print(s.resolve_thinking('unknown-model'))"
+        "r=ModelRouter(s); "
+        "print(r.resolve('claude-opus-4-20250514').thinking_enabled); "
+        "print(r.resolve('claude-sonnet-4-20250514').thinking_enabled); "
+        "print(r.resolve('claude-haiku-4-20250514').thinking_enabled); "
+        "print(r.resolve('unknown-model').thinking_enabled)"
     )
     result = subprocess.run(
         cmd_python_c(script),

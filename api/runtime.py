@@ -12,6 +12,8 @@ from fastapi import FastAPI
 from loguru import logger
 
 from api.admin_urls import local_admin_url
+from config.env_files import ANTHROPIC_AUTH_TOKEN_ENV, process_env_key_is_effective
+from config.paths import default_claude_workspace_path
 from config.settings import Settings, get_settings
 from providers.exceptions import ServiceUnavailableError
 from providers.runtime import ProviderRuntime
@@ -55,7 +57,8 @@ async def best_effort(
 
 def warn_if_process_auth_token(settings: Settings) -> None:
     """Warn when server auth was implicitly inherited from the shell."""
-    if settings.uses_process_anthropic_auth_token():
+    model_config = getattr(settings, "model_config", Settings.model_config)
+    if process_env_key_is_effective(model_config, ANTHROPIC_AUTH_TOKEN_ENV):
         logger.warning(
             "ANTHROPIC_AUTH_TOKEN is set in the process environment but not in "
             "a configured .env file. The proxy will require that token. Add "
@@ -237,21 +240,18 @@ class AppRuntime:
         )
         os.makedirs(workspace, exist_ok=True)
 
-        data_path = os.path.abspath(self.settings.claude_workspace)
+        data_path = os.path.abspath(default_claude_workspace_path())
         os.makedirs(data_path, exist_ok=True)
 
         api_url = f"http://{self.settings.host}:{self.settings.port}/v1"
         allowed_dirs = [workspace] if self.settings.allowed_dir else []
-        plans_dir_abs = os.path.abspath(
-            os.path.join(self.settings.claude_workspace, "plans")
-        )
+        plans_dir_abs = os.path.abspath(os.path.join(data_path, "plans"))
         plans_directory = os.path.relpath(plans_dir_abs, workspace)
         self.cli_manager = ManagedClaudeSessionManager(
             workspace_path=workspace,
             api_url=api_url,
             allowed_dirs=allowed_dirs,
             plans_directory=plans_directory,
-            claude_bin=self.settings.claude_cli_bin,
             auth_token=getattr(self.settings, "anthropic_auth_token", ""),
             log_raw_cli_diagnostics=self.settings.log_raw_cli_diagnostics,
             log_messaging_error_details=self.settings.log_messaging_error_details,

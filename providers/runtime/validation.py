@@ -9,7 +9,8 @@ from collections.abc import Callable
 import httpx
 from loguru import logger
 
-from config.settings import ConfiguredChatModelRef, Settings
+from config.model_refs import ConfiguredChatModelRef, configured_chat_model_refs
+from config.settings import Settings
 from providers.base import BaseProvider
 from providers.exceptions import (
     AuthenticationError,
@@ -52,7 +53,7 @@ class ConfiguredModelValidator:
 
     async def validate_configured_models(self) -> None:
         """Fail unless every configured chat model exists upstream."""
-        refs = self._settings.configured_chat_model_refs()
+        refs = configured_chat_model_refs(self._settings)
         refs_by_provider: dict[str, list[ConfiguredChatModelRef]] = defaultdict(list)
         for ref in refs:
             refs_by_provider[ref.provider_id].append(ref)

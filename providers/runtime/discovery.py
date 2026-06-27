@@ -8,6 +8,7 @@ from contextlib import suppress
 
 from loguru import logger
 
+from config.model_refs import configured_chat_model_refs
 from config.provider_catalog import PROVIDER_CATALOG
 from config.settings import Settings
 from providers.base import BaseProvider
@@ -22,7 +23,7 @@ ProviderResolver = Callable[[str], BaseProvider]
 
 def referenced_provider_ids(settings: Settings) -> frozenset[str]:
     """Return provider ids referenced by configured chat model refs."""
-    return frozenset(ref.provider_id for ref in settings.configured_chat_model_refs())
+    return frozenset(ref.provider_id for ref in configured_chat_model_refs(settings))
 
 
 def model_list_provider_ids_for_settings(settings: Settings) -> tuple[str, ...]:

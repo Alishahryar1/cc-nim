@@ -50,7 +50,7 @@ def launch(argv: Sequence[str] | None = None) -> None:
         print("Start it in another terminal with: fcc-server", file=sys.stderr)
         raise SystemExit(1)
 
-    binary_name = codex_binary_name(settings)
+    binary_name = codex_binary_name()
     binary_path = resolve_client_binary(
         binary_name=binary_name,
         display_name=_DISPLAY_NAME,
@@ -76,10 +76,10 @@ def launch(argv: Sequence[str] | None = None) -> None:
     )
 
 
-def codex_binary_name(settings: Settings) -> str:
-    """Return the configured Codex binary name."""
+def codex_binary_name() -> str:
+    """Return the Codex CLI binary name."""
 
-    return settings.codex_cli_bin or _DEFAULT_BINARY
+    return _DEFAULT_BINARY
 
 
 def build_codex_launcher_command(

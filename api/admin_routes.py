@@ -13,6 +13,7 @@ from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from config.model_refs import parse_provider_type
 from config.settings import Settings
 from config.settings import get_settings as get_cached_settings
 from providers.runtime import ProviderRuntime
@@ -147,7 +148,7 @@ async def admin_status(request: Request):
         "host": settings.host,
         "port": settings.port,
         "model": settings.model,
-        "provider": settings.provider_type,
+        "provider": parse_provider_type(settings.model),
         "pending_fields": getattr(request.app.state, "admin_pending_fields", []),
         "provider_status": provider_config_status(),
         "cached_models": cached_models,

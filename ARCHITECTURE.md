@@ -166,8 +166,10 @@ reported without noisy Starlette tracebacks.
 
 ## Configuration Model
 
-[config/settings.py](config/settings.py) centralizes configuration with Pydantic
-Settings. Dotenv files are configured in this order:
+[config/settings.py](config/settings.py) owns the flat Pydantic Settings schema:
+raw env fields, validation, and `get_settings()`. It should not own routing,
+model-ref parsing, launcher defaults, or web-tool policy. Dotenv discovery lives
+in [config/env_files.py](config/env_files.py) and uses this order:
 
 1. repo-local `.env`;
 2. managed `~/.fcc/.env`;
@@ -176,7 +178,8 @@ Settings. Dotenv files are configured in this order:
 Later dotenv files override earlier dotenv files. Process environment variables
 also participate through Pydantic settings resolution. `ANTHROPIC_AUTH_TOKEN`
 has an extra guard after settings are built: if any configured dotenv file
-defines it, that dotenv value replaces a stale inherited shell token.
+defines it, that dotenv value replaces a stale inherited shell token. Auth-token
+source detection for startup warnings also belongs to `config/env_files.py`.
 
 [config/paths.py](config/paths.py) defines managed paths:
 
@@ -193,6 +196,10 @@ Model routing configuration is tiered:
 - `ENABLE_MODEL_THINKING` is the global thinking switch.
 - `ENABLE_OPUS_THINKING`, `ENABLE_SONNET_THINKING`, and
   `ENABLE_HAIKU_THINKING` optionally override thinking by tier.
+
+[config/model_refs.py](config/model_refs.py) owns provider-prefixed model ref
+parsing and configured `MODEL*` inventory. API routing and provider validation
+depend on those helpers instead of adding behavior methods to Settings.
 
 [api/admin_config/](api/admin_config/) owns the Admin UI config manifest and
 managed env writes. Provider credential, local URL, proxy, and display-name
@@ -279,13 +286,13 @@ It supports two forms:
 - Direct provider model refs such as `nvidia_nim/nvidia/model-name`.
 - Gateway model IDs decoded by [api/gateway_model_ids.py](api/gateway_model_ids.py).
 
-If the incoming model is not direct, `Settings.resolve_model()` maps it by Claude
-tier. Names containing `opus`, `sonnet`, or `haiku` use the matching tier override
-when set, otherwise they fall back to `MODEL`.
+If the incoming model is not direct, `ModelRouter` maps it by Claude tier. Names
+containing `opus`, `sonnet`, or `haiku` use the matching tier override when set,
+otherwise they fall back to `MODEL`.
 
 The router also resolves thinking. Gateway model IDs can force thinking on or
-off; otherwise `Settings.resolve_thinking()` applies tier-specific thinking
-overrides or the global setting.
+off; otherwise `ModelRouter` applies tier-specific thinking overrides or the
+global setting.
 
 `GET /v1/models` advertises:
 

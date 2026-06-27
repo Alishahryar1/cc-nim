@@ -9,7 +9,14 @@ from config.constants import (
     ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
     HTTP_CONNECT_TIMEOUT_DEFAULT,
 )
+from config.env_files import ANTHROPIC_AUTH_TOKEN_ENV, process_env_key_is_effective
+from config.model_refs import (
+    configured_chat_model_refs,
+    parse_model_name,
+    parse_provider_type,
+)
 from config.nim import NimSettings
+from config.paths import default_claude_workspace_path
 
 
 class TestSettings:
@@ -47,7 +54,7 @@ class TestSettings:
         assert settings.debug_subagent_stack is False
 
     def test_default_claude_workspace_uses_fcc_home(self, monkeypatch, tmp_path):
-        """Unset CLAUDE_WORKSPACE stores agent data under ~/.fcc."""
+        """Unset CLAUDE_WORKSPACE stores agent data under the fixed path helper."""
         from config.settings import Settings
 
         monkeypatch.setenv("HOME", str(tmp_path))
@@ -57,7 +64,8 @@ class TestSettings:
 
         settings = Settings()
 
-        assert settings.claude_workspace == str(tmp_path / ".fcc" / "agent_workspace")
+        assert default_claude_workspace_path() == tmp_path / ".fcc" / "agent_workspace"
+        assert not hasattr(settings, "claude_workspace")
 
     def test_server_log_path_uses_fcc_home(self, monkeypatch, tmp_path):
         """The server log location is fixed under ~/.fcc."""
@@ -91,7 +99,7 @@ class TestSettings:
         assert not hasattr(settings, "zai_base_url")
 
     def test_blank_claude_workspace_uses_fcc_home(self, monkeypatch, tmp_path):
-        """An explicit blank env value does not affect the fixed workspace path."""
+        """An explicit blank env value does not affect the fixed workspace helper."""
         from config.settings import Settings
 
         monkeypatch.setenv("HOME", str(tmp_path))
@@ -101,10 +109,11 @@ class TestSettings:
 
         settings = Settings()
 
-        assert settings.claude_workspace == str(tmp_path / ".fcc" / "agent_workspace")
+        assert default_claude_workspace_path() == tmp_path / ".fcc" / "agent_workspace"
+        assert not hasattr(settings, "claude_workspace")
 
     def test_explicit_claude_workspace_is_ignored(self, monkeypatch, tmp_path):
-        """Custom CLAUDE_WORKSPACE values do not override the fixed workspace."""
+        """Custom CLAUDE_WORKSPACE values do not override the fixed workspace helper."""
         from config.settings import Settings
 
         workspace = tmp_path / "custom-workspace"
@@ -115,10 +124,11 @@ class TestSettings:
 
         settings = Settings()
 
-        assert settings.claude_workspace == str(tmp_path / ".fcc" / "agent_workspace")
+        assert default_claude_workspace_path() == tmp_path / ".fcc" / "agent_workspace"
+        assert not hasattr(settings, "claude_workspace")
 
     def test_explicit_claude_cli_bin_is_ignored(self, monkeypatch):
-        """Custom CLAUDE_CLI_BIN values do not override the fixed binary."""
+        """Custom CLAUDE_CLI_BIN values do not become Settings fields."""
         from config.settings import Settings
 
         monkeypatch.setenv("CLAUDE_CLI_BIN", "claude-custom")
@@ -126,10 +136,11 @@ class TestSettings:
 
         settings = Settings()
 
-        assert settings.claude_cli_bin == "claude"
+        assert not hasattr(settings, "claude_cli_bin")
+        assert not hasattr(settings, "codex_cli_bin")
 
     def test_direct_claude_runtime_overrides_are_ignored(self, monkeypatch, tmp_path):
-        """Constructor extras cannot override fixed Claude runtime settings."""
+        """Constructor extras cannot add fixed Claude runtime settings."""
         from config.settings import Settings
 
         monkeypatch.setenv("HOME", str(tmp_path))
@@ -146,8 +157,9 @@ class TestSettings:
             )
         )
 
-        assert settings.claude_workspace == str(tmp_path / ".fcc" / "agent_workspace")
-        assert settings.claude_cli_bin == "claude"
+        assert default_claude_workspace_path() == tmp_path / ".fcc" / "agent_workspace"
+        assert not hasattr(settings, "claude_workspace")
+        assert not hasattr(settings, "claude_cli_bin")
 
     def test_get_settings_cached(self):
         """Test get_settings returns cached instance."""
@@ -286,26 +298,32 @@ class TestSettings:
 
     def test_empty_per_model_thinking_inherits_model_default(self, monkeypatch):
         """Blank per-model thinking env vars are treated as unset."""
+        from api.model_router import ModelRouter
         from config.settings import Settings
 
         monkeypatch.setenv("ENABLE_MODEL_THINKING", "false")
         monkeypatch.setenv("ENABLE_OPUS_THINKING", "")
         settings = Settings()
         assert settings.enable_opus_thinking is None
-        assert settings.resolve_thinking("claude-opus-4-20250514") is False
+        assert (
+            ModelRouter(settings).resolve("claude-opus-4-20250514").thinking_enabled
+            is False
+        )
 
     def test_resolve_thinking_uses_model_tiers(self, monkeypatch):
-        """resolve_thinking applies tier override then fallback."""
+        """ModelRouter applies tier thinking override then fallback."""
+        from api.model_router import ModelRouter
         from config.settings import Settings
 
         monkeypatch.setenv("ENABLE_MODEL_THINKING", "false")
         monkeypatch.setenv("ENABLE_OPUS_THINKING", "true")
         monkeypatch.setenv("ENABLE_HAIKU_THINKING", "false")
         settings = Settings()
-        assert settings.resolve_thinking("claude-opus-4-20250514") is True
-        assert settings.resolve_thinking("claude-sonnet-4-20250514") is False
-        assert settings.resolve_thinking("claude-haiku-4-20250514") is False
-        assert settings.resolve_thinking("unknown-model") is False
+        router = ModelRouter(settings)
+        assert router.resolve("claude-opus-4-20250514").thinking_enabled is True
+        assert router.resolve("claude-sonnet-4-20250514").thinking_enabled is False
+        assert router.resolve("claude-haiku-4-20250514").thinking_enabled is False
+        assert router.resolve("unknown-model").thinking_enabled is False
 
     def test_anthropic_auth_token_from_env_without_dotenv_key(self, monkeypatch):
         """ANTHROPIC_AUTH_TOKEN env var is loaded when dotenv does not define it."""
@@ -315,7 +333,12 @@ class TestSettings:
         monkeypatch.setitem(Settings.model_config, "env_file", ())
         settings = Settings()
         assert settings.anthropic_auth_token == "process-token"
-        assert settings.uses_process_anthropic_auth_token() is True
+        assert (
+            process_env_key_is_effective(
+                Settings.model_config, ANTHROPIC_AUTH_TOKEN_ENV
+            )
+            is True
+        )
 
     def test_empty_dotenv_anthropic_auth_token_overrides_process_env(
         self, monkeypatch, tmp_path
@@ -330,7 +353,12 @@ class TestSettings:
 
         settings = Settings()
         assert settings.anthropic_auth_token == ""
-        assert settings.uses_process_anthropic_auth_token() is False
+        assert (
+            process_env_key_is_effective(
+                Settings.model_config, ANTHROPIC_AUTH_TOKEN_ENV
+            )
+            is False
+        )
 
     def test_dotenv_anthropic_auth_token_overrides_process_env(
         self, monkeypatch, tmp_path
@@ -348,7 +376,12 @@ class TestSettings:
 
         settings = Settings()
         assert settings.anthropic_auth_token == "server-token"
-        assert settings.uses_process_anthropic_auth_token() is False
+        assert (
+            process_env_key_is_effective(
+                Settings.model_config, ANTHROPIC_AUTH_TOKEN_ENV
+            )
+            is False
+        )
 
     @pytest.mark.parametrize("removed_key", ["NIM_ENABLE_THINKING", "ENABLE_THINKING"])
     def test_removed_thinking_env_keys_are_ignored(self, monkeypatch, removed_key):
@@ -585,7 +618,7 @@ class TestSettingsOptionalStr:
 
 
 class TestPerModelMapping:
-    """Test per-model fields and resolve_model()."""
+    """Test per-model settings and model-ref helpers."""
 
     def test_model_fields_default_none(self):
         """Per-model fields default to None."""
@@ -607,13 +640,16 @@ class TestPerModelMapping:
     @pytest.mark.parametrize("env_var", ["MODEL_OPUS", "MODEL_SONNET", "MODEL_HAIKU"])
     def test_empty_model_override_env_is_unset(self, monkeypatch, env_var):
         """Empty per-model override env vars are treated as unset."""
+        from api.model_router import ModelRouter
         from config.settings import Settings
 
         monkeypatch.setenv(env_var, "")
         s = Settings()
         assert getattr(s, env_var.lower()) is None
         assert (
-            s.resolve_model(f"claude-{env_var.removeprefix('MODEL_').lower()}-4")
+            ModelRouter(s)
+            .resolve(f"claude-{env_var.removeprefix('MODEL_').lower()}-4")
+            .provider_model_ref
             == s.model
         )
 
@@ -694,129 +730,156 @@ class TestPerModelMapping:
             Settings()
 
     def test_resolve_model_opus_override(self):
-        """resolve_model returns model_opus for opus model names."""
+        """ModelRouter returns model_opus for opus model names."""
+        from api.model_router import ModelRouter
         from config.settings import Settings
 
         s = Settings()
         s.model_opus = "open_router/deepseek/deepseek-r1"
+        router = ModelRouter(s)
         assert (
-            s.resolve_model("claude-opus-4-20250514")
+            router.resolve("claude-opus-4-20250514").provider_model_ref
             == "open_router/deepseek/deepseek-r1"
         )
-        assert s.resolve_model("claude-3-opus") == "open_router/deepseek/deepseek-r1"
         assert (
-            s.resolve_model("claude-3-opus-20240229")
+            router.resolve("claude-3-opus").provider_model_ref
+            == "open_router/deepseek/deepseek-r1"
+        )
+        assert (
+            router.resolve("claude-3-opus-20240229").provider_model_ref
             == "open_router/deepseek/deepseek-r1"
         )
 
     def test_resolve_model_sonnet_override(self):
-        """resolve_model returns model_sonnet for sonnet model names."""
+        """ModelRouter returns model_sonnet for sonnet model names."""
+        from api.model_router import ModelRouter
         from config.settings import Settings
 
         s = Settings()
         s.model_sonnet = "nvidia_nim/meta/llama-3.3-70b-instruct"
+        router = ModelRouter(s)
         assert (
-            s.resolve_model("claude-sonnet-4-20250514")
+            router.resolve("claude-sonnet-4-20250514").provider_model_ref
             == "nvidia_nim/meta/llama-3.3-70b-instruct"
         )
         assert (
-            s.resolve_model("claude-3-5-sonnet-20241022")
+            router.resolve("claude-3-5-sonnet-20241022").provider_model_ref
             == "nvidia_nim/meta/llama-3.3-70b-instruct"
         )
 
     def test_resolve_model_haiku_override(self):
-        """resolve_model returns model_haiku for haiku model names."""
+        """ModelRouter returns model_haiku for haiku model names."""
+        from api.model_router import ModelRouter
         from config.settings import Settings
 
         s = Settings()
         s.model_haiku = "lmstudio/qwen2.5-7b"
-        assert s.resolve_model("claude-3-haiku-20240307") == "lmstudio/qwen2.5-7b"
-        assert s.resolve_model("claude-3-5-haiku-20241022") == "lmstudio/qwen2.5-7b"
-        assert s.resolve_model("claude-haiku-4-20250514") == "lmstudio/qwen2.5-7b"
+        router = ModelRouter(s)
+        assert (
+            router.resolve("claude-3-haiku-20240307").provider_model_ref
+            == "lmstudio/qwen2.5-7b"
+        )
+        assert (
+            router.resolve("claude-3-5-haiku-20241022").provider_model_ref
+            == "lmstudio/qwen2.5-7b"
+        )
+        assert (
+            router.resolve("claude-haiku-4-20250514").provider_model_ref
+            == "lmstudio/qwen2.5-7b"
+        )
 
     def test_resolve_model_fallback_when_override_not_set(self):
-        """resolve_model falls back to MODEL when model override is None."""
+        """ModelRouter falls back to MODEL when model override is None."""
+        from api.model_router import ModelRouter
         from config.settings import Settings
 
         s = Settings()
         s.model = "nvidia_nim/fallback-model"
-        # No model overrides set
-        assert s.resolve_model("claude-opus-4-20250514") == "nvidia_nim/fallback-model"
+        router = ModelRouter(s)
         assert (
-            s.resolve_model("claude-sonnet-4-20250514") == "nvidia_nim/fallback-model"
+            router.resolve("claude-opus-4-20250514").provider_model_ref
+            == "nvidia_nim/fallback-model"
         )
-        assert s.resolve_model("claude-3-haiku-20240307") == "nvidia_nim/fallback-model"
+        assert (
+            router.resolve("claude-sonnet-4-20250514").provider_model_ref
+            == "nvidia_nim/fallback-model"
+        )
+        assert (
+            router.resolve("claude-3-haiku-20240307").provider_model_ref
+            == "nvidia_nim/fallback-model"
+        )
 
     def test_resolve_model_unknown_model_falls_back(self):
-        """resolve_model falls back to MODEL for unrecognized model names."""
+        """ModelRouter falls back to MODEL for unrecognized model names."""
+        from api.model_router import ModelRouter
         from config.settings import Settings
 
         s = Settings()
         s.model = "nvidia_nim/fallback-model"
         s.model_opus = "open_router/opus-model"
-        assert s.resolve_model("claude-2.1") == "nvidia_nim/fallback-model"
-        assert s.resolve_model("some-unknown-model") == "nvidia_nim/fallback-model"
+        router = ModelRouter(s)
+        assert router.resolve("claude-2.1").provider_model_ref == (
+            "nvidia_nim/fallback-model"
+        )
+        assert router.resolve("some-unknown-model").provider_model_ref == (
+            "nvidia_nim/fallback-model"
+        )
 
     def test_resolve_model_case_insensitive(self):
         """Model classification is case-insensitive."""
+        from api.model_router import ModelRouter
         from config.settings import Settings
 
         s = Settings()
         s.model_opus = "open_router/opus-model"
-        assert s.resolve_model("Claude-OPUS-4") == "open_router/opus-model"
+        assert (
+            ModelRouter(s).resolve("Claude-OPUS-4").provider_model_ref
+            == "open_router/opus-model"
+        )
 
     def test_parse_provider_type(self):
         """parse_provider_type extracts provider from model string."""
-        from config.settings import Settings
 
-        assert Settings.parse_provider_type("nvidia_nim/meta/llama") == "nvidia_nim"
-        assert Settings.parse_provider_type("open_router/deepseek/r1") == "open_router"
+        assert parse_provider_type("nvidia_nim/meta/llama") == "nvidia_nim"
+        assert parse_provider_type("open_router/deepseek/r1") == "open_router"
+        assert parse_provider_type("mistral/devstral-small-latest") == "mistral"
         assert (
-            Settings.parse_provider_type("mistral/devstral-small-latest") == "mistral"
-        )
-        assert (
-            Settings.parse_provider_type("mistral_codestral/codestral-latest")
+            parse_provider_type("mistral_codestral/codestral-latest")
             == "mistral_codestral"
         )
-        assert Settings.parse_provider_type("deepseek/deepseek-chat") == "deepseek"
-        assert Settings.parse_provider_type("lmstudio/qwen") == "lmstudio"
-        assert Settings.parse_provider_type("llamacpp/model") == "llamacpp"
-        assert Settings.parse_provider_type("ollama/llama3.1") == "ollama"
-        assert Settings.parse_provider_type("wafer/DeepSeek-V4-Pro") == "wafer"
-        assert (
-            Settings.parse_provider_type("gemini/models/gemini-3.1-flash-lite")
-            == "gemini"
-        )
-        assert Settings.parse_provider_type("groq/llama-3.3-70b-versatile") == "groq"
-        assert Settings.parse_provider_type("cerebras/llama3.1-8b") == "cerebras"
+        assert parse_provider_type("deepseek/deepseek-chat") == "deepseek"
+        assert parse_provider_type("lmstudio/qwen") == "lmstudio"
+        assert parse_provider_type("llamacpp/model") == "llamacpp"
+        assert parse_provider_type("ollama/llama3.1") == "ollama"
+        assert parse_provider_type("wafer/DeepSeek-V4-Pro") == "wafer"
+        assert parse_provider_type("gemini/models/gemini-3.1-flash-lite") == "gemini"
+        assert parse_provider_type("groq/llama-3.3-70b-versatile") == "groq"
+        assert parse_provider_type("cerebras/llama3.1-8b") == "cerebras"
 
     def test_parse_model_name(self):
         """parse_model_name extracts model name from model string."""
-        from config.settings import Settings
 
-        assert Settings.parse_model_name("nvidia_nim/meta/llama") == "meta/llama"
-        assert (
-            Settings.parse_model_name("mistral/devstral-small-latest")
-            == "devstral-small-latest"
+        assert parse_model_name("nvidia_nim/meta/llama") == "meta/llama"
+        assert parse_model_name("mistral/devstral-small-latest") == (
+            "devstral-small-latest"
         )
         assert (
-            Settings.parse_model_name("mistral_codestral/codestral-latest")
-            == "codestral-latest"
+            parse_model_name("mistral_codestral/codestral-latest") == "codestral-latest"
         )
-        assert Settings.parse_model_name("deepseek/deepseek-chat") == "deepseek-chat"
-        assert Settings.parse_model_name("lmstudio/qwen") == "qwen"
-        assert Settings.parse_model_name("llamacpp/model") == "model"
-        assert Settings.parse_model_name("ollama/llama3.1") == "llama3.1"
-        assert Settings.parse_model_name("wafer/DeepSeek-V4-Pro") == "DeepSeek-V4-Pro"
+        assert parse_model_name("deepseek/deepseek-chat") == "deepseek-chat"
+        assert parse_model_name("lmstudio/qwen") == "qwen"
+        assert parse_model_name("llamacpp/model") == "model"
+        assert parse_model_name("ollama/llama3.1") == "llama3.1"
+        assert parse_model_name("wafer/DeepSeek-V4-Pro") == "DeepSeek-V4-Pro"
         assert (
-            Settings.parse_model_name("gemini/models/gemini-3.1-flash-lite")
+            parse_model_name("gemini/models/gemini-3.1-flash-lite")
             == "models/gemini-3.1-flash-lite"
         )
         assert (
-            Settings.parse_model_name("groq/llama-3.3-70b-versatile")
+            parse_model_name("groq/llama-3.3-70b-versatile")
             == "llama-3.3-70b-versatile"
         )
-        assert Settings.parse_model_name("cerebras/llama3.1-8b") == "llama3.1-8b"
+        assert parse_model_name("cerebras/llama3.1-8b") == "llama3.1-8b"
 
     def test_configured_chat_model_refs_collects_unique_models_with_sources(
         self, monkeypatch
@@ -832,7 +895,7 @@ class TestPerModelMapping:
         s.model_sonnet = "nvidia_nim/fallback"
         s.model_haiku = None
 
-        refs = s.configured_chat_model_refs()
+        refs = configured_chat_model_refs(s)
 
         assert [ref.model_ref for ref in refs] == [
             "nvidia_nim/fallback",

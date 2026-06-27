@@ -30,7 +30,9 @@ from providers.zai import ZaiProvider
 def _make_settings(**overrides):
     mock = MagicMock()
     mock.model = "nvidia_nim/meta/llama3"
-    mock.provider_type = "nvidia_nim"
+    mock.model_opus = None
+    mock.model_sonnet = None
+    mock.model_haiku = None
     mock.nvidia_nim_api_key = "test_key"
     mock.open_router_api_key = "test_openrouter_key"
     mock.mistral_api_key = "test_mistral_key"

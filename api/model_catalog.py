@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+from config.model_refs import configured_chat_model_refs
 from config.settings import Settings
 from providers.runtime import ProviderRuntime
 
@@ -57,7 +58,7 @@ def build_models_list_response(
     models: list[ModelResponse] = []
     seen: set[str] = set()
 
-    for ref in settings.configured_chat_model_refs():
+    for ref in configured_chat_model_refs(settings):
         supports_thinking = None
         if provider_runtime is not None:
             supports_thinking = provider_runtime.cached_model_supports_thinking(
