@@ -1,6 +1,7 @@
 """Re-exports default upstream base URLs from the config provider catalog."""
 
 from config.provider_catalog import (
+    AGENTROUTER_DEFAULT_BASE,
     CEREBRAS_DEFAULT_BASE,
     CODESTRAL_DEFAULT_BASE,
     DEEPSEEK_ANTHROPIC_DEFAULT_BASE,
@@ -21,6 +22,7 @@ from config.provider_catalog import (
 )
 
 __all__ = (
+    "AGENTROUTER_DEFAULT_BASE",
     "CEREBRAS_DEFAULT_BASE",
     "CODESTRAL_DEFAULT_BASE",
     "DEEPSEEK_ANTHROPIC_DEFAULT_BASE",

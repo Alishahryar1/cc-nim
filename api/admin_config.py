@@ -252,6 +252,18 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         ),
     ),
     ConfigFieldSpec(
+        "AGENTROUTER_API_KEY",
+        "AgentRouter API Key",
+        "providers",
+        "secret",
+        settings_attr="agentrouter_api_key",
+        secret=True,
+        description=(
+            "AgentRouter API key for Anthropic-compatible Messages "
+            "at agentrouter.org/v1."
+        ),
+    ),
+    ConfigFieldSpec(
         "LM_STUDIO_BASE_URL",
         "LM Studio Base URL",
         "providers",
@@ -404,6 +416,15 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         "providers",
         "secret",
         settings_attr="cerebras_proxy",
+        secret=True,
+        advanced=True,
+    ),
+    ConfigFieldSpec(
+        "AGENTROUTER_PROXY",
+        "AgentRouter Proxy",
+        "providers",
+        "secret",
+        settings_attr="agentrouter_proxy",
         secret=True,
         advanced=True,
     ),

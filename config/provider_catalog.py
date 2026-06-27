@@ -36,6 +36,7 @@ ZAI_DEFAULT_BASE = "https://api.z.ai/api/anthropic/v1"
 GEMINI_DEFAULT_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GROQ_DEFAULT_BASE = "https://api.groq.com/openai/v1"
 CEREBRAS_DEFAULT_BASE = "https://api.cerebras.ai/v1"
+AGENTROUTER_DEFAULT_BASE = "https://agentrouter.org/v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -244,6 +245,21 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
             "thinking",
             "native_anthropic",
             "local",
+        ),
+    ),
+    "agentrouter": ProviderDescriptor(
+        provider_id="agentrouter",
+        transport_type="anthropic_messages",
+        credential_env="AGENTROUTER_API_KEY",
+        credential_attr="agentrouter_api_key",
+        default_base_url=AGENTROUTER_DEFAULT_BASE,
+        proxy_attr="agentrouter_proxy",
+        capabilities=(
+            "chat",
+            "streaming",
+            "tools",
+            "thinking",
+            "native_anthropic",
         ),
     ),
 }
