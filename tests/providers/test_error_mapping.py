@@ -291,6 +291,7 @@ def test_attached_provider_error_body_is_capped_for_display():
 def test_streaming_transports_pass_scoped_rate_limiter_to_map_error():
     """Guardrail: streaming adapters must scope reactive 429 handling per provider."""
     root = Path(__file__).resolve().parents[2]
+
     for path in (
         root / "providers" / "transports" / "anthropic_messages" / "transport.py",
         root / "providers" / "transports" / "openai_chat" / "transport.py",

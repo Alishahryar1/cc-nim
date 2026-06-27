@@ -252,6 +252,50 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         ),
     ),
     ConfigFieldSpec(
+        "VERTEX_AI_API_KEY",
+        "Vertex AI API Key",
+        "providers",
+        "secret",
+        settings_attr="vertex_ai_api_key",
+        secret=True,
+        description=(
+            "Google Cloud Vertex AI API key or access token. "
+            "Required for requests (Project ID + Location only build the URL). "
+            "Create keys in [Google Cloud Console](https://console.cloud.google.com/apis/credentials)."
+        ),
+    ),
+    ConfigFieldSpec(
+        "VERTEX_AI_BASE_URL",
+        "Vertex AI Base URL",
+        "providers",
+        settings_attr="vertex_ai_base_url",
+        description=(
+            "Google Cloud Vertex AI native REST API base URL. "
+            "Set this or use Project ID + Location to build it. "
+            "Use the 'gemini' provider for OpenAI-compatible Vertex AI endpoints."
+        ),
+    ),
+    ConfigFieldSpec(
+        "VERTEX_AI_PROJECT_ID",
+        "Vertex AI Project ID",
+        "providers",
+        settings_attr="vertex_ai_project_id",
+        description=(
+            "Google Cloud project ID for Vertex AI. "
+            "Used with Location to build the base URL."
+        ),
+    ),
+    ConfigFieldSpec(
+        "VERTEX_AI_LOCATION",
+        "Vertex AI Location",
+        "providers",
+        settings_attr="vertex_ai_location",
+        description=(
+            "Google Cloud region for Vertex AI (e.g. us-central1). "
+            "Used with Project ID to build the base URL."
+        ),
+    ),
+    ConfigFieldSpec(
         "LM_STUDIO_BASE_URL",
         "LM Studio Base URL",
         "providers",
@@ -404,6 +448,15 @@ FIELDS: tuple[ConfigFieldSpec, ...] = (
         "providers",
         "secret",
         settings_attr="cerebras_proxy",
+        secret=True,
+        advanced=True,
+    ),
+    ConfigFieldSpec(
+        "VERTEX_AI_PROXY",
+        "Vertex AI Proxy",
+        "providers",
+        "secret",
+        settings_attr="vertex_ai_proxy",
         secret=True,
         advanced=True,
     ),

@@ -114,6 +114,17 @@ class Settings(BaseSettings):
     # ==================== Cerebras Inference (OpenAI-compatible) ====================
     cerebras_api_key: str = Field(default="", validation_alias="CEREBRAS_API_KEY")
 
+    # ==================== Google Vertex AI ====================
+    # API key (or access token) required. Provide base URL or project + location.
+    vertex_ai_api_key: str = Field(default="", validation_alias="VERTEX_AI_API_KEY")
+    vertex_ai_project_id: str = Field(
+        default="", validation_alias="VERTEX_AI_PROJECT_ID"
+    )
+    vertex_ai_location: str = Field(
+        default="us-central1", validation_alias="VERTEX_AI_LOCATION"
+    )
+    vertex_ai_base_url: str = Field(default="", validation_alias="VERTEX_AI_BASE_URL")
+
     # ==================== Messaging Platform Selection ====================
     # Valid: "telegram" | "discord" | "none"
     messaging_platform: str = Field(
@@ -174,6 +185,7 @@ class Settings(BaseSettings):
     gemini_proxy: str = Field(default="", validation_alias="GEMINI_PROXY")
     groq_proxy: str = Field(default="", validation_alias="GROQ_PROXY")
     cerebras_proxy: str = Field(default="", validation_alias="CEREBRAS_PROXY")
+    vertex_ai_proxy: str = Field(default="", validation_alias="VERTEX_AI_PROXY")
 
     # ==================== Provider Rate Limiting ====================
     provider_rate_limit: int = Field(default=40, validation_alias="PROVIDER_RATE_LIMIT")
@@ -329,6 +341,13 @@ class Settings(BaseSettings):
         if v == "" or v is None:
             return None
         return v
+
+    @field_validator("vertex_ai_location", mode="before")
+    @classmethod
+    def parse_vertex_location(cls, v: Any) -> str:
+        if v == "" or v is None:
+            return "us-central1"
+        return str(v)
 
     @property
     def claude_workspace(self) -> str:

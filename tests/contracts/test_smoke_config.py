@@ -44,6 +44,10 @@ def _settings(**overrides):
         "lm_studio_base_url": "",
         "llamacpp_base_url": "",
         "ollama_base_url": "http://localhost:11434",
+        "vertex_ai_api_key": "",
+        "vertex_ai_project_id": "",
+        "vertex_ai_location": "",
+        "vertex_ai_base_url": "",
     }
     values.update(overrides)
     return SimpleNamespace(**values)
@@ -409,3 +413,49 @@ def test_smoke_config_returns_openrouter_free_cli_provider_models(monkeypatch) -
     assert models[0].provider == "open_router"
     assert models[0].full_model == "open_router/nvidia/nemotron-3-super-120b-a12b:free"
     assert models[0].source == "openrouter_free_cli_default"
+
+
+def test_vertex_ai_smoke_config_validation() -> None:
+    # 1. API key is empty -> False
+    config = _smoke_config(
+        settings=_settings(
+            vertex_ai_api_key="",
+            vertex_ai_base_url="",
+            vertex_ai_project_id="test-project",
+            vertex_ai_location="us-central1",
+        )
+    )
+    assert not config.has_provider_configuration("vertex_ai")
+
+    # 2. API key is set, base_url is set -> True
+    config = _smoke_config(
+        settings=_settings(
+            vertex_ai_api_key="key",
+            vertex_ai_base_url="https://example.com",
+            vertex_ai_project_id="",
+            vertex_ai_location="",
+        )
+    )
+    assert config.has_provider_configuration("vertex_ai")
+
+    # 3. API key is set, base_url is empty, project_id is set, location is set -> True
+    config = _smoke_config(
+        settings=_settings(
+            vertex_ai_api_key="key",
+            vertex_ai_base_url="",
+            vertex_ai_project_id="test-project",
+            vertex_ai_location="us-central1",
+        )
+    )
+    assert config.has_provider_configuration("vertex_ai")
+
+    # 4. API key is set, base_url is empty, project_id is empty -> False (even if location defaults to us-central1)
+    config = _smoke_config(
+        settings=_settings(
+            vertex_ai_api_key="key",
+            vertex_ai_base_url="",
+            vertex_ai_project_id="",
+            vertex_ai_location="us-central1",
+        )
+    )
+    assert not config.has_provider_configuration("vertex_ai")

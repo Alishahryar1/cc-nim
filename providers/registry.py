@@ -136,6 +136,16 @@ def _create_cerebras(config: ProviderConfig, _settings: Settings) -> BaseProvide
     return CerebrasProvider(config)
 
 
+def _create_vertex_ai(config: ProviderConfig, settings: Settings) -> BaseProvider:
+    from providers.vertex_ai import VertexAIProvider
+
+    return VertexAIProvider(
+        config,
+        project_id=settings.vertex_ai_project_id,
+        location=settings.vertex_ai_location,
+    )
+
+
 PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "nvidia_nim": _create_nvidia_nim,
     "open_router": _create_open_router,
@@ -154,6 +164,7 @@ PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "lmstudio": _create_lmstudio,
     "llamacpp": _create_llamacpp,
     "ollama": _create_ollama,
+    "vertex_ai": _create_vertex_ai,
 }
 
 if set(PROVIDER_DESCRIPTORS) != set(SUPPORTED_PROVIDER_IDS) or set(
@@ -181,7 +192,9 @@ def _credential_for(descriptor: ProviderDescriptor, settings: Settings) -> str:
     return ""
 
 
-def _require_credential(descriptor: ProviderDescriptor, credential: str) -> None:
+def _require_credential(
+    descriptor: ProviderDescriptor, credential: str, settings: Settings
+) -> None:
     if descriptor.credential_env is None:
         return
     if credential and credential.strip():
@@ -196,7 +209,7 @@ def build_provider_config(
     descriptor: ProviderDescriptor, settings: Settings
 ) -> ProviderConfig:
     credential = _credential_for(descriptor, settings)
-    _require_credential(descriptor, credential)
+    _require_credential(descriptor, credential, settings)
     base_url = _string_attr(
         settings, descriptor.base_url_attr, descriptor.default_base_url or ""
     )
@@ -285,6 +298,7 @@ def _model_list_provider_ids_for_settings(settings: Settings) -> tuple[str, ...]
             and _credential_for(descriptor, settings).strip()
         ):
             provider_ids.append(provider_id)
+            continue
     return tuple(provider_ids)
 
 

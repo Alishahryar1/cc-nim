@@ -214,3 +214,10 @@ def provider_native_messages_body_snapshot(body: Mapping[str, Any]) -> dict[str,
     )
     snap = {k: body[k] for k in keys if k in body and body[k] is not None}
     return _sanitize_trace_value(snap)
+
+
+def provider_vertex_body_snapshot(body: Mapping[str, Any]) -> dict[str, Any]:
+    """Sanitized Vertex AI native body subset for traces."""
+    keys = ("contents", "systemInstruction", "tools", "generationConfig")
+    snap = {k: body[k] for k in keys if k in body and body[k] is not None}
+    return _sanitize_trace_value(snap)

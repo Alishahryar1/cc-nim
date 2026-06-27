@@ -23,19 +23,16 @@ def _set_home(monkeypatch, tmp_path: Path) -> None:
 
 
 def _clear_process_config(monkeypatch) -> None:
-    for key in (
-        "MODEL",
-        "NVIDIA_NIM_API_KEY",
-        "OPENROUTER_API_KEY",
-        "ANTHROPIC_AUTH_TOKEN",
+    from api.admin_config import FIELD_BY_KEY
+
+    for key in [
+        *FIELD_BY_KEY,
         "FCC_ENV_FILE",
-        "HOST",
-        "PORT",
         "LOG_FILE",
         "ZAI_BASE_URL",
         "CLAUDE_WORKSPACE",
         "CLAUDE_CLI_BIN",
-    ):
+    ]:
         monkeypatch.delenv(key, raising=False)
 
 
