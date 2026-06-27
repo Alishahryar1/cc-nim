@@ -124,13 +124,13 @@ def test_legacy_env_migration_does_not_overwrite_managed_env(
 
 def test_env_template_loader_uses_root_template_in_source_checkout() -> None:
     """Source checkout fallback uses the root .env.example as the single source."""
-    from cli.entrypoints import _load_env_template
+    from config.env_template import load_env_template
 
     template = (Path(__file__).resolve().parents[2] / ".env.example").read_text(
         encoding="utf-8"
     )
 
-    assert _load_env_template() == template
+    assert load_env_template() == template
 
 
 def test_init_creates_parent_directories(tmp_path: Path) -> None:

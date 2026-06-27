@@ -43,6 +43,7 @@ class ProviderDescriptor:
     """Metadata for building :class:`~providers.base.ProviderConfig` and factory wiring."""
 
     provider_id: str
+    display_name: str
     transport_type: TransportType
     capabilities: tuple[str, ...]
     credential_env: str | None = None
@@ -57,6 +58,7 @@ class ProviderDescriptor:
 PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     "nvidia_nim": ProviderDescriptor(
         provider_id="nvidia_nim",
+        display_name="NVIDIA NIM",
         transport_type="openai_chat",
         credential_env="NVIDIA_NIM_API_KEY",
         credential_url="https://build.nvidia.com/settings/api-keys",
@@ -67,6 +69,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     ),
     "open_router": ProviderDescriptor(
         provider_id="open_router",
+        display_name="OpenRouter",
         transport_type="anthropic_messages",
         credential_env="OPENROUTER_API_KEY",
         credential_url="https://openrouter.ai/keys",
@@ -77,6 +80,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     ),
     "gemini": ProviderDescriptor(
         provider_id="gemini",
+        display_name="Gemini",
         transport_type="openai_chat",
         credential_env="GEMINI_API_KEY",
         credential_url="https://aistudio.google.com/apikey",
@@ -87,6 +91,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     ),
     "deepseek": ProviderDescriptor(
         provider_id="deepseek",
+        display_name="DeepSeek",
         transport_type="anthropic_messages",
         credential_env="DEEPSEEK_API_KEY",
         credential_url="https://platform.deepseek.com/api_keys",
@@ -96,6 +101,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     ),
     "mistral": ProviderDescriptor(
         provider_id="mistral",
+        display_name="Mistral",
         transport_type="openai_chat",
         credential_env="MISTRAL_API_KEY",
         credential_url="https://console.mistral.ai/",
@@ -106,6 +112,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     ),
     "mistral_codestral": ProviderDescriptor(
         provider_id="mistral_codestral",
+        display_name="Mistral Codestral",
         transport_type="openai_chat",
         credential_env="CODESTRAL_API_KEY",
         credential_url="https://console.mistral.ai/",
@@ -116,6 +123,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     ),
     "opencode": ProviderDescriptor(
         provider_id="opencode",
+        display_name="OpenCode Zen",
         transport_type="openai_chat",
         credential_env="OPENCODE_API_KEY",
         credential_url="https://opencode.ai/auth",
@@ -126,6 +134,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     ),
     "opencode_go": ProviderDescriptor(
         provider_id="opencode_go",
+        display_name="OpenCode Go",
         transport_type="openai_chat",
         credential_env="OPENCODE_API_KEY",
         credential_url="https://opencode.ai/auth",
@@ -136,6 +145,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     ),
     "wafer": ProviderDescriptor(
         provider_id="wafer",
+        display_name="Wafer",
         transport_type="anthropic_messages",
         credential_env="WAFER_API_KEY",
         credential_url="https://www.wafer.ai/pass",
@@ -146,6 +156,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     ),
     "kimi": ProviderDescriptor(
         provider_id="kimi",
+        display_name="Kimi",
         transport_type="anthropic_messages",
         credential_env="KIMI_API_KEY",
         credential_url="https://platform.moonshot.cn/console/api-keys",
@@ -162,6 +173,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     ),
     "cerebras": ProviderDescriptor(
         provider_id="cerebras",
+        display_name="Cerebras",
         transport_type="openai_chat",
         credential_env="CEREBRAS_API_KEY",
         credential_url="https://cloud.cerebras.ai",
@@ -172,6 +184,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     ),
     "groq": ProviderDescriptor(
         provider_id="groq",
+        display_name="Groq",
         transport_type="openai_chat",
         credential_env="GROQ_API_KEY",
         credential_url="https://console.groq.com/keys",
@@ -182,6 +195,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     ),
     "fireworks": ProviderDescriptor(
         provider_id="fireworks",
+        display_name="Fireworks",
         transport_type="anthropic_messages",
         credential_env="FIREWORKS_API_KEY",
         credential_url="https://fireworks.ai/account/api-keys",
@@ -199,6 +213,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     ),
     "zai": ProviderDescriptor(
         provider_id="zai",
+        display_name="Z.ai",
         transport_type="anthropic_messages",
         credential_env="ZAI_API_KEY",
         credential_attr="zai_api_key",
@@ -215,6 +230,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     ),
     "lmstudio": ProviderDescriptor(
         provider_id="lmstudio",
+        display_name="LM Studio",
         transport_type="anthropic_messages",
         static_credential="lm-studio",
         default_base_url=LMSTUDIO_DEFAULT_BASE,
@@ -224,6 +240,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     ),
     "llamacpp": ProviderDescriptor(
         provider_id="llamacpp",
+        display_name="llama.cpp",
         transport_type="anthropic_messages",
         static_credential="llamacpp",
         default_base_url=LLAMACPP_DEFAULT_BASE,
@@ -233,6 +250,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     ),
     "ollama": ProviderDescriptor(
         provider_id="ollama",
+        display_name="Ollama",
         transport_type="anthropic_messages",
         static_credential="ollama",
         default_base_url=OLLAMA_DEFAULT_BASE,

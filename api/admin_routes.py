@@ -17,13 +17,10 @@ from config.settings import Settings
 from config.settings import get_settings as get_cached_settings
 from providers.runtime import ProviderRuntime
 
-from .admin_config import (
-    FIELD_BY_KEY,
-    load_config_response,
-    provider_config_status,
-    validate_updates,
-    write_managed_env,
-)
+from .admin_config.manifest import FIELD_BY_KEY
+from .admin_config.persistence import validate_updates, write_managed_env
+from .admin_config.status import provider_config_status
+from .admin_config.values import load_config_response
 from .admin_urls import local_admin_url
 
 router = APIRouter()

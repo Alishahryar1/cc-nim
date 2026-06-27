@@ -57,28 +57,6 @@ function sourceText(field) {
   return parts.join(" ");
 }
 
-function providerName(providerId) {
-  const names = {
-    nvidia_nim: "NVIDIA NIM",
-    open_router: "OpenRouter",
-    mistral_codestral: "Mistral Codestral",
-    deepseek: "DeepSeek",
-    lmstudio: "LM Studio",
-    llamacpp: "llama.cpp",
-    ollama: "Ollama",
-    kimi: "Kimi",
-    wafer: "Wafer",
-    opencode: "OpenCode Zen",
-    opencode_go: "OpenCode Go",
-    zai: "Z.ai",
-  };
-  if (names[providerId]) return names[providerId];
-  return providerId
-    .split("_")
-    .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
-    .join(" ");
-}
-
 function statusClass(status) {
   if (["configured", "reachable", "running"].includes(status)) return "ok";
   if (["missing_key", "missing_url", "unknown"].includes(status)) return "warn";
@@ -169,7 +147,7 @@ function renderProviders(providerStatus) {
 
     const title = document.createElement("div");
     title.className = "provider-title";
-    title.innerHTML = `<strong>${providerName(provider.provider_id)}</strong>`;
+    title.innerHTML = `<strong>${provider.display_name || provider.provider_id}</strong>`;
 
     const pill = document.createElement("span");
     pill.className = `status-pill ${statusClass(provider.status)}`;

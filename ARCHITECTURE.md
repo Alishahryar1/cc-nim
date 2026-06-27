@@ -121,9 +121,9 @@ new places to add unrelated behavior:
   dependencies. Inbound turn intake, queued node execution, slash command
   dependencies, and tree queue internals live in separate modules so new
   behavior has one owner instead of growing the workflow object.
-- [api/admin_config.py](api/admin_config.py) owns the admin config manifest,
-  validation, env rendering, and status metadata. Keep it data-driven, and split
-  only around cohesive admin responsibilities.
+- [api/admin_config/](api/admin_config/) owns Admin UI config behavior. Keep
+  provider fields catalog-driven, and keep manifest, source loading, validation,
+  env rendering, value presentation, and status metadata in their package owners.
 
 ## Runtime Startup And Lifecycle
 
@@ -194,12 +194,19 @@ Model routing configuration is tiered:
 - `ENABLE_OPUS_THINKING`, `ENABLE_SONNET_THINKING`, and
   `ENABLE_HAIKU_THINKING` optionally override thinking by tier.
 
-[api/admin_config.py](api/admin_config.py) defines the Admin UI config manifest
-and writes managed env updates. [api/admin_routes.py](api/admin_routes.py)
-exposes local-only admin endpoints that load, validate, apply, and test config.
-After an apply, settings are cache-cleared. Depending on the changed fields, the
-server either replaces the app provider runtime or asks the supervised server to
-restart.
+[api/admin_config/](api/admin_config/) owns the Admin UI config manifest and
+managed env writes. Provider credential, local URL, proxy, and display-name
+metadata is generated from [config/provider_catalog.py](config/provider_catalog.py);
+admin-only help text stays beside the admin manifest. The package splits source
+loading, value presentation, validation, persistence, and provider status into
+separate modules. [api/admin_routes.py](api/admin_routes.py) exposes local-only
+admin endpoints that load, validate, apply, and test config. After an apply,
+settings are cache-cleared. Depending on the changed fields, the server either
+replaces the app provider runtime or asks the supervised server to restart.
+
+[.env.example](.env.example) is the single install/init/admin template source.
+It is packaged as a [config/](config/) resource for `fcc-init` and Admin UI
+template defaults; runtime settings do not read it as a live config file.
 
 Admin routes call `require_loopback_admin()`, which rejects non-loopback clients
 and non-local origins.
@@ -340,8 +347,10 @@ where supported, and returning Anthropic SSE strings to the service layer.
 1. Add provider metadata to [config/provider_catalog.py](config/provider_catalog.py).
 2. Add credentials and related settings to [config/settings.py](config/settings.py)
    and [.env.example](.env.example) when user configurable.
-3. Add admin manifest fields in [api/admin_config.py](api/admin_config.py) when
-   the setting should be editable in the Admin UI.
+3. Add provider metadata to [config/provider_catalog.py](config/provider_catalog.py);
+   Admin UI provider fields are generated from the catalog. Add admin-only help
+   text under [api/admin_config/](api/admin_config/) only when the generated
+   labels/descriptions are insufficient.
 4. Implement the provider under [providers/](providers/) using the appropriate
    shared transport family.
 5. Add a factory in [providers/runtime/factory.py](providers/runtime/factory.py).
@@ -644,7 +653,9 @@ when maintainers want branch-level assurance.
 
 1. Add or expose the setting in [config/settings.py](config/settings.py).
 2. Add the template key to [.env.example](.env.example) if users configure it.
-3. Add a `ConfigFieldSpec` in [api/admin_config.py](api/admin_config.py).
+3. Add a `ConfigFieldSpec` under [api/admin_config/](api/admin_config/), or add
+   provider catalog metadata when the setting is provider credential, local URL,
+   proxy, or display-name metadata.
 4. Mark `restart_required` or `session_sensitive` when runtime state cannot be
    updated in place.
 5. Add tests under [tests/api/](tests/api/) or [tests/config/](tests/config/).

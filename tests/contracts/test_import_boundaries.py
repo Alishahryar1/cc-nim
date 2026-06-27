@@ -298,6 +298,55 @@ def test_openai_responses_uses_adapter_boundary() -> None:
         assert deleted_api not in adapter_text
 
 
+def test_admin_config_uses_package_owners_and_catalog_manifest() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    api_root = repo_root / "api"
+    admin_config_root = api_root / "admin_config"
+
+    assert not (api_root / "admin_config.py").exists()
+    for filename in {
+        "__init__.py",
+        "manifest.py",
+        "provider_manifest.py",
+        "sources.py",
+        "values.py",
+        "validation.py",
+        "persistence.py",
+        "status.py",
+    }:
+        assert (admin_config_root / filename).exists()
+
+    init_text = (admin_config_root / "__init__.py").read_text(encoding="utf-8")
+    assert "from " not in init_text
+    assert "__all__" not in init_text
+
+    routes_imports = set(_imports_from(api_root / "admin_routes.py", repo_root))
+    assert "api.admin_config" not in routes_imports
+    for expected in {
+        "api.admin_config.manifest",
+        "api.admin_config.persistence",
+        "api.admin_config.status",
+        "api.admin_config.values",
+    }:
+        assert expected in routes_imports
+
+    provider_manifest_text = (admin_config_root / "provider_manifest.py").read_text(
+        encoding="utf-8"
+    )
+    assert "PROVIDER_CATALOG" in provider_manifest_text
+    admin_js = (api_root / "admin_static" / "admin.js").read_text(encoding="utf-8")
+    assert "function providerName" not in admin_js
+    assert "display_name || provider.provider_id" in admin_js
+
+    entrypoints_imports = set(
+        _imports_from(repo_root / "cli" / "entrypoints.py", repo_root)
+    )
+    assert "config.env_template" in entrypoints_imports
+    assert "_load_env_template" not in (repo_root / "cli" / "entrypoints.py").read_text(
+        encoding="utf-8"
+    )
+
+
 def test_messaging_workflow_uses_split_runtime_owners() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     messaging_root = repo_root / "messaging"

@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "free-claude-code"
-version = "2.3.17"
+version = "2.3.18"
 description = "Middleware between Claude Code CLI (Anthropic API) and NVIDIA NIM"
 readme = "README.md"
 requires-python = ">=3.14.0"
@@ -49,7 +49,7 @@ voice_local = [
 packages = ["api", "cli", "config", "core", "messaging", "providers"]
 
 [tool.hatch.build.targets.wheel.force-include]
-".env.example" = "cli/env.example"
+".env.example" = "config/env.example"
 
 [tool.uv]
 required-version = ">=0.11.0"
