@@ -115,8 +115,8 @@ new places to add unrelated behavior:
 - [providers/transports/](providers/transports/) owns provider transport
   families. The OpenAI-chat and native Anthropic transport packages split thin
   transport bases from per-request stream runners, recovery event construction,
-  and transport-specific parsing. Shared protocol rules should continue moving
-  toward [core/](core/) when they are not provider-specific.
+  request policy, and transport-specific parsing. Shared protocol rules should
+  continue moving toward [core/](core/) when they are not provider-specific.
 - [messaging/workflow.py](messaging/workflow.py) coordinates messaging runtime
   dependencies. Inbound turn intake, queued node execution, slash command
   dependencies, and tree queue internals live in separate modules so new
@@ -337,13 +337,22 @@ There are two transport families under [providers/transports/](providers/transpo
 - [providers/transports/openai_chat/](providers/transports/openai_chat/)
   implements `OpenAIChatTransport` for providers with OpenAI-compatible
   `/chat/completions` APIs. The package owns the thin transport base,
-  per-request stream runner, OpenAI tool-call assembly, and OpenAI-chat recovery
-  event construction.
+  per-request stream runner, OpenAI request policy, OpenAI tool-call assembly,
+  and OpenAI-chat recovery event construction.
 - [providers/transports/anthropic_messages/](providers/transports/anthropic_messages/)
   implements `AnthropicMessagesTransport` for providers with
   Anthropic-compatible `/messages` APIs. The package owns the thin transport
-  base, native stream runner, HTTP response helpers, and native recovery event
-  construction.
+  base, native request policy, native stream runner, HTTP response helpers, and
+  native recovery event construction.
+
+Provider request construction mirrors the transport family split. OpenAI-chat
+providers call the OpenAI request policy for Anthropic-to-OpenAI conversion,
+thinking replay selection, `extra_body`, and chat-completion field normalization.
+Native Anthropic providers call the native request policy for raw request
+dumping, default tokens, stream flags, thinking payloads, and `extra_body`
+handling. Concrete provider packages keep only true upstream quirks such as
+Gemini thought signatures, NIM tool-schema aliases and retry downgrades, or
+DeepSeek attachment/tool/thinking compatibility.
 
 Shared provider responsibilities include upstream rate limiting, model listing,
 safe error mapping, transport cleanup, thinking/tool handling, retry or recovery
@@ -373,6 +382,7 @@ where supported, and returning Anthropic SSE strings to the service layer.
 [core/anthropic/](core/anthropic/) owns Anthropic-side protocol behavior:
 
 - content and message conversion for OpenAI-compatible upstreams;
+- request serialization primitives shared by provider request policies;
 - tool schema and tool-result handling;
 - thinking block handling;
 - stream lifecycle through `core/anthropic/streaming`, including the neutral

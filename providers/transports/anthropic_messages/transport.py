@@ -7,11 +7,7 @@ from typing import Any, Literal
 
 import httpx
 
-from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from core.anthropic import iter_provider_stream_error_sse_events
-from core.anthropic.native_messages_request import (
-    build_base_native_anthropic_request_body,
-)
 from core.anthropic.native_sse_block_policy import (
     NativeSseBlockPolicyState,
     transform_native_sse_block_event,
@@ -31,6 +27,10 @@ from providers.rate_limit import GlobalRateLimiter
 from providers.transports.http import maybe_await_aclose
 
 from .http import model_list_json, raise_for_status_with_body
+from .request_policy import (
+    NativeMessagesRequestPolicy,
+    build_native_messages_request_body,
+)
 from .stream import AnthropicMessagesStreamAdapter
 
 StreamChunkMode = Literal["line", "event"]
@@ -52,6 +52,7 @@ class AnthropicMessagesTransport(BaseProvider):
         self._provider_name = provider_name
         self._api_key = config.api_key
         self._base_url = (config.base_url or default_base_url).rstrip("/")
+        self._request_policy = NativeMessagesRequestPolicy(provider_name=provider_name)
         self._global_rate_limiter = GlobalRateLimiter.get_scoped_instance(
             provider_name.lower(),
             rate_limit=config.rate_limit,
@@ -129,10 +130,10 @@ class AnthropicMessagesTransport(BaseProvider):
         self, request: Any, *, thinking_enabled: bool
     ) -> dict:
         """Build a native Anthropic request body after thinking is resolved."""
-        return build_base_native_anthropic_request_body(
+        return build_native_messages_request_body(
             request,
-            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
             thinking_enabled=thinking_enabled,
+            policy=self._request_policy,
         )
 
     async def _send_stream_request(self, body: dict) -> httpx.Response:

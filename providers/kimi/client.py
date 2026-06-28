@@ -8,12 +8,21 @@ import httpx
 
 from providers.base import ProviderConfig
 from providers.defaults import KIMI_DEFAULT_BASE
-from providers.transports.anthropic_messages import AnthropicMessagesTransport
-
-from .request import build_request_body
+from providers.transports.anthropic_messages import (
+    AnthropicMessagesTransport,
+    NativeMessagesRequestPolicy,
+    build_native_messages_request_body,
+)
 
 _MOONSHOT_OPENAI_MODELS_URL = "https://api.moonshot.ai/v1/models"
 _ANTHROPIC_VERSION = "2023-06-01"
+_REQUEST_POLICY = NativeMessagesRequestPolicy(
+    provider_name="KIMI",
+    extra_body="reject",
+    reject_extra_body_message=(
+        "Kimi native Messages API does not support extra_body on requests."
+    ),
+)
 
 
 class KimiProvider(AnthropicMessagesTransport):
@@ -29,9 +38,10 @@ class KimiProvider(AnthropicMessagesTransport):
     def _build_request_body(
         self, request: Any, thinking_enabled: bool | None = None
     ) -> dict:
-        return build_request_body(
+        return build_native_messages_request_body(
             request,
             thinking_enabled=self._is_thinking_enabled(request, thinking_enabled),
+            policy=_REQUEST_POLICY,
         )
 
     def _request_headers(self) -> dict[str, str]:

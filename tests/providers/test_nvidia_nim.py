@@ -8,7 +8,7 @@ from httpx import Request, Response
 from config.nim import NimSettings
 from providers.defaults import NVIDIA_NIM_DEFAULT_BASE
 from providers.nvidia_nim import NvidiaNimProvider
-from providers.nvidia_nim.request import NIM_TOOL_ARGUMENT_ALIASES_KEY
+from providers.nvidia_nim.tool_schema import NIM_TOOL_ARGUMENT_ALIASES_KEY
 
 
 # Mock data classes

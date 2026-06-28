@@ -14,6 +14,7 @@ from .errors import (
 )
 from .native_messages_request import sanitize_native_messages_thinking_policy
 from .provider_stream_error import iter_provider_stream_error_sse_events
+from .request_serialization import serialize_tool_result_content
 from .streaming import (
     AnthropicStreamLedger,
     StreamBlockLedger,
@@ -49,5 +50,6 @@ __all__ = [
     "iter_provider_stream_error_sse_events",
     "map_stop_reason",
     "sanitize_native_messages_thinking_policy",
+    "serialize_tool_result_content",
     "set_if_not_none",
 ]

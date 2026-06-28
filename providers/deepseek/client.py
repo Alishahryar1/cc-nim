@@ -10,7 +10,7 @@ from providers.base import ProviderConfig
 from providers.defaults import DEEPSEEK_ANTHROPIC_DEFAULT_BASE
 from providers.transports.anthropic_messages import AnthropicMessagesTransport
 
-from .request import build_request_body
+from .compat import build_deepseek_request_body
 
 
 class DeepSeekProvider(AnthropicMessagesTransport):
@@ -26,7 +26,7 @@ class DeepSeekProvider(AnthropicMessagesTransport):
     def _build_request_body(
         self, request: Any, thinking_enabled: bool | None = None
     ) -> dict:
-        return build_request_body(
+        return build_deepseek_request_body(
             request,
             thinking_enabled=self._is_thinking_enabled(request, thinking_enabled),
         )

@@ -194,6 +194,42 @@ def test_provider_transports_live_under_transport_family_packages() -> None:
     assert offenders == []
 
 
+def test_provider_request_policy_lives_with_transport_families() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    providers_root = repo_root / "providers"
+
+    deleted_request_modules = (
+        "providers.cerebras.request",
+        "providers.deepseek.request",
+        "providers.fireworks.request",
+        "providers.gemini.request",
+        "providers.groq.request",
+        "providers.kimi.request",
+        "providers.mistral.request",
+        "providers.nvidia_nim.request",
+        "providers.opencode.request",
+        "providers.open_router.request",
+        "providers.zai.request",
+    )
+
+    assert (
+        providers_root / "transports" / "openai_chat" / "request_policy.py"
+    ).exists()
+    assert (
+        providers_root / "transports" / "anthropic_messages" / "request_policy.py"
+    ).exists()
+    assert not sorted(
+        path.relative_to(repo_root).as_posix()
+        for path in providers_root.glob("*/request.py")
+    )
+
+    offenders = _imports_matching(
+        [providers_root, repo_root / "tests"],
+        forbidden_prefixes=deleted_request_modules,
+    )
+    assert offenders == []
+
+
 def test_anthropic_stream_engine_owns_provider_stream_state() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     anthropic_root = repo_root / "core" / "anthropic"
