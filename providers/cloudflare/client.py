@@ -53,7 +53,7 @@ class CloudflareProvider(AnthropicMessagesTransport):
     ) -> dict:
         return build_native_messages_request_body(
             request,
-            thinking_enabled=False,
+            thinking_enabled=self._is_thinking_enabled(request, thinking_enabled),
             policy=_REQUEST_POLICY,
         )
 

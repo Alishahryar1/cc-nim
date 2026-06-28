@@ -140,7 +140,7 @@ def test_cloudflare_descriptor_uses_api_root_not_account_url():
     assert descriptor.default_base_url == "https://api.cloudflare.com/client/v4"
     assert descriptor.base_url_attr is None
     assert "native_anthropic" in descriptor.capabilities
-    assert "thinking" not in descriptor.capabilities
+    assert "thinking" in descriptor.capabilities
 
 
 def test_create_cloudflare_provider_uses_account_scoped_base_url():

@@ -226,6 +226,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
             "chat",
             "streaming",
             "tools",
+            "thinking",
             "native_anthropic",
             "rate_limit",
         ),

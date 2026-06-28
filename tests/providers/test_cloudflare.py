@@ -118,7 +118,7 @@ def test_request_headers_use_bearer_auth(cloudflare_provider: CloudflareProvider
     }
 
 
-def test_build_request_body_preserves_slash_model_id_and_disables_thinking(
+def test_build_request_body_preserves_slash_model_id_and_forwards_thinking(
     cloudflare_provider: CloudflareProvider,
 ) -> None:
     request = MessagesRequest.model_validate(
@@ -133,10 +133,10 @@ def test_build_request_body_preserves_slash_model_id_and_disables_thinking(
 
     assert body["model"] == "anthropic/claude-sonnet-4-5"
     assert body["stream"] is True
-    assert "thinking" not in body
+    assert body["thinking"] == {"type": "enabled", "budget_tokens": 2048}
 
 
-def test_build_request_body_strips_prior_thinking_blocks(
+def test_build_request_body_strips_prior_thinking_blocks_when_disabled(
     cloudflare_provider: CloudflareProvider,
 ) -> None:
     request = MessagesRequest.model_validate(
@@ -155,9 +155,25 @@ def test_build_request_body_strips_prior_thinking_blocks(
         }
     )
 
-    body = cloudflare_provider._build_request_body(request, thinking_enabled=True)
+    body = cloudflare_provider._build_request_body(request, thinking_enabled=False)
 
     assert body["messages"][0]["content"] == [{"type": "text", "text": "visible"}]
+
+
+def test_build_request_body_request_disabled_thinking_suppresses_thinking(
+    cloudflare_provider: CloudflareProvider,
+) -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "anthropic/claude-sonnet-4-5",
+            "messages": [{"role": "user", "content": "Hello"}],
+            "thinking": {"type": "disabled"},
+        }
+    )
+
+    body = cloudflare_provider._build_request_body(request, thinking_enabled=True)
+
+    assert "thinking" not in body
 
 
 def test_build_request_body_rejects_extra_body(
