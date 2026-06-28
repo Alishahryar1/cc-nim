@@ -565,6 +565,13 @@ lifecycle for queued nodes: parent-session fork/resume, session registration,
 CLI event parsing, transcript/status updates, cancellation, error propagation,
 and session cleanup.
 
+[messaging/event_parser.py](messaging/event_parser.py) normalizes managed Claude
+JSON events into low-level transcript events.
+[messaging/transcript/](messaging/transcript/) owns transcript assembly and
+rendering: open content-block tracking, Task/subagent display state, segment
+models, render context, and truncation. Platform markdown details stay in
+[messaging/rendering/](messaging/rendering/).
+
 [messaging/command_context.py](messaging/command_context.py) defines the typed
 dependency surface for `/stop`, `/clear`, and `/stats`; commands should not
 depend on the concrete workflow object or on platform SDK runtimes.

@@ -408,6 +408,27 @@ def test_admin_config_uses_package_owners_and_catalog_manifest() -> None:
     )
 
 
+def test_messaging_transcript_uses_package_owners() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    messaging_root = repo_root / "messaging"
+    transcript_root = messaging_root / "transcript"
+
+    assert not (messaging_root / "transcript.py").exists()
+    for filename in {
+        "__init__.py",
+        "buffer.py",
+        "context.py",
+        "renderer.py",
+        "segments.py",
+        "subagents.py",
+    }:
+        assert (transcript_root / filename).exists()
+
+    init_text = (transcript_root / "__init__.py").read_text(encoding="utf-8")
+    assert "TranscriptBuffer" in init_text
+    assert "RenderCtx" in init_text
+
+
 def test_messaging_workflow_uses_split_runtime_owners() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     messaging_root = repo_root / "messaging"
