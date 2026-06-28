@@ -40,6 +40,13 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
         "label": "Fireworks API Key",
         "description": "Fireworks AI inference API key.",
     },
+    "CLOUDFLARE_API_TOKEN": {
+        "label": "Cloudflare API Token",
+        "description": (
+            "Cloudflare API token for account-scoped AI REST requests. "
+            "Use with CLOUDFLARE_ACCOUNT_ID."
+        ),
+    },
     "GEMINI_API_KEY": {
         "label": "Gemini API Key",
         "description": (
@@ -73,6 +80,7 @@ def provider_field_specs() -> tuple[dict[str, Any], ...]:
 
     return (
         *_credential_field_specs(),
+        *_cloudflare_account_field_specs(),
         *_local_base_url_field_specs(),
         *_proxy_field_specs(),
     )
@@ -115,6 +123,20 @@ def _local_base_url_field_specs() -> tuple[dict[str, Any], ...]:
             }
         )
     return tuple(specs)
+
+
+def _cloudflare_account_field_specs() -> tuple[dict[str, Any], ...]:
+    return (
+        {
+            "key": "CLOUDFLARE_ACCOUNT_ID",
+            "label": "Cloudflare Account ID",
+            "section_id": "providers",
+            "settings_attr": "cloudflare_account_id",
+            "description": (
+                "Cloudflare account ID used to build the /accounts/{id}/ai/v1 endpoint."
+            ),
+        },
+    )
 
 
 def _proxy_field_specs() -> tuple[dict[str, Any], ...]:

@@ -29,6 +29,8 @@ def _clear_process_config(monkeypatch) -> None:
         "OPENROUTER_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
         "FCC_ENV_FILE",
+        "CLOUDFLARE_API_TOKEN",
+        "CLOUDFLARE_ACCOUNT_ID",
         "HOST",
         "PORT",
         "LOG_FILE",
@@ -103,6 +105,8 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     assert "ANTHROPIC_AUTH_TOKEN" in keys
     assert "OPENROUTER_API_KEY" in keys
     assert "FIREWORKS_API_KEY" in keys
+    assert "CLOUDFLARE_API_TOKEN" in keys
+    assert "CLOUDFLARE_ACCOUNT_ID" in keys
     assert "GEMINI_API_KEY" in keys
     assert "GROQ_API_KEY" in keys
     assert "CEREBRAS_API_KEY" in keys
@@ -283,6 +287,34 @@ def test_admin_apply_writes_cerebras_key_and_masks_preview(monkeypatch, tmp_path
     text = env_file.read_text(encoding="utf-8")
     assert "MODEL=cerebras/llama3.1-8b" in text
     assert "CEREBRAS_API_KEY=cb-secret" in text
+
+
+def test_admin_apply_writes_cloudflare_fields_and_masks_preview(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_app(lifespan_enabled=False)
+
+    response = _local_client(app).post(
+        "/admin/api/config/apply",
+        json={
+            "values": {
+                "MODEL": "cloudflare/anthropic/claude-sonnet-4-5",
+                "CLOUDFLARE_API_TOKEN": "cf-secret",
+                "CLOUDFLARE_ACCOUNT_ID": "cf-account",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["applied"] is True
+    assert "CLOUDFLARE_API_TOKEN=********" in body["env_preview"]
+    assert "CLOUDFLARE_ACCOUNT_ID=cf-account" in body["env_preview"]
+    env_file = tmp_path / ".fcc" / ".env"
+    text = env_file.read_text(encoding="utf-8")
+    assert "MODEL=cloudflare/anthropic/claude-sonnet-4-5" in text
+    assert "CLOUDFLARE_API_TOKEN=cf-secret" in text
+    assert "CLOUDFLARE_ACCOUNT_ID=cf-account" in text
 
 
 def test_admin_apply_preserves_hidden_diagnostics_and_smoke_values(

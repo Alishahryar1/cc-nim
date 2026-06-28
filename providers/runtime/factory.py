@@ -103,6 +103,12 @@ def _create_fireworks(config: ProviderConfig, _settings: Settings) -> BaseProvid
     return FireworksProvider(config)
 
 
+def _create_cloudflare(config: ProviderConfig, settings: Settings) -> BaseProvider:
+    from providers.cloudflare import CloudflareProvider
+
+    return CloudflareProvider(config, account_id=settings.cloudflare_account_id)
+
+
 def _create_gemini(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     from providers.gemini import GeminiProvider
 
@@ -135,6 +141,7 @@ PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "cerebras": _create_cerebras,
     "groq": _create_groq,
     "fireworks": _create_fireworks,
+    "cloudflare": _create_cloudflare,
     "zai": _create_zai,
     "lmstudio": _create_lmstudio,
     "llamacpp": _create_llamacpp,

@@ -357,16 +357,19 @@ DeepSeek attachment/tool/thinking compatibility.
 Shared provider responsibilities include upstream rate limiting, model listing,
 safe error mapping, transport cleanup, thinking/tool handling, retry or recovery
 where supported, and returning Anthropic SSE strings to the service layer.
+Provider-specific inputs that do not apply to other upstreams, such as
+Cloudflare's account ID, stay in that provider's factory/client instead of being
+added to shared `ProviderConfig`.
 
 ### Adding A Provider
 
 1. Add provider metadata to [config/provider_catalog.py](config/provider_catalog.py).
 2. Add credentials and related settings to [config/settings.py](config/settings.py)
    and [.env.example](.env.example) when user configurable.
-3. Add provider metadata to [config/provider_catalog.py](config/provider_catalog.py);
-   Admin UI provider fields are generated from the catalog. Add admin-only help
-   text under [api/admin_config/](api/admin_config/) only when the generated
-   labels/descriptions are insufficient.
+3. Let Admin UI provider credential, local URL, and proxy fields come from the
+   catalog. Add admin-only help text or provider-specific fields under
+   [api/admin_config/](api/admin_config/) only when the generated manifest is
+   insufficient.
 4. Implement the provider under [providers/](providers/) using the appropriate
    shared transport family.
 5. Add a factory in [providers/runtime/factory.py](providers/runtime/factory.py).

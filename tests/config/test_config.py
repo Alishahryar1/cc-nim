@@ -284,6 +284,18 @@ class TestSettings:
         settings = Settings()
         assert settings.wafer_api_key == "wafer-key"
 
+    def test_cloudflare_settings_from_env(self, monkeypatch):
+        """Cloudflare token, account, and proxy env vars load into settings."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("CLOUDFLARE_API_TOKEN", "cf-token")
+        monkeypatch.setenv("CLOUDFLARE_ACCOUNT_ID", "cf-account")
+        monkeypatch.setenv("CLOUDFLARE_PROXY", "http://proxy.test:8080")
+        settings = Settings()
+        assert settings.cloudflare_api_token == "cf-token"
+        assert settings.cloudflare_account_id == "cf-account"
+        assert settings.cloudflare_proxy == "http://proxy.test:8080"
+
     def test_per_model_thinking_from_env(self, monkeypatch):
         """Per-model thinking env vars are loaded into settings."""
         from config.settings import Settings
@@ -671,6 +683,11 @@ class TestPerModelMapping:
             ),
             ({"MODEL": "deepseek/deepseek-chat"}, "deepseek/deepseek-chat", None),
             ({"MODEL": "wafer/DeepSeek-V4-Pro"}, "wafer/DeepSeek-V4-Pro", None),
+            (
+                {"MODEL": "cloudflare/anthropic/claude-sonnet-4-5"},
+                "cloudflare/anthropic/claude-sonnet-4-5",
+                None,
+            ),
             ({"MODEL": "lmstudio/qwen2.5-7b"}, "lmstudio/qwen2.5-7b", None),
             ({"MODEL": "llamacpp/local-model"}, "llamacpp/local-model", None),
             ({"MODEL": "ollama/llama3.1"}, "ollama/llama3.1", None),
@@ -852,6 +869,10 @@ class TestPerModelMapping:
         assert parse_provider_type("llamacpp/model") == "llamacpp"
         assert parse_provider_type("ollama/llama3.1") == "ollama"
         assert parse_provider_type("wafer/DeepSeek-V4-Pro") == "wafer"
+        assert (
+            parse_provider_type("cloudflare/anthropic/claude-sonnet-4-5")
+            == "cloudflare"
+        )
         assert parse_provider_type("gemini/models/gemini-3.1-flash-lite") == "gemini"
         assert parse_provider_type("groq/llama-3.3-70b-versatile") == "groq"
         assert parse_provider_type("cerebras/llama3.1-8b") == "cerebras"
@@ -871,6 +892,10 @@ class TestPerModelMapping:
         assert parse_model_name("llamacpp/model") == "model"
         assert parse_model_name("ollama/llama3.1") == "llama3.1"
         assert parse_model_name("wafer/DeepSeek-V4-Pro") == "DeepSeek-V4-Pro"
+        assert (
+            parse_model_name("cloudflare/anthropic/claude-sonnet-4-5")
+            == "anthropic/claude-sonnet-4-5"
+        )
         assert (
             parse_model_name("gemini/models/gemini-3.1-flash-lite")
             == "models/gemini-3.1-flash-lite"

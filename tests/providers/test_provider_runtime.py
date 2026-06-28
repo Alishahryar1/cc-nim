@@ -8,6 +8,7 @@ from config.nim import NimSettings
 from config.provider_catalog import PROVIDER_CATALOG, ZAI_DEFAULT_BASE
 from config.provider_ids import SUPPORTED_PROVIDER_IDS
 from providers.cerebras import CerebrasProvider
+from providers.cloudflare import CloudflareProvider
 from providers.codestral import CodestralProvider
 from providers.deepseek import DeepSeekProvider
 from providers.exceptions import UnknownProviderTypeError
@@ -58,6 +59,9 @@ def _make_settings(**overrides):
     mock.zai_proxy = ""
     mock.fireworks_proxy = ""
     mock.fireworks_api_key = "test_fireworks_key"
+    mock.cloudflare_api_token = "test_cloudflare_token"
+    mock.cloudflare_account_id = "test_cloudflare_account"
+    mock.cloudflare_proxy = ""
     mock.gemini_api_key = ""
     mock.gemini_proxy = ""
     mock.groq_api_key = ""
@@ -129,6 +133,31 @@ def test_zai_provider_config_ignores_stale_base_url_setting():
     assert config.base_url == ZAI_DEFAULT_BASE
 
 
+def test_cloudflare_descriptor_uses_api_root_not_account_url():
+    descriptor = PROVIDER_CATALOG["cloudflare"]
+
+    assert descriptor.transport_type == "anthropic_messages"
+    assert descriptor.default_base_url == "https://api.cloudflare.com/client/v4"
+    assert descriptor.base_url_attr is None
+    assert "native_anthropic" in descriptor.capabilities
+    assert "thinking" not in descriptor.capabilities
+
+
+def test_create_cloudflare_provider_uses_account_scoped_base_url():
+    settings = _make_settings(
+        cloudflare_api_token="test_cloudflare_token",
+        cloudflare_account_id="test-account",
+    )
+
+    with patch("httpx.AsyncClient"):
+        provider = create_provider("cloudflare", settings)
+
+    assert isinstance(provider, CloudflareProvider)
+    assert provider._base_url == (
+        "https://api.cloudflare.com/client/v4/accounts/test-account/ai/v1"
+    )
+
+
 def test_opencode_go_provider_config_uses_correct_base_url_and_name():
     with patch("httpx.AsyncClient"):
         provider = create_provider("opencode_go", _make_settings())
@@ -168,6 +197,8 @@ def test_create_provider_instantiates_each_builtin():
         groq_api_key="test_groq_key",
         cerebras_api_key="test_cerebras_key",
         fireworks_api_key="test_fireworks_key",
+        cloudflare_api_token="test_cloudflare_token",
+        cloudflare_account_id="test_cloudflare_account",
         kimi_api_key="test_kimi_key",
     )
     cases = {
@@ -177,6 +208,7 @@ def test_create_provider_instantiates_each_builtin():
         "deepseek": DeepSeekProvider,
         "kimi": KimiProvider,
         "fireworks": FireworksProvider,
+        "cloudflare": CloudflareProvider,
         "lmstudio": LMStudioProvider,
         "llamacpp": LlamaCppProvider,
         "ollama": OllamaProvider,
