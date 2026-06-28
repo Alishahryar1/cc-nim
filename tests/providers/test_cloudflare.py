@@ -43,6 +43,7 @@ class FakeResponse:
 
 _ACCOUNT_ID = "account-123"
 _BASE_URL = f"{CLOUDFLARE_AI_REST_ROOT}/accounts/{_ACCOUNT_ID}/ai/v1"
+_MODEL_SEARCH_URL = f"{CLOUDFLARE_AI_REST_ROOT}/accounts/{_ACCOUNT_ID}/ai/models/search"
 
 
 @pytest.fixture
@@ -101,6 +102,7 @@ def test_init_composes_account_scoped_base_url(
 
     assert provider._api_key == "test-cloudflare-token"
     assert provider._base_url == _BASE_URL
+    assert provider._model_search_url == _MODEL_SEARCH_URL
     assert provider._provider_name == "CLOUDFLARE"
     assert mock_client.called
 
@@ -192,7 +194,7 @@ def test_build_request_body_rejects_extra_body(
 
 
 @pytest.mark.asyncio
-async def test_lists_models_from_cloudflare_models_endpoint(
+async def test_lists_models_from_cloudflare_model_search_endpoint(
     cloudflare_provider: CloudflareProvider,
 ) -> None:
     with patch.object(
@@ -208,7 +210,7 @@ async def test_lists_models_from_cloudflare_models_endpoint(
                     {"id": "anthropic/claude-opus-4-5", "object": "model"},
                 ],
             },
-            request=httpx.Request("GET", f"{_BASE_URL}/models"),
+            request=httpx.Request("GET", _MODEL_SEARCH_URL),
         ),
     ) as mock_get:
         assert await cloudflare_provider.list_model_ids() == frozenset(
@@ -216,7 +218,9 @@ async def test_lists_models_from_cloudflare_models_endpoint(
         )
 
     mock_get.assert_awaited_once_with(
-        "/models", headers={"Authorization": "Bearer test-cloudflare-token"}
+        _MODEL_SEARCH_URL,
+        params={"format": "openrouter"},
+        headers={"Authorization": "Bearer test-cloudflare-token"},
     )
 
 
