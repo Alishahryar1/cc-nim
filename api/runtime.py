@@ -281,29 +281,28 @@ class AppRuntime:
         logger.info("{} platform started with messaging workflow", components.name)
 
     def _restore_tree_state(self, session_store: SessionStore) -> None:
-        saved_trees = session_store.get_all_trees()
-        if not saved_trees:
+        conversation_snapshot = session_store.load_conversation_snapshot()
+        if conversation_snapshot.is_empty:
             return
         if self.messaging_workflow is None:
             return
 
-        logger.info(f"Restoring {len(saved_trees)} conversation trees...")
+        logger.info(
+            "Restoring {} conversation trees...",
+            len(conversation_snapshot.trees),
+        )
         from messaging.trees import TreeQueueManager
 
         self.messaging_workflow.replace_tree_queue(
-            TreeQueueManager.from_dict(
-                {
-                    "trees": saved_trees,
-                    "node_to_tree": session_store.get_node_mapping(),
-                },
+            TreeQueueManager.from_snapshot(
+                conversation_snapshot,
                 queue_update_callback=self.messaging_workflow.update_queue_positions,
                 node_started_callback=self.messaging_workflow.mark_node_processing,
             )
         )
         if self.messaging_workflow.tree_queue.cleanup_stale_nodes() > 0:
-            tree_data = self.messaging_workflow.tree_queue.to_dict()
-            session_store.sync_from_tree_data(
-                tree_data["trees"], tree_data["node_to_tree"]
+            session_store.save_conversation_snapshot(
+                self.messaging_workflow.tree_queue.snapshot()
             )
 
     def _publish_state(self) -> None:

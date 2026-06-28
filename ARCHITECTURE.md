@@ -582,12 +582,21 @@ each tree processes one node at a time while separate trees can progress
 independently. [messaging/trees/repository.py](messaging/trees/repository.py)
 owns the in-memory tree/node index, and
 [messaging/trees/processor.py](messaging/trees/processor.py) owns async queue
-processing. [messaging/trees/data.py](messaging/trees/data.py) owns the persisted
-`MessageNode` and `MessageTree` JSON shape.
+processing. [messaging/trees/node.py](messaging/trees/node.py) owns
+`MessageNode` and `MessageState`,
+[messaging/trees/graph.py](messaging/trees/graph.py) owns parent/child and
+status-message lookup state, [messaging/trees/runtime.py](messaging/trees/runtime.py)
+owns locks/current-task/processing state, and
+[messaging/trees/snapshot.py](messaging/trees/snapshot.py) owns typed persisted
+conversation snapshots.
 
-[messaging/session.py](messaging/session.py) persists trees, node-to-tree
-mappings, and message IDs to a JSON file under the managed agent workspace. It
-uses debounced atomic writes and flushes pending saves on shutdown.
+[messaging/session/](messaging/session/) persists typed conversation snapshots
+and message IDs to a JSON file under the managed agent workspace.
+`SessionStore` reads existing `sessions.json` files but exposes typed snapshot
+APIs to runtime code. Debounced atomic writes live in
+[messaging/session/persistence.py](messaging/session/persistence.py), and
+per-chat message ID tracking for `/clear` lives in
+[messaging/session/message_log.py](messaging/session/message_log.py).
 
 ```mermaid
 sequenceDiagram

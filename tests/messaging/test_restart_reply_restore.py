@@ -28,19 +28,15 @@ async def test_reply_to_old_status_message_after_restore_routes_to_parent(
         "A", a_incoming, status_message_id="status_A"
     )
     handler1.tree_queue.register_node("status_A", tree.root_id)
-    store.register_node("status_A", tree.root_id)
-    store.save_tree(tree.root_id, tree.to_dict())
+    store.save_tree_snapshot(tree.snapshot())
     store.flush_pending_save()
 
     # "Restart": new store instance loads from disk, and we restore TreeQueueManager.
     store2 = SessionStore(storage_path=str(store_path))
     handler2 = MessagingWorkflow(mock_platform, mock_cli_manager, store2)
     handler2.replace_tree_queue(
-        TreeQueueManager.from_dict(
-            {
-                "trees": store2.get_all_trees(),
-                "node_to_tree": store2.get_node_mapping(),
-            },
+        TreeQueueManager.from_snapshot(
+            store2.load_conversation_snapshot(),
             queue_update_callback=handler2.update_queue_positions,
             node_started_callback=handler2.mark_node_processing,
         )
@@ -86,17 +82,14 @@ async def test_save_tree_persists_status_message_mapping_without_manual_register
     tree = await handler1.tree_queue.create_tree(
         "A", a_incoming, status_message_id="status_A"
     )
-    store.save_tree(tree.root_id, tree.to_dict())
+    store.save_tree_snapshot(tree.snapshot())
     store.flush_pending_save()
 
     store2 = SessionStore(storage_path=str(store_path))
     handler2 = MessagingWorkflow(mock_platform, mock_cli_manager, store2)
     handler2.replace_tree_queue(
-        TreeQueueManager.from_dict(
-            {
-                "trees": store2.get_all_trees(),
-                "node_to_tree": store2.get_node_mapping(),
-            },
+        TreeQueueManager.from_snapshot(
+            store2.load_conversation_snapshot(),
             queue_update_callback=handler2.update_queue_positions,
             node_started_callback=handler2.mark_node_processing,
         )
@@ -154,7 +147,7 @@ async def test_reply_clear_purges_removed_status_mapping_from_persisted_store(
         "root", "child", child_incoming, status_message_id="child_status"
     )
     handler.tree_queue.register_node("child_status", tree.root_id)
-    store.save_tree(tree.root_id, tree.to_dict())
+    store.save_tree_snapshot(tree.snapshot())
 
     clear_reply = IncomingMessage(
         text="/clear",
@@ -169,11 +162,8 @@ async def test_reply_clear_purges_removed_status_mapping_from_persisted_store(
     store.flush_pending_save()
 
     restored_store = SessionStore(storage_path=str(store_path))
-    restored_tree_queue = TreeQueueManager.from_dict(
-        {
-            "trees": restored_store.get_all_trees(),
-            "node_to_tree": restored_store.get_node_mapping(),
-        }
+    restored_tree_queue = TreeQueueManager.from_snapshot(
+        restored_store.load_conversation_snapshot()
     )
 
     assert restored_tree_queue.get_tree_for_node("root") is not None

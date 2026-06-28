@@ -3,8 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from messaging.models import IncomingMessage
-from messaging.trees import MessageState
-from messaging.trees.data import MessageNode, MessageTree
+from messaging.trees import MessageNode, MessageState, MessageTree
 from messaging.workflow import MessagingWorkflow
 
 
@@ -212,14 +211,14 @@ async def test_handle_message_new_conversation(
     ):
         mock_tree = MagicMock()
         mock_tree.root_id = "root_1"
-        mock_tree.to_dict.return_value = {"data": "tree"}
+        mock_tree.snapshot.return_value = {"data": "tree"}
         mock_create.return_value = mock_tree
 
         await handler.handle_message(incoming)
 
         mock_create.assert_called_once()
         mock_enqueue.assert_called_once()
-        mock_session_store.save_tree.assert_called_once_with("root_1", {"data": "tree"})
+        mock_session_store.save_tree_snapshot.assert_called_once_with({"data": "tree"})
 
 
 @pytest.mark.asyncio
@@ -234,7 +233,7 @@ async def test_handle_message_queued(handler, mock_platform, incoming_message_fa
     ):
         mock_tree = MagicMock()
         mock_tree.root_id = "root_1"
-        mock_tree.to_dict.return_value = {}
+        mock_tree.snapshot.return_value = {}
         mock_create.return_value = mock_tree
 
         await handler.handle_message(incoming)
@@ -407,7 +406,7 @@ async def test_node_runner_process_node_success_flow(
     mock_tree = MagicMock()
     mock_tree.update_state = AsyncMock()
     mock_tree.root_id = "root_1"
-    mock_tree.to_dict.return_value = {}
+    mock_tree.snapshot.return_value = {}
 
     with patch.object(
         handler.tree_queue, "get_tree_for_node", MagicMock(return_value=mock_tree)
@@ -458,7 +457,7 @@ async def test_node_runner_process_node_reply_uses_parent_session_for_manager_an
     mock_tree = MagicMock()
     mock_tree.update_state = AsyncMock()
     mock_tree.root_id = "root_msg"
-    mock_tree.to_dict.return_value = {}
+    mock_tree.snapshot.return_value = {}
     mock_tree.get_parent_session_id = MagicMock(return_value=parent_claude_session)
 
     with patch.object(
@@ -497,7 +496,7 @@ async def test_node_runner_process_node_error_flow(
 
     mock_tree = MagicMock()
     mock_tree.root_id = "root_1"
-    mock_tree.to_dict.return_value = {"data": "tree"}
+    mock_tree.snapshot.return_value = {"data": "tree"}
     mock_tree.update_state = AsyncMock()
 
     with (
@@ -513,8 +512,8 @@ async def test_node_runner_process_node_error_flow(
         handler.tree_queue.mark_node_error.assert_called_once_with(
             node_id, "CLI crashed", propagate_to_children=True
         )
-        handler.session_store.save_tree.assert_called_once_with(
-            "root_1", {"data": "tree"}
+        handler.session_store.save_tree_snapshot.assert_called_once_with(
+            {"data": "tree"}
         )
 
         last_call = mock_platform.queue_edit_message.call_args_list[-1]
@@ -659,7 +658,7 @@ async def test_handle_message_clear_command_reply_clears_branch(
     assert set(deleted_ids) == {"102", "103", "150"}
     assert "100" not in deleted_ids
     assert "101" not in deleted_ids
-    mock_session_store.remove_node_mappings.assert_called()
+    mock_session_store.save_tree_snapshot.assert_called()
     assert handler.tree_queue.get_tree_for_node("102") is None
     assert handler.tree_queue.get_tree_for_node("100") is not None
 
@@ -711,7 +710,7 @@ async def test_handle_message_clear_command_reply_to_root_clears_tree(
     await handler.handle_message(incoming)
 
     assert set(deleted_ids) == {"100", "101", "150"}
-    mock_session_store.remove_tree.assert_called_once_with("100")
+    mock_session_store.remove_tree_snapshot.assert_called_once_with("100")
     assert handler.tree_queue.get_tree_count() == 0
 
 

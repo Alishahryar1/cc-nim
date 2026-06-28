@@ -11,7 +11,9 @@ from messaging.trees import (
     MessageState,
     MessageTree,
     TreeQueueManager,
+    TreeSnapshot,
 )
+from messaging.trees.snapshot import node_from_snapshot, node_to_snapshot
 
 
 class TestMessageState:
@@ -49,7 +51,7 @@ class TestMessageNode:
         assert node.children_ids == []
         assert node.session_id is None
 
-    def test_node_to_dict(self):
+    def test_node_to_snapshot(self):
         """Test serializing a node."""
         incoming = IncomingMessage(
             text="Test",
@@ -66,12 +68,12 @@ class TestMessageNode:
             session_id="sess_123",
         )
 
-        data = node.to_dict()
+        data = node_to_snapshot(node)
         assert data["node_id"] == "3"
         assert data["state"] == "completed"
         assert data["session_id"] == "sess_123"
 
-    def test_node_from_dict(self):
+    def test_node_from_snapshot(self):
         """Test deserializing a node."""
         data = {
             "node_id": "n1",
@@ -90,7 +92,7 @@ class TestMessageNode:
             "created_at": "2025-01-01T00:00:00",
         }
 
-        node = MessageNode.from_dict(data)
+        node = node_from_snapshot(data)
         assert node.node_id == "n1"
         assert node.state == MessageState.IN_PROGRESS
         assert node.parent_id == "parent_1"
@@ -258,8 +260,8 @@ class TestMessageTree:
         snapshot = await tree.get_queue_snapshot()
         assert snapshot == ["child_1", "child_2"]
 
-    def test_tree_serialization(self):
-        """Test tree to_dict and from_dict."""
+    def test_tree_snapshot_round_trip(self):
+        """Test tree snapshot round-trip."""
         incoming = IncomingMessage(
             text="Test",
             chat_id="1",
@@ -276,8 +278,8 @@ class TestMessageTree:
         )
         tree = MessageTree(root)
 
-        data = tree.to_dict()
-        restored = MessageTree.from_dict(data)
+        snapshot = tree.snapshot()
+        restored = MessageTree.from_snapshot(snapshot)
 
         assert restored.root_id == "m1"
         node = restored.get_node("m1")
@@ -777,11 +779,13 @@ class TestSessionStoreTrees:
             },
         }
 
-        store.save_tree("root_1", tree_data)
+        snapshot = TreeSnapshot.from_json(tree_data)
+        assert snapshot is not None
+        store.save_tree_snapshot(snapshot)
 
-        retrieved = store.get_tree("root_1")
+        retrieved = store.get_tree_snapshot("root_1")
         assert retrieved is not None
-        assert retrieved["root_id"] == "root_1"
+        assert retrieved.root_id == "root_1"
 
     def test_get_tree_by_root_id(self, tmp_path):
         """Test getting tree by root ID and node mapping."""
@@ -797,19 +801,13 @@ class TestSessionStoreTrees:
             },
         }
 
-        store.save_tree("root", tree_data)
+        snapshot = TreeSnapshot.from_json(tree_data)
+        assert snapshot is not None
+        store.save_tree_snapshot(snapshot)
 
-        retrieved = store.get_tree("root")
+        retrieved = store.get_tree_snapshot("root")
         assert retrieved is not None
-        assert retrieved["root_id"] == "root"
-        assert store.get_node_mapping()["child"] == "root"
-
-    def test_register_node(self, tmp_path):
-        """Test registering a node to a tree."""
-        from messaging.session import SessionStore
-
-        store = SessionStore(storage_path=str(tmp_path / "sessions.json"))
-
-        store.register_node("new_node", "root_tree")
-
-        assert store.get_node_mapping()["new_node"] == "root_tree"
+        assert retrieved.root_id == "root"
+        assert (
+            store.load_conversation_snapshot().derive_node_to_tree()["child"] == "root"
+        )

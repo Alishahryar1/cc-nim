@@ -429,6 +429,50 @@ def test_messaging_transcript_uses_package_owners() -> None:
     assert "RenderCtx" in init_text
 
 
+def test_messaging_conversation_state_uses_package_owners() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    messaging_root = repo_root / "messaging"
+    trees_root = messaging_root / "trees"
+    session_root = messaging_root / "session"
+
+    assert not (messaging_root / "session.py").exists()
+    assert not (trees_root / "data.py").exists()
+    for filename in {
+        "__init__.py",
+        "graph.py",
+        "manager.py",
+        "node.py",
+        "processor.py",
+        "queue.py",
+        "repository.py",
+        "runtime.py",
+        "snapshot.py",
+    }:
+        assert (trees_root / filename).exists()
+    for filename in {
+        "__init__.py",
+        "message_log.py",
+        "persistence.py",
+        "store.py",
+    }:
+        assert (session_root / filename).exists()
+
+    offenders = _imports_matching(
+        [messaging_root, repo_root / "api", repo_root / "tests"],
+        forbidden_prefixes=("messaging.trees.data",),
+    )
+    assert offenders == []
+
+    runtime_text = (repo_root / "api" / "runtime.py").read_text(encoding="utf-8")
+    for removed_api in {
+        "get_all_trees",
+        "get_node_mapping",
+        "sync_from_tree_data",
+        "TreeQueueManager.from_dict",
+    }:
+        assert removed_api not in runtime_text
+
+
 def test_messaging_workflow_uses_split_runtime_owners() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     messaging_root = repo_root / "messaging"

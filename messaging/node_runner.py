@@ -68,7 +68,7 @@ class MessagingNodeRunner:
     def _save_tree(self, tree: MessageTree | None) -> None:
         """Persist tree state after runner-owned mutations."""
         if tree:
-            self.session_store.save_tree(tree.root_id, tree.to_dict())
+            self.session_store.save_tree_snapshot(tree.snapshot())
 
     async def process_node(
         self,

@@ -5,8 +5,8 @@ import asyncio
 import pytest
 
 from messaging.models import IncomingMessage
-from messaging.trees import TreeQueueManager
-from messaging.trees.data import MessageNode, MessageState, MessageTree
+from messaging.trees import MessageNode, MessageState, MessageTree, TreeQueueManager
+from messaging.trees.snapshot import node_from_snapshot, node_to_snapshot
 
 
 def _make_incoming(text: str = "hello", msg_id: str = "m1") -> IncomingMessage:
@@ -254,8 +254,8 @@ class TestMessageTreeSerialization:
         await tree.add_node("c2", _make_incoming(msg_id="c2"), "s2", "root")
         await tree.update_state("root", MessageState.COMPLETED, session_id="sess1")
 
-        data = tree.to_dict()
-        restored = MessageTree.from_dict(data)
+        snapshot = tree.snapshot()
+        restored = MessageTree.from_snapshot(snapshot)
 
         assert restored.root_id == "root"
         assert len(restored.all_nodes()) == 3
@@ -276,8 +276,8 @@ class TestMessageTreeSerialization:
             session_id="sess_test",
             error_message="test error",
         )
-        data = node.to_dict()
-        restored = MessageNode.from_dict(data)
+        data = node_to_snapshot(node)
+        restored = node_from_snapshot(data)
 
         assert restored.node_id == "n1"
         assert restored.state == MessageState.COMPLETED
@@ -507,8 +507,8 @@ class TestTreeQueueManagerConcurrency:
         await mgr.create_tree("root", _make_incoming(msg_id="root"), "s_root")
         _, _ = await mgr.add_to_tree("root", "c1", _make_incoming(msg_id="c1"), "s1")
 
-        data = mgr.to_dict()
-        restored = TreeQueueManager.from_dict(data)
+        snapshot = mgr.snapshot()
+        restored = TreeQueueManager.from_snapshot(snapshot)
 
         assert restored.get_tree_count() == 1
         assert restored.get_node("c1") is not None

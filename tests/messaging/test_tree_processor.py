@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from messaging.models import IncomingMessage
-from messaging.trees.data import MessageNode, MessageState, MessageTree
+from messaging.trees import MessageNode, MessageState, MessageTree
 from messaging.trees.processor import TreeQueueProcessor
 
 
@@ -142,7 +142,7 @@ async def test_process_next_queue_empty(tree_processor, sample_tree):
 @pytest.mark.asyncio
 async def test_process_next_with_item(tree_processor, sample_tree):
     processor = AsyncMock()
-    await sample_tree._queue.put("next_node")
+    sample_tree.put_queue_unlocked("next_node")
 
     node = MagicMock(spec=MessageNode)
     sample_tree.get_node = MagicMock(return_value=node)
@@ -182,8 +182,8 @@ async def test_process_next_skips_stale_id_and_runs_next_valid_node(sample_tree)
         "valid_status",
         sample_tree.root_id,
     )
-    await sample_tree._queue.put("missing_node")
-    await sample_tree._queue.put("valid_node")
+    sample_tree.put_queue_unlocked("missing_node")
+    sample_tree.put_queue_unlocked("valid_node")
 
     async def node_processor(node_id, node):
         await release.wait()
@@ -209,8 +209,8 @@ async def test_process_next_drains_all_stale_ids_without_wedging(sample_tree):
         node_started_callback=node_started,
     )
     sample_tree._is_processing = True
-    await sample_tree._queue.put("missing_one")
-    await sample_tree._queue.put("missing_two")
+    sample_tree.put_queue_unlocked("missing_one")
+    sample_tree.put_queue_unlocked("missing_two")
 
     await processor._process_next(sample_tree, AsyncMock())
 
@@ -226,7 +226,7 @@ async def test_process_next_triggers_queue_update(sample_tree):
     callback = AsyncMock()
     processor = TreeQueueProcessor(queue_update_callback=callback)
 
-    await sample_tree._queue.put("next_node")
+    sample_tree.put_queue_unlocked("next_node")
     sample_tree.get_node = MagicMock(return_value=None)
 
     await processor._process_next(sample_tree, AsyncMock())
@@ -250,7 +250,7 @@ async def test_process_next_triggers_node_started(sample_tree):
     await sample_tree.add_node(
         "next_node", incoming, "next_status", sample_tree.root_id
     )
-    await sample_tree._queue.put("next_node")
+    sample_tree.put_queue_unlocked("next_node")
 
     await processor._process_next(sample_tree, AsyncMock())
 

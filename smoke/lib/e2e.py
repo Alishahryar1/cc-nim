@@ -552,12 +552,9 @@ class FakePlatformDriver:
         raise AssertionError("fake platform did not become idle")
 
     def _all_tree_nodes_terminal(self) -> bool:
-        data = self.workflow.tree_queue.to_dict()
-        for tree in data.get("trees", {}).values():
-            nodes = tree.get("nodes", {}) if isinstance(tree, dict) else {}
-            for node in nodes.values():
-                if not isinstance(node, dict):
-                    continue
+        snapshot = self.workflow.tree_queue.snapshot()
+        for tree in snapshot.trees.values():
+            for node in tree.nodes.values():
                 if node.get("state") in {"pending", "in_progress"}:
                     return False
         return True

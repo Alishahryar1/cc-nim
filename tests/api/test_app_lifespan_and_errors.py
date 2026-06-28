@@ -9,6 +9,7 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from config.settings import Settings
+from messaging.trees import ConversationSnapshot, TreeSnapshot
 from providers.exceptions import ServiceUnavailableError
 from providers.runtime import ProviderRuntime
 
@@ -318,17 +319,18 @@ def test_app_lifespan_sets_state_and_cleans_up(tmp_path, messaging_enabled):
     fake_platform.stop = AsyncMock()
     fake_components = _fake_messaging_components(fake_platform)
 
+    snapshot = (
+        ConversationSnapshot(trees={"t": TreeSnapshot(root_id="t", nodes={})})
+        if messaging_enabled
+        else ConversationSnapshot()
+    )
     session_store = MagicMock()
-    session_store.get_all_trees.return_value = [{"t": 1}] if messaging_enabled else []
-    session_store.get_node_mapping.return_value = {"n": "t"}
-    session_store.sync_from_tree_data = MagicMock()
+    session_store.load_conversation_snapshot.return_value = snapshot
+    session_store.save_conversation_snapshot = MagicMock()
 
     fake_queue = MagicMock()
     fake_queue.cleanup_stale_nodes.return_value = 1
-    fake_queue.to_dict.return_value = {
-        "trees": [{"t": 1}],
-        "node_to_tree": {"n": "t"},
-    }
+    fake_queue.snapshot.return_value = snapshot
 
     cli_manager = MagicMock()
     cli_manager.stop_all = AsyncMock()
@@ -346,7 +348,7 @@ def test_app_lifespan_sets_state_and_cleans_up(tmp_path, messaging_enabled):
         patch("messaging.session.SessionStore", return_value=session_store),
         patch("cli.managed.ManagedClaudeSessionManager", return_value=cli_manager),
         patch(
-            "messaging.trees.TreeQueueManager.from_dict",
+            "messaging.trees.TreeQueueManager.from_snapshot",
             return_value=fake_queue,
         ),
         TestClient(app),
@@ -360,10 +362,7 @@ def test_app_lifespan_sets_state_and_cleans_up(tmp_path, messaging_enabled):
         fake_platform.stop.assert_awaited_once()
         cli_manager.stop_all.assert_awaited_once()
         assert getattr(app.state, "messaging_workflow", None) is not None
-        session_store.sync_from_tree_data.assert_called_once_with(
-            [{"t": 1}],
-            {"n": "t"},
-        )
+        session_store.save_conversation_snapshot.assert_called_once_with(snapshot)
     else:
         fake_platform.start.assert_not_awaited()
         fake_platform.stop.assert_not_awaited()
@@ -398,9 +397,7 @@ def test_app_lifespan_cleanup_continues_if_platform_stop_raises(tmp_path):
     fake_components = _fake_messaging_components(fake_platform)
 
     session_store = MagicMock()
-    session_store.get_all_trees.return_value = []
-    session_store.get_node_mapping.return_value = {}
-    session_store.sync_from_tree_data = MagicMock()
+    session_store.load_conversation_snapshot.return_value = ConversationSnapshot()
 
     cli_manager = MagicMock()
     cli_manager.stop_all = AsyncMock()
@@ -576,9 +573,7 @@ def test_app_lifespan_platform_start_exception_cleanup_still_runs(tmp_path):
     fake_components = _fake_messaging_components(fake_platform)
 
     session_store = MagicMock()
-    session_store.get_all_trees.return_value = []
-    session_store.get_node_mapping.return_value = {}
-    session_store.sync_from_tree_data = MagicMock()
+    session_store.load_conversation_snapshot.return_value = ConversationSnapshot()
 
     cli_manager = MagicMock()
     cli_manager.stop_all = AsyncMock()
@@ -627,9 +622,7 @@ def test_app_lifespan_flush_pending_save_exception_warning_only(tmp_path):
     fake_components = _fake_messaging_components(fake_platform)
 
     session_store = MagicMock()
-    session_store.get_all_trees.return_value = []
-    session_store.get_node_mapping.return_value = {}
-    session_store.sync_from_tree_data = MagicMock()
+    session_store.load_conversation_snapshot.return_value = ConversationSnapshot()
     session_store.flush_pending_save = MagicMock(side_effect=OSError("disk full"))
 
     cli_manager = MagicMock()
