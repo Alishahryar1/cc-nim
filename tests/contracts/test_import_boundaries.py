@@ -278,6 +278,7 @@ def test_anthropic_stream_engine_owns_provider_stream_state() -> None:
 def test_openai_responses_uses_adapter_boundary() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     responses_root = repo_root / "core" / "openai_responses"
+    responses_streaming_root = responses_root / "streaming"
     api_root = repo_root / "api"
     handlers_root = api_root / "handlers"
 
@@ -286,6 +287,7 @@ def test_openai_responses_uses_adapter_boundary() -> None:
     assert not (responses_root / "conversion.py").exists()
     assert not (responses_root / "sse.py").exists()
     assert not (responses_root / "output.py").exists()
+    assert not (responses_root / "stream_state.py").exists()
     for filename in {
         "adapter.py",
         "anthropic_sse.py",
@@ -296,10 +298,22 @@ def test_openai_responses_uses_adapter_boundary() -> None:
         "items.py",
         "reasoning.py",
         "stream.py",
-        "stream_state.py",
         "tools.py",
     }:
         assert (responses_root / filename).exists()
+    for filename in {
+        "__init__.py",
+        "assembler.py",
+        "blocks.py",
+        "completion.py",
+        "error_mapping.py",
+        "event_builders.py",
+        "ledger.py",
+    }:
+        assert (responses_streaming_root / filename).exists()
+
+    stream_text = (responses_root / "stream.py").read_text(encoding="utf-8")
+    assert "from .streaming import ResponsesStreamAssembler" in stream_text
 
     responses_handler = handlers_root / "responses.py"
     responses_handler_text = responses_handler.read_text(encoding="utf-8")

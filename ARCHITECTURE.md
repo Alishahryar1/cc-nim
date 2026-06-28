@@ -417,11 +417,13 @@ streaming. Request conversion, stream transformation, Anthropic SSE parsing,
 Responses SSE event formatting, output item construction, tool identity mapping,
 reasoning mapping, ID generation, and error envelope construction each live
 behind the adapter boundary. `stream.py` is the public streaming entrypoint;
-`stream_state.py` owns the block-indexed Responses output ledger used to
-preserve streamed item order, pending block finalization, and terminal response
-lifecycle events. API code should depend on the adapter, not on those internal
-module owners directly. Responses output payloads stay OpenAI-shaped; Anthropic
-terminal metadata is used internally only when it affects streamed behavior.
+[core/openai_responses/streaming/](core/openai_responses/streaming/) owns the
+block-indexed Responses stream assembler. The package separates Anthropic SSE
+dispatch, block state, output ledger ordering, block completion, SSE event
+builders, and error mapping. API code should depend on the adapter, not on
+those internal module owners directly. Responses output payloads stay
+OpenAI-shaped; Anthropic terminal metadata is used internally only when it
+affects streamed behavior.
 
 Responses custom tools are also boundary-owned. The adapter accepts native
 Responses `custom` tool declarations, represents them internally as Anthropic
