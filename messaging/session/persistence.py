@@ -8,9 +8,16 @@ import os
 import tempfile
 import threading
 from collections.abc import Callable
+from dataclasses import dataclass
 from typing import Any
 
 from loguru import logger
+
+
+@dataclass(frozen=True)
+class _PendingWrite:
+    generation: int
+    snapshot: dict[str, Any]
 
 
 class DebouncedJsonPersistence:
@@ -29,6 +36,8 @@ class DebouncedJsonPersistence:
         self._on_dirty = on_dirty
         self._debounce_secs = debounce_secs
         self._save_timer: threading.Timer | None = None
+        self._timer_lock = threading.Lock()
+        self._save_generation = 0
 
     def load_json(self) -> dict[str, Any]:
         if not os.path.exists(self.storage_path):
@@ -39,36 +48,68 @@ class DebouncedJsonPersistence:
 
     def schedule_save(self) -> None:
         self._on_dirty(True)
-        if self._save_timer is not None:
-            self._save_timer.cancel()
-            self._save_timer = None
-        self._save_timer = threading.Timer(self._debounce_secs, self._save_from_timer)
-        self._save_timer.daemon = True
-        self._save_timer.start()
+        with self._timer_lock:
+            if self._save_timer is not None:
+                self._save_timer.cancel()
+            self._save_generation += 1
+            generation = self._save_generation
+            timer = threading.Timer(
+                self._debounce_secs,
+                self._save_from_timer,
+                args=(generation,),
+            )
+            timer.daemon = True
+            self._save_timer = timer
+        timer.start()
 
     def flush(self) -> None:
-        snapshot = self._snapshot_for_write()
+        pending = self._snapshot_for_write()
+        if pending is None:
+            return
+        self._write_pending(pending)
+
+    def _save_from_timer(self, generation: int) -> None:
+        pending = self._snapshot_for_write(expected_generation=generation)
+        if pending is None:
+            return
+        self._write_pending(pending)
+
+    def _write_pending(self, pending: _PendingWrite) -> None:
         try:
-            self.write_data(snapshot)
+            self.write_data(pending.snapshot)
         except Exception as e:
             logger.error("Failed to save sessions: {}", e)
             self._on_dirty(True)
+            return
+        self._mark_clean_if_current(pending.generation)
 
-    def _save_from_timer(self) -> None:
-        snapshot = self._snapshot_for_write()
-        try:
-            self.write_data(snapshot)
-        except Exception as e:
-            logger.error("Failed to save sessions: {}", e)
-            self._on_dirty(True)
-
-    def _snapshot_for_write(self) -> dict[str, Any]:
-        if self._save_timer is not None:
-            self._save_timer.cancel()
-            self._save_timer = None
+    def _snapshot_for_write(
+        self, *, expected_generation: int | None = None
+    ) -> _PendingWrite | None:
+        generation = self._claim_timer(expected_generation)
+        if generation is None:
+            return None
         snapshot = self._snapshot()
-        self._on_dirty(False)
-        return snapshot
+        return _PendingWrite(generation=generation, snapshot=snapshot)
+
+    def _claim_timer(self, expected_generation: int | None) -> int | None:
+        with self._timer_lock:
+            if expected_generation is not None and (
+                expected_generation != self._save_generation or self._save_timer is None
+            ):
+                return None
+            if self._save_timer is not None:
+                self._save_timer.cancel()
+                self._save_timer = None
+            return self._save_generation
+
+    def _mark_clean_if_current(self, generation: int) -> None:
+        with self._timer_lock:
+            is_current = (
+                self._save_timer is None and generation == self._save_generation
+            )
+        if is_current:
+            self._on_dirty(False)
 
     def write_data(self, data: dict[str, Any]) -> None:
         abs_target = os.path.abspath(self.storage_path)

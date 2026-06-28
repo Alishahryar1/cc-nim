@@ -22,8 +22,9 @@ class MessageTree:
         root_node: MessageNode,
         *,
         queue: MessageNodeQueue | None = None,
+        graph: MessageTreeGraph | None = None,
     ) -> None:
-        self._graph = MessageTreeGraph(root_node)
+        self._graph = graph or MessageTreeGraph(root_node)
         self._queue = queue or MessageNodeQueue()
         self._lock = asyncio.Lock()
         self._is_processing = False
@@ -177,7 +178,4 @@ class MessageTree:
     @classmethod
     def from_snapshot(cls, snapshot: TreeSnapshot) -> MessageTree:
         graph = MessageTreeGraph.from_snapshot(snapshot)
-        root_node = graph.get_root()
-        tree = cls(root_node)
-        tree._graph = graph
-        return tree
+        return cls(graph.get_root(), graph=graph)

@@ -1,11 +1,15 @@
 """Edge case tests for the messaging session store."""
 
 import json
+from collections.abc import Callable
+from typing import Any, ClassVar
 from unittest.mock import patch
 
 import pytest
 
+import messaging.session.persistence as persistence_module
 from messaging.session import SessionStore
+from messaging.session.persistence import DebouncedJsonPersistence
 from messaging.trees import TreeSnapshot
 
 
@@ -21,6 +25,52 @@ def _tree_node(node_id: str, status_message_id: str) -> dict:
         "node_id": node_id,
         "status_message_id": status_message_id,
     }
+
+
+class FakeTimer:
+    instances: ClassVar[list[FakeTimer]] = []
+
+    def __init__(
+        self,
+        interval: float,
+        function: Callable[..., None],
+        args: tuple[Any, ...] | None = None,
+        kwargs: dict[str, Any] | None = None,
+    ) -> None:
+        self.interval = interval
+        self.function = function
+        self.args = args or ()
+        self.kwargs = kwargs or {}
+        self.daemon = False
+        self.canceled = False
+        self.started = False
+        self.instances.append(self)
+
+    def cancel(self) -> None:
+        self.canceled = True
+
+    def start(self) -> None:
+        self.started = True
+
+    def fire(self, *, force: bool = False) -> None:
+        if self.canceled and not force:
+            return
+        self.function(*self.args, **self.kwargs)
+
+
+class RecordingPersistence(DebouncedJsonPersistence):
+    def __init__(
+        self,
+        storage_path: str,
+        *,
+        snapshot: Callable[[], dict[str, Any]],
+        on_dirty: Callable[[bool], None],
+    ) -> None:
+        self.writes: list[dict[str, Any]] = []
+        super().__init__(storage_path, snapshot=snapshot, on_dirty=on_dirty)
+
+    def write_data(self, data: dict[str, Any]) -> None:
+        self.writes.append(data)
 
 
 class TestSessionStoreLoadEdgeCases:
@@ -97,6 +147,39 @@ class TestSessionStoreSaveEdgeCases:
         ):
             tmp_store.flush_pending_save()
         assert tmp_store.dirty is True
+
+    def test_stale_timer_callback_cannot_clear_newer_timer(self, tmp_path, monkeypatch):
+        """An already-running old timer cannot consume the newest save."""
+        FakeTimer.instances = []
+        monkeypatch.setattr(persistence_module.threading, "Timer", FakeTimer)
+
+        dirty_states: list[bool] = []
+        snapshot_count = 0
+
+        def snapshot() -> dict[str, Any]:
+            nonlocal snapshot_count
+            snapshot_count += 1
+            return {"snapshot": snapshot_count}
+
+        persistence = RecordingPersistence(
+            str(tmp_path / "sessions.json"),
+            snapshot=snapshot,
+            on_dirty=dirty_states.append,
+        )
+
+        persistence.schedule_save()
+        first_timer = FakeTimer.instances[0]
+        persistence.schedule_save()
+        second_timer = FakeTimer.instances[1]
+
+        first_timer.fire(force=True)
+        assert persistence.writes == []
+        assert dirty_states[-1] is True
+        assert second_timer.canceled is False
+
+        second_timer.fire()
+        assert persistence.writes == [{"snapshot": 1}]
+        assert dirty_states[-1] is False
 
 
 class TestSessionStoreTreeMappings:

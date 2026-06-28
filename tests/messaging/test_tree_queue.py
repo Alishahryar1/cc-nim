@@ -13,6 +13,7 @@ from messaging.trees import (
     TreeQueueManager,
     TreeSnapshot,
 )
+from messaging.trees.graph import MessageTreeGraph
 from messaging.trees.snapshot import node_from_snapshot, node_to_snapshot
 
 
@@ -285,6 +286,36 @@ class TestMessageTree:
         node = restored.get_node("m1")
         assert node is not None
         assert node.session_id == "sess_1"
+
+    def test_tree_from_snapshot_uses_one_graph_construction(self, monkeypatch):
+        """Restore should not build a temporary graph and replace it."""
+        incoming = IncomingMessage(
+            text="Test",
+            chat_id="1",
+            user_id="1",
+            message_id="m1",
+            platform="test",
+        )
+        root = MessageNode(
+            node_id="m1",
+            incoming=incoming,
+            status_message_id="s1",
+        )
+        snapshot = MessageTree(root).snapshot()
+        original_init = MessageTreeGraph.__init__
+        init_calls = 0
+
+        def counting_init(self: MessageTreeGraph, root_node: MessageNode) -> None:
+            nonlocal init_calls
+            init_calls += 1
+            original_init(self, root_node)
+
+        monkeypatch.setattr(MessageTreeGraph, "__init__", counting_init)
+
+        restored = MessageTree.from_snapshot(snapshot)
+
+        assert restored.root_id == "m1"
+        assert init_calls == 1
 
     @pytest.mark.asyncio
     async def test_get_descendants(self):
