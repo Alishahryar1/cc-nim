@@ -82,6 +82,7 @@ def test_build_request_body_openai_chat_shape(deepseek_provider):
     assert body["messages"][1]["role"] == "user"
     assert body["messages"][1] == {"role": "user", "content": "Hello"}
     assert body["max_tokens"] == 100
+    assert body["stream_options"] == {"include_usage": True}
 
 
 def test_build_request_body_default_max_tokens(deepseek_provider):
@@ -187,6 +188,7 @@ def test_build_request_body_respects_global_thinking_disable():
     )
     body = provider._build_request_body(request)
     assert "extra_body" not in body
+    assert body["stream_options"] == {"include_usage": True}
 
 
 def test_preserve_unsigned_thinking_when_thinking_on(deepseek_provider):
@@ -639,6 +641,10 @@ async def test_stream_uses_chat_completions_and_maps_cache_usage(deepseek_provid
                     finish_reason="stop",
                 )
             ],
+            usage=None,
+        )
+        yield SimpleNamespace(
+            choices=[],
             usage=SimpleNamespace(
                 completion_tokens=3,
                 prompt_tokens=30,
@@ -661,6 +667,7 @@ async def test_stream_uses_chat_completions_and_maps_cache_usage(deepseek_provid
     assert await_args is not None
     assert await_args.kwargs["model"] == "m"
     assert await_args.kwargs["stream"] is True
+    assert await_args.kwargs["stream_options"] == {"include_usage": True}
     parsed = parse_sse_text("".join(chunks))
     usage = next(
         event.data["usage"] for event in parsed if event.event == "message_delta"
