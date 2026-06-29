@@ -18,8 +18,8 @@ dependencies = [
     "tiktoken>=0.13.0",
     "python-telegram-bot>=22.8",
     "discord.py>=2.7.1",
-    "pydantic-settings>=2.14.1",
-    "openai>=2.43.0",
+    "pydantic-settings>=2.14.2",
+    "openai>=2.44.0",
     "loguru>=0.7.0",
     "aiohttp>=3.14.1",
     "jsonschema>=4.25.0",
@@ -64,11 +64,11 @@ explicit = true
 
 [dependency-groups]
 dev = [
-    "pytest>=9.1.0",
+    "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
-    "ty>=0.0.50",
-    "ruff>=0.15.18",
+    "ty>=0.0.55",
+    "ruff>=0.15.20",
     "pytest-xdist>=3.8.0",
 ]
 
