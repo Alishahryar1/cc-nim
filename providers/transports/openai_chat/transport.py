@@ -107,6 +107,10 @@ class OpenAIChatTransport(BaseProvider):
         """Return provider-specific per-tool argument aliases for this request."""
         return {}
 
+    def _anthropic_usage_fields(self, usage_info: Any) -> dict[str, int]:
+        """Return provider-specific Anthropic usage fields for final SSE usage."""
+        return {}
+
     async def _create_stream(self, body: dict) -> tuple[Any, dict]:
         """Create a streaming chat completion, optionally retrying once."""
         try:

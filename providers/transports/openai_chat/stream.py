@@ -380,6 +380,7 @@ class OpenAIChatStreamAdapter:
             ledger.message_delta(
                 ledger.final_stop_reason(map_stop_reason(finish_reason)),
                 output_tokens,
+                usage_fields=self._transport._anthropic_usage_fields(usage_info),
             )
         ):
             yield event

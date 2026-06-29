@@ -1,8 +1,9 @@
-"""DeepSeek native Anthropic compatibility request policy."""
+"""DeepSeek Anthropic-to-OpenAI chat request policy."""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
+from types import SimpleNamespace
 from typing import Any
 
 from loguru import logger
@@ -11,6 +12,15 @@ from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from core.anthropic import serialize_tool_result_content
 from core.anthropic.native_messages_request import dump_raw_messages_request
 from providers.exceptions import InvalidRequestError
+from providers.transports.openai_chat import (
+    OpenAIChatRequestPolicy,
+    build_openai_chat_request_body,
+)
+
+_REQUEST_POLICY = OpenAIChatRequestPolicy(
+    provider_name="DEEPSEEK",
+    include_extra_body=True,
+)
 
 _UNSUPPORTED_MESSAGE_BLOCK_TYPES = frozenset(
     {
@@ -29,9 +39,9 @@ _OMITTED_ATTACHMENT_BLOCK = {"type": "text", "text": _OMITTED_ATTACHMENT_TEXT}
 
 
 def build_deepseek_request_body(request_data: Any, *, thinking_enabled: bool) -> dict:
-    """Build a DeepSeek ``/v1/messages`` JSON body (Anthropic format)."""
+    """Build a DeepSeek Chat Completions body from an Anthropic request."""
     logger.debug(
-        "DEEPSEEK_REQUEST: native build model={} msgs={}",
+        "DEEPSEEK_REQUEST: chat build model={} msgs={}",
         getattr(request_data, "model", "?"),
         len(getattr(request_data, "messages", [])),
     )
@@ -39,8 +49,7 @@ def build_deepseek_request_body(request_data: Any, *, thinking_enabled: bool) ->
     data = dump_raw_messages_request(request_data)
     if "messages" in data:
         data["messages"] = _strip_unsupported_attachment_blocks(data["messages"])
-    _validate_deepseek_native_request_dict(data)
-    data.pop("extra_body", None)
+    _validate_deepseek_request_dict(data)
     _downgrade_forced_tool_choice(data)
 
     has_tool_history = _has_tool_history(data)
@@ -74,41 +83,37 @@ def build_deepseek_request_body(request_data: Any, *, thinking_enabled: bool) ->
                 len(data.get("tools", [])),
             )
 
-    thinking_cfg = data.pop("thinking", None)
-    if effective_thinking_enabled and isinstance(thinking_cfg, dict):
-        thinking_payload: dict[str, Any] = {"type": "enabled"}
-        budget_tokens = thinking_cfg.get("budget_tokens")
-        if isinstance(budget_tokens, int):
-            thinking_payload["budget_tokens"] = budget_tokens
-        data["thinking"] = thinking_payload
-
     if "messages" in data:
-        data["messages"] = _strip_reasoning_content_when_native(
-            _normalize_tool_result_content(
-                sanitize_deepseek_messages_for_native(
-                    data["messages"],
-                    thinking_enabled=effective_thinking_enabled,
-                )
+        data["messages"] = _normalize_tool_result_content(
+            sanitize_deepseek_messages_for_openai(
+                data["messages"],
+                thinking_enabled=effective_thinking_enabled,
             )
         )
-    if "max_tokens" not in data or data.get("max_tokens") is None:
-        data["max_tokens"] = ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 
-    data["stream"] = True
+    sanitized_request = _request_from_dict(request_data, data)
+    body = build_openai_chat_request_body(
+        sanitized_request,
+        thinking_enabled=effective_thinking_enabled,
+        policy=_REQUEST_POLICY,
+        postprocessors=(_apply_deepseek_chat_extras,),
+    )
+    if "max_tokens" not in body or body.get("max_tokens") is None:
+        body["max_tokens"] = ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 
     logger.debug(
         "DEEPSEEK_REQUEST: build done model={} msgs={} tools={}",
-        data.get("model"),
-        len(data.get("messages", [])),
-        len(data.get("tools", [])),
+        body.get("model"),
+        len(body.get("messages", [])),
+        len(body.get("tools", [])),
     )
-    return data
+    return body
 
 
-def sanitize_deepseek_messages_for_native(
+def sanitize_deepseek_messages_for_openai(
     messages: Any, *, thinking_enabled: bool
 ) -> Any:
-    """Filter assistant content for DeepSeek's partial native Anthropic support."""
+    """Filter assistant content before converting to DeepSeek Chat Completions."""
     if not isinstance(messages, list):
         return messages
 
@@ -244,19 +249,17 @@ def _walk_block_list_for_unsupported(blocks: Any, *, where: str) -> None:
             )
 
 
-def _validate_deepseek_native_request_dict(data: dict[str, Any]) -> None:
+def _validate_deepseek_request_dict(data: dict[str, Any]) -> None:
     mcp = data.get("mcp_servers")
     if mcp:
-        raise InvalidRequestError(
-            "DeepSeek native does not support mcp_servers on requests."
-        )
+        raise InvalidRequestError("DeepSeek does not support mcp_servers on requests.")
 
     for tool in data.get("tools") or ():
         if not isinstance(tool, dict):
             continue
         if _is_server_listed_tool(tool):
             raise InvalidRequestError(
-                "DeepSeek native does not support listed Anthropic server tools "
+                "DeepSeek does not support listed Anthropic server tools "
                 "(web_search / web_fetch). Remove them or use a different provider."
             )
 
@@ -401,20 +404,6 @@ def _normalize_tool_result_content(messages: Any) -> Any:
     return normalized
 
 
-def _strip_reasoning_content_when_native(messages: Any) -> Any:
-    if not isinstance(messages, list):
-        return messages
-    out: list[Any] = []
-    for message in messages:
-        if not isinstance(message, dict):
-            out.append(message)
-            continue
-        out.append(
-            {key: value for key, value in message.items() if key != "reasoning_content"}
-        )
-    return out
-
-
 def _downgrade_forced_tool_choice(data: dict[str, Any]) -> None:
     tool_choice = data.get("tool_choice")
     if not isinstance(tool_choice, dict):
@@ -429,3 +418,20 @@ def _downgrade_forced_tool_choice(data: dict[str, Any]) -> None:
         tool_choice["name"],
     )
     data["tool_choice"] = {"type": "auto"}
+
+
+def _request_from_dict(request_data: Any, data: dict[str, Any]) -> Any:
+    validator = getattr(type(request_data), "model_validate", None)
+    if callable(validator):
+        return validator(data)
+    return SimpleNamespace(**data)
+
+
+def _apply_deepseek_chat_extras(
+    body: dict[str, Any], _request_data: Any, thinking_enabled: bool
+) -> None:
+    if not thinking_enabled or body.get("model") == "deepseek-reasoner":
+        return
+    extra_body = body.setdefault("extra_body", {})
+    if isinstance(extra_body, dict):
+        extra_body.setdefault("thinking", {"type": "enabled"})

@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 import uuid
-from collections.abc import Iterator
+from collections.abc import Iterator, Mapping
 from contextlib import suppress
 from dataclasses import dataclass, field
 from typing import Any
@@ -207,16 +207,31 @@ class AnthropicStreamLedger:
             },
         )
 
-    def message_delta(self, stop_reason: str, output_tokens: int | None) -> str:
+    def message_delta(
+        self,
+        stop_reason: str,
+        output_tokens: int | None,
+        *,
+        usage_fields: Mapping[str, int] | None = None,
+    ) -> str:
         self.stop_reason = stop_reason
         safe_in = _safe_usage_int(self.input_tokens)
         safe_out = output_tokens if isinstance(output_tokens, int) else 0
+        usage = {"input_tokens": safe_in, "output_tokens": safe_out}
+        if usage_fields:
+            usage.update(
+                {
+                    key: value
+                    for key, value in usage_fields.items()
+                    if isinstance(value, int)
+                }
+            )
         return self._emitter.event(
             "message_delta",
             {
                 "type": "message_delta",
                 "delta": {"stop_reason": stop_reason, "stop_sequence": None},
-                "usage": {"input_tokens": safe_in, "output_tokens": safe_out},
+                "usage": usage,
             },
         )
 

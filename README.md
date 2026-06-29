@@ -197,7 +197,7 @@ Get a key at [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_
 
 In the Admin UI, paste it into `DEEPSEEK_API_KEY`, then set `MODEL` to a DeepSeek slug such as `deepseek/deepseek-chat`.
 
-This provider uses DeepSeek's Anthropic-compatible endpoint, not the OpenAI chat-completions endpoint.
+FCC uses DeepSeek's OpenAI-compatible Chat Completions endpoint so DeepSeek's prompt-cache hit/miss counters can be mapped into Claude-compatible usage metadata.
 
 ### 5. [Mistral La Plateforme](https://console.mistral.ai/)
 
@@ -570,8 +570,8 @@ Important pieces:
 - Responses requests convert to Anthropic Messages internally, then share the same model router, normalizer, and provider adapters.
 - `fcc-codex` registers a custom `fcc` provider that points Codex at the local proxy's `/v1/responses` endpoint.
 - Model routing resolves Claude model names to `MODEL_OPUS`, `MODEL_SONNET`, `MODEL_HAIKU`, or `MODEL`.
-- NIM, OpenCode Zen, and OpenCode Go use OpenAI chat streaming translated into Anthropic SSE.
-- Wafer, OpenRouter, DeepSeek, Kimi, Fireworks AI, Cloudflare, Z.ai, LM Studio, llama.cpp, and Ollama use Anthropic Messages style transports where applicable (with provider-specific quirks and model-list URLs).
+- NIM, DeepSeek, OpenCode Zen, and OpenCode Go use OpenAI chat streaming translated into Anthropic SSE.
+- Wafer, OpenRouter, Kimi, Fireworks AI, Cloudflare, Z.ai, LM Studio, llama.cpp, and Ollama use Anthropic Messages style transports where applicable (with provider-specific quirks and model-list URLs).
 - The proxy normalizes thinking blocks, tool calls, token usage metadata, and provider errors into the shape each client expects.
 - Request optimizations answer trivial Claude Code probes locally to save latency and quota.
 
