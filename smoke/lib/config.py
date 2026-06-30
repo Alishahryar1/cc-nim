@@ -64,6 +64,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "cerebras": "cerebras/llama3.1-8b",
     "cloudflare": "cloudflare/@cf/moonshotai/kimi-k2.6",
 }
+MISTRAL_REASONING_SMOKE_DEFAULT_MODEL = "mistral/mistral-medium-3-5"
 
 NVIDIA_NIM_CLI_DEFAULT_MODELS: tuple[str, ...] = (
     "z-ai/glm-5.2",
@@ -215,6 +216,21 @@ class SmokeConfig:
             ProviderModel(provider="open_router", full_model=full_model, source=source)
             for full_model, source in openrouter_free_cli_model_refs().items()
         ]
+
+    def mistral_reasoning_smoke_model(self) -> ProviderModel | None:
+        """Return a Mistral model expected to accept native reasoning input."""
+        if self.provider_matrix and "mistral" not in self.provider_matrix:
+            return None
+        if not self.has_provider_configuration("mistral"):
+            return None
+        override_env = "FCC_SMOKE_MODEL_MISTRAL_REASONING"
+        if override := os.getenv(override_env):
+            full_model = _normalize_provider_model("mistral", override)
+            source = override_env
+        else:
+            full_model = MISTRAL_REASONING_SMOKE_DEFAULT_MODEL
+            source = "mistral_reasoning_default"
+        return ProviderModel(provider="mistral", full_model=full_model, source=source)
 
     def _include_provider_in_smoke(
         self, provider: str, mapped_providers: set[str]

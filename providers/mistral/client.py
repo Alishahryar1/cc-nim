@@ -2,12 +2,21 @@
 
 from typing import Any
 
+from loguru import logger
+
 from providers.base import ProviderConfig
 from providers.defaults import MISTRAL_DEFAULT_BASE
 from providers.transports.openai_chat import (
     OpenAIChatRequestPolicy,
     OpenAIChatTransport,
     build_openai_chat_request_body,
+)
+
+from .reasoning import (
+    apply_mistral_reasoning_request_shape,
+    clone_body_without_mistral_reasoning,
+    is_mistral_reasoning_rejection,
+    normalize_mistral_stream,
 )
 
 _REQUEST_POLICY = OpenAIChatRequestPolicy(provider_name="MISTRAL")
@@ -27,8 +36,31 @@ class MistralProvider(OpenAIChatTransport):
     def _build_request_body(
         self, request: Any, thinking_enabled: bool | None = None
     ) -> dict:
-        return build_openai_chat_request_body(
+        effective_thinking_enabled = self._is_thinking_enabled(
+            request, thinking_enabled
+        )
+        body = build_openai_chat_request_body(
             request,
-            thinking_enabled=self._is_thinking_enabled(request, thinking_enabled),
+            thinking_enabled=effective_thinking_enabled,
             policy=_REQUEST_POLICY,
         )
+        apply_mistral_reasoning_request_shape(
+            body, thinking_enabled=effective_thinking_enabled
+        )
+        return body
+
+    def _get_retry_request_body(self, error: Exception, body: dict) -> dict | None:
+        """Retry once without Mistral reasoning fields when a model rejects them."""
+        if not is_mistral_reasoning_rejection(error):
+            return None
+        retry_body = clone_body_without_mistral_reasoning(body)
+        if retry_body is None:
+            return None
+        logger.warning(
+            "MISTRAL_STREAM: retrying without reasoning after upstream rejection"
+        )
+        return retry_body
+
+    async def _create_stream(self, body: dict) -> tuple[Any, dict]:
+        stream, final_body = await super()._create_stream(body)
+        return normalize_mistral_stream(stream), final_body

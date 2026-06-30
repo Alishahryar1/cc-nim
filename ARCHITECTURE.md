@@ -361,6 +361,10 @@ account-scoped Workers AI OpenAI-compatible Chat Completions endpoint for
 Cloudflare-specific reasoning deltas stay in the Cloudflare provider client.
 MiniMax uses its Anthropic-compatible Messages endpoint; its provider client owns
 the MiniMax-specific `adaptive` thinking request shape.
+Mistral La Plateforme keeps its native `reasoning_effort` and thinking-chunk
+request/stream mapping inside
+[providers/mistral/reasoning.py](providers/mistral/reasoning.py), including its
+fallback retry when a selected Mistral model rejects reasoning fields.
 NIM reasoning budget control is also treated as a provider-owned best-effort
 downgrade: if an upstream NIM deployment rejects explicit budget control, FCC
 retries without the budget while preserving thinking enablement.

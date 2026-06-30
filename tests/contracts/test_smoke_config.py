@@ -9,6 +9,7 @@ from smoke.conftest import (
 from smoke.lib.config import (
     ALL_TARGETS,
     DEFAULT_TARGETS,
+    MISTRAL_REASONING_SMOKE_DEFAULT_MODEL,
     NVIDIA_NIM_CLI_DEFAULT_MODELS,
     OPENROUTER_FREE_CLI_DEFAULT_MODELS,
     OPT_IN_TARGETS,
@@ -335,6 +336,43 @@ def test_provider_smoke_model_override_rejects_wrong_provider_prefix(
         assert "FCC_SMOKE_MODEL_DEEPSEEK" in str(exc)
     else:
         raise AssertionError("expected wrong provider prefix to fail")
+
+
+def test_mistral_reasoning_smoke_uses_reasoning_default(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_MISTRAL_REASONING", raising=False)
+    config = _smoke_config(
+        settings=_settings(mistral_api_key="mistral-key", ollama_base_url="")
+    )
+
+    model = config.mistral_reasoning_smoke_model()
+
+    assert model is not None
+    assert model.provider == "mistral"
+    assert model.full_model == MISTRAL_REASONING_SMOKE_DEFAULT_MODEL
+    assert model.source == "mistral_reasoning_default"
+
+
+def test_mistral_reasoning_smoke_accepts_override(monkeypatch) -> None:
+    monkeypatch.setenv("FCC_SMOKE_MODEL_MISTRAL_REASONING", "mistral-medium-3-5")
+    config = _smoke_config(
+        settings=_settings(mistral_api_key="mistral-key", ollama_base_url="")
+    )
+
+    model = config.mistral_reasoning_smoke_model()
+
+    assert model is not None
+    assert model.full_model == "mistral/mistral-medium-3-5"
+    assert model.source == "FCC_SMOKE_MODEL_MISTRAL_REASONING"
+
+
+def test_mistral_reasoning_smoke_respects_provider_matrix(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_MISTRAL_REASONING", raising=False)
+    config = _smoke_config(
+        settings=_settings(mistral_api_key="mistral-key", ollama_base_url=""),
+        provider_matrix=frozenset({"deepseek"}),
+    )
+
+    assert config.mistral_reasoning_smoke_model() is None
 
 
 def test_provider_smoke_matrix_filters_provider_catalog(monkeypatch) -> None:
