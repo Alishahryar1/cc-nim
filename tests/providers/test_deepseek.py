@@ -1,8 +1,9 @@
-"""Tests for DeepSeek native Anthropic Messages provider."""
+"""Tests for DeepSeek OpenAI-compatible Chat Completions provider."""
 
 import logging
 from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -13,9 +14,9 @@ from api.models.anthropic import (
     Tool,
 )
 from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from core.anthropic.stream_contracts import parse_sse_text
 from providers.base import ProviderConfig
 from providers.deepseek import (
-    DEEPSEEK_ANTHROPIC_DEFAULT_BASE,
     DEEPSEEK_DEFAULT_BASE,
     DeepSeekProvider,
 )
@@ -26,7 +27,7 @@ from providers.exceptions import InvalidRequestError
 def deepseek_config():
     return ProviderConfig(
         api_key="test_deepseek_key",
-        base_url=DEEPSEEK_ANTHROPIC_DEFAULT_BASE,
+        base_url=DEEPSEEK_DEFAULT_BASE,
         rate_limit=10,
         rate_window=60,
         enable_thinking=True,
@@ -39,9 +40,7 @@ def mock_rate_limiter():
     async def _slot():
         yield
 
-    with patch(
-        "providers.transports.anthropic_messages.transport.GlobalRateLimiter"
-    ) as mock:
+    with patch("providers.transports.openai_chat.transport.GlobalRateLimiter") as mock:
         instance = mock.get_scoped_instance.return_value
 
         async def _passthrough(fn, *args, **kwargs):
@@ -58,26 +57,18 @@ def deepseek_provider(deepseek_config):
 
 
 def test_default_base_url_alias():
-    assert DEEPSEEK_DEFAULT_BASE == DEEPSEEK_ANTHROPIC_DEFAULT_BASE
-    assert DEEPSEEK_ANTHROPIC_DEFAULT_BASE == "https://api.deepseek.com/anthropic"
+    assert DEEPSEEK_DEFAULT_BASE == "https://api.deepseek.com"
 
 
 def test_init(deepseek_config):
-    with patch("httpx.AsyncClient") as mock_client:
+    with patch("providers.transports.openai_chat.transport.AsyncOpenAI") as mock_client:
         provider = DeepSeekProvider(deepseek_config)
     assert provider._api_key == "test_deepseek_key"
-    assert provider._base_url == "https://api.deepseek.com/anthropic"
+    assert provider._base_url == "https://api.deepseek.com"
     assert mock_client.called
 
 
-def test_request_headers_includes_x_api_key(deepseek_provider):
-    h = deepseek_provider._request_headers()
-    assert h["x-api-key"] == "test_deepseek_key"
-    assert h["Content-Type"] == "application/json"
-    assert h["Accept"] == "text/event-stream"
-
-
-def test_build_request_body_native_shape(deepseek_provider):
+def test_build_request_body_openai_chat_shape(deepseek_provider):
     request = MessagesRequest(
         model="deepseek-v4-pro",
         max_tokens=100,
@@ -86,14 +77,12 @@ def test_build_request_body_native_shape(deepseek_provider):
     )
     body = deepseek_provider._build_request_body(request)
     assert body["model"] == "deepseek-v4-pro"
-    assert body["stream"] is True
-    assert body["messages"][0]["role"] == "user"
-    assert body["messages"][0]["content"] in (
-        "Hello",
-        [{"type": "text", "text": "Hello"}],
-    )
-    assert body["system"] == "S"
+    assert "stream" not in body
+    assert body["messages"][0] == {"role": "system", "content": "S"}
+    assert body["messages"][1]["role"] == "user"
+    assert body["messages"][1] == {"role": "user", "content": "Hello"}
     assert body["max_tokens"] == 100
+    assert body["stream_options"] == {"include_usage": True}
 
 
 def test_build_request_body_default_max_tokens(deepseek_provider):
@@ -114,8 +103,7 @@ def test_build_request_body_thinking_enabled(deepseek_provider):
         }
     )
     body = deepseek_provider._build_request_body(request)
-    assert body["thinking"] == {"type": "enabled", "budget_tokens": 2000}
-    assert "extra_body" not in body
+    assert body["extra_body"]["thinking"] == {"type": "enabled"}
 
 
 def test_build_request_body_tool_list_keeps_thinking(deepseek_provider):
@@ -136,8 +124,8 @@ def test_build_request_body_tool_list_keeps_thinking(deepseek_provider):
 
     body = deepseek_provider._build_request_body(request)
 
-    assert body["thinking"] == {"type": "enabled", "budget_tokens": 2000}
-    assert body["tools"][0]["name"] == "Read"
+    assert body["extra_body"]["thinking"] == {"type": "enabled"}
+    assert body["tools"][0]["function"]["name"] == "Read"
 
 
 def test_build_request_body_tool_choice_keeps_thinking(deepseek_provider):
@@ -152,8 +140,8 @@ def test_build_request_body_tool_choice_keeps_thinking(deepseek_provider):
 
     body = deepseek_provider._build_request_body(request)
 
-    assert body["thinking"] == {"type": "enabled", "budget_tokens": 2000}
-    assert body["tool_choice"] == {"type": "auto"}
+    assert body["extra_body"]["thinking"] == {"type": "enabled"}
+    assert body["tool_choice"] == "auto"
 
 
 def test_build_request_body_forced_tool_choice_downgrades_to_auto(
@@ -177,15 +165,15 @@ def test_build_request_body_forced_tool_choice_downgrades_to_auto(
 
     body = deepseek_provider._build_request_body(request)
 
-    assert body["thinking"] == {"type": "enabled", "budget_tokens": 2000}
-    assert body["tool_choice"] == {"type": "auto"}
+    assert body["extra_body"]["thinking"] == {"type": "enabled"}
+    assert body["tool_choice"] == "auto"
 
 
 def test_build_request_body_respects_global_thinking_disable():
     provider = DeepSeekProvider(
         ProviderConfig(
             api_key="k",
-            base_url=DEEPSEEK_ANTHROPIC_DEFAULT_BASE,
+            base_url=DEEPSEEK_DEFAULT_BASE,
             rate_limit=1,
             rate_window=1,
             enable_thinking=False,
@@ -199,7 +187,8 @@ def test_build_request_body_respects_global_thinking_disable():
         }
     )
     body = provider._build_request_body(request)
-    assert "thinking" not in body
+    assert "extra_body" not in body
+    assert body["stream_options"] == {"include_usage": True}
 
 
 def test_preserve_unsigned_thinking_when_thinking_on(deepseek_provider):
@@ -222,10 +211,8 @@ def test_preserve_unsigned_thinking_when_thinking_on(deepseek_provider):
         }
     )
     body = deepseek_provider._build_request_body(request)
-    blocks = body["messages"][0]["content"]
-    assert len(blocks) == 2
-    assert blocks[0]["type"] == "thinking"
-    assert blocks[0]["thinking"] == "plain"
+    assert body["messages"][0]["content"] == "out"
+    assert body["messages"][0]["reasoning_content"] == "plain"
 
 
 def test_strip_redacted_thinking_when_thinking_on(deepseek_provider):
@@ -244,9 +231,7 @@ def test_strip_redacted_thinking_when_thinking_on(deepseek_provider):
         }
     )
     body = deepseek_provider._build_request_body(request)
-    types = {b["type"] for b in body["messages"][0]["content"]}
-    assert "redacted_thinking" not in types
-    assert "text" in types
+    assert body["messages"][0] == {"role": "assistant", "content": "out"}
 
 
 def test_tool_history_with_replayable_thinking_preserves_thinking(deepseek_provider):
@@ -292,17 +277,19 @@ def test_tool_history_with_replayable_thinking_preserves_thinking(deepseek_provi
 
     body = deepseek_provider._build_request_body(request)
 
-    assert body["thinking"] == {"type": "enabled", "budget_tokens": 2000}
-    assert body["context_management"] == {
-        "edits": [{"type": "clear_thinking_20251015", "keep": "all"}]
+    assert body["extra_body"]["thinking"] == {"type": "enabled"}
+    assert "context_management" not in body
+    assert "output_config" not in body
+    assistant = body["messages"][0]
+    assert assistant["content"] == ""
+    assert assistant["reasoning_content"] == "hidden"
+    assert assistant["tool_calls"][0]["function"]["name"] == "Read"
+    assert assistant["tool_calls"][0]["function"]["arguments"] == '{"file_path": "x"}'
+    assert body["messages"][1] == {
+        "role": "tool",
+        "tool_call_id": "t1",
+        "content": "ok",
     }
-    assert body["output_config"] == {"effort": "high"}
-    assistant_blocks = body["messages"][0]["content"]
-    assert [block["type"] for block in assistant_blocks] == ["thinking", "tool_use"]
-    assert assistant_blocks[0]["thinking"] == "hidden"
-    assert assistant_blocks[0]["signature"] == "sig_123"
-    assert assistant_blocks[1]["name"] == "Read"
-    assert body["messages"][1]["content"][0]["type"] == "tool_result"
 
 
 def test_tool_history_with_unsigned_thinking_preserves_thinking(deepseek_provider):
@@ -339,11 +326,8 @@ def test_tool_history_with_unsigned_thinking_preserves_thinking(deepseek_provide
 
     body = deepseek_provider._build_request_body(request)
 
-    assert body["thinking"] == {"type": "enabled"}
-    assert body["messages"][0]["content"][0] == {
-        "type": "thinking",
-        "thinking": "plain",
-    }
+    assert body["extra_body"]["thinking"] == {"type": "enabled"}
+    assert body["messages"][0]["reasoning_content"] == "plain"
 
 
 def test_tool_history_without_thinking_disables_thinking_and_hints(deepseek_provider):
@@ -395,16 +379,13 @@ def test_tool_history_without_thinking_disables_thinking_and_hints(deepseek_prov
 
     body = deepseek_provider._build_request_body(request)
 
-    assert "thinking" not in body
-    assert body["context_management"] == {
-        "edits": [{"type": "other_edit", "keep": "all"}],
-        "other": True,
-    }
-    assert body["output_config"] == {"format": "text"}
-    assert body["tools"][0]["name"] == "Read"
-    assert body["tool_choice"] == {"type": "auto"}
-    assert body["messages"][0]["content"][0]["type"] == "tool_use"
-    assert body["messages"][1]["content"][0]["type"] == "tool_result"
+    assert "extra_body" not in body
+    assert "context_management" not in body
+    assert "output_config" not in body
+    assert body["tools"][0]["function"]["name"] == "Read"
+    assert body["tool_choice"] == "auto"
+    assert body["messages"][0]["tool_calls"][0]["function"]["name"] == "Read"
+    assert body["messages"][1]["role"] == "tool"
 
 
 def test_tool_history_with_empty_thinking_disables_thinking(deepseek_provider):
@@ -441,15 +422,16 @@ def test_tool_history_with_empty_thinking_disables_thinking(deepseek_provider):
 
     body = deepseek_provider._build_request_body(request)
 
-    assert "thinking" not in body
-    assert [block["type"] for block in body["messages"][0]["content"]] == ["tool_use"]
+    assert "extra_body" not in body
+    assert "reasoning_content" not in body["messages"][0]
+    assert body["messages"][0]["tool_calls"][0]["function"]["name"] == "Read"
 
 
 def test_thinking_off_strips_thinking_history():
     provider = DeepSeekProvider(
         ProviderConfig(
             api_key="k",
-            base_url=DEEPSEEK_ANTHROPIC_DEFAULT_BASE,
+            base_url=DEEPSEEK_DEFAULT_BASE,
             rate_limit=1,
             rate_window=1,
             enable_thinking=False,
@@ -470,8 +452,7 @@ def test_thinking_off_strips_thinking_history():
         }
     )
     body = provider._build_request_body(request)
-    for b in body["messages"][0]["content"]:
-        assert b["type"] != "thinking"
+    assert "reasoning_content" not in body["messages"][0]
     assert "sec" not in str(body["messages"])
 
 
@@ -505,8 +486,8 @@ def test_passthrough_tool_use_and_result(deepseek_provider):
         }
     )
     body = deepseek_provider._build_request_body(request)
-    assert body["messages"][0]["content"][0]["type"] == "tool_use"
-    assert body["messages"][1]["content"][0]["type"] == "tool_result"
+    assert body["messages"][0]["tool_calls"][0]["function"]["name"] == "n"
+    assert body["messages"][1]["role"] == "tool"
 
 
 def test_preflight_strips_user_image():
@@ -532,7 +513,7 @@ def test_preflight_strips_user_image():
     provider = DeepSeekProvider(
         ProviderConfig(
             api_key="k",
-            base_url=DEEPSEEK_ANTHROPIC_DEFAULT_BASE,
+            base_url=DEEPSEEK_DEFAULT_BASE,
             rate_limit=1,
             rate_window=1,
         )
@@ -541,8 +522,8 @@ def test_preflight_strips_user_image():
     provider.preflight_stream(request, thinking_enabled=True)
     body = provider._build_request_body(request)
     content = body["messages"][0]["content"]
-    block_types = [b["type"] for b in content] if isinstance(content, list) else []
-    assert "image" not in block_types
+    assert "attachment omitted" in content.lower()
+    assert "image or document inputs" in content.lower()
 
 
 def test_preflight_rejects_mcp_servers():
@@ -554,7 +535,7 @@ def test_preflight_rejects_mcp_servers():
     provider = DeepSeekProvider(
         ProviderConfig(
             api_key="k",
-            base_url=DEEPSEEK_ANTHROPIC_DEFAULT_BASE,
+            base_url=DEEPSEEK_DEFAULT_BASE,
             rate_limit=1,
             rate_window=1,
         )
@@ -572,7 +553,7 @@ def test_preflight_rejects_listed_server_tools_in_tools_list():
     provider = DeepSeekProvider(
         ProviderConfig(
             api_key="k",
-            base_url=DEEPSEEK_ANTHROPIC_DEFAULT_BASE,
+            base_url=DEEPSEEK_DEFAULT_BASE,
             rate_limit=1,
             rate_window=1,
         )
@@ -608,7 +589,7 @@ def test_preflight_rejects_server_tool_result_blocks():
     provider = DeepSeekProvider(
         ProviderConfig(
             api_key="k",
-            base_url=DEEPSEEK_ANTHROPIC_DEFAULT_BASE,
+            base_url=DEEPSEEK_DEFAULT_BASE,
             rate_limit=1,
             rate_window=1,
         )
@@ -617,8 +598,7 @@ def test_preflight_rejects_server_tool_result_blocks():
         provider.preflight_stream(request)
 
 
-def test_strip_reasoning_content_not_forwarded(deepseek_provider):
-    # ``reasoning_content`` is for OpenAI helpers only, not in native body.
+def test_reasoning_content_replayed_to_openai_chat(deepseek_provider):
     request = MessagesRequest(
         model="m",
         messages=[
@@ -630,39 +610,77 @@ def test_strip_reasoning_content_not_forwarded(deepseek_provider):
         ],
     )
     body = deepseek_provider._build_request_body(request)
-    assert "reasoning_content" not in body["messages"][0]
+    assert body["messages"][0]["reasoning_content"] == "r"
 
 
 @pytest.mark.asyncio
-async def test_stream_uses_post_messages_path(deepseek_provider):
+async def test_stream_uses_chat_completions_and_maps_cache_usage(deepseek_provider):
     request = MessagesRequest(
         model="m",
         messages=[Message(role="user", content="hi")],
     )
-    called: dict[str, str] = {}
 
-    async def fake_send(request, *args, **kwargs):
-        called["path"] = request.url.path
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.is_closed = False
-        mock_resp.raise_for_status = lambda: None
+    async def fake_stream():
+        yield SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        content="hello", reasoning_content=None, tool_calls=None
+                    ),
+                    finish_reason=None,
+                )
+            ],
+            usage=None,
+        )
+        yield SimpleNamespace(
+            choices=[
+                SimpleNamespace(
+                    delta=SimpleNamespace(
+                        content=None, reasoning_content=None, tool_calls=None
+                    ),
+                    finish_reason="stop",
+                )
+            ],
+            usage=None,
+        )
+        yield SimpleNamespace(
+            choices=[],
+            usage=SimpleNamespace(
+                completion_tokens=3,
+                prompt_tokens=30,
+                prompt_cache_hit_tokens=10,
+                prompt_cache_miss_tokens=20,
+            ),
+        )
 
-        async def aiter():
-            if False:  # pragma: no cover
-                yield ""
+    create = AsyncMock(return_value=fake_stream())
+    with patch.object(deepseek_provider._client.chat.completions, "create", create):
+        chunks = [
+            chunk
+            async for chunk in deepseek_provider.stream_response(
+                request, input_tokens=7, request_id="r1"
+            )
+        ]
 
-        mock_resp.aiter_lines = aiter
-        mock_resp.aclose = AsyncMock()
-        return mock_resp
+    create.assert_awaited_once()
+    await_args = create.await_args
+    assert await_args is not None
+    assert await_args.kwargs["model"] == "m"
+    assert await_args.kwargs["stream"] is True
+    assert await_args.kwargs["stream_options"] == {"include_usage": True}
+    parsed = parse_sse_text("".join(chunks))
+    usage = next(
+        event.data["usage"] for event in parsed if event.event == "message_delta"
+    )
+    assert usage == {
+        "input_tokens": 7,
+        "output_tokens": 3,
+        "cache_read_input_tokens": 10,
+        "cache_creation_input_tokens": 20,
+    }
 
-    deepseek_provider._client.send = fake_send
-    _ = [x async for x in deepseek_provider.stream_response(request, request_id="r1")]
 
-    assert called["path"] == "/anthropic/messages"
-
-
-def test_drops_extra_body_from_canonical_request(deepseek_provider):
+def test_preserves_extra_body_for_openai_chat_request(deepseek_provider):
     raw = {
         "model": "m",
         "max_tokens": 3,
@@ -671,7 +689,7 @@ def test_drops_extra_body_from_canonical_request(deepseek_provider):
     }
     r = MessagesRequest.model_validate(raw)
     body = deepseek_provider._build_request_body(r)
-    assert "extra_body" not in body
+    assert body["extra_body"] == {"note": 1, "thinking": {"type": "enabled"}}
 
 
 def test_normalizes_tool_result_content_array_to_string(deepseek_provider):
@@ -710,10 +728,8 @@ def test_normalizes_tool_result_content_array_to_string(deepseek_provider):
 
     body = deepseek_provider._build_request_body(request)
 
-    # Verify tool_result content is now a string
-    user_msg = body["messages"][1]
-    tool_result = user_msg["content"][0]
-    assert tool_result["type"] == "tool_result"
+    tool_result = body["messages"][1]
+    assert tool_result["role"] == "tool"
     assert isinstance(tool_result["content"], str)
     assert "file1.txt" in tool_result["content"]
     assert "file2.txt" in tool_result["content"]
@@ -746,11 +762,11 @@ def test_strips_document_blocks_for_deepseek(deepseek_provider):
 
     body = deepseek_provider._build_request_body(request)
 
-    # Document block should be stripped; tool_result preserved
-    content = body["messages"][0]["content"]
-    block_types = [block["type"] for block in content]
-    assert "document" not in block_types
-    assert "tool_result" in block_types
+    assert body["messages"][0] == {
+        "role": "tool",
+        "tool_call_id": "t1",
+        "content": "PDF text extracted",
+    }
 
 
 def test_strips_image_blocks_for_deepseek(deepseek_provider):
@@ -779,10 +795,7 @@ def test_strips_image_blocks_for_deepseek(deepseek_provider):
 
     body = deepseek_provider._build_request_body(request)
 
-    content = body["messages"][0]["content"]
-    block_types = [block["type"] for block in content]
-    assert "image" not in block_types
-    assert "text" in block_types
+    assert body["messages"][0] == {"role": "user", "content": "describe this"}
 
 
 def test_normalizes_tool_result_content_dict_to_string(deepseek_provider):
@@ -818,10 +831,8 @@ def test_normalizes_tool_result_content_dict_to_string(deepseek_provider):
 
     body = deepseek_provider._build_request_body(request)
 
-    # Verify tool_result content is now a JSON string
-    user_msg = body["messages"][1]
-    tool_result = user_msg["content"][0]
-    assert tool_result["type"] == "tool_result"
+    tool_result = body["messages"][1]
+    assert tool_result["role"] == "tool"
     assert isinstance(tool_result["content"], str)
     assert "status" in tool_result["content"]
     assert "success" in tool_result["content"]
@@ -870,8 +881,8 @@ def test_strips_image_block_inside_tool_result(deepseek_provider):
 
     body = deepseek_provider._build_request_body(request)
 
-    tool_result = body["messages"][1]["content"][0]
-    assert tool_result["type"] == "tool_result"
+    tool_result = body["messages"][1]
+    assert tool_result["role"] == "tool"
     # After stripping + string-normalization, no base64/image marker survives.
     assert isinstance(tool_result["content"], str)
     assert "screenshot saved" in tool_result["content"]
@@ -921,8 +932,8 @@ def test_image_only_tool_result_replaced_with_placeholder(deepseek_provider):
 
     body = deepseek_provider._build_request_body(request)
 
-    tool_result = body["messages"][1]["content"][0]
-    assert tool_result["type"] == "tool_result"
+    tool_result = body["messages"][1]
+    assert tool_result["role"] == "tool"
     assert isinstance(tool_result["content"], str)
     assert tool_result["content"] != ""
     assert "attachment omitted" in tool_result["content"].lower()
@@ -972,8 +983,8 @@ def test_document_only_tool_result_replaced_with_generic_placeholder(
 
     body = deepseek_provider._build_request_body(request)
 
-    tool_result = body["messages"][1]["content"][0]
-    assert tool_result["type"] == "tool_result"
+    tool_result = body["messages"][1]
+    assert tool_result["role"] == "tool"
     assert isinstance(tool_result["content"], str)
     assert "attachment omitted" in tool_result["content"].lower()
     assert "document inputs" in tool_result["content"].lower()
@@ -1006,10 +1017,8 @@ def test_image_only_message_replaced_with_placeholder(deepseek_provider):
     body = deepseek_provider._build_request_body(request)
 
     content = body["messages"][0]["content"]
-    assert len(content) == 1
-    assert content[0]["type"] == "text"
-    assert "attachment omitted" in content[0]["text"].lower()
-    assert "image or document inputs" in content[0]["text"].lower()
+    assert "attachment omitted" in content.lower()
+    assert "image or document inputs" in content.lower()
 
 
 def test_document_only_message_replaced_with_placeholder(deepseek_provider):
@@ -1034,10 +1043,8 @@ def test_document_only_message_replaced_with_placeholder(deepseek_provider):
     body = deepseek_provider._build_request_body(request)
 
     content = body["messages"][0]["content"]
-    assert len(content) == 1
-    assert content[0]["type"] == "text"
-    assert "attachment omitted" in content[0]["text"].lower()
-    assert "document inputs" in content[0]["text"].lower()
+    assert "attachment omitted" in content.lower()
+    assert "document inputs" in content.lower()
 
 
 def test_warns_when_stripping_attachment_blocks(deepseek_provider, caplog):

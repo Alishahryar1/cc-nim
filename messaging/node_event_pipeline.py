@@ -10,7 +10,7 @@ from loguru import logger
 from core.trace import trace_event
 
 from .cli_event_constants import TRANSCRIPT_EVENT_TYPES, get_status_for_event
-from .platforms.base import ManagedClaudeSessionManagerProtocol
+from .managed_protocols import ManagedClaudeSessionManagerProtocol
 from .safe_diagnostics import text_len_hint
 from .session import SessionStore
 from .transcript import TranscriptBuffer
@@ -51,7 +51,7 @@ async def handle_session_info_event(
             MessageState.IN_PROGRESS,
             session_id=real_session_id,
         )
-        session_store.save_tree(tree.root_id, tree.to_dict())
+        session_store.save_tree_snapshot(tree.snapshot())
 
     return real_session_id, None
 
@@ -101,7 +101,7 @@ async def process_parsed_cli_event(
                 MessageState.COMPLETED,
                 session_id=captured_session_id,
             )
-            session_store.save_tree(tree.root_id, tree.to_dict())
+            session_store.save_tree_snapshot(tree.snapshot())
     elif ptype == "error":
         error_msg = parsed.get("message", "Unknown error")
         em = error_msg if isinstance(error_msg, str) else str(error_msg)

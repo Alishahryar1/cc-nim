@@ -7,9 +7,8 @@ import uuid
 from collections.abc import Callable, Iterator
 from typing import Any
 
-from core.anthropic import SSEBuilder
-from core.anthropic.stream_recovery import (
-    parse_complete_tool_input,
+from core.anthropic.streaming import (
+    AnthropicStreamLedger,
     tool_schemas_by_name,
 )
 
@@ -17,27 +16,27 @@ RecordToolExtraContent = Callable[[str, dict[str, Any]], None]
 
 
 def iter_heuristic_tool_use_sse(
-    sse: SSEBuilder, tool_use: dict[str, Any]
+    ledger: AnthropicStreamLedger, tool_use: dict[str, Any]
 ) -> Iterator[str]:
     """Emit SSE for one heuristic tool_use block."""
     if tool_use.get("name") == "Task" and isinstance(tool_use.get("input"), dict):
         task_input = tool_use["input"]
         if task_input.get("run_in_background") is not False:
             task_input["run_in_background"] = False
-    yield from sse.close_content_blocks()
-    block_idx = sse.blocks.allocate_index()
-    yield sse.content_block_start(
+    yield from ledger.close_content_blocks()
+    block_idx = ledger.blocks.allocate_index()
+    yield ledger.content_block_start(
         block_idx,
         "tool_use",
         id=tool_use["id"],
         name=tool_use["name"],
     )
-    yield sse.content_block_delta(
+    yield ledger.content_block_delta(
         block_idx,
         "input_json_delta",
         json.dumps(tool_use["input"]),
     )
-    yield sse.content_block_stop(block_idx)
+    yield ledger.content_block_stop(block_idx)
 
 
 def tool_call_extra_content(tool_call: Any) -> dict[str, Any] | None:
@@ -65,35 +64,27 @@ def tool_call_extra_content(tool_call: Any) -> dict[str, Any] | None:
     return None
 
 
-def has_committed_sse_output(sse: SSEBuilder) -> bool:
+def has_committed_sse_output(ledger: AnthropicStreamLedger) -> bool:
     """Return whether any assistant content escaped the builder."""
     return (
-        sse.blocks.text_index != -1
-        or sse.blocks.thinking_index != -1
-        or sse.blocks.has_emitted_tool_block()
+        ledger.blocks.text_index != -1
+        or ledger.blocks.thinking_index != -1
+        or ledger.has_emitted_tool_block()
     )
 
 
-def started_tool_states(sse: SSEBuilder) -> list[tuple[int, Any]]:
+def started_tool_states(ledger: AnthropicStreamLedger) -> list[tuple[int, Any]]:
     """Return started tool states in stream order."""
     return [
         (tool_index, state)
-        for tool_index, state in sse.blocks.tool_states.items()
+        for tool_index, state in ledger.blocks.tool_states.items()
         if state.started
     ]
 
 
-def all_started_tools_complete(sse: SSEBuilder, request: Any) -> bool:
+def all_emitted_tools_complete(ledger: AnthropicStreamLedger, request: Any) -> bool:
     """Return whether every emitted tool block has schema-valid input."""
-    schemas = tool_schemas_by_name(request)
-    started = started_tool_states(sse)
-    if not started:
-        return False
-    for _, state in started:
-        raw = "".join(state.contents)
-        if parse_complete_tool_input(raw, state.name, schemas) is None:
-            return False
-    return True
+    return ledger.can_salvage_tool_use(tool_schemas_by_name(request))
 
 
 class OpenAIToolCallAssembler:
@@ -107,7 +98,7 @@ class OpenAIToolCallAssembler:
     def process_tool_call(
         self,
         tc: dict[str, Any],
-        sse: SSEBuilder,
+        ledger: AnthropicStreamLedger,
         *,
         tool_argument_aliases: dict[str, dict[str, str]] | None = None,
         tool_argument_alias_buffers: dict[int, str] | None = None,
@@ -116,14 +107,14 @@ class OpenAIToolCallAssembler:
         raw_index = tc.get("index", 0)
         tc_index = raw_index if isinstance(raw_index, int) else 0
         if tc_index < 0:
-            tc_index = len(sse.blocks.tool_states)
+            tc_index = len(ledger.blocks.tool_states)
 
         fn_delta = tc.get("function", {})
         incoming_name = fn_delta.get("name")
         arguments = fn_delta.get("arguments", "") or ""
 
         if tc.get("id") is not None:
-            sse.blocks.set_stream_tool_id(tc_index, tc.get("id"))
+            ledger.blocks.set_stream_tool_id(tc_index, tc.get("id"))
 
         raw_extra_content = tc.get("extra_content")
         extra_content = (
@@ -132,12 +123,12 @@ class OpenAIToolCallAssembler:
             else None
         )
         if extra_content:
-            sse.blocks.set_tool_extra_content(tc_index, extra_content)
+            ledger.blocks.set_tool_extra_content(tc_index, extra_content)
 
         if incoming_name is not None:
-            sse.blocks.register_tool_name(tc_index, incoming_name)
+            ledger.blocks.register_tool_name(tc_index, incoming_name)
 
-        state = sse.blocks.tool_states.get(tc_index)
+        state = ledger.blocks.tool_states.get(tc_index)
         resolved_id = (state.tool_id if state and state.tool_id else None) or tc.get(
             "id"
         )
@@ -151,51 +142,51 @@ class OpenAIToolCallAssembler:
                 start_extra_content = state.extra_content if state else extra_content
                 if start_extra_content:
                     self._record_tool_call_extra_content(tool_id, start_extra_content)
-                yield sse.start_tool_block(
+                yield ledger.start_tool_block(
                     tc_index,
                     tool_id,
                     display_name,
                     extra_content=start_extra_content,
                 )
-                state = sse.blocks.tool_states[tc_index]
+                state = ledger.blocks.tool_states[tc_index]
                 if state.pre_start_args:
                     pre = state.pre_start_args
                     state.pre_start_args = ""
                     yield from self._emit_tool_arg_delta(
-                        sse,
+                        ledger,
                         tc_index,
                         pre,
                         tool_argument_aliases=tool_argument_aliases,
                         tool_argument_alias_buffers=tool_argument_alias_buffers,
                     )
 
-        state = sse.blocks.tool_states.get(tc_index)
+        state = ledger.blocks.tool_states.get(tc_index)
         if state is not None and state.tool_id and extra_content:
             self._record_tool_call_extra_content(state.tool_id, extra_content)
         if not arguments:
             return
         if state is None or not state.started:
-            state = sse.blocks.ensure_tool_state(tc_index)
+            state = ledger.blocks.ensure_tool_state(tc_index)
             if not (resolved_name or "").strip():
                 state.pre_start_args += arguments
                 return
 
         yield from self._emit_tool_arg_delta(
-            sse,
+            ledger,
             tc_index,
             arguments,
             tool_argument_aliases=tool_argument_aliases,
             tool_argument_alias_buffers=tool_argument_alias_buffers,
         )
 
-    def flush_task_arg_buffers(self, sse: SSEBuilder) -> Iterator[str]:
+    def flush_task_arg_buffers(self, ledger: AnthropicStreamLedger) -> Iterator[str]:
         """Emit buffered Task args as a single JSON delta."""
-        for tool_index, out in sse.blocks.flush_task_arg_buffers():
-            yield sse.emit_tool_delta(tool_index, out)
+        for tool_index, out in ledger.blocks.flush_task_arg_buffers():
+            yield ledger.emit_tool_delta(tool_index, out)
 
     def flush_tool_argument_alias_buffers(
         self,
-        sse: SSEBuilder,
+        ledger: AnthropicStreamLedger,
         tool_argument_aliases: dict[str, dict[str, str]],
         tool_argument_alias_buffers: dict[int, str],
     ) -> Iterator[str]:
@@ -204,14 +195,14 @@ class OpenAIToolCallAssembler:
             if not buffered_args:
                 tool_argument_alias_buffers.pop(tool_index, None)
                 continue
-            state = sse.blocks.tool_states.get(tool_index)
+            state = ledger.blocks.tool_states.get(tool_index)
             if state is None or state.name == "Task":
                 continue
             aliases = tool_argument_aliases.get(state.name, {})
             if not aliases:
                 continue
             restored = self._restore_aliased_tool_arguments(buffered_args, aliases)
-            yield sse.emit_tool_delta(
+            yield ledger.emit_tool_delta(
                 tool_index,
                 restored if restored is not None else buffered_args,
             )
@@ -219,7 +210,7 @@ class OpenAIToolCallAssembler:
 
     def _emit_tool_arg_delta(
         self,
-        sse: SSEBuilder,
+        ledger: AnthropicStreamLedger,
         tc_index: int,
         args: str,
         *,
@@ -229,13 +220,13 @@ class OpenAIToolCallAssembler:
         """Emit one argument fragment for a started tool block."""
         if not args:
             return
-        state = sse.blocks.tool_states.get(tc_index)
+        state = ledger.blocks.tool_states.get(tc_index)
         if state is None:
             return
         if state.name == "Task":
-            parsed = sse.blocks.buffer_task_args(tc_index, args)
+            parsed = ledger.blocks.buffer_task_args(tc_index, args)
             if parsed is not None:
-                yield sse.emit_tool_delta(tc_index, json.dumps(parsed))
+                yield ledger.emit_tool_delta(tc_index, json.dumps(parsed))
             return
         aliases = (
             tool_argument_aliases.get(state.name, {}) if tool_argument_aliases else {}
@@ -244,7 +235,7 @@ class OpenAIToolCallAssembler:
             if tool_argument_alias_buffers is None:
                 restored = self._restore_aliased_tool_arguments(args, aliases)
                 if restored is not None:
-                    yield sse.emit_tool_delta(tc_index, restored)
+                    yield ledger.emit_tool_delta(tc_index, restored)
                 return
 
             buffered_args = tool_argument_alias_buffers.get(tc_index, "") + args
@@ -253,9 +244,9 @@ class OpenAIToolCallAssembler:
                 tool_argument_alias_buffers[tc_index] = buffered_args
                 return
             tool_argument_alias_buffers.pop(tc_index, None)
-            yield sse.emit_tool_delta(tc_index, restored)
+            yield ledger.emit_tool_delta(tc_index, restored)
             return
-        yield sse.emit_tool_delta(tc_index, args)
+        yield ledger.emit_tool_delta(tc_index, args)
 
     def _restore_aliased_tool_arguments(
         self, argument_json: str, aliases: dict[str, str]

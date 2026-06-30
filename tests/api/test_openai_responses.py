@@ -7,8 +7,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.app import create_app
-from core.anthropic.sse import format_sse_event
 from core.anthropic.stream_contracts import parse_sse_text
+from core.anthropic.streaming import format_sse_event
 
 
 class FakeProvider:
@@ -81,7 +81,7 @@ def test_create_response_stream_bypasses_local_message_optimizations() -> None:
     with (
         patch("api.dependencies.resolve_provider", return_value=provider),
         patch(
-            "api.request_pipeline.try_optimizations",
+            "api.handlers.messages.try_optimizations",
             side_effect=AssertionError("Responses must not use message optimizations"),
         ),
         TestClient(app) as client,
@@ -192,6 +192,40 @@ def test_create_response_tool_stream_emits_function_call() -> None:
     assert call["type"] == "function_call"
     assert call["call_id"] == "toolu_1"
     assert call["arguments"] == '{"value":"FCC"}'
+
+
+def test_create_response_malformed_provider_function_call_fails_stream() -> None:
+    provider = FakeProvider(
+        _anthropic_tool_stream(partial_json='{"value":"FCC" "bad"}')
+    )
+    app = create_app(lifespan_enabled=False)
+    with (
+        patch("api.dependencies.resolve_provider", return_value=provider),
+        TestClient(app) as client,
+    ):
+        response = client.post(
+            "/v1/responses",
+            json={
+                "model": "nvidia_nim/test-model",
+                "input": "Use echo",
+                "stream": True,
+                "tools": [
+                    {
+                        "type": "function",
+                        "name": "echo",
+                        "parameters": {"type": "object", "properties": {}},
+                    }
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    events = parse_sse_text(response.text)
+    assert events[-1].event == "response.failed"
+    failed = events[-1].data["response"]
+    assert failed["status"] == "failed"
+    assert failed["output"] == []
+    assert "replay-unsafe Responses output" in failed["error"]["message"]
 
 
 def test_create_response_accepts_codex_namespace_tool_request() -> None:
@@ -379,6 +413,45 @@ def test_create_response_replays_prior_reasoning_as_reasoning_content() -> None:
     assert routed.messages[2].reasoning_content == "Use the result."
     assert routed.messages[3].role == "user"
     assert routed.messages[3].content == "continue"
+
+
+def test_create_response_quarantines_malformed_prior_function_call() -> None:
+    provider = FakeProvider(_anthropic_text_stream("done"))
+    app = create_app(lifespan_enabled=False)
+    with (
+        patch("api.dependencies.resolve_provider", return_value=provider),
+        TestClient(app) as client,
+    ):
+        response = client.post(
+            "/v1/responses",
+            json={
+                "model": "nvidia_nim/test-model",
+                "input": [
+                    {"role": "user", "content": "hello"},
+                    {
+                        "type": "function_call",
+                        "call_id": "call_bad",
+                        "name": "echo",
+                        "arguments": "{",
+                    },
+                    {
+                        "type": "function_call_output",
+                        "call_id": "call_bad",
+                        "output": "stale output",
+                    },
+                    {"role": "user", "content": "continue"},
+                ],
+                "stream": True,
+            },
+        )
+
+    assert response.status_code == 200
+    routed = provider.requests[0]
+    assert [message.role for message in routed.messages] == ["user", "user"]
+    assert routed.messages[0].content == "hello"
+    assert routed.messages[1].content == "continue"
+    completed = parse_sse_text(response.text)[-1].data["response"]
+    assert completed["output"][0]["content"][0]["text"] == "done"
 
 
 @pytest.mark.parametrize(

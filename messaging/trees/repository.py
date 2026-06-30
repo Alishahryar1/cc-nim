@@ -2,7 +2,9 @@
 
 from loguru import logger
 
-from .data import MessageNode, MessageState, MessageTree
+from .node import MessageNode, MessageState
+from .runtime import MessageTree
+from .snapshot import ConversationSnapshot
 
 
 class TreeRepository:
@@ -157,20 +159,19 @@ class TreeRepository:
                         msg_ids.add(str(node.status_message_id))
         return msg_ids
 
-    def to_dict(self) -> dict:
-        """Serialize all trees."""
-        return {
-            "trees": {rid: tree.to_dict() for rid, tree in self._trees.items()},
-            "node_to_tree": self._node_to_tree.copy(),
-        }
+    def snapshot(self) -> ConversationSnapshot:
+        """Serialize all trees into a typed conversation snapshot."""
+        return ConversationSnapshot(
+            trees={root_id: tree.snapshot() for root_id, tree in self._trees.items()}
+        )
 
     @classmethod
-    def from_dict(cls, data: dict) -> TreeRepository:
-        """Deserialize from dictionary."""
+    def from_snapshot(cls, snapshot: ConversationSnapshot) -> TreeRepository:
+        """Restore repository state from a typed conversation snapshot."""
         repo = cls()
-        for root_id, tree_data in data.get("trees", {}).items():
-            repo._trees[root_id] = MessageTree.from_dict(tree_data)
-        repo._node_to_tree = data.get("node_to_tree", {})
+        for root_id, tree_snapshot in snapshot.trees.items():
+            repo._trees[root_id] = MessageTree.from_snapshot(tree_snapshot)
+        repo._node_to_tree = snapshot.derive_node_to_tree()
         return repo
 
 

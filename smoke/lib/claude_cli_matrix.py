@@ -12,6 +12,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from smoke.lib.child_process import run_captured_text
 from smoke.lib.config import ProviderModel, SmokeConfig, redacted
 from smoke.lib.server import RunningServer
 
@@ -132,12 +133,10 @@ def run_claude_cli(
 
     started = time.monotonic()
     try:
-        result = subprocess.run(
+        result = run_captured_text(
             cmd,
             cwd=cwd,
             env=env,
-            capture_output=True,
-            text=True,
             timeout=config.timeout_s,
             check=False,
         )
@@ -154,8 +153,8 @@ def run_claude_cli(
     return ClaudeCliRun(
         command=tuple(cmd),
         returncode=result.returncode,
-        stdout=result.stdout,
-        stderr=result.stderr,
+        stdout=_coerce_timeout_text(result.stdout),
+        stderr=_coerce_timeout_text(result.stderr),
         duration_s=time.monotonic() - started,
     )
 
@@ -773,7 +772,9 @@ def _marker(scope: str, prefix: str) -> str:
     return f"FCC_{scope}_{prefix}_{uuid.uuid4().hex[:8].upper()}"
 
 
-def _excerpt(value: str, *, max_chars: int = 2400) -> str:
+def _excerpt(value: str | None, *, max_chars: int = 2400) -> str:
+    if value is None:
+        value = ""
     if len(value) <= max_chars:
         return redacted(value)
     return redacted(value[-max_chars:])

@@ -9,7 +9,11 @@ from typing import Any
 
 from loguru import logger
 
-from cli.claude_env import CLAUDE_CODE_AUTO_COMPACT_WINDOW, claude_auth_token
+from cli.claude_env import (
+    CLAUDE_BINARY_NAME,
+    CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+    claude_auth_token,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,7 +43,7 @@ class ManagedClaudeConfig:
     api_url: str
     allowed_dirs: list[str] = field(default_factory=list)
     plans_directory: str | None = None
-    claude_bin: str = "claude"
+    claude_bin: str = CLAUDE_BINARY_NAME
     auth_token: str = ""
 
 

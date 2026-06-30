@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from core.anthropic.stream_contracts import parse_sse_text
 from providers.base import ProviderConfig
 from providers.ollama import OLLAMA_DEFAULT_BASE, OllamaProvider
 from tests.stream_contract import assert_canonical_stream_error_envelope
@@ -184,8 +185,12 @@ async def test_stream_response(ollama_provider):
     assert kwargs["json"]["stream"] is True
     assert "extra_body" not in kwargs["json"]
     assert kwargs["json"]["thinking"] == {"type": "enabled"}
-    assert len(events) == 9
-    assert events[0] == "event: message_start\n"
+    assert [event.event for event in parse_sse_text("".join(events))] == [
+        "message_start",
+        "content_block_delta",
+        "message_stop",
+    ]
+    assert "Hello World" in "".join(events)
 
 
 @pytest.mark.asyncio

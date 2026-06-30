@@ -203,6 +203,10 @@ def parse_arguments(value: Any) -> dict[str, Any]:
     return parsed
 
 
+def normalized_function_call_arguments(value: Any) -> str:
+    return json.dumps(parse_arguments(value), separators=(",", ":"))
+
+
 def custom_tool_input_to_anthropic(value: Any) -> dict[str, str]:
     return {"input": custom_tool_input_text(value)}
 

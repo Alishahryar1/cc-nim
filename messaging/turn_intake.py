@@ -16,7 +16,7 @@ from .command_dispatcher import (
     parse_command_base,
 )
 from .models import IncomingMessage
-from .platforms.base import MessagingPlatform
+from .platforms.ports import OutboundMessenger
 from .safe_diagnostics import format_exception_for_log
 from .session import SessionStore
 from .trees import MessageNode, MessageState, MessageTree, TreeQueueManager
@@ -28,7 +28,8 @@ class MessagingTurnIntake:
     def __init__(
         self,
         *,
-        platform: MessagingPlatform,
+        platform_name: str,
+        outbound: OutboundMessenger,
         session_store: SessionStore,
         command_context: MessagingCommandContext,
         get_tree_queue: Callable[[], TreeQueueManager],
@@ -38,7 +39,8 @@ class MessagingTurnIntake:
         record_outgoing_message: Callable[[str, str, str | None, str], None],
         log_messaging_error_details: bool = False,
     ) -> None:
-        self.platform = platform
+        self.platform_name = platform_name
+        self.outbound = outbound
         self.session_store = session_store
         self._command_context = command_context
         self._get_tree_queue = get_tree_queue
@@ -99,7 +101,7 @@ class MessagingTurnIntake:
         status_text = self._get_initial_status(tree, parent_node_id)
         if incoming.status_message_id:
             status_msg_id = incoming.status_message_id
-            await self.platform.queue_edit_message(
+            await self.outbound.queue_edit_message(
                 incoming.chat_id,
                 status_msg_id,
                 status_text,
@@ -107,7 +109,7 @@ class MessagingTurnIntake:
                 fire_and_forget=False,
             )
         else:
-            status_msg_id = await self.platform.queue_send_message(
+            status_msg_id = await self.outbound.queue_send_message(
                 incoming.chat_id,
                 status_text,
                 reply_to=incoming.message_id,
@@ -127,8 +129,6 @@ class MessagingTurnIntake:
                 status_message_id=status_msg_id,
             )
             tree_queue.register_node(status_msg_id, tree.root_id)
-            self.session_store.register_node(status_msg_id, tree.root_id)
-            self.session_store.register_node(node_id, tree.root_id)
         elif status_msg_id:
             tree = await tree_queue.create_tree(
                 node_id=node_id,
@@ -136,11 +136,9 @@ class MessagingTurnIntake:
                 status_message_id=status_msg_id,
             )
             tree_queue.register_node(status_msg_id, tree.root_id)
-            self.session_store.register_node(node_id, tree.root_id)
-            self.session_store.register_node(status_msg_id, tree.root_id)
 
         if tree:
-            self.session_store.save_tree(tree.root_id, tree.to_dict())
+            self.session_store.save_tree_snapshot(tree.snapshot())
 
         was_queued = await tree_queue.enqueue(
             node_id=node_id,
@@ -152,13 +150,13 @@ class MessagingTurnIntake:
             trace_event(
                 stage="routing",
                 event="turn.queued",
-                source=getattr(self.platform, "name", "messaging"),
+                source=self.platform_name,
                 chat_id=incoming.chat_id,
                 platform_message_id=node_id,
                 status_message_id=status_msg_id,
                 queue_size=queue_size,
             )
-            await self.platform.queue_edit_message(
+            await self.outbound.queue_edit_message(
                 incoming.chat_id,
                 status_msg_id,
                 self._format_status(
@@ -189,8 +187,8 @@ class MessagingTurnIntake:
             if not node or node.state != MessageState.PENDING:
                 continue
             position += 1
-            self.platform.fire_and_forget(
-                self.platform.queue_edit_message(
+            self.outbound.fire_and_forget(
+                self.outbound.queue_edit_message(
                     node.incoming.chat_id,
                     node.status_message_id,
                     self._format_status(
@@ -205,8 +203,8 @@ class MessagingTurnIntake:
         node = tree.get_node(node_id)
         if not node or node.state == MessageState.ERROR:
             return
-        self.platform.fire_and_forget(
-            self.platform.queue_edit_message(
+        self.outbound.fire_and_forget(
+            self.outbound.queue_edit_message(
                 node.incoming.chat_id,
                 node.status_message_id,
                 self._format_status("🔄", "Processing...", None),

@@ -2,19 +2,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from messaging.platforms.telegram import TelegramPlatform
+from messaging.platforms.telegram import TelegramRuntime
 
 
 @pytest.fixture
 def telegram_platform():
     with patch("messaging.platforms.telegram.TELEGRAM_AVAILABLE", True):
-        platform = TelegramPlatform(bot_token="test_token", allowed_user_id="12345")
+        platform = TelegramRuntime(bot_token="test_token", allowed_user_id="12345")
         return platform
 
 
 def test_telegram_platform_init_no_token():
     with patch.dict("os.environ", {}, clear=True):
-        platform = TelegramPlatform(bot_token=None)
+        platform = TelegramRuntime(bot_token=None)
         assert platform.bot_token is None
 
 
@@ -47,7 +47,7 @@ async def test_telegram_platform_send_message_success(telegram_platform):
     telegram_platform._application = MagicMock()
     telegram_platform._application.bot = mock_bot
 
-    msg_id = await telegram_platform.send_message("chat_1", "hello")
+    msg_id = await telegram_platform.outbound.send_message("chat_1", "hello")
 
     assert msg_id == "999"
     mock_bot.send_message.assert_called_once_with(
@@ -64,7 +64,7 @@ async def test_telegram_platform_edit_message_success(telegram_platform):
     telegram_platform._application = MagicMock()
     telegram_platform._application.bot = mock_bot
 
-    await telegram_platform.edit_message("chat_1", "999", "new text")
+    await telegram_platform.outbound.edit_message("chat_1", "999", "new text")
 
     mock_bot.edit_message_text.assert_called_once_with(
         chat_id="chat_1", message_id=999, text="new text", parse_mode="MarkdownV2"
@@ -76,7 +76,9 @@ async def test_telegram_platform_queue_send_message(telegram_platform):
     mock_limiter = AsyncMock()
     telegram_platform._limiter = mock_limiter
 
-    await telegram_platform.queue_send_message("chat_1", "hello", fire_and_forget=False)
+    await telegram_platform.outbound.queue_send_message(
+        "chat_1", "hello", fire_and_forget=False
+    )
 
     mock_limiter.enqueue.assert_called_once()
 

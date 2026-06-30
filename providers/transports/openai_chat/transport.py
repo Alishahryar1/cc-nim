@@ -9,7 +9,7 @@ from typing import Any
 import httpx
 from openai import AsyncOpenAI
 
-from core.anthropic import SSEBuilder
+from core.anthropic.streaming import AnthropicStreamLedger
 from providers.base import BaseProvider, ProviderConfig
 from providers.error_mapping import (
     extract_provider_error_detail,
@@ -19,7 +19,7 @@ from providers.error_mapping import (
 from providers.model_listing import extract_openai_model_ids
 from providers.rate_limit import GlobalRateLimiter
 
-from .stream import OpenAIChatStreamRunner
+from .stream import OpenAIChatStreamAdapter
 
 
 class OpenAIChatTransport(BaseProvider):
@@ -85,7 +85,7 @@ class OpenAIChatTransport(BaseProvider):
         """Build request body. Must be implemented by subclasses."""
 
     def _handle_extra_reasoning(
-        self, delta: Any, sse: SSEBuilder, *, thinking_enabled: bool
+        self, delta: Any, ledger: AnthropicStreamLedger, *, thinking_enabled: bool
     ) -> Iterator[str]:
         """Hook for provider-specific reasoning."""
         return iter(())
@@ -105,6 +105,10 @@ class OpenAIChatTransport(BaseProvider):
 
     def _tool_argument_aliases(self, body: dict[str, Any]) -> dict[str, dict[str, str]]:
         """Return provider-specific per-tool argument aliases for this request."""
+        return {}
+
+    def _anthropic_usage_fields(self, usage_info: Any) -> dict[str, int]:
+        """Return provider-specific Anthropic usage fields for final SSE usage."""
         return {}
 
     async def _create_stream(self, body: dict) -> tuple[Any, dict]:
@@ -145,12 +149,12 @@ class OpenAIChatTransport(BaseProvider):
         thinking_enabled: bool | None = None,
     ) -> AsyncIterator[str]:
         """Stream response in Anthropic SSE format."""
-        runner = OpenAIChatStreamRunner(
+        adapter = OpenAIChatStreamAdapter(
             self,
             request=request,
             input_tokens=input_tokens,
             request_id=request_id,
             thinking_enabled=thinking_enabled,
         )
-        async for event in runner.run():
+        async for event in adapter.run():
             yield event

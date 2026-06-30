@@ -7,7 +7,7 @@ from collections.abc import Callable
 
 from loguru import logger
 
-from .platforms.base import MessagingPlatform
+from .platforms.ports import OutboundMessenger
 from .safe_diagnostics import format_exception_for_log
 from .transcript import RenderCtx, TranscriptBuffer
 
@@ -18,7 +18,7 @@ class ThrottledTranscriptEditor:
     def __init__(
         self,
         *,
-        platform: MessagingPlatform,
+        outbound: OutboundMessenger,
         parse_mode: str | None,
         get_limit_chars: Callable[[], int],
         transcript: TranscriptBuffer,
@@ -29,7 +29,7 @@ class ThrottledTranscriptEditor:
         debug_platform_edits: bool,
         log_messaging_error_details: bool = False,
     ) -> None:
-        self._platform = platform
+        self._outbound = outbound
         self._parse_mode = parse_mode
         self._get_limit_chars = get_limit_chars
         self._transcript = transcript
@@ -85,7 +85,7 @@ class ThrottledTranscriptEditor:
                 logger.debug("PLATFORM_EDIT_TEXT:\n{}", display)
             self._last_displayed_text = display
             try:
-                await self._platform.queue_edit_message(
+                await self._outbound.queue_edit_message(
                     self._chat_id,
                     self._status_msg_id,
                     display,

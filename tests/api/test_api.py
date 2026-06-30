@@ -31,10 +31,10 @@ def client():
     with (
         patch("api.dependencies.resolve_provider", return_value=mock_provider),
         patch(
-            "providers.registry.ProviderRegistry.validate_configured_models",
+            "providers.runtime.ProviderRuntime.validate_configured_models",
             new_callable=AsyncMock,
         ),
-        patch("providers.registry.ProviderRegistry.start_model_list_refresh"),
+        patch("providers.runtime.ProviderRuntime.start_model_list_refresh"),
         TestClient(app) as test_client,
     ):
         yield test_client

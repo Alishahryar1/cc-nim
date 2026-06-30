@@ -7,8 +7,13 @@ import httpx
 import pytest
 
 from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
-from core.anthropic.sse import format_sse_event
 from core.anthropic.stream_contracts import event_index, parse_sse_text
+from core.anthropic.streaming import (
+    MIDSTREAM_RECOVERY_ATTEMPTS,
+    AnthropicStreamLedger,
+    TruncatedProviderStreamError,
+    format_sse_event,
+)
 from providers.base import ProviderConfig
 from providers.transports.anthropic_messages import AnthropicMessagesTransport
 from providers.transports.anthropic_messages.recovery import AnthropicMessagesRecovery
@@ -206,13 +211,9 @@ async def test_stream_uses_retry_builds_request_and_closes_response(
     ):
         events = [event async for event in provider.stream_response(req)]
 
-    assert events == [
-        "event: message_start\n",
-        'data: {"type":"message_start"}\n',
-        "\n",
-        "event: message_stop\n",
-        'data: {"type":"message_stop"}\n',
-        "\n",
+    assert [event.event for event in parse_sse_text("".join(events))] == [
+        "message_start",
+        "message_stop",
     ]
     assert response.is_closed
     assert mock_build.call_args.args[:2] == ("POST", "/messages")
@@ -311,6 +312,145 @@ async def test_midstream_error_closes_open_block_and_uses_fresh_content_index(
     assert event_index(starts[0]) == 0
     assert event_index(starts[-1]) == 1
     assert {event_index(e) for e in parsed if e.event == "content_block_stop"} == {0, 1}
+
+
+@pytest.mark.asyncio
+async def test_midstream_error_after_native_message_delta_does_not_duplicate_terminal(
+    provider_config,
+):
+    """If native upstream emitted message_delta before cutoff, recovery cannot append content."""
+    provider = NativeProvider(provider_config)
+    req = MockRequest()
+    msg_start = format_sse_event(
+        "message_start",
+        {
+            "type": "message_start",
+            "message": {
+                "id": "msg_terminal_cutoff",
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": "test-model",
+                "stop_reason": None,
+                "stop_sequence": None,
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            },
+        },
+    )
+    block_start = format_sse_event(
+        "content_block_start",
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "text", "text": ""},
+        },
+    )
+    text_delta = format_sse_event(
+        "content_block_delta",
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "hello" + ("x" * 70_000)},
+        },
+    )
+    block_stop = format_sse_event(
+        "content_block_stop",
+        {"type": "content_block_stop", "index": 0},
+    )
+    message_delta = format_sse_event(
+        "message_delta",
+        {
+            "type": "message_delta",
+            "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+            "usage": {"input_tokens": 1, "output_tokens": 2},
+        },
+    )
+    response = FakeResponse(
+        lines=_lines_from_events(
+            msg_start, block_start, text_delta, block_stop, message_delta
+        )
+    )
+
+    with (
+        patch.object(provider._client, "build_request", return_value=MagicMock()),
+        patch.object(
+            provider._client,
+            "send",
+            new_callable=AsyncMock,
+            return_value=response,
+        ),
+        patch.object(
+            AnthropicMessagesRecovery,
+            "collect_text",
+            new_callable=AsyncMock,
+            return_value=("hello recovered", ""),
+        ) as mock_collect,
+    ):
+        events = [e async for e in provider.stream_response(req)]
+
+    parsed = parse_sse_text("".join(events))
+    assert mock_collect.await_count == 0
+    assert sum(event.event == "message_delta" for event in parsed) == 1
+    assert sum(event.event == "message_stop" for event in parsed) == 1
+    assert sum(event.event == "error" for event in parsed) == 1
+    message_delta_index = next(
+        index for index, event in enumerate(parsed) if event.event == "message_delta"
+    )
+    assert all(
+        event.event
+        not in {"content_block_start", "content_block_delta", "content_block_stop"}
+        for event in parsed[message_delta_index + 1 :]
+    )
+
+
+@pytest.mark.asyncio
+async def test_native_text_recovery_closes_thinking_before_text_suffix():
+    """Recovery suffixes preserve Anthropic block ordering when switching types."""
+    transport = MagicMock()
+    transport._provider_name = "TEST_NATIVE"
+    recovery = AnthropicMessagesRecovery(
+        transport,
+        iter_stream_chunks=MagicMock(),
+    )
+    ledger = AnthropicStreamLedger("msg_recovery", "test-model")
+    ledger.start_thinking_block()
+    ledger.emit_thinking_delta("thinking")
+
+    with patch.object(
+        recovery,
+        "collect_text",
+        new_callable=AsyncMock,
+        return_value=("answer", "thinking more"),
+    ) as mock_collect:
+        events = await recovery.events(
+            body={"messages": []},
+            request=MockRequest(),
+            ledger=ledger,
+            error=TimeoutError("cutoff"),
+            request_id="req_native_recovery",
+            req_tag="",
+            thinking_enabled=True,
+        )
+
+    assert events is not None
+    assert mock_collect.await_args is not None
+    recovery_body = mock_collect.await_args.args[0]
+    assert "thinking" in recovery_body["messages"][-1]["content"]
+    parsed = parse_sse_text("".join(events))
+    assert [event.event for event in parsed] == [
+        "content_block_delta",
+        "content_block_stop",
+        "content_block_start",
+        "content_block_delta",
+        "content_block_stop",
+        "message_delta",
+        "message_stop",
+    ]
+    assert parsed[0].data["index"] == 0
+    assert parsed[1].data["index"] == 0
+    assert parsed[2].data["index"] == 1
+    assert parsed[2].data["content_block"]["type"] == "text"
+    assert parsed[3].data["index"] == 1
 
 
 @pytest.mark.asyncio
@@ -458,6 +598,210 @@ async def test_clean_eof_after_native_text_continues_with_overlap_trim(
         for event in parsed
     )
     assert not any(event.event == "error" for event in parsed)
+
+
+@pytest.mark.asyncio
+async def test_native_recovery_collect_text_requires_message_stop(provider_config):
+    """Native recovery collectors reject truncated continuation streams."""
+    provider = NativeProvider(provider_config)
+    text_delta = format_sse_event(
+        "content_block_delta",
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "world"},
+        },
+    )
+
+    async def _iter_chunks(_response, *, state, thinking_enabled):
+        yield text_delta
+
+    recovery = AnthropicMessagesRecovery(provider, iter_stream_chunks=_iter_chunks)
+
+    with (
+        patch.object(
+            provider,
+            "_validated_stream_send",
+            new_callable=AsyncMock,
+            return_value=FakeResponse(),
+        ) as mock_send,
+        pytest.raises(TruncatedProviderStreamError),
+    ):
+        await recovery.collect_text({"messages": []}, req_tag="", thinking_enabled=True)
+
+    assert mock_send.await_count == MIDSTREAM_RECOVERY_ATTEMPTS
+
+
+@pytest.mark.asyncio
+async def test_native_recovery_collect_text_accepts_message_stop(provider_config):
+    """Native recovery collectors return text only after message_stop."""
+    provider = NativeProvider(provider_config)
+    text_delta = format_sse_event(
+        "content_block_delta",
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "world"},
+        },
+    )
+    message_stop = format_sse_event("message_stop", {"type": "message_stop"})
+
+    async def _iter_chunks(_response, *, state, thinking_enabled):
+        yield text_delta
+        yield message_stop
+
+    recovery = AnthropicMessagesRecovery(provider, iter_stream_chunks=_iter_chunks)
+
+    with patch.object(
+        provider,
+        "_validated_stream_send",
+        new_callable=AsyncMock,
+        return_value=FakeResponse(),
+    ):
+        result = await recovery.collect_text(
+            {"messages": []}, req_tag="", thinking_enabled=True
+        )
+
+    assert result == ("world", "")
+
+
+@pytest.mark.asyncio
+async def test_native_recovery_collect_text_reads_eager_start_content(provider_config):
+    """Native recovery reads text/thinking carried on content_block_start."""
+    provider = NativeProvider(provider_config)
+    text_start = format_sse_event(
+        "content_block_start",
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "text", "text": "hello"},
+        },
+    )
+    thinking_start = format_sse_event(
+        "content_block_start",
+        {
+            "type": "content_block_start",
+            "index": 1,
+            "content_block": {"type": "thinking", "thinking": "step"},
+        },
+    )
+    text_delta = format_sse_event(
+        "content_block_delta",
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": " world"},
+        },
+    )
+    thinking_delta = format_sse_event(
+        "content_block_delta",
+        {
+            "type": "content_block_delta",
+            "index": 1,
+            "delta": {"type": "thinking_delta", "thinking": " two"},
+        },
+    )
+    message_stop = format_sse_event("message_stop", {"type": "message_stop"})
+
+    async def _iter_chunks(_response, *, state, thinking_enabled):
+        yield text_start
+        yield thinking_start
+        yield text_delta
+        yield thinking_delta
+        yield message_stop
+
+    recovery = AnthropicMessagesRecovery(provider, iter_stream_chunks=_iter_chunks)
+
+    with patch.object(
+        provider,
+        "_validated_stream_send",
+        new_callable=AsyncMock,
+        return_value=FakeResponse(),
+    ):
+        result = await recovery.collect_text(
+            {"messages": []}, req_tag="", thinking_enabled=True
+        )
+
+    assert result == ("hello world", "step two")
+
+
+@pytest.mark.asyncio
+async def test_truncated_native_recovery_stream_falls_back_to_error_tail(
+    provider_config,
+):
+    """Partial native recovery bytes are not converted into a success tail."""
+    provider = NativeProvider(provider_config)
+    req = MockRequest()
+    msg_start = format_sse_event(
+        "message_start",
+        {
+            "type": "message_start",
+            "message": {
+                "id": "msg_text_eof",
+                "type": "message",
+                "role": "assistant",
+                "content": [],
+                "model": "test-model",
+                "stop_reason": None,
+                "stop_sequence": None,
+                "usage": {"input_tokens": 1, "output_tokens": 1},
+            },
+        },
+    )
+    block_start = format_sse_event(
+        "content_block_start",
+        {
+            "type": "content_block_start",
+            "index": 0,
+            "content_block": {"type": "text", "text": ""},
+        },
+    )
+    original_text = "hello wor" + ("x" * 70_000)
+    original_delta = format_sse_event(
+        "content_block_delta",
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": original_text},
+        },
+    )
+    recovery_delta = format_sse_event(
+        "content_block_delta",
+        {
+            "type": "content_block_delta",
+            "index": 0,
+            "delta": {"type": "text_delta", "text": "world"},
+        },
+    )
+    original = FakeResponse(
+        lines=_lines_from_events(msg_start, block_start, original_delta)
+    )
+    recovery_responses = [
+        FakeResponse(lines=_lines_from_events(recovery_delta))
+        for _ in range(MIDSTREAM_RECOVERY_ATTEMPTS)
+    ]
+
+    with (
+        patch.object(provider._client, "build_request", return_value=MagicMock()),
+        patch.object(
+            provider._client,
+            "send",
+            new_callable=AsyncMock,
+            side_effect=[original, *recovery_responses],
+        ) as mock_send,
+    ):
+        events = [e async for e in provider.stream_response(req)]
+
+    event_text = "".join(events)
+    assert mock_send.await_count == 1 + MIDSTREAM_RECOVERY_ATTEMPTS
+    assert original_text in event_text
+    assert "world" not in event_text
+    assert "Provider stream ended without message_stop." in event_text
+    assert not any(
+        event.event == "content_block_delta"
+        and event.data.get("delta", {}).get("text") == "ld"
+        for event in parse_sse_text(event_text)
+    )
 
 
 @pytest.mark.asyncio

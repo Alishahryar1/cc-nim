@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from core.anthropic import SSEBuilder
+from core.anthropic import AnthropicStreamLedger
 from core.anthropic.stream_contracts import (
     assert_anthropic_stream_contract,
     has_tool_use,
@@ -13,7 +13,7 @@ from messaging.transcript import RenderCtx, TranscriptBuffer
 
 
 def test_thinking_tool_text_and_transcript_order_contract() -> None:
-    builder = SSEBuilder("msg_contract", "contract-model")
+    builder = AnthropicStreamLedger("msg_contract", "contract-model")
     chunks = [builder.message_start()]
     chunks.extend(builder.ensure_thinking_block())
     chunks.append(builder.emit_thinking_delta("inspect first"))

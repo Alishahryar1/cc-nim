@@ -4,7 +4,8 @@ from __future__ import annotations
 
 from typing import Protocol
 
-from .platforms.base import ManagedClaudeSessionManagerProtocol, MessagingPlatform
+from .managed_protocols import ManagedClaudeSessionManagerProtocol
+from .platforms.ports import OutboundMessenger, VoiceCancellation
 from .session import SessionStore
 from .transcript import RenderCtx
 from .trees import MessageNode, MessageTree, TreeQueueManager
@@ -13,7 +14,8 @@ from .trees import MessageNode, MessageTree, TreeQueueManager
 class MessagingCommandContext(Protocol):
     """Operations commands need from the messaging workflow."""
 
-    platform: MessagingPlatform
+    outbound: OutboundMessenger
+    voice_cancellation: VoiceCancellation | None
     cli_manager: ManagedClaudeSessionManagerProtocol
     session_store: SessionStore
 

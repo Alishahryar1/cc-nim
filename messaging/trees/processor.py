@@ -9,7 +9,8 @@ from config.settings import get_settings
 from core.anthropic import get_user_facing_error_message
 
 from ..safe_diagnostics import format_exception_for_log
-from .data import MessageNode, MessageState, MessageTree
+from .node import MessageNode, MessageState
+from .runtime import MessageTree
 
 
 class TreeQueueProcessor:

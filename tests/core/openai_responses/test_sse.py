@@ -5,8 +5,8 @@ from typing import Any
 
 import pytest
 
-from core.anthropic.sse import format_sse_event
 from core.anthropic.stream_contracts import parse_sse_text
+from core.anthropic.streaming import format_sse_event
 from core.openai_responses import OpenAIResponsesAdapter
 
 _ADAPTER = OpenAIResponsesAdapter()
@@ -54,6 +54,56 @@ async def test_anthropic_tool_stream_converts_to_function_call_item() -> None:
     assert function_call["call_id"] == "toolu_1"
     assert function_call["name"] == "echo"
     assert function_call["arguments"] == '{"value":"FCC"}'
+
+
+@pytest.mark.asyncio
+async def test_anthropic_function_tool_arguments_are_normalized() -> None:
+    response = await _completed_response_from_sse(
+        _aiter(_anthropic_tool_stream(partial_json='{ "value" : "FCC" }')),
+        {"model": "nvidia_nim/test-model", "stream": True},
+    )
+
+    assert response["output"][0]["arguments"] == '{"value":"FCC"}'
+
+
+@pytest.mark.asyncio
+async def test_anthropic_malformed_function_tool_arguments_fail_response() -> None:
+    text = await _collect_sse(
+        _ADAPTER.iter_sse_from_anthropic(
+            _aiter(_anthropic_tool_stream(partial_json='{"value":"FCC" "bad"}')),
+            {"model": "nvidia_nim/test-model", "stream": True},
+        )
+    )
+
+    events = parse_sse_text(text)
+    assert events[-1].event == "response.failed"
+    assert "response.function_call_arguments.done" not in [
+        event.event for event in events
+    ]
+    assert "response.output_item.done" not in [event.event for event in events]
+    failed = events[-1].data["response"]
+    assert failed["status"] == "failed"
+    assert failed["output"] == []
+    assert failed["error"]["type"] == "api_error"
+    assert "replay-unsafe Responses output" in failed["error"]["message"]
+
+
+@pytest.mark.asyncio
+async def test_anthropic_malformed_function_tool_arguments_fail_on_eof() -> None:
+    stream = _anthropic_tool_stream(
+        partial_json='{"value":"FCC" "bad"}',
+        include_block_stop=False,
+    )
+    text = await _collect_sse(
+        _ADAPTER.iter_sse_from_anthropic(
+            _aiter(stream[:-1]),
+            {"model": "nvidia_nim/test-model", "stream": True},
+        )
+    )
+
+    events = parse_sse_text(text)
+    assert events[-1].event == "response.failed"
+    assert events[-1].data["response"]["output"] == []
 
 
 @pytest.mark.asyncio
@@ -123,6 +173,27 @@ async def test_anthropic_custom_tool_stream_converts_to_custom_tool_call() -> No
     assert custom_call["type"] == "custom_tool_call"
     assert custom_call["call_id"] == "toolu_1"
     assert custom_call["name"] == "apply_patch"
+    assert custom_call["input"] == "*** Begin Patch"
+
+
+@pytest.mark.asyncio
+async def test_custom_tool_input_remains_free_form_when_not_json() -> None:
+    response = await _completed_response_from_sse(
+        _aiter(
+            _anthropic_tool_stream(
+                tool_name="apply_patch",
+                partial_json="*** Begin Patch",
+            )
+        ),
+        {
+            "model": "nvidia_nim/test-model",
+            "stream": True,
+            "tools": [{"type": "custom", "name": "apply_patch"}],
+        },
+    )
+
+    custom_call = response["output"][0]
+    assert custom_call["type"] == "custom_tool_call"
     assert custom_call["input"] == "*** Begin Patch"
 
 

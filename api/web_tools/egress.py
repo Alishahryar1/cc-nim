@@ -20,6 +20,14 @@ class WebFetchEgressViolation(ValueError):
     """Raised when a web_fetch URL is rejected by egress policy (SSRF guard)."""
 
 
+def web_fetch_allowed_scheme_set(raw_schemes: str) -> frozenset[str]:
+    """Return normalized schemes allowed for web_fetch."""
+
+    return frozenset(
+        part.strip().lower() for part in raw_schemes.split(",") if part.strip()
+    )
+
+
 def _port_for_url(parsed) -> int:
     if parsed.port is not None:
         return parsed.port

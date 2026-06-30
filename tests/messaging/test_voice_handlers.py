@@ -6,21 +6,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from messaging.platforms.discord import DISCORD_AVAILABLE, DiscordPlatform
-from messaging.platforms.telegram import TelegramPlatform
+from messaging.platforms.discord import DISCORD_AVAILABLE, DiscordRuntime
+from messaging.platforms.discord_inbound import get_audio_attachment
+from messaging.platforms.telegram import TelegramRuntime
 
 
 @pytest.fixture
 def telegram_platform():
     with patch("messaging.platforms.telegram.TELEGRAM_AVAILABLE", True):
-        return TelegramPlatform(bot_token="test_token", allowed_user_id="12345")
+        return TelegramRuntime(bot_token="test_token", allowed_user_id="12345")
 
 
 @pytest.mark.asyncio
 async def test_telegram_voice_disabled_sends_reply():
     """When voice_note_enabled is False, reply with disabled message."""
     with patch("messaging.platforms.telegram.TELEGRAM_AVAILABLE", True):
-        telegram_platform = TelegramPlatform(
+        telegram_platform = TelegramRuntime(
             bot_token="test_token",
             allowed_user_id="12345",
             voice_note_enabled=False,
@@ -87,7 +88,7 @@ async def test_telegram_voice_success_invokes_handler(telegram_platform):
                 return_value="Hello from voice",
             ),
             patch.object(
-                telegram_platform,
+                telegram_platform.outbound,
                 "queue_send_message",
                 mock_queue_send,
             ),
@@ -116,44 +117,40 @@ class TestDiscordGetAudioAttachment:
     """Tests for _get_audio_attachment helper."""
 
     def test_returns_none_when_no_attachments(self):
-        platform = DiscordPlatform(bot_token="token")
         msg = MagicMock()
         msg.attachments = []
-        assert platform._get_audio_attachment(msg) is None
+        assert get_audio_attachment(msg) is None
 
     def test_returns_none_when_no_audio_attachments(self):
-        platform = DiscordPlatform(bot_token="token")
         msg = MagicMock()
         att = MagicMock()
         att.content_type = "image/png"
         att.filename = "pic.png"
         msg.attachments = [att]
-        assert platform._get_audio_attachment(msg) is None
+        assert get_audio_attachment(msg) is None
 
     def test_returns_attachment_by_content_type(self):
-        platform = DiscordPlatform(bot_token="token")
         msg = MagicMock()
         att = MagicMock()
         att.content_type = "audio/ogg"
         att.filename = "voice.ogg"
         msg.attachments = [att]
-        assert platform._get_audio_attachment(msg) is att
+        assert get_audio_attachment(msg) is att
 
     def test_returns_attachment_by_extension(self):
-        platform = DiscordPlatform(bot_token="token")
         msg = MagicMock()
         att = MagicMock()
         att.content_type = "application/octet-stream"
         att.filename = "voice.ogg"
         msg.attachments = [att]
-        assert platform._get_audio_attachment(msg) is att
+        assert get_audio_attachment(msg) is att
 
 
 @pytest.mark.skipif(not DISCORD_AVAILABLE, reason="discord.py not installed")
 @pytest.mark.asyncio
 async def test_discord_voice_disabled_sends_reply():
     """When voice_note_enabled is False, reply with disabled message."""
-    platform = DiscordPlatform(
+    platform = DiscordRuntime(
         bot_token="token",
         allowed_channel_ids="123",
         voice_note_enabled=False,

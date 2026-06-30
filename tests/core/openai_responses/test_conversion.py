@@ -389,18 +389,83 @@ def test_responses_unsupported_tool_type_is_clear() -> None:
         )
 
 
-def test_responses_invalid_function_arguments_are_rejected() -> None:
-    with pytest.raises(_CONVERSION_ERROR, match="invalid JSON"):
+def test_responses_malformed_prior_function_call_is_quarantined() -> None:
+    payload = _ADAPTER.to_anthropic_payload(
+        {
+            "model": "nvidia_nim/test-model",
+            "input": [
+                {"role": "user", "content": "hello"},
+                {
+                    "type": "function_call",
+                    "call_id": "call_bad",
+                    "name": "echo",
+                    "arguments": "{",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_bad",
+                    "output": "stale output",
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_good",
+                    "name": "echo",
+                    "arguments": '{"value":"ok"}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_good",
+                    "output": "ok",
+                },
+                {"role": "user", "content": "continue"},
+            ],
+        }
+    )
+
+    assert payload["messages"] == [
+        {"role": "user", "content": "hello"},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "call_good",
+                    "name": "echo",
+                    "input": {"value": "ok"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "call_good",
+                    "content": "ok",
+                }
+            ],
+        },
+        {"role": "user", "content": "continue"},
+    ]
+
+
+def test_responses_malformed_only_function_call_still_has_no_routable_message() -> None:
+    with pytest.raises(_CONVERSION_ERROR, match="must contain a message"):
         _ADAPTER.to_anthropic_payload(
             {
                 "model": "nvidia_nim/test-model",
                 "input": [
                     {
                         "type": "function_call",
-                        "call_id": "call_1",
+                        "call_id": "call_bad",
                         "name": "echo",
                         "arguments": "{",
-                    }
+                    },
+                    {
+                        "type": "function_call_output",
+                        "call_id": "call_bad",
+                        "output": "stale output",
+                    },
                 ],
             }
         )

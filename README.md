@@ -57,7 +57,7 @@ Free Claude Code routes Anthropic Messages API traffic from Claude Code (CLI and
 - Drop-in proxy for Claude Code's Anthropic API calls (`/v1/messages`, `/v1/models`).
 - Drop-in proxy for Codex via the OpenAI Responses API (`/v1/responses`).
 - `fcc-claude` and `fcc-codex` launchers that read the current Admin UI port and auth token each time they start.
-- 17 provider backends: NVIDIA NIM, OpenRouter, Google AI Studio (Gemini), DeepSeek, Mistral La Plateforme, Mistral Codestral, OpenCode Zen, OpenCode Go, Wafer, Kimi, Cerebras Inference, Groq, Fireworks AI, Z.ai, LM Studio, llama.cpp, and Ollama.
+- 18 provider backends: NVIDIA NIM, OpenRouter, Google AI Studio (Gemini), DeepSeek, Mistral La Plateforme, Mistral Codestral, OpenCode Zen, OpenCode Go, Wafer, Kimi, Cerebras Inference, Groq, Fireworks AI, Cloudflare, Z.ai, LM Studio, llama.cpp, and Ollama.
 - Per-model routing for Claude Code: send Opus, Sonnet, Haiku, and fallback traffic to different providers.
 - Native Claude Code `/model` picker support through the proxy's `/v1/models` endpoint (see [Model Picker](#model-picker)).
 - Native Codex `/model` picker support when launched through `fcc-codex`, using a generated local model catalog.
@@ -197,7 +197,7 @@ Get a key at [platform.deepseek.com/api_keys](https://platform.deepseek.com/api_
 
 In the Admin UI, paste it into `DEEPSEEK_API_KEY`, then set `MODEL` to a DeepSeek slug such as `deepseek/deepseek-chat`.
 
-This provider uses DeepSeek's Anthropic-compatible endpoint, not the OpenAI chat-completions endpoint.
+FCC uses DeepSeek's OpenAI-compatible Chat Completions endpoint so DeepSeek's prompt-cache hit/miss counters can be mapped into Claude-compatible usage metadata.
 
 ### 5. [Mistral La Plateforme](https://console.mistral.ai/)
 
@@ -306,7 +306,15 @@ Fireworks exposes an **Anthropic-compatible** Messages API at `https://api.firew
 
 Browse models at [fireworks.ai/models](https://fireworks.ai/models).
 
-### 14. [Z.ai](https://z.ai/)
+### 14. [Cloudflare](https://developers.cloudflare.com/ai-gateway/)
+
+Create a Cloudflare API token and copy your account ID from the Cloudflare dashboard.
+
+In the Admin UI, set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, then set `MODEL` to a Cloudflare model slug such as `cloudflare/anthropic/claude-sonnet-4-5`.
+
+This provider calls Cloudflare's account-scoped **Anthropic-compatible** Messages API at `https://api.cloudflare.com/client/v4/accounts/<account_id>/ai/v1/messages`. The first Cloudflare integration targets third-party Anthropic-compatible models; Cloudflare AI Gateway BYOK/provider-gateway routing is not required.
+
+### 15. [Z.ai](https://z.ai/)
 
 Get an API key at [Z.ai/manage-apikey/apikey-list](https://z.ai/manage-apikey/apikey-list).
 
@@ -321,13 +329,13 @@ Popular examples:
 
 Browse models at [Z.ai](https://z.ai).
 
-### 15. [LM Studio](https://lmstudio.ai/)
+### 16. [LM Studio](https://lmstudio.ai/)
 
 Start LM Studio's local server and load a model. In the Admin UI, keep or update `LM_STUDIO_BASE_URL`, then set `MODEL` to the model identifier shown by LM Studio, prefixed with `lmstudio/`.
 
 Prefer models with tool-use support for Claude Code workflows.
 
-### 16. [llama.cpp](https://github.com/ggml-org/llama.cpp)
+### 17. [llama.cpp](https://github.com/ggml-org/llama.cpp)
 
 Start `llama-server` with an Anthropic-compatible `/v1/messages` endpoint and enough context for Claude Code requests.
 
@@ -335,7 +343,7 @@ In the Admin UI, keep or update `LLAMACPP_BASE_URL`, then set `MODEL` to the loc
 
 For local coding models, context size matters. If llama.cpp returns HTTP 400 for normal Claude Code requests, increase `--ctx-size` and verify the model/server build supports the requested features.
 
-### 17. [Ollama](https://ollama.com/)
+### 18. [Ollama](https://ollama.com/)
 
 Run Ollama and pull a model:
 
@@ -562,8 +570,8 @@ Important pieces:
 - Responses requests convert to Anthropic Messages internally, then share the same model router, normalizer, and provider adapters.
 - `fcc-codex` registers a custom `fcc` provider that points Codex at the local proxy's `/v1/responses` endpoint.
 - Model routing resolves Claude model names to `MODEL_OPUS`, `MODEL_SONNET`, `MODEL_HAIKU`, or `MODEL`.
-- NIM, OpenCode Zen, and OpenCode Go use OpenAI chat streaming translated into Anthropic SSE.
-- Wafer, OpenRouter, DeepSeek, Kimi, Fireworks AI, Z.ai, LM Studio, llama.cpp, and Ollama use Anthropic Messages style transports where applicable (with provider-specific quirks and model-list URLs).
+- NIM, DeepSeek, OpenCode Zen, and OpenCode Go use OpenAI chat streaming translated into Anthropic SSE.
+- Wafer, OpenRouter, Kimi, Fireworks AI, Cloudflare, Z.ai, LM Studio, llama.cpp, and Ollama use Anthropic Messages style transports where applicable (with provider-specific quirks and model-list URLs).
 - The proxy normalizes thinking blocks, tool calls, token usage metadata, and provider errors into the shape each client expects.
 - Request optimizations answer trivial Claude Code probes locally to save latency and quota.
 
@@ -577,8 +585,8 @@ free-claude-code/
 ├── api/                   # FastAPI routes, service layer, routing, optimizations
 ├── core/                  # Shared Anthropic protocol helpers, SSE, OpenAI Responses
 │   └── openai_responses/  # Responses ↔ Anthropic conversion and SSE mapping
-├── providers/             # Provider transports, registry, rate limiting
-├── messaging/             # Discord/Telegram adapters, sessions, voice
+├── providers/             # Provider runtime, transports, rate limiting
+├── messaging/             # Discord/Telegram runtimes, outbound ports, voice
 ├── cli/                   # Package entry points and client CLI process management
 ├── config/                # Settings, provider catalog, logging
 └── tests/                 # Unit and contract tests
@@ -639,8 +647,8 @@ CI also enforces a ban on `# type: ignore` / `# ty: ignore` suppressions; `scrip
 - Add OpenAI-compatible providers by extending `OpenAIChatTransport`.
 - Add Anthropic Messages providers by extending `AnthropicMessagesTransport`.
 - Extend OpenAI Responses conversion in `core/openai_responses/` when Codex adds new request or stream shapes.
-- Register provider metadata in `config.provider_catalog` and factory wiring in `providers.registry`.
-- Add messaging platforms by implementing the `MessagingPlatform` interface in `messaging/`.
+- Register provider metadata in `config.provider_catalog` and factory wiring in `providers.runtime`.
+- Add messaging platforms by wiring runtime, outbound, and inbound-normalizer ports in `messaging/platforms/`.
 
 ## Contributing
 

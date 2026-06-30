@@ -1,7 +1,7 @@
 """Tests for messaging/ module."""
 
 import json
-from unittest.mock import patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -43,15 +43,32 @@ class TestMessagingModels:
         assert msg.reply_to_message_id == "100"
 
 
-class TestMessagingBase:
-    """Test MessagingPlatform ABC."""
+class TestMessagingPorts:
+    """Test explicit messaging platform component ports."""
 
-    def test_platform_is_abstract(self):
-        """Verify MessagingPlatform cannot be instantiated."""
-        from messaging.platforms.base import MessagingPlatform
+    def test_components_bundle_runtime_and_outbound(self):
+        """Verify the factory handoff shape is explicit."""
+        from messaging.platforms.ports import MessagingPlatformComponents
 
-        with pytest.raises(TypeError):
-            MessagingPlatform()
+        runtime = MagicMock()
+        runtime.name = "telegram"
+        runtime.start = AsyncMock()
+        runtime.stop = AsyncMock()
+        runtime.on_message = MagicMock()
+        outbound = MagicMock()
+        outbound.queue_send_message = AsyncMock()
+        outbound.queue_edit_message = AsyncMock()
+        outbound.queue_delete_message = AsyncMock()
+        outbound.queue_delete_messages = AsyncMock()
+        outbound.fire_and_forget = MagicMock()
+        components = MessagingPlatformComponents(
+            name="telegram",
+            runtime=runtime,
+            outbound=outbound,
+            voice_cancellation=None,
+        )
+        assert components.runtime is runtime
+        assert components.outbound is outbound
 
 
 class TestSessionStore:
@@ -62,37 +79,34 @@ class TestSessionStore:
         from messaging.session import SessionStore
 
         store = SessionStore(storage_path=str(tmp_path / "sessions.json"))
-        assert store._trees == {}
+        assert store.load_conversation_snapshot().is_empty
 
     # --- Tree Tests ---
 
     def test_save_and_get_tree(self, tmp_path):
         """Test saving and retrieving trees."""
         from messaging.session import SessionStore
+        from messaging.trees import TreeSnapshot
 
         store = SessionStore(storage_path=str(tmp_path / "sessions.json"))
 
         tree_data = {
-            "root": "r1",
-            "nodes": {"r1": {"content": "root"}, "n1": {"content": "child"}},
+            "root_id": "r1",
+            "nodes": {
+                "r1": {"node_id": "r1", "status_message_id": "s1"},
+                "n1": {"node_id": "n1", "status_message_id": "s2"},
+            },
         }
-        store.save_tree("r1", tree_data)
+        snapshot = TreeSnapshot.from_json(tree_data)
+        assert snapshot is not None
+        store.save_tree_snapshot(snapshot)
 
-        loaded = store.get_tree("r1")
-        assert loaded == tree_data
+        loaded = store.get_tree_snapshot("r1")
+        assert loaded == snapshot
 
-        # Verify node mapping
-        node_map = store.get_node_mapping()
+        node_map = store.load_conversation_snapshot().derive_node_to_tree()
         assert node_map["r1"] == "r1"
         assert node_map["n1"] == "r1"
-
-    def test_register_node(self, tmp_path):
-        """Test manual node registration."""
-        from messaging.session import SessionStore
-
-        store = SessionStore(storage_path=str(tmp_path / "sessions.json"))
-        store.register_node("n_manual", "r_manual")
-        assert store.get_node_mapping()["n_manual"] == "r_manual"
 
     # --- Persistence & Edge Cases ---
 
@@ -112,7 +126,7 @@ class TestSessionStore:
             json.dump(data, f)
 
         store = SessionStore(storage_path=str(p))
-        assert store.get_tree("r1") is not None
+        assert store.get_tree_snapshot("r1") is not None
 
     def test_load_corrupt_file(self, tmp_path):
         """Test loading corrupt/invalid json file."""
@@ -124,21 +138,24 @@ class TestSessionStore:
 
         # Should log error and start empty, avoiding crash
         store = SessionStore(storage_path=str(p))
-        assert store._trees == {}
+        assert store.load_conversation_snapshot().is_empty
 
     def test_save_error_handling(self, tmp_path):
         """Test error during save."""
         from messaging.session import SessionStore
+        from messaging.trees import TreeSnapshot
 
         store = SessionStore(storage_path=str(tmp_path / "sessions.json"))
-        store.save_tree("r1", {"root_id": "r1", "nodes": {"r1": {}}})
+        snapshot = TreeSnapshot(root_id="r1", nodes={"r1": {}})
+        store.save_tree_snapshot(snapshot)
 
-        # Mock open to raise exception
-        with patch("builtins.open", side_effect=OSError("Disk full")):
-            store.save_tree("r2", {"root_id": "r2", "nodes": {"r2": {}}})
+        with patch(
+            "messaging.session.persistence.os.replace", side_effect=OSError("Disk full")
+        ):
+            store.flush_pending_save()
 
-        # Should log error but not crash. Tree should be in memory.
-        assert "r2" in store._trees
+        assert store.dirty is True
+        assert store.get_tree_snapshot("r1") is not None
 
 
 class TestTreeQueueManager:

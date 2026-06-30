@@ -58,7 +58,7 @@ Default targets do not send real bot messages or load voice backends:
 | `cli` | `fcc-init`, server entrypoint, Claude CLI adaptive thinking, session cleanup | Claude CLI binary and provider only for real CLI |
 | `clients` | VS Code and JetBrains protocol payloads | configured provider |
 | `config` | env precedence, removed-env migration, proxy/timeouts | none |
-| `extensibility` | provider registry and platform factory construction | none |
+| `extensibility` | provider runtime and platform factory construction | none |
 | `messaging` | fake Discord/Telegram full flow, commands, trees, persistence, voice cancel | none |
 | `providers` | multi-turn text, adaptive thinking history, tools, disconnect, errors | configured providers, optional `FCC_SMOKE_MODEL_*` |
 | `tools` | forced tool_use and tool_result continuation | tool-capable configured provider |
@@ -130,8 +130,8 @@ uv run pytest smoke/product -n 0 -s --tb=short
   `FCC_SMOKE_MODEL_MISTRAL`, `FCC_SMOKE_MODEL_MISTRAL_CODESTRAL`,
   `FCC_SMOKE_MODEL_DEEPSEEK`, `FCC_SMOKE_MODEL_KIMI`,
   `FCC_SMOKE_MODEL_WAFER`, `FCC_SMOKE_MODEL_OPENCODE`, `FCC_SMOKE_MODEL_OPENCODE_GO`,
-  `FCC_SMOKE_MODEL_ZAI`, `FCC_SMOKE_MODEL_FIREWORKS`,   `FCC_SMOKE_MODEL_GEMINI`,
-  `FCC_SMOKE_MODEL_GROQ`, `FCC_SMOKE_MODEL_CEREBRAS`,
+  `FCC_SMOKE_MODEL_ZAI`, `FCC_SMOKE_MODEL_FIREWORKS`, `FCC_SMOKE_MODEL_CLOUDFLARE`,
+  `FCC_SMOKE_MODEL_GEMINI`, `FCC_SMOKE_MODEL_GROQ`, `FCC_SMOKE_MODEL_CEREBRAS`,
   `FCC_SMOKE_MODEL_LMSTUDIO`,
   `FCC_SMOKE_MODEL_LLAMACPP`, `FCC_SMOKE_MODEL_OLLAMA`: optional per-provider
   smoke model overrides. Values may include the provider prefix or just the model

@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from core.anthropic.stream_contracts import (
     assert_anthropic_stream_contract,
     parse_sse_text,
@@ -13,8 +14,8 @@ from core.anthropic.stream_contracts import (
     thinking_content,
 )
 from providers.base import ProviderConfig
+from providers.exceptions import InvalidRequestError
 from providers.open_router import OpenRouterProvider
-from providers.open_router.request import OPENROUTER_DEFAULT_MAX_TOKENS
 
 
 class MockMessage:
@@ -144,21 +145,18 @@ def test_build_request_body_is_native_anthropic(open_router_provider):
 
 
 def test_openrouter_extra_body_rejects_overriding_reserved_fields() -> None:
-    from providers.exceptions import InvalidRequestError
-    from providers.open_router.request import build_request_body
-
     r = MockRequest()
     r.extra_body = {"model": "hijack"}
+    provider = OpenRouterProvider(ProviderConfig(api_key="test_openrouter_key"))
     with pytest.raises(InvalidRequestError, match="model"):
-        build_request_body(r, thinking_enabled=True)
+        provider._build_request_body(r, thinking_enabled=True)
 
 
 def test_openrouter_extra_body_allows_openrouter_only_keys() -> None:
-    from providers.open_router.request import build_request_body
-
     r = MockRequest()
     r.extra_body = {"transforms": ["no-web"], "plugins": []}
-    body = build_request_body(r, thinking_enabled=False)
+    provider = OpenRouterProvider(ProviderConfig(api_key="test_openrouter_key"))
+    body = provider._build_request_body(r, thinking_enabled=False)
     assert body["transforms"] == ["no-web"]
     assert body["plugins"] == []
 
@@ -211,7 +209,7 @@ def test_build_request_body_default_max_tokens(open_router_provider):
 
     body = open_router_provider._build_request_body(req)
 
-    assert body["max_tokens"] == OPENROUTER_DEFAULT_MAX_TOKENS
+    assert body["max_tokens"] == ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 
 
 def test_build_request_body_strips_unsigned_thinking_history(open_router_provider):

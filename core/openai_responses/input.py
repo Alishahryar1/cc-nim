@@ -5,6 +5,8 @@ from __future__ import annotations
 from collections.abc import Mapping
 from typing import Any
 
+from core.trace import trace_event
+
 from .errors import ResponsesConversionError
 from .reasoning import (
     combine_reasoning,
@@ -34,12 +36,14 @@ def convert_request_to_anthropic_payload(
 
     messages: list[dict[str, Any]] = []
     pending_reasoning: str | None = None
+    quarantined_function_call_ids: set[str] = set()
     for item in _iter_input_items(request.get("input")):
         pending_reasoning = _append_input_item(
             item,
             messages=messages,
             system_parts=system_parts,
             pending_reasoning=pending_reasoning,
+            quarantined_function_call_ids=quarantined_function_call_ids,
         )
     _append_pending_reasoning(messages, pending_reasoning)
 
@@ -80,6 +84,7 @@ def _append_input_item(
     messages: list[dict[str, Any]],
     system_parts: list[str],
     pending_reasoning: str | None,
+    quarantined_function_call_ids: set[str],
 ) -> str | None:
     if isinstance(item, str):
         _append_pending_reasoning(messages, pending_reasoning)
@@ -109,16 +114,22 @@ def _append_input_item(
         namespace = optional_str(item.get("namespace"))
         field_name = f"{item_type}.name"
         name = required_str(item.get("name"), field_name)
+        call_id = call_id_from_item(item)
         if item_type == "custom_tool_call":
             tool_input = custom_tool_input_to_anthropic(item.get("input"))
         else:
-            tool_input = parse_arguments(item.get("arguments"))
+            try:
+                tool_input = parse_arguments(item.get("arguments"))
+            except ResponsesConversionError as exc:
+                quarantined_function_call_ids.add(call_id)
+                _trace_quarantined_function_call(call_id, exc)
+                return pending_reasoning
         message = {
             "role": "assistant",
             "content": [
                 {
                     "type": "tool_use",
-                    "id": call_id_from_item(item),
+                    "id": call_id,
                     "name": responses_tool_name_to_anthropic_name(
                         name, namespace=namespace
                     ),
@@ -131,6 +142,12 @@ def _append_input_item(
         messages.append(message)
         return None
     if item_type in {"function_call_output", "custom_tool_call_output"}:
+        call_id = call_id_from_item(item)
+        if (
+            item_type == "function_call_output"
+            and call_id in quarantined_function_call_ids
+        ):
+            return pending_reasoning
         _append_pending_reasoning(messages, pending_reasoning)
         messages.append(
             {
@@ -138,7 +155,7 @@ def _append_input_item(
                 "content": [
                     {
                         "type": "tool_result",
-                        "tool_use_id": call_id_from_item(item),
+                        "tool_use_id": call_id,
                         "content": item.get("output", ""),
                     }
                 ],
@@ -154,6 +171,18 @@ def _append_input_item(
 
     raise ResponsesConversionError(
         f"Unsupported Responses input item type: {item_type!r}"
+    )
+
+
+def _trace_quarantined_function_call(
+    call_id: str, exc: ResponsesConversionError
+) -> None:
+    trace_event(
+        stage="responses",
+        event="responses.input.function_call_quarantined",
+        source="openai_responses",
+        call_id=call_id,
+        error_type=type(exc).__name__,
     )
 
 

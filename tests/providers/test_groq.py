@@ -107,7 +107,9 @@ def test_build_request_body_global_disable_blocks_reasoning_mapping():
 
 
 def test_build_request_body_sanitizes_and_remaps_via_mock_converter(groq_provider):
-    with patch("providers.groq.request.build_base_request_body") as mock_convert:
+    with patch(
+        "providers.transports.openai_chat.request_policy.build_base_request_body"
+    ) as mock_convert:
         mock_convert.return_value = {
             "model": "llama-3.3-70b-versatile",
             "messages": [
@@ -138,7 +140,9 @@ def test_build_request_body_sanitizes_and_remaps_via_mock_converter(groq_provide
 
 
 def test_build_request_body_prefers_existing_max_completion_tokens(groq_provider):
-    with patch("providers.groq.request.build_base_request_body") as mock_convert:
+    with patch(
+        "providers.transports.openai_chat.request_policy.build_base_request_body"
+    ) as mock_convert:
         mock_convert.return_value = {
             "model": "llama-3.3-70b-versatile",
             "messages": [{"role": "user", "content": "x"}],

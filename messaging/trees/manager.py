@@ -6,9 +6,11 @@ from collections.abc import Awaitable, Callable
 from loguru import logger
 
 from ..models import IncomingMessage
-from .data import MessageNode, MessageState, MessageTree
+from .node import MessageNode, MessageState
 from .processor import TreeQueueProcessor
 from .repository import TreeRepository
+from .runtime import MessageTree
+from .snapshot import ConversationSnapshot
 
 
 class TreeQueueManager:
@@ -408,23 +410,23 @@ class TreeQueueManager:
         """Get all message IDs for a given platform/chat."""
         return self._repository.get_message_ids_for_chat(platform, chat_id)
 
-    def to_dict(self) -> dict:
-        """Serialize all trees."""
-        return self._repository.to_dict()
+    def snapshot(self) -> ConversationSnapshot:
+        """Serialize all trees into a typed conversation snapshot."""
+        return self._repository.snapshot()
 
     @classmethod
-    def from_dict(
+    def from_snapshot(
         cls,
-        data: dict,
+        snapshot: ConversationSnapshot,
         queue_update_callback: Callable[[MessageTree], Awaitable[None]] | None = None,
         node_started_callback: Callable[[MessageTree, str], Awaitable[None]]
         | None = None,
     ) -> TreeQueueManager:
-        """Deserialize from dictionary."""
+        """Restore a manager from a typed conversation snapshot."""
         return cls(
             queue_update_callback=queue_update_callback,
             node_started_callback=node_started_callback,
-            _repository=TreeRepository.from_dict(data),
+            _repository=TreeRepository.from_snapshot(snapshot),
         )
 
 

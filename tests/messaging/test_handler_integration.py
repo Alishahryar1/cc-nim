@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from messaging.trees.data import MessageState
+from messaging.trees import MessageState
 from messaging.workflow import MessagingWorkflow
 
 

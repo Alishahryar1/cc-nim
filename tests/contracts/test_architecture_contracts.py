@@ -55,7 +55,7 @@ def test_root_env_example_is_the_single_template_source() -> None:
     assert not duplicate_example.exists()
 
 
-def test_root_env_example_is_packaged_for_fcc_init() -> None:
+def test_root_env_example_is_packaged_for_config_template_loader() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     pyproject = tomllib.loads((repo_root / "pyproject.toml").read_text("utf-8"))
 
@@ -63,7 +63,7 @@ def test_root_env_example_is_packaged_for_fcc_init() -> None:
         "force-include"
     ]
 
-    assert force_include[".env.example"] == "cli/env.example"
+    assert force_include[".env.example"] == "config/env.example"
 
 
 def test_pyproject_first_party_packages_match_packaged_roots() -> None:

@@ -5,6 +5,8 @@ import uuid
 
 from loguru import logger
 
+from cli.claude_env import CLAUDE_BINARY_NAME
+
 from .session import ManagedClaudeSession
 
 
@@ -22,7 +24,7 @@ class ManagedClaudeSessionManager:
         api_url: str,
         allowed_dirs: list[str] | None = None,
         plans_directory: str | None = None,
-        claude_bin: str = "claude",
+        claude_bin: str = CLAUDE_BINARY_NAME,
         auth_token: str = "",
         *,
         log_raw_cli_diagnostics: bool = False,

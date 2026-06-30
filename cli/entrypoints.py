@@ -17,6 +17,7 @@ from cli.launchers.common import preflight_proxy
 from cli.process_registry import (
     kill_all_best_effort,
 )
+from config.env_template import load_env_template
 from config.paths import (
     config_dir_path,
     legacy_env_paths,
@@ -25,21 +26,6 @@ from config.paths import (
 from config.settings import Settings, get_settings
 
 SERVER_GRACEFUL_SHUTDOWN_SECONDS = 5
-
-
-def _load_env_template() -> str:
-    """Load the canonical root env template from package resources or source."""
-    import importlib.resources
-
-    packaged = importlib.resources.files("cli").joinpath("env.example")
-    if packaged.is_file():
-        return packaged.read_text("utf-8")
-
-    source_template = Path(__file__).resolve().parents[1] / ".env.example"
-    if source_template.is_file():
-        return source_template.read_text(encoding="utf-8")
-
-    raise FileNotFoundError("Could not find bundled or source .env.example template.")
 
 
 def serve() -> None:
@@ -140,7 +126,7 @@ def init() -> None:
         return
 
     config_dir.mkdir(parents=True, exist_ok=True)
-    template = _load_env_template()
+    template = load_env_template()
     env_file.write_text(template, encoding="utf-8")
     print(f"Config created at {env_file}")
     print("Edit it to set your API keys and model preferences, then run: fcc-server")
