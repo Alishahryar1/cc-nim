@@ -1,7 +1,6 @@
 from __future__ import annotations
 
 import os
-import subprocess
 
 import pytest
 
@@ -9,7 +8,11 @@ from config.provider_catalog import PROVIDER_CATALOG
 from config.settings import Settings
 from messaging.platforms.factory import create_messaging_components
 from providers.runtime import build_provider_config
-from smoke.lib.child_process import cmd_free_claude_code_serve, cmd_python_c
+from smoke.lib.child_process import (
+    cmd_free_claude_code_serve,
+    cmd_python_c,
+    run_captured_text,
+)
 from smoke.lib.config import SmokeConfig
 from smoke.lib.e2e import SmokeServerDriver
 
@@ -32,12 +35,10 @@ def test_env_precedence_e2e(smoke_config: SmokeConfig, tmp_path) -> None:
         "s=get_settings(); "
         "print(s.model); print(s.anthropic_auth_token)"
     )
-    result = subprocess.run(
+    result = run_captured_text(
         cmd_python_c(script),
         cwd=smoke_config.root,
         env=env,
-        capture_output=True,
-        text=True,
         timeout=smoke_config.timeout_s,
         check=False,
     )
@@ -52,12 +53,10 @@ def test_removed_env_migration_e2e(smoke_config: SmokeConfig, tmp_path) -> None:
     env_file.write_text('NIM_ENABLE_THINKING="true"\n', encoding="utf-8")
     env = os.environ.copy()
     env["FCC_ENV_FILE"] = str(env_file)
-    result = subprocess.run(
+    result = run_captured_text(
         cmd_python_c("from config.settings import Settings; Settings()"),
         cwd=smoke_config.root,
         env=env,
-        capture_output=True,
-        text=True,
         timeout=smoke_config.timeout_s,
         check=False,
     )
@@ -86,12 +85,10 @@ def test_per_model_thinking_config_e2e(smoke_config: SmokeConfig, tmp_path) -> N
         "print(r.resolve('claude-haiku-4-20250514').thinking_enabled); "
         "print(r.resolve('unknown-model').thinking_enabled)"
     )
-    result = subprocess.run(
+    result = run_captured_text(
         cmd_python_c(script),
         cwd=smoke_config.root,
         env=env,
-        capture_output=True,
-        text=True,
         timeout=smoke_config.timeout_s,
         check=False,
     )
@@ -121,12 +118,10 @@ def test_proxy_timeout_config_e2e(smoke_config: SmokeConfig, tmp_path) -> None:
         "print(c.proxy); print(c.http_read_timeout); "
         "print(c.http_connect_timeout); print(c.http_write_timeout)"
     )
-    result = subprocess.run(
+    result = run_captured_text(
         cmd_python_c(script),
         cwd=smoke_config.root,
         env=env,
-        capture_output=True,
-        text=True,
         timeout=smoke_config.timeout_s,
         check=False,
     )
