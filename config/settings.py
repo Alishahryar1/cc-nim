@@ -64,6 +64,20 @@ class Settings(BaseSettings):
     # ==================== Cerebras Inference (OpenAI-compatible) ====================
     cerebras_api_key: str = Field(default="", validation_alias="CEREBRAS_API_KEY")
 
+    # ==================== Azure AI Foundry (OpenAI-compatible v1) ====================
+    # Resource-specific endpoint, e.g. https://<resource>.services.ai.azure.com/openai/v1
+    azure_foundry_api_key: str = Field(
+        default="", validation_alias="AZURE_FOUNDRY_API_KEY"
+    )
+    azure_foundry_base_url: str = Field(
+        default="", validation_alias="AZURE_FOUNDRY_BASE_URL"
+    )
+    # Optional cap on requested output tokens (Azure deployments reject over-budget
+    # max_tokens with a 400); blank/unset disables clamping.
+    azure_foundry_max_tokens: int | None = Field(
+        default=None, validation_alias="AZURE_FOUNDRY_MAX_TOKENS"
+    )
+
     # ==================== Messaging Platform Selection ====================
     # Valid: "telegram" | "discord" | "none"
     messaging_platform: str = Field(
@@ -125,6 +139,7 @@ class Settings(BaseSettings):
     gemini_proxy: str = Field(default="", validation_alias="GEMINI_PROXY")
     groq_proxy: str = Field(default="", validation_alias="GROQ_PROXY")
     cerebras_proxy: str = Field(default="", validation_alias="CEREBRAS_PROXY")
+    azure_foundry_proxy: str = Field(default="", validation_alias="AZURE_FOUNDRY_PROXY")
 
     # ==================== Provider Rate Limiting ====================
     provider_rate_limit: int = Field(default=40, validation_alias="PROVIDER_RATE_LIMIT")
@@ -274,9 +289,13 @@ class Settings(BaseSettings):
             return None
         return v
 
-    @field_validator("max_message_log_entries_per_chat", mode="before")
+    @field_validator(
+        "max_message_log_entries_per_chat",
+        "azure_foundry_max_tokens",
+        mode="before",
+    )
     @classmethod
-    def parse_optional_log_cap(cls, v: Any) -> Any:
+    def parse_optional_int(cls, v: Any) -> Any:
         if v == "" or v is None:
             return None
         return v

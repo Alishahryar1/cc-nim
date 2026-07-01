@@ -246,6 +246,20 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
             "rate_limit",
         ),
     ),
+    "azure_foundry": ProviderDescriptor(
+        provider_id="azure_foundry",
+        display_name="Azure AI Foundry",
+        transport_type="openai_chat",
+        credential_env="AZURE_FOUNDRY_API_KEY",
+        credential_url="https://ai.azure.com/",
+        credential_attr="azure_foundry_api_key",
+        # No universal default: the endpoint is resource-specific and is supplied
+        # via AZURE_FOUNDRY_BASE_URL (…services.ai.azure.com/openai/v1).
+        default_base_url=None,
+        base_url_attr="azure_foundry_base_url",
+        proxy_attr="azure_foundry_proxy",
+        capabilities=("chat", "streaming", "tools", "thinking", "rate_limit"),
+    ),
     "lmstudio": ProviderDescriptor(
         provider_id="lmstudio",
         display_name="LM Studio",

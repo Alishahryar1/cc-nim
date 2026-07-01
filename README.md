@@ -57,7 +57,7 @@ Free Claude Code routes Anthropic Messages API traffic from Claude Code (CLI and
 - Drop-in proxy for Claude Code's Anthropic API calls (`/v1/messages`, `/v1/models`).
 - Drop-in proxy for Codex via the OpenAI Responses API (`/v1/responses`).
 - `fcc-claude` and `fcc-codex` launchers that read the current Admin UI port and auth token each time they start.
-- 18 provider backends: NVIDIA NIM, OpenRouter, Google AI Studio (Gemini), DeepSeek, Mistral La Plateforme, Mistral Codestral, OpenCode Zen, OpenCode Go, Wafer, Kimi, Cerebras Inference, Groq, Fireworks AI, Cloudflare, Z.ai, LM Studio, llama.cpp, and Ollama.
+- 19 provider backends: NVIDIA NIM, OpenRouter, Google AI Studio (Gemini), DeepSeek, Mistral La Plateforme, Mistral Codestral, OpenCode Zen, OpenCode Go, Wafer, Kimi, Cerebras Inference, Groq, Fireworks AI, Cloudflare, Z.ai, Azure AI Foundry, LM Studio, llama.cpp, and Ollama.
 - Per-model routing for Claude Code: send Opus, Sonnet, Haiku, and fallback traffic to different providers.
 - Native Claude Code `/model` picker support through the proxy's `/v1/models` endpoint (see [Model Picker](#model-picker)).
 - Native Codex `/model` picker support when launched through `fcc-codex`, using a generated local model catalog.

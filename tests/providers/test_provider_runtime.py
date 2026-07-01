@@ -7,6 +7,7 @@ import pytest
 from config.nim import NimSettings
 from config.provider_catalog import PROVIDER_CATALOG, ZAI_DEFAULT_BASE
 from config.provider_ids import SUPPORTED_PROVIDER_IDS
+from providers.azure_foundry import AzureFoundryProvider
 from providers.cerebras import CerebrasProvider
 from providers.cloudflare import CloudflareProvider
 from providers.codestral import CodestralProvider
@@ -68,6 +69,12 @@ def _make_settings(**overrides):
     mock.groq_proxy = ""
     mock.cerebras_api_key = ""
     mock.cerebras_proxy = ""
+    mock.azure_foundry_api_key = "test_azure_key"
+    mock.azure_foundry_base_url = (
+        "https://example-resource.services.ai.azure.com/openai/v1"
+    )
+    mock.azure_foundry_max_tokens = None
+    mock.azure_foundry_proxy = ""
     mock.provider_rate_limit = 40
     mock.provider_rate_window = 60
     mock.provider_max_concurrency = 5
@@ -219,6 +226,7 @@ def test_create_provider_instantiates_each_builtin():
         "gemini": GeminiProvider,
         "groq": GroqProvider,
         "cerebras": CerebrasProvider,
+        "azure_foundry": AzureFoundryProvider,
     }
 
     with (

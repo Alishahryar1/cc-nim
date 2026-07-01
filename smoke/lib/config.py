@@ -59,6 +59,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "groq": "groq/llama-3.3-70b-versatile",
     "cerebras": "cerebras/llama3.1-8b",
     "cloudflare": "cloudflare/anthropic/claude-sonnet-4-5",
+    "azure_foundry": "azure_foundry/Kimi-K2.6",
 }
 
 NVIDIA_NIM_CLI_DEFAULT_MODELS: tuple[str, ...] = (
@@ -259,6 +260,11 @@ class SmokeConfig:
             return bool(self.settings.groq_api_key.strip())
         if provider == "cerebras":
             return bool(self.settings.cerebras_api_key.strip())
+        if provider == "azure_foundry":
+            return bool(
+                self.settings.azure_foundry_api_key.strip()
+                and self.settings.azure_foundry_base_url.strip()
+            )
         if provider == "cloudflare":
             return bool(
                 self.settings.cloudflare_api_token.strip()

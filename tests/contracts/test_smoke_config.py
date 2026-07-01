@@ -40,6 +40,8 @@ def _settings(**overrides):
         "gemini_api_key": "",
         "groq_api_key": "",
         "cerebras_api_key": "",
+        "azure_foundry_api_key": "",
+        "azure_foundry_base_url": "",
         "fireworks_api_key": "",
         "cloudflare_api_token": "",
         "cloudflare_account_id": "",

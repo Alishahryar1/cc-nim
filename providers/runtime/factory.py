@@ -127,6 +127,12 @@ def _create_cerebras(config: ProviderConfig, _settings: Settings) -> BaseProvide
     return CerebrasProvider(config)
 
 
+def _create_azure_foundry(config: ProviderConfig, settings: Settings) -> BaseProvider:
+    from providers.azure_foundry import AzureFoundryProvider
+
+    return AzureFoundryProvider(config, max_tokens=settings.azure_foundry_max_tokens)
+
+
 PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "nvidia_nim": _create_nvidia_nim,
     "open_router": _create_open_router,
@@ -143,6 +149,7 @@ PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "fireworks": _create_fireworks,
     "cloudflare": _create_cloudflare,
     "zai": _create_zai,
+    "azure_foundry": _create_azure_foundry,
     "lmstudio": _create_lmstudio,
     "llamacpp": _create_llamacpp,
     "ollama": _create_ollama,
