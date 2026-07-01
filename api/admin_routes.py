@@ -31,6 +31,7 @@ LOCAL_PROVIDER_PATHS = {
     "lmstudio": "/models",
     "llamacpp": "/models",
     "ollama": "/api/tags",
+    "lemonade": "/v1/models",
 }
 
 
@@ -253,6 +254,8 @@ def _local_provider_url(provider_id: str, values: dict[str, str]) -> str:
         return values.get("LLAMACPP_BASE_URL", "")
     if provider_id == "ollama":
         return values.get("OLLAMA_BASE_URL", "")
+    if provider_id == "lemonade":
+        return values.get("LEMONADE_BASE_URL", "")
     return ""
 
 

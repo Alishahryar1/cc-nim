@@ -97,6 +97,12 @@ class Settings(BaseSettings):
         validation_alias="OLLAMA_BASE_URL",
     )
 
+    # ==================== Lemonade Config ====================
+    lemonade_base_url: str = Field(
+        default="http://localhost:13305",
+        validation_alias="LEMONADE_BASE_URL",
+    )
+
     # ==================== Model ====================
     # All Claude model requests are mapped to this single model (fallback)
     # Format: provider_type/model/name
@@ -125,6 +131,7 @@ class Settings(BaseSettings):
     gemini_proxy: str = Field(default="", validation_alias="GEMINI_PROXY")
     groq_proxy: str = Field(default="", validation_alias="GROQ_PROXY")
     cerebras_proxy: str = Field(default="", validation_alias="CEREBRAS_PROXY")
+    lemonade_proxy: str = Field(default="", validation_alias="LEMONADE_PROXY")
 
     # ==================== Provider Rate Limiting ====================
     provider_rate_limit: int = Field(default=40, validation_alias="PROVIDER_RATE_LIMIT")
@@ -333,6 +340,16 @@ class Settings(BaseSettings):
             raise ValueError(
                 "OLLAMA_BASE_URL must be the Ollama root URL for native Anthropic "
                 "messages, e.g. http://localhost:11434 (without /v1)."
+            )
+        return v
+
+    @field_validator("lemonade_base_url")
+    @classmethod
+    def validate_lemonade_base_url(cls, v: str) -> str:
+        if v.rstrip("/").endswith("/v1"):
+            raise ValueError(
+                "LEMONADE_BASE_URL must be the Lemonade root URL for native Anthropic "
+                "messages, e.g. http://localhost:13305 (without /v1)."
             )
         return v
 
