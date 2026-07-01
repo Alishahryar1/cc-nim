@@ -27,3 +27,10 @@ class LemonadeProvider(AnthropicMessagesTransport):
             headers=self._request_headers(),
         )
         return await self._client.send(request, stream=True)
+
+    async def _send_model_list_request(self) -> httpx.Response:
+        """Query Lemonade's model list endpoint."""
+        return await self._client.get(
+            "/v1/models",
+            headers=self._model_list_headers(),
+        )
