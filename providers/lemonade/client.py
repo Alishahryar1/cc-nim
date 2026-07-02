@@ -46,7 +46,7 @@ class LemonadeProvider(OpenAIChatTransport):
 
     async def list_model_ids(self) -> frozenset[str]:
         """Return model ids from Lemonade's /v1/models endpoint."""
-        response = await self._http_client.get("/v1/models")
+        response = await self._http_client.get("/models")
         response.raise_for_status()
         return extract_openai_model_ids(
             response.json(), provider_name=self._provider_name

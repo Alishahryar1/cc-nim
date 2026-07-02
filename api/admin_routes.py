@@ -31,7 +31,7 @@ LOCAL_PROVIDER_PATHS = {
     "lmstudio": "/models",
     "llamacpp": "/models",
     "ollama": "/api/tags",
-    "lemonade": "/v1/models",
+    "lemonade": "/models",
 }
 
 
