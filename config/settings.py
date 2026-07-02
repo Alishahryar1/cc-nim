@@ -346,11 +346,6 @@ class Settings(BaseSettings):
     @field_validator("lemonade_base_url")
     @classmethod
     def validate_lemonade_base_url(cls, v: str) -> str:
-        if v.rstrip("/").endswith("/v1"):
-            raise ValueError(
-                "LEMONADE_BASE_URL must be the Lemonade root URL for native Anthropic "
-                "messages, e.g. http://localhost:13305 (without /v1)."
-            )
         return v
 
     @field_validator("model", "model_opus", "model_sonnet", "model_haiku")
