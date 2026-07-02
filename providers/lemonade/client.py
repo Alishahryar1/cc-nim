@@ -11,7 +11,7 @@ from loguru import logger
 
 from providers.base import ProviderConfig
 from providers.defaults import LEMONADE_DEFAULT_BASE
-from providers.exceptions import TruncatedProviderStreamError
+from core.anthropic.streaming import TruncatedProviderStreamError
 from providers.model_listing import extract_openai_model_ids
 from providers.transports.openai_chat import (
     OpenAIChatRequestPolicy,
