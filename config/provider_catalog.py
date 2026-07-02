@@ -36,7 +36,7 @@ ZAI_DEFAULT_BASE = "https://api.z.ai/api/anthropic/v1"
 GEMINI_DEFAULT_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GROQ_DEFAULT_BASE = "https://api.groq.com/openai/v1"
 CEREBRAS_DEFAULT_BASE = "https://api.cerebras.ai/v1"
-LEMONADE_DEFAULT_BASE = "http://localhost:13305"
+LEMONADE_DEFAULT_BASE = "http://localhost:13305/v1"
 
 
 @dataclass(frozen=True, slots=True)
