@@ -286,12 +286,12 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     "lemonade": ProviderDescriptor(
         provider_id="lemonade",
         display_name="Lemonade",
-        transport_type="anthropic_messages",
+        transport_type="openai_chat",
         static_credential="lemonade",
         default_base_url=LEMONADE_DEFAULT_BASE,
         base_url_attr="lemonade_base_url",
         proxy_attr="lemonade_proxy",
-        capabilities=("chat", "streaming", "tools", "native_anthropic", "local"),
+        capabilities=("chat", "streaming", "tools", "local"),
     ),
 }
 
