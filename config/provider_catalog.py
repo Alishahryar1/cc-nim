@@ -36,7 +36,7 @@ ZAI_DEFAULT_BASE = "https://api.z.ai/api/anthropic/v1"
 GEMINI_DEFAULT_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GROQ_DEFAULT_BASE = "https://api.groq.com/openai/v1"
 CEREBRAS_DEFAULT_BASE = "https://api.cerebras.ai/v1"
-LEMONADE_DEFAULT_BASE = "http://localhost:13305/v1"
+LEMONADE_DEFAULT_BASE = "http://localhost:13305"
 
 
 @dataclass(frozen=True, slots=True)
@@ -286,12 +286,12 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     "lemonade": ProviderDescriptor(
         provider_id="lemonade",
         display_name="Lemonade",
-        transport_type="openai_chat",
+        transport_type="anthropic_messages",
         static_credential="lemonade",
         default_base_url=LEMONADE_DEFAULT_BASE,
         base_url_attr="lemonade_base_url",
         proxy_attr="lemonade_proxy",
-        capabilities=("chat", "streaming", "tools", "local"),
+        capabilities=("chat", "streaming", "tools", "native_anthropic", "local"),
     ),
 }
 

@@ -1,11 +1,15 @@
-"""Tests for Lemonade OpenAI Chat provider."""
+"""Tests for Lemonade native Anthropic provider."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
 import pytest
 
+from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from core.anthropic.stream_contracts import parse_sse_text
 from providers.base import ProviderConfig
 from providers.lemonade import LEMONADE_DEFAULT_BASE, LemonadeProvider
+from tests.stream_contract import assert_canonical_stream_error_envelope
 
 
 class MockMessage:
@@ -16,7 +20,7 @@ class MockMessage:
 
 class MockRequest:
     def __init__(self, **kwargs):
-        self.model = "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q4_K_M"
+        self.model = "gemma-4-12B-coder-fable5-composer2.5-v1-GGUF-Q4_K_M"
         self.messages = [MockMessage("user", "Hello")]
         self.max_tokens = 100
         self.temperature = 0.5
@@ -62,7 +66,7 @@ def lemonade_config():
 def mock_rate_limiter():
     """Mock the global rate limiter to prevent waiting."""
     with patch(
-        "providers.transports.openai_chat.transport.GlobalRateLimiter"
+        "providers.transports.anthropic_messages.transport.GlobalRateLimiter"
     ) as mock:
         instance = mock.get_scoped_instance.return_value
         instance.wait_if_blocked = AsyncMock(return_value=False)
@@ -81,7 +85,7 @@ def lemonade_provider(lemonade_config):
 
 def test_init(lemonade_config):
     """Test provider initialization."""
-    with patch("openai.AsyncOpenAI"):
+    with patch("httpx.AsyncClient"):
         provider = LemonadeProvider(lemonade_config)
         assert provider._base_url == "http://localhost:13305"
         assert provider._provider_name == "LEMONADE"
@@ -90,7 +94,7 @@ def test_init(lemonade_config):
 def test_init_uses_default_base_url():
     """Test that provider uses default base URL when not configured."""
     config = ProviderConfig(api_key="lemonade", base_url=None)
-    with patch("openai.AsyncOpenAI"):
+    with patch("httpx.AsyncClient"):
         provider = LemonadeProvider(config)
         assert provider._base_url == LEMONADE_DEFAULT_BASE
 
@@ -103,7 +107,7 @@ def test_init_uses_default_api_key():
         rate_limit=10,
         rate_window=60,
     )
-    with patch("openai.AsyncOpenAI"):
+    with patch("httpx.AsyncClient"):
         provider = LemonadeProvider(config)
         assert provider._api_key == "lemonade"
 
@@ -116,14 +120,90 @@ def test_init_base_url_strips_trailing_slash():
         rate_limit=10,
         rate_window=60,
     )
-    with patch("openai.AsyncOpenAI"):
+    with patch("httpx.AsyncClient"):
         provider = LemonadeProvider(config)
         assert provider._base_url == "http://localhost:13305"
 
 
-def test_build_request_body(lemonade_provider):
-    """Test that request body is built correctly."""
+@pytest.mark.asyncio
+async def test_stream_response(lemonade_provider):
+    """Test streaming native Anthropic response."""
     req = MockRequest()
-    body = lemonade_provider._build_request_body(req, thinking_enabled=False)
-    assert body["model"] == "Qwen3.5-9B-Uncensored-HauhauCS-Aggressive-Q4_K_M"
-    assert "messages" in body
+
+    mock_response = MagicMock()
+    mock_response.status_code = 200
+
+    async def mock_aiter_lines():
+        yield "event: message_start"
+        yield 'data: {"type":"message_start","message":{}}'
+        yield ""
+        yield "event: content_block_delta"
+        yield 'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello World"}}'
+        yield ""
+        yield "event: message_stop"
+        yield 'data: {"type":"message_stop"}'
+        yield ""
+
+    mock_response.aiter_lines = mock_aiter_lines
+
+    with (
+        patch.object(
+            lemonade_provider._client, "build_request", return_value=MagicMock()
+        ) as mock_build,
+        patch.object(
+            lemonade_provider._client,
+            "send",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ),
+    ):
+        events = [event async for event in lemonade_provider.stream_response(req)]
+
+    mock_build.assert_called_once()
+    args, kwargs = mock_build.call_args
+    assert args[0] == "POST"
+    assert args[1] == "/v1/messages"
+    assert "Hello World" in "".join(events)
+
+
+@pytest.mark.asyncio
+async def test_stream_error_status_code(lemonade_provider):
+    """Non-200 status code is yielded as an SSE API error."""
+    req = MockRequest()
+    mock_response = MagicMock()
+    mock_response.status_code = 500
+    mock_response.aread = AsyncMock(return_value=b"Internal Server Error")
+    mock_response.raise_for_status = MagicMock(
+        side_effect=httpx.HTTPStatusError(
+            "Internal Server Error", request=MagicMock(), response=mock_response
+        )
+    )
+
+    with (
+        patch.object(
+            lemonade_provider._client, "build_request", return_value=MagicMock()
+        ),
+        patch.object(
+            lemonade_provider._client,
+            "send",
+            new_callable=AsyncMock,
+            return_value=mock_response,
+        ),
+    ):
+        events = [
+            event
+            async for event in lemonade_provider.stream_response(req, request_id="REQ")
+        ]
+
+    assert_canonical_stream_error_envelope(
+        events, user_message_substr="Provider API request failed"
+    )
+    assert "REQ" in "".join(events)
+
+
+@pytest.mark.asyncio
+async def test_cleanup(lemonade_provider):
+    """Test that cleanup closes the client."""
+    lemonade_provider._client.aclose = AsyncMock()
+    await lemonade_provider.cleanup()
+    lemonade_provider._client.aclose.assert_called_once()

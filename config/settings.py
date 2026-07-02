@@ -99,7 +99,7 @@ class Settings(BaseSettings):
 
     # ==================== Lemonade Config ====================
     lemonade_base_url: str = Field(
-        default="http://localhost:13305/v1",
+        default="http://localhost:13305",
         validation_alias="LEMONADE_BASE_URL",
     )
 
