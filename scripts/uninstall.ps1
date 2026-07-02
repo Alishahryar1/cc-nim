@@ -173,3 +173,4 @@ Purge-FccHome
 Write-Host ""
 Write-Host "Free Claude Code has been removed."
 Write-Host "uv, Claude Code, Codex, and the uv-managed Python runtime were left installed."
+fcc-server
