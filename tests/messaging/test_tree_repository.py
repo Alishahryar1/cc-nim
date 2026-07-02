@@ -3,7 +3,7 @@ from unittest.mock import MagicMock
 import pytest
 
 from messaging.models import IncomingMessage
-from messaging.trees.data import MessageNode, MessageState, MessageTree
+from messaging.trees import MessageNode, MessageTree
 from messaging.trees.repository import TreeRepository
 
 
@@ -93,10 +93,10 @@ def test_resolve_parent_node_id(repository, sample_tree):
     assert repository.resolve_parent_node_id("unknown") is None
 
 
-def test_get_pending_children(repository, sample_tree):
+@pytest.mark.asyncio
+async def test_get_pending_children(repository, sample_tree):
     repository.add_tree("root_id", sample_tree)
 
-    # Create a child node
     child_incoming = IncomingMessage(
         text="child",
         chat_id="c1",
@@ -104,16 +104,7 @@ def test_get_pending_children(repository, sample_tree):
         message_id="child_id",
         platform="telegram",
     )
-    child_node = MessageNode(
-        node_id="child_id",
-        incoming=child_incoming,
-        status_message_id="s2",
-        parent_id="root_id",
-        state=MessageState.PENDING,
-    )
-
-    sample_tree._nodes["child_id"] = child_node
-    sample_tree.get_node("root_id").children_ids.append("child_id")
+    await sample_tree.add_node("child_id", child_incoming, "s2", "root_id")
     repository.register_node("child_id", "root_id")
 
     pending = repository.get_pending_children("root_id")
@@ -121,16 +112,14 @@ def test_get_pending_children(repository, sample_tree):
     assert pending[0].node_id == "child_id"
 
 
-def test_to_from_dict(repository, sample_tree):
+def test_snapshot_round_trip(repository, sample_tree):
     repository.add_tree("root_id", sample_tree)
-    data = repository.to_dict()
+    snapshot = repository.snapshot()
 
-    assert "trees" in data
-    assert "root_id" in data["trees"]
-    assert "node_to_tree" in data
-    assert data["node_to_tree"]["root_id"] == "root_id"
+    assert "root_id" in snapshot.trees
+    assert snapshot.derive_node_to_tree()["root_id"] == "root_id"
 
-    new_repo = TreeRepository.from_dict(data)
+    new_repo = TreeRepository.from_snapshot(snapshot)
     tree = new_repo.get_tree("root_id")
     assert tree is not None
     assert tree.root_id == "root_id"

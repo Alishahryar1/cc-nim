@@ -9,6 +9,7 @@ import pytest
 
 from api.models.anthropic import Message, MessagesRequest, Tool
 from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from core.anthropic.stream_contracts import parse_sse_text
 from providers.base import ProviderConfig
 from providers.wafer import WAFER_DEFAULT_BASE, WaferProvider
 from tests.stream_contract import assert_canonical_stream_error_envelope
@@ -288,13 +289,9 @@ async def test_stream_uses_post_messages_path(wafer_provider):
     ):
         events = [event async for event in wafer_provider.stream_response(request)]
 
-    assert events == [
-        "event: message_start\n",
-        'data: {"type":"message_start"}\n',
-        "\n",
-        "event: message_stop\n",
-        'data: {"type":"message_stop"}\n',
-        "\n",
+    assert [event.event for event in parse_sse_text("".join(events))] == [
+        "message_start",
+        "message_stop",
     ]
     assert response.is_closed
     assert mock_build.call_args.args[:2] == ("POST", "/messages")

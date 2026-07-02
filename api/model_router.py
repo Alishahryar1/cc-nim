@@ -6,6 +6,7 @@ from dataclasses import dataclass
 
 from loguru import logger
 
+from config.model_refs import parse_model_name, parse_provider_type
 from config.provider_ids import SUPPORTED_PROVIDER_IDS
 from config.settings import Settings
 
@@ -50,7 +51,7 @@ class ModelRouter:
             thinking_enabled = (
                 force_thinking_enabled
                 if force_thinking_enabled is not None
-                else self._settings.resolve_thinking(direct_provider_model)
+                else self._resolve_thinking(direct_provider_model)
             )
             logger.debug(
                 "MODEL DIRECT: '{}' -> provider='{}' model='{}' thinking={}",
@@ -67,10 +68,10 @@ class ModelRouter:
                 thinking_enabled=thinking_enabled,
             )
 
-        provider_model_ref = self._settings.resolve_model(claude_model_name)
-        thinking_enabled = self._settings.resolve_thinking(claude_model_name)
-        provider_id = Settings.parse_provider_type(provider_model_ref)
-        provider_model = Settings.parse_model_name(provider_model_ref)
+        provider_model_ref = self._resolve_model_ref(claude_model_name)
+        thinking_enabled = self._resolve_thinking(claude_model_name)
+        provider_id = parse_provider_type(provider_model_ref)
+        provider_model = parse_model_name(provider_model_ref)
         if provider_model != claude_model_name:
             logger.debug(
                 "MODEL MAPPING: '{}' -> '{}'", claude_model_name, provider_model
@@ -104,6 +105,30 @@ class ModelRouter:
         if not provider_model:
             return None, None, None
         return provider_id, provider_model, None
+
+    def _resolve_model_ref(self, claude_model_name: str) -> str:
+        """Resolve a Claude model name to the configured provider/model ref."""
+
+        name_lower = claude_model_name.lower()
+        if "opus" in name_lower and self._settings.model_opus is not None:
+            return self._settings.model_opus
+        if "haiku" in name_lower and self._settings.model_haiku is not None:
+            return self._settings.model_haiku
+        if "sonnet" in name_lower and self._settings.model_sonnet is not None:
+            return self._settings.model_sonnet
+        return self._settings.model
+
+    def _resolve_thinking(self, claude_model_name: str) -> bool:
+        """Resolve whether thinking is enabled for an incoming Claude model name."""
+
+        name_lower = claude_model_name.lower()
+        if "opus" in name_lower and self._settings.enable_opus_thinking is not None:
+            return self._settings.enable_opus_thinking
+        if "haiku" in name_lower and self._settings.enable_haiku_thinking is not None:
+            return self._settings.enable_haiku_thinking
+        if "sonnet" in name_lower and self._settings.enable_sonnet_thinking is not None:
+            return self._settings.enable_sonnet_thinking
+        return self._settings.enable_model_thinking
 
     def resolve_messages_request(
         self, request: MessagesRequest

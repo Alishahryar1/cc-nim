@@ -2,12 +2,15 @@ from __future__ import annotations
 
 import os
 import shutil
-import subprocess
 from pathlib import Path
 
 import pytest
 
-from smoke.lib.child_process import cmd_fcc_init, cmd_free_claude_code_serve
+from smoke.lib.child_process import (
+    cmd_fcc_init,
+    cmd_free_claude_code_serve,
+    run_captured_text,
+)
 from smoke.lib.config import SmokeConfig
 from smoke.lib.server import start_server
 from smoke.lib.skips import skip_upstream_unavailable
@@ -21,12 +24,10 @@ def test_fcc_init_scaffolds_user_config(
     env = os.environ.copy()
     env["HOME"] = str(tmp_path)
     env["USERPROFILE"] = str(tmp_path)
-    result = subprocess.run(
+    result = run_captured_text(
         cmd_fcc_init(),
         cwd=smoke_config.root,
         env=env,
-        capture_output=True,
-        text=True,
         timeout=smoke_config.timeout_s,
         check=False,
     )
@@ -63,12 +64,10 @@ def test_claude_cli_prompt_when_available(
         env["ANTHROPIC_BASE_URL"] = server.base_url
         if smoke_config.settings.anthropic_auth_token:
             env["ANTHROPIC_AUTH_TOKEN"] = smoke_config.settings.anthropic_auth_token
-        result = subprocess.run(
+        result = run_captured_text(
             [claude_bin, "-p", "Reply with exactly FCC_SMOKE_PONG"],
             cwd=tmp_path,
             env=env,
-            capture_output=True,
-            text=True,
             timeout=smoke_config.timeout_s,
             check=False,
         )

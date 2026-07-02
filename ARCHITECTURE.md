@@ -32,9 +32,10 @@ flowchart LR
     Bots[Discord or Telegram Bots] --> Messaging[Messaging Bridge]
     Messaging --> ClientCLI[Managed Client CLI Sessions]
     ClientCLI --> ProxyAPI
-    ProxyAPI --> Pipeline[ApiRequestPipeline]
-    Pipeline --> Router[ModelRouter]
-    Pipeline --> Providers[ProviderRegistry]
+    ProxyAPI --> Handlers[API Product Handlers]
+    Handlers --> Router[ModelRouter]
+    Handlers --> Executor[ProviderExecutionService]
+    Executor --> Providers[ProviderRuntime]
     Providers --> OpenAIChat[OpenAI Chat Providers]
     Providers --> NativeAnthropic[Anthropic Messages Providers]
 ```
@@ -43,8 +44,9 @@ flowchart LR
 
 The installable wheel packages are declared in [pyproject.toml](pyproject.toml):
 
-- [api/](api/) owns the FastAPI app, route handlers, request pipeline, model
-  catalog, admin APIs, local optimizations, and server-tool handling.
+- [api/](api/) owns the FastAPI app, route handlers, API product handlers, shared
+  provider execution, model catalog, admin APIs, local optimizations, and
+  server-tool handling.
 - [cli/](cli/) owns console entrypoints, client CLI launchers, process/session
   management, and client adapter contracts.
 - [config/](config/) owns settings, provider metadata, filesystem paths,
@@ -105,22 +107,23 @@ The current package boundaries are intentional, but several modules still carry
 large orchestration responsibilities. Treat these as refactor targets, not as
 new places to add unrelated behavior:
 
-- [api/request_pipeline.py](api/request_pipeline.py) coordinates routing,
-  message-only intercepts, provider execution, token counting, and Responses
-  adaptation. Keep route handlers thin and keep new pre-provider behavior as
-  explicit pipeline intercepts.
+- [api/handlers/](api/handlers/) owns customer-facing API product flows:
+  Claude Messages, OpenAI Responses, and token counting. Keep route handlers
+  thin, keep Claude-only behavior in the Messages handler, and use
+  [api/provider_execution.py](api/provider_execution.py) only for shared
+  provider resolution, preflight, tracing, token counting, and streaming.
 - [providers/transports/](providers/transports/) owns provider transport
   families. The OpenAI-chat and native Anthropic transport packages split thin
   transport bases from per-request stream runners, recovery event construction,
-  and transport-specific parsing. Shared protocol rules should continue moving
-  toward [core/](core/) when they are not provider-specific.
+  request policy, and transport-specific parsing. Shared protocol rules should
+  continue moving toward [core/](core/) when they are not provider-specific.
 - [messaging/workflow.py](messaging/workflow.py) coordinates messaging runtime
   dependencies. Inbound turn intake, queued node execution, slash command
   dependencies, and tree queue internals live in separate modules so new
   behavior has one owner instead of growing the workflow object.
-- [api/admin_config.py](api/admin_config.py) owns the admin config manifest,
-  validation, env rendering, and status metadata. Keep it data-driven, and split
-  only around cohesive admin responsibilities.
+- [api/admin_config/](api/admin_config/) owns Admin UI config behavior. Keep
+  provider fields catalog-driven, and keep manifest, source loading, validation,
+  env rendering, value presentation, and status metadata in their package owners.
 
 ## Runtime Startup And Lifecycle
 
@@ -153,7 +156,7 @@ reported without noisy Starlette tracebacks.
 [api/runtime.py](api/runtime.py) owns process-lifetime resources through
 `AppRuntime`:
 
-- creates and publishes an app-scoped `ProviderRegistry`;
+- creates and publishes an app-scoped `ProviderRuntime`;
 - validates configured models best-effort without blocking first-run admin access;
 - starts provider model-list refresh;
 - starts optional Discord or Telegram messaging when configured;
@@ -163,8 +166,10 @@ reported without noisy Starlette tracebacks.
 
 ## Configuration Model
 
-[config/settings.py](config/settings.py) centralizes configuration with Pydantic
-Settings. Dotenv files are configured in this order:
+[config/settings.py](config/settings.py) owns the flat Pydantic Settings schema:
+raw env fields, validation, and `get_settings()`. It should not own routing,
+model-ref parsing, launcher defaults, or web-tool policy. Dotenv discovery lives
+in [config/env_files.py](config/env_files.py) and uses this order:
 
 1. repo-local `.env`;
 2. managed `~/.fcc/.env`;
@@ -173,7 +178,8 @@ Settings. Dotenv files are configured in this order:
 Later dotenv files override earlier dotenv files. Process environment variables
 also participate through Pydantic settings resolution. `ANTHROPIC_AUTH_TOKEN`
 has an extra guard after settings are built: if any configured dotenv file
-defines it, that dotenv value replaces a stale inherited shell token.
+defines it, that dotenv value replaces a stale inherited shell token. Auth-token
+source detection for startup warnings also belongs to `config/env_files.py`.
 
 [config/paths.py](config/paths.py) defines managed paths:
 
@@ -191,12 +197,23 @@ Model routing configuration is tiered:
 - `ENABLE_OPUS_THINKING`, `ENABLE_SONNET_THINKING`, and
   `ENABLE_HAIKU_THINKING` optionally override thinking by tier.
 
-[api/admin_config.py](api/admin_config.py) defines the Admin UI config manifest
-and writes managed env updates. [api/admin_routes.py](api/admin_routes.py)
-exposes local-only admin endpoints that load, validate, apply, and test config.
-After an apply, settings are cache-cleared. Depending on the changed fields, the
-server either replaces the app provider registry or asks the supervised server to
-restart.
+[config/model_refs.py](config/model_refs.py) owns provider-prefixed model ref
+parsing and configured `MODEL*` inventory. API routing and provider validation
+depend on those helpers instead of adding behavior methods to Settings.
+
+[api/admin_config/](api/admin_config/) owns the Admin UI config manifest and
+managed env writes. Provider credential, local URL, proxy, and display-name
+metadata is generated from [config/provider_catalog.py](config/provider_catalog.py);
+admin-only help text stays beside the admin manifest. The package splits source
+loading, value presentation, validation, persistence, and provider status into
+separate modules. [api/admin_routes.py](api/admin_routes.py) exposes local-only
+admin endpoints that load, validate, apply, and test config. After an apply,
+settings are cache-cleared. Depending on the changed fields, the server either
+replaces the app provider runtime or asks the supervised server to restart.
+
+[.env.example](.env.example) is the single install/init/admin template source.
+It is packaged as a [config/](config/) resource for `fcc-init` and Admin UI
+template defaults; runtime settings do not read it as a live config file.
 
 Admin routes call `require_loopback_admin()`, which rejects non-loopback clients
 and non-local origins.
@@ -221,36 +238,42 @@ proxy auth is disabled. Otherwise the token may be supplied through `x-api-key`,
 `Authorization: Bearer ...`, or `anthropic-auth-token`. Comparisons use
 constant-time matching.
 
-`ApiRequestPipeline` in
-[api/request_pipeline.py](api/request_pipeline.py) coordinates request handling.
-It validates non-empty messages, resolves models, runs explicit message-only
-intercepts for local server tools and optimizations, resolves a provider,
-preflights the upstream request, then streams Anthropic SSE back to the caller.
+[api/handlers/](api/handlers/) owns the public API product flows.
+`MessagesHandler` validates non-empty messages, resolves models, applies
+Claude-only safety-classifier and local optimization policy, handles local web
+server tools, then streams Anthropic SSE. `ResponsesHandler` owns streaming-only
+OpenAI Responses validation and conversion for Codex clients. `TokenCountHandler`
+owns Anthropic token counting. Shared provider execution lives in
+[api/provider_execution.py](api/provider_execution.py), which resolves a
+provider, preflights the upstream request, emits trace events, counts input
+tokens, and returns an Anthropic SSE iterator.
 
 ```mermaid
 sequenceDiagram
     participant Client
     participant Route as FastAPIRoute
-    participant Pipeline as ApiRequestPipeline
+    participant Handler as ProductHandler
     participant Router as ModelRouter
-    participant Registry as ProviderRegistry
+    participant Exec as ProviderExecution
+    participant Runtime as ProviderRuntime
     participant Provider
 
     Client->>Route: POST /v1/messages
     Route->>Route: require_api_key
-    Route->>Pipeline: create_message
-    Pipeline->>Router: resolve model and thinking
-    Pipeline->>Pipeline: server tools or optimizations
-    Pipeline->>Registry: resolve provider
-    Registry->>Provider: cached or new provider
-    Pipeline->>Provider: preflight_stream
-    Pipeline->>Provider: stream_response
+    Route->>Handler: create message
+    Handler->>Router: resolve model and thinking
+    Handler->>Handler: server tools or optimizations
+    Handler->>Exec: stream routed request
+    Exec->>Runtime: resolve provider
+    Runtime->>Provider: cached or new provider
+    Exec->>Provider: preflight_stream
+    Exec->>Provider: stream_response
     Provider-->>Client: Anthropic SSE events
 ```
 
-OpenAI Responses uses the same provider execution path without message-only
-intercepts. `create_response()` delegates Responses protocol work to the
-`OpenAIResponsesAdapter` in
+OpenAI Responses uses the same provider execution primitive without importing
+Claude-only message intercepts. `ResponsesHandler` delegates protocol work to
+the `OpenAIResponsesAdapter` in
 [core/openai_responses/adapter.py](core/openai_responses/adapter.py). The adapter
 converts the Responses payload into an Anthropic Messages payload before
 provider execution, then converts Anthropic SSE back to Responses SSE.
@@ -263,13 +286,13 @@ It supports two forms:
 - Direct provider model refs such as `nvidia_nim/nvidia/model-name`.
 - Gateway model IDs decoded by [api/gateway_model_ids.py](api/gateway_model_ids.py).
 
-If the incoming model is not direct, `Settings.resolve_model()` maps it by Claude
-tier. Names containing `opus`, `sonnet`, or `haiku` use the matching tier override
-when set, otherwise they fall back to `MODEL`.
+If the incoming model is not direct, `ModelRouter` maps it by Claude tier. Names
+containing `opus`, `sonnet`, or `haiku` use the matching tier override when set,
+otherwise they fall back to `MODEL`.
 
 The router also resolves thinking. Gateway model IDs can force thinking on or
-off; otherwise `Settings.resolve_thinking()` applies tier-specific thinking
-overrides or the global setting.
+off; otherwise `ModelRouter` applies tier-specific thinking overrides or the
+global setting.
 
 `GET /v1/models` advertises:
 
@@ -278,7 +301,7 @@ overrides or the global setting.
 - no-thinking variants when appropriate;
 - built-in Claude model IDs for compatibility with Claude clients.
 
-Provider model discovery is app-scoped through `ProviderRegistry`, which caches
+Provider model discovery is app-scoped through `ProviderRuntime`, which caches
 model IDs and optional thinking capability metadata for the model-list route and
 admin status.
 
@@ -295,10 +318,12 @@ Provider metadata is neutral and centralized in
 `ProviderDescriptor` declares provider ID, transport type, capabilities,
 credential env var, default base URL, settings attribute names, and proxy support.
 
-[providers/registry.py](providers/registry.py) owns provider factories and the
-runtime registry. It validates that descriptors, factories, and supported IDs are
-in sync, builds shared `ProviderConfig`, checks required credentials, creates
-providers lazily, caches them, refreshes model lists, and cleans up transports.
+[providers/runtime/](providers/runtime/) owns the app-scoped provider runtime.
+It validates that descriptors, factories, and supported IDs are in sync, builds
+shared `ProviderConfig`, checks required credentials, creates providers lazily,
+caches them, refreshes model lists, validates configured models, and cleans up
+transports. The package splits factory wiring, config building, provider instance
+cache, model metadata cache, discovery, and validation into separate modules.
 
 [providers/base.py](providers/base.py) defines:
 
@@ -312,28 +337,45 @@ There are two transport families under [providers/transports/](providers/transpo
 - [providers/transports/openai_chat/](providers/transports/openai_chat/)
   implements `OpenAIChatTransport` for providers with OpenAI-compatible
   `/chat/completions` APIs. The package owns the thin transport base,
-  per-request stream runner, OpenAI tool-call assembly, and OpenAI-chat recovery
-  event construction.
+  per-request stream runner, OpenAI request policy, OpenAI tool-call assembly,
+  and OpenAI-chat recovery event construction.
 - [providers/transports/anthropic_messages/](providers/transports/anthropic_messages/)
   implements `AnthropicMessagesTransport` for providers with
   Anthropic-compatible `/messages` APIs. The package owns the thin transport
-  base, native stream runner, HTTP response helpers, and native recovery event
-  construction.
+  base, native request policy, native stream runner, HTTP response helpers, and
+  native recovery event construction.
+
+Provider request construction mirrors the transport family split. OpenAI-chat
+providers call the OpenAI request policy for Anthropic-to-OpenAI conversion,
+thinking replay selection, `extra_body`, and chat-completion field normalization.
+Native Anthropic providers call the native request policy for raw request
+dumping, default tokens, stream flags, thinking payloads, and `extra_body`
+handling. Concrete provider packages keep only true upstream quirks such as
+Gemini thought signatures, NIM tool-schema aliases and retry downgrades, or
+DeepSeek attachment/tool/thinking compatibility. DeepSeek intentionally uses its
+OpenAI-compatible Chat Completions endpoint because that is the endpoint that
+reports prompt-cache hit/miss counters; the provider maps those counters back
+into Anthropic usage fields for Claude-compatible clients.
 
 Shared provider responsibilities include upstream rate limiting, model listing,
 safe error mapping, transport cleanup, thinking/tool handling, retry or recovery
 where supported, and returning Anthropic SSE strings to the service layer.
+Provider-specific inputs that do not apply to other upstreams, such as
+Cloudflare's account ID, stay in that provider's factory/client instead of being
+added to shared `ProviderConfig`.
 
 ### Adding A Provider
 
 1. Add provider metadata to [config/provider_catalog.py](config/provider_catalog.py).
 2. Add credentials and related settings to [config/settings.py](config/settings.py)
    and [.env.example](.env.example) when user configurable.
-3. Add admin manifest fields in [api/admin_config.py](api/admin_config.py) when
-   the setting should be editable in the Admin UI.
+3. Let Admin UI provider credential, local URL, and proxy fields come from the
+   catalog. Add admin-only help text or provider-specific fields under
+   [api/admin_config/](api/admin_config/) only when the generated manifest is
+   insufficient.
 4. Implement the provider under [providers/](providers/) using the appropriate
    shared transport family.
-5. Add a factory in [providers/registry.py](providers/registry.py).
+5. Add a factory in [providers/runtime/factory.py](providers/runtime/factory.py).
 6. Add deterministic tests under [tests/providers/](tests/providers/) and any
    relevant contract tests.
 7. Add smoke coverage or smoke config in [smoke/](smoke/) when the provider can
@@ -346,25 +388,25 @@ where supported, and returning Anthropic SSE strings to the service layer.
 [core/anthropic/](core/anthropic/) owns Anthropic-side protocol behavior:
 
 - content and message conversion for OpenAI-compatible upstreams;
+- request serialization primitives shared by provider request policies;
 - tool schema and tool-result handling;
 - thinking block handling;
-- SSE event formatting through `SSEBuilder`;
+- stream lifecycle through `core/anthropic/streaming`, including the neutral
+  stream ledger, Anthropic SSE emitter, native event normalization, retry
+  holdback, continuation, and tool repair;
 - native Anthropic stream policy;
-- stream recovery policy, holdback, continuation, and repair helpers;
 - token counting and user-facing error formatting.
 
-Shared stream recovery policy lives in
-[core/anthropic/stream_recovery_session.py](core/anthropic/stream_recovery_session.py)
-and [core/anthropic/stream_recovery.py](core/anthropic/stream_recovery.py). The
-shared layer owns early retry classification, holdback buffering, retry attempt
-counting, and common flush/discard behavior. Provider transports still own
-upstream request construction, stream semantic parsing, transport-specific state
-tracking, and the actual recovery SSE events emitted for OpenAI-chat or native
-Anthropic streams. Per-request stream runners in
-[providers/transports/openai_chat/](providers/transports/openai_chat/) and
-[providers/transports/anthropic_messages/](providers/transports/anthropic_messages/)
-own mutable stream state so transport base classes stay focused on provider
-hooks, client setup, and model listing.
+Shared stream behavior lives under
+[core/anthropic/streaming/](core/anthropic/streaming/). The shared layer owns the
+Anthropic content-block ledger, SSE serialization, early retry classification,
+holdback buffering, retry attempt counting, common flush/discard behavior,
+midstream continuation, tool JSON repair, and final success/error tails. Provider
+transport packages are upstream adapters: OpenAI-chat providers convert chat
+chunks into ledger operations, and native Anthropic providers parse upstream SSE,
+apply native block policy, and re-emit normalized Anthropic SSE from the shared
+ledger. Transport bases stay focused on provider hooks, client setup, request
+construction, rate limiting, and model listing.
 
 [core/openai_responses/](core/openai_responses/) owns OpenAI Responses support:
 
@@ -381,11 +423,13 @@ streaming. Request conversion, stream transformation, Anthropic SSE parsing,
 Responses SSE event formatting, output item construction, tool identity mapping,
 reasoning mapping, ID generation, and error envelope construction each live
 behind the adapter boundary. `stream.py` is the public streaming entrypoint;
-`stream_state.py` owns the block-indexed Responses output ledger used to
-preserve streamed item order, pending block finalization, and terminal response
-lifecycle events. API code should depend on the adapter, not on those internal
-module owners directly. Responses output payloads stay OpenAI-shaped; Anthropic
-terminal metadata is used internally only when it affects streamed behavior.
+[core/openai_responses/streaming/](core/openai_responses/streaming/) owns the
+block-indexed Responses stream assembler. The package separates Anthropic SSE
+dispatch, block state, output ledger ordering, block completion, SSE event
+builders, and error mapping. API code should depend on the adapter, not on
+those internal module owners directly. Responses output payloads stay
+OpenAI-shaped; Anthropic terminal metadata is used internally only when it
+affects streamed behavior.
 
 Responses custom tools are also boundary-owned. The adapter accepts native
 Responses `custom` tool declarations, represents them internally as Anthropic
@@ -424,25 +468,25 @@ common low-value client requests before they reach a provider:
 - suggestion mode;
 - filepath extraction.
 
-The service runs these only after model routing and after local server-tool
+The Messages handler runs these only after model routing and after local server-tool
 handling. Each optimization is controlled by settings flags.
 
 Claude Code auto-mode safety-classifier requests are a message-only routing
-policy, not a short-circuit response. After routing, the pipeline detects the
+policy, not a short-circuit response. After routing, the Messages handler detects the
 narrow classifier prompt shape and forces thinking off before provider execution
 so Claude Code receives a parser-readable `<block>yes</block>` or
 `<block>no</block>` verdict.
 
 Local `web_search` and `web_fetch` handling lives under
 [api/web_tools/](api/web_tools/). When `ENABLE_WEB_SERVER_TOOLS` is true, the
-service can stream local Anthropic server-tool responses without sending the
+Messages handler can stream local Anthropic server-tool responses without sending the
 request upstream. [api/web_tools/egress.py](api/web_tools/egress.py) enforces URL
 scheme and private-network restrictions for `web_fetch`.
 
 OpenAI-chat upstream providers are identified by
 `ProviderDescriptor.transport_type == "openai_chat"` in
 [config/provider_catalog.py](config/provider_catalog.py). They cannot safely
-represent Anthropic server-tool blocks, so the service rejects unsupported
+represent Anthropic server-tool blocks, so the Messages handler rejects unsupported
 server-tool requests before provider execution instead of performing a lossy
 conversion. Forced `web_search` or `web_fetch` requests are handled locally when
 `ENABLE_WEB_SERVER_TOOLS` is true; otherwise OpenAI-chat upstreams reject them
@@ -529,6 +573,13 @@ lifecycle for queued nodes: parent-session fork/resume, session registration,
 CLI event parsing, transcript/status updates, cancellation, error propagation,
 and session cleanup.
 
+[messaging/event_parser.py](messaging/event_parser.py) normalizes managed Claude
+JSON events into low-level transcript events.
+[messaging/transcript/](messaging/transcript/) owns transcript assembly and
+rendering: open content-block tracking, Task/subagent display state, segment
+models, render context, and truncation. Platform markdown details stay in
+[messaging/rendering/](messaging/rendering/).
+
 [messaging/command_context.py](messaging/command_context.py) defines the typed
 dependency surface for `/stop`, `/clear`, and `/stats`; commands should not
 depend on the concrete workflow object or on platform SDK runtimes.
@@ -539,12 +590,21 @@ each tree processes one node at a time while separate trees can progress
 independently. [messaging/trees/repository.py](messaging/trees/repository.py)
 owns the in-memory tree/node index, and
 [messaging/trees/processor.py](messaging/trees/processor.py) owns async queue
-processing. [messaging/trees/data.py](messaging/trees/data.py) owns the persisted
-`MessageNode` and `MessageTree` JSON shape.
+processing. [messaging/trees/node.py](messaging/trees/node.py) owns
+`MessageNode` and `MessageState`,
+[messaging/trees/graph.py](messaging/trees/graph.py) owns parent/child and
+status-message lookup state, [messaging/trees/runtime.py](messaging/trees/runtime.py)
+owns locks/current-task/processing state, and
+[messaging/trees/snapshot.py](messaging/trees/snapshot.py) owns typed persisted
+conversation snapshots.
 
-[messaging/session.py](messaging/session.py) persists trees, node-to-tree
-mappings, and message IDs to a JSON file under the managed agent workspace. It
-uses debounced atomic writes and flushes pending saves on shutdown.
+[messaging/session/](messaging/session/) persists typed conversation snapshots
+and message IDs to a JSON file under the managed agent workspace.
+`SessionStore` reads existing `sessions.json` files but exposes typed snapshot
+APIs to runtime code. Debounced atomic writes live in
+[messaging/session/persistence.py](messaging/session/persistence.py), and
+per-chat message ID tracking for `/clear` lives in
+[messaging/session/message_log.py](messaging/session/message_log.py).
 
 ```mermaid
 sequenceDiagram
@@ -634,7 +694,9 @@ when maintainers want branch-level assurance.
 
 1. Add or expose the setting in [config/settings.py](config/settings.py).
 2. Add the template key to [.env.example](.env.example) if users configure it.
-3. Add a `ConfigFieldSpec` in [api/admin_config.py](api/admin_config.py).
+3. Add a `ConfigFieldSpec` under [api/admin_config/](api/admin_config/), or add
+   provider catalog metadata when the setting is provider credential, local URL,
+   proxy, or display-name metadata.
 4. Mark `restart_required` or `session_sensitive` when runtime state cannot be
    updated in place.
 5. Add tests under [tests/api/](tests/api/) or [tests/config/](tests/config/).
@@ -689,7 +751,7 @@ Update this file when a change adds or meaningfully changes:
 - a public route or wire protocol;
 - startup, shutdown, or resource ownership;
 - configuration precedence or managed config behavior;
-- provider registry, catalog, or transport architecture;
+- provider runtime, catalog, or transport architecture;
 - model routing or thinking behavior;
 - CLI adapter behavior;
 - messaging platform behavior;

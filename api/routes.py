@@ -3,34 +3,56 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from loguru import logger
 
+from config.model_refs import parse_provider_type
 from config.settings import Settings
 from core.anthropic import get_token_count
 from core.trace import trace_event
-from providers.registry import ProviderRegistry
 
 from . import dependencies
 from .dependencies import get_settings, require_api_key
+from .handlers import MessagesHandler, ResponsesHandler, TokenCountHandler
 from .model_catalog import build_models_list_response
 from .models.anthropic import MessagesRequest, TokenCountRequest
 from .models.openai_responses import OpenAIResponsesRequest
 from .models.responses import ModelsListResponse
-from .request_pipeline import ApiRequestPipeline
 
 router = APIRouter()
 
 
-def get_request_pipeline(
+def _provider_getter(request: Request, settings: Settings):
+    return lambda provider_type: dependencies.resolve_provider(
+        provider_type, app=request.app
+    )
+
+
+def get_messages_handler(
     request: Request,
     settings: Settings = Depends(get_settings),
-) -> ApiRequestPipeline:
-    """Build the API request pipeline for route handlers."""
-    return ApiRequestPipeline(
+) -> MessagesHandler:
+    """Build the Claude Messages product handler for route handlers."""
+    return MessagesHandler(
         settings,
-        provider_getter=lambda provider_type: dependencies.resolve_provider(
-            provider_type, app=request.app, settings=settings
-        ),
+        provider_getter=_provider_getter(request, settings),
         token_counter=get_token_count,
     )
+
+
+def get_responses_handler(
+    request: Request,
+    settings: Settings = Depends(get_settings),
+) -> ResponsesHandler:
+    """Build the OpenAI Responses product handler for route handlers."""
+    return ResponsesHandler(
+        settings,
+        provider_getter=_provider_getter(request, settings),
+    )
+
+
+def get_token_count_handler(
+    settings: Settings = Depends(get_settings),
+) -> TokenCountHandler:
+    """Build the token-count product handler for route handlers."""
+    return TokenCountHandler(settings, token_counter=get_token_count)
 
 
 def _probe_response(allow: str) -> Response:
@@ -44,11 +66,11 @@ def _probe_response(allow: str) -> Response:
 @router.post("/v1/messages")
 async def create_message(
     request_data: MessagesRequest,
-    pipeline: ApiRequestPipeline = Depends(get_request_pipeline),
+    handler: MessagesHandler = Depends(get_messages_handler),
     _auth=Depends(require_api_key),
 ):
     """Create a message (always streaming)."""
-    return pipeline.create_message(request_data)
+    return handler.create(request_data)
 
 
 @router.api_route("/v1/messages", methods=["HEAD", "OPTIONS"])
@@ -60,11 +82,11 @@ async def probe_messages(_auth=Depends(require_api_key)):
 @router.post("/v1/responses")
 async def create_response(
     request_data: OpenAIResponsesRequest,
-    pipeline: ApiRequestPipeline = Depends(get_request_pipeline),
+    handler: ResponsesHandler = Depends(get_responses_handler),
     _auth=Depends(require_api_key),
 ):
     """Create an OpenAI Responses-compatible response through this proxy."""
-    return await pipeline.create_response(request_data)
+    return await handler.create(request_data)
 
 
 @router.api_route("/v1/responses", methods=["HEAD", "OPTIONS"])
@@ -76,11 +98,11 @@ async def probe_responses(_auth=Depends(require_api_key)):
 @router.post("/v1/messages/count_tokens")
 async def count_tokens(
     request_data: TokenCountRequest,
-    pipeline: ApiRequestPipeline = Depends(get_request_pipeline),
+    handler: TokenCountHandler = Depends(get_token_count_handler),
     _auth=Depends(require_api_key),
 ):
     """Count tokens for a request."""
-    return pipeline.count_tokens(request_data)
+    return handler.count(request_data)
 
 
 @router.api_route("/v1/messages/count_tokens", methods=["HEAD", "OPTIONS"])
@@ -96,7 +118,7 @@ async def root(
     """Root endpoint."""
     return {
         "status": "ok",
-        "provider": settings.provider_type,
+        "provider": parse_provider_type(settings.model),
         "model": settings.model,
     }
 
@@ -127,9 +149,8 @@ async def list_models(
 ):
     """List the model ids this proxy advertises to Claude-compatible clients."""
     trace_event(stage="ingress", event="api.models.list", source="api")
-    registry = getattr(request.app.state, "provider_registry", None)
-    provider_registry = registry if isinstance(registry, ProviderRegistry) else None
-    return build_models_list_response(settings, provider_registry)
+    provider_runtime = dependencies.maybe_provider_runtime(request.app)
+    return build_models_list_response(settings, provider_runtime)
 
 
 @router.post("/stop")

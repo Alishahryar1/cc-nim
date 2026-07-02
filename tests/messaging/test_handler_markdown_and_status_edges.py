@@ -6,7 +6,7 @@ import pytest
 from messaging.models import IncomingMessage
 from messaging.node_event_pipeline import process_parsed_cli_event
 from messaging.rendering.telegram_markdown import render_markdown_to_mdv2
-from messaging.trees.data import MessageNode, MessageState
+from messaging.trees import MessageNode, MessageState
 from messaging.workflow import MessagingWorkflow
 
 
@@ -153,7 +153,7 @@ async def test_node_runner_process_node_session_limit_marks_error_and_updates_ui
 
     fake_tree = MagicMock()
     fake_tree.root_id = "root"
-    fake_tree.to_dict = MagicMock(return_value={"root": "error"})
+    fake_tree.snapshot = MagicMock(return_value={"root": "error"})
     fake_tree.update_state = AsyncMock()
     with patch.object(
         handler.tree_queue, "get_tree_for_node", MagicMock(return_value=fake_tree)
@@ -170,7 +170,7 @@ async def test_node_runner_process_node_session_limit_marks_error_and_updates_ui
         await handler.node_runner.process_node("n1", node)
     assert platform.queue_edit_message.await_count >= 1
     fake_tree.update_state.assert_awaited()
-    session_store.save_tree.assert_called_once_with("root", {"root": "error"})
+    session_store.save_tree_snapshot.assert_called_once_with({"root": "error"})
 
 
 @pytest.mark.asyncio
@@ -199,7 +199,7 @@ async def test_node_runner_cancellation_marks_error_and_saves_tree():
 
     fake_tree = MagicMock()
     fake_tree.root_id = "root"
-    fake_tree.to_dict = MagicMock(return_value={"root": "cancelled"})
+    fake_tree.snapshot = MagicMock(return_value={"root": "cancelled"})
     fake_tree.update_state = AsyncMock()
     with patch.object(
         handler.tree_queue, "get_tree_for_node", MagicMock(return_value=fake_tree)
@@ -218,7 +218,7 @@ async def test_node_runner_cancellation_marks_error_and_saves_tree():
     fake_tree.update_state.assert_any_await(
         "n1", MessageState.ERROR, error_message="Cancelled by user"
     )
-    session_store.save_tree.assert_called_once_with("root", {"root": "cancelled"})
+    session_store.save_tree_snapshot.assert_called_once_with({"root": "cancelled"})
 
 
 @pytest.mark.asyncio
@@ -247,7 +247,7 @@ async def test_stop_all_tasks_saves_tree_for_cancelled_nodes():
 
     tree = MagicMock()
     tree.root_id = "root"
-    tree.to_dict = MagicMock(return_value={"root": "ok"})
+    tree.snapshot = MagicMock(return_value={"root": "ok"})
     with (
         patch.object(handler.tree_queue, "cancel_all", AsyncMock(return_value=[node])),
         patch.object(
@@ -257,7 +257,7 @@ async def test_stop_all_tasks_saves_tree_for_cancelled_nodes():
         count = await handler.stop_all_tasks()
     assert count == 1
     cli_manager.stop_all.assert_awaited_once()
-    session_store.save_tree.assert_called_once_with("root", {"root": "ok"})
+    session_store.save_tree_snapshot.assert_called_once_with({"root": "ok"})
 
 
 @pytest.mark.asyncio
@@ -277,7 +277,9 @@ async def test_handle_message_reply_with_tree_but_no_parent_treated_as_new():
     mock_queue.get_tree_for_node.return_value = object()
     mock_queue.resolve_parent_node_id.return_value = None
     mock_queue.create_tree = AsyncMock(
-        return_value=MagicMock(root_id="root", to_dict=MagicMock(return_value={"t": 1}))
+        return_value=MagicMock(
+            root_id="root", snapshot=MagicMock(return_value={"t": 1})
+        )
     )
     mock_queue.register_node = MagicMock()
     mock_queue.enqueue = AsyncMock(return_value=False)
@@ -367,7 +369,9 @@ async def test_handle_message_incoming_text_none_safe():
     mock_queue.get_tree_for_node.return_value = None
     mock_queue.resolve_parent_node_id.return_value = None
     mock_queue.create_tree = AsyncMock(
-        return_value=MagicMock(root_id="root", to_dict=MagicMock(return_value={"t": 1}))
+        return_value=MagicMock(
+            root_id="root", snapshot=MagicMock(return_value={"t": 1})
+        )
     )
     mock_queue.register_node = MagicMock()
     mock_queue.enqueue = AsyncMock(return_value=True)

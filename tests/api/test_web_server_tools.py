@@ -5,9 +5,9 @@ import httpx
 import pytest
 
 import api.web_tools.constants as web_tool_constants
+from api.handlers import MessagesHandler
 from api.model_router import ModelRouter, ResolvedModel, RoutedMessagesRequest
 from api.models.anthropic import Message, MessagesRequest, Tool
-from api.request_pipeline import ApiRequestPipeline
 from api.web_tools import egress as web_egress
 from api.web_tools.egress import (
     WebFetchEgressPolicy,
@@ -112,7 +112,7 @@ def test_service_rejects_forced_server_tool_on_openai_when_disabled(
     """OpenAI Chat upstreams cannot run forced server tools without the local handler."""
     settings = Settings()
     assert settings.enable_web_server_tools is False
-    service = ApiRequestPipeline(
+    service = MessagesHandler(
         settings,
         provider_getter=lambda _: MagicMock(),
         model_router=FixedProviderModelRouter(settings, provider_id),
@@ -130,7 +130,7 @@ def test_service_rejects_forced_server_tool_on_openai_when_disabled(
         tool_choice={"type": "tool", "name": "web_search"},
     )
     with pytest.raises(InvalidRequestError, match="ENABLE_WEB_SERVER_TOOLS"):
-        service.create_message(request)
+        service.create(request)
 
 
 @pytest.mark.parametrize(
@@ -598,7 +598,7 @@ def test_service_rejects_listed_server_tools_on_openai_chat(
     provider_id: str,
 ) -> None:
     settings = Settings()
-    service = ApiRequestPipeline(
+    service = MessagesHandler(
         settings,
         provider_getter=lambda _: MagicMock(),
         model_router=FixedProviderModelRouter(settings, provider_id),
@@ -610,7 +610,7 @@ def test_service_rejects_listed_server_tools_on_openai_chat(
         tools=[Tool(name="web_search", type="web_search_20250305")],
     )
     with pytest.raises(InvalidRequestError, match="OpenAI Chat upstreams"):
-        service.create_message(request)
+        service.create(request)
 
 
 @pytest.mark.parametrize("provider_id", _ANTHROPIC_MESSAGES_PROVIDER_IDS)
@@ -626,7 +626,7 @@ def test_listed_server_tools_routed_on_anthropic_messages_providers(
 
     mock_provider = MagicMock()
     mock_provider.stream_response = fake_stream
-    service = ApiRequestPipeline(
+    service = MessagesHandler(
         settings,
         provider_getter=lambda _: mock_provider,
         model_router=FixedProviderModelRouter(settings, provider_id),
@@ -637,7 +637,7 @@ def test_listed_server_tools_routed_on_anthropic_messages_providers(
         messages=[Message(role="user", content="q")],
         tools=[Tool(name="web_search", type="web_search_20250305")],
     )
-    service.create_message(request)
+    service.create(request)
     mock_provider.preflight_stream.assert_called()
 
 
@@ -654,7 +654,7 @@ def test_forced_server_tools_routed_on_anthropic_messages_providers_when_local_d
 
     mock_provider = MagicMock()
     mock_provider.stream_response = fake_stream
-    service = ApiRequestPipeline(
+    service = MessagesHandler(
         settings,
         provider_getter=lambda _: mock_provider,
         model_router=FixedProviderModelRouter(settings, provider_id),
@@ -666,5 +666,5 @@ def test_forced_server_tools_routed_on_anthropic_messages_providers_when_local_d
         tools=[Tool(name="web_search", type="web_search_20250305")],
         tool_choice={"type": "tool", "name": "web_search"},
     )
-    service.create_message(request)
+    service.create(request)
     mock_provider.preflight_stream.assert_called()

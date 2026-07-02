@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from core.anthropic.stream_contracts import event_names, parse_sse_text
 from providers.base import ProviderConfig
 from providers.rate_limit import GlobalRateLimiter
 from tests.providers.test_anthropic_messages import (
@@ -14,6 +15,13 @@ from tests.providers.test_anthropic_messages import (
     NativeProvider,
 )
 from tests.stream_contract import assert_canonical_stream_error_envelope
+
+
+def _assert_minimal_success_stream(events: list[str]) -> None:
+    assert event_names(parse_sse_text("".join(events))) == [
+        "message_start",
+        "message_stop",
+    ]
 
 
 @pytest.fixture
@@ -74,14 +82,7 @@ async def test_native_stream_retries_on_http_429_then_streams(provider_config):
         assert send_calls["n"] == 2
         assert too_many.is_closed
         assert ok_response.is_closed
-        assert events == [
-            "event: message_start\n",
-            'data: {"type":"message_start"}\n',
-            "\n",
-            "event: message_stop\n",
-            'data: {"type":"message_stop"}\n',
-            "\n",
-        ]
+        _assert_minimal_success_stream(events)
     finally:
         GlobalRateLimiter.reset_instance()
 
@@ -134,14 +135,7 @@ async def test_native_stream_retries_on_http_5xx_then_streams(
         assert send_calls["n"] == 2
         assert bad.is_closed
         assert ok_response.is_closed
-        assert events == [
-            "event: message_start\n",
-            'data: {"type":"message_start"}\n',
-            "\n",
-            "event: message_stop\n",
-            'data: {"type":"message_stop"}\n',
-            "\n",
-        ]
+        _assert_minimal_success_stream(events)
     finally:
         GlobalRateLimiter.reset_instance()
 

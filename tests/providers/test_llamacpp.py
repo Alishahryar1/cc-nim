@@ -6,6 +6,7 @@ import httpx
 import pytest
 
 from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from core.anthropic.stream_contracts import parse_sse_text
 from providers.base import ProviderConfig
 from providers.llamacpp import LlamaCppProvider
 from tests.stream_contract import assert_canonical_stream_error_envelope
@@ -192,10 +193,12 @@ async def test_stream_response(llamacpp_provider):
         # Verify internal ThinkingConfig is mapped to Anthropic API format
         assert kwargs["json"]["thinking"] == {"type": "enabled"}
 
-        # Verify events yielded correctly
-        assert len(events) == 9
-        assert events[0] == "event: message_start\n"
-        assert events[1] == 'data: {"type":"message_start","message":{}}\n'
+        assert [event.event for event in parse_sse_text("".join(events))] == [
+            "message_start",
+            "content_block_delta",
+            "message_stop",
+        ]
+        assert "Hello World" in "".join(events)
 
 
 @pytest.mark.asyncio

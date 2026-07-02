@@ -9,6 +9,7 @@ from typing import Any
 from pydantic import BaseModel
 
 from .content import get_block_attr, get_block_type
+from .request_serialization import serialize_tool_result_content
 from .utils import set_if_not_none
 
 
@@ -51,27 +52,6 @@ def _tool_input_schema(tool: Any) -> dict[str, Any]:
     if isinstance(schema, dict):
         return schema
     return {"type": "object", "properties": {}}
-
-
-def _serialize_tool_result_content(tool_content: Any) -> str:
-    """Serialize tool_result content for OpenAI ``role: tool`` messages (stable JSON for structured values)."""
-    if tool_content is None:
-        return ""
-    if isinstance(tool_content, str):
-        return tool_content
-    if isinstance(tool_content, dict):
-        return json.dumps(tool_content, ensure_ascii=False)
-    if isinstance(tool_content, list):
-        parts: list[str] = []
-        for item in tool_content:
-            if isinstance(item, dict) and item.get("type") == "text":
-                parts.append(str(item.get("text", "")))
-            elif isinstance(item, dict):
-                parts.append(json.dumps(item, ensure_ascii=False))
-            else:
-                parts.append(str(item))
-        return "\n".join(parts)
-    return str(tool_content)
 
 
 def _clean_reasoning_content(value: Any) -> str | None:
@@ -435,7 +415,7 @@ class AnthropicToOpenAIConverter:
             elif block_type == "tool_result":
                 flush_text()
                 tool_content = get_block_attr(block, "content", "")
-                serialized = _serialize_tool_result_content(tool_content)
+                serialized = serialize_tool_result_content(tool_content)
                 tuid = get_block_attr(block, "tool_use_id")
                 tuid_s = str(tuid) if tuid is not None else ""
                 result.append(
@@ -485,7 +465,7 @@ class AnthropicToOpenAIConverter:
             elif block_type == "tool_result":
                 flush_text()
                 tool_content = get_block_attr(block, "content", "")
-                serialized = _serialize_tool_result_content(tool_content)
+                serialized = serialize_tool_result_content(tool_content)
                 result.append(
                     {
                         "role": "tool",

@@ -160,19 +160,18 @@ async def _handle_clear_branch(
     await _delete_message_ids(handler, incoming.chat_id, msg_ids)
 
     # 4) Remove branch from tree
-    removed, root_id, removed_entire_tree = await handler.tree_queue.remove_branch(
+    _removed, root_id, removed_entire_tree = await handler.tree_queue.remove_branch(
         branch_root_id
     )
 
     # 5) Update session store
     try:
-        handler.session_store.remove_node_mappings([n.node_id for n in removed])
         if removed_entire_tree:
-            handler.session_store.remove_tree(root_id)
+            handler.session_store.remove_tree_snapshot(root_id)
         else:
             updated_tree = handler.tree_queue.get_tree(root_id)
             if updated_tree:
-                handler.session_store.save_tree(root_id, updated_tree.to_dict())
+                handler.session_store.save_tree_snapshot(updated_tree.snapshot())
     except Exception as e:
         logger.warning(f"Failed to update session store after branch clear: {e}")
 

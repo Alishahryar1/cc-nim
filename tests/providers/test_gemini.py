@@ -7,7 +7,7 @@ import pytest
 
 from providers.base import ProviderConfig
 from providers.gemini import GEMINI_DEFAULT_BASE, GeminiProvider
-from providers.gemini.request import GEMINI_SKIP_THOUGHT_SIGNATURE_VALIDATOR
+from providers.gemini.quirks import GEMINI_SKIP_THOUGHT_SIGNATURE_VALIDATOR
 
 
 class MockMessage:

@@ -108,7 +108,9 @@ def test_build_request_body_global_disable_blocks_reasoning_mapping():
 
 def test_build_request_body_remaps_max_tokens_preserves_message_name(cerebras_provider):
     """Cerebras does not strip message ``name``; ``max_tokens`` maps to completion field."""
-    with patch("providers.cerebras.request.build_base_request_body") as mock_convert:
+    with patch(
+        "providers.transports.openai_chat.request_policy.build_base_request_body"
+    ) as mock_convert:
         mock_convert.return_value = {
             "model": "llama3.1-8b",
             "messages": [{"role": "user", "name": "alice", "content": "hi"}],
@@ -123,7 +125,9 @@ def test_build_request_body_remaps_max_tokens_preserves_message_name(cerebras_pr
 
 
 def test_build_request_body_prefers_existing_max_completion_tokens(cerebras_provider):
-    with patch("providers.cerebras.request.build_base_request_body") as mock_convert:
+    with patch(
+        "providers.transports.openai_chat.request_policy.build_base_request_body"
+    ) as mock_convert:
         mock_convert.return_value = {
             "model": "llama3.1-8b",
             "messages": [{"role": "user", "content": "x"}],

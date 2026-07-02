@@ -2,7 +2,6 @@ from __future__ import annotations
 
 import asyncio
 import os
-import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -10,7 +9,7 @@ import pytest
 
 from cli.managed.manager import ManagedClaudeSessionManager
 from cli.managed.session import ManagedClaudeSession
-from smoke.lib.child_process import cmd_fcc_init
+from smoke.lib.child_process import cmd_fcc_init, run_captured_text
 from smoke.lib.config import SmokeConfig
 
 pytestmark = [pytest.mark.live, pytest.mark.smoke_target("cli")]
@@ -20,12 +19,10 @@ def test_entrypoint_init_e2e(smoke_config: SmokeConfig, tmp_path: Path) -> None:
     env = os.environ.copy()
     env["HOME"] = str(tmp_path)
     env["USERPROFILE"] = str(tmp_path)
-    result = subprocess.run(
+    result = run_captured_text(
         cmd_fcc_init(),
         cwd=smoke_config.root,
         env=env,
-        capture_output=True,
-        text=True,
         timeout=smoke_config.timeout_s,
         check=False,
     )

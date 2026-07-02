@@ -199,8 +199,8 @@ class MessagingWorkflow:
             tree = self.tree_queue.get_tree_for_node(node.node_id)
             if tree:
                 trees_to_save[tree.root_id] = tree
-        for root_id, tree in trees_to_save.items():
-            self.session_store.save_tree(root_id, tree.to_dict())
+        for tree in trees_to_save.values():
+            self.session_store.save_tree_snapshot(tree.snapshot())
 
 
 __all__ = ["MessagingWorkflow"]

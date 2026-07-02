@@ -77,7 +77,7 @@ async def test_messaging_commands_stop_clear_stats_e2e(
     assert "Stats" in sent_text
     assert "Stopped" in sent_text
     assert driver.platform.deletes
-    assert driver.session_store.get_all_trees() == {}
+    assert driver.session_store.load_conversation_snapshot().trees == {}
 
 
 @pytest.mark.asyncio
@@ -108,14 +108,13 @@ async def test_restart_restore_and_session_persistence_e2e(tmp_path) -> None:
 
     session_file = tmp_path / "telegram-sessions.json"
     payload = json.loads(session_file.read_text(encoding="utf-8"))
-    assert payload["trees"]
-    assert payload["node_to_tree"]
+    assert payload["conversation"]["trees"]
     assert payload["message_log"]
 
     restored = FakePlatformDriver("telegram", tmp_path)
-    saved = restored.session_store.get_all_trees()
-    assert saved
-    assert root.message_id in restored.session_store.get_node_mapping()
+    saved = restored.session_store.load_conversation_snapshot()
+    assert saved.trees
+    assert root.message_id in saved.derive_node_to_tree()
 
 
 @pytest.mark.asyncio

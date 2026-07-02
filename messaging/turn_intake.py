@@ -129,8 +129,6 @@ class MessagingTurnIntake:
                 status_message_id=status_msg_id,
             )
             tree_queue.register_node(status_msg_id, tree.root_id)
-            self.session_store.register_node(status_msg_id, tree.root_id)
-            self.session_store.register_node(node_id, tree.root_id)
         elif status_msg_id:
             tree = await tree_queue.create_tree(
                 node_id=node_id,
@@ -138,11 +136,9 @@ class MessagingTurnIntake:
                 status_message_id=status_msg_id,
             )
             tree_queue.register_node(status_msg_id, tree.root_id)
-            self.session_store.register_node(node_id, tree.root_id)
-            self.session_store.register_node(status_msg_id, tree.root_id)
 
         if tree:
-            self.session_store.save_tree(tree.root_id, tree.to_dict())
+            self.session_store.save_tree_snapshot(tree.snapshot())
 
         was_queued = await tree_queue.enqueue(
             node_id=node_id,

@@ -1,4 +1,4 @@
-"""Per-request OpenAI-chat stream runner."""
+"""OpenAI-chat upstream adapter."""
 
 from __future__ import annotations
 
@@ -12,30 +12,31 @@ from loguru import logger
 from core.anthropic import (
     ContentType,
     HeuristicToolParser,
-    SSEBuilder,
     ThinkTagParser,
-    map_stop_reason,
 )
-from core.anthropic.stream_recovery import TruncatedProviderStreamError
-from core.anthropic.stream_recovery_session import (
-    StreamFailureAction,
-    StreamRecoverySession,
+from core.anthropic.streaming import (
+    AnthropicStreamLedger,
+    RecoveryController,
+    RecoveryFailureAction,
+    TruncatedProviderStreamError,
+    map_stop_reason,
 )
 from core.trace import provider_chat_body_snapshot, trace_event
 from providers.error_mapping import map_error
+from providers.transports.http import maybe_await_aclose
 
 from .recovery import OpenAIChatRecovery
 from .tool_calls import (
     OpenAIToolCallAssembler,
-    all_started_tools_complete,
+    all_emitted_tools_complete,
     has_committed_sse_output,
     iter_heuristic_tool_use_sse,
     tool_call_extra_content,
 )
 
 
-class OpenAIChatStreamRunner:
-    """Own mutable state for one OpenAI-chat provider stream."""
+class OpenAIChatStreamAdapter:
+    """Convert one OpenAI-chat upstream stream into Anthropic SSE."""
 
     def __init__(
         self,
@@ -64,14 +65,14 @@ class OpenAIChatStreamRunner:
         """Stream response in Anthropic SSE format."""
         tag = self._transport._provider_name
         req_tag = f" request_id={self._request_id}" if self._request_id else ""
-        sse = self._new_sse_builder()
-        recovery_session = StreamRecoverySession(
+        ledger = self._new_ledger()
+        recovery = RecoveryController(
             provider_name=tag,
             request_id=self._request_id,
         )
 
         def hold_event(event: str) -> Iterator[str]:
-            yield from recovery_session.push(event)
+            yield from recovery.push(event)
 
         def hold_events(events: Iterator[str]) -> Iterator[str]:
             for event in events:
@@ -95,8 +96,6 @@ class OpenAIChatStreamRunner:
             body=provider_chat_body_snapshot(body),
         )
 
-        yield sse.message_start()
-
         think_parser = ThinkTagParser()
         heuristic_parser = HeuristicToolParser()
         finish_reason = None
@@ -106,6 +105,10 @@ class OpenAIChatStreamRunner:
 
         async with self._transport._global_rate_limiter.concurrency_slot():
             while True:
+                if not ledger.message_started:
+                    for event in hold_event(ledger.message_start()):
+                        yield event
+                stream: Any | None = None
                 stream_opened = False
                 try:
                     stream, body = await self._transport._create_stream(body)
@@ -129,14 +132,16 @@ class OpenAIChatStreamRunner:
 
                         reasoning = getattr(delta, "reasoning_content", None)
                         if thinking_enabled and reasoning:
-                            for event in hold_events(sse.ensure_thinking_block()):
+                            for event in hold_events(ledger.ensure_thinking_block()):
                                 yield event
-                            for event in hold_event(sse.emit_thinking_delta(reasoning)):
+                            for event in hold_event(
+                                ledger.emit_thinking_delta(reasoning)
+                            ):
                                 yield event
 
                         for event in self._transport._handle_extra_reasoning(
                             delta,
-                            sse,
+                            ledger,
                             thinking_enabled=thinking_enabled,
                         ):
                             for out_event in hold_event(event):
@@ -148,11 +153,11 @@ class OpenAIChatStreamRunner:
                                     if not thinking_enabled:
                                         continue
                                     for event in hold_events(
-                                        sse.ensure_thinking_block()
+                                        ledger.ensure_thinking_block()
                                     ):
                                         yield event
                                     for event in hold_event(
-                                        sse.emit_thinking_delta(part.content)
+                                        ledger.emit_thinking_delta(part.content)
                                     ):
                                         yield event
                                 else:
@@ -163,23 +168,23 @@ class OpenAIChatStreamRunner:
 
                                     if filtered_text:
                                         for event in hold_events(
-                                            sse.ensure_text_block()
+                                            ledger.ensure_text_block()
                                         ):
                                             yield event
                                         for event in hold_event(
-                                            sse.emit_text_delta(filtered_text)
+                                            ledger.emit_text_delta(filtered_text)
                                         ):
                                             yield event
 
                                     for tool_use in detected_tools:
                                         for event in iter_heuristic_tool_use_sse(
-                                            sse, tool_use
+                                            ledger, tool_use
                                         ):
                                             for out_event in hold_event(event):
                                                 yield out_event
 
                         if delta.tool_calls:
-                            for event in hold_events(sse.close_content_blocks()):
+                            for event in hold_events(ledger.close_content_blocks()):
                                 yield event
                             for tc in delta.tool_calls:
                                 extra_content = tool_call_extra_content(tc)
@@ -195,7 +200,7 @@ class OpenAIChatStreamRunner:
                                     tc_info["extra_content"] = extra_content
                                 for event in self._tool_calls.process_tool_call(
                                     tc_info,
-                                    sse,
+                                    ledger,
                                     tool_argument_aliases=tool_argument_aliases,
                                     tool_argument_alias_buffers=tool_argument_alias_buffers,
                                 ):
@@ -211,20 +216,20 @@ class OpenAIChatStreamRunner:
                 except asyncio.CancelledError, GeneratorExit:
                     raise
                 except Exception as error:
-                    generated_output = has_committed_sse_output(sse)
+                    generated_output = has_committed_sse_output(ledger)
                     complete_tool_salvageable = (
                         generated_output
-                        and sse.blocks.has_emitted_tool_block()
-                        and all_started_tools_complete(sse, self._request)
+                        and ledger.has_emitted_tool_block()
+                        and all_emitted_tools_complete(ledger, self._request)
                     )
-                    decision = recovery_session.advance_failure(
+                    decision = recovery.advance_failure(
                         error,
                         stream_opened=stream_opened,
                         generated_output=generated_output,
                         complete_tool_salvageable=complete_tool_salvageable,
                     )
-                    if decision.action == StreamFailureAction.EARLY_RETRY:
-                        sse = self._new_sse_builder()
+                    if decision.action == RecoveryFailureAction.EARLY_RETRY:
+                        ledger = self._new_ledger()
                         think_parser = ThinkTagParser()
                         heuristic_parser = HeuristicToolParser()
                         finish_reason = None
@@ -233,11 +238,11 @@ class OpenAIChatStreamRunner:
                         tool_argument_alias_buffers = {}
                         continue
 
-                    if decision.action == StreamFailureAction.MIDSTREAM_RECOVERY:
+                    if decision.action == RecoveryFailureAction.MIDSTREAM_RECOVERY:
                         try:
                             recovery_events = await self._recovery.events(
                                 body=body,
-                                sse=sse,
+                                ledger=ledger,
                                 request=self._request,
                                 request_id=self._request_id,
                                 error=error,
@@ -254,7 +259,7 @@ class OpenAIChatStreamRunner:
                             )
                             recovery_events = None
                         if recovery_events is not None:
-                            for event in recovery_session.flush_uncommitted(decision):
+                            for event in recovery.flush_uncommitted(decision):
                                 yield event
                             for event in recovery_events:
                                 yield event
@@ -280,14 +285,17 @@ class OpenAIChatStreamRunner:
                         ).__name__,
                     )
                     if not decision.committed and decision.has_buffered:
-                        for event in recovery_session.flush():
+                        for event in recovery.flush():
                             yield event
                     elif not decision.committed:
-                        recovery_session.discard()
-                        sse = self._new_sse_builder()
-                    for event in self._recovery.emit_error_tail(sse, error_message):
+                        recovery.discard()
+                        ledger = self._new_ledger()
+                    for event in self._recovery.emit_error_tail(ledger, error_message):
                         yield event
                     return
+                finally:
+                    if stream is not None:
+                        await maybe_await_aclose(stream)
 
         remaining = think_parser.flush()
         if remaining:
@@ -295,48 +303,50 @@ class OpenAIChatStreamRunner:
                 if not thinking_enabled:
                     remaining = None
                 else:
-                    for event in hold_events(sse.ensure_thinking_block()):
+                    for event in hold_events(ledger.ensure_thinking_block()):
                         yield event
-                    for event in hold_event(sse.emit_thinking_delta(remaining.content)):
+                    for event in hold_event(
+                        ledger.emit_thinking_delta(remaining.content)
+                    ):
                         yield event
             if remaining and remaining.type == ContentType.TEXT:
-                for event in hold_events(sse.ensure_text_block()):
+                for event in hold_events(ledger.ensure_text_block()):
                     yield event
-                for event in hold_event(sse.emit_text_delta(remaining.content)):
+                for event in hold_event(ledger.emit_text_delta(remaining.content)):
                     yield event
 
         for tool_use in heuristic_parser.flush():
-            for event in iter_heuristic_tool_use_sse(sse, tool_use):
+            for event in iter_heuristic_tool_use_sse(ledger, tool_use):
                 for out_event in hold_event(event):
                     yield out_event
 
-        has_started_tool = any(s.started for s in sse.blocks.tool_states.values())
+        has_emitted_tool = ledger.has_emitted_tool_block()
         has_content_blocks = (
-            sse.blocks.text_index != -1
-            or sse.blocks.thinking_index != -1
-            or has_started_tool
+            ledger.blocks.text_index != -1
+            or ledger.blocks.thinking_index != -1
+            or has_emitted_tool
         )
         if not has_content_blocks or (
-            not has_started_tool
-            and not sse.accumulated_text.strip()
-            and sse.accumulated_reasoning.strip()
+            not has_emitted_tool
+            and not ledger.accumulated_text.strip()
+            and ledger.accumulated_reasoning.strip()
         ):
-            for event in hold_events(sse.ensure_text_block()):
+            for event in hold_events(ledger.ensure_text_block()):
                 yield event
-            for event in hold_event(sse.emit_text_delta(" ")):
+            for event in hold_event(ledger.emit_text_delta(" ")):
                 yield event
 
         for event in self._tool_calls.flush_tool_argument_alias_buffers(
-            sse, tool_argument_aliases, tool_argument_alias_buffers
+            ledger, tool_argument_aliases, tool_argument_alias_buffers
         ):
             for out_event in hold_event(event):
                 yield out_event
 
-        for event in self._tool_calls.flush_task_arg_buffers(sse):
+        for event in self._tool_calls.flush_task_arg_buffers(ledger):
             for out_event in hold_event(event):
                 yield out_event
 
-        for event in hold_events(sse.close_all_blocks()):
+        for event in hold_events(ledger.close_all_blocks()):
             yield event
 
         completion = (
@@ -347,7 +357,7 @@ class OpenAIChatStreamRunner:
         if isinstance(completion, int):
             output_tokens = completion
         else:
-            output_tokens = sse.estimate_output_tokens()
+            output_tokens = ledger.estimate_output_tokens()
         if usage_info and hasattr(usage_info, "prompt_tokens"):
             provider_input = usage_info.prompt_tokens
             if isinstance(provider_input, int):
@@ -367,16 +377,20 @@ class OpenAIChatStreamRunner:
             prompt_tokens_estimate=self._input_tokens,
         )
         for event in hold_event(
-            sse.message_delta(map_stop_reason(finish_reason), output_tokens)
+            ledger.message_delta(
+                ledger.final_stop_reason(map_stop_reason(finish_reason)),
+                output_tokens,
+                usage_fields=self._transport._anthropic_usage_fields(usage_info),
+            )
         ):
             yield event
-        for event in hold_event(sse.message_stop()):
+        for event in hold_event(ledger.message_stop()):
             yield event
-        for event in recovery_session.flush():
+        for event in recovery.flush():
             yield event
 
-    def _new_sse_builder(self) -> SSEBuilder:
-        return SSEBuilder(
+    def _new_ledger(self) -> AnthropicStreamLedger:
+        return AnthropicStreamLedger(
             self._message_id,
             self._request.model,
             self._input_tokens,

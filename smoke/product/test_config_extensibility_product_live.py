@@ -1,14 +1,18 @@
 from __future__ import annotations
 
 import os
-import subprocess
 
 import pytest
 
+from config.provider_catalog import PROVIDER_CATALOG
 from config.settings import Settings
 from messaging.platforms.factory import create_messaging_components
-from providers.registry import PROVIDER_DESCRIPTORS, build_provider_config
-from smoke.lib.child_process import cmd_free_claude_code_serve, cmd_python_c
+from providers.runtime import build_provider_config
+from smoke.lib.child_process import (
+    cmd_free_claude_code_serve,
+    cmd_python_c,
+    run_captured_text,
+)
 from smoke.lib.config import SmokeConfig
 from smoke.lib.e2e import SmokeServerDriver
 
@@ -31,12 +35,10 @@ def test_env_precedence_e2e(smoke_config: SmokeConfig, tmp_path) -> None:
         "s=get_settings(); "
         "print(s.model); print(s.anthropic_auth_token)"
     )
-    result = subprocess.run(
+    result = run_captured_text(
         cmd_python_c(script),
         cwd=smoke_config.root,
         env=env,
-        capture_output=True,
-        text=True,
         timeout=smoke_config.timeout_s,
         check=False,
     )
@@ -51,12 +53,10 @@ def test_removed_env_migration_e2e(smoke_config: SmokeConfig, tmp_path) -> None:
     env_file.write_text('NIM_ENABLE_THINKING="true"\n', encoding="utf-8")
     env = os.environ.copy()
     env["FCC_ENV_FILE"] = str(env_file)
-    result = subprocess.run(
+    result = run_captured_text(
         cmd_python_c("from config.settings import Settings; Settings()"),
         cwd=smoke_config.root,
         env=env,
-        capture_output=True,
-        text=True,
         timeout=smoke_config.timeout_s,
         check=False,
     )
@@ -76,19 +76,19 @@ def test_per_model_thinking_config_e2e(smoke_config: SmokeConfig, tmp_path) -> N
     env = os.environ.copy()
     env["FCC_ENV_FILE"] = str(env_file)
     script = (
+        "from api.model_router import ModelRouter; "
         "from config.settings import Settings; "
         "s=Settings(); "
-        "print(s.resolve_thinking('claude-opus-4-20250514')); "
-        "print(s.resolve_thinking('claude-sonnet-4-20250514')); "
-        "print(s.resolve_thinking('claude-haiku-4-20250514')); "
-        "print(s.resolve_thinking('unknown-model'))"
+        "r=ModelRouter(s); "
+        "print(r.resolve('claude-opus-4-20250514').thinking_enabled); "
+        "print(r.resolve('claude-sonnet-4-20250514').thinking_enabled); "
+        "print(r.resolve('claude-haiku-4-20250514').thinking_enabled); "
+        "print(r.resolve('unknown-model').thinking_enabled)"
     )
-    result = subprocess.run(
+    result = run_captured_text(
         cmd_python_c(script),
         cwd=smoke_config.root,
         env=env,
-        capture_output=True,
-        text=True,
         timeout=smoke_config.timeout_s,
         check=False,
     )
@@ -112,17 +112,16 @@ def test_proxy_timeout_config_e2e(smoke_config: SmokeConfig, tmp_path) -> None:
     env["FCC_ENV_FILE"] = str(env_file)
     script = (
         "from config.settings import Settings; "
-        "from providers.registry import PROVIDER_DESCRIPTORS, build_provider_config; "
-        "s=Settings(); c=build_provider_config(PROVIDER_DESCRIPTORS['open_router'], s); "
+        "from config.provider_catalog import PROVIDER_CATALOG; "
+        "from providers.runtime import build_provider_config; "
+        "s=Settings(); c=build_provider_config(PROVIDER_CATALOG['open_router'], s); "
         "print(c.proxy); print(c.http_read_timeout); "
         "print(c.http_connect_timeout); print(c.http_write_timeout)"
     )
-    result = subprocess.run(
+    result = run_captured_text(
         cmd_python_c(script),
         cwd=smoke_config.root,
         env=env,
-        capture_output=True,
-        text=True,
         timeout=smoke_config.timeout_s,
         check=False,
     )
@@ -136,9 +135,9 @@ def test_proxy_timeout_config_e2e(smoke_config: SmokeConfig, tmp_path) -> None:
 
 
 @pytest.mark.smoke_target("extensibility")
-def test_provider_registry_e2e() -> None:
+def test_provider_runtime_config_e2e() -> None:
     settings_kwargs: dict[str, str] = {}
-    for descriptor in PROVIDER_DESCRIPTORS.values():
+    for descriptor in PROVIDER_CATALOG.values():
         if descriptor.credential_attr is not None:
             settings_kwargs[_settings_init_key(descriptor.credential_attr)] = (
                 f"{descriptor.provider_id}-key"
@@ -148,7 +147,7 @@ def test_provider_registry_e2e() -> None:
                 descriptor.default_base_url
             )
     settings = Settings.model_validate(settings_kwargs)
-    for descriptor in PROVIDER_DESCRIPTORS.values():
+    for descriptor in PROVIDER_CATALOG.values():
         config = build_provider_config(descriptor, settings)
         assert config.base_url
         assert config.api_key

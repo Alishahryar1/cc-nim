@@ -11,7 +11,7 @@ _API_ALLOWED_PROVIDER_MODULES = frozenset(
         "providers",
         "providers.base",
         "providers.exceptions",
-        "providers.registry",
+        "providers.runtime",
     }
 )
 
@@ -56,11 +56,25 @@ def test_core_does_not_import_product_packages() -> None:
 
 def test_provider_catalog_is_single_source_for_supported_ids() -> None:
     from config.provider_catalog import PROVIDER_CATALOG, SUPPORTED_PROVIDER_IDS
-    from providers.registry import PROVIDER_DESCRIPTORS, PROVIDER_FACTORIES
+    from providers.runtime import PROVIDER_FACTORIES
 
     assert tuple(PROVIDER_CATALOG.keys()) == SUPPORTED_PROVIDER_IDS
-    assert PROVIDER_DESCRIPTORS is PROVIDER_CATALOG
     assert set(SUPPORTED_PROVIDER_IDS) == set(PROVIDER_FACTORIES)
+
+
+def test_provider_runtime_replaces_old_registry_module() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+
+    assert not (repo_root / "providers" / "registry.py").exists()
+    assert (repo_root / "providers" / "runtime" / "runtime.py").exists()
+    assert (repo_root / "providers" / "runtime" / "factory.py").exists()
+    assert (repo_root / "providers" / "runtime" / "discovery.py").exists()
+
+    offenders = _imports_matching(
+        [repo_root / "api", repo_root / "tests", repo_root / "smoke"],
+        forbidden_prefixes=("providers.registry",),
+    )
+    assert offenders == []
 
 
 def test_config_does_not_import_non_config_packages() -> None:
@@ -78,6 +92,31 @@ def test_config_does_not_import_non_config_packages() -> None:
         ),
     )
     assert offenders == []
+
+
+def test_settings_stays_schema_only() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    config_root = repo_root / "config"
+
+    assert (config_root / "env_files.py").exists()
+    assert (config_root / "model_refs.py").exists()
+
+    settings_text = (config_root / "settings.py").read_text(encoding="utf-8")
+    for removed_api in {
+        "def resolve_model",
+        "def resolve_thinking",
+        "def configured_chat_model_refs",
+        "def web_fetch_allowed_scheme_set",
+        "def parse_provider_type",
+        "def parse_model_name",
+        "def uses_process_anthropic_auth_token",
+        "def claude_workspace",
+        "def claude_cli_bin",
+        "def codex_cli_bin",
+        "def provider_type",
+        "def model_name",
+    }:
+        assert removed_api not in settings_text
 
 
 _MESSAGING_ALLOWED_PROVIDER_MODULES = frozenset({"providers.nvidia_nim.voice"})
@@ -155,14 +194,100 @@ def test_provider_transports_live_under_transport_family_packages() -> None:
     assert offenders == []
 
 
+def test_provider_request_policy_lives_with_transport_families() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    providers_root = repo_root / "providers"
+
+    deleted_request_modules = (
+        "providers.cerebras.request",
+        "providers.deepseek.request",
+        "providers.fireworks.request",
+        "providers.gemini.request",
+        "providers.groq.request",
+        "providers.kimi.request",
+        "providers.mistral.request",
+        "providers.nvidia_nim.request",
+        "providers.opencode.request",
+        "providers.open_router.request",
+        "providers.zai.request",
+    )
+
+    assert (
+        providers_root / "transports" / "openai_chat" / "request_policy.py"
+    ).exists()
+    assert (
+        providers_root / "transports" / "anthropic_messages" / "request_policy.py"
+    ).exists()
+    assert not sorted(
+        path.relative_to(repo_root).as_posix()
+        for path in providers_root.glob("*/request.py")
+    )
+
+    offenders = _imports_matching(
+        [providers_root, repo_root / "tests"],
+        forbidden_prefixes=deleted_request_modules,
+    )
+    assert offenders == []
+
+
+def test_anthropic_stream_engine_owns_provider_stream_state() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    anthropic_root = repo_root / "core" / "anthropic"
+    streaming_root = anthropic_root / "streaming"
+
+    for removed in {
+        "sse.py",
+        "emitted_sse_tracker.py",
+        "stream_recovery.py",
+        "stream_recovery_session.py",
+    }:
+        assert not (anthropic_root / removed).exists()
+
+    for filename in {
+        "__init__.py",
+        "emitter.py",
+        "ledger.py",
+        "lifecycle.py",
+        "recovery.py",
+    }:
+        assert (streaming_root / filename).exists()
+
+    forbidden = (
+        "SSEBuilder",
+        "ContentBlockManager",
+        "ToolCallState",
+        "EmittedNativeSseTracker",
+        "StreamRecoverySession",
+        "OpenAIChatStreamRunner",
+        "AnthropicMessagesStreamRunner",
+    )
+    offenders: list[str] = []
+    for path in [
+        *anthropic_root.rglob("*.py"),
+        *(repo_root / "providers" / "transports").rglob("*.py"),
+    ]:
+        text = path.read_text(encoding="utf-8")
+        offenders.extend(
+            f"{path.relative_to(repo_root)}: {name}"
+            for name in forbidden
+            if name in text
+        )
+    assert sorted(offenders) == []
+
+
 def test_openai_responses_uses_adapter_boundary() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     responses_root = repo_root / "core" / "openai_responses"
+    responses_streaming_root = responses_root / "streaming"
+    api_root = repo_root / "api"
+    handlers_root = api_root / "handlers"
 
     assert not (repo_root / "api" / "services.py").exists()
+    assert not (api_root / "request_pipeline.py").exists()
     assert not (responses_root / "conversion.py").exists()
     assert not (responses_root / "sse.py").exists()
     assert not (responses_root / "output.py").exists()
+    assert not (responses_root / "stream_state.py").exists()
     for filename in {
         "adapter.py",
         "anthropic_sse.py",
@@ -173,17 +298,33 @@ def test_openai_responses_uses_adapter_boundary() -> None:
         "items.py",
         "reasoning.py",
         "stream.py",
-        "stream_state.py",
         "tools.py",
     }:
         assert (responses_root / filename).exists()
+    for filename in {
+        "__init__.py",
+        "assembler.py",
+        "blocks.py",
+        "completion.py",
+        "error_mapping.py",
+        "event_builders.py",
+        "ledger.py",
+    }:
+        assert (responses_streaming_root / filename).exists()
 
-    pipeline_text = (repo_root / "api" / "request_pipeline.py").read_text(
-        encoding="utf-8"
+    stream_text = (responses_root / "stream.py").read_text(encoding="utf-8")
+    assert "from .streaming import ResponsesStreamAssembler" in stream_text
+
+    responses_handler = handlers_root / "responses.py"
+    responses_handler_text = responses_handler.read_text(encoding="utf-8")
+    assert (
+        "from core.openai_responses import OpenAIResponsesAdapter"
+        in responses_handler_text
     )
-    assert "from core.openai_responses import OpenAIResponsesAdapter" in pipeline_text
     routes_text = (repo_root / "api" / "routes.py").read_text(encoding="utf-8")
-    assert "ApiRequestPipeline" in routes_text
+    assert "ApiRequestPipeline" not in routes_text
+    assert "request_pipeline" not in routes_text
+    assert "from .handlers import" in routes_text
     assert "api.services" not in routes_text
     for old_helper in {
         "responses_request_to_anthropic_payload",
@@ -192,7 +333,7 @@ def test_openai_responses_uses_adapter_boundary() -> None:
         "collect_openai_response_from_anthropic_sse",
         "iter_message_response_as_openai_responses",
     }:
-        assert old_helper not in pipeline_text
+        assert old_helper not in responses_handler_text
 
     offenders: list[str] = []
     for path in (repo_root / "api").rglob("*.py"):
@@ -202,6 +343,27 @@ def test_openai_responses_uses_adapter_boundary() -> None:
                 offenders.append(f"{rel}: {imported}")
     assert sorted(offenders) == []
 
+    adapter_importers: list[str] = []
+    for path in (repo_root / "api").rglob("*.py"):
+        imports = set(_imports_from(path, repo_root))
+        if "core.openai_responses" in imports:
+            adapter_importers.append(path.relative_to(repo_root).as_posix())
+    assert sorted(adapter_importers) == ["api/handlers/responses.py"]
+
+    response_handler_imports = set(_imports_from(responses_handler, repo_root))
+    for forbidden in {
+        "api.optimization_handlers",
+        "api.detection",
+        "api.web_tools",
+    }:
+        assert forbidden not in response_handler_imports
+
+    provider_execution_text = (api_root / "provider_execution.py").read_text(
+        encoding="utf-8"
+    )
+    assert "StreamingResponse" not in provider_execution_text
+    assert "OpenAIResponsesAdapter" not in provider_execution_text
+
     adapter_text = (responses_root / "adapter.py").read_text(encoding="utf-8")
     for deleted_api in {
         "from_anthropic_message",
@@ -209,6 +371,120 @@ def test_openai_responses_uses_adapter_boundary() -> None:
         "iter_sse_from_anthropic_message",
     }:
         assert deleted_api not in adapter_text
+
+
+def test_admin_config_uses_package_owners_and_catalog_manifest() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    api_root = repo_root / "api"
+    admin_config_root = api_root / "admin_config"
+
+    assert not (api_root / "admin_config.py").exists()
+    for filename in {
+        "__init__.py",
+        "manifest.py",
+        "provider_manifest.py",
+        "sources.py",
+        "values.py",
+        "validation.py",
+        "persistence.py",
+        "status.py",
+    }:
+        assert (admin_config_root / filename).exists()
+
+    init_text = (admin_config_root / "__init__.py").read_text(encoding="utf-8")
+    assert "from " not in init_text
+    assert "__all__" not in init_text
+
+    routes_imports = set(_imports_from(api_root / "admin_routes.py", repo_root))
+    assert "api.admin_config" not in routes_imports
+    for expected in {
+        "api.admin_config.manifest",
+        "api.admin_config.persistence",
+        "api.admin_config.status",
+        "api.admin_config.values",
+    }:
+        assert expected in routes_imports
+
+    provider_manifest_text = (admin_config_root / "provider_manifest.py").read_text(
+        encoding="utf-8"
+    )
+    assert "PROVIDER_CATALOG" in provider_manifest_text
+    admin_js = (api_root / "admin_static" / "admin.js").read_text(encoding="utf-8")
+    assert "function providerName" not in admin_js
+    assert "display_name || provider.provider_id" in admin_js
+
+    entrypoints_imports = set(
+        _imports_from(repo_root / "cli" / "entrypoints.py", repo_root)
+    )
+    assert "config.env_template" in entrypoints_imports
+    assert "_load_env_template" not in (repo_root / "cli" / "entrypoints.py").read_text(
+        encoding="utf-8"
+    )
+
+
+def test_messaging_transcript_uses_package_owners() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    messaging_root = repo_root / "messaging"
+    transcript_root = messaging_root / "transcript"
+
+    assert not (messaging_root / "transcript.py").exists()
+    for filename in {
+        "__init__.py",
+        "buffer.py",
+        "context.py",
+        "renderer.py",
+        "segments.py",
+        "subagents.py",
+    }:
+        assert (transcript_root / filename).exists()
+
+    init_text = (transcript_root / "__init__.py").read_text(encoding="utf-8")
+    assert "TranscriptBuffer" in init_text
+    assert "RenderCtx" in init_text
+
+
+def test_messaging_conversation_state_uses_package_owners() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    messaging_root = repo_root / "messaging"
+    trees_root = messaging_root / "trees"
+    session_root = messaging_root / "session"
+
+    assert not (messaging_root / "session.py").exists()
+    assert not (trees_root / "data.py").exists()
+    for filename in {
+        "__init__.py",
+        "graph.py",
+        "manager.py",
+        "node.py",
+        "processor.py",
+        "queue.py",
+        "repository.py",
+        "runtime.py",
+        "snapshot.py",
+    }:
+        assert (trees_root / filename).exists()
+    for filename in {
+        "__init__.py",
+        "message_log.py",
+        "persistence.py",
+        "store.py",
+    }:
+        assert (session_root / filename).exists()
+
+    offenders = _imports_matching(
+        [messaging_root, repo_root / "api", repo_root / "tests"],
+        forbidden_prefixes=("messaging.trees.data",),
+    )
+    assert offenders == []
+
+    runtime_text = (repo_root / "api" / "runtime.py").read_text(encoding="utf-8")
+    for removed_api in {
+        "get_all_trees",
+        "get_node_mapping",
+        "sync_from_tree_data",
+        "TreeQueueManager.from_dict",
+    }:
+        assert removed_api not in runtime_text
 
 
 def test_messaging_workflow_uses_split_runtime_owners() -> None:

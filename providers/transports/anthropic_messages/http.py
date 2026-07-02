@@ -2,7 +2,6 @@
 
 from __future__ import annotations
 
-import inspect
 from typing import Any
 
 import httpx
@@ -14,16 +13,6 @@ from config.constants import (
 )
 from providers.error_mapping import attach_provider_error_body
 from providers.exceptions import ModelListResponseError
-
-
-async def maybe_await_aclose(response: Any) -> None:
-    """Call ``aclose`` on httpx-like responses; ignore sync test doubles."""
-    close = getattr(response, "aclose", None)
-    if not callable(close):
-        return
-    result = close()
-    if inspect.isawaitable(result):
-        await result
 
 
 def model_list_json(response: httpx.Response, *, provider_name: str) -> Any:

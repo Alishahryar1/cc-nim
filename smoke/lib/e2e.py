@@ -30,6 +30,7 @@ from core.anthropic.stream_contracts import (
 from messaging.models import IncomingMessage
 from messaging.session import SessionStore
 from messaging.workflow import MessagingWorkflow
+from smoke.lib.child_process import run_captured_text
 from smoke.lib.config import ProviderModel, SmokeConfig, auth_headers
 from smoke.lib.server import RunningServer, start_server
 from smoke.lib.skips import fail_missing_env
@@ -285,7 +286,7 @@ class ClientProtocolDriver:
             env["ANTHROPIC_AUTH_TOKEN"] = config.settings.anthropic_auth_token
         else:
             env.pop("ANTHROPIC_AUTH_TOKEN", None)
-        return subprocess.run(
+        return run_captured_text(
             [
                 claude_bin,
                 "--bare",
@@ -298,8 +299,6 @@ class ClientProtocolDriver:
             ],
             cwd=cwd,
             env=env,
-            capture_output=True,
-            text=True,
             timeout=config.timeout_s,
             check=False,
         )
@@ -552,12 +551,9 @@ class FakePlatformDriver:
         raise AssertionError("fake platform did not become idle")
 
     def _all_tree_nodes_terminal(self) -> bool:
-        data = self.workflow.tree_queue.to_dict()
-        for tree in data.get("trees", {}).values():
-            nodes = tree.get("nodes", {}) if isinstance(tree, dict) else {}
-            for node in nodes.values():
-                if not isinstance(node, dict):
-                    continue
+        snapshot = self.workflow.tree_queue.snapshot()
+        for tree in snapshot.trees.values():
+            for node in tree.nodes.values():
                 if node.get("state") in {"pending", "in_progress"}:
                     return False
         return True

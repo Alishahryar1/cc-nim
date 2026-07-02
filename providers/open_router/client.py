@@ -21,12 +21,16 @@ from providers.model_listing import (
 )
 from providers.transports.anthropic_messages import (
     AnthropicMessagesTransport,
+    NativeMessagesRequestPolicy,
     StreamChunkMode,
+    build_native_messages_request_body,
 )
 
-from .request import build_request_body
-
 _ANTHROPIC_VERSION = "2023-06-01"
+_REQUEST_POLICY = NativeMessagesRequestPolicy(
+    provider_name="OPENROUTER",
+    extra_body="openrouter",
+)
 
 
 class OpenRouterProvider(AnthropicMessagesTransport):
@@ -45,9 +49,10 @@ class OpenRouterProvider(AnthropicMessagesTransport):
         self, request: Any, thinking_enabled: bool | None = None
     ) -> dict:
         """Internal helper for tests and direct request dispatch."""
-        return build_request_body(
+        return build_native_messages_request_body(
             request,
             thinking_enabled=self._is_thinking_enabled(request, thinking_enabled),
+            policy=_REQUEST_POLICY,
         )
 
     def _request_headers(self) -> dict[str, str]:

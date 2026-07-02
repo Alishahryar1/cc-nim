@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 import json
+import subprocess
 from pathlib import Path
+from typing import cast
 
 from config.settings import Settings
 from smoke.lib.claude_cli_matrix import (
@@ -10,9 +12,11 @@ from smoke.lib.claude_cli_matrix import (
     _subagent_probe_options,
     make_outcome,
     regression_failures,
+    run_claude_cli,
     write_matrix_report,
 )
 from smoke.lib.config import DEFAULT_TARGETS, SmokeConfig
+from smoke.lib.server import RunningServer
 
 
 def _smoke_config(tmp_path: Path) -> SmokeConfig:
@@ -73,6 +77,59 @@ def test_nvidia_nim_cli_matrix_report_shape_and_redaction(
     assert saved["token_evidence"]["agent_tool_count"] == 0
     assert saved["token_evidence"]["agent_result_count"] == 0
     assert "secret-nim-key" not in path.read_text(encoding="utf-8")
+
+
+def test_cli_matrix_normalizes_missing_captured_output(
+    tmp_path: Path, monkeypatch
+) -> None:
+    def fake_run_captured_text(
+        command: list[str],
+        **_kwargs: object,
+    ) -> subprocess.CompletedProcess[str]:
+        return cast(
+            subprocess.CompletedProcess[str],
+            subprocess.CompletedProcess(
+                args=command,
+                returncode=0,
+                stdout=None,
+                stderr=None,
+            ),
+        )
+
+    monkeypatch.setattr(
+        "smoke.lib.claude_cli_matrix.run_captured_text",
+        fake_run_captured_text,
+    )
+    server = RunningServer(
+        base_url="http://127.0.0.1:9999",
+        port=9999,
+        log_path=tmp_path / "server.log",
+        process=cast(subprocess.Popen[bytes], object()),
+    )
+
+    run = run_claude_cli(
+        claude_bin="claude",
+        server=server,
+        config=_smoke_config(tmp_path),
+        cwd=tmp_path / "workspace",
+        prompt="hello",
+        tools="",
+    )
+    outcome = make_outcome(
+        model="z-ai/glm-5.1",
+        full_model="nvidia_nim/z-ai/glm-5.1",
+        source="nvidia_nim_cli_default",
+        feature="basic_text",
+        marker="FCC_NIM_BASIC",
+        run=run,
+        log_delta='POST /v1/messages HTTP/1.1" 200 OK',
+        log_path=tmp_path / "server.log",
+    )
+
+    assert run.stdout == ""
+    assert run.stderr == ""
+    assert outcome.stdout_excerpt == ""
+    assert outcome.stderr_excerpt == ""
 
 
 def test_openrouter_free_cli_matrix_report_shape_and_redaction(

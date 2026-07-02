@@ -44,6 +44,8 @@ def _settings(**overrides):
         "fireworks_api_key": "",
         "custom_api_key": "",
         "custom_url_provider": "",
+        "cloudflare_api_token": "",
+        "cloudflare_account_id": "",
         "lm_studio_base_url": "",
         "llamacpp_base_url": "",
         "ollama_base_url": "http://localhost:11434",
@@ -167,6 +169,37 @@ def test_custom_provider_configuration_uses_url(monkeypatch) -> None:
             source="FCC_SMOKE_MODEL_CUSTOM",
         )
     ]
+
+
+def test_cloudflare_provider_configuration_requires_token_and_account(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_CLOUDFLARE", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            cloudflare_api_token="cf-token",
+            cloudflare_account_id="cf-account",
+        )
+    )
+
+    assert config.has_provider_configuration("cloudflare")
+    models = config.provider_smoke_models()
+    assert models[0].provider == "cloudflare"
+    assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["cloudflare"]
+
+
+def test_cloudflare_provider_configuration_missing_account_is_unconfigured() -> None:
+    config = _smoke_config(
+        settings=_settings(
+            ollama_base_url="",
+            cloudflare_api_token="cf-token",
+            cloudflare_account_id="",
+        )
+    )
+
+    assert not config.has_provider_configuration("cloudflare")
 
 
 def test_provider_smoke_model_override_accepts_model_name_without_prefix(

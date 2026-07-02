@@ -6,6 +6,7 @@ from fastapi import Depends, HTTPException, Request
 from loguru import logger
 from starlette.applications import Starlette
 
+from config.provider_catalog import PROVIDER_CATALOG
 from config.settings import Settings
 from config.settings import get_settings as _get_settings
 from core.anthropic import get_user_facing_error_message
@@ -15,12 +16,7 @@ from providers.exceptions import (
     ServiceUnavailableError,
     UnknownProviderTypeError,
 )
-from providers.registry import PROVIDER_DESCRIPTORS, ProviderRegistry
-
-# Process-level cache: only for :func:`get_provider_for_type` / :func:`get_provider`
-# when there is no ``Request``/``app`` (unit tests, scripts). HTTP handlers must pass
-# ``app`` to :func:`resolve_provider` so the app-scoped registry is used.
-_providers: dict[str, BaseProvider] = {}
+from providers.runtime import ProviderRuntime
 
 
 def get_settings() -> Settings:
@@ -28,39 +24,33 @@ def get_settings() -> Settings:
     return _get_settings()
 
 
+def get_provider_runtime(app: Starlette) -> ProviderRuntime:
+    """Return the app-scoped provider runtime installed by ``AppRuntime``."""
+    runtime = getattr(app.state, "provider_runtime", None)
+    if isinstance(runtime, ProviderRuntime):
+        return runtime
+    raise ServiceUnavailableError(
+        "Provider runtime is not configured. Ensure AppRuntime startup ran "
+        "or assign app.state.provider_runtime for test apps."
+    )
+
+
+def maybe_provider_runtime(app: Starlette) -> ProviderRuntime | None:
+    """Return the app-scoped provider runtime when it is installed."""
+    runtime = getattr(app.state, "provider_runtime", None)
+    return runtime if isinstance(runtime, ProviderRuntime) else None
+
+
 def resolve_provider(
     provider_type: str,
     *,
-    app: Starlette | None,
-    settings: Settings,
+    app: Starlette,
 ) -> BaseProvider:
-    """Resolve a provider using the app-scoped registry when ``app`` is set.
-
-    When ``app`` is not ``None``, the app-owned :attr:`app.state.provider_registry`
-    must exist (installed by :class:`~api.runtime.AppRuntime` during startup).
-    Callers that construct a bare ``FastAPI`` without lifespan must set
-    ``app.state.provider_registry`` explicitly.
-
-    When ``app`` is ``None`` (no HTTP context), uses the process-level
-    :data:`_providers` cache only.
-    """
-    if app is not None:
-        reg = getattr(app.state, "provider_registry", None)
-        if reg is None:
-            raise ServiceUnavailableError(
-                "Provider registry is not configured. Ensure AppRuntime startup ran "
-                "or assign app.state.provider_registry for test apps."
-            )
-        return _resolve_with_registry(reg, provider_type, settings)
-    return _resolve_with_registry(ProviderRegistry(_providers), provider_type, settings)
-
-
-def _resolve_with_registry(
-    registry: ProviderRegistry, provider_type: str, settings: Settings
-) -> BaseProvider:
-    should_log_init = not registry.is_cached(provider_type)
+    """Resolve a provider through the app-scoped provider runtime."""
+    runtime = get_provider_runtime(app)
+    should_log_init = not runtime.is_cached(provider_type)
     try:
-        provider = registry.get(provider_type, settings)
+        provider = runtime.resolve_provider(provider_type)
     except AuthenticationError as e:
         # Provider :class:`~providers.exceptions.AuthenticationError` messages are
         # curated configuration hints (env var names, docs links), not upstream noise.
@@ -70,22 +60,12 @@ def _resolve_with_registry(
         logger.error(
             "Unknown provider_type: '{}'. Supported: {}",
             provider_type,
-            ", ".join(f"'{key}'" for key in PROVIDER_DESCRIPTORS),
+            ", ".join(f"'{key}'" for key in PROVIDER_CATALOG),
         )
         raise
     if should_log_init:
         logger.info("Provider initialized: {}", provider_type)
     return provider
-
-
-def get_provider_for_type(provider_type: str) -> BaseProvider:
-    """Get or create a provider in the process-level cache (no ``app``/Request).
-
-    HTTP route handlers should call :func:`resolve_provider` with the active
-    :attr:`request.app` (via :class:`~api.runtime.AppRuntime`) instead of this
-    process-wide cache.
-    """
-    return resolve_provider(provider_type, app=None, settings=get_settings())
 
 
 def require_api_key(
@@ -124,21 +104,3 @@ def require_api_key(
         token.encode("utf-8"), anthropic_auth_token.encode("utf-8")
     ):
         raise HTTPException(status_code=401, detail="Invalid API key")
-
-
-def get_provider() -> BaseProvider:
-    """Get or create the default provider (``MODEL`` / ``provider_type``).
-
-    Process-cache helper for scripts, unit tests, and non-FastAPI callers. HTTP
-    handlers must use :func:`resolve_provider` with :attr:`request.app` so the
-    app-scoped :class:`~providers.registry.ProviderRegistry` is used.
-    """
-    return get_provider_for_type(get_settings().provider_type)
-
-
-async def cleanup_provider():
-    """Cleanup all provider resources."""
-    global _providers
-    await ProviderRegistry(_providers).cleanup()
-    _providers = {}
-    logger.debug("Provider cleanup completed")

@@ -12,9 +12,11 @@ from fastapi import FastAPI
 from loguru import logger
 
 from api.admin_urls import local_admin_url
+from config.env_files import ANTHROPIC_AUTH_TOKEN_ENV, process_env_key_is_effective
+from config.paths import default_claude_workspace_path
 from config.settings import Settings, get_settings
 from providers.exceptions import ServiceUnavailableError
-from providers.registry import ProviderRegistry
+from providers.runtime import ProviderRuntime
 
 if TYPE_CHECKING:
     from cli.managed import ManagedClaudeSessionManager
@@ -55,7 +57,8 @@ async def best_effort(
 
 def warn_if_process_auth_token(settings: Settings) -> None:
     """Warn when server auth was implicitly inherited from the shell."""
-    if settings.uses_process_anthropic_auth_token():
+    model_config = getattr(settings, "model_config", Settings.model_config)
+    if process_env_key_is_effective(model_config, ANTHROPIC_AUTH_TOKEN_ENV):
         logger.warning(
             "ANTHROPIC_AUTH_TOKEN is set in the process environment but not in "
             "a configured .env file. The proxy will require that token. Add "
@@ -87,7 +90,7 @@ class AppRuntime:
 
     app: FastAPI
     settings: Settings
-    _provider_registry: ProviderRegistry | None = field(default=None, init=False)
+    _provider_runtime: ProviderRuntime | None = field(default=None, init=False)
     messaging_runtime: MessagingRuntime | None = None
     messaging_workflow: MessagingWorkflow | None = None
     cli_manager: ManagedClaudeSessionManager | None = None
@@ -103,12 +106,12 @@ class AppRuntime:
     async def startup(self) -> None:
         logger.info("Starting Claude Code Proxy...")
         admin_url = local_admin_url(self.settings)
-        self._provider_registry = ProviderRegistry()
-        self.app.state.provider_registry = self._provider_registry
+        self._provider_runtime = ProviderRuntime(self.settings)
+        self.app.state.provider_runtime = self._provider_runtime
         try:
             warn_if_process_auth_token(self.settings)
             await self._validate_configured_models_best_effort()
-            self._provider_registry.start_model_list_refresh(self.settings)
+            self._provider_runtime.start_model_list_refresh()
             await self._start_messaging_if_configured()
             self._publish_state()
             logging.getLogger("uvicorn.error").info(
@@ -117,18 +120,18 @@ class AppRuntime:
         except Exception as exc:
             log_startup_failure(self.settings, exc)
             await best_effort(
-                "provider_registry.cleanup",
-                self._provider_registry.cleanup(),
+                "provider_runtime.cleanup",
+                self._provider_runtime.cleanup(),
                 log_verbose_errors=self.settings.log_api_error_tracebacks,
             )
             raise
 
     async def _validate_configured_models_best_effort(self) -> None:
         """Warm validation status without blocking first-run/admin access."""
-        if self._provider_registry is None:
+        if self._provider_runtime is None:
             return
         try:
-            await self._provider_registry.validate_configured_models(self.settings)
+            await self._provider_runtime.validate_configured_models()
         except ServiceUnavailableError as exc:
             self.app.state.startup_validation_error = exc.message
             logger.warning(
@@ -165,10 +168,10 @@ class AppRuntime:
                 self.cli_manager.stop_all(),
                 log_verbose_errors=verbose,
             )
-        if self._provider_registry is not None:
+        if self._provider_runtime is not None:
             await best_effort(
-                "provider_registry.cleanup",
-                self._provider_registry.cleanup(),
+                "provider_runtime.cleanup",
+                self._provider_runtime.cleanup(),
                 log_verbose_errors=verbose,
             )
         await self._shutdown_limiter()
@@ -237,21 +240,18 @@ class AppRuntime:
         )
         os.makedirs(workspace, exist_ok=True)
 
-        data_path = os.path.abspath(self.settings.claude_workspace)
+        data_path = os.path.abspath(default_claude_workspace_path())
         os.makedirs(data_path, exist_ok=True)
 
         api_url = f"http://{self.settings.host}:{self.settings.port}/v1"
         allowed_dirs = [workspace] if self.settings.allowed_dir else []
-        plans_dir_abs = os.path.abspath(
-            os.path.join(self.settings.claude_workspace, "plans")
-        )
+        plans_dir_abs = os.path.abspath(os.path.join(data_path, "plans"))
         plans_directory = os.path.relpath(plans_dir_abs, workspace)
         self.cli_manager = ManagedClaudeSessionManager(
             workspace_path=workspace,
             api_url=api_url,
             allowed_dirs=allowed_dirs,
             plans_directory=plans_directory,
-            claude_bin=self.settings.claude_cli_bin,
             auth_token=getattr(self.settings, "anthropic_auth_token", ""),
             log_raw_cli_diagnostics=self.settings.log_raw_cli_diagnostics,
             log_messaging_error_details=self.settings.log_messaging_error_details,
@@ -281,29 +281,28 @@ class AppRuntime:
         logger.info("{} platform started with messaging workflow", components.name)
 
     def _restore_tree_state(self, session_store: SessionStore) -> None:
-        saved_trees = session_store.get_all_trees()
-        if not saved_trees:
+        conversation_snapshot = session_store.load_conversation_snapshot()
+        if conversation_snapshot.is_empty:
             return
         if self.messaging_workflow is None:
             return
 
-        logger.info(f"Restoring {len(saved_trees)} conversation trees...")
+        logger.info(
+            "Restoring {} conversation trees...",
+            len(conversation_snapshot.trees),
+        )
         from messaging.trees import TreeQueueManager
 
         self.messaging_workflow.replace_tree_queue(
-            TreeQueueManager.from_dict(
-                {
-                    "trees": saved_trees,
-                    "node_to_tree": session_store.get_node_mapping(),
-                },
+            TreeQueueManager.from_snapshot(
+                conversation_snapshot,
                 queue_update_callback=self.messaging_workflow.update_queue_positions,
                 node_started_callback=self.messaging_workflow.mark_node_processing,
             )
         )
         if self.messaging_workflow.tree_queue.cleanup_stale_nodes() > 0:
-            tree_data = self.messaging_workflow.tree_queue.to_dict()
-            session_store.sync_from_tree_data(
-                tree_data["trees"], tree_data["node_to_tree"]
+            session_store.save_conversation_snapshot(
+                self.messaging_workflow.tree_queue.snapshot()
             )
 
     def _publish_state(self) -> None:
