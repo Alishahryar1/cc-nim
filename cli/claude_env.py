@@ -3,7 +3,8 @@
 from __future__ import annotations
 
 CLAUDE_CODE_AUTO_COMPACT_WINDOW = "190000"
-CLAUDE_BINARY_NAME = "claude"
+import os
+CLAUDE_BINARY_NAME = "claude.cmd" if os.name == "nt" else "claude"
 CLAUDE_NO_AUTH_SENTINEL = "fcc-no-auth"
 
 
