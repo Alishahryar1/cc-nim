@@ -38,17 +38,33 @@ def provider_config_status(
             continue
 
         value = str(state.get(descriptor.credential_env, {}).get("value", ""))
-        configured = bool(value.strip())
-        statuses.append(
-            {
-                "provider_id": provider_id,
-                "display_name": descriptor.display_name,
-                "kind": "remote",
-                "status": "configured" if configured else "missing_key",
-                "label": "Configured" if configured else "Missing key",
-                "credential_env": descriptor.credential_env,
-            }
-        )
+        has_key = bool(value.strip())
+        base_url = ""
+        if descriptor.base_url_attr is not None:
+            base_url = _value_for_settings_attr(state, descriptor.base_url_attr)
+        has_url = bool(base_url.strip()) or descriptor.base_url_attr is None
+
+        if not has_key and not descriptor.credential_optional:
+            status = "missing_key"
+            label = "Missing key"
+        elif not has_url:
+            status = "missing_url"
+            label = "Missing URL"
+        else:
+            status = "configured"
+            label = "Configured"
+
+        entry: dict[str, Any] = {
+            "provider_id": provider_id,
+            "display_name": descriptor.display_name,
+            "kind": "remote",
+            "status": status,
+            "label": label,
+            "credential_env": descriptor.credential_env,
+        }
+        if descriptor.base_url_attr is not None:
+            entry["base_url"] = base_url
+        statuses.append(entry)
     return statuses
 
 

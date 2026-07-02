@@ -127,6 +127,12 @@ def _create_cerebras(config: ProviderConfig, _settings: Settings) -> BaseProvide
     return CerebrasProvider(config)
 
 
+def _create_custom(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+    from providers.custom import CustomProvider
+
+    return CustomProvider(config)
+
+
 PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "nvidia_nim": _create_nvidia_nim,
     "open_router": _create_open_router,
@@ -143,6 +149,7 @@ PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "fireworks": _create_fireworks,
     "cloudflare": _create_cloudflare,
     "zai": _create_zai,
+    "custom": _create_custom,
     "lmstudio": _create_lmstudio,
     "llamacpp": _create_llamacpp,
     "ollama": _create_ollama,

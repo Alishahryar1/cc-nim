@@ -6,6 +6,7 @@ from unittest.mock import patch
 import httpx
 from fastapi.testclient import TestClient
 
+from api.admin_config.status import provider_config_status
 from api.admin_config.values import MASKED_SECRET
 from api.admin_urls import local_admin_url
 from api.app import create_app
@@ -510,6 +511,38 @@ def test_admin_first_apply_migrates_repo_env(monkeypatch, tmp_path):
     managed_text = (tmp_path / ".fcc" / ".env").read_text("utf-8")
     assert "MODEL=deepseek/deepseek-chat" in managed_text
     assert "DEEPSEEK_API_KEY=deepseek-secret" in managed_text
+
+
+def test_custom_provider_status_configured_with_url_only_no_api_key() -> None:
+    state = {
+        "CUSTOM_API_KEY": {"value": ""},
+        "CUSTOM_URL_PROVIDER": {"value": "http://gateway.test/v1"},
+    }
+
+    custom = next(
+        entry
+        for entry in provider_config_status(state)
+        if entry["provider_id"] == "custom"
+    )
+
+    assert custom["status"] == "configured"
+    assert custom["label"] == "Configured"
+
+
+def test_custom_provider_status_missing_url_when_key_optional() -> None:
+    state = {
+        "CUSTOM_API_KEY": {"value": ""},
+        "CUSTOM_URL_PROVIDER": {"value": ""},
+    }
+
+    custom = next(
+        entry
+        for entry in provider_config_status(state)
+        if entry["provider_id"] == "custom"
+    )
+
+    assert custom["status"] == "missing_url"
+    assert custom["label"] == "Missing URL"
 
 
 def test_admin_local_provider_status_reports_reachable(monkeypatch, tmp_path):

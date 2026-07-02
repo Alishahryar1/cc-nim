@@ -259,6 +259,8 @@ class SmokeConfig:
             return bool(self.settings.groq_api_key.strip())
         if provider == "cerebras":
             return bool(self.settings.cerebras_api_key.strip())
+        if provider == "custom":
+            return bool(self.settings.custom_url_provider.strip())
         if provider == "cloudflare":
             return bool(
                 self.settings.cloudflare_api_token.strip()

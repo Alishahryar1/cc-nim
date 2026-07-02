@@ -64,6 +64,10 @@ class Settings(BaseSettings):
     # ==================== Cerebras Inference (OpenAI-compatible) ====================
     cerebras_api_key: str = Field(default="", validation_alias="CEREBRAS_API_KEY")
 
+    # ==================== Custom OpenAI-compatible provider ====================
+    custom_api_key: str = Field(default="", validation_alias="CUSTOM_API_KEY")
+    custom_url_provider: str = Field(default="", validation_alias="CUSTOM_URL_PROVIDER")
+
     # ==================== Messaging Platform Selection ====================
     # Valid: "telegram" | "discord" | "none"
     messaging_platform: str = Field(
@@ -125,6 +129,7 @@ class Settings(BaseSettings):
     gemini_proxy: str = Field(default="", validation_alias="GEMINI_PROXY")
     groq_proxy: str = Field(default="", validation_alias="GROQ_PROXY")
     cerebras_proxy: str = Field(default="", validation_alias="CEREBRAS_PROXY")
+    custom_proxy: str = Field(default="", validation_alias="CUSTOM_PROXY")
 
     # ==================== Provider Rate Limiting ====================
     provider_rate_limit: int = Field(default=40, validation_alias="PROVIDER_RATE_LIMIT")
@@ -325,6 +330,11 @@ class Settings(BaseSettings):
                     f"Invalid URL scheme in web_fetch_allowed_schemes: {scheme!r}"
                 )
         return ",".join(schemes)
+
+    @field_validator("custom_url_provider")
+    @classmethod
+    def validate_custom_url_provider(cls, v: str) -> str:
+        return v.strip().rstrip("/")
 
     @field_validator("ollama_base_url")
     @classmethod

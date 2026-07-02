@@ -10,6 +10,7 @@ from config.provider_ids import SUPPORTED_PROVIDER_IDS
 from providers.cerebras import CerebrasProvider
 from providers.cloudflare import CloudflareProvider
 from providers.codestral import CodestralProvider
+from providers.custom import CustomProvider
 from providers.deepseek import DeepSeekProvider
 from providers.exceptions import UnknownProviderTypeError
 from providers.fireworks import FireworksProvider
@@ -24,6 +25,7 @@ from providers.ollama import OllamaProvider
 from providers.open_router import OpenRouterProvider
 from providers.opencode import OpenCodeProvider
 from providers.runtime import ProviderRuntime, build_provider_config, create_provider
+from providers.runtime.discovery import model_list_provider_ids_for_settings
 from providers.wafer import WaferProvider
 from providers.zai import ZaiProvider
 
@@ -68,6 +70,9 @@ def _make_settings(**overrides):
     mock.groq_proxy = ""
     mock.cerebras_api_key = ""
     mock.cerebras_proxy = ""
+    mock.custom_api_key = ""
+    mock.custom_url_provider = ""
+    mock.custom_proxy = ""
     mock.provider_rate_limit = 40
     mock.provider_rate_window = 60
     mock.provider_max_concurrency = 5
@@ -131,6 +136,34 @@ def test_zai_provider_config_ignores_stale_base_url_setting():
     )
 
     assert config.base_url == ZAI_DEFAULT_BASE
+
+
+def test_build_provider_config_custom_allows_missing_api_key() -> None:
+    descriptor = PROVIDER_CATALOG["custom"]
+    settings = _make_settings(
+        custom_api_key="",
+        custom_url_provider="http://gateway.test/v1",
+    )
+
+    config = build_provider_config(descriptor, settings)
+
+    assert config.api_key == ""
+    assert config.base_url == "http://gateway.test/v1"
+
+
+def test_model_list_includes_custom_when_only_url_configured() -> None:
+    settings = _make_settings(
+        custom_api_key="",
+        custom_url_provider="http://gateway.test/v1",
+    )
+
+    assert "custom" in model_list_provider_ids_for_settings(settings)
+
+
+def test_model_list_omits_custom_without_url_or_key() -> None:
+    settings = _make_settings(custom_api_key="", custom_url_provider="")
+
+    assert "custom" not in model_list_provider_ids_for_settings(settings)
 
 
 def test_cloudflare_descriptor_uses_api_root_not_account_url():
@@ -200,6 +233,8 @@ def test_create_provider_instantiates_each_builtin():
         cloudflare_api_token="test_cloudflare_token",
         cloudflare_account_id="test_cloudflare_account",
         kimi_api_key="test_kimi_key",
+        custom_api_key="test_custom_key",
+        custom_url_provider="http://gateway.test/v1",
     )
     cases = {
         "nvidia_nim": NvidiaNimProvider,
@@ -209,6 +244,7 @@ def test_create_provider_instantiates_each_builtin():
         "kimi": KimiProvider,
         "fireworks": FireworksProvider,
         "cloudflare": CloudflareProvider,
+        "custom": CustomProvider,
         "lmstudio": LMStudioProvider,
         "llamacpp": LlamaCppProvider,
         "ollama": OllamaProvider,

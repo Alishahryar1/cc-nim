@@ -15,3 +15,6 @@ debug-*.log
 llama_cache
 .smoke-results
 .vscode
+node_modules/
+package-lock.json
+package.json

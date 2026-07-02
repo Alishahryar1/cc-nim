@@ -53,6 +53,7 @@ class ProviderDescriptor:
     default_base_url: str | None = None
     base_url_attr: str | None = None
     proxy_attr: str | None = None
+    credential_optional: bool = False
 
 
 PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
@@ -245,6 +246,17 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
             "native_anthropic",
             "rate_limit",
         ),
+    ),
+    "custom": ProviderDescriptor(
+        provider_id="custom",
+        display_name="Custom Provider",
+        transport_type="openai_chat",
+        credential_env="CUSTOM_API_KEY",
+        credential_attr="custom_api_key",
+        base_url_attr="custom_url_provider",
+        proxy_attr="custom_proxy",
+        credential_optional=True,
+        capabilities=("chat", "streaming", "tools", "thinking", "rate_limit"),
     ),
     "lmstudio": ProviderDescriptor(
         provider_id="lmstudio",

@@ -9,12 +9,12 @@ from contextlib import suppress
 from loguru import logger
 
 from config.model_refs import configured_chat_model_refs
-from config.provider_catalog import PROVIDER_CATALOG
+from config.provider_catalog import PROVIDER_CATALOG, ProviderDescriptor
 from config.settings import Settings
 from providers.base import BaseProvider
 from providers.model_listing import ProviderModelInfo
 
-from .config import provider_credential
+from .config import provider_credential, string_setting
 from .model_cache import ProviderModelCache
 from .validation import provider_query_failure_reason
 
@@ -26,6 +26,23 @@ def referenced_provider_ids(settings: Settings) -> frozenset[str]:
     return frozenset(ref.provider_id for ref in configured_chat_model_refs(settings))
 
 
+def provider_configured_for_discovery(
+    descriptor: ProviderDescriptor, settings: Settings
+) -> bool:
+    """Return whether a provider has enough config to query model lists."""
+    if descriptor.credential_optional:
+        if descriptor.base_url_attr is not None:
+            return bool(string_setting(settings, descriptor.base_url_attr).strip())
+        return bool(provider_credential(descriptor, settings).strip())
+    if descriptor.credential_env is None:
+        return False
+    if not provider_credential(descriptor, settings).strip():
+        return False
+    if descriptor.base_url_attr is not None:
+        return bool(string_setting(settings, descriptor.base_url_attr).strip())
+    return True
+
+
 def model_list_provider_ids_for_settings(settings: Settings) -> tuple[str, ...]:
     """Return providers worth discovering for this process configuration."""
     referenced_ids = referenced_provider_ids(settings)
@@ -35,10 +52,7 @@ def model_list_provider_ids_for_settings(settings: Settings) -> tuple[str, ...]:
             if provider_id in referenced_ids:
                 provider_ids.append(provider_id)
             continue
-        if (
-            descriptor.credential_env is not None
-            and provider_credential(descriptor, settings).strip()
-        ):
+        if provider_configured_for_discovery(descriptor, settings):
             provider_ids.append(provider_id)
     return tuple(provider_ids)
 

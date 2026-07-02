@@ -29,7 +29,7 @@ def require_provider_credential(
     descriptor: ProviderDescriptor, credential: str
 ) -> None:
     """Raise a user-facing configuration error when a required key is missing."""
-    if descriptor.credential_env is None:
+    if descriptor.credential_env is None or descriptor.credential_optional:
         return
     if credential and credential.strip():
         return

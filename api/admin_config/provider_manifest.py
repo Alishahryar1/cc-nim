@@ -72,6 +72,26 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "[OpenAI compatibility](https://inference-docs.cerebras.ai/resources/openai)."
         ),
     },
+    "CUSTOM_API_KEY": {
+        "label": "Custom API Key",
+        "description": (
+            "Bearer token for your custom OpenAI-compatible backend "
+            "(``Authorization: Bearer …`` on ``/v1/chat/completions``). "
+            "Optional when the gateway does not require auth."
+        ),
+    },
+}
+
+
+_BASE_URL_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
+    "CUSTOM_URL_PROVIDER": {
+        "label": "Custom URL Provider",
+        "description": (
+            "Base URL of the custom OpenAI-compatible API, including ``/v1`` "
+            "(for example ``http://host:3001/v1``). Route models as "
+            "``custom/<upstream-model-id>`` under Model Routing."
+        ),
+    },
 }
 
 
@@ -113,15 +133,16 @@ def _local_base_url_field_specs() -> tuple[dict[str, Any], ...]:
     for descriptor in PROVIDER_CATALOG.values():
         if descriptor.base_url_attr is None:
             continue
-        specs.append(
-            {
-                "key": _settings_env_key(descriptor.base_url_attr),
-                "label": f"{descriptor.display_name} Base URL",
-                "section_id": "providers",
-                "settings_attr": descriptor.base_url_attr,
-                "default": descriptor.default_base_url or "",
-            }
-        )
+        spec = {
+            "key": _settings_env_key(descriptor.base_url_attr),
+            "label": f"{descriptor.display_name} Base URL",
+            "section_id": "providers",
+            "settings_attr": descriptor.base_url_attr,
+            "default": descriptor.default_base_url or "",
+        }
+        env_key = spec["key"]
+        spec.update(_BASE_URL_FIELD_OVERRIDES.get(env_key, {}))
+        specs.append(spec)
     return tuple(specs)
 
 
