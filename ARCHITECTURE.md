@@ -406,7 +406,10 @@ transport packages are upstream adapters: OpenAI-chat providers convert chat
 chunks into ledger operations, and native Anthropic providers parse upstream SSE,
 apply native block policy, and re-emit normalized Anthropic SSE from the shared
 ledger. Transport bases stay focused on provider hooks, client setup, request
-construction, rate limiting, and model listing.
+construction, rate limiting, and model listing. Status-less upstream transient
+classification also lives in this shared layer so stream recovery, provider
+backoff, and provider error mapping agree on retryable overload/rate-limit
+signals.
 
 [core/openai_responses/](core/openai_responses/) owns OpenAI Responses support:
 
@@ -521,7 +524,9 @@ Discord and Telegram messaging. Managed task invocations set
 non-interactive terminal settings, optional `--resume`, optional
 `--fork-session`, and `--output-format stream-json`. The managed session parser
 extracts persistent Claude session IDs and yields Claude stream-json events to
-the messaging event parser.
+the messaging event parser. Managed Claude also owns subprocess stderr
+diagnostic classification so known benign Claude Code notices do not become
+messaging task errors, while unknown stderr remains fatal.
 
 Codex is supported through `fcc-codex` and Codex extensions. FCC does not keep an
 internal managed-Codex session runner because no user-facing messaging setting

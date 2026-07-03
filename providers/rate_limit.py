@@ -7,10 +7,9 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any, ClassVar, TypeVar
 
-import httpx
-import openai
 from loguru import logger
 
+from core.anthropic.streaming import retryable_transient_status
 from core.rate_limit import StrictSlidingWindowLimiter
 from core.trace import trace_event
 
@@ -31,18 +30,9 @@ def retryable_upstream_status(exc: BaseException) -> int | None:
     ``429`` plus any upstream ``5xx`` use the same exponential backoff and scoped
     limiter blocking semantics as today's rate-limit path.
     """
-    if isinstance(exc, openai.RateLimitError):
-        return 429
-    if isinstance(exc, httpx.HTTPStatusError):
-        status = exc.response.status_code
-        if _upstream_http_retryable(status):
-            return status
-        return None
-    if isinstance(exc, openai.APIError):
-        status = getattr(exc, "status_code", None)
-        if isinstance(status, int) and 500 <= status <= 599:
-            return status
-        return None
+    status = retryable_transient_status(exc)
+    if status is not None and _upstream_http_retryable(status):
+        return status
     return None
 
 

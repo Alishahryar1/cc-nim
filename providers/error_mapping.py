@@ -9,6 +9,10 @@ import openai
 
 from config.constants import PROVIDER_ERROR_BODY_DISPLAY_CAP_BYTES
 from core.anthropic import get_user_facing_error_message
+from core.anthropic.streaming import (
+    is_transient_overload_error,
+    retryable_transient_status,
+)
 from providers.exceptions import (
     APIError,
     AuthenticationError,
@@ -275,8 +279,8 @@ def map_error(
         return InvalidRequestError(message, raw_error=str(e))
     if isinstance(e, openai.InternalServerError):
         raw_message = str(e)
-        sdk_status = getattr(e, "status_code", None)
-        if "overloaded" in raw_message.lower() or "capacity" in raw_message.lower():
+        sdk_status = retryable_transient_status(e) or getattr(e, "status_code", None)
+        if is_transient_overload_error(e):
             return OverloadedError(message, raw_error=raw_message)
         if isinstance(sdk_status, int) and 500 <= sdk_status <= 599:
             stable = APIError("_", status_code=sdk_status)
@@ -287,8 +291,24 @@ def map_error(
             )
         return APIError(message, status_code=500, raw_error=str(e))
     if isinstance(e, openai.APIError):
+        status = retryable_transient_status(e)
+        if status == 429:
+            limiter.set_blocked(60)
+            return RateLimitError(
+                "Provider rate limit reached. Please retry shortly.", raw_error=str(e)
+            )
+        if is_transient_overload_error(e):
+            return OverloadedError(
+                "Provider is currently overloaded. Please retry.", raw_error=str(e)
+            )
+        effective_status = status or getattr(e, "status_code", None)
+        if not isinstance(effective_status, int):
+            effective_status = 500
+        stable = APIError("_", status_code=effective_status)
         return APIError(
-            message, status_code=getattr(e, "status_code", 500), raw_error=str(e)
+            get_user_facing_error_message(stable),
+            status_code=effective_status,
+            raw_error=str(e),
         )
 
     if isinstance(e, httpx.HTTPStatusError):

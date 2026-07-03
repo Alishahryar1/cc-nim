@@ -348,6 +348,86 @@ class TestManagedClaudeSession:
         assert events[-1]["code"] == 0
 
     @pytest.mark.asyncio
+    async def test_start_task_ignores_benign_claude_connectors_stderr(self):
+        """Known Claude diagnostics on stderr are not surfaced as task failures."""
+        from cli.managed.session import ManagedClaudeSession
+
+        session = ManagedClaudeSession("/tmp", "http://localhost:8082/v1")
+
+        mock_process = AsyncMock()
+        mock_process.stdout.read.side_effect = [
+            b'{"type": "message", "content": "Hi"}\n',
+            b"",
+        ]
+        mock_process.stderr.read.side_effect = [
+            b"claude.ai connectors are disabled in this environment\n",
+            b"",
+        ]
+        mock_process.wait.return_value = 0
+
+        with patch(
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock
+        ) as mock_exec:
+            mock_exec.return_value = mock_process
+
+            events = [e async for e in session.start_task("Hello")]
+
+        assert [e for e in events if e.get("type") == "error"] == []
+        assert events[-1] == {"type": "exit", "code": 0, "stderr": None}
+
+    @pytest.mark.asyncio
+    async def test_start_task_mixed_stderr_reports_only_fatal_lines(self):
+        """Benign stderr diagnostics are filtered without hiding real failures."""
+        from cli.managed.session import ManagedClaudeSession
+
+        session = ManagedClaudeSession("/tmp", "http://localhost:8082/v1")
+
+        mock_process = AsyncMock()
+        mock_process.stdout.read.side_effect = [b""]
+        mock_process.stderr.read.side_effect = [
+            (b"claude.ai connectors are disabled in this environment\nFatal error\n"),
+            b"",
+        ]
+        mock_process.wait.return_value = 1
+
+        with patch(
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock
+        ) as mock_exec:
+            mock_exec.return_value = mock_process
+
+            events = [e async for e in session.start_task("Hello")]
+
+        assert len(events) == 2
+        assert events[0] == {"type": "error", "error": {"message": "Fatal error"}}
+        assert events[1] == {"type": "exit", "code": 1, "stderr": "Fatal error"}
+
+    @pytest.mark.asyncio
+    async def test_start_task_nonzero_with_only_benign_stderr_has_no_stderr_error(
+        self,
+    ):
+        """A benign stderr line is not duplicated as the process failure reason."""
+        from cli.managed.session import ManagedClaudeSession
+
+        session = ManagedClaudeSession("/tmp", "http://localhost:8082/v1")
+
+        mock_process = AsyncMock()
+        mock_process.stdout.read.side_effect = [b""]
+        mock_process.stderr.read.side_effect = [
+            b"claude.ai connectors are disabled in this environment\n",
+            b"",
+        ]
+        mock_process.wait.return_value = 1
+
+        with patch(
+            "asyncio.create_subprocess_exec", new_callable=AsyncMock
+        ) as mock_exec:
+            mock_exec.return_value = mock_process
+
+            events = [e async for e in session.start_task("Hello")]
+
+        assert events == [{"type": "exit", "code": 1, "stderr": None}]
+
+    @pytest.mark.asyncio
     async def test_drain_stderr_bounded_retains_cap_but_drains_to_eof(self):
         """Oversized stderr is fully drained so the pipe cannot deadlock; capture is bounded."""
         from cli.managed.session import _MAX_STDERR_CAPTURE_BYTES, ManagedClaudeSession

@@ -16,6 +16,7 @@ from .claude import (
     build_managed_claude_invocation,
     parse_managed_claude_stdout_line,
 )
+from .diagnostics import classify_managed_claude_stderr
 
 # Cap stderr capture so a runaway child cannot exhaust memory; pipe is still drained.
 _MAX_STDERR_CAPTURE_BYTES = 256 * 1024
@@ -188,7 +189,17 @@ class ManagedClaudeSession:
 
                 stderr_text = None
                 if stderr_bytes:
-                    stderr_text = stderr_bytes.decode("utf-8", errors="replace").strip()
+                    raw_stderr_text = stderr_bytes.decode(
+                        "utf-8", errors="replace"
+                    ).strip()
+                    if raw_stderr_text:
+                        diagnostics = classify_managed_claude_stderr(raw_stderr_text)
+                        if diagnostics.has_benign:
+                            logger.info(
+                                "Claude CLI benign stderr diagnostics: lines={}",
+                                len(diagnostics.benign_lines),
+                            )
+                        stderr_text = diagnostics.fatal_text
                     if stderr_text:
                         if self._log_raw_cli_diagnostics:
                             logger.error("Claude CLI stderr: {}", stderr_text)

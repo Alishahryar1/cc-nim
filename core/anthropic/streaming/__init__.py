@@ -25,6 +25,7 @@ from .recovery import (
     parse_complete_tool_input,
     tool_schemas_by_name,
 )
+from .transient_errors import is_transient_overload_error, retryable_transient_status
 
 __all__ = [
     "ANTHROPIC_SSE_RESPONSE_HEADERS",
@@ -45,9 +46,11 @@ __all__ = [
     "continuation_suffix",
     "format_sse_event",
     "is_retryable_stream_error",
+    "is_transient_overload_error",
     "make_text_recovery_body",
     "make_tool_repair_body",
     "map_stop_reason",
     "parse_complete_tool_input",
+    "retryable_transient_status",
     "tool_schemas_by_name",
 ]
