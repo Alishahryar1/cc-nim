@@ -97,6 +97,21 @@ def _make_bad_request_error(message: str) -> openai.BadRequestError:
     return openai.BadRequestError(message, response=response, body=body)
 
 
+def _make_internal_server_error(message: str) -> openai.InternalServerError:
+    response = Response(
+        status_code=500,
+        request=Request("POST", f"{NVIDIA_NIM_DEFAULT_BASE}/chat/completions"),
+    )
+    body = {
+        "error": {
+            "message": message,
+            "type": "internal_server_error",
+            "code": 500,
+        }
+    }
+    return openai.InternalServerError(message, response=response, body=body)
+
+
 @pytest.fixture(autouse=True)
 def mock_rate_limiter():
     """Mock the global rate limiter to prevent waiting."""
@@ -713,6 +728,51 @@ async def test_stream_response_retries_without_reasoning_budget(nim_provider):
 
 
 @pytest.mark.asyncio
+async def test_stream_response_retries_without_budget_for_thinking_token_error(
+    nim_provider,
+):
+    req = MockRequest(model="meta/llama-3.3-70b-instruct")
+
+    mock_chunk = MagicMock()
+    mock_chunk.choices = [
+        MagicMock(
+            delta=MagicMock(content="Recovered", reasoning_content=""),
+            finish_reason="stop",
+        )
+    ]
+    mock_chunk.usage = MagicMock(completion_tokens=5)
+
+    async def mock_stream():
+        yield mock_chunk
+
+    error = _make_internal_server_error(
+        "ValueError: thinking_token_budget is set but reasoning_config is not "
+        "configured. Please set --reasoning-config to use thinking_token_budget."
+    )
+
+    with patch.object(
+        nim_provider._client.chat.completions, "create", new_callable=AsyncMock
+    ) as mock_create:
+        mock_create.side_effect = [error, mock_stream()]
+
+        events = [e async for e in nim_provider.stream_response(req)]
+
+    assert mock_create.await_count == 2
+    first_call = mock_create.await_args_list[0].kwargs
+    second_call = mock_create.await_args_list[1].kwargs
+    assert (
+        first_call["extra_body"]["chat_template_kwargs"]["reasoning_budget"]
+        == first_call["max_tokens"]
+    )
+    assert "reasoning_budget" not in second_call["extra_body"]
+    assert "reasoning_budget" not in second_call["extra_body"]["chat_template_kwargs"]
+    assert second_call["extra_body"]["chat_template_kwargs"]["thinking"] is True
+    assert second_call["extra_body"]["chat_template_kwargs"]["enable_thinking"] is True
+    assert any("Recovered" in event for event in events)
+    assert any("message_stop" in event for event in events)
+
+
+@pytest.mark.asyncio
 async def test_stream_response_retries_without_reasoning_content(nim_provider):
     req = MockRequest(
         system=None,
@@ -779,4 +839,44 @@ async def test_stream_response_bad_request_without_reasoning_budget_does_not_ret
 
     assert mock_create.await_count == 1
     assert any("Invalid request sent to provider" in event for event in events)
+    assert any("message_stop" in event for event in events)
+
+
+@pytest.mark.asyncio
+async def test_stream_response_unrelated_internal_error_does_not_downgrade(
+    nim_provider,
+):
+    req = MockRequest()
+    error = _make_internal_server_error("unrelated internal provider failure")
+
+    with patch.object(
+        nim_provider._client.chat.completions, "create", new_callable=AsyncMock
+    ) as mock_create:
+        mock_create.side_effect = error
+
+        events = [e async for e in nim_provider.stream_response(req)]
+
+    assert mock_create.await_count == 1
+    assert any("Provider API request failed" in event for event in events)
+    assert any("message_stop" in event for event in events)
+
+
+@pytest.mark.asyncio
+async def test_stream_response_internal_reasoning_content_error_does_not_downgrade(
+    nim_provider,
+):
+    req = MockRequest()
+    error = _make_internal_server_error(
+        "reasoning_content could not be processed by the upstream model"
+    )
+
+    with patch.object(
+        nim_provider._client.chat.completions, "create", new_callable=AsyncMock
+    ) as mock_create:
+        mock_create.side_effect = error
+
+        events = [e async for e in nim_provider.stream_response(req)]
+
+    assert mock_create.await_count == 1
+    assert any("Provider API request failed" in event for event in events)
     assert any("message_stop" in event for event in events)
