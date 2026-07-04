@@ -58,7 +58,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "gemini": "gemini/models/gemini-3.1-flash-lite",
     "groq": "groq/llama-3.3-70b-versatile",
     "cerebras": "cerebras/llama3.1-8b",
-    "cloudflare": "cloudflare/anthropic/claude-sonnet-4-5",
+    "cloudflare": "cloudflare/@cf/moonshotai/kimi-k2.6",
 }
 
 NVIDIA_NIM_CLI_DEFAULT_MODELS: tuple[str, ...] = (

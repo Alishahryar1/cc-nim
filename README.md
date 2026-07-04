@@ -306,13 +306,13 @@ Fireworks exposes an **Anthropic-compatible** Messages API at `https://api.firew
 
 Browse models at [fireworks.ai/models](https://fireworks.ai/models).
 
-### 14. [Cloudflare](https://developers.cloudflare.com/ai-gateway/)
+### 14. [Cloudflare](https://developers.cloudflare.com/workers-ai/)
 
 Create a Cloudflare API token and copy your account ID from the Cloudflare dashboard.
 
-In the Admin UI, set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, then set `MODEL` to a Cloudflare model slug such as `cloudflare/anthropic/claude-sonnet-4-5`.
+In the Admin UI, set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, then set `MODEL` to a Cloudflare Workers AI model slug such as `cloudflare/@cf/moonshotai/kimi-k2.6`.
 
-This provider calls Cloudflare's account-scoped **Anthropic-compatible** Messages API at `https://api.cloudflare.com/client/v4/accounts/<account_id>/ai/v1/messages`. The first Cloudflare integration targets third-party Anthropic-compatible models; Cloudflare AI Gateway BYOK/provider-gateway routing is not required.
+This provider calls Cloudflare's account-scoped **OpenAI-compatible** Chat Completions API at `https://api.cloudflare.com/client/v4/accounts/<account_id>/ai/v1/chat/completions`. Use literal Workers AI model IDs, including the `@cf/` prefix when the catalog model includes it.
 
 ### 15. [Z.ai](https://z.ai/)
 
@@ -571,7 +571,7 @@ Important pieces:
 - `fcc-codex` registers a custom `fcc` provider that points Codex at the local proxy's `/v1/responses` endpoint.
 - Model routing resolves Claude model names to `MODEL_OPUS`, `MODEL_SONNET`, `MODEL_HAIKU`, or `MODEL`.
 - NIM, DeepSeek, OpenCode Zen, and OpenCode Go use OpenAI chat streaming translated into Anthropic SSE.
-- Wafer, OpenRouter, Kimi, Fireworks AI, Cloudflare, Z.ai, LM Studio, llama.cpp, and Ollama use Anthropic Messages style transports where applicable (with provider-specific quirks and model-list URLs).
+- Wafer, OpenRouter, Kimi, Fireworks AI, Z.ai, LM Studio, llama.cpp, and Ollama use Anthropic Messages style transports where applicable (with provider-specific quirks and model-list URLs).
 - The proxy normalizes thinking blocks, tool calls, token usage metadata, and provider errors into the shape each client expects.
 - Request optimizations answer trivial Claude Code probes locally to save latency and quota.
 

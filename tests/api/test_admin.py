@@ -298,7 +298,7 @@ def test_admin_apply_writes_cloudflare_fields_and_masks_preview(monkeypatch, tmp
         "/admin/api/config/apply",
         json={
             "values": {
-                "MODEL": "cloudflare/anthropic/claude-sonnet-4-5",
+                "MODEL": "cloudflare/@cf/moonshotai/kimi-k2.6",
                 "CLOUDFLARE_API_TOKEN": "cf-secret",
                 "CLOUDFLARE_ACCOUNT_ID": "cf-account",
             }
@@ -312,7 +312,7 @@ def test_admin_apply_writes_cloudflare_fields_and_masks_preview(monkeypatch, tmp
     assert "CLOUDFLARE_ACCOUNT_ID=cf-account" in body["env_preview"]
     env_file = tmp_path / ".fcc" / ".env"
     text = env_file.read_text(encoding="utf-8")
-    assert "MODEL=cloudflare/anthropic/claude-sonnet-4-5" in text
+    assert "MODEL=cloudflare/@cf/moonshotai/kimi-k2.6" in text
     assert "CLOUDFLARE_API_TOKEN=cf-secret" in text
     assert "CLOUDFLARE_ACCOUNT_ID=cf-account" in text
 

@@ -47,7 +47,7 @@ class Settings(BaseSettings):
     # ==================== Fireworks AI Config ====================
     fireworks_api_key: str = Field(default="", validation_alias="FIREWORKS_API_KEY")
 
-    # ==================== Cloudflare AI REST Config ====================
+    # ==================== Cloudflare Workers AI Config ====================
     cloudflare_api_token: str = Field(
         default="", validation_alias="CLOUDFLARE_API_TOKEN"
     )

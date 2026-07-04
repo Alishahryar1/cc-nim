@@ -136,10 +136,10 @@ def test_zai_provider_config_ignores_stale_base_url_setting():
 def test_cloudflare_descriptor_uses_api_root_not_account_url():
     descriptor = PROVIDER_CATALOG["cloudflare"]
 
-    assert descriptor.transport_type == "anthropic_messages"
+    assert descriptor.transport_type == "openai_chat"
     assert descriptor.default_base_url == "https://api.cloudflare.com/client/v4"
     assert descriptor.base_url_attr is None
-    assert "native_anthropic" in descriptor.capabilities
+    assert "native_anthropic" not in descriptor.capabilities
     assert "thinking" in descriptor.capabilities
 
 
@@ -149,7 +149,7 @@ def test_create_cloudflare_provider_uses_account_scoped_base_url():
         cloudflare_account_id="test-account",
     )
 
-    with patch("httpx.AsyncClient"):
+    with patch("providers.transports.openai_chat.transport.AsyncOpenAI"):
         provider = create_provider("cloudflare", settings)
 
     assert isinstance(provider, CloudflareProvider)

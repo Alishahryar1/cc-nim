@@ -684,8 +684,8 @@ class TestPerModelMapping:
             ({"MODEL": "deepseek/deepseek-chat"}, "deepseek/deepseek-chat", None),
             ({"MODEL": "wafer/DeepSeek-V4-Pro"}, "wafer/DeepSeek-V4-Pro", None),
             (
-                {"MODEL": "cloudflare/anthropic/claude-sonnet-4-5"},
-                "cloudflare/anthropic/claude-sonnet-4-5",
+                {"MODEL": "cloudflare/@cf/moonshotai/kimi-k2.6"},
+                "cloudflare/@cf/moonshotai/kimi-k2.6",
                 None,
             ),
             ({"MODEL": "lmstudio/qwen2.5-7b"}, "lmstudio/qwen2.5-7b", None),
@@ -870,8 +870,7 @@ class TestPerModelMapping:
         assert parse_provider_type("ollama/llama3.1") == "ollama"
         assert parse_provider_type("wafer/DeepSeek-V4-Pro") == "wafer"
         assert (
-            parse_provider_type("cloudflare/anthropic/claude-sonnet-4-5")
-            == "cloudflare"
+            parse_provider_type("cloudflare/@cf/moonshotai/kimi-k2.6") == "cloudflare"
         )
         assert parse_provider_type("gemini/models/gemini-3.1-flash-lite") == "gemini"
         assert parse_provider_type("groq/llama-3.3-70b-versatile") == "groq"
@@ -893,8 +892,8 @@ class TestPerModelMapping:
         assert parse_model_name("ollama/llama3.1") == "llama3.1"
         assert parse_model_name("wafer/DeepSeek-V4-Pro") == "DeepSeek-V4-Pro"
         assert (
-            parse_model_name("cloudflare/anthropic/claude-sonnet-4-5")
-            == "anthropic/claude-sonnet-4-5"
+            parse_model_name("cloudflare/@cf/moonshotai/kimi-k2.6")
+            == "@cf/moonshotai/kimi-k2.6"
         )
         assert (
             parse_model_name("gemini/models/gemini-3.1-flash-lite")

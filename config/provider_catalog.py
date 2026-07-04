@@ -214,7 +214,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     "cloudflare": ProviderDescriptor(
         provider_id="cloudflare",
         display_name="Cloudflare",
-        transport_type="anthropic_messages",
+        transport_type="openai_chat",
         credential_env="CLOUDFLARE_API_TOKEN",
         credential_url="https://dash.cloudflare.com/profile/api-tokens",
         credential_attr="cloudflare_api_token",
@@ -225,7 +225,6 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
             "streaming",
             "tools",
             "thinking",
-            "native_anthropic",
             "rate_limit",
         ),
     ),
