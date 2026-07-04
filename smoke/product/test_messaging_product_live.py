@@ -4,7 +4,7 @@ import json
 
 import pytest
 
-from messaging.trees.queue_manager import MessageState
+from messaging.trees import MessageState
 from smoke.lib.e2e import FakePlatformDriver, default_cli_events
 
 pytestmark = [pytest.mark.live, pytest.mark.smoke_target("messaging")]
@@ -17,7 +17,7 @@ async def test_messaging_fake_full_flow_e2e(platform_name: str, tmp_path) -> Non
 
     incoming = await driver.send("Please inspect README.", message_id="root_1")
 
-    tree = driver.handler.tree_queue.get_tree_for_node(incoming.message_id)
+    tree = driver.workflow.tree_queue.get_tree_for_node(incoming.message_id)
     assert tree is not None
     node = tree.get_node(incoming.message_id)
     assert node is not None
@@ -77,7 +77,7 @@ async def test_messaging_commands_stop_clear_stats_e2e(
     assert "Stats" in sent_text
     assert "Stopped" in sent_text
     assert driver.platform.deletes
-    assert driver.session_store.get_all_trees() == {}
+    assert driver.session_store.load_conversation_snapshot().trees == {}
 
 
 @pytest.mark.asyncio
@@ -91,7 +91,7 @@ async def test_tree_threading_e2e(platform_name: str, tmp_path) -> None:
         "branch prompt", message_id="branch_1", reply_to=root.message_id
     )
 
-    tree = driver.handler.tree_queue.get_tree_for_node(root.message_id)
+    tree = driver.workflow.tree_queue.get_tree_for_node(root.message_id)
     assert tree is not None
     branch_node = tree.get_node(branch.message_id)
     assert branch_node is not None
@@ -108,14 +108,13 @@ async def test_restart_restore_and_session_persistence_e2e(tmp_path) -> None:
 
     session_file = tmp_path / "telegram-sessions.json"
     payload = json.loads(session_file.read_text(encoding="utf-8"))
-    assert payload["trees"]
-    assert payload["node_to_tree"]
+    assert payload["conversation"]["trees"]
     assert payload["message_log"]
 
     restored = FakePlatformDriver("telegram", tmp_path)
-    saved = restored.session_store.get_all_trees()
-    assert saved
-    assert root.message_id in restored.session_store.get_node_mapping()
+    saved = restored.session_store.load_conversation_snapshot()
+    assert saved.trees
+    assert root.message_id in saved.derive_node_to_tree()
 
 
 @pytest.mark.asyncio

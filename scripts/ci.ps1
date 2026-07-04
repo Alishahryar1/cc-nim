@@ -22,13 +22,14 @@ function Show-Usage {
     @"
 Usage: ci.ps1 [options]
 
-Runs the same local checks enforced by GitHub CI (.github/workflows/tests.yml).
+Runs the local sequence for the same check IDs enforced by GitHub CI.
 Requires uv on PATH when running ruff, ty, or pytest checks.
+Local ruff checks repair formatting and autofixable lint before later checks.
 
 Checks (in order):
   suppressions   Ban # type: ignore / # ty: ignore suppressions
-  ruff-format    uv run ruff format --check
-  ruff-check     uv run ruff check
+  ruff-format    uv run ruff format
+  ruff-check     uv run ruff check --fix
   ty             uv run ty check
   pytest         uv run pytest -v --tb=short
 
@@ -145,13 +146,13 @@ function Invoke-SuppressionsCheck {
 }
 
 function Invoke-RuffFormatCheck {
-    Write-Step "ruff format --check"
-    Invoke-CiCommand -FilePath "uv" -Arguments @("run", "ruff", "format", "--check")
+    Write-Step "ruff format"
+    Invoke-CiCommand -FilePath "uv" -Arguments @("run", "ruff", "format")
 }
 
 function Invoke-RuffLintCheck {
-    Write-Step "ruff check"
-    Invoke-CiCommand -FilePath "uv" -Arguments @("run", "ruff", "check")
+    Write-Step "ruff check --fix"
+    Invoke-CiCommand -FilePath "uv" -Arguments @("run", "ruff", "check", "--fix")
 }
 
 function Invoke-TyCheck {

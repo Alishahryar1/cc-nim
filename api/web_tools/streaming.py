@@ -15,7 +15,7 @@ from core.anthropic.server_tool_sse import (
     WEB_SEARCH_TOOL_RESULT,
     WEB_SEARCH_TOOL_RESULT_ERROR,
 )
-from core.anthropic.sse import format_sse_event
+from core.anthropic.streaming import format_sse_event
 
 from . import outbound
 from .constants import _MAX_FETCH_CHARS

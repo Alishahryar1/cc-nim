@@ -1,22 +1,25 @@
 """Platform-agnostic messaging layer."""
 
 from .event_parser import parse_cli_event
-from .handler import ClaudeMessageHandler
+from .managed_protocols import (
+    ManagedClaudeSessionManagerProtocol,
+    ManagedClaudeSessionProtocol,
+)
 from .models import IncomingMessage
-from .platforms.base import CLISession, MessagingPlatform, SessionManagerInterface
+from .platforms.ports import OutboundMessenger
 from .session import SessionStore
-from .trees.data import MessageNode, MessageState, MessageTree
-from .trees.queue_manager import TreeQueueManager
+from .trees import MessageNode, MessageState, MessageTree, TreeQueueManager
+from .workflow import MessagingWorkflow
 
 __all__ = [
-    "CLISession",
-    "ClaudeMessageHandler",
     "IncomingMessage",
+    "ManagedClaudeSessionManagerProtocol",
+    "ManagedClaudeSessionProtocol",
     "MessageNode",
     "MessageState",
     "MessageTree",
-    "MessagingPlatform",
-    "SessionManagerInterface",
+    "MessagingWorkflow",
+    "OutboundMessenger",
     "SessionStore",
     "TreeQueueManager",
     "parse_cli_event",

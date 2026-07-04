@@ -1,7 +1,7 @@
 """Shared native Anthropic SSE thinking policy, block remapping, and overlap repair.
 
 Used by :class:`OpenRouterProvider` and line-mode
-:class:`providers.anthropic_messages.AnthropicMessagesTransport` providers.
+:class:`providers.transports.anthropic_messages.AnthropicMessagesTransport` providers.
 """
 
 from __future__ import annotations

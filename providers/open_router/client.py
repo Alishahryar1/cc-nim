@@ -12,7 +12,6 @@ from core.anthropic.native_sse_block_policy import (
     parse_native_sse_event,
     transform_native_sse_block_event,
 )
-from providers.anthropic_messages import AnthropicMessagesTransport, StreamChunkMode
 from providers.base import ProviderConfig
 from providers.defaults import OPENROUTER_DEFAULT_BASE
 from providers.model_listing import (
@@ -20,10 +19,18 @@ from providers.model_listing import (
     extract_openrouter_tool_model_ids,
     extract_openrouter_tool_model_infos,
 )
-
-from .request import build_request_body
+from providers.transports.anthropic_messages import (
+    AnthropicMessagesTransport,
+    NativeMessagesRequestPolicy,
+    StreamChunkMode,
+    build_native_messages_request_body,
+)
 
 _ANTHROPIC_VERSION = "2023-06-01"
+_REQUEST_POLICY = NativeMessagesRequestPolicy(
+    provider_name="OPENROUTER",
+    extra_body="openrouter",
+)
 
 
 class OpenRouterProvider(AnthropicMessagesTransport):
@@ -42,9 +49,10 @@ class OpenRouterProvider(AnthropicMessagesTransport):
         self, request: Any, thinking_enabled: bool | None = None
     ) -> dict:
         """Internal helper for tests and direct request dispatch."""
-        return build_request_body(
+        return build_native_messages_request_body(
             request,
             thinking_enabled=self._is_thinking_enabled(request, thinking_enabled),
+            policy=_REQUEST_POLICY,
         )
 
     def _request_headers(self) -> dict[str, str]:

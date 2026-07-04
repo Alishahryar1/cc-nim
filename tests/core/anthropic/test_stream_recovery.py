@@ -1,21 +1,30 @@
 """Unit tests for resilient stream recovery helpers."""
 
 import httpx
+import openai
 
-from core.anthropic.stream_recovery import (
+from core.anthropic.streaming import (
     EARLY_TRANSPARENT_MAX_RETRIES,
     EARLY_TRANSPARENT_TOTAL_ATTEMPTS,
     MIDSTREAM_RECOVERY_ATTEMPTS,
+    RecoveryController,
+    RecoveryFailureAction,
     RecoveryHoldbackBuffer,
     ToolSchema,
     accept_tool_json_repair,
     continuation_suffix,
     is_retryable_stream_error,
 )
-from core.anthropic.stream_recovery_session import (
-    StreamFailureAction,
-    StreamRecoverySession,
-)
+
+
+def _statusless_openai_api_error(
+    message: str, body: object | None = None
+) -> openai.APIError:
+    return openai.APIError(
+        message,
+        request=httpx.Request("POST", "https://provider.test/messages"),
+        body=body,
+    )
 
 
 def test_early_transparent_retry_total_attempts_is_five() -> None:
@@ -43,8 +52,46 @@ def test_retryable_stream_error_classifies_transport_and_http_status() -> None:
     )
 
 
+def test_retryable_stream_error_classifies_statusless_api_error_body_status() -> None:
+    assert is_retryable_stream_error(
+        _statusless_openai_api_error(
+            "stream embedded error",
+            {"error": {"message": "internal failure", "code": 500}},
+        )
+    )
+
+
+def test_retryable_stream_error_classifies_statusless_internal_error_type() -> None:
+    assert is_retryable_stream_error(
+        _statusless_openai_api_error(
+            "stream embedded error",
+            {"error": {"message": "internal failure", "type": "internal_server_error"}},
+        )
+    )
+
+
+def test_retryable_stream_error_classifies_resource_exhausted_text() -> None:
+    assert is_retryable_stream_error(
+        _statusless_openai_api_error(
+            "ResourceExhausted: limit reached while generating response",
+            {"error": {"message": "ResourceExhausted: limit reached"}},
+        )
+    )
+
+
+def test_retryable_stream_error_does_not_retry_bad_request_status() -> None:
+    request = httpx.Request("POST", "https://provider.test/messages")
+    assert not is_retryable_stream_error(
+        openai.BadRequestError(
+            "bad request",
+            response=httpx.Response(400, request=request),
+            body={"error": {"message": "bad request"}},
+        )
+    )
+
+
 def test_stream_recovery_session_advances_early_retry_and_discards_holdback() -> None:
-    session = StreamRecoverySession(provider_name="TEST", request_id="REQ")
+    session = RecoveryController(provider_name="TEST", request_id="REQ")
 
     assert session.push("hidden") == []
     decision = session.advance_failure(
@@ -54,7 +101,7 @@ def test_stream_recovery_session_advances_early_retry_and_discards_holdback() ->
         complete_tool_salvageable=False,
     )
 
-    assert decision.action == StreamFailureAction.EARLY_RETRY
+    assert decision.action == RecoveryFailureAction.EARLY_RETRY
     assert decision.early_retry_attempt == 1
     assert session.early_retries == 1
     assert not session.committed
@@ -62,8 +109,26 @@ def test_stream_recovery_session_advances_early_retry_and_discards_holdback() ->
     assert session.flush() == []
 
 
+def test_stream_recovery_session_retries_statusless_transient_api_error() -> None:
+    session = RecoveryController(provider_name="TEST", request_id="REQ")
+
+    decision = session.advance_failure(
+        _statusless_openai_api_error(
+            "ResourceExhausted: limit reached while generating response",
+            {"error": {"message": "ResourceExhausted: limit reached"}},
+        ),
+        stream_opened=True,
+        generated_output=False,
+        complete_tool_salvageable=False,
+    )
+
+    assert decision.action == RecoveryFailureAction.EARLY_RETRY
+    assert decision.retryable
+    assert decision.early_retry_attempt == 1
+
+
 def test_stream_recovery_session_respects_early_retry_limit() -> None:
-    session = StreamRecoverySession(provider_name="TEST", request_id=None)
+    session = RecoveryController(provider_name="TEST", request_id=None)
 
     for attempt in range(1, EARLY_TRANSPARENT_MAX_RETRIES + 1):
         decision = session.advance_failure(
@@ -72,7 +137,7 @@ def test_stream_recovery_session_respects_early_retry_limit() -> None:
             generated_output=False,
             complete_tool_salvageable=False,
         )
-        assert decision.action == StreamFailureAction.EARLY_RETRY
+        assert decision.action == RecoveryFailureAction.EARLY_RETRY
         assert decision.early_retry_attempt == attempt
 
     decision = session.advance_failure(
@@ -82,12 +147,12 @@ def test_stream_recovery_session_respects_early_retry_limit() -> None:
         complete_tool_salvageable=False,
     )
 
-    assert decision.action == StreamFailureAction.FINAL_ERROR
+    assert decision.action == RecoveryFailureAction.FINAL_ERROR
     assert session.early_retries == EARLY_TRANSPARENT_MAX_RETRIES
 
 
 def test_stream_recovery_session_classifies_midstream_recovery_after_commit() -> None:
-    session = StreamRecoverySession(provider_name="TEST", request_id=None)
+    session = RecoveryController(provider_name="TEST", request_id=None)
 
     assert session.push("event: content_block_delta\n\n") == []
     assert session.flush() == ["event: content_block_delta\n\n"]
@@ -98,14 +163,14 @@ def test_stream_recovery_session_classifies_midstream_recovery_after_commit() ->
         complete_tool_salvageable=False,
     )
 
-    assert decision.action == StreamFailureAction.MIDSTREAM_RECOVERY
+    assert decision.action == RecoveryFailureAction.MIDSTREAM_RECOVERY
     assert decision.retryable
     assert decision.committed
     assert session.flush_uncommitted(decision) == []
 
 
 def test_stream_recovery_session_flushes_uncommitted_midstream_decision() -> None:
-    session = StreamRecoverySession(provider_name="TEST", request_id=None)
+    session = RecoveryController(provider_name="TEST", request_id=None)
 
     assert session.push("event: content_block_delta\n\n") == []
     decision = session.advance_failure(
@@ -115,7 +180,7 @@ def test_stream_recovery_session_flushes_uncommitted_midstream_decision() -> Non
         complete_tool_salvageable=True,
     )
 
-    assert decision.action == StreamFailureAction.MIDSTREAM_RECOVERY
+    assert decision.action == RecoveryFailureAction.MIDSTREAM_RECOVERY
     assert not decision.committed
     assert decision.has_buffered
     assert not session.committed
@@ -135,7 +200,7 @@ def test_stream_recovery_session_non_retryable_error_is_final() -> None:
         request=request,
         response=httpx.Response(400, request=request),
     )
-    session = StreamRecoverySession(provider_name="TEST", request_id=None)
+    session = RecoveryController(provider_name="TEST", request_id=None)
 
     decision = session.advance_failure(
         error,
@@ -144,7 +209,7 @@ def test_stream_recovery_session_non_retryable_error_is_final() -> None:
         complete_tool_salvageable=False,
     )
 
-    assert decision.action == StreamFailureAction.FINAL_ERROR
+    assert decision.action == RecoveryFailureAction.FINAL_ERROR
     assert not decision.retryable
     assert session.early_retries == 0
 

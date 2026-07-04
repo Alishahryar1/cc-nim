@@ -85,9 +85,9 @@ def llamacpp_provider(provider_config):
 
 @pytest.fixture
 def mock_cli_session():
-    from messaging.platforms.base import CLISession
+    from messaging.managed_protocols import ManagedClaudeSessionProtocol
 
-    session = MagicMock(spec=CLISession)
+    session = MagicMock(spec=ManagedClaudeSessionProtocol)
     session.start_task = MagicMock()  # This will return an async generator
     session.is_busy = False
     return session
@@ -95,9 +95,9 @@ def mock_cli_session():
 
 @pytest.fixture
 def mock_cli_manager():
-    from messaging.platforms.base import SessionManagerInterface
+    from messaging.managed_protocols import ManagedClaudeSessionManagerProtocol
 
-    manager = MagicMock(spec=SessionManagerInterface)
+    manager = MagicMock(spec=ManagedClaudeSessionManagerProtocol)
     manager.get_or_create_session = AsyncMock()
     manager.register_real_session_id = AsyncMock(return_value=True)
     manager.stop_all = AsyncMock()
@@ -108,9 +108,9 @@ def mock_cli_manager():
 
 @pytest.fixture
 def mock_platform():
-    from messaging.platforms.base import MessagingPlatform
+    from messaging.platforms.ports import OutboundMessenger
 
-    platform = MagicMock(spec=MessagingPlatform)
+    platform = MagicMock(spec=OutboundMessenger)
     platform.send_message = AsyncMock(return_value="msg_123")
     platform.edit_message = AsyncMock()
     platform.delete_message = AsyncMock()
@@ -126,6 +126,7 @@ def mock_platform():
             await qdm(chat_id, mid, fire_and_forget=fire_and_forget)
 
     platform.queue_delete_messages = AsyncMock(side_effect=_queue_delete_messages)
+    platform.cancel_pending_voice = AsyncMock(return_value=None)
 
     def _fire_and_forget(task):
         if asyncio.iscoroutine(task):

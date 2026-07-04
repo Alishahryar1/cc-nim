@@ -1,7 +1,6 @@
 """Command handlers for messaging platform commands (/stop, /stats, /clear).
 
-Extracted from ClaudeMessageHandler to keep handler.py focused on
-core message processing logic.
+Commands depend on MessagingCommandContext instead of the concrete workflow.
 """
 
 from __future__ import annotations
@@ -10,13 +9,14 @@ from typing import TYPE_CHECKING
 
 from loguru import logger
 
+from .command_context import MessagingCommandContext
+
 if TYPE_CHECKING:
-    from messaging.handler import ClaudeMessageHandler
     from messaging.models import IncomingMessage
 
 
 async def handle_stop_command(
-    handler: ClaudeMessageHandler, incoming: IncomingMessage
+    handler: MessagingCommandContext, incoming: IncomingMessage
 ) -> None:
     """Handle /stop command from messaging platform."""
     # Reply-scoped stop: reply "/stop" to stop only that task.
@@ -26,7 +26,7 @@ async def handle_stop_command(
         node_id = handler.tree_queue.resolve_parent_node_id(reply_id) if tree else None
 
         if not node_id:
-            msg_id = await handler.platform.queue_send_message(
+            msg_id = await handler.outbound.queue_send_message(
                 incoming.chat_id,
                 handler.format_status(
                     "⏹", "Stopped.", "Nothing to stop for that message."
@@ -41,7 +41,7 @@ async def handle_stop_command(
 
         count = await handler.stop_task(node_id)
         noun = "request" if count == 1 else "requests"
-        msg_id = await handler.platform.queue_send_message(
+        msg_id = await handler.outbound.queue_send_message(
             incoming.chat_id,
             handler.format_status("⏹", "Stopped.", f"Cancelled {count} {noun}."),
             fire_and_forget=False,
@@ -54,7 +54,7 @@ async def handle_stop_command(
 
     # Global stop: legacy behavior (stop everything)
     count = await handler.stop_all_tasks()
-    msg_id = await handler.platform.queue_send_message(
+    msg_id = await handler.outbound.queue_send_message(
         incoming.chat_id,
         handler.format_status(
             "⏹", "Stopped.", f"Cancelled {count} pending or active requests."
@@ -68,13 +68,13 @@ async def handle_stop_command(
 
 
 async def handle_stats_command(
-    handler: ClaudeMessageHandler, incoming: IncomingMessage
+    handler: MessagingCommandContext, incoming: IncomingMessage
 ) -> None:
     """Handle /stats command."""
     stats = handler.cli_manager.get_stats()
     tree_count = handler.tree_queue.get_tree_count()
     ctx = handler.get_render_ctx()
-    msg_id = await handler.platform.queue_send_message(
+    msg_id = await handler.outbound.queue_send_message(
         incoming.chat_id,
         "📊 "
         + ctx.bold("Stats")
@@ -91,7 +91,7 @@ async def handle_stats_command(
 
 
 async def _delete_message_ids(
-    handler: ClaudeMessageHandler, chat_id: str, msg_ids: set[str]
+    handler: MessagingCommandContext, chat_id: str, msg_ids: set[str]
 ) -> None:
     """Best-effort delete messages by ID. Sorts numeric IDs descending."""
     if not msg_ids:
@@ -118,7 +118,7 @@ async def _delete_message_ids(
         CHUNK = 100
         for i in range(0, len(ordered), CHUNK):
             chunk = ordered[i : i + CHUNK]
-            await handler.platform.queue_delete_messages(
+            await handler.outbound.queue_delete_messages(
                 chat_id, chunk, fire_and_forget=False
             )
     except Exception as e:
@@ -126,7 +126,7 @@ async def _delete_message_ids(
 
 
 async def _handle_clear_branch(
-    handler: ClaudeMessageHandler,
+    handler: MessagingCommandContext,
     incoming: IncomingMessage,
     branch_root_id: str,
 ) -> None:
@@ -160,25 +160,24 @@ async def _handle_clear_branch(
     await _delete_message_ids(handler, incoming.chat_id, msg_ids)
 
     # 4) Remove branch from tree
-    removed, root_id, removed_entire_tree = await handler.tree_queue.remove_branch(
+    _removed, root_id, removed_entire_tree = await handler.tree_queue.remove_branch(
         branch_root_id
     )
 
     # 5) Update session store
     try:
-        handler.session_store.remove_node_mappings([n.node_id for n in removed])
         if removed_entire_tree:
-            handler.session_store.remove_tree(root_id)
+            handler.session_store.remove_tree_snapshot(root_id)
         else:
             updated_tree = handler.tree_queue.get_tree(root_id)
             if updated_tree:
-                handler.session_store.save_tree(root_id, updated_tree.to_dict())
+                handler.session_store.save_tree_snapshot(updated_tree.snapshot())
     except Exception as e:
         logger.warning(f"Failed to update session store after branch clear: {e}")
 
 
 async def handle_clear_command(
-    handler: ClaudeMessageHandler, incoming: IncomingMessage
+    handler: MessagingCommandContext, incoming: IncomingMessage
 ) -> None:
     """
     Handle /clear command.
@@ -195,16 +194,17 @@ async def handle_clear_command(
             handler.tree_queue.resolve_parent_node_id(reply_id) if tree else None
         )
         if not branch_root_id:
-            cancel_fn = getattr(handler.platform, "cancel_pending_voice", None)
-            if cancel_fn is not None:
-                cancelled = await cancel_fn(incoming.chat_id, reply_id)
+            if handler.voice_cancellation is not None:
+                cancelled = await handler.voice_cancellation.cancel_pending_voice(
+                    incoming.chat_id, reply_id
+                )
                 if cancelled is not None:
                     voice_msg_id, status_msg_id = cancelled
                     msg_ids_to_del: set[str] = {voice_msg_id, status_msg_id}
                     if incoming.message_id is not None:
                         msg_ids_to_del.add(str(incoming.message_id))
                     await _delete_message_ids(handler, incoming.chat_id, msg_ids_to_del)
-                    msg_id = await handler.platform.queue_send_message(
+                    msg_id = await handler.outbound.queue_send_message(
                         incoming.chat_id,
                         handler.format_status("🗑", "Cleared.", "Voice note cancelled."),
                         fire_and_forget=False,
@@ -214,7 +214,7 @@ async def handle_clear_command(
                         incoming.platform, incoming.chat_id, msg_id, "command"
                     )
                     return
-            msg_id = await handler.platform.queue_send_message(
+            msg_id = await handler.outbound.queue_send_message(
                 incoming.chat_id,
                 handler.format_status(
                     "🗑", "Cleared.", "Nothing to clear for that message."

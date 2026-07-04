@@ -9,14 +9,16 @@ from loguru import logger
 from config.nim import NimSettings
 from providers.base import ProviderConfig
 from providers.defaults import NVIDIA_NIM_DEFAULT_BASE
-from providers.openai_compat import OpenAIChatTransport
+from providers.transports.openai_chat import OpenAIChatTransport
 
-from .request import (
-    body_without_nim_tool_argument_aliases,
-    build_request_body,
+from .request_options import build_nim_request_body
+from .retry import (
     clone_body_without_chat_template,
     clone_body_without_reasoning_budget,
     clone_body_without_reasoning_content,
+)
+from .tool_schema import (
+    body_without_nim_tool_argument_aliases,
     nim_tool_argument_aliases_from_body,
 )
 
@@ -37,7 +39,7 @@ class NvidiaNimProvider(OpenAIChatTransport):
         self, request: Any, thinking_enabled: bool | None = None
     ) -> dict:
         """Internal helper for tests and shared building."""
-        return build_request_body(
+        return build_nim_request_body(
             request,
             self._nim_settings,
             thinking_enabled=self._is_thinking_enabled(request, thinking_enabled),
@@ -54,8 +56,9 @@ class NvidiaNimProvider(OpenAIChatTransport):
     def _get_retry_request_body(self, error: Exception, body: dict) -> dict | None:
         """Retry once with a downgraded body when NIM rejects a known field."""
         status_code = getattr(error, "status_code", None)
-        if not isinstance(error, openai.BadRequestError) and status_code != 400:
-            return None
+        bad_request_like = isinstance(error, openai.BadRequestError) or (
+            status_code == 400
+        )
 
         error_text = str(error)
         error_body = getattr(error, "body", None)
@@ -63,14 +66,19 @@ class NvidiaNimProvider(OpenAIChatTransport):
             error_text = f"{error_text} {json.dumps(error_body, default=str)}"
         error_text = error_text.lower()
 
-        if "reasoning_budget" in error_text:
+        if _is_reasoning_budget_rejection(error_text) and (
+            bad_request_like or status_code == 500
+        ):
             retry_body = clone_body_without_reasoning_budget(body)
             if retry_body is None:
                 return None
             logger.warning(
-                "NIM_STREAM: retrying without reasoning_budget after 400 error"
+                "NIM_STREAM: retrying without reasoning budget after upstream rejection"
             )
             return retry_body
+
+        if not bad_request_like:
+            return None
 
         if "chat_template" in error_text:
             retry_body = clone_body_without_chat_template(body)
@@ -89,3 +97,10 @@ class NvidiaNimProvider(OpenAIChatTransport):
             return retry_body
 
         return None
+
+
+def _is_reasoning_budget_rejection(error_text: str) -> bool:
+    """Return whether NIM rejected optional thinking budget control."""
+    if "reasoning_budget" in error_text:
+        return True
+    return "thinking_token_budget" in error_text and "reasoning_config" in error_text

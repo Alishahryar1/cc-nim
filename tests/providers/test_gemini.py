@@ -7,7 +7,7 @@ import pytest
 
 from providers.base import ProviderConfig
 from providers.gemini import GEMINI_DEFAULT_BASE, GeminiProvider
-from providers.gemini.request import GEMINI_SKIP_THOUGHT_SIGNATURE_VALIDATOR
+from providers.gemini.quirks import GEMINI_SKIP_THOUGHT_SIGNATURE_VALIDATOR
 
 
 class MockMessage:
@@ -59,7 +59,7 @@ def mock_rate_limiter():
     async def _slot():
         yield
 
-    with patch("providers.openai_compat.GlobalRateLimiter") as mock:
+    with patch("providers.transports.openai_chat.transport.GlobalRateLimiter") as mock:
         instance = mock.get_scoped_instance.return_value
 
         async def _passthrough(fn, *args, **kwargs):
@@ -77,7 +77,7 @@ def gemini_provider(gemini_config):
 
 def test_init(gemini_config):
     """Test provider initialization."""
-    with patch("providers.openai_compat.AsyncOpenAI") as mock_openai:
+    with patch("providers.transports.openai_chat.transport.AsyncOpenAI") as mock_openai:
         provider = GeminiProvider(gemini_config)
         assert provider._api_key == "test_gemini_key"
         assert (

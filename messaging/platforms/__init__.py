@@ -1,11 +1,18 @@
-"""Messaging platform adapters (Telegram, Discord, etc.)."""
+"""Messaging platform runtimes and ports."""
 
-from .base import CLISession, MessagingPlatform, SessionManagerInterface
-from .factory import create_messaging_platform
+from .factory import MessagingPlatformOptions, create_messaging_components
+from .ports import (
+    MessagingPlatformComponents,
+    MessagingRuntime,
+    OutboundMessenger,
+    VoiceCancellation,
+)
 
 __all__ = [
-    "CLISession",
-    "MessagingPlatform",
-    "SessionManagerInterface",
-    "create_messaging_platform",
+    "MessagingPlatformComponents",
+    "MessagingPlatformOptions",
+    "MessagingRuntime",
+    "OutboundMessenger",
+    "VoiceCancellation",
+    "create_messaging_components",
 ]

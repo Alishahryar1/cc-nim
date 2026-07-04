@@ -3,9 +3,10 @@ from __future__ import annotations
 import re
 from pathlib import Path
 
-from messaging.platforms.factory import create_messaging_platform
+from messaging.platforms.factory import create_messaging_components
 from providers.base import BaseProvider
 from providers.cerebras import CerebrasProvider
+from providers.cloudflare import CloudflareProvider
 from providers.codestral import CodestralProvider
 from providers.deepseek import DeepSeekProvider
 from providers.fireworks import FireworksProvider
@@ -84,6 +85,7 @@ def test_provider_and_platform_registries_include_advertised_builtins() -> None:
         "deepseek": DeepSeekProvider,
         "kimi": KimiProvider,
         "fireworks": FireworksProvider,
+        "cloudflare": CloudflareProvider,
         "lmstudio": LMStudioProvider,
         "llamacpp": LlamaCppProvider,
         "ollama": OllamaProvider,
@@ -98,7 +100,7 @@ def test_provider_and_platform_registries_include_advertised_builtins() -> None:
     for provider_class in provider_classes.values():
         assert issubclass(provider_class, BaseProvider)
 
-    assert create_messaging_platform("not-a-platform") is None
+    assert create_messaging_components("not-a-platform") is None
 
 
 def _collect_test_names(root: Path) -> set[str]:

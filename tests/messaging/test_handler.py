@@ -2,15 +2,19 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from messaging.handler import ClaudeMessageHandler
 from messaging.models import IncomingMessage
-from messaging.trees.data import MessageNode, MessageTree
-from messaging.trees.queue_manager import MessageState
+from messaging.trees import MessageNode, MessageState, MessageTree
+from messaging.workflow import MessagingWorkflow
 
 
 @pytest.fixture
 def handler(mock_platform, mock_cli_manager, mock_session_store):
-    return ClaudeMessageHandler(mock_platform, mock_cli_manager, mock_session_store)
+    return MessagingWorkflow(
+        mock_platform,
+        mock_cli_manager,
+        mock_session_store,
+        voice_cancellation=mock_platform,
+    )
 
 
 @pytest.mark.asyncio
@@ -19,7 +23,7 @@ async def test_handle_message_turn_trace_includes_full_message_text(
 ):
     """turn.received always records the verbatim user message (local debugging)."""
     secret = "user-message-content-visible-in-trace"
-    handler = ClaudeMessageHandler(
+    handler = MessagingWorkflow(
         mock_platform,
         mock_cli_manager,
         mock_session_store,
@@ -27,8 +31,8 @@ async def test_handle_message_turn_trace_includes_full_message_text(
     )
     incoming = incoming_message_factory(text=secret)
     with (
-        patch.object(handler, "_handle_message_impl", new_callable=AsyncMock),
-        patch("messaging.handler.trace_event") as trace_mock,
+        patch.object(handler.turn_intake, "handle_message", new_callable=AsyncMock),
+        patch("messaging.workflow.trace_event") as trace_mock,
     ):
         await handler.handle_message(incoming)
     kwargs = trace_mock.call_args.kwargs
@@ -42,7 +46,7 @@ async def test_handle_message_log_raw_messaging_does_not_change_turn_received_sh
 ):
     """LOG_RAW_MESSAGING_CONTENT is adapter-only; ingress TRACE always includes text."""
     text = "visible-either-way"
-    handler = ClaudeMessageHandler(
+    handler = MessagingWorkflow(
         mock_platform,
         mock_cli_manager,
         mock_session_store,
@@ -50,8 +54,8 @@ async def test_handle_message_log_raw_messaging_does_not_change_turn_received_sh
     )
     incoming = incoming_message_factory(text=text)
     with (
-        patch.object(handler, "_handle_message_impl", new_callable=AsyncMock),
-        patch("messaging.handler.trace_event") as trace_mock,
+        patch.object(handler.turn_intake, "handle_message", new_callable=AsyncMock),
+        patch("messaging.workflow.trace_event") as trace_mock,
     ):
         await handler.handle_message(incoming)
     assert trace_mock.call_args.kwargs["message_text"] == text
@@ -59,7 +63,7 @@ async def test_handle_message_log_raw_messaging_does_not_change_turn_received_sh
 
 def test_get_initial_status_new_conversation(handler):
     """New conversation always returns launching message."""
-    result = handler._get_initial_status(None, None)
+    result = handler.turn_intake._get_initial_status(None, None)
     assert "Launching" in result
 
 
@@ -69,7 +73,7 @@ def test_get_initial_status_reply_tree_busy_queued(handler):
     mock_queue.is_node_tree_busy.return_value = True
     mock_queue.get_queue_size.return_value = 2
     handler.replace_tree_queue(mock_queue)
-    result = handler._get_initial_status(MagicMock(), "parent_1")
+    result = handler.turn_intake._get_initial_status(MagicMock(), "parent_1")
     assert "Queued" in result
     assert "position 3" in result
 
@@ -79,7 +83,7 @@ def test_get_initial_status_reply_tree_not_busy_continuing(handler):
     mock_queue = MagicMock()
     mock_queue.is_node_tree_busy.return_value = False
     handler.replace_tree_queue(mock_queue)
-    result = handler._get_initial_status(MagicMock(), "parent_1")
+    result = handler.turn_intake._get_initial_status(MagicMock(), "parent_1")
     assert "Continuing" in result
 
 
@@ -207,14 +211,14 @@ async def test_handle_message_new_conversation(
     ):
         mock_tree = MagicMock()
         mock_tree.root_id = "root_1"
-        mock_tree.to_dict.return_value = {"data": "tree"}
+        mock_tree.snapshot.return_value = {"data": "tree"}
         mock_create.return_value = mock_tree
 
         await handler.handle_message(incoming)
 
         mock_create.assert_called_once()
         mock_enqueue.assert_called_once()
-        mock_session_store.save_tree.assert_called_once_with("root_1", {"data": "tree"})
+        mock_session_store.save_tree_snapshot.assert_called_once_with({"data": "tree"})
 
 
 @pytest.mark.asyncio
@@ -229,7 +233,7 @@ async def test_handle_message_queued(handler, mock_platform, incoming_message_fa
     ):
         mock_tree = MagicMock()
         mock_tree.root_id = "root_1"
-        mock_tree.to_dict.return_value = {}
+        mock_tree.snapshot.return_value = {}
         mock_create.return_value = mock_tree
 
         await handler.handle_message(incoming)
@@ -367,7 +371,9 @@ async def mock_async_gen(events):
 
 
 @pytest.mark.asyncio
-async def test_process_node_success_flow(handler, mock_cli_manager, mock_platform):
+async def test_node_runner_process_node_success_flow(
+    handler, mock_cli_manager, mock_platform
+):
     # Setup
     node_id = "node_1"
     mock_node = MagicMock()
@@ -400,12 +406,12 @@ async def test_process_node_success_flow(handler, mock_cli_manager, mock_platfor
     mock_tree = MagicMock()
     mock_tree.update_state = AsyncMock()
     mock_tree.root_id = "root_1"
-    mock_tree.to_dict.return_value = {}
+    mock_tree.snapshot.return_value = {}
 
     with patch.object(
         handler.tree_queue, "get_tree_for_node", MagicMock(return_value=mock_tree)
     ):
-        await handler._process_node(node_id, mock_node)
+        await handler.node_runner.process_node(node_id, mock_node)
 
         # Verify state updates
         mock_tree.update_state.assert_any_call(node_id, MessageState.IN_PROGRESS)
@@ -428,7 +434,7 @@ async def test_process_node_success_flow(handler, mock_cli_manager, mock_platfor
 
 
 @pytest.mark.asyncio
-async def test_process_node_reply_uses_parent_session_for_manager_and_fork(
+async def test_node_runner_process_node_reply_uses_parent_session_for_manager_and_fork(
     handler, mock_cli_manager, mock_platform
 ):
     """Telegram follow-ups must reuse parent Claude session (issue #233)."""
@@ -451,13 +457,13 @@ async def test_process_node_reply_uses_parent_session_for_manager_and_fork(
     mock_tree = MagicMock()
     mock_tree.update_state = AsyncMock()
     mock_tree.root_id = "root_msg"
-    mock_tree.to_dict.return_value = {}
+    mock_tree.snapshot.return_value = {}
     mock_tree.get_parent_session_id = MagicMock(return_value=parent_claude_session)
 
     with patch.object(
         handler.tree_queue, "get_tree_for_node", MagicMock(return_value=mock_tree)
     ):
-        await handler._process_node(node_id, mock_node)
+        await handler.node_runner.process_node(node_id, mock_node)
 
     mock_tree.get_parent_session_id.assert_called_once_with(node_id)
     mock_cli_manager.get_or_create_session.assert_awaited_once_with(
@@ -470,7 +476,9 @@ async def test_process_node_reply_uses_parent_session_for_manager_and_fork(
 
 
 @pytest.mark.asyncio
-async def test_process_node_error_flow(handler, mock_cli_manager, mock_platform):
+async def test_node_runner_process_node_error_flow(
+    handler, mock_cli_manager, mock_platform
+):
     node_id = "node_1"
     mock_node = MagicMock()
     mock_node.incoming.chat_id = "chat_1"
@@ -487,6 +495,8 @@ async def test_process_node_error_flow(handler, mock_cli_manager, mock_platform)
     )
 
     mock_tree = MagicMock()
+    mock_tree.root_id = "root_1"
+    mock_tree.snapshot.return_value = {"data": "tree"}
     mock_tree.update_state = AsyncMock()
 
     with (
@@ -497,10 +507,13 @@ async def test_process_node_error_flow(handler, mock_cli_manager, mock_platform)
             handler.tree_queue, "mark_node_error", AsyncMock(return_value=[mock_node])
         ),
     ):
-        await handler._process_node(node_id, mock_node)
+        await handler.node_runner.process_node(node_id, mock_node)
 
         handler.tree_queue.mark_node_error.assert_called_once_with(
             node_id, "CLI crashed", propagate_to_children=True
+        )
+        handler.session_store.save_tree_snapshot.assert_called_once_with(
+            {"data": "tree"}
         )
 
         last_call = mock_platform.queue_edit_message.call_args_list[-1]
@@ -645,7 +658,7 @@ async def test_handle_message_clear_command_reply_clears_branch(
     assert set(deleted_ids) == {"102", "103", "150"}
     assert "100" not in deleted_ids
     assert "101" not in deleted_ids
-    mock_session_store.remove_node_mappings.assert_called()
+    mock_session_store.save_tree_snapshot.assert_called()
     assert handler.tree_queue.get_tree_for_node("102") is None
     assert handler.tree_queue.get_tree_for_node("100") is not None
 
@@ -697,7 +710,7 @@ async def test_handle_message_clear_command_reply_to_root_clears_tree(
     await handler.handle_message(incoming)
 
     assert set(deleted_ids) == {"100", "101", "150"}
-    mock_session_store.remove_tree.assert_called_once_with("100")
+    mock_session_store.remove_tree_snapshot.assert_called_once_with("100")
     assert handler.tree_queue.get_tree_count() == 0
 
 

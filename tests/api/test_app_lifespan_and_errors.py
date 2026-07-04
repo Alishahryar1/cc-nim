@@ -9,17 +9,20 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from config.settings import Settings
+from messaging.trees import ConversationSnapshot, TreeSnapshot
 from providers.exceptions import ServiceUnavailableError
-from providers.registry import ProviderRegistry
+from providers.runtime import ProviderRuntime
 
 _RUNTIME_EXTRAS = {
+    "model": "nvidia_nim/test-model",
+    "model_opus": None,
+    "model_sonnet": None,
+    "model_haiku": None,
     "voice_note_enabled": True,
     "whisper_model": "base",
     "whisper_device": "cpu",
     "hf_token": "",
     "nvidia_nim_api_key": "",
-    "claude_cli_bin": "claude",
-    "uses_process_anthropic_auth_token": lambda: False,
     "messaging_rate_limit": 1,
     "messaging_rate_window": 1.0,
     "max_message_log_entries_per_chat": None,
@@ -29,7 +32,6 @@ _RUNTIME_EXTRAS = {
     "log_raw_messaging_content": False,
     "log_raw_cli_diagnostics": False,
     "log_messaging_error_details": False,
-    "configured_chat_model_refs": lambda: (),
 }
 
 
@@ -39,11 +41,38 @@ def _app_settings(**kwargs):
     return SimpleNamespace(**data)
 
 
-def test_warn_if_process_auth_token_logs_warning():
-    api_runtime_mod = importlib.import_module("api.runtime")
-    settings = cast(
-        Settings, SimpleNamespace(uses_process_anthropic_auth_token=lambda: True)
+def _fake_messaging_components(runtime: MagicMock | None = None) -> SimpleNamespace:
+    runtime = runtime or MagicMock()
+    runtime.name = getattr(runtime, "name", "fake")
+    runtime.on_message = getattr(runtime, "on_message", MagicMock())
+    runtime.start = getattr(runtime, "start", AsyncMock())
+    runtime.stop = getattr(runtime, "stop", AsyncMock())
+    outbound = MagicMock()
+    outbound.queue_send_message = AsyncMock(return_value="msg")
+    outbound.queue_edit_message = AsyncMock()
+    outbound.queue_delete_message = AsyncMock()
+    outbound.queue_delete_messages = AsyncMock()
+    outbound.fire_and_forget = MagicMock()
+    return SimpleNamespace(
+        name=runtime.name,
+        runtime=runtime,
+        outbound=outbound,
+        voice_cancellation=None,
     )
+
+
+@pytest.fixture(autouse=True)
+def _redirect_fcc_home(monkeypatch, tmp_path):
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
+    monkeypatch.setenv("USERPROFILE", str(home))
+
+
+def test_warn_if_process_auth_token_logs_warning(monkeypatch):
+    api_runtime_mod = importlib.import_module("api.runtime")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "process-token")
+    monkeypatch.setitem(Settings.model_config, "env_file", ())
+    settings = Settings.model_construct()
 
     with patch.object(api_runtime_mod.logger, "warning") as warning:
         api_runtime_mod.warn_if_process_auth_token(settings)
@@ -52,11 +81,13 @@ def test_warn_if_process_auth_token_logs_warning():
     assert "ANTHROPIC_AUTH_TOKEN" in warning.call_args.args[0]
 
 
-def test_warn_if_process_auth_token_skips_explicit_dotenv_config():
+def test_warn_if_process_auth_token_skips_explicit_dotenv_config(monkeypatch, tmp_path):
     api_runtime_mod = importlib.import_module("api.runtime")
-    settings = cast(
-        Settings, SimpleNamespace(uses_process_anthropic_auth_token=lambda: False)
-    )
+    env_file = tmp_path / ".env"
+    env_file.write_text("ANTHROPIC_AUTH_TOKEN=\n", encoding="utf-8")
+    monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "process-token")
+    monkeypatch.setitem(Settings.model_config, "env_file", (env_file,))
+    settings = Settings.model_construct()
 
     with patch.object(api_runtime_mod.logger, "warning") as warning:
         api_runtime_mod.warn_if_process_auth_token(settings)
@@ -90,11 +121,11 @@ async def test_runtime_startup_logs_admin_url_without_printed_server_banner(tmp_
             api_runtime_mod.logging, "getLogger", return_value=uvicorn_logger
         ) as get_logger,
         patch.object(api_runtime_mod.logger, "info") as app_info,
-        patch.object(ProviderRegistry, "validate_configured_models", new=AsyncMock()),
-        patch.object(ProviderRegistry, "start_model_list_refresh"),
-        patch.object(ProviderRegistry, "cleanup", new=AsyncMock()),
+        patch.object(ProviderRuntime, "validate_configured_models", new=AsyncMock()),
+        patch.object(ProviderRuntime, "start_model_list_refresh"),
+        patch.object(ProviderRuntime, "cleanup", new=AsyncMock()),
         patch(
-            "messaging.platforms.factory.create_messaging_platform",
+            "messaging.platforms.factory.create_messaging_components",
             return_value=None,
         ),
     ):
@@ -135,7 +166,7 @@ def test_create_app_provider_error_handler_returns_anthropic_format():
     )
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
-        patch.object(ProviderRegistry, "cleanup", new=AsyncMock()),
+        patch.object(ProviderRuntime, "cleanup", new=AsyncMock()),
     ):
         with TestClient(app) as client:
             resp = client.get("/raise_provider")
@@ -172,7 +203,7 @@ def test_create_app_provider_error_default_logs_exclude_provider_message():
     )
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
-        patch.object(ProviderRegistry, "cleanup", new=AsyncMock()),
+        patch.object(ProviderRuntime, "cleanup", new=AsyncMock()),
         patch.object(api_app_mod.logger, "error") as log_err,
     ):
         with TestClient(app) as client:
@@ -208,7 +239,7 @@ def test_create_app_general_exception_handler_returns_500():
     )
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
-        patch.object(ProviderRegistry, "cleanup", new=AsyncMock()),
+        patch.object(ProviderRuntime, "cleanup", new=AsyncMock()),
     ):
         with TestClient(app, raise_server_exceptions=False) as client:
             resp = client.get("/raise_general")
@@ -245,7 +276,7 @@ def test_create_app_general_exception_default_logs_exclude_exception_message():
     )
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
-        patch.object(ProviderRegistry, "cleanup", new=AsyncMock()),
+        patch.object(ProviderRuntime, "cleanup", new=AsyncMock()),
         patch.object(api_app_mod.logger, "error") as log_err,
     ):
         with TestClient(app, raise_server_exceptions=False) as client:
@@ -286,36 +317,38 @@ def test_app_lifespan_sets_state_and_cleans_up(tmp_path, messaging_enabled):
     fake_platform.on_message = MagicMock()
     fake_platform.start = AsyncMock()
     fake_platform.stop = AsyncMock()
+    fake_components = _fake_messaging_components(fake_platform)
 
+    snapshot = (
+        ConversationSnapshot(trees={"t": TreeSnapshot(root_id="t", nodes={})})
+        if messaging_enabled
+        else ConversationSnapshot()
+    )
     session_store = MagicMock()
-    session_store.get_all_trees.return_value = [{"t": 1}] if messaging_enabled else []
-    session_store.get_node_mapping.return_value = {"n": "t"}
-    session_store.sync_from_tree_data = MagicMock()
+    session_store.load_conversation_snapshot.return_value = snapshot
+    session_store.save_conversation_snapshot = MagicMock()
 
     fake_queue = MagicMock()
     fake_queue.cleanup_stale_nodes.return_value = 1
-    fake_queue.to_dict.return_value = {
-        "trees": [{"t": 1}],
-        "node_to_tree": {"n": "t"},
-    }
+    fake_queue.snapshot.return_value = snapshot
 
     cli_manager = MagicMock()
     cli_manager.stop_all = AsyncMock()
 
     api_app_mod = importlib.import_module("api.app")
 
-    registry_cleanup = AsyncMock()
+    runtime_cleanup = AsyncMock()
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
-        patch.object(ProviderRegistry, "cleanup", new=registry_cleanup),
+        patch.object(ProviderRuntime, "cleanup", new=runtime_cleanup),
         patch(
-            "messaging.platforms.factory.create_messaging_platform",
-            return_value=fake_platform if messaging_enabled else None,
-        ) as create_platform,
+            "messaging.platforms.factory.create_messaging_components",
+            return_value=fake_components if messaging_enabled else None,
+        ) as create_components,
         patch("messaging.session.SessionStore", return_value=session_store),
-        patch("cli.manager.CLISessionManager", return_value=cli_manager),
+        patch("cli.managed.ManagedClaudeSessionManager", return_value=cli_manager),
         patch(
-            "messaging.trees.queue_manager.TreeQueueManager.from_dict",
+            "messaging.trees.TreeQueueManager.from_snapshot",
             return_value=fake_queue,
         ),
         TestClient(app),
@@ -323,23 +356,20 @@ def test_app_lifespan_sets_state_and_cleans_up(tmp_path, messaging_enabled):
         pass
 
     if messaging_enabled:
-        create_platform.assert_called_once()
+        create_components.assert_called_once()
         fake_platform.on_message.assert_called_once()
         fake_platform.start.assert_awaited_once()
         fake_platform.stop.assert_awaited_once()
         cli_manager.stop_all.assert_awaited_once()
-        assert getattr(app.state, "message_handler", None) is not None
-        session_store.sync_from_tree_data.assert_called_once_with(
-            [{"t": 1}],
-            {"n": "t"},
-        )
+        assert getattr(app.state, "messaging_workflow", None) is not None
+        session_store.save_conversation_snapshot.assert_called_once_with(snapshot)
     else:
         fake_platform.start.assert_not_awaited()
         fake_platform.stop.assert_not_awaited()
         cli_manager.stop_all.assert_not_awaited()
-        assert getattr(app.state, "messaging_platform", "missing") is None
+        assert getattr(app.state, "messaging_runtime", "missing") is None
 
-    registry_cleanup.assert_awaited_once()
+    runtime_cleanup.assert_awaited_once()
 
 
 def test_app_lifespan_cleanup_continues_if_platform_stop_raises(tmp_path):
@@ -364,33 +394,32 @@ def test_app_lifespan_cleanup_continues_if_platform_stop_raises(tmp_path):
     fake_platform.on_message = MagicMock()
     fake_platform.start = AsyncMock()
     fake_platform.stop = AsyncMock(side_effect=RuntimeError("stop failed"))
+    fake_components = _fake_messaging_components(fake_platform)
 
     session_store = MagicMock()
-    session_store.get_all_trees.return_value = []
-    session_store.get_node_mapping.return_value = {}
-    session_store.sync_from_tree_data = MagicMock()
+    session_store.load_conversation_snapshot.return_value = ConversationSnapshot()
 
     cli_manager = MagicMock()
     cli_manager.stop_all = AsyncMock()
 
     api_app_mod = importlib.import_module("api.app")
-    registry_cleanup = AsyncMock()
+    runtime_cleanup = AsyncMock()
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
-        patch.object(ProviderRegistry, "cleanup", new=registry_cleanup),
+        patch.object(ProviderRuntime, "cleanup", new=runtime_cleanup),
         patch(
-            "messaging.platforms.factory.create_messaging_platform",
-            return_value=fake_platform,
+            "messaging.platforms.factory.create_messaging_components",
+            return_value=fake_components,
         ),
         patch("messaging.session.SessionStore", return_value=session_store),
-        patch("cli.manager.CLISessionManager", return_value=cli_manager),
+        patch("cli.managed.ManagedClaudeSessionManager", return_value=cli_manager),
         TestClient(app),
     ):
         pass
 
     fake_platform.stop.assert_awaited_once()
     cli_manager.stop_all.assert_awaited_once()
-    registry_cleanup.assert_awaited_once()
+    runtime_cleanup.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -417,20 +446,20 @@ async def test_runtime_startup_validation_failure_does_not_block_server(tmp_path
     validation = AsyncMock(side_effect=ServiceUnavailableError("bad model"))
     cleanup = AsyncMock()
     with (
-        patch.object(ProviderRegistry, "validate_configured_models", new=validation),
-        patch.object(ProviderRegistry, "cleanup", new=cleanup),
+        patch.object(ProviderRuntime, "validate_configured_models", new=validation),
+        patch.object(ProviderRuntime, "cleanup", new=cleanup),
         patch.object(api_runtime_mod.logger, "warning") as log_warning,
         patch(
-            "messaging.platforms.factory.create_messaging_platform",
+            "messaging.platforms.factory.create_messaging_components",
             return_value=None,
-        ) as create_platform,
+        ) as create_components,
     ):
         await runtime.startup()
         await runtime.shutdown()
 
-    validation.assert_awaited_once_with(settings)
+    validation.assert_awaited_once_with()
     cleanup.assert_awaited_once()
-    create_platform.assert_called_once()
+    create_components.assert_called_once()
     logged = " ".join(
         str(arg) for call in log_warning.call_args_list for arg in call.args
     )
@@ -472,8 +501,8 @@ async def test_graceful_asgi_lifespan_model_validation_failure_starts(tmp_path):
     cleanup = AsyncMock()
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
-        patch.object(ProviderRegistry, "validate_configured_models", new=validation),
-        patch.object(ProviderRegistry, "cleanup", new=cleanup),
+        patch.object(ProviderRuntime, "validate_configured_models", new=validation),
+        patch.object(ProviderRuntime, "cleanup", new=cleanup),
     ):
         await app({"type": "lifespan"}, receive, send)
 
@@ -502,20 +531,20 @@ def test_app_lifespan_messaging_import_error_no_crash(tmp_path, caplog):
     )
 
     api_app_mod = importlib.import_module("api.app")
-    registry_cleanup = AsyncMock()
+    runtime_cleanup = AsyncMock()
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
-        patch.object(ProviderRegistry, "cleanup", new=registry_cleanup),
+        patch.object(ProviderRuntime, "cleanup", new=runtime_cleanup),
         patch(
-            "messaging.platforms.factory.create_messaging_platform",
+            "messaging.platforms.factory.create_messaging_components",
             side_effect=ImportError("discord not installed"),
         ),
         TestClient(app),
     ):
         pass
 
-    assert getattr(app.state, "messaging_platform", None) is None
-    registry_cleanup.assert_awaited_once()
+    assert getattr(app.state, "messaging_runtime", None) is None
+    runtime_cleanup.assert_awaited_once()
 
 
 def test_app_lifespan_platform_start_exception_cleanup_still_runs(tmp_path):
@@ -541,31 +570,30 @@ def test_app_lifespan_platform_start_exception_cleanup_still_runs(tmp_path):
     fake_platform.on_message = MagicMock()
     fake_platform.start = AsyncMock(side_effect=RuntimeError("start failed"))
     fake_platform.stop = AsyncMock()
+    fake_components = _fake_messaging_components(fake_platform)
 
     session_store = MagicMock()
-    session_store.get_all_trees.return_value = []
-    session_store.get_node_mapping.return_value = {}
-    session_store.sync_from_tree_data = MagicMock()
+    session_store.load_conversation_snapshot.return_value = ConversationSnapshot()
 
     cli_manager = MagicMock()
     cli_manager.stop_all = AsyncMock()
 
     api_app_mod = importlib.import_module("api.app")
-    registry_cleanup = AsyncMock()
+    runtime_cleanup = AsyncMock()
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
-        patch.object(ProviderRegistry, "cleanup", new=registry_cleanup),
+        patch.object(ProviderRuntime, "cleanup", new=runtime_cleanup),
         patch(
-            "messaging.platforms.factory.create_messaging_platform",
-            return_value=fake_platform,
+            "messaging.platforms.factory.create_messaging_components",
+            return_value=fake_components,
         ),
         patch("messaging.session.SessionStore", return_value=session_store),
-        patch("cli.manager.CLISessionManager", return_value=cli_manager),
+        patch("cli.managed.ManagedClaudeSessionManager", return_value=cli_manager),
         TestClient(app),
     ):
         pass
 
-    registry_cleanup.assert_awaited_once()
+    runtime_cleanup.assert_awaited_once()
 
 
 def test_app_lifespan_flush_pending_save_exception_warning_only(tmp_path):
@@ -591,33 +619,32 @@ def test_app_lifespan_flush_pending_save_exception_warning_only(tmp_path):
     fake_platform.on_message = MagicMock()
     fake_platform.start = AsyncMock()
     fake_platform.stop = AsyncMock()
+    fake_components = _fake_messaging_components(fake_platform)
 
     session_store = MagicMock()
-    session_store.get_all_trees.return_value = []
-    session_store.get_node_mapping.return_value = {}
-    session_store.sync_from_tree_data = MagicMock()
+    session_store.load_conversation_snapshot.return_value = ConversationSnapshot()
     session_store.flush_pending_save = MagicMock(side_effect=OSError("disk full"))
 
     cli_manager = MagicMock()
     cli_manager.stop_all = AsyncMock()
 
     api_app_mod = importlib.import_module("api.app")
-    registry_cleanup = AsyncMock()
+    runtime_cleanup = AsyncMock()
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
-        patch.object(ProviderRegistry, "cleanup", new=registry_cleanup),
+        patch.object(ProviderRuntime, "cleanup", new=runtime_cleanup),
         patch(
-            "messaging.platforms.factory.create_messaging_platform",
-            return_value=fake_platform,
+            "messaging.platforms.factory.create_messaging_components",
+            return_value=fake_components,
         ),
         patch("messaging.session.SessionStore", return_value=session_store),
-        patch("cli.manager.CLISessionManager", return_value=cli_manager),
+        patch("cli.managed.ManagedClaudeSessionManager", return_value=cli_manager),
         TestClient(app),
     ):
         pass
 
     session_store.flush_pending_save.assert_called_once()
-    registry_cleanup.assert_awaited_once()
+    runtime_cleanup.assert_awaited_once()
 
 
 def test_create_app_writes_server_log_under_fcc_home(monkeypatch, tmp_path):

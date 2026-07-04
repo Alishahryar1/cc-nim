@@ -54,16 +54,21 @@ class BaseProvider(ABC):
                 if isinstance(thinking, dict)
                 else getattr(thinking, "type", None)
             )
+            if isinstance(thinking, dict):
+                enabled = thinking.get("enabled")
+                enabled_supplied = "enabled" in thinking
+            else:
+                enabled = getattr(thinking, "enabled", None)
+                fields_set = getattr(thinking, "model_fields_set", None)
+                enabled_supplied = (
+                    "enabled" in fields_set
+                    if isinstance(fields_set, set | frozenset)
+                    else enabled is not None
+                )
+            if enabled_supplied and enabled is not None:
+                request_enabled = bool(enabled)
             if thinking_type == "disabled":
                 request_enabled = False
-
-            enabled = (
-                thinking.get("enabled")
-                if isinstance(thinking, dict)
-                else getattr(thinking, "enabled", None)
-            )
-            if enabled is not None:
-                request_enabled = bool(enabled)
         return config_enabled and request_enabled
 
     def preflight_stream(

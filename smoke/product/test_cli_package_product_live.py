@@ -2,15 +2,14 @@ from __future__ import annotations
 
 import asyncio
 import os
-import subprocess
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from cli.manager import CLISessionManager
-from cli.session import CLISession
-from smoke.lib.child_process import cmd_fcc_init
+from cli.managed.manager import ManagedClaudeSessionManager
+from cli.managed.session import ManagedClaudeSession
+from smoke.lib.child_process import cmd_fcc_init, run_captured_text
 from smoke.lib.config import SmokeConfig
 
 pytestmark = [pytest.mark.live, pytest.mark.smoke_target("cli")]
@@ -20,12 +19,10 @@ def test_entrypoint_init_e2e(smoke_config: SmokeConfig, tmp_path: Path) -> None:
     env = os.environ.copy()
     env["HOME"] = str(tmp_path)
     env["USERPROFILE"] = str(tmp_path)
-    result = subprocess.run(
+    result = run_captured_text(
         cmd_fcc_init(),
         cwd=smoke_config.root,
         env=env,
-        capture_output=True,
-        text=True,
         timeout=smoke_config.timeout_s,
         check=False,
     )
@@ -37,7 +34,7 @@ def test_entrypoint_init_e2e(smoke_config: SmokeConfig, tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_cli_session_resume_fork_e2e(tmp_path: Path) -> None:
-    session = CLISession(str(tmp_path), "http://127.0.0.1:8082/v1")
+    session = ManagedClaudeSession(str(tmp_path), "http://127.0.0.1:8082/v1")
     process = AsyncMock()
     process.stdout.read.side_effect = [b""]
     process.stderr.read.return_value = b""
@@ -62,7 +59,7 @@ async def test_cli_session_resume_fork_e2e(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_cli_process_cleanup_e2e(tmp_path: Path) -> None:
-    manager = CLISessionManager(
+    manager = ManagedClaudeSessionManager(
         workspace_path=str(tmp_path),
         api_url="http://127.0.0.1:8082/v1",
     )
@@ -84,14 +81,14 @@ async def test_cli_process_cleanup_e2e(tmp_path: Path) -> None:
 
 @pytest.mark.asyncio
 async def test_cli_session_stop_kills_child_e2e(tmp_path: Path) -> None:
-    session = CLISession(str(tmp_path), "http://127.0.0.1:8082/v1")
+    session = ManagedClaudeSession(str(tmp_path), "http://127.0.0.1:8082/v1")
     process = MagicMock()
     process.pid = 123456
     process.returncode = None
     process.wait = AsyncMock(side_effect=[asyncio.TimeoutError, 0])
     session.process = process
 
-    with patch("cli.session.kill_pid_tree_best_effort") as kill_tree:
+    with patch("cli.managed.session.kill_pid_tree_best_effort") as kill_tree:
         stopped = await session.stop()
 
     assert stopped is True

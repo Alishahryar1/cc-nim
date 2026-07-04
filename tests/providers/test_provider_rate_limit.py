@@ -1,19 +1,44 @@
 import asyncio
 import time
 
+import openai
 import pytest
 import pytest_asyncio
+from httpx import Request
 
 from providers.rate_limit import (
     DEFAULT_UPSTREAM_MAX_RETRIES,
     UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS,
     GlobalRateLimiter,
+    retryable_upstream_status,
 )
 
 
 def test_upstream_transient_retry_total_attempts_is_five() -> None:
     assert UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS == 5
     assert DEFAULT_UPSTREAM_MAX_RETRIES == 4
+
+
+def _statusless_api_error(message: str, body: object | None) -> openai.APIError:
+    return openai.APIError(message, request=Request("POST", "http://x"), body=body)
+
+
+def test_retryable_upstream_status_reads_statusless_api_error_body_status() -> None:
+    exc = _statusless_api_error(
+        "stream embedded error",
+        {"error": {"message": "internal failure", "code": 500}},
+    )
+
+    assert retryable_upstream_status(exc) == 500
+
+
+def test_retryable_upstream_status_reads_statusless_resource_exhausted_text() -> None:
+    exc = _statusless_api_error(
+        "ResourceExhausted: limit reached while generating response",
+        {"error": {"message": "ResourceExhausted: limit reached"}},
+    )
+
+    assert retryable_upstream_status(exc) == 503
 
 
 class TestProviderRateLimiter:
@@ -347,6 +372,30 @@ class TestProviderRateLimiter:
         result = await limiter.execute_with_retry(
             fail_then_ok, max_retries=2, base_delay=0.01, max_delay=0.1, jitter=0
         )
+        assert result == "ok"
+        assert call_count == 2
+
+    @pytest.mark.asyncio
+    async def test_execute_with_retry_succeeds_on_statusless_transient_api_error(self):
+        """Status-less SDK APIError transient markers participate in backoff retry."""
+        limiter = GlobalRateLimiter.get_instance(rate_limit=100, rate_window=60)
+
+        call_count = 0
+
+        async def fail_then_ok():
+            nonlocal call_count
+            call_count += 1
+            if call_count == 1:
+                raise _statusless_api_error(
+                    "ResourceExhausted: limit reached while generating response",
+                    {"error": {"message": "ResourceExhausted: limit reached"}},
+                )
+            return "ok"
+
+        result = await limiter.execute_with_retry(
+            fail_then_ok, max_retries=2, base_delay=0.01, max_delay=0.1, jitter=0
+        )
+
         assert result == "ok"
         assert call_count == 2
 

@@ -28,7 +28,7 @@ async def test_messaging_start_failure_default_logs_exclude_traceback(caplog):
 
     with (
         patch(
-            "messaging.platforms.factory.create_messaging_platform",
+            "messaging.platforms.factory.create_messaging_components",
             side_effect=RuntimeError("SECRET_RUNTIME_DETAIL"),
         ),
         caplog.at_level(logging.ERROR),

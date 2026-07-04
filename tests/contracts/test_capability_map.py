@@ -46,3 +46,14 @@ def test_capability_contracts_are_decision_complete() -> None:
         assert contract.failure.strip(), contract
 
         assert contract.pytest_tests or contract.smoke_tests, contract
+
+
+def test_capability_contract_owners_do_not_reference_removed_request_pipeline() -> None:
+    stale = [
+        contract
+        for contract in CAPABILITY_CONTRACTS
+        if "api.request_pipeline" in contract.owner
+        or "ApiRequestPipeline" in contract.owner
+    ]
+
+    assert stale == []

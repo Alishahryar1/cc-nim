@@ -6,7 +6,7 @@ import uuid
 from collections.abc import Iterator
 from typing import Any
 
-from core.anthropic.sse import SSEBuilder
+from core.anthropic.streaming import AnthropicStreamLedger
 
 
 def iter_provider_stream_error_sse_events(
@@ -21,14 +21,14 @@ def iter_provider_stream_error_sse_events(
     """Yield message_start (if needed), a text block with the error, then message_delta/stop."""
     mid = message_id or f"msg_{uuid.uuid4()}"
     model = getattr(request, "model", "") or ""
-    sse = SSEBuilder(
+    ledger = AnthropicStreamLedger(
         mid,
         model,
         input_tokens,
         log_raw_events=log_raw_sse_events,
     )
     if not sent_any_event:
-        yield sse.message_start()
-    yield from sse.emit_error(error_message)
-    yield sse.message_delta("end_turn", 1)
-    yield sse.message_stop()
+        yield ledger.message_start()
+    yield from ledger.emit_error(error_message)
+    yield ledger.message_delta("end_turn", 1)
+    yield ledger.message_stop()
