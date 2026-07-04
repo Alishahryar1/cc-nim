@@ -1,0 +1,42 @@
+{
+  "base_url": "https://hailuoai.video",
+  "image_gen_url": "https://hailuoai.video/create/image-generation",
+  "video_gen_url": "https://hailuoai.video/create/image-to-video",
+  "tabs": {
+    "create_video": { "role": "tab", "name": "Create Video" },
+    "create_image": { "role": "tab", "name": "Create Image" }
+  },
+  "prompt_input": {
+    "role": "textbox",
+    "selector": "div[contenteditable=\"true\"][role=\"textbox\"]",
+    "fallback_selector": "div[contenteditable=\"true\"]"
+  },
+  "image_gen": {
+    "model_selector": { "text": "GPT Image 2" },
+    "resolution_selector": { "text": "1K" },
+    "quality_selector": { "text": "Low" },
+    "aspect_ratio_selector": { "text": "4:3" },
+    "create_button": { "role": "button", "name": "Create" }
+  },
+  "video_gen": {
+    "start_frame_button": { "text": "Start Frame" },
+    "end_frame_button": { "text": "End Frame" },
+    "model_selector": { "text": "Hailuo 2.3" },
+    "mode_selector": { "text": "Start/End Frame" },
+    "resolution_selector": { "text": "768p" },
+    "duration_selector": { "text": "6s" },
+    "create_button": { "role": "button", "name": "Create" }
+  },
+  "file_upload": {
+    "input_selector": "input[type=\"file\"][accept*=\".png\"]",
+    "accept": ".jpg,.jpeg,.png,.webp"
+  },
+  "downloads": {
+    "result_card_selector": "[class*=\"generate-result\"], [class*=\"video-card\"], a[href*=\"/generate/\"]",
+    "download_button_selector": "button[class*=\"download\"], [title*=\"download\" i], a[download]"
+  },
+  "state": {
+    "credit_counter_selector": "[class*=\"credit\"]",
+    "generating_indicator": "[class*=\"generating\"], [class*=\"loading\"], svg[class*=\"animate-spin\"]"
+  }
+}
