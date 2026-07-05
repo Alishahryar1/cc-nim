@@ -589,7 +589,6 @@ Important pieces:
 
 ```text
 free-claude-code/
-├── server.py              # ASGI entry point
 ├── api/                   # FastAPI routes, service layer, routing, optimizations
 ├── core/                  # Shared Anthropic protocol helpers, SSE, OpenAI Responses
 │   └── openai_responses/  # Responses ↔ Anthropic conversion and SSE mapping
@@ -607,7 +606,7 @@ Use this path if you are developing or want to run directly from a checkout:
 ```bash
 git clone https://github.com/Alishahryar1/free-claude-code.git
 cd free-claude-code
-uv run uvicorn server:app --host 0.0.0.0 --port 8082
+uv run fcc-server
 ```
 
 ### 3. Commands

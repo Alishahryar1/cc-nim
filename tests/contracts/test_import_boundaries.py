@@ -32,6 +32,17 @@ def test_python314_native_annotations_do_not_use_legacy_future_import() -> None:
     assert sorted(offenders) == []
 
 
+def test_server_startup_is_owned_by_cli_entrypoint() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+
+    assert not (repo_root / "server.py").exists()
+    assert _text_occurrences(repo_root, "server" + ":app") == []
+
+    pyproject_text = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'fcc-server = "cli.entrypoints:serve"' in pyproject_text
+    assert 'free-claude-code = "cli.entrypoints:serve"' in pyproject_text
+
+
 def test_api_and_messaging_do_not_import_provider_common() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     assert not (repo_root / "providers" / "common").exists()
