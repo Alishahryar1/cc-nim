@@ -1,7 +1,5 @@
 """Shared provider execution primitive for API product handlers."""
 
-from __future__ import annotations
-
 import uuid
 from collections.abc import AsyncIterator, Callable
 from typing import Any

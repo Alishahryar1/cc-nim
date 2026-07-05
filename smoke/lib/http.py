@@ -1,7 +1,5 @@
 """HTTP helpers for live smoke requests."""
 
-from __future__ import annotations
-
 from typing import Any
 
 import httpx

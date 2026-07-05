@@ -1,7 +1,5 @@
 """Shared voice-note flow for messaging platform adapters."""
 
-from __future__ import annotations
-
 import contextlib
 import tempfile
 from collections.abc import Awaitable, Callable

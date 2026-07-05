@@ -1,7 +1,5 @@
 """App-scoped provider runtime orchestration."""
 
-from __future__ import annotations
-
 from collections.abc import Iterable, MutableMapping
 
 from config.settings import Settings

@@ -1,7 +1,5 @@
 """Reasoning and thinking conversion helpers for OpenAI Responses."""
 
-from __future__ import annotations
-
 from collections.abc import Mapping
 from typing import Any
 

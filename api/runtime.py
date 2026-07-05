@@ -1,28 +1,29 @@
 """Application runtime composition and lifecycle ownership."""
 
-from __future__ import annotations
-
 import asyncio
 import logging
 import os
+import traceback
 from dataclasses import dataclass, field
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 from fastapi import FastAPI
 from loguru import logger
 
+import cli.managed as cli_managed
+import messaging.limiter as messaging_limiter
+import messaging.session as messaging_session
+import messaging.trees as messaging_trees
+import messaging.workflow as messaging_workflow_module
 from api.admin_urls import local_admin_url
 from config.env_files import ANTHROPIC_AUTH_TOKEN_ENV, process_env_key_is_effective
 from config.paths import default_claude_workspace_path
 from config.settings import Settings, get_settings
+from messaging.platforms import factory as messaging_platform_factory
+from messaging.platforms.factory import MessagingPlatformOptions
+from messaging.platforms.ports import MessagingPlatformComponents, MessagingRuntime
 from providers.exceptions import ServiceUnavailableError
 from providers.runtime import ProviderRuntime
-
-if TYPE_CHECKING:
-    from cli.managed import ManagedClaudeSessionManager
-    from messaging.platforms.ports import MessagingPlatformComponents, MessagingRuntime
-    from messaging.session import SessionStore
-    from messaging.workflow import MessagingWorkflow
 
 _SHUTDOWN_TIMEOUT_S = 5.0
 
@@ -92,8 +93,8 @@ class AppRuntime:
     settings: Settings
     _provider_runtime: ProviderRuntime | None = field(default=None, init=False)
     messaging_runtime: MessagingRuntime | None = None
-    messaging_workflow: MessagingWorkflow | None = None
-    cli_manager: ManagedClaudeSessionManager | None = None
+    messaging_workflow: messaging_workflow_module.MessagingWorkflow | None = None
+    cli_manager: cli_managed.ManagedClaudeSessionManager | None = None
 
     @classmethod
     def for_app(
@@ -179,12 +180,7 @@ class AppRuntime:
 
     async def _start_messaging_if_configured(self) -> None:
         try:
-            from messaging.platforms.factory import (
-                MessagingPlatformOptions,
-                create_messaging_components,
-            )
-
-            components = create_messaging_components(
+            components = messaging_platform_factory.create_messaging_components(
                 self.settings.messaging_platform,
                 MessagingPlatformOptions(
                     telegram_bot_token=self.settings.telegram_bot_token,
@@ -217,8 +213,6 @@ class AppRuntime:
         except Exception as e:
             if self.settings.log_api_error_tracebacks:
                 logger.error("Failed to start messaging platform: {}", e)
-                import traceback
-
                 logger.error(traceback.format_exc())
             else:
                 logger.error(
@@ -229,10 +223,6 @@ class AppRuntime:
     async def _start_messaging_workflow(
         self, components: MessagingPlatformComponents
     ) -> None:
-        from cli.managed import ManagedClaudeSessionManager
-        from messaging.session import SessionStore
-        from messaging.workflow import MessagingWorkflow
-
         workspace = (
             os.path.abspath(self.settings.allowed_dir)
             if self.settings.allowed_dir
@@ -247,7 +237,7 @@ class AppRuntime:
         allowed_dirs = [workspace] if self.settings.allowed_dir else []
         plans_dir_abs = os.path.abspath(os.path.join(data_path, "plans"))
         plans_directory = os.path.relpath(plans_dir_abs, workspace)
-        self.cli_manager = ManagedClaudeSessionManager(
+        self.cli_manager = cli_managed.ManagedClaudeSessionManager(
             workspace_path=workspace,
             api_url=api_url,
             allowed_dirs=allowed_dirs,
@@ -257,12 +247,12 @@ class AppRuntime:
             log_messaging_error_details=self.settings.log_messaging_error_details,
         )
 
-        session_store = SessionStore(
+        session_store = messaging_session.SessionStore(
             storage_path=os.path.join(data_path, "sessions.json"),
             message_log_cap=self.settings.max_message_log_entries_per_chat,
         )
         self.messaging_runtime = components.runtime
-        self.messaging_workflow = MessagingWorkflow(
+        self.messaging_workflow = messaging_workflow_module.MessagingWorkflow(
             platform_name=components.name,
             outbound=components.outbound,
             voice_cancellation=components.voice_cancellation,
@@ -280,7 +270,9 @@ class AppRuntime:
         await components.runtime.start()
         logger.info("{} platform started with messaging workflow", components.name)
 
-    def _restore_tree_state(self, session_store: SessionStore) -> None:
+    def _restore_tree_state(
+        self, session_store: messaging_session.SessionStore
+    ) -> None:
         conversation_snapshot = session_store.load_conversation_snapshot()
         if conversation_snapshot.is_empty:
             return
@@ -291,10 +283,9 @@ class AppRuntime:
             "Restoring {} conversation trees...",
             len(conversation_snapshot.trees),
         )
-        from messaging.trees import TreeQueueManager
 
         self.messaging_workflow.replace_tree_queue(
-            TreeQueueManager.from_snapshot(
+            messaging_trees.TreeQueueManager.from_snapshot(
                 conversation_snapshot,
                 queue_update_callback=self.messaging_workflow.update_queue_positions,
                 node_started_callback=self.messaging_workflow.mark_node_processing,
@@ -313,24 +304,18 @@ class AppRuntime:
     async def _shutdown_limiter(self) -> None:
         verbose = self.settings.log_api_error_tracebacks
         try:
-            from messaging.limiter import MessagingRateLimiter
+            await best_effort(
+                "MessagingRateLimiter.shutdown_instance",
+                messaging_limiter.MessagingRateLimiter.shutdown_instance(),
+                timeout_s=2.0,
+                log_verbose_errors=verbose,
+            )
         except Exception as e:
             if verbose:
                 logger.debug(
-                    "Rate limiter shutdown skipped (import failed): {}: {}",
-                    type(e).__name__,
-                    e,
+                    "Rate limiter shutdown skipped: {}: {}", type(e).__name__, e
                 )
             else:
                 logger.debug(
-                    "Rate limiter shutdown skipped (import failed): exc_type={}",
-                    type(e).__name__,
+                    "Rate limiter shutdown skipped: exc_type={}", type(e).__name__
                 )
-            return
-
-        await best_effort(
-            "MessagingRateLimiter.shutdown_instance",
-            MessagingRateLimiter.shutdown_instance(),
-            timeout_s=2.0,
-            log_verbose_errors=verbose,
-        )

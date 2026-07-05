@@ -1,7 +1,5 @@
 """In-memory graph for one messaging conversation tree."""
 
-from __future__ import annotations
-
 from loguru import logger
 
 from ..models import IncomingMessage

@@ -1,7 +1,5 @@
 """Mistral Codestral provider (OpenAI-compatible chat on codestral.mistral.ai)."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from providers.base import ProviderConfig

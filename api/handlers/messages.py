@@ -1,7 +1,5 @@
 """Claude Messages API product flow."""
 
-from __future__ import annotations
-
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, replace
 

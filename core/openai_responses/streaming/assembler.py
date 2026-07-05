@@ -1,7 +1,5 @@
 """Anthropic SSE to OpenAI Responses stream assembly."""
 
-from __future__ import annotations
-
 import json
 import time
 import uuid

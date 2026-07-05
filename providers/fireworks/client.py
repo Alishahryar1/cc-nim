@@ -1,7 +1,5 @@
 """Fireworks AI provider using native Anthropic-compatible Messages."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from providers.base import ProviderConfig

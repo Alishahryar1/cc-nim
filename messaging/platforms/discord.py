@@ -1,7 +1,5 @@
 """Discord messaging runtime."""
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable

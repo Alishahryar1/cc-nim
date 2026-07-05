@@ -1,7 +1,5 @@
 """Facade for OpenAI Responses protocol adaptation."""
 
-from __future__ import annotations
-
 from collections.abc import AsyncIterable, AsyncIterator, Mapping
 from typing import Any, ClassVar
 

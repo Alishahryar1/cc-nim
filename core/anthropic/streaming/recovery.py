@@ -1,7 +1,5 @@
 """Shared retry and recovery policy for Anthropic streams."""
 
-from __future__ import annotations
-
 import json
 import time
 from collections.abc import Callable

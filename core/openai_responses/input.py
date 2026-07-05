@@ -1,7 +1,5 @@
 """Convert OpenAI Responses requests into Anthropic Messages payloads."""
 
-from __future__ import annotations
-
 from collections.abc import Mapping
 from typing import Any
 

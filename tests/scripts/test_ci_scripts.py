@@ -59,10 +59,13 @@ def _powershell_interpreter() -> str:
 
 def test_ci_sh_runs_ci_checks_in_order() -> None:
     text = _script_text("ci.sh")
+    legacy_future_import = "from __future__ import " + "annotations"
 
     assert 'CHECK_ORDER="suppressions ruff-format ruff-check ty pytest"' in text
     assert "grep -rE" in text
-    assert "Fix the underlying type errors instead" in text
+    assert "Fix the underlying type/import issue instead" in text
+    assert legacy_future_import in text
+    assert "legacy future annotations are not allowed" in text
     assert "--exclude-dir=.venv" in text
     assert "--exclude-dir=.git" in text
     assert "uv run ruff format" in text
@@ -146,7 +149,7 @@ def test_ci_sh_suppression_only_does_not_require_uv() -> None:
     )
 
     assert result.returncode == 0
-    assert "Ban type ignore suppressions" in result.stdout
+    assert "Ban suppressions and legacy annotations" in result.stdout
     assert "uv is required" not in result.stderr
 
 
@@ -180,6 +183,7 @@ def test_ci_sh_fail_fast_runs_checks_sequentially() -> None:
 
 def test_ci_ps1_runs_ci_checks_in_order() -> None:
     text = _script_text("ci.ps1")
+    legacy_future_import = "from __future__ import " + "annotations"
 
     assert '"suppressions"' in text
     assert '"ruff-format"' in text
@@ -187,7 +191,9 @@ def test_ci_ps1_runs_ci_checks_in_order() -> None:
     assert '"ty"' in text
     assert '"pytest"' in text
     assert "Select-String -Pattern" in text
-    assert "Fix the underlying type errors instead" in text
+    assert "Fix the underlying type/import issue instead" in text
+    assert legacy_future_import in text
+    assert "legacy future annotations are not allowed" in text
     assert ".venv" in text
     assert ".git" in text
     assert '"run", "ruff", "format"' in text
@@ -276,7 +282,7 @@ def test_ci_ps1_suppression_only_does_not_require_uv() -> None:
     )
 
     assert result.returncode == 0
-    assert "Ban type ignore suppressions" in result.stdout
+    assert "Ban suppressions and legacy annotations" in result.stdout
     assert "uv is required" not in result.stderr
 
 

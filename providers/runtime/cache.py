@@ -1,7 +1,5 @@
 """Provider instance cache and cleanup."""
 
-from __future__ import annotations
-
 from collections.abc import Callable, MutableMapping
 
 from config.settings import Settings

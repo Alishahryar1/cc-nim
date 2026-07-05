@@ -1,12 +1,10 @@
 """Telegram messaging runtime."""
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import os
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 # Opt-in to future behavior for python-telegram-bot (retry_after as timedelta).
 os.environ["PTB_TIMEDELTA"] = "1"
@@ -25,11 +23,8 @@ from .telegram_inbound import (
 from .telegram_io import TelegramMessenger
 from .voice_flow import VoiceNoteFlow
 
-if TYPE_CHECKING:
-    from telegram import Update
-    from telegram.ext import ContextTypes
-
 try:
+    from telegram import Update
     from telegram.ext import (
         Application,
         CommandHandler,

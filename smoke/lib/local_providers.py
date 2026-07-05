@@ -1,7 +1,5 @@
 """Helpers for local-provider smoke availability checks."""
 
-from __future__ import annotations
-
 from urllib.parse import urljoin
 
 import httpx

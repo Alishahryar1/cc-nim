@@ -3,8 +3,6 @@
 Shared by :mod:`api.web_tools` and stream contract tests to avoid drift.
 """
 
-from __future__ import annotations
-
 from typing import Final
 
 SERVER_TOOL_USE: Final = "server_tool_use"

@@ -6,8 +6,6 @@ already executed under the project environment (``uv run pytest``), so children
 should use the same interpreter.
 """
 
-from __future__ import annotations
-
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence

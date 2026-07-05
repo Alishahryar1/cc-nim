@@ -1,7 +1,5 @@
 """Freeze ``PROVIDER_CATALOG`` insertion order used as canonical provider ranking."""
 
-from __future__ import annotations
-
 from config.provider_catalog import PROVIDER_CATALOG, SUPPORTED_PROVIDER_IDS
 
 _EXPECTED_PROVIDER_ORDER: tuple[str, ...] = (

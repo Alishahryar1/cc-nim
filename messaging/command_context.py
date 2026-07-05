@@ -1,7 +1,5 @@
 """Typed dependency surface for messaging slash commands."""
 
-from __future__ import annotations
-
 from typing import Protocol
 
 from .managed_protocols import ManagedClaudeSessionManagerProtocol

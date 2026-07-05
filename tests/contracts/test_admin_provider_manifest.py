@@ -1,7 +1,5 @@
 """Ensure admin UI manifest exposes every catalog credential/proxy binding."""
 
-from __future__ import annotations
-
 from api.admin_config.manifest import FIELD_BY_KEY
 from config.provider_catalog import PROVIDER_CATALOG
 from config.settings import Settings

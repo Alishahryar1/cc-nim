@@ -1,7 +1,5 @@
 """Shared Markdown table pre-normalization for platform renderers."""
 
-from __future__ import annotations
-
 import re
 
 _TABLE_SEP_RE = re.compile(r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$")

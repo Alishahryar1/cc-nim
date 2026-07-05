@@ -1,7 +1,5 @@
 """CLI event handling for a single queued node (transcript + session + errors)."""
 
-from __future__ import annotations
-
 from collections.abc import Awaitable, Callable
 from typing import Any
 

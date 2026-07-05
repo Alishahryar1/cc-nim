@@ -1,7 +1,5 @@
 """Shared transport for providers with native Anthropic Messages endpoints."""
 
-from __future__ import annotations
-
 from collections.abc import AsyncIterator, Iterator
 from typing import Any, Literal
 

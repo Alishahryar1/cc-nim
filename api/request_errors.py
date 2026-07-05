@@ -1,7 +1,5 @@
 """Shared API request validation and safe error logging."""
 
-from __future__ import annotations
-
 import traceback
 from typing import Any
 

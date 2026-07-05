@@ -16,7 +16,7 @@ Requires uv on PATH when running ruff, ty, or pytest checks.
 Local ruff checks repair formatting and autofixable lint before later checks.
 
 Checks (in order):
-  suppressions   Ban # type: ignore / # ty: ignore suppressions
+  suppressions   Ban type ignores and legacy future annotations
   ruff-format    uv run ruff format
   ruff-check     uv run ruff check --fix
   ty             uv run ty check
@@ -124,13 +124,14 @@ selected_checks_need_uv() {
 }
 
 run_suppressions() {
-    step "Ban type ignore suppressions"
-    print_command grep -rE '# type: ignore|# ty: ignore' --include='*.py' . \
+    step "Ban suppressions and legacy annotations"
+    pattern='# type: ignore|# ty: ignore|from __future__ import annotations'
+    print_command grep -rE "$pattern" --include='*.py' . \
         --exclude-dir=.venv --exclude-dir=.git
     if [ "$dry_run" -eq 0 ]; then
-        if grep -rE '# type: ignore|# ty: ignore' --include='*.py' . \
+        if grep -rE "$pattern" --include='*.py' . \
             --exclude-dir=.venv --exclude-dir=.git; then
-            fail "type: ignore / ty: ignore comments are not allowed. Fix the underlying type errors instead."
+            fail "type: ignore / ty: ignore comments and legacy future annotations are not allowed. Fix the underlying type/import issue instead."
         fi
     fi
 }

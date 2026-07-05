@@ -1,7 +1,5 @@
 """Block finalization for OpenAI Responses streams."""
 
-from __future__ import annotations
-
 from collections.abc import Callable
 
 from ..errors import ResponsesConversionError

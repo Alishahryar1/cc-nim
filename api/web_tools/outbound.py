@@ -1,7 +1,5 @@
 """Outbound HTTP for web_search / web_fetch (client, body caps, logging)."""
 
-from __future__ import annotations
-
 import asyncio
 import socket
 from collections.abc import AsyncIterator

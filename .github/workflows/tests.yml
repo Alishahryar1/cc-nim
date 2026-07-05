@@ -1,5 +1,5 @@
 # Branch protection: require every status check this workflow reports, for example:
-#   Ban type ignore suppressions
+#   Ban suppressions and legacy annotations
 #   ruff-format, ruff-check, ty, pytest
 # GitHub may prefix with the workflow name (e.g. "CI / ruff-format"); use the names the branch protection UI offers after a run.
 
@@ -17,8 +17,8 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  no-type-ignore-suppressions:
-    name: Ban type ignore suppressions
+  no-suppressions-or-legacy-annotations:
+    name: Ban suppressions and legacy annotations
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
@@ -30,10 +30,10 @@ jobs:
           repository: ${{ github.event.pull_request.head.repo.full_name || github.repository }}
           fetch-depth: 1
 
-      - name: "Fail on type: ignore (no suppressions allowed)"
+      - name: "Fail on type ignores and legacy future annotations"
         run: |
-          if grep -rE '# type: ignore|# ty: ignore' --include='*.py' . --exclude-dir=.venv --exclude-dir=.git; then
-            echo "::error::type: ignore / ty: ignore comments are not allowed. Fix the underlying type errors instead."
+          if grep -rE '# type: ignore|# ty: ignore|from __future__ import annotations' --include='*.py' . --exclude-dir=.venv --exclude-dir=.git; then
+            echo "::error::type: ignore / ty: ignore comments and legacy future annotations are not allowed. Fix the underlying type/import issue instead."
             exit 1
           fi
           exit 0

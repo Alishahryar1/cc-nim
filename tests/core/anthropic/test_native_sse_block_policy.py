@@ -1,7 +1,5 @@
 """Unit tests for shared native Anthropic SSE thinking policy / block remapping."""
 
-from __future__ import annotations
-
 import json
 
 from core.anthropic.native_sse_block_policy import (

@@ -4,8 +4,6 @@ Used by :class:`OpenRouterProvider` and line-mode
 :class:`providers.transports.anthropic_messages.AnthropicMessagesTransport` providers.
 """
 
-from __future__ import annotations
-
 import copy
 import json
 from dataclasses import dataclass, field

@@ -1,7 +1,5 @@
 """Provider factory wiring and lazy adapter construction."""
 
-from __future__ import annotations
-
 from collections.abc import Callable
 
 from config.provider_catalog import (

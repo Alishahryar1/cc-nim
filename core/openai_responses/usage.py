@@ -1,7 +1,5 @@
 """Usage helpers for OpenAI Responses payloads."""
 
-from __future__ import annotations
-
 from typing import Protocol
 
 _DISALLOWED_SPECIAL: tuple[str, ...] = ()

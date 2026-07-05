@@ -1,7 +1,5 @@
 """Subprocess lifecycle helpers for local smoke servers."""
 
-from __future__ import annotations
-
 import os
 import socket
 import subprocess

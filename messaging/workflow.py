@@ -1,7 +1,5 @@
 """Messaging workflow coordinator for Discord and Telegram prompts."""
 
-from __future__ import annotations
-
 from loguru import logger
 
 from core.trace import trace_event

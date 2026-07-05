@@ -1,7 +1,5 @@
 """Helpers for redacting user-derived content from log lines."""
 
-from __future__ import annotations
-
 
 def format_exception_for_log(exc: BaseException, *, log_full_message: bool) -> str:
     """Return exception type and optionally ``str(exc)`` for operator diagnostics."""

@@ -1,7 +1,5 @@
 """Tests that API and SSE logging avoid raw sensitive payloads by default."""
 
-from __future__ import annotations
-
 from unittest.mock import MagicMock, patch
 
 import pytest
