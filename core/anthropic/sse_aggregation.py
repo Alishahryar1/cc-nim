@@ -77,7 +77,9 @@ async def aggregate_anthropic_sse_to_message(
                     if isinstance(message.get("usage"), dict)
                     else {}
                 )
-                merged.update({k: v for k, v in usage.items() if isinstance(v, int)})
+                merged.update(
+                    {k: v for k, v in usage.items() if isinstance(v, int | dict)}
+                )
                 message["usage"] = merged
         elif ptype == "error":
             err = payload.get("error")

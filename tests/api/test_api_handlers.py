@@ -1,16 +1,18 @@
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse
 
 from api.handlers import MessagesHandler, ResponsesHandler, TokenCountHandler
 from api.models.anthropic import Message, MessagesRequest, TokenCountRequest
 from api.models.openai_responses import OpenAIResponsesRequest
 from config.settings import Settings
+from core.anthropic.streaming import format_sse_event
 from providers.base import BaseProvider, ProviderConfig
 
 _CLASSIFIER_SYSTEM = (
@@ -23,11 +25,15 @@ _CLASSIFIER_USER = (
 
 
 class FakeProvider(BaseProvider):
-    def __init__(self) -> None:
+    def __init__(self, events: list[str] | None = None) -> None:
         super().__init__(ProviderConfig(api_key="test"))
         self.preflight_calls: list[tuple[Any, bool | None]] = []
         self.requests: list[Any] = []
         self.stream_kwargs: list[dict[str, Any]] = []
+        self.events = events or [
+            'event: message_start\ndata: {"type":"message_start"}\n\n',
+            'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+        ]
 
     def preflight_stream(
         self, request: Any, *, thinking_enabled: bool | None = None
@@ -56,8 +62,8 @@ class FakeProvider(BaseProvider):
                 "thinking_enabled": thinking_enabled,
             }
         )
-        yield 'event: message_start\ndata: {"type":"message_start"}\n\n'
-        yield 'event: message_stop\ndata: {"type":"message_stop"}\n\n'
+        for event in self.events:
+            yield event
 
 
 async def _streaming_body_text(response: StreamingResponse) -> str:
@@ -68,6 +74,12 @@ async def _streaming_body_text(response: StreamingResponse) -> str:
         else:
             parts.append(str(chunk))
     return "".join(parts)
+
+
+def _json_response_content(response: JSONResponse) -> dict[str, Any]:
+    content = json.loads(bytes(response.body).decode("utf-8"))
+    assert isinstance(content, dict)
+    return content
 
 
 def _trace_events(trace_mock: MagicMock, event: str) -> list[dict[str, Any]]:
@@ -98,6 +110,110 @@ async def test_messages_handler_passes_routed_request_and_stream_metadata() -> N
     assert provider.stream_kwargs[0]["request_id"].startswith("req_")
     assert provider.stream_kwargs[0]["thinking_enabled"] is True
     assert len(provider.preflight_calls) == 1
+
+
+@pytest.mark.asyncio
+async def test_messages_handler_aggregates_provider_stream_when_stream_false() -> None:
+    provider = FakeProvider(
+        [
+            format_sse_event(
+                "message_start",
+                {
+                    "type": "message_start",
+                    "message": {
+                        "id": "msg_test",
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [],
+                        "model": "test-model",
+                        "stop_reason": None,
+                        "stop_sequence": None,
+                        "usage": {"input_tokens": 7, "output_tokens": 1},
+                    },
+                },
+            ),
+            format_sse_event(
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                },
+            ),
+            format_sse_event(
+                "content_block_delta",
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "OK"},
+                },
+            ),
+            format_sse_event(
+                "content_block_stop", {"type": "content_block_stop", "index": 0}
+            ),
+            format_sse_event(
+                "message_delta",
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                    "usage": {"input_tokens": 7, "output_tokens": 2},
+                },
+            ),
+            format_sse_event("message_stop", {"type": "message_stop"}),
+        ]
+    )
+    handler = MessagesHandler(Settings(), provider_getter=lambda _: provider)
+    request = MessagesRequest(
+        model="nvidia_nim/test-model",
+        max_tokens=100,
+        stream=False,
+        messages=[Message(role="user", content="hi")],
+    )
+
+    response = await handler.create(request)
+
+    assert isinstance(response, JSONResponse)
+    assert response.headers["content-type"].startswith("application/json")
+    body = _json_response_content(response)
+    assert body["id"] == "msg_test"
+    assert body["type"] == "message"
+    assert body["role"] == "assistant"
+    assert body["model"] == "test-model"
+    assert body["content"] == [{"type": "text", "text": "OK"}]
+    assert body["stop_reason"] == "end_turn"
+    assert body["usage"] == {"input_tokens": 7, "output_tokens": 2}
+
+
+@pytest.mark.asyncio
+async def test_messages_handler_returns_error_json_for_stream_false_sse_error() -> None:
+    provider = FakeProvider(
+        [
+            format_sse_event(
+                "error",
+                {
+                    "type": "error",
+                    "error": {"type": "api_error", "message": "upstream failed"},
+                },
+            )
+        ]
+    )
+    handler = MessagesHandler(Settings(), provider_getter=lambda _: provider)
+    request = MessagesRequest(
+        model="nvidia_nim/test-model",
+        max_tokens=100,
+        stream=False,
+        messages=[Message(role="user", content="hi")],
+    )
+
+    response = await handler.create(request)
+
+    assert isinstance(response, JSONResponse)
+    assert response.status_code == 502
+    body = _json_response_content(response)
+    assert body == {
+        "type": "error",
+        "error": {"type": "api_error", "message": "upstream failed"},
+    }
 
 
 @pytest.mark.asyncio

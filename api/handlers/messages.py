@@ -2,8 +2,8 @@
 
 from __future__ import annotations
 
-from collections.abc import Callable
-from dataclasses import replace
+from collections.abc import AsyncIterator, Callable
+from dataclasses import dataclass, replace
 
 from fastapi.responses import JSONResponse
 from loguru import logger
@@ -28,14 +28,26 @@ from core.trace import trace_event
 from providers.base import BaseProvider
 from providers.exceptions import InvalidRequestError, ProviderError
 
-ProviderGetter = Callable[[str], BaseProvider]
-MessageIntercept = Callable[[RoutedMessagesRequest], object | None]
-
 _OPENAI_CHAT_UPSTREAM_IDS = frozenset(
     provider_id
     for provider_id, descriptor in PROVIDER_CATALOG.items()
     if descriptor.transport_type == "openai_chat"
 )
+
+
+@dataclass(frozen=True)
+class _MessagesStreamResult:
+    body: AsyncIterator[str]
+
+
+@dataclass(frozen=True)
+class _MessagesCompleteResult:
+    response: object
+
+
+ProviderGetter = Callable[[str], BaseProvider]
+_MessagesResult = _MessagesStreamResult | _MessagesCompleteResult
+MessageIntercept = Callable[[RoutedMessagesRequest], _MessagesResult | None]
 
 
 class MessagesHandler:
@@ -71,37 +83,42 @@ class MessagesHandler:
             routed = self._apply_message_routing_policies(routed)
             self._reject_unsupported_server_tools(routed)
 
-            intercepted = self._run_message_intercepts(routed)
-            if intercepted is not None:
-                return intercepted
-
-            logger.debug("No optimization matched, routing to provider")
-            provider_stream = self._provider_execution.stream(
-                routed,
-                wire_api="messages",
-                raw_log_label="FULL_PAYLOAD",
-                raw_log_payload=routed.request.model_dump(),
-            )
-            if request_data.stream is False:
-                # Non-streaming clients (e.g. Claude Code utility calls) need a
-                # complete JSON Message; the internal pipeline is always SSE, so
-                # serving that raw here breaks the client SDK's response parse.
-                message, error = await aggregate_anthropic_sse_to_message(
-                    provider_stream
-                )
-                if error is not None and not message.get("content"):
-                    return JSONResponse(
-                        status_code=502,
-                        content={"type": "error", "error": error},
+            result = self._run_message_intercepts(routed)
+            if result is None:
+                logger.debug("No optimization matched, routing to provider")
+                result = _MessagesStreamResult(
+                    self._provider_execution.stream(
+                        routed,
+                        wire_api="messages",
+                        raw_log_label="FULL_PAYLOAD",
+                        raw_log_payload=routed.request.model_dump(),
                     )
-                return JSONResponse(content=message)
-            return anthropic_sse_streaming_response(provider_stream)
+                )
+            return await self._to_public_response(result, stream=request_data.stream)
         except ProviderError:
             raise
         except Exception as exc:
             raise unexpected_http_exception(
                 self._settings, exc, context="CREATE_MESSAGE_ERROR"
             ) from exc
+
+    async def _to_public_response(
+        self, result: _MessagesResult, *, stream: bool | None
+    ) -> object:
+        if isinstance(result, _MessagesCompleteResult):
+            return result.response
+        if stream is False:
+            # Non-streaming clients (e.g. Claude Code utility calls) need a
+            # complete JSON Message; the internal pipeline is always SSE, so
+            # serving that raw here breaks the client SDK's response parse.
+            message, error = await aggregate_anthropic_sse_to_message(result.body)
+            if error is not None and not message.get("content"):
+                return JSONResponse(
+                    status_code=502,
+                    content={"type": "error", "error": error},
+                )
+            return JSONResponse(content=message)
+        return anthropic_sse_streaming_response(result.body)
 
     def _reject_unsupported_server_tools(self, routed: RoutedMessagesRequest) -> None:
         if routed.resolved.provider_id not in _OPENAI_CHAT_UPSTREAM_IDS:
@@ -133,7 +150,9 @@ class MessagesHandler:
             resolved=replace(routed.resolved, thinking_enabled=False),
         )
 
-    def _run_message_intercepts(self, routed: RoutedMessagesRequest) -> object | None:
+    def _run_message_intercepts(
+        self, routed: RoutedMessagesRequest
+    ) -> _MessagesResult | None:
         for intercept in self._message_intercepts:
             result = intercept(routed)
             if result is not None:
@@ -142,7 +161,7 @@ class MessagesHandler:
 
     def _intercept_web_server_tool(
         self, routed: RoutedMessagesRequest
-    ) -> object | None:
+    ) -> _MessagesResult | None:
         if not self._settings.enable_web_server_tools:
             return None
         if not is_web_server_tool_request(routed.request):
@@ -163,7 +182,7 @@ class MessagesHandler:
                 self._settings.web_fetch_allowed_schemes
             ),
         )
-        return anthropic_sse_streaming_response(
+        return _MessagesStreamResult(
             stream_web_server_tool_response(
                 routed.request,
                 input_tokens=input_tokens,
@@ -174,7 +193,7 @@ class MessagesHandler:
 
     def _intercept_local_optimization(
         self, routed: RoutedMessagesRequest
-    ) -> object | None:
+    ) -> _MessagesResult | None:
         optimized = try_optimizations(routed.request, self._settings)
         if optimized is None:
             return None
@@ -184,4 +203,4 @@ class MessagesHandler:
             source="api",
             model=routed.request.model,
         )
-        return optimized
+        return _MessagesCompleteResult(optimized)
