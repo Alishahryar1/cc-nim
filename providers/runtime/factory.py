@@ -95,6 +95,12 @@ def _create_opencode_go(config: ProviderConfig, _settings: Settings) -> BaseProv
     return OpenCodeProvider(config, provider_name="OPENCODE_GO")
 
 
+def _create_vercel(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+    from providers.vercel import VercelProvider
+
+    return VercelProvider(config)
+
+
 def _create_zai(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     from providers.zai import ZaiProvider
 
@@ -140,6 +146,7 @@ PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "mistral_codestral": _create_mistral_codestral,
     "opencode": _create_opencode,
     "opencode_go": _create_opencode_go,
+    "vercel": _create_vercel,
     "wafer": _create_wafer,
     "kimi": _create_kimi,
     "minimax": _create_minimax,

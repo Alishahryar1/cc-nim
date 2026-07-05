@@ -19,6 +19,7 @@ from providers.nvidia_nim import NvidiaNimProvider
 from providers.ollama import OllamaProvider
 from providers.open_router import OpenRouterProvider
 from providers.opencode import OpenCodeProvider
+from providers.vercel import VercelProvider
 from providers.wafer import WaferProvider
 from providers.zai import ZaiProvider
 from smoke.features import FEATURE_INVENTORY, README_FEATURES, feature_ids
@@ -92,6 +93,7 @@ def test_provider_and_platform_registries_include_advertised_builtins() -> None:
         "wafer": WaferProvider,
         "opencode": OpenCodeProvider,
         "opencode_go": OpenCodeProvider,
+        "vercel": VercelProvider,
         "zai": ZaiProvider,
         "gemini": GeminiProvider,
         "groq": GroqProvider,

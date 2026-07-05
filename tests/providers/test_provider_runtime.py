@@ -29,6 +29,7 @@ from providers.ollama import OllamaProvider
 from providers.open_router import OpenRouterProvider
 from providers.opencode import OpenCodeProvider
 from providers.runtime import ProviderRuntime, build_provider_config, create_provider
+from providers.vercel import VERCEL_AI_GATEWAY_DEFAULT_BASE, VercelProvider
 from providers.wafer import WaferProvider
 from providers.zai import ZaiProvider
 
@@ -47,6 +48,7 @@ def _make_settings(**overrides):
     mock.wafer_api_key = "test_wafer_key"
     mock.minimax_api_key = "test_minimax_key"
     mock.opencode_api_key = "test_opencode_key"
+    mock.vercel_ai_gateway_api_key = "test_vercel_key"
     mock.zai_api_key = "test_zai_key"
     mock.lm_studio_base_url = "http://localhost:1234/v1"
     mock.llamacpp_base_url = "http://localhost:8080/v1"
@@ -63,6 +65,7 @@ def _make_settings(**overrides):
     mock.minimax_proxy = ""
     mock.opencode_proxy = ""
     mock.opencode_go_proxy = ""
+    mock.vercel_ai_gateway_proxy = ""
     mock.zai_proxy = ""
     mock.fireworks_proxy = ""
     mock.fireworks_api_key = "test_fireworks_key"
@@ -200,6 +203,29 @@ def test_build_provider_config_opencode_go_uses_opencode_api_key() -> None:
     assert config.api_key == "shared-opencode-token"
 
 
+def test_vercel_descriptor_uses_openai_chat_gateway() -> None:
+    descriptor = PROVIDER_CATALOG["vercel"]
+
+    assert descriptor.transport_type == "openai_chat"
+    assert descriptor.default_base_url == VERCEL_AI_GATEWAY_DEFAULT_BASE
+    assert descriptor.credential_env == "AI_GATEWAY_API_KEY"
+    assert descriptor.proxy_attr == "vercel_ai_gateway_proxy"
+    assert "thinking" in descriptor.capabilities
+
+
+def test_build_provider_config_vercel_uses_gateway_key_and_proxy() -> None:
+    descriptor = PROVIDER_CATALOG["vercel"]
+    settings = _make_settings(
+        vercel_ai_gateway_api_key="vercel-token",
+        vercel_ai_gateway_proxy="http://proxy.test:8080",
+    )
+
+    config = build_provider_config(descriptor, settings)
+
+    assert config.api_key == "vercel-token"
+    assert config.proxy == "http://proxy.test:8080"
+
+
 def test_create_provider_uses_native_openrouter_by_default():
     with patch("httpx.AsyncClient"):
         provider = create_provider("open_router", _make_settings())
@@ -215,6 +241,7 @@ def test_create_provider_instantiates_each_builtin():
         fireworks_api_key="test_fireworks_key",
         cloudflare_api_token="test_cloudflare_token",
         cloudflare_account_id="test_cloudflare_account",
+        vercel_ai_gateway_api_key="test_vercel_key",
         kimi_api_key="test_kimi_key",
     )
     cases = {
@@ -232,6 +259,7 @@ def test_create_provider_instantiates_each_builtin():
         "wafer": WaferProvider,
         "opencode": OpenCodeProvider,
         "opencode_go": OpenCodeProvider,
+        "vercel": VercelProvider,
         "zai": ZaiProvider,
         "gemini": GeminiProvider,
         "groq": GroqProvider,

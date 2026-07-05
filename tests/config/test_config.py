@@ -306,6 +306,16 @@ class TestSettings:
         assert settings.cloudflare_account_id == "cf-account"
         assert settings.cloudflare_proxy == "http://proxy.test:8080"
 
+    def test_vercel_settings_from_env(self, monkeypatch):
+        """Vercel AI Gateway key and proxy env vars load into settings."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("AI_GATEWAY_API_KEY", "vercel-key")
+        monkeypatch.setenv("VERCEL_AI_GATEWAY_PROXY", "http://proxy.test:8080")
+        settings = Settings()
+        assert settings.vercel_ai_gateway_api_key == "vercel-key"
+        assert settings.vercel_ai_gateway_proxy == "http://proxy.test:8080"
+
     def test_per_model_thinking_from_env(self, monkeypatch):
         """Per-model thinking env vars are loaded into settings."""
         from config.settings import Settings
@@ -883,6 +893,7 @@ class TestPerModelMapping:
         assert (
             parse_provider_type("cloudflare/@cf/moonshotai/kimi-k2.6") == "cloudflare"
         )
+        assert parse_provider_type("vercel/openai/gpt-5.5") == "vercel"
         assert parse_provider_type("gemini/models/gemini-3.1-flash-lite") == "gemini"
         assert parse_provider_type("groq/llama-3.3-70b-versatile") == "groq"
         assert parse_provider_type("cerebras/llama3.1-8b") == "cerebras"
@@ -907,6 +918,7 @@ class TestPerModelMapping:
             parse_model_name("cloudflare/@cf/moonshotai/kimi-k2.6")
             == "@cf/moonshotai/kimi-k2.6"
         )
+        assert parse_model_name("vercel/openai/gpt-5.5") == "openai/gpt-5.5"
         assert (
             parse_model_name("gemini/models/gemini-3.1-flash-lite")
             == "models/gemini-3.1-flash-lite"

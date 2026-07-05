@@ -29,6 +29,7 @@ LLAMACPP_DEFAULT_BASE = "http://localhost:8080/v1"
 OLLAMA_DEFAULT_BASE = "http://localhost:11434"
 OPENCODE_DEFAULT_BASE = "https://opencode.ai/zen/v1"
 OPENCODE_GO_DEFAULT_BASE = "https://opencode.ai/zen/go/v1"
+VERCEL_AI_GATEWAY_DEFAULT_BASE = "https://ai-gateway.vercel.sh/v1"
 # Z.ai Anthropic-compatible Messages API (not OpenAI Coding Plan chat completions).
 ZAI_DEFAULT_BASE = "https://api.z.ai/api/anthropic/v1"
 # Google AI Studio Gemini API OpenAI-compat layer (not Vertex AI).
@@ -140,6 +141,17 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="opencode_api_key",
         default_base_url=OPENCODE_GO_DEFAULT_BASE,
         proxy_attr="opencode_go_proxy",
+        capabilities=("chat", "streaming", "tools", "thinking", "rate_limit"),
+    ),
+    "vercel": ProviderDescriptor(
+        provider_id="vercel",
+        display_name="Vercel AI Gateway",
+        transport_type="openai_chat",
+        credential_env="AI_GATEWAY_API_KEY",
+        credential_url="https://vercel.com/docs/ai-gateway",
+        credential_attr="vercel_ai_gateway_api_key",
+        default_base_url=VERCEL_AI_GATEWAY_DEFAULT_BASE,
+        proxy_attr="vercel_ai_gateway_proxy",
         capabilities=("chat", "streaming", "tools", "thinking", "rate_limit"),
     ),
     "wafer": ProviderDescriptor(
@@ -301,10 +313,10 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
 }
 
 # Key order:
-# NVIDIA NIM first (README default), DeepSeek fourth, Wafer ninth / Kimi tenth;
-# MiniMax follows the native Anthropic remotes; then cerebras / groq / fireworks /
-# Cloudflare overlap; remainder and locals last per project plan (
-# github.com/cheahjs/free-llm-api-resources Free Providers TOC as rough guide beyond fixed slots).
+# NVIDIA NIM first (README default), DeepSeek fourth, OpenCode gateways adjacent,
+# Vercel follows gateway-style remotes, then native Anthropic remotes and locals
+# per project plan (github.com/cheahjs/free-llm-api-resources Free Providers TOC
+# as rough guide beyond fixed slots).
 # ``SUPPORTED_PROVIDER_IDS`` inherits this insertion order for UI and error-message listing.
 SUPPORTED_PROVIDER_IDS: tuple[str, ...] = tuple(PROVIDER_CATALOG.keys())
 

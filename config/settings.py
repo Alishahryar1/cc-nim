@@ -44,6 +44,11 @@ class Settings(BaseSettings):
     # Same key from opencode.ai/auth; zen uses prefix ``opencode/``, Go uses ``opencode_go/``.
     opencode_api_key: str = Field(default="", validation_alias="OPENCODE_API_KEY")
 
+    # ==================== Vercel AI Gateway ====================
+    vercel_ai_gateway_api_key: str = Field(
+        default="", validation_alias="AI_GATEWAY_API_KEY"
+    )
+
     # ==================== Z.ai Config ====================
     zai_api_key: str = Field(default="", validation_alias="ZAI_API_KEY")
 
@@ -123,6 +128,9 @@ class Settings(BaseSettings):
     minimax_proxy: str = Field(default="", validation_alias="MINIMAX_PROXY")
     opencode_proxy: str = Field(default="", validation_alias="OPENCODE_PROXY")
     opencode_go_proxy: str = Field(default="", validation_alias="OPENCODE_GO_PROXY")
+    vercel_ai_gateway_proxy: str = Field(
+        default="", validation_alias="VERCEL_AI_GATEWAY_PROXY"
+    )
     zai_proxy: str = Field(default="", validation_alias="ZAI_PROXY")
     fireworks_proxy: str = Field(default="", validation_alias="FIREWORKS_PROXY")
     cloudflare_proxy: str = Field(default="", validation_alias="CLOUDFLARE_PROXY")

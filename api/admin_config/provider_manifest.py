@@ -30,6 +30,13 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "gateway (opencode.ai/zen/go/v1); single key from opencode.ai/auth."
         ),
     },
+    "AI_GATEWAY_API_KEY": {
+        "label": "Vercel AI Gateway API Key",
+        "description": (
+            "Vercel AI Gateway API key for the OpenAI-compatible endpoint at "
+            "ai-gateway.vercel.sh/v1."
+        ),
+    },
     "ZAI_API_KEY": {
         "label": "Z.ai API Key",
         "description": "Z.ai Coding Plan API key.",
