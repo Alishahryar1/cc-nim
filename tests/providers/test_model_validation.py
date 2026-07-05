@@ -14,7 +14,7 @@ from config.settings import Settings
 from providers.base import BaseProvider, ProviderConfig
 from providers.deepseek import DeepSeekProvider
 from providers.exceptions import ModelListResponseError, ServiceUnavailableError
-from providers.lmstudio import LMStudioProvider
+from providers.llamacpp import LlamaCppProvider
 from providers.model_listing import ProviderModelInfo
 from providers.nvidia_nim import NvidiaNimProvider
 from providers.ollama import OllamaProvider
@@ -75,9 +75,9 @@ async def test_nim_lists_openai_compatible_model_ids() -> None:
 
 
 @pytest.mark.asyncio
-async def test_native_openai_compatible_provider_lists_model_ids() -> None:
-    provider = LMStudioProvider(
-        ProviderConfig(api_key="lm-studio", base_url="http://localhost:1234/v1")
+async def test_native_anthropic_messages_provider_lists_model_ids() -> None:
+    provider = LlamaCppProvider(
+        ProviderConfig(api_key="llamacpp", base_url="http://localhost:8080/v1")
     )
     with patch.object(
         provider._client,
@@ -264,8 +264,8 @@ async def test_ollama_lists_native_tag_model_ids() -> None:
 
 @pytest.mark.asyncio
 async def test_model_listing_rejects_malformed_payload() -> None:
-    provider = LMStudioProvider(
-        ProviderConfig(api_key="lm-studio", base_url="http://localhost:1234/v1")
+    provider = LlamaCppProvider(
+        ProviderConfig(api_key="llamacpp", base_url="http://localhost:8080/v1")
     )
     with (
         patch.object(
@@ -281,8 +281,8 @@ async def test_model_listing_rejects_malformed_payload() -> None:
 
 @pytest.mark.asyncio
 async def test_model_listing_raises_http_status_errors() -> None:
-    provider = LMStudioProvider(
-        ProviderConfig(api_key="lm-studio", base_url="http://localhost:1234/v1")
+    provider = LlamaCppProvider(
+        ProviderConfig(api_key="llamacpp", base_url="http://localhost:8080/v1")
     )
     with (
         patch.object(

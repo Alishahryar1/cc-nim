@@ -1,4 +1,4 @@
-"""LM Studio provider - Anthropic-compatible local API."""
+"""LM Studio provider - OpenAI-compatible chat completions API."""
 
 from .client import LMStudioProvider
 
