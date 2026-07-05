@@ -41,6 +41,12 @@ def _make_openai_error(cls, message="test error", status_code=None):
     return cls(message, response=response, body=body)
 
 
+def _make_statusless_openai_api_error(
+    message: str, body: object | None = None
+) -> openai.APIError:
+    return openai.APIError(message, request=Request("POST", "http://test"), body=body)
+
+
 class TestMapError:
     """Tests for map_error function."""
 
@@ -123,6 +129,45 @@ class TestMapError:
         )
         result = map_error(exc)
         assert isinstance(result, APIError)
+
+    def test_statusless_api_error_resource_exhausted_maps_to_overloaded(self):
+        """Status-less SDK APIError overload text maps to user-visible overload."""
+        exc = _make_statusless_openai_api_error(
+            "ResourceExhausted: limit reached while generating response",
+            {"error": {"message": "ResourceExhausted: limit reached", "code": 500}},
+        )
+
+        result = map_error(exc)
+
+        assert isinstance(result, OverloadedError)
+        assert result.status_code == 529
+
+    def test_statusless_api_error_rate_limit_body_blocks_limiter(self):
+        """Status-less SDK APIError with 429 body uses scoped reactive limiting."""
+        exc = _make_statusless_openai_api_error(
+            "stream embedded error",
+            {"error": {"message": "too many requests", "code": 429}},
+        )
+        limiter = MagicMock()
+
+        result = map_error(exc, rate_limiter=limiter)
+
+        assert isinstance(result, RateLimitError)
+        assert result.status_code == 429
+        limiter.set_blocked.assert_called_once_with(60)
+
+    def test_statusless_api_error_without_transient_marker_maps_to_generic_500(self):
+        """Unknown status-less SDK APIError stays generic instead of pretending success."""
+        exc = _make_statusless_openai_api_error(
+            "stream embedded error",
+            {"error": {"message": "unknown provider failure"}},
+        )
+
+        result = map_error(exc)
+
+        assert isinstance(result, APIError)
+        assert result.status_code == 500
+        assert result.message == "Provider API request failed."
 
     def test_unmapped_exception_passthrough(self):
         """Non-openai exceptions are returned as-is."""

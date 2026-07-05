@@ -1,7 +1,5 @@
 """Messaging-specific assertions built on neutral Anthropic stream contracts."""
 
-from __future__ import annotations
-
 from core.anthropic import AnthropicStreamLedger
 from core.anthropic.stream_contracts import (
     assert_anthropic_stream_contract,

@@ -1,7 +1,5 @@
 """Anthropic stream state ledger."""
 
-from __future__ import annotations
-
 import hashlib
 import json
 import uuid

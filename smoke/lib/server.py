@@ -1,7 +1,5 @@
 """Subprocess lifecycle helpers for local smoke servers."""
 
-from __future__ import annotations
-
 import os
 import socket
 import subprocess
@@ -13,7 +11,7 @@ from pathlib import Path
 
 import httpx
 
-from .child_process import cmd_uvicorn_server_app
+from .child_process import cmd_free_claude_code_serve
 from .config import SmokeConfig, redacted
 
 
@@ -49,6 +47,7 @@ def start_server(
             "HOST": "127.0.0.1",
             "PORT": str(port),
             "LOG_FILE": str(log_path),
+            "FCC_OPEN_BROWSER": "0",
             "MESSAGING_PLATFORM": "none",
             "PYTHONUNBUFFERED": "1",
         }
@@ -56,7 +55,7 @@ def start_server(
     if env_overrides:
         env.update(env_overrides)
 
-    cmd = command or cmd_uvicorn_server_app("127.0.0.1", port)
+    cmd = command or cmd_free_claude_code_serve()
 
     with log_path.open("ab") as log_file:
         process = subprocess.Popen(

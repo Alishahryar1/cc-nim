@@ -1,7 +1,5 @@
 """Runtime state for one messaging conversation tree."""
 
-from __future__ import annotations
-
 import asyncio
 from contextlib import asynccontextmanager
 

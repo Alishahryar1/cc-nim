@@ -1,7 +1,5 @@
 """Catalog-derived Admin UI provider fields."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from config.provider_catalog import PROVIDER_CATALOG
@@ -32,6 +30,24 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "gateway (opencode.ai/zen/go/v1); single key from opencode.ai/auth."
         ),
     },
+    "AI_GATEWAY_API_KEY": {
+        "label": "Vercel AI Gateway API Key",
+        "description": (
+            "Vercel AI Gateway API key for the OpenAI-compatible endpoint at "
+            "ai-gateway.vercel.sh/v1."
+        ),
+    },
+    "HUGGINGFACE_API_KEY": {
+        "label": "Hugging Face API Key",
+        "description": (
+            "Hugging Face token with Inference Providers permission; also used "
+            "for local Whisper model downloads when voice notes need gated models."
+        ),
+    },
+    "COHERE_API_KEY": {
+        "label": "Cohere API Key",
+        "description": "Cohere API key for the OpenAI-compatible Compatibility API.",
+    },
     "ZAI_API_KEY": {
         "label": "Z.ai API Key",
         "description": "Z.ai Coding Plan API key.",
@@ -39,6 +55,13 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
     "FIREWORKS_API_KEY": {
         "label": "Fireworks API Key",
         "description": "Fireworks AI inference API key.",
+    },
+    "MINIMAX_API_KEY": {
+        "label": "MiniMax API Key",
+        "description": (
+            "MiniMax API key for the Anthropic-compatible Messages API at "
+            "api.minimax.io/anthropic/v1."
+        ),
     },
     "CLOUDFLARE_API_TOKEN": {
         "label": "Cloudflare API Token",

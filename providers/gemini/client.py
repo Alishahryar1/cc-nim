@@ -1,7 +1,5 @@
 """Google AI Studio Gemini provider (OpenAI-compatible chat completions)."""
 
-from __future__ import annotations
-
 from copy import deepcopy
 from typing import Any
 

@@ -1,7 +1,5 @@
 """Shared Anthropic request serialization helpers."""
 
-from __future__ import annotations
-
 import json
 from typing import Any
 

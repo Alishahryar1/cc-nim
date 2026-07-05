@@ -1,7 +1,5 @@
 """OpenAI Responses SSE event builders."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from ..events import format_response_sse_event

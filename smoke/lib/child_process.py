@@ -6,8 +6,6 @@ already executed under the project environment (``uv run pytest``), so children
 should use the same interpreter.
 """
 
-from __future__ import annotations
-
 import subprocess
 import sys
 from collections.abc import Mapping, Sequence
@@ -20,23 +18,6 @@ def python_exe() -> str:
 
 def cmd_python_c(script: str) -> list[str]:
     return [python_exe(), "-c", script]
-
-
-def cmd_uvicorn_server_app(
-    host: str, port: int, *, graceful_shutdown_s: int = 5
-) -> list[str]:
-    return [
-        python_exe(),
-        "-m",
-        "uvicorn",
-        "server:app",
-        "--host",
-        host,
-        "--port",
-        str(port),
-        "--timeout-graceful-shutdown",
-        str(graceful_shutdown_s),
-    ]
 
 
 def cmd_fcc_init() -> list[str]:

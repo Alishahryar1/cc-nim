@@ -1,7 +1,5 @@
 """Freeze ``PROVIDER_CATALOG`` insertion order used as canonical provider ranking."""
 
-from __future__ import annotations
-
 from config.provider_catalog import PROVIDER_CATALOG, SUPPORTED_PROVIDER_IDS
 
 _EXPECTED_PROVIDER_ORDER: tuple[str, ...] = (
@@ -13,8 +11,12 @@ _EXPECTED_PROVIDER_ORDER: tuple[str, ...] = (
     "mistral_codestral",
     "opencode",
     "opencode_go",
+    "vercel",
+    "huggingface",
+    "cohere",
     "wafer",
     "kimi",
+    "minimax",
     "cerebras",
     "groq",
     "fireworks",
@@ -27,7 +29,7 @@ _EXPECTED_PROVIDER_ORDER: tuple[str, ...] = (
 
 
 def test_provider_catalog_key_order_matches_canonical_plan() -> None:
-    """NIM first; DeepSeek fourth; Wafer ninth / Kimi tenth (see contributor plan)."""
+    """NIM first; OpenCode pair stays adjacent; gateways precede native remotes."""
 
     assert tuple(PROVIDER_CATALOG.keys()) == _EXPECTED_PROVIDER_ORDER
     assert SUPPORTED_PROVIDER_IDS == _EXPECTED_PROVIDER_ORDER

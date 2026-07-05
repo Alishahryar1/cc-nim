@@ -1,7 +1,5 @@
 """Model-list response construction for Claude-compatible clients."""
 
-from __future__ import annotations
-
 from config.model_refs import configured_chat_model_refs
 from config.settings import Settings
 from providers.runtime import ProviderRuntime

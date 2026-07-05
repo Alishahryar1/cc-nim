@@ -5,8 +5,6 @@ Conversation and Claude Code prompts are logged verbatim unless values live unde
 sanitized credential keys (e.g. ``api_key``, ``authorization``).
 """
 
-from __future__ import annotations
-
 import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from typing import Any

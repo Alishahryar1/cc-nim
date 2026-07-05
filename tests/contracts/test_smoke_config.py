@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -35,7 +33,11 @@ def _settings(**overrides):
         "deepseek_api_key": "",
         "kimi_api_key": "",
         "wafer_api_key": "",
+        "minimax_api_key": "",
         "opencode_api_key": "",
+        "vercel_ai_gateway_api_key": "",
+        "huggingface_api_key": "",
+        "cohere_api_key": "",
         "zai_api_key": "",
         "gemini_api_key": "",
         "groq_api_key": "",
@@ -146,6 +148,22 @@ def test_wafer_provider_configuration_uses_api_key(monkeypatch) -> None:
     assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["wafer"]
 
 
+def test_minimax_provider_configuration_uses_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_MINIMAX", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            minimax_api_key="minimax-key",
+        )
+    )
+
+    assert config.has_provider_configuration("minimax")
+    models = config.provider_smoke_models()
+    assert models[0].provider == "minimax"
+    assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["minimax"]
+
+
 def test_cloudflare_provider_configuration_requires_token_and_account(
     monkeypatch,
 ) -> None:
@@ -175,6 +193,54 @@ def test_cloudflare_provider_configuration_missing_account_is_unconfigured() -> 
     )
 
     assert not config.has_provider_configuration("cloudflare")
+
+
+def test_vercel_provider_configuration_uses_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_VERCEL", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            vercel_ai_gateway_api_key="vercel-key",
+        )
+    )
+
+    assert config.has_provider_configuration("vercel")
+    models = config.provider_smoke_models()
+    assert models[0].provider == "vercel"
+    assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["vercel"]
+
+
+def test_huggingface_provider_configuration_uses_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_HUGGINGFACE", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            huggingface_api_key="hf-key",
+        )
+    )
+
+    assert config.has_provider_configuration("huggingface")
+    models = config.provider_smoke_models()
+    assert models[0].provider == "huggingface"
+    assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["huggingface"]
+
+
+def test_cohere_provider_configuration_uses_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_COHERE", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            cohere_api_key="cohere-key",
+        )
+    )
+
+    assert config.has_provider_configuration("cohere")
+    models = config.provider_smoke_models()
+    assert models[0].provider == "cohere"
+    assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["cohere"]
 
 
 def test_provider_smoke_model_override_accepts_model_name_without_prefix(

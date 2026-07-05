@@ -1,7 +1,5 @@
 """Smoke-suite configuration loaded from the real developer environment."""
 
-from __future__ import annotations
-
 import os
 from collections.abc import Mapping
 from dataclasses import dataclass
@@ -52,13 +50,17 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "llamacpp": "llamacpp/local-model",
     "ollama": "ollama/llama3.1",
     "wafer": "wafer/DeepSeek-V4-Pro",
+    "minimax": "minimax/MiniMax-M3",
     "opencode": "opencode/gpt-5.3-codex",
     "opencode_go": "opencode_go/minimax-m2.7",
+    "vercel": "vercel/openai/gpt-5.5",
+    "huggingface": "huggingface/openai/gpt-oss-120b:fastest",
+    "cohere": "cohere/command-a-plus-05-2026",
     "zai": "zai/glm-5.1",
     "gemini": "gemini/models/gemini-3.1-flash-lite",
     "groq": "groq/llama-3.3-70b-versatile",
     "cerebras": "cerebras/llama3.1-8b",
-    "cloudflare": "cloudflare/anthropic/claude-sonnet-4-5",
+    "cloudflare": "cloudflare/@cf/moonshotai/kimi-k2.6",
 }
 
 NVIDIA_NIM_CLI_DEFAULT_MODELS: tuple[str, ...] = (
@@ -245,12 +247,20 @@ class SmokeConfig:
             return bool(self.settings.ollama_base_url.strip())
         if provider == "wafer":
             return bool(self.settings.wafer_api_key.strip())
+        if provider == "minimax":
+            return bool(self.settings.minimax_api_key.strip())
         if provider == "fireworks":
             return bool(self.settings.fireworks_api_key.strip())
         if provider == "opencode":
             return bool(self.settings.opencode_api_key.strip())
         if provider == "opencode_go":
             return bool(self.settings.opencode_api_key.strip())
+        if provider == "vercel":
+            return bool(self.settings.vercel_ai_gateway_api_key.strip())
+        if provider == "huggingface":
+            return bool(self.settings.huggingface_api_key.strip())
+        if provider == "cohere":
+            return bool(self.settings.cohere_api_key.strip())
         if provider == "zai":
             return bool(self.settings.zai_api_key.strip())
         if provider == "gemini":

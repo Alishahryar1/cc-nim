@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import os
 
 from cli.managed.claude import (
@@ -11,6 +9,7 @@ from cli.managed.claude import (
     extract_managed_claude_session_id,
     parse_managed_claude_stdout_line,
 )
+from cli.managed.diagnostics import classify_managed_claude_stderr
 
 
 def _config(**overrides: object) -> ManagedClaudeConfig:
@@ -96,6 +95,27 @@ def test_managed_claude_env_uses_sentinel_when_proxy_auth_blank() -> None:
     )
 
     assert env["ANTHROPIC_AUTH_TOKEN"] == "fcc-no-auth"
+
+
+def test_managed_claude_stderr_classifier_filters_known_benign_notice() -> None:
+    diagnostics = classify_managed_claude_stderr(
+        "claude.ai connectors are disabled in this environment"
+    )
+
+    assert diagnostics.has_benign
+    assert diagnostics.benign_lines == (
+        "claude.ai connectors are disabled in this environment",
+    )
+    assert diagnostics.fatal_text is None
+
+
+def test_managed_claude_stderr_classifier_preserves_unknown_lines() -> None:
+    diagnostics = classify_managed_claude_stderr(
+        "claude.ai connectors are disabled in this environment\nFatal error"
+    )
+
+    assert diagnostics.has_benign
+    assert diagnostics.fatal_text == "Fatal error"
 
 
 def test_managed_claude_extracts_session_ids() -> None:

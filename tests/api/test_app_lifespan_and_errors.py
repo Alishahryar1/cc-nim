@@ -21,7 +21,7 @@ _RUNTIME_EXTRAS = {
     "voice_note_enabled": True,
     "whisper_model": "base",
     "whisper_device": "cpu",
-    "hf_token": "",
+    "huggingface_api_key": "",
     "nvidia_nim_api_key": "",
     "messaging_rate_limit": 1,
     "messaging_rate_window": 1.0,

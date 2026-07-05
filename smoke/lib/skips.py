@@ -1,7 +1,5 @@
 """Skip helpers for expected live-smoke environment gaps."""
 
-from __future__ import annotations
-
 import httpx
 import pytest
 

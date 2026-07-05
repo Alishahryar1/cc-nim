@@ -1,7 +1,5 @@
 """Helpers for presenting local admin URLs."""
 
-from __future__ import annotations
-
 from config.settings import Settings
 
 

@@ -1,7 +1,5 @@
 """Request-body policy for native Anthropic-compatible providers."""
 
-from __future__ import annotations
-
 from collections.abc import Callable, Iterable
 from dataclasses import dataclass
 from typing import Any, Literal

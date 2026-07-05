@@ -1,7 +1,5 @@
 """Admin UI configuration manifest."""
 
-from __future__ import annotations
-
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
@@ -341,15 +339,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         session_sensitive=True,
     ),
     ConfigFieldSpec(
-        "HF_TOKEN",
-        "Hugging Face Token",
-        "voice",
-        "secret",
-        settings_attr="hf_token",
-        secret=True,
-        session_sensitive=True,
-    ),
-    ConfigFieldSpec(
         "FAST_PREFIX_DETECTION",
         "Fast Prefix Detection",
         "runtime",
@@ -544,6 +533,12 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         advanced=True,
     ),
     ConfigFieldSpec(
+        "FCC_SMOKE_MODEL_MINIMAX",
+        "Smoke MiniMax Model",
+        "smoke",
+        advanced=True,
+    ),
+    ConfigFieldSpec(
         "FCC_SMOKE_MODEL_WAFER",
         "Smoke Wafer Model",
         "smoke",
@@ -558,6 +553,24 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
     ConfigFieldSpec(
         "FCC_SMOKE_MODEL_OPENCODE_GO",
         "Smoke OpenCode Go Model",
+        "smoke",
+        advanced=True,
+    ),
+    ConfigFieldSpec(
+        "FCC_SMOKE_MODEL_VERCEL",
+        "Smoke Vercel AI Gateway Model",
+        "smoke",
+        advanced=True,
+    ),
+    ConfigFieldSpec(
+        "FCC_SMOKE_MODEL_HUGGINGFACE",
+        "Smoke Hugging Face Model",
+        "smoke",
+        advanced=True,
+    ),
+    ConfigFieldSpec(
+        "FCC_SMOKE_MODEL_COHERE",
+        "Smoke Cohere Model",
         "smoke",
         advanced=True,
     ),

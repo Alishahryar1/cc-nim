@@ -1,7 +1,5 @@
 """Provider configuration construction from neutral catalog metadata."""
 
-from __future__ import annotations
-
 from config.provider_catalog import ProviderDescriptor
 from config.settings import Settings
 from providers.base import ProviderConfig

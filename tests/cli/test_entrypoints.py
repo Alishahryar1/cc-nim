@@ -286,6 +286,52 @@ def test_serve_migrates_legacy_env_before_loading_settings(tmp_path: Path) -> No
     get_settings.assert_called_once_with()
 
 
+def test_serve_migrates_hf_token_before_loading_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from cli import entrypoints
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    (repo / ".env").write_text("HF_TOKEN=legacy-hf\n", encoding="utf-8")
+    settings = _launcher_settings()
+    get_settings = MagicMock(return_value=settings)
+    get_settings.cache_clear = MagicMock()
+    monkeypatch.chdir(repo)
+
+    with (
+        patch("pathlib.Path.home", return_value=tmp_path),
+        patch.object(entrypoints, "get_settings", get_settings),
+        patch.object(entrypoints, "_run_supervised_server", return_value=False),
+        patch.object(entrypoints, "kill_all_best_effort"),
+        patch.object(entrypoints, "explicit_env_file_huggingface_warning"),
+    ):
+        entrypoints.serve()
+
+    assert (repo / ".env").read_text(encoding="utf-8") == (
+        "HUGGINGFACE_API_KEY=legacy-hf\n"
+    )
+    get_settings.assert_called_once_with()
+
+
+def test_config_env_key_migration_warns_for_explicit_env_file(
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from cli import entrypoints
+
+    explicit = tmp_path / "custom.env"
+    explicit.write_text("HF_TOKEN=legacy-hf\n", encoding="utf-8")
+
+    with patch.dict(entrypoints.os.environ, {"FCC_ENV_FILE": str(explicit)}):
+        migrated = entrypoints._migrate_config_env_keys()
+
+    assert migrated == ()
+    assert "HF_TOKEN" in capsys.readouterr().err
+    assert explicit.read_text(encoding="utf-8") == "HF_TOKEN=legacy-hf\n"
+
+
 def test_serve_handles_keyboard_interrupt_without_traceback() -> None:
     from cli import entrypoints
 

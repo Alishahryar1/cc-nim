@@ -1,7 +1,5 @@
 """Admin config source loading and source precedence."""
 
-from __future__ import annotations
-
 import os
 from io import StringIO
 from pathlib import Path

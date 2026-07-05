@@ -1,7 +1,5 @@
 """OpenAI-compatible chat transport base."""
 
-from __future__ import annotations
-
 from abc import abstractmethod
 from collections.abc import AsyncIterator, Iterator
 from typing import Any

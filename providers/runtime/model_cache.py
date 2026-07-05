@@ -1,7 +1,5 @@
 """Provider model-list metadata cache."""
 
-from __future__ import annotations
-
 from collections.abc import Iterable
 
 from config.provider_catalog import SUPPORTED_PROVIDER_IDS

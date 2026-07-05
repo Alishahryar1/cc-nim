@@ -1,7 +1,5 @@
 """Atomic JSON persistence for messaging session state."""
 
-from __future__ import annotations
-
 import contextlib
 import json
 import os

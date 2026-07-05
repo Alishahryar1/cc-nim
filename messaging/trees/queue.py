@@ -1,7 +1,5 @@
 """FIFO queue state for one messaging conversation tree."""
 
-from __future__ import annotations
-
 import asyncio
 from collections import deque
 

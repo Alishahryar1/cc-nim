@@ -69,8 +69,8 @@ async def create_message(
     handler: MessagesHandler = Depends(get_messages_handler),
     _auth=Depends(require_api_key),
 ):
-    """Create a message (always streaming)."""
-    return handler.create(request_data)
+    """Create a message (streaming by default; stream=false gets aggregated JSON)."""
+    return await handler.create(request_data)
 
 
 @router.api_route("/v1/messages", methods=["HEAD", "OPTIONS"])

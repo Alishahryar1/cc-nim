@@ -1,7 +1,5 @@
 """HTTP helpers for native Anthropic Messages transports."""
 
-from __future__ import annotations
-
 from typing import Any
 
 import httpx

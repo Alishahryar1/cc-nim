@@ -57,7 +57,7 @@ Free Claude Code routes Anthropic Messages API traffic from Claude Code (CLI and
 - Drop-in proxy for Claude Code's Anthropic API calls (`/v1/messages`, `/v1/models`).
 - Drop-in proxy for Codex via the OpenAI Responses API (`/v1/responses`).
 - `fcc-claude` and `fcc-codex` launchers that read the current Admin UI port and auth token each time they start.
-- 18 provider backends: NVIDIA NIM, OpenRouter, Google AI Studio (Gemini), DeepSeek, Mistral La Plateforme, Mistral Codestral, OpenCode Zen, OpenCode Go, Wafer, Kimi, Cerebras Inference, Groq, Fireworks AI, Cloudflare, Z.ai, LM Studio, llama.cpp, and Ollama.
+- 22 provider backends: NVIDIA NIM, OpenRouter, Google AI Studio (Gemini), DeepSeek, Mistral La Plateforme, Mistral Codestral, OpenCode Zen, OpenCode Go, Vercel AI Gateway, Hugging Face Inference Providers, Cohere, Wafer, Kimi, MiniMax, Cerebras Inference, Groq, Fireworks AI, Cloudflare, Z.ai, LM Studio, llama.cpp, and Ollama.
 - Per-model routing for Claude Code: send Opus, Sonnet, Haiku, and fallback traffic to different providers.
 - Native Claude Code `/model` picker support through the proxy's `/v1/models` endpoint (see [Model Picker](#model-picker)).
 - Native Codex `/model` picker support when launched through `fcc-codex`, using a generated local model catalog.
@@ -253,7 +253,39 @@ Popular examples:
 
 Browse available models at [opencode.ai](https://opencode.ai).
 
-### 9. [Wafer](https://wafer.ai/)
+### 9. [Vercel AI Gateway](https://vercel.com/docs/ai-gateway)
+
+Create an AI Gateway API key from Vercel, then paste it into `AI_GATEWAY_API_KEY` in the Admin UI.
+
+Set `MODEL` to a Vercel model slug such as `vercel/openai/gpt-5.5`, `vercel/anthropic/claude-sonnet-4.6`, or `vercel/google/gemini-3.1-flash-lite-preview`.
+
+Vercel AI Gateway exposes an OpenAI-compatible endpoint at `https://ai-gateway.vercel.sh/v1`, supports `GET /models`, streaming Chat Completions, tool calls, provider options, and gateway fallbacks. FCC routes it through the shared OpenAI-chat transport and preserves request `extra_body` for Vercel-specific options.
+
+Browse models at [Vercel models and providers](https://vercel.com/docs/ai-gateway/models-and-providers).
+
+### 10. [Hugging Face Inference Providers](https://huggingface.co/docs/inference-providers/)
+
+Create a Hugging Face token with Inference Providers permission at [huggingface.co/settings/tokens](https://huggingface.co/settings/tokens), then paste it into `HUGGINGFACE_API_KEY` in the Admin UI.
+
+Set `MODEL` to a Hugging Face model slug such as `huggingface/openai/gpt-oss-120b:fastest`, `huggingface/Qwen/Qwen3-Coder-480B-A35B-Instruct:fastest`, or `huggingface/deepseek-ai/DeepSeek-R1:fastest`.
+
+Hugging Face routes through the OpenAI-compatible router at `https://router.huggingface.co/v1`. FCC uses the shared OpenAI-chat transport and preserves request `extra_body` for Hugging Face provider options.
+
+If your existing repo `.env` or `~/.fcc/.env` uses the old voice setting `HF_TOKEN`, `fcc-server`/`fcc-init` renames it to `HUGGINGFACE_API_KEY`. Explicit `FCC_ENV_FILE` files are not rewritten automatically; rename the key there manually.
+
+Browse models at [Hugging Face Inference Providers](https://huggingface.co/docs/inference-providers/).
+
+### 11. [Cohere](https://cohere.com/)
+
+Create a Cohere API key at [dashboard.cohere.com/api-keys](https://dashboard.cohere.com/api-keys), then paste it into `COHERE_API_KEY` in the Admin UI.
+
+Set `MODEL` to a Cohere model slug such as `cohere/command-a-plus-05-2026`.
+
+Cohere routes through its OpenAI-compatible Compatibility API at `https://api.cohere.ai/compatibility/v1`. FCC keeps Cohere-specific request shaping in the Cohere provider: unsupported compatibility fields are removed, Cohere-compatible structured-output knobs are accepted through `extra_body`, and Claude thinking maps to Cohere's documented `reasoning_effort` values.
+
+Browse models at [Cohere models](https://docs.cohere.com/docs/models).
+
+### 12. [Wafer](https://wafer.ai/)
 
 Get a key from [wafer.ai](https://wafer.ai). In the Admin UI, paste it into `WAFER_API_KEY`, then set `MODEL` to a Wafer Pass model such as `wafer/DeepSeek-V4-Pro`.
 
@@ -266,7 +298,7 @@ Popular examples:
 
 This provider uses Wafer's Anthropic-compatible endpoint at `https://pass.wafer.ai/v1/messages`.
 
-### 10. [Kimi](https://platform.moonshot.ai/)
+### 13. [Kimi](https://platform.moonshot.ai/)
 
 Get a key at [platform.moonshot.ai/console/api-keys](https://platform.moonshot.ai/console/api-keys).
 
@@ -276,7 +308,15 @@ This provider calls Kimi's **Anthropic-compatible** Messages API (`https://api.m
 
 Browse models at [platform.moonshot.ai](https://platform.moonshot.ai).
 
-### 11. [Cerebras Inference](https://inference-docs.cerebras.ai/quickstart)
+### 14. [MiniMax](https://platform.minimax.io/)
+
+Get a key from [MiniMax](https://platform.minimax.io/user-center/basic-information/interface-key).
+
+In the Admin UI, paste it into `MINIMAX_API_KEY`, then set `MODEL` to a MiniMax slug such as `minimax/MiniMax-M3`.
+
+This provider calls MiniMax's **Anthropic-compatible** Messages API (`https://api.minimax.io/anthropic/v1/messages`). `MiniMax-M3` is the recommended default because MiniMax documents controllable Anthropic thinking for that model; other MiniMax models remain discoverable through the provider model list.
+
+### 15. [Cerebras Inference](https://inference-docs.cerebras.ai/quickstart)
 
 Sign up and create an API key in the [Cerebras Cloud Console](https://cloud.cerebras.ai) (see [Quickstart](https://inference-docs.cerebras.ai/quickstart)).
 
@@ -284,7 +324,7 @@ In the Admin UI, set `CEREBRAS_API_KEY`, then route with `MODEL` such as `cerebr
 
 Cerebras exposes an OpenAI-compatible API at `https://api.cerebras.ai/v1` ([OpenAI compatibility](https://inference-docs.cerebras.ai/resources/openai)). Non-standard request fields should go in `extra_body` when using the OpenAI client; see the same page. For reasoning models and parameters, see [Reasoning](https://inference-docs.cerebras.ai/capabilities/reasoning). This proxy follows other OpenAI-compat adapters for thinking via `reasoning_content` when Claude-style thinking is enabled.
 
-### 12. [Groq](https://console.groq.com/)
+### 16. [Groq](https://console.groq.com/)
 
 Get an API key at [console.groq.com/keys](https://console.groq.com/keys).
 
@@ -296,7 +336,7 @@ Reasoning-heavy models expose extra knobs documented under [Groq reasoning](http
 
 Browse models at [console.groq.com/docs/models](https://console.groq.com/docs/models).
 
-### 13. [Fireworks AI](https://fireworks.ai/)
+### 17. [Fireworks AI](https://fireworks.ai/)
 
 Get an API key at [fireworks.ai/account/api-keys](https://fireworks.ai/account/api-keys).
 
@@ -306,15 +346,15 @@ Fireworks exposes an **Anthropic-compatible** Messages API at `https://api.firew
 
 Browse models at [fireworks.ai/models](https://fireworks.ai/models).
 
-### 14. [Cloudflare](https://developers.cloudflare.com/ai-gateway/)
+### 18. [Cloudflare](https://developers.cloudflare.com/workers-ai/)
 
 Create a Cloudflare API token and copy your account ID from the Cloudflare dashboard.
 
-In the Admin UI, set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, then set `MODEL` to a Cloudflare model slug such as `cloudflare/anthropic/claude-sonnet-4-5`.
+In the Admin UI, set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, then set `MODEL` to a Cloudflare Workers AI model slug such as `cloudflare/@cf/moonshotai/kimi-k2.6`.
 
-This provider calls Cloudflare's account-scoped **Anthropic-compatible** Messages API at `https://api.cloudflare.com/client/v4/accounts/<account_id>/ai/v1/messages`. The first Cloudflare integration targets third-party Anthropic-compatible models; Cloudflare AI Gateway BYOK/provider-gateway routing is not required.
+This provider calls Cloudflare's account-scoped **OpenAI-compatible** Chat Completions API at `https://api.cloudflare.com/client/v4/accounts/<account_id>/ai/v1/chat/completions`. Use literal Workers AI model IDs, including the `@cf/` prefix when the catalog model includes it.
 
-### 15. [Z.ai](https://z.ai/)
+### 19. [Z.ai](https://z.ai/)
 
 Get an API key at [Z.ai/manage-apikey/apikey-list](https://z.ai/manage-apikey/apikey-list).
 
@@ -329,13 +369,13 @@ Popular examples:
 
 Browse models at [Z.ai](https://z.ai).
 
-### 16. [LM Studio](https://lmstudio.ai/)
+### 20. [LM Studio](https://lmstudio.ai/)
 
 Start LM Studio's local server and load a model. In the Admin UI, keep or update `LM_STUDIO_BASE_URL`, then set `MODEL` to the model identifier shown by LM Studio, prefixed with `lmstudio/`.
 
 Prefer models with tool-use support for Claude Code workflows.
 
-### 17. [llama.cpp](https://github.com/ggml-org/llama.cpp)
+### 21. [llama.cpp](https://github.com/ggml-org/llama.cpp)
 
 Start `llama-server` with an Anthropic-compatible `/v1/messages` endpoint and enough context for Claude Code requests.
 
@@ -343,7 +383,7 @@ In the Admin UI, keep or update `LLAMACPP_BASE_URL`, then set `MODEL` to the loc
 
 For local coding models, context size matters. If llama.cpp returns HTTP 400 for normal Claude Code requests, increase `--ctx-size` and verify the model/server build supports the requested features.
 
-### 18. [Ollama](https://ollama.com/)
+### 22. [Ollama](https://ollama.com/)
 
 Run Ollama and pull a model:
 
@@ -356,7 +396,7 @@ In the Admin UI, keep or update `OLLAMA_BASE_URL`, then set `MODEL` to the same 
 
 `OLLAMA_BASE_URL` is the Ollama server root; do not append `/v1`. Example model slugs include `ollama/llama3.1` and `ollama/llama3.1:8b`.
 
-### 18. Mix Providers By Model Tier
+### 23. Mix Providers By Model Tier
 
 Each model tier can use a different provider by setting `MODEL_OPUS`, `MODEL_SONNET`, and `MODEL_HAIKU` in the Admin UI. Leave a tier blank to inherit `MODEL`. These tier overrides apply to Claude model names that contain `opus`, `sonnet`, or `haiku`. Codex uses the Admin `MODEL` default through `fcc-codex` unless a session requests a provider-prefixed slug directly.
 
@@ -553,7 +593,7 @@ Windows PowerShell:
 
 Restart `fcc-server` after reinstalling.
 
-In the **Admin UI**, open **Messaging** and scroll to **Voice**. Turn on **Voice Notes**, choose **Whisper Device** (`cpu`, `cuda`, or `nvidia_nim`), set **Whisper Model**, and enter **Hugging Face Token** when your setup needs it. For **nvidia_nim** transcription, install the `voice` extra and set **NVIDIA NIM API Key** on the **Providers** view. The screenshot above shows the **Voice** block in the same view.
+In the **Admin UI**, open **Messaging** and scroll to **Voice**. Turn on **Voice Notes**, choose **Whisper Device** (`cpu`, `cuda`, or `nvidia_nim`), and set **Whisper Model**. For gated local Whisper models, set **Hugging Face API Key** on the **Providers** view. For **nvidia_nim** transcription, install the `voice` extra and set **NVIDIA NIM API Key** on the **Providers** view. The screenshot above shows the **Voice** block in the same view.
 
 ## How It Works
 
@@ -570,8 +610,8 @@ Important pieces:
 - Responses requests convert to Anthropic Messages internally, then share the same model router, normalizer, and provider adapters.
 - `fcc-codex` registers a custom `fcc` provider that points Codex at the local proxy's `/v1/responses` endpoint.
 - Model routing resolves Claude model names to `MODEL_OPUS`, `MODEL_SONNET`, `MODEL_HAIKU`, or `MODEL`.
-- NIM, DeepSeek, OpenCode Zen, and OpenCode Go use OpenAI chat streaming translated into Anthropic SSE.
-- Wafer, OpenRouter, Kimi, Fireworks AI, Cloudflare, Z.ai, LM Studio, llama.cpp, and Ollama use Anthropic Messages style transports where applicable (with provider-specific quirks and model-list URLs).
+- NIM, Gemini, DeepSeek, Mistral, Codestral, OpenCode Zen, OpenCode Go, Vercel AI Gateway, Hugging Face, Cohere, Cerebras, Groq, and Cloudflare use OpenAI chat streaming translated into Anthropic SSE.
+- Wafer, OpenRouter, Kimi, MiniMax, Fireworks AI, Z.ai, LM Studio, llama.cpp, and Ollama use Anthropic Messages style transports where applicable (with provider-specific quirks and model-list URLs).
 - The proxy normalizes thinking blocks, tool calls, token usage metadata, and provider errors into the shape each client expects.
 - Request optimizations answer trivial Claude Code probes locally to save latency and quota.
 
@@ -581,7 +621,6 @@ Important pieces:
 
 ```text
 free-claude-code/
-├── server.py              # ASGI entry point
 ├── api/                   # FastAPI routes, service layer, routing, optimizations
 ├── core/                  # Shared Anthropic protocol helpers, SSE, OpenAI Responses
 │   └── openai_responses/  # Responses ↔ Anthropic conversion and SSE mapping
@@ -599,7 +638,7 @@ Use this path if you are developing or want to run directly from a checkout:
 ```bash
 git clone https://github.com/Alishahryar1/free-claude-code.git
 cd free-claude-code
-uv run uvicorn server:app --host 0.0.0.0 --port 8082
+uv run fcc-server
 ```
 
 ### 3. Commands

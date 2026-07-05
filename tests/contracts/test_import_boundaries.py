@@ -1,7 +1,5 @@
 """Package import contract tests (static AST; dynamic ``importlib`` loads are not scanned)."""
 
-from __future__ import annotations
-
 import ast
 from pathlib import Path
 
@@ -14,6 +12,35 @@ _API_ALLOWED_PROVIDER_MODULES = frozenset(
         "providers.runtime",
     }
 )
+
+
+def test_python314_native_annotations_do_not_use_legacy_future_import() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    offenders: list[str] = []
+    for path in repo_root.rglob("*.py"):
+        if ".git" in path.parts or ".venv" in path.parts:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if not isinstance(node, ast.ImportFrom):
+                continue
+            if node.module != "__future__":
+                continue
+            if any(alias.name == "annotations" for alias in node.names):
+                offenders.append(path.relative_to(repo_root).as_posix())
+
+    assert sorted(offenders) == []
+
+
+def test_server_startup_is_owned_by_cli_entrypoint() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+
+    assert not (repo_root / "server.py").exists()
+    assert _text_occurrences(repo_root, "server" + ":app") == []
+
+    pyproject_text = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
+    assert 'fcc-server = "cli.entrypoints:serve"' in pyproject_text
+    assert 'free-claude-code = "cli.entrypoints:serve"' in pyproject_text
 
 
 def test_api_and_messaging_do_not_import_provider_common() -> None:

@@ -1,12 +1,10 @@
 """Telegram messaging runtime."""
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import os
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 # Opt-in to future behavior for python-telegram-bot (retry_after as timedelta).
 os.environ["PTB_TIMEDELTA"] = "1"
@@ -25,11 +23,8 @@ from .telegram_inbound import (
 from .telegram_io import TelegramMessenger
 from .voice_flow import VoiceNoteFlow
 
-if TYPE_CHECKING:
-    from telegram import Update
-    from telegram.ext import ContextTypes
-
 try:
+    from telegram import Update
     from telegram.ext import (
         Application,
         CommandHandler,
@@ -57,7 +52,7 @@ class TelegramRuntime:
         voice_note_enabled: bool = True,
         whisper_model: str = "base",
         whisper_device: str = "cpu",
-        hf_token: str = "",
+        huggingface_api_key: str = "",
         nvidia_nim_api_key: str = "",
         messaging_rate_limit: int = 1,
         messaging_rate_window: float = 1.0,
@@ -86,7 +81,7 @@ class TelegramRuntime:
             voice_note_enabled=voice_note_enabled,
             whisper_model=whisper_model,
             whisper_device=whisper_device,
-            hf_token=hf_token,
+            huggingface_api_key=huggingface_api_key,
             nvidia_nim_api_key=nvidia_nim_api_key,
             log_raw_messaging_content=log_raw_messaging_content,
             log_api_error_tracebacks=log_api_error_tracebacks,

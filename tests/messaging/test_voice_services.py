@@ -29,9 +29,9 @@ async def test_pending_voice_registry_complete_removes_entries():
 
 @pytest.mark.asyncio
 async def test_voice_transcription_service_runs_backend():
-    service = VoiceTranscriptionService()
+    service = VoiceTranscriptionService(huggingface_api_key="hf-provider-key")
 
-    with patch("messaging.transcription.transcribe_audio", return_value="hello"):
+    with patch("messaging.transcription.transcribe_audio", return_value="hello") as run:
         text = await service.transcribe(
             Path("audio.ogg"),
             "audio/ogg",
@@ -40,3 +40,4 @@ async def test_voice_transcription_service_runs_backend():
         )
 
     assert text == "hello"
+    assert run.call_args.kwargs["huggingface_api_key"] == "hf-provider-key"

@@ -5,25 +5,34 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from config.nim import NimSettings
-from config.provider_catalog import PROVIDER_CATALOG, ZAI_DEFAULT_BASE
+from config.provider_catalog import (
+    COHERE_DEFAULT_BASE,
+    MINIMAX_DEFAULT_BASE,
+    PROVIDER_CATALOG,
+    ZAI_DEFAULT_BASE,
+)
 from config.provider_ids import SUPPORTED_PROVIDER_IDS
 from providers.cerebras import CerebrasProvider
 from providers.cloudflare import CloudflareProvider
 from providers.codestral import CodestralProvider
+from providers.cohere import CohereProvider
 from providers.deepseek import DeepSeekProvider
 from providers.exceptions import UnknownProviderTypeError
 from providers.fireworks import FireworksProvider
 from providers.gemini import GeminiProvider
 from providers.groq import GroqProvider
+from providers.huggingface import HUGGINGFACE_DEFAULT_BASE, HuggingFaceProvider
 from providers.kimi import KimiProvider
 from providers.llamacpp import LlamaCppProvider
 from providers.lmstudio import LMStudioProvider
+from providers.minimax import MiniMaxProvider
 from providers.mistral import MistralProvider
 from providers.nvidia_nim import NvidiaNimProvider
 from providers.ollama import OllamaProvider
 from providers.open_router import OpenRouterProvider
 from providers.opencode import OpenCodeProvider
 from providers.runtime import ProviderRuntime, build_provider_config, create_provider
+from providers.vercel import VERCEL_AI_GATEWAY_DEFAULT_BASE, VercelProvider
 from providers.wafer import WaferProvider
 from providers.zai import ZaiProvider
 
@@ -40,7 +49,11 @@ def _make_settings(**overrides):
     mock.codestral_api_key = "test_codestral_key"
     mock.deepseek_api_key = "test_deepseek_key"
     mock.wafer_api_key = "test_wafer_key"
+    mock.minimax_api_key = "test_minimax_key"
     mock.opencode_api_key = "test_opencode_key"
+    mock.vercel_ai_gateway_api_key = "test_vercel_key"
+    mock.huggingface_api_key = "test_huggingface_key"
+    mock.cohere_api_key = "test_cohere_key"
     mock.zai_api_key = "test_zai_key"
     mock.lm_studio_base_url = "http://localhost:1234/v1"
     mock.llamacpp_base_url = "http://localhost:8080/v1"
@@ -54,8 +67,12 @@ def _make_settings(**overrides):
     mock.kimi_proxy = ""
     mock.kimi_api_key = "test_kimi_key"
     mock.wafer_proxy = ""
+    mock.minimax_proxy = ""
     mock.opencode_proxy = ""
     mock.opencode_go_proxy = ""
+    mock.vercel_ai_gateway_proxy = ""
+    mock.huggingface_proxy = ""
+    mock.cohere_proxy = ""
     mock.zai_proxy = ""
     mock.fireworks_proxy = ""
     mock.fireworks_api_key = "test_fireworks_key"
@@ -133,13 +150,22 @@ def test_zai_provider_config_ignores_stale_base_url_setting():
     assert config.base_url == ZAI_DEFAULT_BASE
 
 
+def test_minimax_descriptor_uses_native_anthropic_transport():
+    descriptor = PROVIDER_CATALOG["minimax"]
+
+    assert descriptor.transport_type == "anthropic_messages"
+    assert descriptor.default_base_url == MINIMAX_DEFAULT_BASE
+    assert descriptor.credential_env == "MINIMAX_API_KEY"
+    assert "native_anthropic" in descriptor.capabilities
+
+
 def test_cloudflare_descriptor_uses_api_root_not_account_url():
     descriptor = PROVIDER_CATALOG["cloudflare"]
 
-    assert descriptor.transport_type == "anthropic_messages"
+    assert descriptor.transport_type == "openai_chat"
     assert descriptor.default_base_url == "https://api.cloudflare.com/client/v4"
     assert descriptor.base_url_attr is None
-    assert "native_anthropic" in descriptor.capabilities
+    assert "native_anthropic" not in descriptor.capabilities
     assert "thinking" in descriptor.capabilities
 
 
@@ -149,7 +175,7 @@ def test_create_cloudflare_provider_uses_account_scoped_base_url():
         cloudflare_account_id="test-account",
     )
 
-    with patch("httpx.AsyncClient"):
+    with patch("providers.transports.openai_chat.transport.AsyncOpenAI"):
         provider = create_provider("cloudflare", settings)
 
     assert isinstance(provider, CloudflareProvider)
@@ -184,6 +210,75 @@ def test_build_provider_config_opencode_go_uses_opencode_api_key() -> None:
     assert config.api_key == "shared-opencode-token"
 
 
+def test_vercel_descriptor_uses_openai_chat_gateway() -> None:
+    descriptor = PROVIDER_CATALOG["vercel"]
+
+    assert descriptor.transport_type == "openai_chat"
+    assert descriptor.default_base_url == VERCEL_AI_GATEWAY_DEFAULT_BASE
+    assert descriptor.credential_env == "AI_GATEWAY_API_KEY"
+    assert descriptor.proxy_attr == "vercel_ai_gateway_proxy"
+    assert "thinking" in descriptor.capabilities
+
+
+def test_huggingface_descriptor_uses_openai_chat_router() -> None:
+    descriptor = PROVIDER_CATALOG["huggingface"]
+
+    assert descriptor.transport_type == "openai_chat"
+    assert descriptor.default_base_url == HUGGINGFACE_DEFAULT_BASE
+    assert descriptor.credential_env == "HUGGINGFACE_API_KEY"
+    assert descriptor.proxy_attr == "huggingface_proxy"
+    assert "thinking" in descriptor.capabilities
+
+
+def test_cohere_descriptor_uses_openai_chat_compatibility_api() -> None:
+    descriptor = PROVIDER_CATALOG["cohere"]
+
+    assert descriptor.transport_type == "openai_chat"
+    assert descriptor.default_base_url == COHERE_DEFAULT_BASE
+    assert descriptor.credential_env == "COHERE_API_KEY"
+    assert descriptor.proxy_attr == "cohere_proxy"
+    assert "thinking" in descriptor.capabilities
+
+
+def test_build_provider_config_vercel_uses_gateway_key_and_proxy() -> None:
+    descriptor = PROVIDER_CATALOG["vercel"]
+    settings = _make_settings(
+        vercel_ai_gateway_api_key="vercel-token",
+        vercel_ai_gateway_proxy="http://proxy.test:8080",
+    )
+
+    config = build_provider_config(descriptor, settings)
+
+    assert config.api_key == "vercel-token"
+    assert config.proxy == "http://proxy.test:8080"
+
+
+def test_build_provider_config_huggingface_uses_api_key_and_proxy() -> None:
+    descriptor = PROVIDER_CATALOG["huggingface"]
+    settings = _make_settings(
+        huggingface_api_key="hf-token",
+        huggingface_proxy="http://proxy.test:8080",
+    )
+
+    config = build_provider_config(descriptor, settings)
+
+    assert config.api_key == "hf-token"
+    assert config.proxy == "http://proxy.test:8080"
+
+
+def test_build_provider_config_cohere_uses_api_key_and_proxy() -> None:
+    descriptor = PROVIDER_CATALOG["cohere"]
+    settings = _make_settings(
+        cohere_api_key="cohere-token",
+        cohere_proxy="http://proxy.test:8080",
+    )
+
+    config = build_provider_config(descriptor, settings)
+
+    assert config.api_key == "cohere-token"
+    assert config.proxy == "http://proxy.test:8080"
+
+
 def test_create_provider_uses_native_openrouter_by_default():
     with patch("httpx.AsyncClient"):
         provider = create_provider("open_router", _make_settings())
@@ -199,6 +294,9 @@ def test_create_provider_instantiates_each_builtin():
         fireworks_api_key="test_fireworks_key",
         cloudflare_api_token="test_cloudflare_token",
         cloudflare_account_id="test_cloudflare_account",
+        vercel_ai_gateway_api_key="test_vercel_key",
+        huggingface_api_key="test_huggingface_key",
+        cohere_api_key="test_cohere_key",
         kimi_api_key="test_kimi_key",
     )
     cases = {
@@ -207,6 +305,7 @@ def test_create_provider_instantiates_each_builtin():
         "mistral_codestral": CodestralProvider,
         "deepseek": DeepSeekProvider,
         "kimi": KimiProvider,
+        "minimax": MiniMaxProvider,
         "fireworks": FireworksProvider,
         "cloudflare": CloudflareProvider,
         "lmstudio": LMStudioProvider,
@@ -215,6 +314,9 @@ def test_create_provider_instantiates_each_builtin():
         "wafer": WaferProvider,
         "opencode": OpenCodeProvider,
         "opencode_go": OpenCodeProvider,
+        "vercel": VercelProvider,
+        "huggingface": HuggingFaceProvider,
+        "cohere": CohereProvider,
         "zai": ZaiProvider,
         "gemini": GeminiProvider,
         "groq": GroqProvider,

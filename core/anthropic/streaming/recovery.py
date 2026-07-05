@@ -1,7 +1,5 @@
 """Shared retry and recovery policy for Anthropic streams."""
 
-from __future__ import annotations
-
 import json
 import time
 from collections.abc import Callable
@@ -16,6 +14,8 @@ import openai
 from loguru import logger
 
 from core.trace import trace_event
+
+from .transient_errors import retryable_transient_status
 
 EARLY_TRANSPARENT_TOTAL_ATTEMPTS = 5
 EARLY_TRANSPARENT_MAX_RETRIES = EARLY_TRANSPARENT_TOTAL_ATTEMPTS - 1
@@ -231,14 +231,8 @@ def is_retryable_stream_error(exc: BaseException) -> bool:
         return True
     if isinstance(exc, openai.AuthenticationError | openai.BadRequestError):
         return False
-    if isinstance(exc, httpx.HTTPStatusError):
-        status = exc.response.status_code
-        return status == 429 or 500 <= status <= 599
-    if isinstance(exc, openai.RateLimitError):
+    if retryable_transient_status(exc) is not None:
         return True
-    if isinstance(exc, openai.APIStatusError):
-        status = getattr(exc, "status_code", None)
-        return isinstance(status, int) and (status == 429 or 500 <= status <= 599)
     return isinstance(
         exc,
         (

@@ -1,7 +1,5 @@
 """Run queued messaging nodes through a managed CLI session."""
 
-from __future__ import annotations
-
 import asyncio
 from collections.abc import Callable
 

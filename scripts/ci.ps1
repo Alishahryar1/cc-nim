@@ -27,7 +27,7 @@ Requires uv on PATH when running ruff, ty, or pytest checks.
 Local ruff checks repair formatting and autofixable lint before later checks.
 
 Checks (in order):
-  suppressions   Ban # type: ignore / # ty: ignore suppressions
+  suppressions   Ban type ignores and legacy future annotations
   ruff-format    uv run ruff format
   ruff-check     uv run ruff check --fix
   ty             uv run ty check
@@ -125,8 +125,8 @@ function Test-SelectedChecksNeedUv {
 }
 
 function Invoke-SuppressionsCheck {
-    Write-Step "Ban type ignore suppressions"
-    $pattern = '# type: ignore|# ty: ignore'
+    Write-Step "Ban suppressions and legacy annotations"
+    $pattern = '# type: ignore|# ty: ignore|from __future__ import annotations'
     Write-Host "+ Get-ChildItem -Recurse -Filter *.py (excluding .venv, .git) | Select-String '$pattern'"
 
     if (-not $DryRun) {
@@ -140,7 +140,7 @@ function Invoke-SuppressionsCheck {
 
         if ($matches) {
             $matches | ForEach-Object { Write-Host $_.Line }
-            throw "type: ignore / ty: ignore comments are not allowed. Fix the underlying type errors instead."
+            throw "type: ignore / ty: ignore comments and legacy future annotations are not allowed. Fix the underlying type/import issue instead."
         }
     }
 }

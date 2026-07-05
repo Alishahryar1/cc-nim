@@ -5,8 +5,6 @@ FastAPI lifespan cleanup doesn't run to completion. We only track processes we
 spawn so we don't accidentally kill unrelated system processes.
 """
 
-from __future__ import annotations
-
 import atexit
 import os
 import signal

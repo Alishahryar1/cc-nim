@@ -1,7 +1,5 @@
 """Canonical Anthropic-style SSE sequence for provider-side streaming errors."""
 
-from __future__ import annotations
-
 import uuid
 from collections.abc import Iterator
 from typing import Any

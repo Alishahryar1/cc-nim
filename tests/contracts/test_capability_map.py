@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from smoke.capabilities import (
     CAPABILITY_CONTRACTS,
     capability_names,

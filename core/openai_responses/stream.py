@@ -1,7 +1,5 @@
 """Translate Anthropic SSE streams into OpenAI Responses SSE streams."""
 
-from __future__ import annotations
-
 from collections.abc import AsyncIterable, AsyncIterator, Mapping
 from typing import Any
 

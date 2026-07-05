@@ -1,7 +1,5 @@
 """Provider factory wiring and lazy adapter construction."""
 
-from __future__ import annotations
-
 from collections.abc import Callable
 
 from config.provider_catalog import (
@@ -79,6 +77,12 @@ def _create_wafer(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     return WaferProvider(config)
 
 
+def _create_minimax(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+    from providers.minimax import MiniMaxProvider
+
+    return MiniMaxProvider(config)
+
+
 def _create_opencode(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     from providers.opencode import OpenCodeProvider
 
@@ -89,6 +93,24 @@ def _create_opencode_go(config: ProviderConfig, _settings: Settings) -> BaseProv
     from providers.opencode import OpenCodeProvider
 
     return OpenCodeProvider(config, provider_name="OPENCODE_GO")
+
+
+def _create_vercel(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+    from providers.vercel import VercelProvider
+
+    return VercelProvider(config)
+
+
+def _create_huggingface(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+    from providers.huggingface import HuggingFaceProvider
+
+    return HuggingFaceProvider(config)
+
+
+def _create_cohere(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+    from providers.cohere import CohereProvider
+
+    return CohereProvider(config)
 
 
 def _create_zai(config: ProviderConfig, _settings: Settings) -> BaseProvider:
@@ -136,8 +158,12 @@ PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "mistral_codestral": _create_mistral_codestral,
     "opencode": _create_opencode,
     "opencode_go": _create_opencode_go,
+    "vercel": _create_vercel,
+    "huggingface": _create_huggingface,
+    "cohere": _create_cohere,
     "wafer": _create_wafer,
     "kimi": _create_kimi,
+    "minimax": _create_minimax,
     "cerebras": _create_cerebras,
     "groq": _create_groq,
     "fireworks": _create_fireworks,

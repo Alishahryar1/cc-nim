@@ -1,7 +1,5 @@
 """Persistent messaging conversation state store."""
 
-from __future__ import annotations
-
 import threading
 
 from loguru import logger

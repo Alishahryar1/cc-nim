@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 import re
 from pathlib import Path
 
@@ -8,18 +6,22 @@ from providers.base import BaseProvider
 from providers.cerebras import CerebrasProvider
 from providers.cloudflare import CloudflareProvider
 from providers.codestral import CodestralProvider
+from providers.cohere import CohereProvider
 from providers.deepseek import DeepSeekProvider
 from providers.fireworks import FireworksProvider
 from providers.gemini import GeminiProvider
 from providers.groq import GroqProvider
+from providers.huggingface import HuggingFaceProvider
 from providers.kimi import KimiProvider
 from providers.llamacpp import LlamaCppProvider
 from providers.lmstudio import LMStudioProvider
+from providers.minimax import MiniMaxProvider
 from providers.mistral import MistralProvider
 from providers.nvidia_nim import NvidiaNimProvider
 from providers.ollama import OllamaProvider
 from providers.open_router import OpenRouterProvider
 from providers.opencode import OpenCodeProvider
+from providers.vercel import VercelProvider
 from providers.wafer import WaferProvider
 from providers.zai import ZaiProvider
 from smoke.features import FEATURE_INVENTORY, README_FEATURES, feature_ids
@@ -84,6 +86,7 @@ def test_provider_and_platform_registries_include_advertised_builtins() -> None:
         "mistral_codestral": CodestralProvider,
         "deepseek": DeepSeekProvider,
         "kimi": KimiProvider,
+        "minimax": MiniMaxProvider,
         "fireworks": FireworksProvider,
         "cloudflare": CloudflareProvider,
         "lmstudio": LMStudioProvider,
@@ -92,6 +95,9 @@ def test_provider_and_platform_registries_include_advertised_builtins() -> None:
         "wafer": WaferProvider,
         "opencode": OpenCodeProvider,
         "opencode_go": OpenCodeProvider,
+        "vercel": VercelProvider,
+        "huggingface": HuggingFaceProvider,
+        "cohere": CohereProvider,
         "zai": ZaiProvider,
         "gemini": GeminiProvider,
         "groq": GroqProvider,

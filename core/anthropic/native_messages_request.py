@@ -3,8 +3,6 @@
 Provider adapters supply policy via parameters (defaults, OpenRouter post-steps).
 """
 
-from __future__ import annotations
-
 from collections.abc import Sequence
 from typing import Any
 

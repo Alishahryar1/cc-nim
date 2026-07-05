@@ -3,16 +3,10 @@
 Commands depend on MessagingCommandContext instead of the concrete workflow.
 """
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
 from loguru import logger
 
 from .command_context import MessagingCommandContext
-
-if TYPE_CHECKING:
-    from messaging.models import IncomingMessage
+from .models import IncomingMessage
 
 
 async def handle_stop_command(

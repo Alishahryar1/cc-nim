@@ -1,7 +1,5 @@
 """Render and truncate ordered transcript segments."""
 
-from __future__ import annotations
-
 from collections import deque
 from collections.abc import Iterable
 

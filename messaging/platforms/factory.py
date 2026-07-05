@@ -1,7 +1,5 @@
 """Messaging platform component factory."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 from loguru import logger
@@ -20,7 +18,7 @@ class MessagingPlatformOptions:
     voice_note_enabled: bool = True
     whisper_model: str = "base"
     whisper_device: str = "cpu"
-    hf_token: str = ""
+    huggingface_api_key: str = ""
     nvidia_nim_api_key: str = ""
     messaging_rate_limit: int = 1
     messaging_rate_window: float = 1.0
@@ -52,7 +50,7 @@ def create_messaging_components(
             voice_note_enabled=opts.voice_note_enabled,
             whisper_model=opts.whisper_model,
             whisper_device=opts.whisper_device,
-            hf_token=opts.hf_token,
+            huggingface_api_key=opts.huggingface_api_key,
             nvidia_nim_api_key=opts.nvidia_nim_api_key,
             messaging_rate_limit=opts.messaging_rate_limit,
             messaging_rate_window=opts.messaging_rate_window,
@@ -80,7 +78,7 @@ def create_messaging_components(
             voice_note_enabled=opts.voice_note_enabled,
             whisper_model=opts.whisper_model,
             whisper_device=opts.whisper_device,
-            hf_token=opts.hf_token,
+            huggingface_api_key=opts.huggingface_api_key,
             nvidia_nim_api_key=opts.nvidia_nim_api_key,
             messaging_rate_limit=opts.messaging_rate_limit,
             messaging_rate_window=opts.messaging_rate_window,

@@ -1,7 +1,5 @@
 """Task/subagent display state for messaging transcripts."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from loguru import logger
