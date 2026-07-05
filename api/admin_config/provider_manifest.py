@@ -94,6 +94,13 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "[OpenAI compatibility docs](https://console.groq.com/docs/openai)."
         ),
     },
+    "SAMBANOVA_API_KEY": {
+        "label": "SambaNova API Key",
+        "description": (
+            "SambaNova Cloud OpenAI-compatible API key (create at "
+            "[cloud.sambanova.ai/apis](https://cloud.sambanova.ai/apis))."
+        ),
+    },
     "CEREBRAS_API_KEY": {
         "label": "Cerebras API Key",
         "description": (

@@ -60,6 +60,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "zai": "zai/glm-5.1",
     "gemini": "gemini/models/gemini-3.1-flash-lite",
     "groq": "groq/llama-3.3-70b-versatile",
+    "sambanova": "sambanova/Meta-Llama-3.3-70B-Instruct",
     "cerebras": "cerebras/llama3.1-8b",
     "cloudflare": "cloudflare/@cf/moonshotai/kimi-k2.6",
 }
@@ -270,6 +271,8 @@ class SmokeConfig:
             return bool(self.settings.gemini_api_key.strip())
         if provider == "groq":
             return bool(self.settings.groq_api_key.strip())
+        if provider == "sambanova":
+            return bool(self.settings.sambanova_api_key.strip())
         if provider == "cerebras":
             return bool(self.settings.cerebras_api_key.strip())
         if provider == "cloudflare":

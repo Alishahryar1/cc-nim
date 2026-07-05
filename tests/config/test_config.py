@@ -347,6 +347,16 @@ class TestSettings:
         assert settings.github_models_token == "github-token"
         assert settings.github_models_proxy == "http://proxy.test:8080"
 
+    def test_sambanova_settings_from_env(self, monkeypatch):
+        """SambaNova key and proxy env vars load into settings."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("SAMBANOVA_API_KEY", "sambanova-key")
+        monkeypatch.setenv("SAMBANOVA_PROXY", "http://proxy.test:8080")
+        settings = Settings()
+        assert settings.sambanova_api_key == "sambanova-key"
+        assert settings.sambanova_proxy == "http://proxy.test:8080"
+
     def test_legacy_hf_token_env_is_ignored(self, monkeypatch):
         """HF_TOKEN is migrated by startup config migration, not read by Settings."""
         from config.settings import Settings
@@ -754,6 +764,11 @@ class TestPerModelMapping:
                 "github_models/openai/gpt-4.1",
                 None,
             ),
+            (
+                {"MODEL": "sambanova/Meta-Llama-3.3-70B-Instruct"},
+                "sambanova/Meta-Llama-3.3-70B-Instruct",
+                None,
+            ),
             ({"MODEL": "lmstudio/qwen2.5-7b"}, "lmstudio/qwen2.5-7b", None),
             ({"MODEL": "llamacpp/local-model"}, "llamacpp/local-model", None),
             ({"MODEL": "ollama/llama3.1"}, "ollama/llama3.1", None),
@@ -948,6 +963,9 @@ class TestPerModelMapping:
         assert parse_provider_type("github_models/openai/gpt-4.1") == ("github_models")
         assert parse_provider_type("gemini/models/gemini-3.1-flash-lite") == "gemini"
         assert parse_provider_type("groq/llama-3.3-70b-versatile") == "groq"
+        assert (
+            parse_provider_type("sambanova/Meta-Llama-3.3-70B-Instruct") == "sambanova"
+        )
         assert parse_provider_type("cerebras/llama3.1-8b") == "cerebras"
 
     def test_parse_model_name(self):
@@ -986,6 +1004,10 @@ class TestPerModelMapping:
         assert (
             parse_model_name("groq/llama-3.3-70b-versatile")
             == "llama-3.3-70b-versatile"
+        )
+        assert (
+            parse_model_name("sambanova/Meta-Llama-3.3-70B-Instruct")
+            == "Meta-Llama-3.3-70B-Instruct"
         )
         assert parse_model_name("cerebras/llama3.1-8b") == "llama3.1-8b"
 

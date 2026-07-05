@@ -57,7 +57,7 @@ Free Claude Code routes Anthropic Messages API traffic from Claude Code (CLI and
 - Drop-in proxy for Claude Code's Anthropic API calls (`/v1/messages`, `/v1/models`).
 - Drop-in proxy for Codex via the OpenAI Responses API (`/v1/responses`).
 - `fcc-claude` and `fcc-codex` launchers that read the current Admin UI port and auth token each time they start.
-- 23 provider backends: NVIDIA NIM, OpenRouter, Google AI Studio (Gemini), DeepSeek, Mistral La Plateforme, Mistral Codestral, OpenCode Zen, OpenCode Go, Vercel AI Gateway, Hugging Face Inference Providers, Cohere, GitHub Models, Wafer, Kimi, MiniMax, Cerebras Inference, Groq, Fireworks AI, Cloudflare, Z.ai, LM Studio, llama.cpp, and Ollama.
+- 24 provider backends: NVIDIA NIM, OpenRouter, Google AI Studio (Gemini), DeepSeek, Mistral La Plateforme, Mistral Codestral, OpenCode Zen, OpenCode Go, Vercel AI Gateway, Hugging Face Inference Providers, Cohere, GitHub Models, Wafer, Kimi, MiniMax, Cerebras Inference, Groq, SambaNova, Fireworks AI, Cloudflare, Z.ai, LM Studio, llama.cpp, and Ollama.
 - Per-model routing for Claude Code: send Opus, Sonnet, Haiku, and fallback traffic to different providers.
 - Native Claude Code `/model` picker support through the proxy's `/v1/models` endpoint (see [Model Picker](#model-picker)).
 - Native Codex `/model` picker support when launched through `fcc-codex`, using a generated local model catalog.
@@ -346,7 +346,17 @@ Reasoning-heavy models expose extra knobs documented under [Groq reasoning](http
 
 Browse models at [console.groq.com/docs/models](https://console.groq.com/docs/models).
 
-### 18. [Fireworks AI](https://fireworks.ai/)
+### 18. [SambaNova](https://sambanova.ai/)
+
+Create an API key in the [SambaNova Cloud console](https://cloud.sambanova.ai/apis).
+
+In the Admin UI, paste it into `SAMBANOVA_API_KEY`, then set `MODEL` to a SambaNova model slug such as `sambanova/Meta-Llama-3.3-70B-Instruct`.
+
+SambaNova Cloud exposes an OpenAI-compatible Chat Completions API at `https://api.sambanova.ai/v1` ([OpenAI compatibility](https://docs.sambanova.ai/cloud/docs/capabilities/openai-compatibility)). This proxy follows the shared OpenAI-compat adapters, mapping Claude-style thinking to `reasoning_content` deltas where the model supports it.
+
+Browse models at [SambaNova Cloud models](https://docs.sambanova.ai/cloud/docs/get-started/supported-models).
+
+### 19. [Fireworks AI](https://fireworks.ai/)
 
 Get an API key at [fireworks.ai/account/api-keys](https://fireworks.ai/account/api-keys).
 
@@ -356,7 +366,7 @@ Fireworks exposes an **Anthropic-compatible** Messages API at `https://api.firew
 
 Browse models at [fireworks.ai/models](https://fireworks.ai/models).
 
-### 19. [Cloudflare](https://developers.cloudflare.com/workers-ai/)
+### 20. [Cloudflare](https://developers.cloudflare.com/workers-ai/)
 
 Create a Cloudflare API token and copy your account ID from the Cloudflare dashboard.
 
@@ -364,7 +374,7 @@ In the Admin UI, set `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID`, then se
 
 This provider calls Cloudflare's account-scoped **OpenAI-compatible** Chat Completions API at `https://api.cloudflare.com/client/v4/accounts/<account_id>/ai/v1/chat/completions`. Use literal Workers AI model IDs, including the `@cf/` prefix when the catalog model includes it.
 
-### 20. [Z.ai](https://z.ai/)
+### 21. [Z.ai](https://z.ai/)
 
 Get an API key at [Z.ai/manage-apikey/apikey-list](https://z.ai/manage-apikey/apikey-list).
 
@@ -379,13 +389,13 @@ Popular examples:
 
 Browse models at [Z.ai](https://z.ai).
 
-### 21. [LM Studio](https://lmstudio.ai/)
+### 22. [LM Studio](https://lmstudio.ai/)
 
 Start LM Studio's local server and load a model. In the Admin UI, keep or update `LM_STUDIO_BASE_URL`, then set `MODEL` to the model identifier shown by LM Studio, prefixed with `lmstudio/`.
 
 Prefer models with tool-use support for Claude Code workflows.
 
-### 22. [llama.cpp](https://github.com/ggml-org/llama.cpp)
+### 23. [llama.cpp](https://github.com/ggml-org/llama.cpp)
 
 Start `llama-server` with an Anthropic-compatible `/v1/messages` endpoint and enough context for Claude Code requests.
 
@@ -393,7 +403,7 @@ In the Admin UI, keep or update `LLAMACPP_BASE_URL`, then set `MODEL` to the loc
 
 For local coding models, context size matters. If llama.cpp returns HTTP 400 for normal Claude Code requests, increase `--ctx-size` and verify the model/server build supports the requested features.
 
-### 23. [Ollama](https://ollama.com/)
+### 24. [Ollama](https://ollama.com/)
 
 Run Ollama and pull a model:
 
@@ -406,7 +416,7 @@ In the Admin UI, keep or update `OLLAMA_BASE_URL`, then set `MODEL` to the same 
 
 `OLLAMA_BASE_URL` is the Ollama server root; do not append `/v1`. Example model slugs include `ollama/llama3.1` and `ollama/llama3.1:8b`.
 
-### 24. Mix Providers By Model Tier
+### 25. Mix Providers By Model Tier
 
 Each model tier can use a different provider by setting `MODEL_OPUS`, `MODEL_SONNET`, and `MODEL_HAIKU` in the Admin UI. Leave a tier blank to inherit `MODEL`. These tier overrides apply to Claude model names that contain `opus`, `sonnet`, or `haiku`. Codex uses the Admin `MODEL` default through `fcc-codex` unless a session requests a provider-prefixed slug directly.
 
@@ -620,7 +630,7 @@ Important pieces:
 - Responses requests convert to Anthropic Messages internally, then share the same model router, normalizer, and provider adapters.
 - `fcc-codex` registers a custom `fcc` provider that points Codex at the local proxy's `/v1/responses` endpoint.
 - Model routing resolves Claude model names to `MODEL_OPUS`, `MODEL_SONNET`, `MODEL_HAIKU`, or `MODEL`.
-- NIM, Gemini, DeepSeek, Mistral, Codestral, OpenCode Zen, OpenCode Go, Vercel AI Gateway, Hugging Face, Cohere, GitHub Models, Cerebras, Groq, and Cloudflare use OpenAI chat streaming translated into Anthropic SSE.
+- NIM, Gemini, DeepSeek, Mistral, Codestral, OpenCode Zen, OpenCode Go, Vercel AI Gateway, Hugging Face, Cohere, GitHub Models, Cerebras, Groq, SambaNova, and Cloudflare use OpenAI chat streaming translated into Anthropic SSE.
 - Wafer, OpenRouter, Kimi, MiniMax, Fireworks AI, Z.ai, LM Studio, llama.cpp, and Ollama use Anthropic Messages style transports where applicable (with provider-specific quirks and model-list URLs).
 - The proxy normalizes thinking blocks, tool calls, token usage metadata, and provider errors into the shape each client expects.
 - Request optimizations answer trivial Claude Code probes locally to save latency and quota.

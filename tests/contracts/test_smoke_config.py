@@ -42,6 +42,7 @@ def _settings(**overrides):
         "zai_api_key": "",
         "gemini_api_key": "",
         "groq_api_key": "",
+        "sambanova_api_key": "",
         "cerebras_api_key": "",
         "fireworks_api_key": "",
         "cloudflare_api_token": "",
@@ -258,6 +259,22 @@ def test_github_models_provider_configuration_uses_token(monkeypatch) -> None:
     models = config.provider_smoke_models()
     assert models[0].provider == "github_models"
     assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["github_models"]
+
+
+def test_sambanova_provider_configuration_uses_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_SAMBANOVA", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            sambanova_api_key="sambanova-key",
+        )
+    )
+
+    assert config.has_provider_configuration("sambanova")
+    models = config.provider_smoke_models()
+    assert models[0].provider == "sambanova"
+    assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["sambanova"]
 
 
 def test_provider_smoke_model_override_accepts_model_name_without_prefix(

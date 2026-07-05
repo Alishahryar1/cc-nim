@@ -22,6 +22,7 @@ from providers.nvidia_nim import NvidiaNimProvider
 from providers.ollama import OllamaProvider
 from providers.open_router import OpenRouterProvider
 from providers.opencode import OpenCodeProvider
+from providers.sambanova import SambaNovaProvider
 from providers.vercel import VercelProvider
 from providers.wafer import WaferProvider
 from providers.zai import ZaiProvider
@@ -103,6 +104,7 @@ def test_provider_and_platform_registries_include_advertised_builtins() -> None:
         "zai": ZaiProvider,
         "gemini": GeminiProvider,
         "groq": GroqProvider,
+        "sambanova": SambaNovaProvider,
         "cerebras": CerebrasProvider,
     }
     for provider_class in provider_classes.values():

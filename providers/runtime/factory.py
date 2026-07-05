@@ -149,6 +149,12 @@ def _create_groq(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     return GroqProvider(config)
 
 
+def _create_sambanova(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+    from providers.sambanova import SambaNovaProvider
+
+    return SambaNovaProvider(config)
+
+
 def _create_cerebras(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     from providers.cerebras import CerebrasProvider
 
@@ -173,6 +179,7 @@ PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "minimax": _create_minimax,
     "cerebras": _create_cerebras,
     "groq": _create_groq,
+    "sambanova": _create_sambanova,
     "fireworks": _create_fireworks,
     "cloudflare": _create_cloudflare,
     "zai": _create_zai,

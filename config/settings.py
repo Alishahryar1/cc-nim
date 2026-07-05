@@ -58,6 +58,9 @@ class Settings(BaseSettings):
     # ==================== GitHub Models ====================
     github_models_token: str = Field(default="", validation_alias="GITHUB_MODELS_TOKEN")
 
+    # ==================== SambaNova Cloud ====================
+    sambanova_api_key: str = Field(default="", validation_alias="SAMBANOVA_API_KEY")
+
     # ==================== Z.ai Config ====================
     zai_api_key: str = Field(default="", validation_alias="ZAI_API_KEY")
 
@@ -143,6 +146,7 @@ class Settings(BaseSettings):
     huggingface_proxy: str = Field(default="", validation_alias="HUGGINGFACE_PROXY")
     cohere_proxy: str = Field(default="", validation_alias="COHERE_PROXY")
     github_models_proxy: str = Field(default="", validation_alias="GITHUB_MODELS_PROXY")
+    sambanova_proxy: str = Field(default="", validation_alias="SAMBANOVA_PROXY")
     zai_proxy: str = Field(default="", validation_alias="ZAI_PROXY")
     fireworks_proxy: str = Field(default="", validation_alias="FIREWORKS_PROXY")
     cloudflare_proxy: str = Field(default="", validation_alias="CLOUDFLARE_PROXY")

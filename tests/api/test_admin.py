@@ -30,6 +30,7 @@ def _clear_process_config(monkeypatch) -> None:
         "CLOUDFLARE_API_TOKEN",
         "CLOUDFLARE_ACCOUNT_ID",
         "GITHUB_MODELS_TOKEN",
+        "SAMBANOVA_API_KEY",
         "HOST",
         "PORT",
         "LOG_FILE",
@@ -109,6 +110,7 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     assert "GITHUB_MODELS_TOKEN" in keys
     assert "GEMINI_API_KEY" in keys
     assert "GROQ_API_KEY" in keys
+    assert "SAMBANOVA_API_KEY" in keys
     assert "CEREBRAS_API_KEY" in keys
     assert "ZAI_BASE_URL" not in keys
     assert "CLAUDE_WORKSPACE" not in keys
@@ -262,6 +264,31 @@ def test_admin_apply_writes_groq_key_and_masks_preview(monkeypatch, tmp_path):
     text = env_file.read_text(encoding="utf-8")
     assert "MODEL=groq/llama-3.3-70b-versatile" in text
     assert "GROQ_API_KEY=gq-secret" in text
+
+
+def test_admin_apply_writes_sambanova_key_and_masks_preview(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_app(lifespan_enabled=False)
+
+    response = _local_client(app).post(
+        "/admin/api/config/apply",
+        json={
+            "values": {
+                "MODEL": "sambanova/Meta-Llama-3.3-70B-Instruct",
+                "SAMBANOVA_API_KEY": "sn-secret",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["applied"] is True
+    assert "SAMBANOVA_API_KEY=********" in body["env_preview"]
+    env_file = tmp_path / ".fcc" / ".env"
+    text = env_file.read_text(encoding="utf-8")
+    assert "MODEL=sambanova/Meta-Llama-3.3-70B-Instruct" in text
+    assert "SAMBANOVA_API_KEY=sn-secret" in text
 
 
 def test_admin_apply_writes_cerebras_key_and_masks_preview(monkeypatch, tmp_path):
