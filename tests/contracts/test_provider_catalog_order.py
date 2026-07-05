@@ -14,6 +14,7 @@ _EXPECTED_PROVIDER_ORDER: tuple[str, ...] = (
     "vercel",
     "huggingface",
     "cohere",
+    "github_models",
     "wafer",
     "kimi",
     "minimax",

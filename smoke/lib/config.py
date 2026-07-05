@@ -56,6 +56,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "vercel": "vercel/openai/gpt-5.5",
     "huggingface": "huggingface/openai/gpt-oss-120b:fastest",
     "cohere": "cohere/command-a-plus-05-2026",
+    "github_models": "github_models/openai/gpt-4.1",
     "zai": "zai/glm-5.1",
     "gemini": "gemini/models/gemini-3.1-flash-lite",
     "groq": "groq/llama-3.3-70b-versatile",
@@ -261,6 +262,8 @@ class SmokeConfig:
             return bool(self.settings.huggingface_api_key.strip())
         if provider == "cohere":
             return bool(self.settings.cohere_api_key.strip())
+        if provider == "github_models":
+            return bool(self.settings.github_models_token.strip())
         if provider == "zai":
             return bool(self.settings.zai_api_key.strip())
         if provider == "gemini":

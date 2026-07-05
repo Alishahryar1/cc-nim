@@ -337,6 +337,16 @@ class TestSettings:
         assert settings.cohere_api_key == "cohere-key"
         assert settings.cohere_proxy == "http://proxy.test:8080"
 
+    def test_github_models_settings_from_env(self, monkeypatch):
+        """GitHub Models token and proxy env vars load into settings."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("GITHUB_MODELS_TOKEN", "github-token")
+        monkeypatch.setenv("GITHUB_MODELS_PROXY", "http://proxy.test:8080")
+        settings = Settings()
+        assert settings.github_models_token == "github-token"
+        assert settings.github_models_proxy == "http://proxy.test:8080"
+
     def test_legacy_hf_token_env_is_ignored(self, monkeypatch):
         """HF_TOKEN is migrated by startup config migration, not read by Settings."""
         from config.settings import Settings
@@ -739,6 +749,11 @@ class TestPerModelMapping:
                 "cloudflare/@cf/moonshotai/kimi-k2.6",
                 None,
             ),
+            (
+                {"MODEL": "github_models/openai/gpt-4.1"},
+                "github_models/openai/gpt-4.1",
+                None,
+            ),
             ({"MODEL": "lmstudio/qwen2.5-7b"}, "lmstudio/qwen2.5-7b", None),
             ({"MODEL": "llamacpp/local-model"}, "llamacpp/local-model", None),
             ({"MODEL": "ollama/llama3.1"}, "ollama/llama3.1", None),
@@ -930,6 +945,7 @@ class TestPerModelMapping:
             == "huggingface"
         )
         assert parse_provider_type("cohere/command-a-plus-05-2026") == "cohere"
+        assert parse_provider_type("github_models/openai/gpt-4.1") == ("github_models")
         assert parse_provider_type("gemini/models/gemini-3.1-flash-lite") == "gemini"
         assert parse_provider_type("groq/llama-3.3-70b-versatile") == "groq"
         assert parse_provider_type("cerebras/llama3.1-8b") == "cerebras"
@@ -962,6 +978,7 @@ class TestPerModelMapping:
         assert parse_model_name("cohere/command-a-plus-05-2026") == (
             "command-a-plus-05-2026"
         )
+        assert parse_model_name("github_models/openai/gpt-4.1") == "openai/gpt-4.1"
         assert (
             parse_model_name("gemini/models/gemini-3.1-flash-lite")
             == "models/gemini-3.1-flash-lite"

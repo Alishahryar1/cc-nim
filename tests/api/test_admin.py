@@ -29,6 +29,7 @@ def _clear_process_config(monkeypatch) -> None:
         "FCC_ENV_FILE",
         "CLOUDFLARE_API_TOKEN",
         "CLOUDFLARE_ACCOUNT_ID",
+        "GITHUB_MODELS_TOKEN",
         "HOST",
         "PORT",
         "LOG_FILE",
@@ -105,6 +106,7 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     assert "FIREWORKS_API_KEY" in keys
     assert "CLOUDFLARE_API_TOKEN" in keys
     assert "CLOUDFLARE_ACCOUNT_ID" in keys
+    assert "GITHUB_MODELS_TOKEN" in keys
     assert "GEMINI_API_KEY" in keys
     assert "GROQ_API_KEY" in keys
     assert "CEREBRAS_API_KEY" in keys
@@ -363,6 +365,33 @@ def test_admin_apply_writes_cohere_key_and_masks_preview(monkeypatch, tmp_path):
     text = env_file.read_text(encoding="utf-8")
     assert "MODEL=cohere/command-a-plus-05-2026" in text
     assert "COHERE_API_KEY=cohere-secret" in text
+
+
+def test_admin_apply_writes_github_models_token_and_masks_preview(
+    monkeypatch, tmp_path
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_app(lifespan_enabled=False)
+
+    response = _local_client(app).post(
+        "/admin/api/config/apply",
+        json={
+            "values": {
+                "MODEL": "github_models/openai/gpt-4.1",
+                "GITHUB_MODELS_TOKEN": "github-secret",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["applied"] is True
+    assert "GITHUB_MODELS_TOKEN=********" in body["env_preview"]
+    env_file = tmp_path / ".fcc" / ".env"
+    text = env_file.read_text(encoding="utf-8")
+    assert "MODEL=github_models/openai/gpt-4.1" in text
+    assert "GITHUB_MODELS_TOKEN=github-secret" in text
 
 
 def test_admin_apply_preserves_hidden_diagnostics_and_smoke_values(

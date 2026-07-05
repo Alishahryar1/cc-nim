@@ -48,6 +48,13 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
         "label": "Cohere API Key",
         "description": "Cohere API key for the OpenAI-compatible Compatibility API.",
     },
+    "GITHUB_MODELS_TOKEN": {
+        "label": "GitHub Models Token",
+        "description": (
+            "GitHub token with Models access for the OpenAI-compatible inference API "
+            "at models.github.ai."
+        ),
+    },
     "ZAI_API_KEY": {
         "label": "Z.ai API Key",
         "description": "Z.ai Coding Plan API key.",

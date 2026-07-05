@@ -38,6 +38,7 @@ def _settings(**overrides):
         "vercel_ai_gateway_api_key": "",
         "huggingface_api_key": "",
         "cohere_api_key": "",
+        "github_models_token": "",
         "zai_api_key": "",
         "gemini_api_key": "",
         "groq_api_key": "",
@@ -241,6 +242,22 @@ def test_cohere_provider_configuration_uses_api_key(monkeypatch) -> None:
     models = config.provider_smoke_models()
     assert models[0].provider == "cohere"
     assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["cohere"]
+
+
+def test_github_models_provider_configuration_uses_token(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_GITHUB_MODELS", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            github_models_token="github-token",
+        )
+    )
+
+    assert config.has_provider_configuration("github_models")
+    models = config.provider_smoke_models()
+    assert models[0].provider == "github_models"
+    assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["github_models"]
 
 
 def test_provider_smoke_model_override_accepts_model_name_without_prefix(

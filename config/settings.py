@@ -55,6 +55,9 @@ class Settings(BaseSettings):
     # ==================== Cohere Compatibility API ====================
     cohere_api_key: str = Field(default="", validation_alias="COHERE_API_KEY")
 
+    # ==================== GitHub Models ====================
+    github_models_token: str = Field(default="", validation_alias="GITHUB_MODELS_TOKEN")
+
     # ==================== Z.ai Config ====================
     zai_api_key: str = Field(default="", validation_alias="ZAI_API_KEY")
 
@@ -139,6 +142,7 @@ class Settings(BaseSettings):
     )
     huggingface_proxy: str = Field(default="", validation_alias="HUGGINGFACE_PROXY")
     cohere_proxy: str = Field(default="", validation_alias="COHERE_PROXY")
+    github_models_proxy: str = Field(default="", validation_alias="GITHUB_MODELS_PROXY")
     zai_proxy: str = Field(default="", validation_alias="ZAI_PROXY")
     fireworks_proxy: str = Field(default="", validation_alias="FIREWORKS_PROXY")
     cloudflare_proxy: str = Field(default="", validation_alias="CLOUDFLARE_PROXY")

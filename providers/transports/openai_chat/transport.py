@@ -1,7 +1,7 @@
 """OpenAI-compatible chat transport base."""
 
 from abc import abstractmethod
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Mapping
 from typing import Any
 
 import httpx
@@ -30,6 +30,7 @@ class OpenAIChatTransport(BaseProvider):
         provider_name: str,
         base_url: str,
         api_key: str,
+        default_headers: Mapping[str, str] | None = None,
     ):
         super().__init__(config)
         self._provider_name = provider_name
@@ -56,6 +57,7 @@ class OpenAIChatTransport(BaseProvider):
             api_key=self._api_key,
             base_url=self._base_url,
             max_retries=0,
+            default_headers=default_headers,
             timeout=httpx.Timeout(
                 config.http_read_timeout,
                 connect=config.http_connect_timeout,
