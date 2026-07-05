@@ -37,6 +37,17 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "ai-gateway.vercel.sh/v1."
         ),
     },
+    "HUGGINGFACE_API_KEY": {
+        "label": "Hugging Face API Key",
+        "description": (
+            "Hugging Face token with Inference Providers permission; also used "
+            "for local Whisper model downloads when voice notes need gated models."
+        ),
+    },
+    "COHERE_API_KEY": {
+        "label": "Cohere API Key",
+        "description": "Cohere API key for the OpenAI-compatible Compatibility API.",
+    },
     "ZAI_API_KEY": {
         "label": "Z.ai API Key",
         "description": "Z.ai Coding Plan API key.",

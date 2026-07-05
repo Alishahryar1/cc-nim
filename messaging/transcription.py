@@ -28,7 +28,7 @@ _MODEL_MAP: dict[str, str] = {
     "large-v3-turbo": "openai/whisper-large-v3-turbo",
 }
 
-# Lazy-loaded pipelines: (model_id, device, hf_token_fingerprint) -> pipeline
+# Lazy-loaded pipelines: (model_id, device, Hugging Face API key fingerprint) -> pipeline
 _pipeline_cache: dict[tuple[str, str, str], Any] = {}
 
 
@@ -37,12 +37,12 @@ def _resolve_model_id(whisper_model: str) -> str:
     return _MODEL_MAP.get(whisper_model, whisper_model)
 
 
-def _get_pipeline(model_id: str, device: str, hf_token: str = "") -> Any:
+def _get_pipeline(model_id: str, device: str, huggingface_api_key: str = "") -> Any:
     """Lazy-load transformers Whisper pipeline. Raises ImportError if not installed."""
     global _pipeline_cache
     if device not in ("cpu", "cuda"):
         raise ValueError(f"whisper_device must be 'cpu' or 'cuda', got {device!r}")
-    resolved_token = hf_token or ""
+    resolved_token = huggingface_api_key or ""
     cache_key = (model_id, device, resolved_token)
     if cache_key not in _pipeline_cache:
         try:
@@ -89,7 +89,7 @@ def transcribe_audio(
     *,
     whisper_model: str = "base",
     whisper_device: str = "cpu",
-    hf_token: str = "",
+    huggingface_api_key: str = "",
     nvidia_nim_api_key: str = "",
 ) -> str:
     """
@@ -128,7 +128,10 @@ def transcribe_audio(
             file_path, whisper_model, api_key=nvidia_nim_api_key
         )
     return _transcribe_local(
-        file_path, whisper_model, whisper_device, hf_token=hf_token
+        file_path,
+        whisper_model,
+        whisper_device,
+        huggingface_api_key=huggingface_api_key,
     )
 
 
@@ -149,11 +152,13 @@ def _transcribe_local(
     whisper_model: str,
     whisper_device: str,
     *,
-    hf_token: str = "",
+    huggingface_api_key: str = "",
 ) -> str:
     """Transcribe using transformers Whisper pipeline."""
     model_id = _resolve_model_id(whisper_model)
-    pipe = _get_pipeline(model_id, whisper_device, hf_token=hf_token)
+    pipe = _get_pipeline(
+        model_id, whisper_device, huggingface_api_key=huggingface_api_key
+    )
     audio = _load_audio(file_path)
     result = pipe(audio, generate_kwargs={"language": "en", "task": "transcribe"})
     text = result.get("text", "") or ""

@@ -90,7 +90,7 @@ class VoiceNoteFlow:
         voice_note_enabled: bool,
         whisper_model: str,
         whisper_device: str,
-        hf_token: str,
+        huggingface_api_key: str,
         nvidia_nim_api_key: str,
         log_raw_messaging_content: bool,
         log_api_error_tracebacks: bool,
@@ -102,7 +102,7 @@ class VoiceNoteFlow:
         self._log_api_error_tracebacks = log_api_error_tracebacks
         self._pending_voice = PendingVoiceRegistry()
         self._voice_transcription = VoiceTranscriptionService(
-            hf_token=hf_token,
+            huggingface_api_key=huggingface_api_key,
             nvidia_nim_api_key=nvidia_nim_api_key,
         )
 

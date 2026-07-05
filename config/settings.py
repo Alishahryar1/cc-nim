@@ -49,6 +49,12 @@ class Settings(BaseSettings):
         default="", validation_alias="AI_GATEWAY_API_KEY"
     )
 
+    # ==================== Hugging Face Inference Providers ====================
+    huggingface_api_key: str = Field(default="", validation_alias="HUGGINGFACE_API_KEY")
+
+    # ==================== Cohere Compatibility API ====================
+    cohere_api_key: str = Field(default="", validation_alias="COHERE_API_KEY")
+
     # ==================== Z.ai Config ====================
     zai_api_key: str = Field(default="", validation_alias="ZAI_API_KEY")
 
@@ -131,6 +137,8 @@ class Settings(BaseSettings):
     vercel_ai_gateway_proxy: str = Field(
         default="", validation_alias="VERCEL_AI_GATEWAY_PROXY"
     )
+    huggingface_proxy: str = Field(default="", validation_alias="HUGGINGFACE_PROXY")
+    cohere_proxy: str = Field(default="", validation_alias="COHERE_PROXY")
     zai_proxy: str = Field(default="", validation_alias="ZAI_PROXY")
     fireworks_proxy: str = Field(default="", validation_alias="FIREWORKS_PROXY")
     cloudflare_proxy: str = Field(default="", validation_alias="CLOUDFLARE_PROXY")
@@ -240,9 +248,6 @@ class Settings(BaseSettings):
     # Local Whisper: "tiny", "base", "small", "medium", "large-v2", "large-v3", "large-v3-turbo"
     # NVIDIA NIM: "nvidia/parakeet-ctc-1.1b-asr", "openai/whisper-large-v3", etc.
     whisper_model: str = Field(default="base", validation_alias="WHISPER_MODEL")
-    # Hugging Face token for faster model downloads (optional, for local Whisper)
-    hf_token: str = Field(default="", validation_alias="HF_TOKEN")
-
     # ==================== Bot Wrapper Config ====================
     telegram_bot_token: str | None = None
     allowed_telegram_user_id: str | None = None
