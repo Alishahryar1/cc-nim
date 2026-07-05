@@ -327,6 +327,16 @@ class TestSettings:
         assert settings.huggingface_proxy == "http://proxy.test:8080"
         assert not hasattr(settings, "hf_token")
 
+    def test_cohere_settings_from_env(self, monkeypatch):
+        """Cohere key and proxy env vars load into settings."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("COHERE_API_KEY", "cohere-key")
+        monkeypatch.setenv("COHERE_PROXY", "http://proxy.test:8080")
+        settings = Settings()
+        assert settings.cohere_api_key == "cohere-key"
+        assert settings.cohere_proxy == "http://proxy.test:8080"
+
     def test_legacy_hf_token_env_is_ignored(self, monkeypatch):
         """HF_TOKEN is migrated by startup config migration, not read by Settings."""
         from config.settings import Settings
@@ -919,6 +929,7 @@ class TestPerModelMapping:
             parse_provider_type("huggingface/openai/gpt-oss-120b:fastest")
             == "huggingface"
         )
+        assert parse_provider_type("cohere/command-a-plus-05-2026") == "cohere"
         assert parse_provider_type("gemini/models/gemini-3.1-flash-lite") == "gemini"
         assert parse_provider_type("groq/llama-3.3-70b-versatile") == "groq"
         assert parse_provider_type("cerebras/llama3.1-8b") == "cerebras"
@@ -947,6 +958,9 @@ class TestPerModelMapping:
         assert (
             parse_model_name("huggingface/openai/gpt-oss-120b:fastest")
             == "openai/gpt-oss-120b:fastest"
+        )
+        assert parse_model_name("cohere/command-a-plus-05-2026") == (
+            "command-a-plus-05-2026"
         )
         assert (
             parse_model_name("gemini/models/gemini-3.1-flash-lite")

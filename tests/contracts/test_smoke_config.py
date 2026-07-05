@@ -37,6 +37,7 @@ def _settings(**overrides):
         "opencode_api_key": "",
         "vercel_ai_gateway_api_key": "",
         "huggingface_api_key": "",
+        "cohere_api_key": "",
         "zai_api_key": "",
         "gemini_api_key": "",
         "groq_api_key": "",
@@ -224,6 +225,22 @@ def test_huggingface_provider_configuration_uses_api_key(monkeypatch) -> None:
     models = config.provider_smoke_models()
     assert models[0].provider == "huggingface"
     assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["huggingface"]
+
+
+def test_cohere_provider_configuration_uses_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_COHERE", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            cohere_api_key="cohere-key",
+        )
+    )
+
+    assert config.has_provider_configuration("cohere")
+    models = config.provider_smoke_models()
+    assert models[0].provider == "cohere"
+    assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["cohere"]
 
 
 def test_provider_smoke_model_override_accepts_model_name_without_prefix(

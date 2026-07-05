@@ -371,10 +371,11 @@ where supported, and returning Anthropic SSE strings to the service layer.
 Provider-specific inputs that do not apply to other upstreams, such as
 Cloudflare's account ID, stay in that provider's factory/client instead of being
 added to shared `ProviderConfig`.
-Gateway providers such as Vercel AI Gateway and Hugging Face stay thin when
-their documented OpenAI-compatible Chat Completions behavior matches shared
-transport policy; provider-specific gateway options pass through request
-`extra_body`.
+Gateway providers such as Vercel AI Gateway, Hugging Face, and Cohere stay thin
+when their documented OpenAI-compatible Chat Completions behavior matches shared
+transport policy. Provider-specific gateway quirks, such as Cohere's supported
+`reasoning_effort` values and unsupported compatibility fields, stay in that
+provider package.
 
 ### Adding A Provider
 

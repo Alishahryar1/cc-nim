@@ -107,6 +107,12 @@ def _create_huggingface(config: ProviderConfig, _settings: Settings) -> BaseProv
     return HuggingFaceProvider(config)
 
 
+def _create_cohere(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+    from providers.cohere import CohereProvider
+
+    return CohereProvider(config)
+
+
 def _create_zai(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     from providers.zai import ZaiProvider
 
@@ -154,6 +160,7 @@ PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "opencode_go": _create_opencode_go,
     "vercel": _create_vercel,
     "huggingface": _create_huggingface,
+    "cohere": _create_cohere,
     "wafer": _create_wafer,
     "kimi": _create_kimi,
     "minimax": _create_minimax,

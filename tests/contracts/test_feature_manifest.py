@@ -6,6 +6,7 @@ from providers.base import BaseProvider
 from providers.cerebras import CerebrasProvider
 from providers.cloudflare import CloudflareProvider
 from providers.codestral import CodestralProvider
+from providers.cohere import CohereProvider
 from providers.deepseek import DeepSeekProvider
 from providers.fireworks import FireworksProvider
 from providers.gemini import GeminiProvider
@@ -96,6 +97,7 @@ def test_provider_and_platform_registries_include_advertised_builtins() -> None:
         "opencode_go": OpenCodeProvider,
         "vercel": VercelProvider,
         "huggingface": HuggingFaceProvider,
+        "cohere": CohereProvider,
         "zai": ZaiProvider,
         "gemini": GeminiProvider,
         "groq": GroqProvider,

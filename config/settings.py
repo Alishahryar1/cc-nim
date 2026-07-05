@@ -52,6 +52,9 @@ class Settings(BaseSettings):
     # ==================== Hugging Face Inference Providers ====================
     huggingface_api_key: str = Field(default="", validation_alias="HUGGINGFACE_API_KEY")
 
+    # ==================== Cohere Compatibility API ====================
+    cohere_api_key: str = Field(default="", validation_alias="COHERE_API_KEY")
+
     # ==================== Z.ai Config ====================
     zai_api_key: str = Field(default="", validation_alias="ZAI_API_KEY")
 
@@ -135,6 +138,7 @@ class Settings(BaseSettings):
         default="", validation_alias="VERCEL_AI_GATEWAY_PROXY"
     )
     huggingface_proxy: str = Field(default="", validation_alias="HUGGINGFACE_PROXY")
+    cohere_proxy: str = Field(default="", validation_alias="COHERE_PROXY")
     zai_proxy: str = Field(default="", validation_alias="ZAI_PROXY")
     fireworks_proxy: str = Field(default="", validation_alias="FIREWORKS_PROXY")
     cloudflare_proxy: str = Field(default="", validation_alias="CLOUDFLARE_PROXY")

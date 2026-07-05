@@ -6,6 +6,7 @@ import pytest
 
 from config.nim import NimSettings
 from config.provider_catalog import (
+    COHERE_DEFAULT_BASE,
     MINIMAX_DEFAULT_BASE,
     PROVIDER_CATALOG,
     ZAI_DEFAULT_BASE,
@@ -14,6 +15,7 @@ from config.provider_ids import SUPPORTED_PROVIDER_IDS
 from providers.cerebras import CerebrasProvider
 from providers.cloudflare import CloudflareProvider
 from providers.codestral import CodestralProvider
+from providers.cohere import CohereProvider
 from providers.deepseek import DeepSeekProvider
 from providers.exceptions import UnknownProviderTypeError
 from providers.fireworks import FireworksProvider
@@ -51,6 +53,7 @@ def _make_settings(**overrides):
     mock.opencode_api_key = "test_opencode_key"
     mock.vercel_ai_gateway_api_key = "test_vercel_key"
     mock.huggingface_api_key = "test_huggingface_key"
+    mock.cohere_api_key = "test_cohere_key"
     mock.zai_api_key = "test_zai_key"
     mock.lm_studio_base_url = "http://localhost:1234/v1"
     mock.llamacpp_base_url = "http://localhost:8080/v1"
@@ -69,6 +72,7 @@ def _make_settings(**overrides):
     mock.opencode_go_proxy = ""
     mock.vercel_ai_gateway_proxy = ""
     mock.huggingface_proxy = ""
+    mock.cohere_proxy = ""
     mock.zai_proxy = ""
     mock.fireworks_proxy = ""
     mock.fireworks_api_key = "test_fireworks_key"
@@ -226,6 +230,16 @@ def test_huggingface_descriptor_uses_openai_chat_router() -> None:
     assert "thinking" in descriptor.capabilities
 
 
+def test_cohere_descriptor_uses_openai_chat_compatibility_api() -> None:
+    descriptor = PROVIDER_CATALOG["cohere"]
+
+    assert descriptor.transport_type == "openai_chat"
+    assert descriptor.default_base_url == COHERE_DEFAULT_BASE
+    assert descriptor.credential_env == "COHERE_API_KEY"
+    assert descriptor.proxy_attr == "cohere_proxy"
+    assert "thinking" in descriptor.capabilities
+
+
 def test_build_provider_config_vercel_uses_gateway_key_and_proxy() -> None:
     descriptor = PROVIDER_CATALOG["vercel"]
     settings = _make_settings(
@@ -252,6 +266,19 @@ def test_build_provider_config_huggingface_uses_api_key_and_proxy() -> None:
     assert config.proxy == "http://proxy.test:8080"
 
 
+def test_build_provider_config_cohere_uses_api_key_and_proxy() -> None:
+    descriptor = PROVIDER_CATALOG["cohere"]
+    settings = _make_settings(
+        cohere_api_key="cohere-token",
+        cohere_proxy="http://proxy.test:8080",
+    )
+
+    config = build_provider_config(descriptor, settings)
+
+    assert config.api_key == "cohere-token"
+    assert config.proxy == "http://proxy.test:8080"
+
+
 def test_create_provider_uses_native_openrouter_by_default():
     with patch("httpx.AsyncClient"):
         provider = create_provider("open_router", _make_settings())
@@ -269,6 +296,7 @@ def test_create_provider_instantiates_each_builtin():
         cloudflare_account_id="test_cloudflare_account",
         vercel_ai_gateway_api_key="test_vercel_key",
         huggingface_api_key="test_huggingface_key",
+        cohere_api_key="test_cohere_key",
         kimi_api_key="test_kimi_key",
     )
     cases = {
@@ -288,6 +316,7 @@ def test_create_provider_instantiates_each_builtin():
         "opencode_go": OpenCodeProvider,
         "vercel": VercelProvider,
         "huggingface": HuggingFaceProvider,
+        "cohere": CohereProvider,
         "zai": ZaiProvider,
         "gemini": GeminiProvider,
         "groq": GroqProvider,

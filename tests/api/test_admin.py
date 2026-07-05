@@ -340,6 +340,31 @@ def test_admin_apply_writes_huggingface_key_and_masks_preview(monkeypatch, tmp_p
     assert "HUGGINGFACE_API_KEY=hf-secret" in text
 
 
+def test_admin_apply_writes_cohere_key_and_masks_preview(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_app(lifespan_enabled=False)
+
+    response = _local_client(app).post(
+        "/admin/api/config/apply",
+        json={
+            "values": {
+                "MODEL": "cohere/command-a-plus-05-2026",
+                "COHERE_API_KEY": "cohere-secret",
+            }
+        },
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["applied"] is True
+    assert "COHERE_API_KEY=********" in body["env_preview"]
+    env_file = tmp_path / ".fcc" / ".env"
+    text = env_file.read_text(encoding="utf-8")
+    assert "MODEL=cohere/command-a-plus-05-2026" in text
+    assert "COHERE_API_KEY=cohere-secret" in text
+
+
 def test_admin_apply_preserves_hidden_diagnostics_and_smoke_values(
     monkeypatch, tmp_path
 ):
