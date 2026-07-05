@@ -280,6 +280,14 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         session_sensitive=True,
     ),
     ConfigFieldSpec(
+        "TELEGRAM_PROXY_URL",
+        "Telegram Proxy URL",
+        "messaging",
+        settings_attr="telegram_proxy_url",
+        session_sensitive=True,
+        description="Optional Telegram-only proxy, e.g. socks5://127.0.0.1:1080.",
+    ),
+    ConfigFieldSpec(
         "DISCORD_BOT_TOKEN",
         "Discord Bot Token",
         "messaging",

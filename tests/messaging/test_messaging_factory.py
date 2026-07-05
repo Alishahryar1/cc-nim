@@ -28,6 +28,7 @@ class TestCreateMessagingComponents:
                 MessagingPlatformOptions(
                     telegram_bot_token="test_token",
                     allowed_telegram_user_id="12345",
+                    telegram_proxy_url="socks5://127.0.0.1:1080",
                     voice_note_enabled=False,
                     whisper_model="large-v3",
                     whisper_device="cuda",
@@ -41,6 +42,7 @@ class TestCreateMessagingComponents:
         runtime_cls.assert_called_once_with(
             bot_token="test_token",
             allowed_user_id="12345",
+            telegram_proxy_url="socks5://127.0.0.1:1080",
             voice_note_enabled=False,
             whisper_model="large-v3",
             whisper_device="cuda",

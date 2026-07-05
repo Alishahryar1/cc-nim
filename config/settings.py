@@ -246,6 +246,7 @@ class Settings(BaseSettings):
     # ==================== Bot Wrapper Config ====================
     telegram_bot_token: str | None = None
     allowed_telegram_user_id: str | None = None
+    telegram_proxy_url: str = Field(default="", validation_alias="TELEGRAM_PROXY_URL")
     discord_bot_token: str | None = Field(
         default=None, validation_alias="DISCORD_BOT_TOKEN"
     )

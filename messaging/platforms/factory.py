@@ -13,6 +13,7 @@ class MessagingPlatformOptions:
 
     telegram_bot_token: str | None = None
     allowed_telegram_user_id: str | None = None
+    telegram_proxy_url: str = ""
     discord_bot_token: str | None = None
     allowed_discord_channels: str | None = None
     voice_note_enabled: bool = True
@@ -47,6 +48,7 @@ def create_messaging_components(
         runtime = TelegramRuntime(
             bot_token=bot_token,
             allowed_user_id=opts.allowed_telegram_user_id,
+            telegram_proxy_url=opts.telegram_proxy_url,
             voice_note_enabled=opts.voice_note_enabled,
             whisper_model=opts.whisper_model,
             whisper_device=opts.whisper_device,

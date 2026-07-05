@@ -38,6 +38,48 @@ async def test_telegram_platform_start_success(telegram_platform):
 
 
 @pytest.mark.asyncio
+async def test_telegram_platform_start_with_proxy():
+    with patch("messaging.platforms.telegram.TELEGRAM_AVAILABLE", True):
+        platform = TelegramRuntime(
+            bot_token="test_token",
+            allowed_user_id="12345",
+            telegram_proxy_url="socks5://127.0.0.1:1080",
+        )
+
+    with (
+        patch("telegram.ext.Application.builder") as mock_builder,
+        patch("messaging.platforms.telegram.HTTPXRequest") as request_cls,
+    ):
+        mock_app = MagicMock()
+        mock_app.initialize = AsyncMock()
+        mock_app.start = AsyncMock()
+        mock_app.updater.start_polling = AsyncMock()
+
+        builder = mock_builder.return_value
+        builder.token.return_value = builder
+        builder.request.return_value = builder
+        builder.get_updates_request.return_value = builder
+        builder.build.return_value = mock_app
+        request = MagicMock()
+        update_request = MagicMock()
+        request_cls.side_effect = [request, update_request]
+
+        with patch("messaging.limiter.MessagingRateLimiter.get_instance", AsyncMock()):
+            await platform.start()
+
+        assert request_cls.call_count == 2
+        request_cls.assert_any_call(
+            connection_pool_size=8,
+            connect_timeout=30.0,
+            read_timeout=30.0,
+            proxy="socks5://127.0.0.1:1080",
+        )
+        builder.request.assert_called_once_with(request)
+        builder.get_updates_request.assert_called_once_with(update_request)
+        assert platform._connected is True
+
+
+@pytest.mark.asyncio
 async def test_telegram_platform_send_message_success(telegram_platform):
     mock_bot = AsyncMock()
     mock_msg = MagicMock()

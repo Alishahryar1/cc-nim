@@ -185,6 +185,7 @@ class AppRuntime:
                 MessagingPlatformOptions(
                     telegram_bot_token=self.settings.telegram_bot_token,
                     allowed_telegram_user_id=self.settings.allowed_telegram_user_id,
+                    telegram_proxy_url=self.settings.telegram_proxy_url,
                     discord_bot_token=self.settings.discord_bot_token,
                     allowed_discord_channels=self.settings.allowed_discord_channels,
                     voice_note_enabled=self.settings.voice_note_enabled,

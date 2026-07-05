@@ -49,6 +49,7 @@ class TelegramRuntime:
         bot_token: str | None = None,
         allowed_user_id: str | None = None,
         *,
+        telegram_proxy_url: str = "",
         voice_note_enabled: bool = True,
         whisper_model: str = "base",
         whisper_device: str = "cpu",
@@ -66,6 +67,7 @@ class TelegramRuntime:
 
         self.bot_token = bot_token
         self.allowed_user_id = allowed_user_id
+        self.telegram_proxy_url = telegram_proxy_url.strip()
         if not self.bot_token:
             logger.warning("TELEGRAM_BOT_TOKEN not set")
 
@@ -102,10 +104,30 @@ class TelegramRuntime:
         if not self.bot_token:
             raise ValueError("TELEGRAM_BOT_TOKEN is required")
 
-        request = HTTPXRequest(
-            connection_pool_size=8, connect_timeout=30.0, read_timeout=30.0
-        )
-        builder = Application.builder().token(self.bot_token).request(request)
+        if self.telegram_proxy_url:
+            request = HTTPXRequest(
+                connection_pool_size=8,
+                connect_timeout=30.0,
+                read_timeout=30.0,
+                proxy=self.telegram_proxy_url,
+            )
+            update_request = HTTPXRequest(
+                connection_pool_size=8,
+                connect_timeout=30.0,
+                read_timeout=30.0,
+                proxy=self.telegram_proxy_url,
+            )
+            builder = (
+                Application.builder()
+                .token(self.bot_token)
+                .request(request)
+                .get_updates_request(update_request)
+            )
+        else:
+            request = HTTPXRequest(
+                connection_pool_size=8, connect_timeout=30.0, read_timeout=30.0
+            )
+            builder = Application.builder().token(self.bot_token).request(request)
         self._application = builder.build()
 
         self._application.add_handler(
