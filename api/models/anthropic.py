@@ -3,7 +3,7 @@
 from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
 # =============================================================================
@@ -92,7 +92,7 @@ class SystemContent(_AnthropicBlockBase):
 # Message Types
 # =============================================================================
 class Message(BaseModel):
-    role: Literal["user", "assistant"]
+    role: Literal["user", "assistant", "system"]  # system aceptado, filtrado antes de enviar al provider
     content: (
         str
         | list[
@@ -156,6 +156,14 @@ class MessagesRequest(BaseModel):
     # Beta feature flags sent by Claude Code as a body field; accepted but never forwarded.
     betas: list[str] | None = Field(default=None, exclude=True)
 
+    @model_validator(mode="after")
+    def remove_system_role_messages(self) -> "MessagesRequest":
+        """Elimina mensajes con role=system del historial.
+        Claude Code los inyecta como recordatorios de contexto, pero DeepSeek/OpenAI
+        solo acepta 'user' y 'assistant' en el array messages."""
+        self.messages = [m for m in self.messages if m.role != "system"]
+        return self
+
 
 class TokenCountRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
@@ -172,3 +180,8 @@ class TokenCountRequest(BaseModel):
     output_config: dict[str, Any] | None = None
     mcp_servers: list[dict[str, Any]] | None = None
     betas: list[str] | None = Field(default=None, exclude=True)
+
+    @model_validator(mode="after")
+    def remove_system_role_messages(self) -> "TokenCountRequest":
+        self.messages = [m for m in self.messages if m.role != "system"]
+        return self

@@ -14,6 +14,8 @@ TransportType = Literal["openai_chat", "anthropic_messages"]
 # Default upstream base URLs (also re-exported via :mod:`providers.defaults`)
 NVIDIA_NIM_DEFAULT_BASE = "https://integrate.api.nvidia.com/v1"
 KIMI_DEFAULT_BASE = "https://api.moonshot.ai/v1"
+ZHIPU_DEFAULT_BASE = "https://open.bigmodel.cn/api/paas/v4"
+ZAI_DEFAULT_BASE = "https://api.z.ai/api/anthropic"
 # DeepSeek Anthropic-compatible Messages API (not OpenAI ``/v1`` chat completions).
 DEEPSEEK_ANTHROPIC_DEFAULT_BASE = "https://api.deepseek.com/anthropic"
 # Historical export name: DeepSeek upstream is the native Anthropic path above.
@@ -112,6 +114,25 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         default_base_url=KIMI_DEFAULT_BASE,
         proxy_attr="kimi_proxy",
         capabilities=("chat", "streaming", "tools"),
+    ),
+    "zhipu": ProviderDescriptor(
+        provider_id="zhipu",
+        transport_type="openai_chat",
+        credential_env="ZHIPU_API_KEY",
+        credential_url="https://open.bigmodel.cn/usercenter/apikeys",
+        credential_attr="zhipu_api_key",
+        default_base_url=ZHIPU_DEFAULT_BASE,
+        proxy_attr="zhipu_proxy",
+        capabilities=("chat", "streaming", "tools", "thinking"),
+    ),
+    "z_ai": ProviderDescriptor(
+        provider_id="z_ai",
+        transport_type="anthropic_messages",
+        credential_env="ZAI_API_KEY",
+        credential_url="https://z.ai",
+        credential_attr="zai_api_key",
+        default_base_url=ZAI_DEFAULT_BASE,
+        capabilities=("chat", "streaming", "tools", "thinking", "native_anthropic"),
     ),
 }
 

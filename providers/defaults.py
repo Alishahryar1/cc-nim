@@ -9,6 +9,8 @@ from config.provider_catalog import (
     NVIDIA_NIM_DEFAULT_BASE,
     OLLAMA_DEFAULT_BASE,
     OPENROUTER_DEFAULT_BASE,
+    ZAI_DEFAULT_BASE,
+    ZHIPU_DEFAULT_BASE,
 )
 
 __all__ = (
@@ -20,4 +22,6 @@ __all__ = (
     "NVIDIA_NIM_DEFAULT_BASE",
     "OLLAMA_DEFAULT_BASE",
     "OPENROUTER_DEFAULT_BASE",
+    "ZAI_DEFAULT_BASE",
+    "ZHIPU_DEFAULT_BASE",
 )

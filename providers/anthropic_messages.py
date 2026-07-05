@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import json
 from collections.abc import AsyncIterator, Iterator
 from typing import Any, Literal
 
@@ -373,14 +374,60 @@ class AnthropicMessagesTransport(BaseProvider):
                     _validated_stream_send
                 )
 
+                # Accumulate thinking text and tool_use IDs for the thinking cache.
+                # Chunks are individual SSE lines; buffer them until an empty line
+                # marks the end of a complete event, then extract what we need.
+                _ev_lines: list[str] = []
+                _thinking_parts: list[str] = []
+                _tool_ids: set[str] = set()
+
+                def _proc_buf() -> None:
+                    ev_name = None
+                    ev_data = None
+                    for ln in _ev_lines:
+                        if ln.startswith("event:"):
+                            ev_name = ln[6:].strip()
+                        elif ln.startswith("data:"):
+                            ev_data = ln[5:].lstrip()
+                    _ev_lines.clear()
+                    if not ev_name or not ev_data:
+                        return
+                    try:
+                        p = json.loads(ev_data)
+                    except Exception:
+                        return
+                    if ev_name == "content_block_delta":
+                        d = p.get("delta") or {}
+                        if isinstance(d, dict) and d.get("type") == "thinking_delta":
+                            t = d.get("thinking")
+                            if isinstance(t, str):
+                                _thinking_parts.append(t)
+                    elif ev_name == "content_block_start":
+                        blk = p.get("content_block") or {}
+                        if isinstance(blk, dict) and blk.get("type") == "tool_use":
+                            tid = blk.get("id")
+                            if isinstance(tid, str) and tid:
+                                _tool_ids.add(tid)
+
                 async for chunk in self._iter_stream_chunks(
                     response,
                     state=state,
                     thinking_enabled=thinking_enabled,
                 ):
+                    s = chunk.rstrip("\r\n")
+                    if s:
+                        _ev_lines.append(s)
+                    elif _ev_lines:
+                        _proc_buf()
                     sent_any_event = True
                     emitted_tracker.feed(chunk)
                     yield chunk
+
+                if _ev_lines:
+                    _proc_buf()
+                if _thinking_parts and _tool_ids:
+                    from core.thinking_cache import ThinkingCache
+                    ThinkingCache.store(frozenset(_tool_ids), "".join(_thinking_parts))
 
             except Exception as error:
                 if not isinstance(error, httpx.HTTPStatusError):

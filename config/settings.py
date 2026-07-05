@@ -115,6 +115,12 @@ class Settings(BaseSettings):
     # ==================== Kimi Config ====================
     kimi_api_key: str = Field(default="", validation_alias="KIMI_API_KEY")
 
+    # ==================== Zhipu AI (GLM) Config ====================
+    zhipu_api_key: str = Field(default="", validation_alias="ZHIPU_API_KEY")
+
+    # ==================== Z.ai (GLM-5.2) Config ====================
+    zai_api_key: str = Field(default="", validation_alias="ZAI_API_KEY")
+
     # ==================== Messaging Platform Selection ====================
     # Valid: "telegram" | "discord" | "none"
     messaging_platform: str = Field(
@@ -165,6 +171,7 @@ class Settings(BaseSettings):
     lmstudio_proxy: str = Field(default="", validation_alias="LMSTUDIO_PROXY")
     llamacpp_proxy: str = Field(default="", validation_alias="LLAMACPP_PROXY")
     kimi_proxy: str = Field(default="", validation_alias="KIMI_PROXY")
+    zhipu_proxy: str = Field(default="", validation_alias="ZHIPU_PROXY")
 
     # ==================== Provider Rate Limiting ====================
     provider_rate_limit: int = Field(default=40, validation_alias="PROVIDER_RATE_LIMIT")
@@ -207,6 +214,23 @@ class Settings(BaseSettings):
     enable_title_generation_skip: bool = True
     enable_suggestion_mode_skip: bool = True
     enable_filepath_extraction_mock: bool = True
+
+    # ==================== Agentic Directive ====================
+    # When true, appends a system-prompt suffix instructing the model to complete
+    # multi-step agentic tasks without stopping mid-turn.  Targets models (DeepSeek,
+    # GLM, etc.) that end their turn prematurely when using background commands.
+    inject_agentic_directive: bool = Field(
+        default=True, validation_alias="INJECT_AGENTIC_DIRECTIVE"
+    )
+
+    # ==================== Context Window Trim ====================
+    # Maximum number of messages forwarded to the upstream provider per request.
+    # When a Claude Code session grows beyond this, the oldest messages are dropped
+    # (keeping the most recent turns) to prevent multi-MB request bodies and
+    # upstream token-limit errors.  Set to None to disable trimming.
+    max_request_messages: int | None = Field(
+        default=400, validation_alias="MAX_REQUEST_MESSAGES"
+    )
 
     # ==================== Local web server tools (web_search / web_fetch) ====================
     # Off by default: these tools perform outbound HTTP from the proxy (SSRF risk).

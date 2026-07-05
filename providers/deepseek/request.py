@@ -290,14 +290,29 @@ def _remove_deepseek_thinking_hints(data: dict[str, Any]) -> None:
             data.pop("context_management", None)
 
 
-def _inject_placeholder_thinking_blocks(messages: Any) -> Any:
-    """Inject placeholder thinking blocks for assistant turns that have tool_use but no thinking.
+def _tool_ids_from_content(content: list) -> frozenset[str]:
+    """Extract tool_use IDs from an assistant message content list."""
+    return frozenset(
+        b["id"]
+        for b in content
+        if isinstance(b, dict)
+        and b.get("type") == "tool_use"
+        and isinstance(b.get("id"), str)
+        and b["id"]
+    )
 
-    DeepSeek-v4-pro is an always-on reasoning model: it requires thinking blocks in ALL
-    prior assistant turns that contain tool_use blocks.  If Claude Code 2.1+ didn't store
-    the original thinking blocks (because they lacked a valid Anthropic signature), we
-    inject minimal placeholders so DeepSeek accepts the conversation history.
+
+def _inject_placeholder_thinking_blocks(messages: Any) -> Any:
+    """Inject real or placeholder thinking blocks for assistant turns without thinking.
+
+    DeepSeek-v4-pro requires thinking blocks in ALL prior assistant turns that contain
+    tool_use blocks.  Claude Code 2.1+ strips thinking from conversation history, so we
+    inject them here.  When the thinking cache has the real content (stored server-side
+    during the original stream), we use it; otherwise we fall back to a short placeholder
+    so DeepSeek still accepts the request.
     """
+    from core.thinking_cache import ThinkingCache
+
     if not isinstance(messages, list):
         return messages
 
@@ -322,7 +337,10 @@ def _inject_placeholder_thinking_blocks(messages: Any) -> Any:
         has_tool_use = any(isinstance(b, dict) and b.get("type") == "tool_use" for b in content)
 
         if has_tool_use and not has_thinking:
-            placeholder = {"type": "thinking", "thinking": "(prior reasoning not available)"}
+            tool_ids = _tool_ids_from_content(content)
+            cached = ThinkingCache.lookup(tool_ids) if tool_ids else None
+            thinking_text = cached if cached else "(prior reasoning not available)"
+            placeholder = {"type": "thinking", "thinking": thinking_text}
             new_msg = dict(msg)
             new_msg["content"] = [placeholder] + list(content)
             result.append(new_msg)
@@ -332,7 +350,7 @@ def _inject_placeholder_thinking_blocks(messages: Any) -> Any:
 
     if injected:
         logger.debug(
-            "DEEPSEEK_REQUEST: injected {} placeholder thinking block(s) for prior tool-use turns",
+            "DEEPSEEK_REQUEST: injected {} thinking block(s) for prior tool-use turns",
             injected,
         )
     return result

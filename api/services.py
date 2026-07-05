@@ -18,7 +18,7 @@ from providers.base import BaseProvider
 from providers.exceptions import InvalidRequestError, ProviderError
 
 from .model_router import ModelRouter
-from .models.anthropic import MessagesRequest, TokenCountRequest
+from .models.anthropic import MessagesRequest, SystemContent, TokenCountRequest
 from .models.responses import TokenCountResponse
 from .optimization_handlers import try_optimizations
 from .web_tools.egress import WebFetchEgressPolicy
@@ -34,6 +34,82 @@ ProviderGetter = Callable[[str], BaseProvider]
 
 # Providers that use ``/chat/completions`` + Anthropic-to-OpenAI conversion (not native Messages).
 _OPENAI_CHAT_UPSTREAM_IDS = frozenset({"nvidia_nim"})
+
+_AGENTIC_DIRECTIVE = (
+    "\n\n<agentic_behavior_directive>"
+    "\nYou are an autonomous agent executing multi-step tasks. Rules:"
+    "\n1. NEVER end your turn mid-task. Complete ALL steps before stopping."
+    "\n2. NEVER use run_in_background for tasks whose results you need — run them"
+    " synchronously."
+    "\n3. After each tool result, immediately determine and execute the next step."
+    "\n4. Chain as many tool calls as needed within a single turn."
+    "\n5. Only stop when the entire task is fully complete and verified."
+    "\n</agentic_behavior_directive>"
+)
+
+
+def _message_starts_with_tool_result(m: Any) -> bool:
+    """True if the message's first content block is a tool_result.
+
+    A user message that opens with tool_result blocks is a follow-up to an
+    assistant tool_use turn.  If that assistant turn was trimmed away, the
+    tool_result blocks are orphaned and DeepSeek rejects the request with:
+      "Each tool_result block must have a corresponding tool_use block in the
+       previous message."
+    """
+    content = getattr(m, "content", None)
+    if not isinstance(content, list) or not content:
+        return False
+    first = content[0]
+    return getattr(first, "type", None) == "tool_result"
+
+
+def _truncate_messages(request: MessagesRequest, max_messages: int) -> MessagesRequest:
+    """Trim the conversation history to the most recent ``max_messages`` messages.
+
+    Takes the last ``max_messages`` messages, then advances the start pointer to
+    the first ``user`` message whose first block is NOT a tool_result.  This
+    prevents orphaned tool_result blocks (whose paired assistant tool_use was
+    trimmed) from appearing at position 0, which DeepSeek rejects with HTTP 400.
+    """
+    msgs = request.messages
+    if len(msgs) <= max_messages:
+        return request
+
+    kept = msgs[-max_messages:]
+    # Find the first clean user message (not a tool_result continuation).
+    for i, m in enumerate(kept):
+        if m.role == "user" and not _message_starts_with_tool_result(m):
+            kept = kept[i:]
+            break
+
+    if not kept:
+        kept = msgs[-1:]
+
+    original = len(msgs)
+    logger.info(
+        "CONTEXT_TRIM: truncated %d → %d messages (cap=%d)",
+        original,
+        len(kept),
+        max_messages,
+    )
+    return request.model_copy(update={"messages": kept})
+
+
+def _inject_agentic_directive(request: MessagesRequest) -> MessagesRequest:
+    """Append the agentic directive to the system prompt (only for tool-bearing requests)."""
+    if not request.tools:
+        return request
+    system = request.system
+    if system is None:
+        new_system: str | list[SystemContent] = _AGENTIC_DIRECTIVE.strip()
+    elif isinstance(system, str):
+        new_system = system + _AGENTIC_DIRECTIVE
+    else:
+        new_system = list(system) + [
+            SystemContent(type="text", text=_AGENTIC_DIRECTIVE.strip())
+        ]
+    return request.model_copy(update={"system": new_system})
 
 
 def anthropic_sse_streaming_response(
@@ -102,6 +178,17 @@ class ClaudeProxyService:
         """Create a message response or streaming response."""
         try:
             _require_non_empty_messages(request_data.messages)
+
+            if (
+                self._settings.max_request_messages is not None
+                and len(request_data.messages) > self._settings.max_request_messages
+            ):
+                request_data = _truncate_messages(
+                    request_data, self._settings.max_request_messages
+                )
+
+            if self._settings.inject_agentic_directive:
+                request_data = _inject_agentic_directive(request_data)
 
             routed = self._model_router.resolve_messages_request(request_data)
             if routed.resolved.provider_id in _OPENAI_CHAT_UPSTREAM_IDS:
