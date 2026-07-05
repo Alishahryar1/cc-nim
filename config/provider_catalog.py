@@ -16,6 +16,7 @@ NVIDIA_NIM_DEFAULT_BASE = "https://integrate.api.nvidia.com/v1"
 # Moonshot Kimi Anthropic-compatible Messages API (POST …/messages).
 KIMI_DEFAULT_BASE = "https://api.moonshot.ai/anthropic/v1"
 WAFER_DEFAULT_BASE = "https://pass.wafer.ai/v1"
+MINIMAX_DEFAULT_BASE = "https://api.minimax.io/anthropic/v1"
 # DeepSeek Chat Completions API; cache usage is reported on this endpoint.
 DEEPSEEK_DEFAULT_BASE = "https://api.deepseek.com"
 FIREWORKS_DEFAULT_BASE = "https://api.fireworks.ai/inference/v1"
@@ -171,6 +172,24 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
             "native_anthropic",
         ),
     ),
+    "minimax": ProviderDescriptor(
+        provider_id="minimax",
+        display_name="MiniMax",
+        transport_type="anthropic_messages",
+        credential_env="MINIMAX_API_KEY",
+        credential_url="https://platform.minimax.io/user-center/basic-information/interface-key",
+        credential_attr="minimax_api_key",
+        default_base_url=MINIMAX_DEFAULT_BASE,
+        proxy_attr="minimax_proxy",
+        capabilities=(
+            "chat",
+            "streaming",
+            "tools",
+            "thinking",
+            "native_anthropic",
+            "rate_limit",
+        ),
+    ),
     "cerebras": ProviderDescriptor(
         provider_id="cerebras",
         display_name="Cerebras",
@@ -284,8 +303,9 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
 }
 
 # Key order:
-# NVIDIA NIM first (README default), DeepSeek fourth, Wafer ninth / Kimi tenth; then cerebras /
-# groq / fireworks / Cloudflare overlap; remainder and locals last per project plan (
+# NVIDIA NIM first (README default), DeepSeek fourth, Wafer ninth / Kimi tenth;
+# MiniMax follows the native Anthropic remotes; then cerebras / groq / fireworks /
+# Cloudflare overlap; remainder and locals last per project plan (
 # github.com/cheahjs/free-llm-api-resources Free Providers TOC as rough guide beyond fixed slots).
 # ``SUPPORTED_PROVIDER_IDS`` inherits this insertion order for UI and error-message listing.
 SUPPORTED_PROVIDER_IDS: tuple[str, ...] = tuple(PROVIDER_CATALOG.keys())

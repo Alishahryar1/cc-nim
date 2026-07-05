@@ -15,6 +15,7 @@ from providers.groq import GroqProvider
 from providers.kimi import KimiProvider
 from providers.llamacpp import LlamaCppProvider
 from providers.lmstudio import LMStudioProvider
+from providers.minimax import MiniMaxProvider
 from providers.mistral import MistralProvider
 from providers.nvidia_nim import NvidiaNimProvider
 from providers.ollama import OllamaProvider
@@ -84,6 +85,7 @@ def test_provider_and_platform_registries_include_advertised_builtins() -> None:
         "mistral_codestral": CodestralProvider,
         "deepseek": DeepSeekProvider,
         "kimi": KimiProvider,
+        "minimax": MiniMaxProvider,
         "fireworks": FireworksProvider,
         "cloudflare": CloudflareProvider,
         "lmstudio": LMStudioProvider,

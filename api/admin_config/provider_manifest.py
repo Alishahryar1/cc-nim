@@ -40,6 +40,13 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
         "label": "Fireworks API Key",
         "description": "Fireworks AI inference API key.",
     },
+    "MINIMAX_API_KEY": {
+        "label": "MiniMax API Key",
+        "description": (
+            "MiniMax API key for the Anthropic-compatible Messages API at "
+            "api.minimax.io/anthropic/v1."
+        ),
+    },
     "CLOUDFLARE_API_TOKEN": {
         "label": "Cloudflare API Token",
         "description": (

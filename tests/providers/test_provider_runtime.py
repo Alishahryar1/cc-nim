@@ -5,7 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from config.nim import NimSettings
-from config.provider_catalog import PROVIDER_CATALOG, ZAI_DEFAULT_BASE
+from config.provider_catalog import (
+    MINIMAX_DEFAULT_BASE,
+    PROVIDER_CATALOG,
+    ZAI_DEFAULT_BASE,
+)
 from config.provider_ids import SUPPORTED_PROVIDER_IDS
 from providers.cerebras import CerebrasProvider
 from providers.cloudflare import CloudflareProvider
@@ -18,6 +22,7 @@ from providers.groq import GroqProvider
 from providers.kimi import KimiProvider
 from providers.llamacpp import LlamaCppProvider
 from providers.lmstudio import LMStudioProvider
+from providers.minimax import MiniMaxProvider
 from providers.mistral import MistralProvider
 from providers.nvidia_nim import NvidiaNimProvider
 from providers.ollama import OllamaProvider
@@ -40,6 +45,7 @@ def _make_settings(**overrides):
     mock.codestral_api_key = "test_codestral_key"
     mock.deepseek_api_key = "test_deepseek_key"
     mock.wafer_api_key = "test_wafer_key"
+    mock.minimax_api_key = "test_minimax_key"
     mock.opencode_api_key = "test_opencode_key"
     mock.zai_api_key = "test_zai_key"
     mock.lm_studio_base_url = "http://localhost:1234/v1"
@@ -54,6 +60,7 @@ def _make_settings(**overrides):
     mock.kimi_proxy = ""
     mock.kimi_api_key = "test_kimi_key"
     mock.wafer_proxy = ""
+    mock.minimax_proxy = ""
     mock.opencode_proxy = ""
     mock.opencode_go_proxy = ""
     mock.zai_proxy = ""
@@ -133,6 +140,15 @@ def test_zai_provider_config_ignores_stale_base_url_setting():
     assert config.base_url == ZAI_DEFAULT_BASE
 
 
+def test_minimax_descriptor_uses_native_anthropic_transport():
+    descriptor = PROVIDER_CATALOG["minimax"]
+
+    assert descriptor.transport_type == "anthropic_messages"
+    assert descriptor.default_base_url == MINIMAX_DEFAULT_BASE
+    assert descriptor.credential_env == "MINIMAX_API_KEY"
+    assert "native_anthropic" in descriptor.capabilities
+
+
 def test_cloudflare_descriptor_uses_api_root_not_account_url():
     descriptor = PROVIDER_CATALOG["cloudflare"]
 
@@ -207,6 +223,7 @@ def test_create_provider_instantiates_each_builtin():
         "mistral_codestral": CodestralProvider,
         "deepseek": DeepSeekProvider,
         "kimi": KimiProvider,
+        "minimax": MiniMaxProvider,
         "fireworks": FireworksProvider,
         "cloudflare": CloudflareProvider,
         "lmstudio": LMStudioProvider,

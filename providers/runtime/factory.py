@@ -79,6 +79,12 @@ def _create_wafer(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     return WaferProvider(config)
 
 
+def _create_minimax(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+    from providers.minimax import MiniMaxProvider
+
+    return MiniMaxProvider(config)
+
+
 def _create_opencode(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     from providers.opencode import OpenCodeProvider
 
@@ -138,6 +144,7 @@ PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "opencode_go": _create_opencode_go,
     "wafer": _create_wafer,
     "kimi": _create_kimi,
+    "minimax": _create_minimax,
     "cerebras": _create_cerebras,
     "groq": _create_groq,
     "fireworks": _create_fireworks,

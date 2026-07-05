@@ -284,6 +284,16 @@ class TestSettings:
         settings = Settings()
         assert settings.wafer_api_key == "wafer-key"
 
+    def test_minimax_settings_from_env(self, monkeypatch):
+        """MiniMax key and proxy env vars load into settings."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
+        monkeypatch.setenv("MINIMAX_PROXY", "http://proxy.test:8080")
+        settings = Settings()
+        assert settings.minimax_api_key == "minimax-key"
+        assert settings.minimax_proxy == "http://proxy.test:8080"
+
     def test_cloudflare_settings_from_env(self, monkeypatch):
         """Cloudflare token, account, and proxy env vars load into settings."""
         from config.settings import Settings
@@ -869,6 +879,7 @@ class TestPerModelMapping:
         assert parse_provider_type("llamacpp/model") == "llamacpp"
         assert parse_provider_type("ollama/llama3.1") == "ollama"
         assert parse_provider_type("wafer/DeepSeek-V4-Pro") == "wafer"
+        assert parse_provider_type("minimax/MiniMax-M3") == "minimax"
         assert (
             parse_provider_type("cloudflare/@cf/moonshotai/kimi-k2.6") == "cloudflare"
         )
@@ -891,6 +902,7 @@ class TestPerModelMapping:
         assert parse_model_name("llamacpp/model") == "model"
         assert parse_model_name("ollama/llama3.1") == "llama3.1"
         assert parse_model_name("wafer/DeepSeek-V4-Pro") == "DeepSeek-V4-Pro"
+        assert parse_model_name("minimax/MiniMax-M3") == "MiniMax-M3"
         assert (
             parse_model_name("cloudflare/@cf/moonshotai/kimi-k2.6")
             == "@cf/moonshotai/kimi-k2.6"
