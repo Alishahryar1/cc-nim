@@ -14,7 +14,8 @@ from config.settings import Settings
 from core.anthropic import AnthropicStreamLedger
 
 
-def test_create_message_skips_full_payload_debug_log_by_default():
+@pytest.mark.asyncio
+async def test_create_message_skips_full_payload_debug_log_by_default():
     settings = Settings()
     assert settings.log_raw_api_payloads is False
     mock_provider = MagicMock()
@@ -32,7 +33,7 @@ def test_create_message_skips_full_payload_debug_log_by_default():
     )
 
     with patch.object(provider_execution.logger, "debug") as mock_debug:
-        service.create(request)
+        await service.create(request)
 
     full_payload_calls = [
         c
@@ -42,7 +43,8 @@ def test_create_message_skips_full_payload_debug_log_by_default():
     assert not full_payload_calls
 
 
-def test_create_message_logs_full_payload_when_opt_in():
+@pytest.mark.asyncio
+async def test_create_message_logs_full_payload_when_opt_in():
     settings = Settings()
     settings.log_raw_api_payloads = True
     mock_provider = MagicMock()
@@ -59,7 +61,7 @@ def test_create_message_logs_full_payload_when_opt_in():
     )
 
     with patch.object(provider_execution.logger, "debug") as mock_debug:
-        service.create(request)
+        await service.create(request)
 
     keys = [c.args[0] for c in mock_debug.call_args_list if c.args]
     assert any(k == "FULL_PAYLOAD [{}]: {}" for k in keys)
@@ -92,7 +94,8 @@ def _flatten_log_calls(mock_log) -> str:
     return " ".join(parts)
 
 
-def test_create_message_unexpected_error_default_logs_exclude_exception_text():
+@pytest.mark.asyncio
+async def test_create_message_unexpected_error_default_logs_exclude_exception_text():
     settings = Settings()
     assert settings.log_api_error_tracebacks is False
     secret = "upstream-secret-token-abc"
@@ -114,14 +117,15 @@ def test_create_message_unexpected_error_default_logs_exclude_exception_text():
         patch.object(request_errors.logger, "error") as log_err,
         pytest.raises(HTTPException),
     ):
-        service.create(request)
+        await service.create(request)
 
     blob = _flatten_log_calls(log_err)
     assert secret not in blob
     assert "RuntimeError" in blob
 
 
-def test_create_message_unexpected_error_always_returns_500():
+@pytest.mark.asyncio
+async def test_create_message_unexpected_error_always_returns_500():
     """Non-provider failures must not leak arbitrary status_code attributes."""
 
     class WeirdError(Exception):
@@ -142,7 +146,7 @@ def test_create_message_unexpected_error_always_returns_500():
     )
 
     with pytest.raises(HTTPException) as excinfo:
-        service.create(request)
+        await service.create(request)
 
     assert excinfo.value.status_code == 500
 

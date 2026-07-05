@@ -105,8 +105,9 @@ def test_web_server_tool_not_detected_when_forced_name_missing_from_tools():
     assert not is_web_server_tool_request(request)
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("provider_id", _OPENAI_CHAT_PROVIDER_IDS)
-def test_service_rejects_forced_server_tool_on_openai_when_disabled(
+async def test_service_rejects_forced_server_tool_on_openai_when_disabled(
     provider_id: str,
 ):
     """OpenAI Chat upstreams cannot run forced server tools without the local handler."""
@@ -130,7 +131,7 @@ def test_service_rejects_forced_server_tool_on_openai_when_disabled(
         tool_choice={"type": "tool", "name": "web_search"},
     )
     with pytest.raises(InvalidRequestError, match="ENABLE_WEB_SERVER_TOOLS"):
-        service.create(request)
+        await service.create(request)
 
 
 @pytest.mark.parametrize(
@@ -593,8 +594,9 @@ async def test_drain_response_body_capped_stops_after_first_chunk_when_oversized
     assert chunk_calls["n"] == 1
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("provider_id", _OPENAI_CHAT_PROVIDER_IDS)
-def test_service_rejects_listed_server_tools_on_openai_chat(
+async def test_service_rejects_listed_server_tools_on_openai_chat(
     provider_id: str,
 ) -> None:
     settings = Settings()
@@ -610,11 +612,12 @@ def test_service_rejects_listed_server_tools_on_openai_chat(
         tools=[Tool(name="web_search", type="web_search_20250305")],
     )
     with pytest.raises(InvalidRequestError, match="OpenAI Chat upstreams"):
-        service.create(request)
+        await service.create(request)
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("provider_id", _ANTHROPIC_MESSAGES_PROVIDER_IDS)
-def test_listed_server_tools_routed_on_anthropic_messages_providers(
+async def test_listed_server_tools_routed_on_anthropic_messages_providers(
     provider_id: str,
 ) -> None:
     """Native Anthropic transports may receive listed server tool definitions."""
@@ -637,12 +640,13 @@ def test_listed_server_tools_routed_on_anthropic_messages_providers(
         messages=[Message(role="user", content="q")],
         tools=[Tool(name="web_search", type="web_search_20250305")],
     )
-    service.create(request)
+    await service.create(request)
     mock_provider.preflight_stream.assert_called()
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("provider_id", _ANTHROPIC_MESSAGES_PROVIDER_IDS)
-def test_forced_server_tools_routed_on_anthropic_messages_providers_when_local_disabled(
+async def test_forced_server_tools_routed_on_anthropic_messages_providers_when_local_disabled(
     provider_id: str,
 ) -> None:
     """Native Anthropic transports may receive forced server tools when local tools are off."""
@@ -666,5 +670,5 @@ def test_forced_server_tools_routed_on_anthropic_messages_providers_when_local_d
         tools=[Tool(name="web_search", type="web_search_20250305")],
         tool_choice={"type": "tool", "name": "web_search"},
     )
-    service.create(request)
+    await service.create(request)
     mock_provider.preflight_stream.assert_called()

@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from dataclasses import replace
 
+from fastapi.responses import JSONResponse
 from loguru import logger
 
 from api.detection import is_safety_classifier_request
@@ -22,7 +23,7 @@ from api.web_tools.request import (
 from api.web_tools.streaming import stream_web_server_tool_response
 from config.provider_catalog import PROVIDER_CATALOG
 from config.settings import Settings
-from core.anthropic import get_token_count
+from core.anthropic import aggregate_anthropic_sse_to_message, get_token_count
 from core.trace import trace_event
 from providers.base import BaseProvider
 from providers.exceptions import InvalidRequestError, ProviderError
@@ -62,7 +63,7 @@ class MessagesHandler:
             self._intercept_local_optimization,
         )
 
-    def create(self, request_data: MessagesRequest) -> object:
+    async def create(self, request_data: MessagesRequest) -> object:
         """Create an Anthropic-compatible message response."""
         try:
             require_non_empty_messages(request_data.messages)
@@ -75,14 +76,26 @@ class MessagesHandler:
                 return intercepted
 
             logger.debug("No optimization matched, routing to provider")
-            return anthropic_sse_streaming_response(
-                self._provider_execution.stream(
-                    routed,
-                    wire_api="messages",
-                    raw_log_label="FULL_PAYLOAD",
-                    raw_log_payload=routed.request.model_dump(),
-                )
+            provider_stream = self._provider_execution.stream(
+                routed,
+                wire_api="messages",
+                raw_log_label="FULL_PAYLOAD",
+                raw_log_payload=routed.request.model_dump(),
             )
+            if request_data.stream is False:
+                # Non-streaming clients (e.g. Claude Code utility calls) need a
+                # complete JSON Message; the internal pipeline is always SSE, so
+                # serving that raw here breaks the client SDK's response parse.
+                message, error = await aggregate_anthropic_sse_to_message(
+                    provider_stream
+                )
+                if error is not None and not message.get("content"):
+                    return JSONResponse(
+                        status_code=502,
+                        content={"type": "error", "error": error},
+                    )
+                return JSONResponse(content=message)
+            return anthropic_sse_streaming_response(provider_stream)
         except ProviderError:
             raise
         except Exception as exc:
