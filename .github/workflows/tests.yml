@@ -10,6 +10,7 @@ on:
     branches: [main, master]
   pull_request:
     branches: [main, master]
+  merge_group:
 
 concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
