@@ -18,6 +18,7 @@ _RUNTIME_EXTRAS = {
     "model_opus": None,
     "model_sonnet": None,
     "model_haiku": None,
+    "telegram_proxy_url": "",
     "voice_note_enabled": True,
     "whisper_model": "base",
     "whisper_device": "cpu",
