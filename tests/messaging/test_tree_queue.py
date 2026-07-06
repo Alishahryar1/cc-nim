@@ -735,25 +735,31 @@ class TestTreeQueueManager:
         """Cancellation drain returns when a task refuses to finish cleanup."""
         monkeypatch.setattr(tree_manager_module, "CANCEL_TASK_DRAIN_TIMEOUT_S", 0.01)
         started = asyncio.Event()
+        cleanup_started = asyncio.Event()
+        cleanup_release = asyncio.Event()
 
         async def stubborn_task():
             started.set()
             try:
                 await asyncio.sleep(60)
             except asyncio.CancelledError:
-                await asyncio.sleep(60)
+                cleanup_started.set()
+                await cleanup_release.wait()
+                raise
 
         task = asyncio.create_task(stubborn_task())
         await started.wait()
         task.cancel()
+        await cleanup_started.wait()
 
         start = asyncio.get_running_loop().time()
         try:
             await tree_manager_module._drain_cancelled_tasks([task])
             elapsed = asyncio.get_running_loop().time() - start
+            assert not task.done()
         finally:
+            cleanup_release.set()
             if not task.done():
-                task.cancel()
                 with contextlib.suppress(asyncio.CancelledError):
                     await task
 

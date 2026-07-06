@@ -19,25 +19,26 @@ async def _drain_cancelled_tasks(tasks: list[asyncio.Task]) -> None:
     """Wait briefly for cancelled node tasks to finish their cleanup."""
     if not tasks:
         return
-    try:
-        results = await asyncio.wait_for(
-            asyncio.gather(*tasks, return_exceptions=True),
-            timeout=CANCEL_TASK_DRAIN_TIMEOUT_S,
-        )
-    except TimeoutError:
+
+    done, pending = await asyncio.wait(
+        set(tasks),
+        timeout=CANCEL_TASK_DRAIN_TIMEOUT_S,
+    )
+    if pending:
         logger.warning(
             "Timed out waiting for {} cancelled messaging task(s) to finish cleanup",
-            len(tasks),
+            len(pending),
         )
-        return
 
-    for result in results:
-        if isinstance(result, asyncio.CancelledError):
+    for task in done:
+        if task.cancelled():
             continue
-        if isinstance(result, Exception):
+        try:
+            task.result()
+        except Exception as exc:
             logger.debug(
                 "Cancelled messaging task finished with {}",
-                type(result).__name__,
+                type(exc).__name__,
             )
 
 
