@@ -49,13 +49,6 @@ class OutboundMessenger(Protocol):
         fire_and_forget: bool = True,
     ) -> None: ...
 
-    async def queue_delete_message(
-        self,
-        chat_id: str,
-        message_id: str,
-        fire_and_forget: bool = True,
-    ) -> None: ...
-
     async def queue_delete_messages(
         self,
         chat_id: str,

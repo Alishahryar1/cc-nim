@@ -69,7 +69,7 @@ async def test_voice_flow_success_builds_incoming_message(monkeypatch) -> None:
         _request(download_to=download_to),
         message_handler=handler,
         queue_send_message=queue_send,
-        queue_delete_message=queue_delete,
+        queue_delete_messages=queue_delete,
     )
 
     assert handled is True
@@ -105,7 +105,7 @@ async def test_voice_flow_disabled_replies_without_transcribing(monkeypatch) -> 
         _request(reply_text=reply_text),
         message_handler=AsyncMock(),
         queue_send_message=AsyncMock(),
-        queue_delete_message=AsyncMock(),
+        queue_delete_messages=AsyncMock(),
     )
 
     assert handled is True
@@ -134,12 +134,12 @@ async def test_voice_flow_cancelled_transcription_deletes_status(monkeypatch) ->
         _request(),
         message_handler=handler,
         queue_send_message=queue_send,
-        queue_delete_message=queue_delete,
+        queue_delete_messages=queue_delete,
     )
 
     assert handled is True
     handler.assert_not_awaited()
-    queue_delete.assert_awaited_once_with("chat", "status")
+    queue_delete.assert_awaited_once_with("chat", ["status"])
 
 
 @pytest.mark.asyncio
@@ -157,12 +157,12 @@ async def test_voice_flow_download_failure_cleans_pending_state(monkeypatch) -> 
         _request(download_to=failing_download, reply_text=reply_text),
         message_handler=AsyncMock(),
         queue_send_message=AsyncMock(return_value="status"),
-        queue_delete_message=queue_delete,
+        queue_delete_messages=queue_delete,
     )
 
     assert handled is True
     transcribe.assert_not_awaited()
-    queue_delete.assert_awaited_once_with("chat", "status")
+    queue_delete.assert_awaited_once_with("chat", ["status"])
     reply_text.assert_awaited_once_with(VOICE_TRANSCRIPTION_ERROR_MESSAGE)
     assert await flow.cancel_pending_voice("chat", "voice") is None
 
@@ -184,11 +184,11 @@ async def test_voice_flow_transcription_failure_cleans_pending_state(
         _request(reply_text=reply_text),
         message_handler=AsyncMock(),
         queue_send_message=AsyncMock(return_value="status"),
-        queue_delete_message=queue_delete,
+        queue_delete_messages=queue_delete,
     )
 
     assert handled is True
-    queue_delete.assert_awaited_once_with("chat", "status")
+    queue_delete.assert_awaited_once_with("chat", ["status"])
     reply_text.assert_awaited_once_with(VOICE_TRANSCRIPTION_ERROR_MESSAGE)
     assert await flow.cancel_pending_voice("chat", "voice") is None
 
@@ -213,7 +213,7 @@ async def test_voice_flow_handler_failure_cleans_pending_without_deleting_status
         _request(reply_text=reply_text),
         message_handler=failing_handler,
         queue_send_message=AsyncMock(return_value="status"),
-        queue_delete_message=queue_delete,
+        queue_delete_messages=queue_delete,
     )
 
     assert handled is True

@@ -116,16 +116,7 @@ def mock_platform():
     platform.delete_message = AsyncMock()
     platform.queue_send_message = AsyncMock(return_value="msg_123")
     platform.queue_edit_message = AsyncMock()
-    platform.queue_delete_message = AsyncMock()
-
-    async def _queue_delete_messages(
-        chat_id: str, message_ids: list[str], *, fire_and_forget: bool = True
-    ) -> None:
-        qdm = platform.queue_delete_message
-        for mid in message_ids:
-            await qdm(chat_id, mid, fire_and_forget=fire_and_forget)
-
-    platform.queue_delete_messages = AsyncMock(side_effect=_queue_delete_messages)
+    platform.queue_delete_messages = AsyncMock()
     platform.cancel_pending_voice = AsyncMock(return_value=None)
 
     def _fire_and_forget(task):

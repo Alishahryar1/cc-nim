@@ -5,7 +5,7 @@ import pytest
 from messaging.platforms.outbox import PlatformOutbox
 
 
-def _noop_outbox(*, limiter=None) -> PlatformOutbox:
+def _noop_outbox(*, limiter=None, delete_many=None) -> PlatformOutbox:
     async def send(
         chat_id: str,
         text: str,
@@ -23,18 +23,14 @@ def _noop_outbox(*, limiter=None) -> PlatformOutbox:
     ) -> None:
         return None
 
-    async def delete(chat_id: str, message_id: str) -> None:
-        return None
-
-    async def delete_many(chat_id: str, message_ids: list[str]) -> None:
+    async def default_delete_many(chat_id: str, message_ids: list[str]) -> None:
         return None
 
     return PlatformOutbox(
         get_limiter=lambda: limiter,
         send=send,
         edit=edit,
-        delete=delete,
-        delete_many=delete_many,
+        delete_many=delete_many or default_delete_many,
     )
 
 
@@ -75,17 +71,6 @@ async def test_queue_edit_awaits_limiter_with_dedup_key() -> None:
 
 
 @pytest.mark.asyncio
-async def test_queue_delete_uses_fire_and_forget_with_dedup_key() -> None:
-    limiter = MagicMock()
-    outbox = _noop_outbox(limiter=limiter)
-
-    await outbox.queue_delete_message("chat", "message", fire_and_forget=True)
-
-    limiter.fire_and_forget.assert_called_once()
-    assert limiter.fire_and_forget.call_args.kwargs["dedup_key"] == "del:chat:message"
-
-
-@pytest.mark.asyncio
 async def test_queue_delete_many_skips_empty_batches() -> None:
     limiter = MagicMock()
     outbox = _noop_outbox(limiter=limiter)
@@ -103,6 +88,26 @@ async def test_queue_delete_many_dedups_by_batch() -> None:
     await outbox.queue_delete_messages("chat", ["1", "2"], fire_and_forget=True)
 
     limiter.fire_and_forget.assert_called_once()
-    assert limiter.fire_and_forget.call_args.kwargs["dedup_key"] == (
-        f"del_bulk:chat:{hash(('1', '2'))}"
+    assert (
+        limiter.fire_and_forget.call_args.kwargs["dedup_key"]
+        == "del_bulk:chat:11f0530a8259fffb"
     )
+
+
+@pytest.mark.asyncio
+async def test_queue_delete_many_snapshots_ids_before_queueing() -> None:
+    limiter = MagicMock()
+    deleted: list[list[str]] = []
+
+    async def delete_many(_chat_id: str, message_ids: list[str]) -> None:
+        deleted.append(message_ids)
+
+    outbox = _noop_outbox(limiter=limiter, delete_many=delete_many)
+    message_ids = ["1", "2"]
+
+    await outbox.queue_delete_messages("chat", message_ids, fire_and_forget=True)
+    message_ids.append("3")
+    operation = limiter.fire_and_forget.call_args.args[0]
+    await operation()
+
+    assert deleted == [["1", "2"]]

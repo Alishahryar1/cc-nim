@@ -270,5 +270,5 @@ class TelegramRuntime:
             request,
             message_handler=self._message_handler,
             queue_send_message=self.outbound.queue_send_message,
-            queue_delete_message=self.outbound.queue_delete_message,
+            queue_delete_messages=self.outbound.queue_delete_messages,
         )

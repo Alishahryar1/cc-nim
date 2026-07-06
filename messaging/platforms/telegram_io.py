@@ -9,6 +9,8 @@ from loguru import logger
 
 from .outbox import PlatformOutbox
 
+TELEGRAM_DELETE_MESSAGES_BATCH_SIZE = 100
+
 TelegramNetworkError: type[BaseException]
 TelegramRetryAfter: type[BaseException]
 TelegramBaseError: type[BaseException]
@@ -49,7 +51,6 @@ class TelegramMessenger:
             get_limiter=get_limiter,
             send=self.send_message,
             edit=self.edit_message,
-            delete=self.delete_message,
             delete_many=self.delete_messages,
         )
 
@@ -183,23 +184,37 @@ class TelegramMessenger:
             raise RuntimeError("Telegram application or bot not initialized")
 
         bot = app.bot
-        if hasattr(bot, "delete_messages"):
-
-            async def _do_bulk() -> None:
-                mids: list[int] = []
-                for mid in message_ids:
-                    try:
-                        mids.append(int(mid))
-                    except Exception:
-                        continue
-                if mids:
-                    await bot.delete_messages(chat_id=chat_id, message_ids=mids)
-
-            await self._with_retry(_do_bulk)
+        mids: list[int] = []
+        for mid in message_ids:
+            try:
+                mids.append(int(mid))
+            except Exception:
+                continue
+        if not mids:
             return
 
-        for mid in message_ids:
-            await self.delete_message(chat_id, mid)
+        if hasattr(bot, "delete_messages"):
+            for start in range(0, len(mids), TELEGRAM_DELETE_MESSAGES_BATCH_SIZE):
+                chunk = mids[start : start + TELEGRAM_DELETE_MESSAGES_BATCH_SIZE]
+                chunk_snapshot = tuple(chunk)
+
+                async def _do_bulk(ids: tuple[int, ...] = chunk_snapshot) -> None:
+                    await bot.delete_messages(chat_id=chat_id, message_ids=list(ids))
+
+                try:
+                    await self._with_retry(_do_bulk)
+                except Exception as e:
+                    logger.debug(
+                        "Telegram bulk delete failed for chat {}: {}; falling back",
+                        chat_id,
+                        type(e).__name__,
+                    )
+                    for mid in chunk:
+                        await self.delete_message(chat_id, str(mid))
+            return
+
+        for mid in mids:
+            await self.delete_message(chat_id, str(mid))
 
     async def queue_send_message(
         self,
@@ -236,15 +251,6 @@ class TelegramMessenger:
             parse_mode,
             fire_and_forget,
         )
-
-    async def queue_delete_message(
-        self,
-        chat_id: str,
-        message_id: str,
-        fire_and_forget: bool = True,
-    ) -> None:
-        """Queue a Telegram delete."""
-        await self._outbox.queue_delete_message(chat_id, message_id, fire_and_forget)
 
     async def queue_delete_messages(
         self,

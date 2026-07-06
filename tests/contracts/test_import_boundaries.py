@@ -551,6 +551,12 @@ def test_messaging_platforms_use_shared_outbox_and_voice_flow() -> None:
     assert (platforms_root / "ports.py").exists()
     assert (platforms_root / "outbox.py").exists()
     assert (platforms_root / "voice_flow.py").exists()
+    assert "def queue_delete_message(" not in (platforms_root / "ports.py").read_text(
+        encoding="utf-8"
+    )
+    assert "def queue_delete_message(" not in (platforms_root / "outbox.py").read_text(
+        encoding="utf-8"
+    )
 
     for runtime in {
         platforms_root / "telegram.py",
@@ -568,6 +574,7 @@ def test_messaging_platforms_use_shared_outbox_and_voice_flow() -> None:
     }:
         text = messenger.read_text(encoding="utf-8")
         assert "PlatformOutbox" in text
+        assert "def queue_delete_message(" not in text
 
 
 def test_cli_surfaces_are_explicit_launchers_and_managed_claude() -> None:

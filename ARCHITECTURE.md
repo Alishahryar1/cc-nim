@@ -571,8 +571,10 @@ Outbound SDK calls live in
 [messaging/platforms/telegram_io.py](messaging/platforms/telegram_io.py) and
 [messaging/platforms/discord_io.py](messaging/platforms/discord_io.py). Shared
 delivery policy lives in [messaging/platforms/outbox.py](messaging/platforms/outbox.py),
-which owns queued send/edit/delete, dedup keys, limiter delegation, and
-fire-and-forget behavior.
+which owns queued send/edit/list-based delete, dedup keys, limiter delegation,
+and fire-and-forget behavior. Workflow and command code request deletion of
+message ID lists; platform IO decides whether to use native batch deletion
+(Telegram) or internal per-message deletion (Discord).
 Shared voice-note orchestration lives in
 [messaging/platforms/voice_flow.py](messaging/platforms/voice_flow.py), which owns
 pending voice registration, temp-file cleanup, transcription, cancellation, error
@@ -628,9 +630,10 @@ APIs to runtime code. Debounced atomic writes live in
 [messaging/session/persistence.py](messaging/session/persistence.py), and
 per-chat message ID tracking for `/clear` lives in
 [messaging/session/message_log.py](messaging/session/message_log.py). `/clear`
-guarantees FCC state cleanup and tries each tracked platform delete, but
-Discord/Telegram can still reject individual message deletions for platform
-reasons such as permissions, age, or missing messages.
+guarantees FCC state cleanup and tries tracked platform deletes through the
+list-based outbound delete port, but Discord/Telegram can still reject
+individual message deletions for platform reasons such as permissions, age, or
+missing messages.
 
 ```mermaid
 sequenceDiagram

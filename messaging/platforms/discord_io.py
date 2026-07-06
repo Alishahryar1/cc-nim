@@ -35,7 +35,6 @@ class DiscordMessenger:
             get_limiter=get_limiter,
             send=self.send_message,
             edit=self.edit_message,
-            delete=self.delete_message,
             delete_many=self.delete_messages,
         )
 
@@ -145,15 +144,6 @@ class DiscordMessenger:
             parse_mode,
             fire_and_forget,
         )
-
-    async def queue_delete_message(
-        self,
-        chat_id: str,
-        message_id: str,
-        fire_and_forget: bool = True,
-    ) -> None:
-        """Queue a Discord delete."""
-        await self._outbox.queue_delete_message(chat_id, message_id, fire_and_forget)
 
     async def queue_delete_messages(
         self,

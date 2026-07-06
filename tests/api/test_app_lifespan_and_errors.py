@@ -51,7 +51,6 @@ def _fake_messaging_components(runtime: MagicMock | None = None) -> SimpleNamesp
     outbound = MagicMock()
     outbound.queue_send_message = AsyncMock(return_value="msg")
     outbound.queue_edit_message = AsyncMock()
-    outbound.queue_delete_message = AsyncMock()
     outbound.queue_delete_messages = AsyncMock()
     outbound.fire_and_forget = MagicMock()
     return SimpleNamespace(

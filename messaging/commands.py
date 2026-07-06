@@ -3,19 +3,10 @@
 Commands depend on MessagingCommandContext instead of the concrete workflow.
 """
 
-from dataclasses import dataclass
-
 from loguru import logger
 
 from .command_context import MessagingCommandContext
 from .models import IncomingMessage
-
-
-@dataclass(frozen=True, slots=True)
-class MessageDeleteReport:
-    attempted: int
-    deleted: int
-    failed: int
 
 
 async def handle_stop_command(
@@ -95,10 +86,10 @@ async def handle_stats_command(
 
 async def _delete_message_ids(
     handler: MessagingCommandContext, chat_id: str, msg_ids: set[str]
-) -> MessageDeleteReport:
+) -> None:
     """Best-effort delete messages by ID. Sorts numeric IDs descending."""
     if not msg_ids:
-        return MessageDeleteReport(attempted=0, deleted=0, failed=0)
+        return
 
     def _as_int(s: str) -> int | None:
         try:
@@ -117,28 +108,23 @@ async def _delete_message_ids(
     numeric.sort(reverse=True)
     ordered = [mid for _, mid in numeric] + non_numeric
 
-    deleted = 0
     failed = 0
-    for mid in ordered:
-        try:
-            await handler.outbound.queue_delete_message(
-                chat_id, mid, fire_and_forget=False
-            )
-            deleted += 1
-        except Exception as e:
-            failed += 1
-            logger.debug(
-                "Message delete failed for chat {}: {}", chat_id, type(e).__name__
-            )
+    try:
+        await handler.outbound.queue_delete_messages(
+            chat_id,
+            ordered,
+            fire_and_forget=False,
+        )
+    except Exception as e:
+        failed = len(ordered)
+        logger.debug("Message delete failed for chat {}: {}", chat_id, type(e).__name__)
 
     if ordered:
         logger.info(
-            "Clear delete attempted={} deleted={} failed={}",
+            "Clear delete attempted={} failed={}",
             len(ordered),
-            deleted,
             failed,
         )
-    return MessageDeleteReport(attempted=len(ordered), deleted=deleted, failed=failed)
 
 
 async def _handle_clear_branch(

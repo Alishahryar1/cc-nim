@@ -114,6 +114,90 @@ async def test_telegram_platform_edit_message_success(telegram_platform):
 
 
 @pytest.mark.asyncio
+async def test_telegram_platform_delete_messages_uses_batch_api(telegram_platform):
+    mock_bot = AsyncMock()
+    telegram_platform._application = MagicMock()
+    telegram_platform._application.bot = mock_bot
+
+    await telegram_platform.outbound.delete_messages("chat_1", ["1", "2", "bad"])
+
+    mock_bot.delete_messages.assert_awaited_once_with(
+        chat_id="chat_1",
+        message_ids=[1, 2],
+    )
+    mock_bot.delete_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_telegram_platform_delete_messages_chunks_batch_api(telegram_platform):
+    mock_bot = AsyncMock()
+    telegram_platform._application = MagicMock()
+    telegram_platform._application.bot = mock_bot
+
+    await telegram_platform.outbound.delete_messages(
+        "chat_1",
+        [str(i) for i in range(105)],
+    )
+
+    assert mock_bot.delete_messages.await_count == 2
+    assert mock_bot.delete_messages.await_args_list[0].kwargs["message_ids"] == list(
+        range(100)
+    )
+    assert mock_bot.delete_messages.await_args_list[1].kwargs["message_ids"] == list(
+        range(100, 105)
+    )
+
+
+@pytest.mark.asyncio
+async def test_telegram_platform_delete_messages_falls_back_without_batch(
+    telegram_platform,
+):
+    class BotWithoutBatch:
+        def __init__(self) -> None:
+            self.delete_message = AsyncMock()
+
+    bot = BotWithoutBatch()
+    telegram_platform._application = MagicMock()
+    telegram_platform._application.bot = bot
+
+    await telegram_platform.outbound.delete_messages("chat_1", ["1", "2"])
+
+    assert bot.delete_message.await_args_list[0].kwargs == {
+        "chat_id": "chat_1",
+        "message_id": 1,
+    }
+    assert bot.delete_message.await_args_list[1].kwargs == {
+        "chat_id": "chat_1",
+        "message_id": 2,
+    }
+
+
+@pytest.mark.asyncio
+async def test_telegram_platform_delete_messages_falls_back_after_batch_failure(
+    telegram_platform,
+):
+    mock_bot = AsyncMock()
+    mock_bot.delete_messages.side_effect = RuntimeError("bulk failed")
+    telegram_platform._application = MagicMock()
+    telegram_platform._application.bot = mock_bot
+
+    await telegram_platform.outbound.delete_messages("chat_1", ["1", "2"])
+
+    mock_bot.delete_messages.assert_awaited_once_with(
+        chat_id="chat_1",
+        message_ids=[1, 2],
+    )
+    assert mock_bot.delete_message.await_args_list[0].kwargs == {
+        "chat_id": "chat_1",
+        "message_id": 1,
+    }
+    assert mock_bot.delete_message.await_args_list[1].kwargs == {
+        "chat_id": "chat_1",
+        "message_id": 2,
+    }
+
+
+@pytest.mark.asyncio
 async def test_telegram_platform_queue_send_message(telegram_platform):
     mock_limiter = AsyncMock()
     telegram_platform._limiter = mock_limiter

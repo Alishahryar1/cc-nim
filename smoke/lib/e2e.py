@@ -408,14 +408,6 @@ class FakePlatform:
     ) -> None:
         await self.edit_message(chat_id, message_id, text, parse_mode=parse_mode)
 
-    async def queue_delete_message(
-        self,
-        chat_id: str,
-        message_id: str,
-        fire_and_forget: bool = True,
-    ) -> None:
-        await self.delete_message(chat_id, message_id)
-
     async def queue_delete_messages(
         self,
         chat_id: str,
@@ -423,7 +415,7 @@ class FakePlatform:
         fire_and_forget: bool = True,
     ) -> None:
         for message_id in message_ids:
-            await self.queue_delete_message(chat_id, message_id, fire_and_forget=False)
+            await self.delete_message(chat_id, message_id)
 
     def register_pending_voice(
         self, chat_id: str, voice_message_id: str, status_message_id: str

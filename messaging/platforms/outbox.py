@@ -1,6 +1,7 @@
 """Shared queued delivery helper for messaging platforms."""
 
 import asyncio
+import hashlib
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
@@ -9,7 +10,6 @@ SendOperation = Callable[
     Awaitable[str],
 ]
 EditOperation = Callable[[str, str, str, str | None], Awaitable[None]]
-DeleteOperation = Callable[[str, str], Awaitable[None]]
 DeleteManyOperation = Callable[[str, list[str]], Awaitable[None]]
 LimiterGetter = Callable[[], Any | None]
 
@@ -23,13 +23,11 @@ class PlatformOutbox:
         get_limiter: LimiterGetter,
         send: SendOperation,
         edit: EditOperation,
-        delete: DeleteOperation,
         delete_many: DeleteManyOperation,
     ) -> None:
         self._get_limiter = get_limiter
         self._send = send
         self._edit = edit
-        self._delete = delete
         self._delete_many = delete_many
 
     async def queue_send_message(
@@ -89,27 +87,6 @@ class PlatformOutbox:
         else:
             await limiter.enqueue(_edit, dedup_key=dedup_key)
 
-    async def queue_delete_message(
-        self,
-        chat_id: str,
-        message_id: str,
-        fire_and_forget: bool = True,
-    ) -> None:
-        """Queue or immediately delete a platform message."""
-        limiter = self._get_limiter()
-        if limiter is None:
-            await self._delete(chat_id, message_id)
-            return
-
-        async def _delete() -> None:
-            await self._delete(chat_id, message_id)
-
-        dedup_key = f"del:{chat_id}:{message_id}"
-        if fire_and_forget:
-            limiter.fire_and_forget(_delete, dedup_key=dedup_key)
-        else:
-            await limiter.enqueue(_delete, dedup_key=dedup_key)
-
     async def queue_delete_messages(
         self,
         chat_id: str,
@@ -117,18 +94,20 @@ class PlatformOutbox:
         fire_and_forget: bool = True,
     ) -> None:
         """Queue or immediately bulk-delete platform messages."""
-        if not message_ids:
+        ids_snapshot = tuple(str(message_id) for message_id in message_ids)
+        if not ids_snapshot:
             return
 
         limiter = self._get_limiter()
         if limiter is None:
-            await self._delete_many(chat_id, message_ids)
+            await self._delete_many(chat_id, list(ids_snapshot))
             return
 
         async def _delete_many() -> None:
-            await self._delete_many(chat_id, message_ids)
+            await self._delete_many(chat_id, list(ids_snapshot))
 
-        dedup_key = f"del_bulk:{chat_id}:{hash(tuple(message_ids))}"
+        digest = hashlib.sha256("\x1f".join(ids_snapshot).encode()).hexdigest()[:16]
+        dedup_key = f"del_bulk:{chat_id}:{digest}"
         if fire_and_forget:
             limiter.fire_and_forget(_delete_many, dedup_key=dedup_key)
         else:

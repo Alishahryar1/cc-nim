@@ -558,11 +558,11 @@ async def test_handle_message_clear_command_stops_deletes_and_wipes_state(
         events.append("stop")
         return 0
 
-    async def _del(chat_id, message_id, fire_and_forget=True):
-        events.append(f"del:{chat_id}:{message_id}:{fire_and_forget}")
+    async def _del_many(chat_id, message_ids, fire_and_forget=True):
+        events.append(("del", chat_id, tuple(message_ids), fire_and_forget))
 
     handler.stop_all_tasks = AsyncMock(side_effect=_stop)
-    mock_platform.queue_delete_message = AsyncMock(side_effect=_del)
+    mock_platform.queue_delete_messages = AsyncMock(side_effect=_del_many)
 
     incoming = incoming_message_factory(
         text="/clear", chat_id="chat_1", message_id="150"
@@ -570,9 +570,9 @@ async def test_handle_message_clear_command_stops_deletes_and_wipes_state(
     await handler.handle_message(incoming)
 
     assert events and events[0] == "stop"
-    deleted_ids = {e.split(":")[2] for e in events[1:]}
+    deleted_ids = set(events[1][2])
     assert deleted_ids == {"100", "101", "150"}
-    assert all(e.endswith(":False") for e in events[1:])
+    assert events[1][3] is False
 
     mock_session_store.clear_all.assert_called_once()
     assert handler.tree_queue.get_tree_count() == 0
@@ -591,9 +591,9 @@ async def test_handle_message_clear_command_with_mention(
     await handler.handle_message(incoming)
 
     handler.stop_all_tasks.assert_called_once()
-    mock_platform.queue_delete_message.assert_called_once_with(
+    mock_platform.queue_delete_messages.assert_called_once_with(
         "chat_1",
-        "10",
+        ["10"],
         fire_and_forget=False,
     )
     mock_session_store.clear_all.assert_called_once()
@@ -611,8 +611,11 @@ async def test_handle_message_clear_command_deletes_message_log_ids(
     )
     await handler.handle_message(incoming)
 
-    deleted = {c.args[1] for c in mock_platform.queue_delete_message.call_args_list}
-    assert deleted == {"42", "43", "150"}
+    mock_platform.queue_delete_messages.assert_called_once_with(
+        "chat_1",
+        ["150", "43", "42"],
+        fire_and_forget=False,
+    )
 
 
 @pytest.mark.asyncio
@@ -622,19 +625,21 @@ async def test_handle_message_clear_command_continues_after_delete_failure(
     handler.stop_all_tasks = AsyncMock(return_value=0)
     mock_session_store.get_message_ids_for_chat.return_value = ["41", "42", "43"]
 
-    async def delete_message(chat_id, message_id, fire_and_forget=True):
-        if message_id == "42":
-            raise RuntimeError("platform rejected delete")
+    async def delete_messages(chat_id, message_ids, fire_and_forget=True):
+        raise RuntimeError("platform rejected delete")
 
-    mock_platform.queue_delete_message = AsyncMock(side_effect=delete_message)
+    mock_platform.queue_delete_messages = AsyncMock(side_effect=delete_messages)
 
     incoming = incoming_message_factory(
         text="/clear", chat_id="chat_1", message_id="150"
     )
     await handler.handle_message(incoming)
 
-    deleted = [c.args[1] for c in mock_platform.queue_delete_message.call_args_list]
-    assert deleted == ["150", "43", "42", "41"]
+    mock_platform.queue_delete_messages.assert_called_once_with(
+        "chat_1",
+        ["150", "43", "42", "41"],
+        fire_and_forget=False,
+    )
     mock_session_store.clear_all.assert_called_once()
 
 
@@ -666,10 +671,10 @@ async def test_handle_message_clear_command_reply_clears_branch(
 
     deleted_ids = []
 
-    async def _capture_delete(chat_id, message_id, fire_and_forget=True):
-        deleted_ids.append(message_id)
+    async def _capture_delete(chat_id, message_ids, fire_and_forget=True):
+        deleted_ids.extend(message_ids)
 
-    mock_platform.queue_delete_message = AsyncMock(side_effect=_capture_delete)
+    mock_platform.queue_delete_messages = AsyncMock(side_effect=_capture_delete)
 
     incoming = incoming_message_factory(
         text="/clear",
@@ -723,10 +728,10 @@ async def test_handle_message_clear_command_reply_to_root_clears_tree(
 
     deleted_ids = []
 
-    async def _capture_delete(chat_id, message_id, fire_and_forget=True):
-        deleted_ids.append(message_id)
+    async def _capture_delete(chat_id, message_ids, fire_and_forget=True):
+        deleted_ids.extend(message_ids)
 
-    mock_platform.queue_delete_message = AsyncMock(side_effect=_capture_delete)
+    mock_platform.queue_delete_messages = AsyncMock(side_effect=_capture_delete)
 
     incoming = incoming_message_factory(
         text="/clear",
@@ -800,13 +805,12 @@ async def test_handle_message_clear_command_reply_pending_voice_cancels(
         return None
 
     mock_platform.cancel_pending_voice = AsyncMock(side_effect=cancel_pending)
-    mock_platform.queue_delete_message = AsyncMock()
     deleted_ids = []
 
-    async def _capture_delete(chat_id, message_id, fire_and_forget=True):
-        deleted_ids.append(message_id)
+    async def _capture_delete(chat_id, message_ids, fire_and_forget=True):
+        deleted_ids.extend(message_ids)
 
-    mock_platform.queue_delete_message = AsyncMock(side_effect=_capture_delete)
+    mock_platform.queue_delete_messages = AsyncMock(side_effect=_capture_delete)
 
     incoming = incoming_message_factory(
         text="/clear",

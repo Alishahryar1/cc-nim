@@ -141,7 +141,7 @@ class DiscordRuntime:
             discord_voice_request_from_event(message, attachment, channel_id),
             message_handler=self._message_handler,
             queue_send_message=self.outbound.queue_send_message,
-            queue_delete_message=self.outbound.queue_delete_message,
+            queue_delete_messages=self.outbound.queue_delete_messages,
         )
 
     async def _on_discord_message(self, message: Any) -> None:
