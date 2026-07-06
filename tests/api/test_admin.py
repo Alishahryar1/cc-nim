@@ -26,6 +26,7 @@ def _clear_process_config(monkeypatch) -> None:
         "NVIDIA_NIM_API_KEY",
         "OPENROUTER_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
+        "TELEGRAM_PROXY_URL",
         "FCC_ENV_FILE",
         "CLOUDFLARE_API_TOKEN",
         "CLOUDFLARE_ACCOUNT_ID",
@@ -111,6 +112,7 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     assert "GEMINI_API_KEY" in keys
     assert "GROQ_API_KEY" in keys
     assert "SAMBANOVA_API_KEY" in keys
+    assert "TELEGRAM_PROXY_URL" in keys
     assert "CEREBRAS_API_KEY" in keys
     assert "ZAI_BASE_URL" not in keys
     assert "CLAUDE_WORKSPACE" not in keys
@@ -122,6 +124,10 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     assert auth_field["secret"] is True
     assert auth_field["value"] == MASKED_SECRET
     assert auth_field["source"] == "template"
+    telegram_proxy_field = next(
+        field for field in body["fields"] if field["key"] == "TELEGRAM_PROXY_URL"
+    )
+    assert telegram_proxy_field["secret"] is True
 
 
 def test_admin_config_preserves_managed_env_source_contract(monkeypatch, tmp_path):
@@ -139,6 +145,27 @@ def test_admin_config_preserves_managed_env_source_contract(monkeypatch, tmp_pat
     model_field = next(field for field in body["fields"] if field["key"] == "MODEL")
     assert model_field["source"] == "managed_env"
     assert model_field["locked"] is False
+
+
+def test_admin_apply_masks_telegram_proxy_credentials(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_app(lifespan_enabled=False)
+    proxy_url = "https://user:password@proxy.example:8443"
+
+    response = _local_client(app).post(
+        "/admin/api/config/apply",
+        json={"values": {"TELEGRAM_PROXY_URL": proxy_url}},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["applied"] is True
+    assert "TELEGRAM_PROXY_URL=********" in body["env_preview"]
+    assert proxy_url not in body["env_preview"]
+    env_file = tmp_path / ".fcc" / ".env"
+    text = env_file.read_text(encoding="utf-8")
+    assert f"TELEGRAM_PROXY_URL={proxy_url}" in text
 
 
 def test_admin_validate_rejects_bad_model_shape(monkeypatch, tmp_path):
