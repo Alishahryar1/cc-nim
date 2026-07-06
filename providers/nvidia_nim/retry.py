@@ -11,8 +11,8 @@ def clone_body_without_reasoning_budget(body: dict[str, Any]) -> dict[str, Any] 
 
 
 def clone_body_without_chat_template(body: dict[str, Any]) -> dict[str, Any] | None:
-    """Clone a request body and strip only chat_template."""
-    return _clone_strip_extra_body(body, _strip_chat_template_field)
+    """Clone a request body and strip NIM chat-template control fields."""
+    return _clone_strip_extra_body(body, _strip_chat_template_fields)
 
 
 def clone_body_without_reasoning_content(
@@ -51,8 +51,11 @@ def _strip_reasoning_budget_fields(extra_body: dict[str, Any]) -> bool:
     return removed
 
 
-def _strip_chat_template_field(extra_body: dict[str, Any]) -> bool:
-    return extra_body.pop("chat_template", None) is not None
+def _strip_chat_template_fields(extra_body: dict[str, Any]) -> bool:
+    removed = extra_body.pop("chat_template", None) is not None
+    if extra_body.pop("chat_template_kwargs", None) is not None:
+        removed = True
+    return removed
 
 
 def _strip_message_reasoning_content(body: dict[str, Any]) -> bool:

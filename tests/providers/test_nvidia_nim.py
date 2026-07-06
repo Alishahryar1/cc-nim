@@ -428,12 +428,58 @@ async def test_stream_response_retries_without_chat_template(provider_config):
     assert "reasoning_budget" not in first_extra
 
     assert "chat_template" not in second_extra
-    assert second_extra["chat_template_kwargs"] == {
+    assert "chat_template_kwargs" not in second_extra
+    assert "reasoning_budget" not in second_extra
+
+    event_text = "".join(events)
+    assert "event: error" not in event_text
+    assert "OK" in event_text
+
+
+@pytest.mark.asyncio
+async def test_stream_response_retries_without_chat_template_kwargs_issue_993(
+    provider_config,
+):
+    provider = NvidiaNimProvider(provider_config, nim_settings=NimSettings())
+    req = MockRequest(model="mistralai/mistral-small-4-119b-2603")
+
+    mock_chunk = MagicMock()
+    mock_chunk.choices = [
+        MagicMock(
+            delta=MagicMock(content="OK", reasoning_content=""),
+            finish_reason="stop",
+        )
+    ]
+    mock_chunk.usage = MagicMock(completion_tokens=2)
+
+    async def mock_stream():
+        yield mock_chunk
+
+    first_error = _make_bad_request_error(
+        "chat_template is not supported for Mistral tokenizers."
+    )
+
+    with patch.object(
+        provider._client.chat.completions, "create", new_callable=AsyncMock
+    ) as mock_create:
+        mock_create.side_effect = [first_error, mock_stream()]
+
+        events = [e async for e in provider.stream_response(req)]
+
+    assert mock_create.await_count == 2
+
+    first_extra = mock_create.call_args_list[0].kwargs["extra_body"]
+    second_kwargs = mock_create.call_args_list[1].kwargs
+
+    assert "chat_template" not in first_extra
+    assert first_extra["chat_template_kwargs"] == {
         "thinking": True,
         "enable_thinking": True,
         "reasoning_budget": 100,
     }
-    assert "reasoning_budget" not in second_extra
+    second_extra = second_kwargs.get("extra_body") or {}
+    assert "chat_template" not in second_extra
+    assert "chat_template_kwargs" not in second_extra
 
     event_text = "".join(events)
     assert "event: error" not in event_text
