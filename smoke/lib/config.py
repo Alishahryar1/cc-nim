@@ -57,7 +57,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "huggingface": "huggingface/openai/gpt-oss-120b:fastest",
     "cohere": "cohere/command-a-plus-05-2026",
     "github_models": "github_models/openai/gpt-4.1",
-    "zai": "zai/glm-5.1",
+    "zai": "zai/glm-5.2",
     "gemini": "gemini/models/gemini-3.1-flash-lite",
     "groq": "groq/llama-3.3-70b-versatile",
     "sambanova": "sambanova/Meta-Llama-3.3-70B-Instruct",
@@ -66,7 +66,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
 }
 
 NVIDIA_NIM_CLI_DEFAULT_MODELS: tuple[str, ...] = (
-    "z-ai/glm-5.1",
+    "z-ai/glm-5.2",
     "moonshotai/kimi-k2.6",
     "minimaxai/minimax-m2.7",
     "nvidia/nemotron-3-super-120b-a12b",

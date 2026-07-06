@@ -420,17 +420,17 @@ def test_nvidia_nim_cli_default_models_are_normalized() -> None:
 def test_nvidia_nim_cli_models_override_and_append() -> None:
     refs = nvidia_nim_cli_model_refs(
         {
-            "FCC_SMOKE_NIM_MODELS": "z-ai/glm-5.1,nvidia_nim/custom/model",
-            "FCC_SMOKE_NIM_EXTRA_MODELS": "moonshotai/kimi-k2.6,z-ai/glm-5.1",
+            "FCC_SMOKE_NIM_MODELS": "z-ai/glm-5.2,nvidia_nim/custom/model",
+            "FCC_SMOKE_NIM_EXTRA_MODELS": "moonshotai/kimi-k2.6,z-ai/glm-5.2",
         }
     )
 
     assert tuple(refs) == (
-        "nvidia_nim/z-ai/glm-5.1",
+        "nvidia_nim/z-ai/glm-5.2",
         "nvidia_nim/custom/model",
         "nvidia_nim/moonshotai/kimi-k2.6",
     )
-    assert refs["nvidia_nim/z-ai/glm-5.1"] == "FCC_SMOKE_NIM_MODELS"
+    assert refs["nvidia_nim/z-ai/glm-5.2"] == "FCC_SMOKE_NIM_MODELS"
     assert refs["nvidia_nim/moonshotai/kimi-k2.6"] == ("FCC_SMOKE_NIM_EXTRA_MODELS")
 
 
@@ -457,7 +457,7 @@ def test_smoke_config_returns_nvidia_nim_cli_provider_models(monkeypatch) -> Non
     monkeypatch.delenv("FCC_SMOKE_NIM_EXTRA_MODELS", raising=False)
     config = _smoke_config(
         settings=_settings(
-            model="nvidia_nim/z-ai/glm-5.1",
+            model="nvidia_nim/z-ai/glm-5.2",
             nvidia_nim_api_key="nim-key",
             ollama_base_url="",
         )
@@ -466,7 +466,7 @@ def test_smoke_config_returns_nvidia_nim_cli_provider_models(monkeypatch) -> Non
     models = config.nvidia_nim_cli_models()
 
     assert models[0].provider == "nvidia_nim"
-    assert models[0].full_model == "nvidia_nim/z-ai/glm-5.1"
+    assert models[0].full_model == "nvidia_nim/z-ai/glm-5.2"
     assert models[0].source == "nvidia_nim_cli_default"
 
 
