@@ -113,6 +113,12 @@ def _create_cohere(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     return CohereProvider(config)
 
 
+def _create_github_models(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+    from providers.github_models import GitHubModelsProvider
+
+    return GitHubModelsProvider(config)
+
+
 def _create_zai(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     from providers.zai import ZaiProvider
 
@@ -143,6 +149,12 @@ def _create_groq(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     return GroqProvider(config)
 
 
+def _create_sambanova(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+    from providers.sambanova import SambaNovaProvider
+
+    return SambaNovaProvider(config)
+
+
 def _create_cerebras(config: ProviderConfig, _settings: Settings) -> BaseProvider:
     from providers.cerebras import CerebrasProvider
 
@@ -161,11 +173,13 @@ PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "vercel": _create_vercel,
     "huggingface": _create_huggingface,
     "cohere": _create_cohere,
+    "github_models": _create_github_models,
     "wafer": _create_wafer,
     "kimi": _create_kimi,
     "minimax": _create_minimax,
     "cerebras": _create_cerebras,
     "groq": _create_groq,
+    "sambanova": _create_sambanova,
     "fireworks": _create_fireworks,
     "cloudflare": _create_cloudflare,
     "zai": _create_zai,

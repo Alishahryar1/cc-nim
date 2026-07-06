@@ -583,6 +583,12 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         advanced=True,
     ),
     ConfigFieldSpec(
+        "FCC_SMOKE_MODEL_GITHUB_MODELS",
+        "Smoke GitHub Models Model",
+        "smoke",
+        advanced=True,
+    ),
+    ConfigFieldSpec(
         "FCC_SMOKE_MODEL_ZAI",
         "Smoke Z.ai Model",
         "smoke",
@@ -609,6 +615,12 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
     ConfigFieldSpec(
         "FCC_SMOKE_MODEL_GROQ",
         "Smoke Groq Model",
+        "smoke",
+        advanced=True,
+    ),
+    ConfigFieldSpec(
+        "FCC_SMOKE_MODEL_SAMBANOVA",
+        "Smoke SambaNova Model",
         "smoke",
         advanced=True,
     ),

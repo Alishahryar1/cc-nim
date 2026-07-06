@@ -48,6 +48,13 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
         "label": "Cohere API Key",
         "description": "Cohere API key for the OpenAI-compatible Compatibility API.",
     },
+    "GITHUB_MODELS_TOKEN": {
+        "label": "GitHub Models Token",
+        "description": (
+            "GitHub token with Models access for the OpenAI-compatible inference API "
+            "at models.github.ai."
+        ),
+    },
     "ZAI_API_KEY": {
         "label": "Z.ai API Key",
         "description": "Z.ai Coding Plan API key.",
@@ -85,6 +92,13 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "GroqCloud OpenAI-compatible API key ([console.groq.com/keys]("
             "https://console.groq.com/keys)); see Groq "
             "[OpenAI compatibility docs](https://console.groq.com/docs/openai)."
+        ),
+    },
+    "SAMBANOVA_API_KEY": {
+        "label": "SambaNova API Key",
+        "description": (
+            "SambaNova Cloud OpenAI-compatible API key (create at "
+            "[cloud.sambanova.ai/apis](https://cloud.sambanova.ai/apis))."
         ),
     },
     "CEREBRAS_API_KEY": {

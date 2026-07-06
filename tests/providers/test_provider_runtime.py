@@ -7,6 +7,7 @@ import pytest
 from config.nim import NimSettings
 from config.provider_catalog import (
     COHERE_DEFAULT_BASE,
+    GITHUB_MODELS_DEFAULT_BASE,
     MINIMAX_DEFAULT_BASE,
     PROVIDER_CATALOG,
     ZAI_DEFAULT_BASE,
@@ -20,6 +21,7 @@ from providers.deepseek import DeepSeekProvider
 from providers.exceptions import UnknownProviderTypeError
 from providers.fireworks import FireworksProvider
 from providers.gemini import GeminiProvider
+from providers.github_models import GitHubModelsProvider
 from providers.groq import GroqProvider
 from providers.huggingface import HUGGINGFACE_DEFAULT_BASE, HuggingFaceProvider
 from providers.kimi import KimiProvider
@@ -54,6 +56,7 @@ def _make_settings(**overrides):
     mock.vercel_ai_gateway_api_key = "test_vercel_key"
     mock.huggingface_api_key = "test_huggingface_key"
     mock.cohere_api_key = "test_cohere_key"
+    mock.github_models_token = "test_github_models_token"
     mock.zai_api_key = "test_zai_key"
     mock.lm_studio_base_url = "http://localhost:1234/v1"
     mock.llamacpp_base_url = "http://localhost:8080/v1"
@@ -73,6 +76,7 @@ def _make_settings(**overrides):
     mock.vercel_ai_gateway_proxy = ""
     mock.huggingface_proxy = ""
     mock.cohere_proxy = ""
+    mock.github_models_proxy = ""
     mock.zai_proxy = ""
     mock.fireworks_proxy = ""
     mock.fireworks_api_key = "test_fireworks_key"
@@ -240,6 +244,16 @@ def test_cohere_descriptor_uses_openai_chat_compatibility_api() -> None:
     assert "thinking" in descriptor.capabilities
 
 
+def test_github_models_descriptor_uses_openai_chat_inference_api() -> None:
+    descriptor = PROVIDER_CATALOG["github_models"]
+
+    assert descriptor.transport_type == "openai_chat"
+    assert descriptor.default_base_url == GITHUB_MODELS_DEFAULT_BASE
+    assert descriptor.credential_env == "GITHUB_MODELS_TOKEN"
+    assert descriptor.proxy_attr == "github_models_proxy"
+    assert "thinking" in descriptor.capabilities
+
+
 def test_build_provider_config_vercel_uses_gateway_key_and_proxy() -> None:
     descriptor = PROVIDER_CATALOG["vercel"]
     settings = _make_settings(
@@ -279,6 +293,19 @@ def test_build_provider_config_cohere_uses_api_key_and_proxy() -> None:
     assert config.proxy == "http://proxy.test:8080"
 
 
+def test_build_provider_config_github_models_uses_token_and_proxy() -> None:
+    descriptor = PROVIDER_CATALOG["github_models"]
+    settings = _make_settings(
+        github_models_token="github-token",
+        github_models_proxy="http://proxy.test:8080",
+    )
+
+    config = build_provider_config(descriptor, settings)
+
+    assert config.api_key == "github-token"
+    assert config.proxy == "http://proxy.test:8080"
+
+
 def test_create_provider_uses_native_openrouter_by_default():
     with patch("httpx.AsyncClient"):
         provider = create_provider("open_router", _make_settings())
@@ -297,6 +324,7 @@ def test_create_provider_instantiates_each_builtin():
         vercel_ai_gateway_api_key="test_vercel_key",
         huggingface_api_key="test_huggingface_key",
         cohere_api_key="test_cohere_key",
+        github_models_token="test_github_models_token",
         kimi_api_key="test_kimi_key",
     )
     cases = {
@@ -317,6 +345,7 @@ def test_create_provider_instantiates_each_builtin():
         "vercel": VercelProvider,
         "huggingface": HuggingFaceProvider,
         "cohere": CohereProvider,
+        "github_models": GitHubModelsProvider,
         "zai": ZaiProvider,
         "gemini": GeminiProvider,
         "groq": GroqProvider,

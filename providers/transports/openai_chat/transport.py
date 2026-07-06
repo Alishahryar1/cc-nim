@@ -1,10 +1,11 @@
 """OpenAI-compatible chat transport base."""
 
 from abc import abstractmethod
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator, Iterator, Mapping
 from typing import Any
 
 import httpx
+from loguru import logger
 from openai import AsyncOpenAI
 
 from core.anthropic.streaming import AnthropicStreamLedger
@@ -17,6 +18,7 @@ from providers.error_mapping import (
 from providers.model_listing import extract_openai_model_ids
 from providers.rate_limit import GlobalRateLimiter
 
+from .output_cap import clamp_output_tokens, parse_output_token_cap
 from .stream import OpenAIChatStreamAdapter
 
 
@@ -30,11 +32,15 @@ class OpenAIChatTransport(BaseProvider):
         provider_name: str,
         base_url: str,
         api_key: str,
+        default_headers: Mapping[str, str] | None = None,
     ):
         super().__init__(config)
         self._provider_name = provider_name
         self._api_key = api_key
         self._base_url = base_url.rstrip("/")
+        # Learned per-model output-token caps from upstream 400 rejections, so
+        # later requests clamp proactively instead of paying the 400 each time.
+        self._model_output_caps: dict[str, int] = {}
         self._global_rate_limiter = GlobalRateLimiter.get_scoped_instance(
             provider_name.lower(),
             rate_limit=config.rate_limit,
@@ -56,6 +62,7 @@ class OpenAIChatTransport(BaseProvider):
             api_key=self._api_key,
             base_url=self._base_url,
             max_retries=0,
+            default_headers=default_headers,
             timeout=httpx.Timeout(
                 config.http_read_timeout,
                 connect=config.http_connect_timeout,
@@ -111,6 +118,7 @@ class OpenAIChatTransport(BaseProvider):
 
     async def _create_stream(self, body: dict) -> tuple[Any, dict]:
         """Create a streaming chat completion, optionally retrying once."""
+        body = self._apply_learned_output_cap(body)
         try:
             create_body = self._prepare_create_body(body)
             stream = await self._global_rate_limiter.execute_with_retry(
@@ -118,7 +126,9 @@ class OpenAIChatTransport(BaseProvider):
             )
             return stream, body
         except Exception as error:
-            retry_body = self._get_retry_request_body(error, body)
+            retry_body = self._retry_body_for_output_cap(error, body)
+            if retry_body is None:
+                retry_body = self._get_retry_request_body(error, body)
             if retry_body is None:
                 raise
 
@@ -127,6 +137,37 @@ class OpenAIChatTransport(BaseProvider):
                 self._client.chat.completions.create, **create_retry_body, stream=True
             )
             return stream, retry_body
+
+    def _apply_learned_output_cap(self, body: dict) -> dict:
+        """Clamp output tokens to a previously learned cap for this model."""
+        model = body.get("model")
+        if not isinstance(model, str):
+            return body
+        cap = self._model_output_caps.get(model)
+        if cap is None:
+            return body
+        clamped = clamp_output_tokens(body, cap)
+        return clamped if clamped is not None else body
+
+    def _retry_body_for_output_cap(self, error: Exception, body: dict) -> dict | None:
+        """Learn an upstream output-token cap from a 400 and clamp for one retry."""
+        cap = parse_output_token_cap(error)
+        if cap is None:
+            return None
+        model = body.get("model")
+        if isinstance(model, str):
+            previous = self._model_output_caps.get(model)
+            cap = cap if previous is None else min(previous, cap)
+            self._model_output_caps[model] = cap
+        clamped = clamp_output_tokens(body, cap)
+        if clamped is None:
+            return None
+        logger.warning(
+            "{}_STREAM: clamping output tokens to {} after upstream cap rejection",
+            self._provider_name,
+            cap,
+        )
+        return clamped
 
     def _openai_error_message(self, error: Exception, request_id: str | None) -> str:
         mapped_error = map_error(error, rate_limiter=self._global_rate_limiter)
