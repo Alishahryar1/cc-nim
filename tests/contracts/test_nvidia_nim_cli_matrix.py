@@ -45,8 +45,8 @@ def test_nvidia_nim_cli_matrix_report_shape_and_redaction(
         duration_s=1.25,
     )
     outcome = make_outcome(
-        model="z-ai/glm-5.1",
-        full_model="nvidia_nim/z-ai/glm-5.1",
+        model="z-ai/glm-5.2",
+        full_model="nvidia_nim/z-ai/glm-5.2",
         source="nvidia_nim_cli_default",
         feature="basic_text",
         marker="FCC_NIM_BASIC",
@@ -65,7 +65,7 @@ def test_nvidia_nim_cli_matrix_report_shape_and_redaction(
 
     assert path.name.startswith("nvidia-nim-cli-matrix-test-worker-")
     assert payload["target"] == "nvidia_nim_cli"
-    assert payload["models"] == ["nvidia_nim/z-ai/glm-5.1"]
+    assert payload["models"] == ["nvidia_nim/z-ai/glm-5.2"]
     saved = payload["outcomes"][0]
     assert saved["feature"] == "basic_text"
     assert saved["classification"] == "passed"
@@ -114,8 +114,8 @@ def test_cli_matrix_normalizes_missing_captured_output(
         tools="",
     )
     outcome = make_outcome(
-        model="z-ai/glm-5.1",
-        full_model="nvidia_nim/z-ai/glm-5.1",
+        model="z-ai/glm-5.2",
+        full_model="nvidia_nim/z-ai/glm-5.2",
         source="nvidia_nim_cli_default",
         feature="basic_text",
         marker="FCC_NIM_BASIC",
@@ -183,8 +183,8 @@ def test_nvidia_nim_cli_matrix_regression_detection(tmp_path: Path) -> None:
         duration_s=0.1,
     )
     outcome = make_outcome(
-        model="z-ai/glm-5.1",
-        full_model="nvidia_nim/z-ai/glm-5.1",
+        model="z-ai/glm-5.2",
+        full_model="nvidia_nim/z-ai/glm-5.2",
         source="nvidia_nim_cli_default",
         feature="basic_text",
         marker="FCC_NIM_BASIC",
@@ -195,7 +195,7 @@ def test_nvidia_nim_cli_matrix_regression_detection(tmp_path: Path) -> None:
 
     assert outcome.classification == "product_failure"
     assert regression_failures([outcome]) == [
-        "nvidia_nim/z-ai/glm-5.1 basic_text: product_failure"
+        "nvidia_nim/z-ai/glm-5.2 basic_text: product_failure"
     ]
 
 
@@ -210,8 +210,8 @@ def test_nvidia_nim_cli_matrix_model_feature_failures_do_not_regress(
         duration_s=0.1,
     )
     outcome = make_outcome(
-        model="z-ai/glm-5.1",
-        full_model="nvidia_nim/z-ai/glm-5.1",
+        model="z-ai/glm-5.2",
+        full_model="nvidia_nim/z-ai/glm-5.2",
         source="nvidia_nim_cli_default",
         feature="tool_use_roundtrip",
         marker="FCC_NIM_TOOL",
@@ -236,13 +236,13 @@ def test_nvidia_nim_cli_raw_payload_log_counts_as_proxy_request(
         duration_s=0.1,
     )
     outcome = make_outcome(
-        model="z-ai/glm-5.1",
-        full_model="nvidia_nim/z-ai/glm-5.1",
+        model="z-ai/glm-5.2",
+        full_model="nvidia_nim/z-ai/glm-5.2",
         source="nvidia_nim_cli_default",
         feature="subagent_task",
         marker="FCC_NIM_TASK",
         run=run,
-        log_delta="API_REQUEST: request_id=req_1 model=z-ai/glm-5.1 messages=2",
+        log_delta="API_REQUEST: request_id=req_1 model=z-ai/glm-5.2 messages=2",
         log_path=tmp_path / "server.log",
         requires_task=True,
     )
@@ -428,13 +428,13 @@ def test_nvidia_nim_cli_timeout_is_not_model_missing(
         timed_out=True,
     )
     outcome = make_outcome(
-        model="z-ai/glm-5.1",
-        full_model="nvidia_nim/z-ai/glm-5.1",
+        model="z-ai/glm-5.2",
+        full_model="nvidia_nim/z-ai/glm-5.2",
         source="nvidia_nim_cli_default",
         feature="tool_use_roundtrip",
         marker="FCC_NIM_TOOL",
         run=run,
-        log_delta="API_REQUEST: request_id=req_1 model=z-ai/glm-5.1 messages=2",
+        log_delta="API_REQUEST: request_id=req_1 model=z-ai/glm-5.2 messages=2",
         log_path=tmp_path / "server.log",
     )
 
@@ -452,14 +452,14 @@ def test_nvidia_nim_cli_success_beats_verbose_timeout_words(tmp_path: Path) -> N
         duration_s=0.1,
     )
     outcome = make_outcome(
-        model="z-ai/glm-5.1",
-        full_model="nvidia_nim/z-ai/glm-5.1",
+        model="z-ai/glm-5.2",
+        full_model="nvidia_nim/z-ai/glm-5.2",
         source="nvidia_nim_cli_default",
         feature="thinking",
         marker="FCC_NIM_THINK",
         run=run,
         log_delta=(
-            "API_REQUEST: request_id=req_1 model=z-ai/glm-5.1 messages=1 "
+            "API_REQUEST: request_id=req_1 model=z-ai/glm-5.2 messages=1 "
             "read_timeout_s=300"
         ),
         log_path=tmp_path / "server.log",

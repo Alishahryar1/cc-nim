@@ -490,7 +490,7 @@ def test_admin_apply_omits_stale_zai_base_url(monkeypatch, tmp_path):
     env_file.write_text(
         "\n".join(
             [
-                "MODEL=zai/glm-5.1",
+                "MODEL=zai/glm-5.2",
                 "ZAI_API_KEY=zai-secret",
                 "ZAI_BASE_URL=https://custom.zai.invalid/v1",
                 "",
@@ -502,7 +502,7 @@ def test_admin_apply_omits_stale_zai_base_url(monkeypatch, tmp_path):
 
     response = _local_client(app).post(
         "/admin/api/config/apply",
-        json={"values": {"MODEL": "zai/glm-5.1"}},
+        json={"values": {"MODEL": "zai/glm-5.2"}},
     )
 
     assert response.status_code == 200

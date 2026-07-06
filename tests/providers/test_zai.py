@@ -69,12 +69,12 @@ def test_model_list_headers(zai_provider):
 
 def test_build_request_body_native(zai_provider):
     request = MessagesRequest(
-        model="glm-5.1",
+        model="glm-5.2",
         max_tokens=100,
         messages=[Message(role="user", content="Hello")],
     )
     body = zai_provider._build_request_body(request)
-    assert body["model"] == "glm-5.1"
+    assert body["model"] == "glm-5.2"
     assert body["stream"] is True
     assert body["max_tokens"] == 100
 

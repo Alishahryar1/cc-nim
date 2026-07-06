@@ -102,7 +102,7 @@ uv run pytest smoke/product -n 0 -s --tb=short
 ```powershell
 $env:FCC_LIVE_SMOKE = "1"
 $env:FCC_SMOKE_TARGETS = "nvidia_nim_cli"
-$env:FCC_SMOKE_NIM_MODELS = "z-ai/glm-5.1,moonshotai/kimi-k2.6,minimaxai/minimax-m2.7,nvidia/nemotron-3-super-120b-a12b,deepseek-ai/deepseek-v4-pro,deepseek-ai/deepseek-v4-flash"
+$env:FCC_SMOKE_NIM_MODELS = "z-ai/glm-5.2,moonshotai/kimi-k2.6,minimaxai/minimax-m2.7,nvidia/nemotron-3-super-120b-a12b,deepseek-ai/deepseek-v4-pro,deepseek-ai/deepseek-v4-flash"
 uv run pytest smoke/product -n 0 -s --tb=short
 ```
 
