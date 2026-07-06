@@ -1,6 +1,7 @@
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
+from telegram.error import TelegramError
 
 from messaging.platforms.telegram import TelegramRuntime
 
@@ -195,6 +196,48 @@ async def test_telegram_platform_delete_messages_falls_back_after_batch_failure(
         "chat_id": "chat_1",
         "message_id": 2,
     }
+
+
+@pytest.mark.asyncio
+async def test_telegram_platform_delete_messages_falls_back_after_swallowed_error(
+    telegram_platform,
+):
+    mock_bot = AsyncMock()
+    mock_bot.delete_messages.side_effect = TelegramError("message can't be deleted")
+    telegram_platform._application = MagicMock()
+    telegram_platform._application.bot = mock_bot
+
+    await telegram_platform.outbound.delete_messages("chat_1", ["1", "2"])
+
+    mock_bot.delete_messages.assert_awaited_once_with(
+        chat_id="chat_1",
+        message_ids=[1, 2],
+    )
+    assert mock_bot.delete_message.await_args_list[0].kwargs == {
+        "chat_id": "chat_1",
+        "message_id": 1,
+    }
+    assert mock_bot.delete_message.await_args_list[1].kwargs == {
+        "chat_id": "chat_1",
+        "message_id": 2,
+    }
+
+
+@pytest.mark.asyncio
+async def test_telegram_platform_single_delete_still_swallows_known_error(
+    telegram_platform,
+):
+    mock_bot = AsyncMock()
+    mock_bot.delete_message.side_effect = TelegramError("message can't be deleted")
+    telegram_platform._application = MagicMock()
+    telegram_platform._application.bot = mock_bot
+
+    await telegram_platform.outbound.delete_message("chat_1", "1")
+
+    mock_bot.delete_message.assert_awaited_once_with(
+        chat_id="chat_1",
+        message_id=1,
+    )
 
 
 @pytest.mark.asyncio

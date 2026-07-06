@@ -55,7 +55,11 @@ class TelegramMessenger:
         )
 
     async def _with_retry(
-        self, func: Callable[..., Awaitable[Any]], *args: Any, **kwargs: Any
+        self,
+        func: Callable[..., Awaitable[Any]],
+        *args: Any,
+        suppress_known_message_errors: bool = True,
+        **kwargs: Any,
     ) -> Any:
         """Execute a Telegram API call with the platform retry policy."""
         max_retries = 3
@@ -64,7 +68,9 @@ class TelegramMessenger:
                 return await func(*args, **kwargs)
             except (TimeoutError, TelegramNetworkError) as e:
                 if "Message is not modified" in str(e):
-                    return None
+                    if suppress_known_message_errors:
+                        return None
+                    raise
                 if attempt < max_retries - 1:
                     wait_time = 2**attempt
                     logger.warning(
@@ -96,7 +102,9 @@ class TelegramMessenger:
             except TelegramBaseError as e:
                 err_lower = str(e).lower()
                 if "message is not modified" in err_lower:
-                    return None
+                    if suppress_known_message_errors:
+                        return None
+                    raise
                 if any(
                     x in err_lower
                     for x in [
@@ -107,7 +115,9 @@ class TelegramMessenger:
                         "not enough rights to delete",
                     ]
                 ):
-                    return None
+                    if suppress_known_message_errors:
+                        return None
+                    raise
                 if "Can't parse entities" in str(e) and kwargs.get("parse_mode"):
                     logger.warning("Markdown failed, retrying without parse_mode")
                     kwargs["parse_mode"] = None
@@ -202,7 +212,10 @@ class TelegramMessenger:
                     await bot.delete_messages(chat_id=chat_id, message_ids=list(ids))
 
                 try:
-                    await self._with_retry(_do_bulk)
+                    await self._with_retry(
+                        _do_bulk,
+                        suppress_known_message_errors=False,
+                    )
                 except Exception as e:
                     logger.debug(
                         "Telegram bulk delete failed for chat {}: {}; falling back",
