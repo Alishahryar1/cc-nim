@@ -24,6 +24,7 @@ async def handle_session_info_event(
     *,
     cli_manager: ManagedClaudeSessionManagerProtocol,
     session_store: SessionStore,
+    save_tree_snapshot: Callable[[MessageTree], None] | None = None,
 ) -> tuple[str | None, str | None]:
     """Handle session_info event; return updated (captured_session_id, temp_session_id)."""
     if event_data.get("type") != "session_info":
@@ -49,7 +50,10 @@ async def handle_session_info_event(
             MessageState.IN_PROGRESS,
             session_id=real_session_id,
         )
-        session_store.save_tree_snapshot(tree.snapshot())
+        if save_tree_snapshot is None:
+            session_store.save_tree_snapshot(tree.snapshot())
+        else:
+            save_tree_snapshot(tree)
 
     return real_session_id, None
 
@@ -65,6 +69,7 @@ async def process_parsed_cli_event(
     captured_session_id: str | None,
     *,
     session_store: SessionStore,
+    save_tree_snapshot: Callable[[MessageTree], None] | None = None,
     format_status: Callable[..., str],
     propagate_error_to_children: Callable[[str, str, str], Awaitable[None]],
     log_messaging_error_details: bool = False,
@@ -99,7 +104,10 @@ async def process_parsed_cli_event(
                 MessageState.COMPLETED,
                 session_id=captured_session_id,
             )
-            session_store.save_tree_snapshot(tree.snapshot())
+            if save_tree_snapshot is None:
+                session_store.save_tree_snapshot(tree.snapshot())
+            else:
+                save_tree_snapshot(tree)
     elif ptype == "error":
         error_msg = parsed.get("message", "Unknown error")
         em = error_msg if isinstance(error_msg, str) else str(error_msg)

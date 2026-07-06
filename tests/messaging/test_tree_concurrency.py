@@ -412,7 +412,7 @@ class TestTreeQueueManagerConcurrency:
         assert len(cancelled) >= 1  # At least the current + queued
 
         # Tree should no longer be processing
-        assert tree._is_processing is False
+        assert tree.is_processing is False
 
     @pytest.mark.asyncio
     async def test_cancel_nonexistent_tree(self):

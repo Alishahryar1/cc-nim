@@ -131,11 +131,15 @@ class MessageTree:
     def set_current_task(self, task: asyncio.Task | None) -> None:
         self._current_task = task
 
-    def cancel_current_task(self) -> bool:
+    @property
+    def current_task(self) -> asyncio.Task | None:
+        return self._current_task
+
+    def cancel_current_task(self) -> asyncio.Task | None:
         if self._current_task and not self._current_task.done():
             self._current_task.cancel()
-            return True
-        return False
+            return self._current_task
+        return None
 
     def set_node_error_sync(self, node: MessageNode, error_message: str) -> None:
         node.mark_error(error_message)

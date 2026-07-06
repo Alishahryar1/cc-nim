@@ -12,6 +12,34 @@ from .repository import TreeRepository
 from .runtime import MessageTree
 from .snapshot import ConversationSnapshot
 
+CANCEL_TASK_DRAIN_TIMEOUT_S = 5.0
+
+
+async def _drain_cancelled_tasks(tasks: list[asyncio.Task]) -> None:
+    """Wait briefly for cancelled node tasks to finish their cleanup."""
+    if not tasks:
+        return
+    try:
+        results = await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True),
+            timeout=CANCEL_TASK_DRAIN_TIMEOUT_S,
+        )
+    except TimeoutError:
+        logger.warning(
+            "Timed out waiting for {} cancelled messaging task(s) to finish cleanup",
+            len(tasks),
+        )
+        return
+
+    for result in results:
+        if isinstance(result, asyncio.CancelledError):
+            continue
+        if isinstance(result, Exception):
+            logger.debug(
+                "Cancelled messaging task finished with {}",
+                type(result).__name__,
+            )
+
 
 class TreeQueueManager:
     """
@@ -218,10 +246,13 @@ class TreeQueueManager:
             return []
 
         cancelled_nodes = []
+        cancelled_tasks: list[asyncio.Task] = []
 
         cleanup_count = 0
         async with tree.with_lock():
-            if tree.cancel_current_task():
+            cancelled_task = tree.cancel_current_task()
+            if cancelled_task:
+                cancelled_tasks.append(cancelled_task)
                 current_id = tree.current_node_id
                 if current_id:
                     node = tree.get_node(current_id)
@@ -245,6 +276,8 @@ class TreeQueueManager:
                     cleanup_count += 1
 
             tree.reset_processing_state()
+
+        await _drain_cancelled_tasks(cancelled_tasks)
 
         if cancelled_nodes:
             logger.info(
@@ -274,8 +307,11 @@ class TreeQueueManager:
             if node.state in (MessageState.COMPLETED, MessageState.ERROR):
                 return []
 
+            cancelled_tasks: list[asyncio.Task] = []
             if tree.is_current_node(node_id):
-                self._processor.cancel_current(tree)
+                cancelled_task = self._processor.cancel_current(tree)
+                if cancelled_task:
+                    cancelled_tasks.append(cancelled_task)
 
             removed_from_queue = False
             try:
@@ -289,6 +325,7 @@ class TreeQueueManager:
 
         if removed_from_queue:
             await self._processor.notify_queue_updated(tree)
+        await _drain_cancelled_tasks(cancelled_tasks)
 
         return [node]
 
@@ -296,10 +333,10 @@ class TreeQueueManager:
         """Cancel all messages in all trees."""
         async with self._lock:
             root_ids = list(self._repository.tree_ids())
-            all_cancelled: list[MessageNode] = []
-            for root_id in root_ids:
-                all_cancelled.extend(await self.cancel_tree(root_id))
-            return all_cancelled
+        all_cancelled: list[MessageNode] = []
+        for root_id in root_ids:
+            all_cancelled.extend(await self.cancel_tree(root_id))
+        return all_cancelled
 
     def cleanup_stale_nodes(self) -> int:
         """
@@ -348,6 +385,7 @@ class TreeQueueManager:
 
         branch_ids = set(tree.get_descendants(branch_root_id))
         cancelled: list[MessageNode] = []
+        cancelled_tasks: list[asyncio.Task] = []
         removed_from_queue = False
 
         async with tree.with_lock():
@@ -360,7 +398,9 @@ class TreeQueueManager:
                     continue
 
                 if tree.is_current_node(nid):
-                    self._processor.cancel_current(tree)
+                    cancelled_task = self._processor.cancel_current(tree)
+                    if cancelled_task:
+                        cancelled_tasks.append(cancelled_task)
                     tree.set_node_error_sync(node, "Cancelled by user")
                     cancelled.append(node)
                 else:
@@ -374,6 +414,7 @@ class TreeQueueManager:
             logger.info(f"Cancelled {len(cancelled)} nodes in branch {branch_root_id}")
         if removed_from_queue:
             await self._processor.notify_queue_updated(tree)
+        await _drain_cancelled_tasks(cancelled_tasks)
         return cancelled
 
     async def remove_branch(

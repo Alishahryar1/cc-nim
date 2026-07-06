@@ -44,7 +44,7 @@ async def test_process_node_success(tree_processor, sample_tree, sample_node):
     await tree_processor.process_node(sample_tree, sample_node, processor)
 
     processor.assert_called_once_with(sample_node.node_id, sample_node)
-    assert sample_tree._current_node_id is None
+    assert sample_tree.current_node_id is None
 
 
 @pytest.mark.asyncio
@@ -54,7 +54,7 @@ async def test_process_node_cancelled(tree_processor, sample_tree, sample_node):
     with pytest.raises(asyncio.CancelledError):
         await tree_processor.process_node(sample_tree, sample_node, processor)
 
-    assert sample_tree._current_node_id is None
+    assert sample_tree.current_node_id is None
 
 
 @pytest.mark.asyncio
@@ -69,7 +69,7 @@ async def test_process_node_exception(tree_processor, sample_tree, sample_node):
     sample_tree.update_state.assert_called_once_with(
         sample_node.node_id, MessageState.ERROR, error_message="Test error"
     )
-    assert sample_tree._current_node_id is None
+    assert sample_tree.current_node_id is None
 
 
 @pytest.mark.asyncio
@@ -84,20 +84,20 @@ async def test_enqueue_and_start_when_free(tree_processor, sample_tree):
     was_queued = await tree_processor.enqueue_and_start(sample_tree, node_id, processor)
 
     assert was_queued is False
-    assert sample_tree._is_processing is True
-    assert sample_tree._current_node_id == node_id
-    assert sample_tree._current_task is not None
+    assert sample_tree.is_processing is True
+    assert sample_tree.current_node_id == node_id
+    assert sample_tree.current_task is not None
 
     # Clean up task
-    sample_tree._current_task.cancel()
+    sample_tree.current_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
-        await sample_tree._current_task
+        await sample_tree.current_task
 
 
 @pytest.mark.asyncio
 async def test_enqueue_and_start_when_busy(tree_processor, sample_tree):
     processor = AsyncMock()
-    sample_tree._is_processing = True
+    sample_tree.set_processing_state("busy", True)
     node_id = "node1"
 
     was_queued = await tree_processor.enqueue_and_start(sample_tree, node_id, processor)
@@ -110,33 +110,33 @@ async def test_enqueue_and_start_when_busy(tree_processor, sample_tree):
 def test_cancel_current_task(tree_processor, sample_tree):
     mock_task = MagicMock(spec=asyncio.Task)
     mock_task.done.return_value = False
-    sample_tree._current_task = mock_task
+    sample_tree.set_current_task(mock_task)
 
     cancelled = tree_processor.cancel_current(sample_tree)
 
-    assert cancelled is True
+    assert cancelled is mock_task
     mock_task.cancel.assert_called_once()
 
 
 def test_cancel_current_task_already_done(tree_processor, sample_tree):
     mock_task = MagicMock(spec=asyncio.Task)
     mock_task.done.return_value = True
-    sample_tree._current_task = mock_task
+    sample_tree.set_current_task(mock_task)
 
     cancelled = tree_processor.cancel_current(sample_tree)
 
-    assert cancelled is False
+    assert cancelled is None
     mock_task.cancel.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_process_next_queue_empty(tree_processor, sample_tree):
     processor = AsyncMock()
-    sample_tree._is_processing = True
+    sample_tree.set_processing_state("busy", True)
 
     await tree_processor._process_next(sample_tree, processor)
 
-    assert sample_tree._is_processing is False
+    assert sample_tree.is_processing is False
 
 
 @pytest.mark.asyncio
@@ -149,13 +149,13 @@ async def test_process_next_with_item(tree_processor, sample_tree):
 
     await tree_processor._process_next(sample_tree, processor)
 
-    assert sample_tree._current_node_id == "next_node"
-    assert sample_tree._current_task is not None
+    assert sample_tree.current_node_id == "next_node"
+    assert sample_tree.current_task is not None
 
     # Clean up
-    sample_tree._current_task.cancel()
+    sample_tree.current_task.cancel()
     with contextlib.suppress(asyncio.CancelledError):
-        await sample_tree._current_task
+        await sample_tree.current_task
 
 
 @pytest.mark.asyncio
@@ -190,14 +190,14 @@ async def test_process_next_skips_stale_id_and_runs_next_valid_node(sample_tree)
 
     await processor._process_next(sample_tree, node_processor)
 
-    assert sample_tree._is_processing is True
-    assert sample_tree._current_node_id == "valid_node"
+    assert sample_tree.is_processing is True
+    assert sample_tree.current_node_id == "valid_node"
     node_started.assert_awaited_once_with(sample_tree, "valid_node")
     queue_updated.assert_awaited_once_with(sample_tree)
 
     release.set()
-    if sample_tree._current_task:
-        await sample_tree._current_task
+    if sample_tree.current_task:
+        await sample_tree.current_task
 
 
 @pytest.mark.asyncio
@@ -208,14 +208,14 @@ async def test_process_next_drains_all_stale_ids_without_wedging(sample_tree):
         queue_update_callback=queue_updated,
         node_started_callback=node_started,
     )
-    sample_tree._is_processing = True
+    sample_tree.set_processing_state("busy", True)
     sample_tree.put_queue_unlocked("missing_one")
     sample_tree.put_queue_unlocked("missing_two")
 
     await processor._process_next(sample_tree, AsyncMock())
 
-    assert sample_tree._is_processing is False
-    assert sample_tree._current_node_id is None
+    assert sample_tree.is_processing is False
+    assert sample_tree.current_node_id is None
     assert sample_tree._queue.qsize() == 0
     node_started.assert_not_awaited()
     queue_updated.assert_awaited_once_with(sample_tree)
@@ -256,7 +256,7 @@ async def test_process_next_triggers_node_started(sample_tree):
 
     node_started.assert_awaited_once_with(sample_tree, "next_node")
 
-    if sample_tree._current_task:
-        sample_tree._current_task.cancel()
+    if sample_tree.current_task:
+        sample_tree.current_task.cancel()
         with contextlib.suppress(asyncio.CancelledError):
-            await sample_tree._current_task
+            await sample_tree.current_task

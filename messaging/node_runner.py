@@ -63,10 +63,18 @@ class MessagingNodeRunner:
         )
         return transcript, self._get_render_ctx()
 
-    def _save_tree(self, tree: MessageTree | None) -> None:
+    def _save_tree(self, tree: MessageTree | None, node_id: str) -> None:
         """Persist tree state after runner-owned mutations."""
-        if tree:
-            self.session_store.save_tree_snapshot(tree.snapshot())
+        if not tree:
+            return
+        active_tree = self._get_tree_queue().get_tree_for_node(node_id)
+        if active_tree is not tree:
+            logger.debug(
+                "Skipping stale tree save for node {} after cancellation/clear",
+                node_id,
+            )
+            return
+        self.session_store.save_tree_snapshot(tree.snapshot())
 
     async def process_node(
         self,
@@ -186,7 +194,7 @@ class MessagingNodeRunner:
                         MessageState.ERROR,
                         error_message=error_message,
                     )
-                    self._save_tree(tree)
+                    self._save_tree(tree, node_id)
                 trace_event(
                     stage="claude_cli",
                     event="claude_cli.session.limit_reached",
@@ -218,6 +226,9 @@ class MessagingNodeRunner:
                     temp_session_id,
                     cli_manager=self.cli_manager,
                     session_store=self.session_store,
+                    save_tree_snapshot=lambda updated_tree: self._save_tree(
+                        updated_tree, node_id
+                    ),
                 )
                 if event_data.get("type") == "session_info":
                     continue
@@ -240,6 +251,9 @@ class MessagingNodeRunner:
                         node_id,
                         captured_session_id,
                         session_store=self.session_store,
+                        save_tree_snapshot=lambda updated_tree: self._save_tree(
+                            updated_tree, node_id
+                        ),
                         format_status=self._format_status,
                         propagate_error_to_children=self.propagate_error_to_children,
                         log_messaging_error_details=self._log_messaging_error_details,
@@ -270,7 +284,7 @@ class MessagingNodeRunner:
                 await tree.update_state(
                     node_id, MessageState.ERROR, error_message="Cancelled by user"
                 )
-                self._save_tree(tree)
+                self._save_tree(tree, node_id)
         except Exception as e:
             trace_event(
                 stage="claude_cli",
@@ -328,7 +342,7 @@ class MessagingNodeRunner:
             node_id, error_msg, propagate_to_children=True
         )
         if affected:
-            self._save_tree(tree_queue.get_tree_for_node(node_id))
+            self._save_tree(tree_queue.get_tree_for_node(node_id), node_id)
         for child in affected[1:]:
             self.outbound.fire_and_forget(
                 self.outbound.queue_edit_message(

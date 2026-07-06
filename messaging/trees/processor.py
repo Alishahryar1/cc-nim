@@ -172,7 +172,7 @@ class TreeQueueProcessor:
                 )
             return False
 
-    def cancel_current(self, tree: MessageTree) -> bool:
+    def cancel_current(self, tree: MessageTree) -> asyncio.Task | None:
         """Cancel the currently running task in a tree."""
         return tree.cancel_current_task()
 

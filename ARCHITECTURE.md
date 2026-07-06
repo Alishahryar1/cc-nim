@@ -589,7 +589,9 @@ creation/extension, initial status messages, persistence, and enqueueing.
 [messaging/node_runner.py](messaging/node_runner.py) owns managed CLI session
 lifecycle for queued nodes: parent-session fork/resume, session registration,
 CLI event parsing, transcript/status updates, cancellation, error propagation,
-and session cleanup.
+and session cleanup. Runner persistence must be guarded by active tree
+membership so late cancellation cleanup cannot restore state after `/clear`
+removed a tree or reset the queue.
 
 [messaging/event_parser.py](messaging/event_parser.py) normalizes managed Claude
 JSON events into low-level transcript events.
@@ -605,7 +607,10 @@ depend on the concrete workflow object or on platform SDK runtimes.
 [messaging/trees/manager.py](messaging/trees/manager.py) preserves
 per-conversation ordering with tree-aware queues. Replies become child nodes, and
 each tree processes one node at a time while separate trees can progress
-independently. [messaging/trees/repository.py](messaging/trees/repository.py)
+independently. Tree cancellation is terminal: cancelling `/stop`, reply
+`/stop`, reply `/clear`, or global `/clear` awaits active task cleanup outside
+tree locks before command state cleanup continues.
+[messaging/trees/repository.py](messaging/trees/repository.py)
 owns the in-memory tree/node index, and
 [messaging/trees/processor.py](messaging/trees/processor.py) owns async queue
 processing. [messaging/trees/node.py](messaging/trees/node.py) owns
@@ -622,7 +627,10 @@ and message IDs to a JSON file under the managed agent workspace.
 APIs to runtime code. Debounced atomic writes live in
 [messaging/session/persistence.py](messaging/session/persistence.py), and
 per-chat message ID tracking for `/clear` lives in
-[messaging/session/message_log.py](messaging/session/message_log.py).
+[messaging/session/message_log.py](messaging/session/message_log.py). `/clear`
+guarantees FCC state cleanup and tries each tracked platform delete, but
+Discord/Telegram can still reject individual message deletions for platform
+reasons such as permissions, age, or missing messages.
 
 ```mermaid
 sequenceDiagram
