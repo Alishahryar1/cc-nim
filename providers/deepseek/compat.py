@@ -297,13 +297,13 @@ def _has_replayable_thinking_before_tool_use(message: Mapping[str, Any]) -> bool
     if not isinstance(content, list):
         return False
 
-    has_thinking = False
+    has_thinking = isinstance(message.get("reasoning_content"), str)
     for block in content:
         if not isinstance(block, dict):
             continue
         btype = block.get("type")
         if btype == "thinking" and isinstance(block.get("thinking"), str):
-            has_thinking = bool(block["thinking"])
+            has_thinking = True
             continue
         if btype == "tool_use":
             return has_thinking

@@ -388,7 +388,7 @@ def test_tool_history_without_thinking_disables_thinking_and_hints(deepseek_prov
     assert body["messages"][1]["role"] == "tool"
 
 
-def test_tool_history_with_empty_thinking_disables_thinking(deepseek_provider):
+def test_tool_history_with_empty_thinking_preserves_reasoning_state(deepseek_provider):
     request = MessagesRequest.model_validate(
         {
             "model": "m",
@@ -422,8 +422,49 @@ def test_tool_history_with_empty_thinking_disables_thinking(deepseek_provider):
 
     body = deepseek_provider._build_request_body(request)
 
-    assert "extra_body" not in body
-    assert "reasoning_content" not in body["messages"][0]
+    assert body["extra_body"]["thinking"] == {"type": "enabled"}
+    assert body["messages"][0]["reasoning_content"] == ""
+    assert body["messages"][0]["tool_calls"][0]["function"]["name"] == "Read"
+
+
+def test_tool_history_with_empty_top_level_reasoning_preserves_reasoning_state(
+    deepseek_provider,
+):
+    request = MessagesRequest.model_validate(
+        {
+            "model": "m",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "t1",
+                            "name": "Read",
+                            "input": {"file_path": "x"},
+                        },
+                    ],
+                    "reasoning_content": "",
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "t1",
+                            "content": "ok",
+                        }
+                    ],
+                },
+            ],
+            "thinking": {"type": "enabled"},
+        }
+    )
+
+    body = deepseek_provider._build_request_body(request)
+
+    assert body["extra_body"]["thinking"] == {"type": "enabled"}
+    assert body["messages"][0]["reasoning_content"] == ""
     assert body["messages"][0]["tool_calls"][0]["function"]["name"] == "Read"
 
 

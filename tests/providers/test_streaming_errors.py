@@ -99,7 +99,7 @@ def _make_chunk(
     delta = MagicMock()
     delta.content = content
     delta.tool_calls = tool_calls
-    delta.reasoning_content = reasoning_content if reasoning_content else None
+    delta.reasoning_content = reasoning_content
 
     choice = MagicMock()
     choice.delta = delta
@@ -469,6 +469,49 @@ class TestStreamingExceptionHandling:
         assert "thinking_delta" in event_text
         assert "I think..." in event_text
         assert "The answer" in event_text
+
+    @pytest.mark.asyncio
+    async def test_stream_with_empty_reasoning_content_starts_thinking_block_only(self):
+        """Empty reasoning_content is stateful but must not emit visible thinking text."""
+        provider = _make_provider()
+        request = _make_request()
+
+        chunk1 = _make_chunk(reasoning_content="")
+        chunk2 = _make_chunk(finish_reason="stop")
+        stream_mock = AsyncStreamMock([chunk1, chunk2])
+
+        with (
+            patch.object(
+                provider._client.chat.completions,
+                "create",
+                new_callable=AsyncMock,
+                return_value=stream_mock,
+            ),
+            patch.object(
+                provider._global_rate_limiter,
+                "wait_if_blocked",
+                new_callable=AsyncMock,
+                return_value=False,
+            ),
+        ):
+            events = await _collect_stream(provider, request)
+
+        parsed = parse_sse_text("".join(events))
+        thinking_starts = [
+            event
+            for event in parsed
+            if event.event == "content_block_start"
+            and event.data["content_block"]["type"] == "thinking"
+        ]
+        thinking_deltas = [
+            event
+            for event in parsed
+            if event.event == "content_block_delta"
+            and event.data["delta"]["type"] == "thinking_delta"
+        ]
+        assert len(thinking_starts) == 1
+        assert thinking_deltas == []
+        assert parsed[-1].event == "message_stop"
 
     @pytest.mark.asyncio
     async def test_stream_with_reasoning_content_suppressed_when_disabled(self):

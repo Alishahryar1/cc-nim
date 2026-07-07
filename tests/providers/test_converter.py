@@ -266,6 +266,22 @@ def test_convert_assistant_top_level_reasoning_content_is_preserved():
     ]
 
 
+def test_convert_assistant_empty_top_level_reasoning_content_is_preserved():
+    messages = [MockMessage("assistant", "The answer is 4.", reasoning_content="")]
+
+    result = AnthropicToOpenAIConverter.convert_messages(
+        messages, reasoning_replay=ReasoningReplayMode.REASONING_CONTENT
+    )
+
+    assert result == [
+        {
+            "role": "assistant",
+            "content": "The answer is 4.",
+            "reasoning_content": "",
+        }
+    ]
+
+
 def test_convert_assistant_thinking_tool_use_replays_top_level_reasoning():
     content = [
         MockBlock(type="thinking", thinking="I should call the tool."),
@@ -286,6 +302,42 @@ def test_convert_assistant_thinking_tool_use_replays_top_level_reasoning():
     assert result[0]["reasoning_content"] == "I should call the tool."
     assert "<think>" not in result[0]["content"]
     assert result[0]["tool_calls"][0]["id"] == "call_reasoning"
+
+
+def test_convert_assistant_empty_thinking_replays_empty_reasoning_content():
+    content = [
+        MockBlock(type="thinking", thinking=""),
+        MockBlock(type="text", text="The answer is 4."),
+    ]
+    messages = [MockMessage("assistant", content)]
+
+    result = AnthropicToOpenAIConverter.convert_messages(
+        messages, reasoning_replay=ReasoningReplayMode.REASONING_CONTENT
+    )
+
+    assert result == [
+        {
+            "role": "assistant",
+            "content": "The answer is 4.",
+            "reasoning_content": "",
+        }
+    ]
+
+
+def test_convert_assistant_tool_use_replays_empty_reasoning_content():
+    content = [
+        MockBlock(type="thinking", thinking=""),
+        MockBlock(type="tool_use", id="call_empty", name="Read", input={}),
+    ]
+    messages = [MockMessage("assistant", content)]
+
+    result = AnthropicToOpenAIConverter.convert_messages(
+        messages, reasoning_replay=ReasoningReplayMode.REASONING_CONTENT
+    )
+
+    assert result[0]["content"] == ""
+    assert result[0]["reasoning_content"] == ""
+    assert result[0]["tool_calls"][0]["id"] == "call_empty"
 
 
 def test_convert_assistant_message_thinking_removed_when_disabled():
@@ -629,6 +681,99 @@ def test_convert_assistant_text_after_tool_use_inserts_after_tool_results():
     assert result[0]["role"] == "assistant" and "tool_calls" in result[0]
     assert result[1]["role"] == "tool" and result[1]["tool_call_id"] == "call_z"
     assert result[2] == {"role": "assistant", "content": "Post-tool commentary"}
+
+
+def test_unrelated_user_text_before_tool_result_is_buffered_until_after_tool_result():
+    messages = [
+        MockMessage(
+            "assistant",
+            [MockBlock(type="tool_use", id="call_z", name="Read", input={})],
+        ),
+        MockMessage("user", "Please also summarize it."),
+        MockMessage(
+            "user",
+            [
+                MockBlock(
+                    type="tool_result",
+                    tool_use_id="call_z",
+                    content="file contents",
+                )
+            ],
+        ),
+    ]
+
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert [message["role"] for message in result] == ["assistant", "tool", "user"]
+    assert result[0]["tool_calls"][0]["id"] == "call_z"
+    assert result[1]["tool_call_id"] == "call_z"
+    assert result[2]["content"] == "Please also summarize it."
+
+
+def test_unrelated_assistant_text_before_tool_result_is_buffered_until_after_tool_result():
+    messages = [
+        MockMessage(
+            "assistant",
+            [MockBlock(type="tool_use", id="call_z", name="Read", input={})],
+        ),
+        MockMessage("assistant", "Waiting for the result."),
+        MockMessage(
+            "user",
+            [
+                MockBlock(
+                    type="tool_result",
+                    tool_use_id="call_z",
+                    content="file contents",
+                )
+            ],
+        ),
+    ]
+
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert [message["role"] for message in result] == [
+        "assistant",
+        "tool",
+        "assistant",
+    ]
+    assert result[0]["tool_calls"][0]["id"] == "call_z"
+    assert result[1]["tool_call_id"] == "call_z"
+    assert result[2]["content"] == "Waiting for the result."
+
+
+def test_user_text_in_tool_result_message_is_replayed_after_tool_sequence():
+    messages = [
+        MockMessage(
+            "assistant",
+            [
+                MockBlock(type="tool_use", id="call_z", name="Read", input={}),
+                MockBlock(type="text", text="Post-tool commentary"),
+            ],
+        ),
+        MockMessage(
+            "user",
+            [
+                MockBlock(type="text", text="Use this result too."),
+                MockBlock(
+                    type="tool_result",
+                    tool_use_id="call_z",
+                    content="file contents",
+                ),
+            ],
+        ),
+    ]
+
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert [message["role"] for message in result] == [
+        "assistant",
+        "tool",
+        "assistant",
+        "user",
+    ]
+    assert result[1]["tool_call_id"] == "call_z"
+    assert result[2]["content"] == "Post-tool commentary"
+    assert result[3]["content"] == "Use this result too."
 
 
 def test_openai_build_accepts_declared_native_top_level_hints() -> None:

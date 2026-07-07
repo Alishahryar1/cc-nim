@@ -129,13 +129,14 @@ class OpenAIChatStreamAdapter:
                             logger.debug("{} finish_reason: {}", tag, finish_reason)
 
                         reasoning = getattr(delta, "reasoning_content", None)
-                        if thinking_enabled and reasoning:
+                        if thinking_enabled and isinstance(reasoning, str):
                             for event in hold_events(ledger.ensure_thinking_block()):
                                 yield event
-                            for event in hold_event(
-                                ledger.emit_thinking_delta(reasoning)
-                            ):
-                                yield event
+                            if reasoning:
+                                for event in hold_event(
+                                    ledger.emit_thinking_delta(reasoning)
+                                ):
+                                    yield event
 
                         for event in self._transport._handle_extra_reasoning(
                             delta,

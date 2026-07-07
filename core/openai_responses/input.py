@@ -122,22 +122,17 @@ def _append_input_item(
                 quarantined_function_call_ids.add(call_id)
                 _trace_quarantined_function_call(call_id, exc)
                 return pending_reasoning
-        message = {
-            "role": "assistant",
-            "content": [
-                {
-                    "type": "tool_use",
-                    "id": call_id,
-                    "name": responses_tool_name_to_anthropic_name(
-                        name, namespace=namespace
-                    ),
-                    "input": tool_input,
-                }
-            ],
+        tool_use = {
+            "type": "tool_use",
+            "id": call_id,
+            "name": responses_tool_name_to_anthropic_name(name, namespace=namespace),
+            "input": tool_input,
         }
-        if pending_reasoning:
-            message["reasoning_content"] = pending_reasoning
-        messages.append(message)
+        _append_tool_use_message(
+            messages,
+            tool_use,
+            reasoning_content=pending_reasoning,
+        )
         return None
     if item_type in {"function_call_output", "custom_tool_call_output"}:
         call_id = call_id_from_item(item)
@@ -146,18 +141,14 @@ def _append_input_item(
             and call_id in quarantined_function_call_ids
         ):
             return pending_reasoning
-        _append_pending_reasoning(messages, pending_reasoning)
-        messages.append(
+        _append_pending_reasoning_before_tool_output(messages, pending_reasoning)
+        _append_tool_result_message(
+            messages,
             {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": call_id,
-                        "content": item.get("output", ""),
-                    }
-                ],
-            }
+                "type": "tool_result",
+                "tool_use_id": call_id,
+                "content": item.get("output", ""),
+            },
         )
         return None
     if item_type == "reasoning":
@@ -204,7 +195,7 @@ def _append_message_item(
         "role": normalized_role,
         "content": _convert_message_content(content),
     }
-    if normalized_role == "assistant" and reasoning_content:
+    if normalized_role == "assistant" and reasoning_content is not None:
         message["reasoning_content"] = reasoning_content
     messages.append(message)
 
@@ -212,7 +203,7 @@ def _append_message_item(
 def _append_pending_reasoning(
     messages: list[dict[str, Any]], pending_reasoning: str | None
 ) -> None:
-    if pending_reasoning:
+    if pending_reasoning is not None:
         messages.append(
             {
                 "role": "assistant",
@@ -220,6 +211,91 @@ def _append_pending_reasoning(
                 "reasoning_content": pending_reasoning,
             }
         )
+
+
+def _append_pending_reasoning_before_tool_output(
+    messages: list[dict[str, Any]], pending_reasoning: str | None
+) -> None:
+    if pending_reasoning is None:
+        return
+    message = _last_assistant_tool_use_message(messages)
+    if message is None:
+        _append_pending_reasoning(messages, pending_reasoning)
+        return
+    _merge_message_reasoning(message, pending_reasoning)
+
+
+def _append_tool_use_message(
+    messages: list[dict[str, Any]],
+    tool_use: dict[str, Any],
+    *,
+    reasoning_content: str | None,
+) -> None:
+    message = _last_assistant_tool_use_message(messages)
+    if message is None:
+        message = {"role": "assistant", "content": []}
+        messages.append(message)
+    if reasoning_content is not None:
+        _merge_message_reasoning(message, reasoning_content)
+    content = message["content"]
+    if isinstance(content, list):
+        content.append(tool_use)
+
+
+def _append_tool_result_message(
+    messages: list[dict[str, Any]],
+    tool_result: dict[str, Any],
+) -> None:
+    message = _last_user_tool_result_message(messages)
+    if message is None:
+        message = {"role": "user", "content": []}
+        messages.append(message)
+    content = message["content"]
+    if isinstance(content, list):
+        content.append(tool_result)
+
+
+def _last_assistant_tool_use_message(
+    messages: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not messages:
+        return None
+    message = messages[-1]
+    if message.get("role") != "assistant":
+        return None
+    content = message.get("content")
+    if not isinstance(content, list) or not content:
+        return None
+    if all(
+        isinstance(block, dict) and block.get("type") == "tool_use" for block in content
+    ):
+        return message
+    return None
+
+
+def _last_user_tool_result_message(
+    messages: list[dict[str, Any]],
+) -> dict[str, Any] | None:
+    if not messages:
+        return None
+    message = messages[-1]
+    if message.get("role") != "user":
+        return None
+    content = message.get("content")
+    if not isinstance(content, list) or not content:
+        return None
+    if all(
+        isinstance(block, dict) and block.get("type") == "tool_result"
+        for block in content
+    ):
+        return message
+    return None
+
+
+def _merge_message_reasoning(message: dict[str, Any], reasoning: str) -> None:
+    existing = message.get("reasoning_content")
+    existing_reasoning = existing if isinstance(existing, str) else None
+    message["reasoning_content"] = combine_reasoning(existing_reasoning, reasoning)
 
 
 def _iter_input_items(value: Any) -> list[Any]:
