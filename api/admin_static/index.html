@@ -62,10 +62,10 @@
 
       <footer class="action-bar">
         <div class="action-meta">
-          <strong id="dirtyState">No changes</strong>
+          <strong id="dirtyState" aria-live="polite">No changes</strong>
           <span id="configPath"></span>
         </div>
-        <div id="messageArea" class="message-area"></div>
+        <div id="messageArea" class="message-area" role="status" aria-live="polite"></div>
         <div class="action-buttons">
           <button id="validateButton" class="secondary-button" type="button">Validate</button>
           <button id="applyButton" class="primary-button" type="button" disabled>Apply</button>

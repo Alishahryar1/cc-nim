@@ -40,6 +40,19 @@ textarea {
   font: inherit;
 }
 
+:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+
+.field input:focus-visible,
+.field select:focus-visible,
+.field textarea:focus-visible {
+  outline: none;
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px rgba(47, 185, 132, 0.25);
+}
+
 .app-shell {
   display: grid;
   grid-template-columns: 268px minmax(0, 1fr);
@@ -115,6 +128,10 @@ textarea {
   text-align: left;
   cursor: pointer;
   font-weight: 700;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
 .nav-link:hover,
@@ -256,6 +273,10 @@ textarea {
   padding: 7px 12px;
   cursor: pointer;
   font-weight: 700;
+  transition:
+    border-color 0.15s ease,
+    background 0.15s ease,
+    color 0.15s ease;
 }
 
 .ghost-button,
@@ -339,6 +360,9 @@ textarea {
   background: var(--input);
   color: var(--text);
   padding: 8px 10px;
+  transition:
+    border-color 0.15s ease,
+    box-shadow 0.15s ease;
 }
 
 .field textarea {
@@ -455,5 +479,118 @@ textarea {
 
   .action-buttons button {
     flex: 1;
+  }
+}
+
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+
+/* Secret field reveal toggle */
+.secret-input {
+  position: relative;
+  display: flex;
+  align-items: stretch;
+}
+
+.secret-input input {
+  flex: 1;
+  padding-right: 66px;
+}
+
+.secret-toggle {
+  position: absolute;
+  top: 1px;
+  right: 1px;
+  bottom: 1px;
+  display: flex;
+  align-items: center;
+  border: 0;
+  border-radius: 0 7px 7px 0;
+  background: transparent;
+  color: var(--muted);
+  padding: 0 12px;
+  font-size: 12px;
+  font-weight: 700;
+  cursor: pointer;
+  transition: color 0.15s ease;
+}
+
+.secret-toggle:hover {
+  color: var(--accent);
+}
+
+.secret-toggle:disabled {
+  cursor: not-allowed;
+  color: #6a6259;
+}
+
+/* Loading skeleton */
+.skeleton-card {
+  pointer-events: none;
+}
+
+.skeleton-section {
+  padding: 18px;
+}
+
+.skeleton-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 1fr));
+  gap: 14px;
+}
+
+.skeleton-field {
+  display: grid;
+  gap: 7px;
+}
+
+.skeleton-line {
+  height: 12px;
+  border-radius: 6px;
+  background: linear-gradient(90deg, #221f1b 25%, #2d2924 37%, #221f1b 63%);
+  background-size: 400% 100%;
+  animation: skeleton-shimmer 1.4s ease infinite;
+}
+
+.skeleton-line-title {
+  width: 50%;
+}
+
+.skeleton-line-button {
+  height: 30px;
+  width: 72%;
+  margin-top: 4px;
+}
+
+.skeleton-line-heading {
+  height: 18px;
+  width: 220px;
+  margin-bottom: 16px;
+}
+
+.skeleton-line-label {
+  width: 42%;
+}
+
+.skeleton-line-input {
+  height: 38px;
+}
+
+@keyframes skeleton-shimmer {
+  0% {
+    background-position: 100% 50%;
+  }
+  100% {
+    background-position: 0 50%;
   }
 }
