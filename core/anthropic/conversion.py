@@ -98,8 +98,8 @@ class _PendingAfterTools:
     reasoning_replay: ReasoningReplayMode = ReasoningReplayMode.THINK_TAGS
     # True after deferred assistant text has been added to the OpenAI transcript.
     deferred_emitted: bool = False
-    # Later transcript messages held until the required OpenAI ``tool`` sequence completes.
-    buffered_messages: list[dict[str, Any]] = field(default_factory=list)
+    # Later transcript segments held until the required OpenAI ``tool`` sequence completes.
+    buffered_segments: list[Any] = field(default_factory=list)
 
     def needs_deferred(self) -> bool:
         return bool(self.deferred_blocks) and not self.deferred_emitted
@@ -185,8 +185,7 @@ class AnthropicToOpenAIConverter:
                             content, pending
                         )
                         result.extend(pieces["messages"])
-                        if pieces["cleared_pending"]:
-                            pending = None
+                        pending = pieces["pending"]
                         continue
 
                     converted, nested_pending = (
@@ -197,20 +196,14 @@ class AnthropicToOpenAIConverter:
                             reasoning_replay=reasoning_replay,
                         )
                     )
-                    pending.buffered_messages.extend(converted)
+                    pending.buffered_segments.extend(converted)
                     if nested_pending is not None:
-                        pending.buffered_messages.extend(
-                            AnthropicToOpenAIConverter._complete_pending_messages(
-                                nested_pending
-                            )
-                        )
+                        pending.buffered_segments.append(nested_pending)
                     continue
 
-                if pending.needs_deferred() or pending.buffered_messages:
-                    result.extend(
-                        AnthropicToOpenAIConverter._complete_pending_messages(pending)
-                    )
-                    pending = None
+                pending = AnthropicToOpenAIConverter._drain_completed_pending(
+                    pending, result
+                )
 
             converted, new_pending = (
                 AnthropicToOpenAIConverter._convert_message_without_pending(
@@ -226,7 +219,7 @@ class AnthropicToOpenAIConverter:
 
         if pending is not None:
             result.extend(
-                AnthropicToOpenAIConverter._complete_pending_messages(pending)
+                AnthropicToOpenAIConverter._force_complete_pending_messages(pending)
             )
 
         return result
@@ -403,15 +396,59 @@ class AnthropicToOpenAIConverter:
     @staticmethod
     def _complete_pending_messages(
         pending: _PendingAfterTools,
-    ) -> list[dict[str, Any]]:
+    ) -> tuple[list[dict[str, Any]], _PendingAfterTools | None]:
         messages: list[dict[str, Any]] = []
         if pending.needs_deferred():
             messages.extend(
                 AnthropicToOpenAIConverter._deferred_post_tool_to_messages(pending)
             )
             pending.deferred_emitted = True
-        messages.extend(pending.buffered_messages)
-        pending.buffered_messages.clear()
+
+        segments = list(pending.buffered_segments)
+        pending.buffered_segments.clear()
+        while segments:
+            segment = segments.pop(0)
+            if isinstance(segment, _PendingAfterTools):
+                segment.buffered_segments.extend(segments)
+                segments.clear()
+                if segment.awaits_tool_results():
+                    return messages, segment
+                nested_messages, next_pending = (
+                    AnthropicToOpenAIConverter._complete_pending_messages(segment)
+                )
+                messages.extend(nested_messages)
+                if next_pending is not None:
+                    return messages, next_pending
+                continue
+            messages.append(segment)
+
+        return messages, None
+
+    @staticmethod
+    def _drain_completed_pending(
+        pending: _PendingAfterTools | None, result: list[dict[str, Any]]
+    ) -> _PendingAfterTools | None:
+        while pending is not None and not pending.awaits_tool_results():
+            completed, pending = AnthropicToOpenAIConverter._complete_pending_messages(
+                pending
+            )
+            result.extend(completed)
+        return pending
+
+    @staticmethod
+    def _force_complete_pending_messages(
+        pending: _PendingAfterTools,
+    ) -> list[dict[str, Any]]:
+        pending.remaining_tool_ids.clear()
+        messages, next_pending = AnthropicToOpenAIConverter._complete_pending_messages(
+            pending
+        )
+        while next_pending is not None:
+            next_pending.remaining_tool_ids.clear()
+            completed, next_pending = (
+                AnthropicToOpenAIConverter._complete_pending_messages(next_pending)
+            )
+            messages.extend(completed)
         return messages
 
     @staticmethod
@@ -422,12 +459,12 @@ class AnthropicToOpenAIConverter:
         if not pending.remaining_tool_ids:
             return {
                 "messages": AnthropicToOpenAIConverter._convert_user_message(content),
-                "cleared_pending": False,
+                "pending": None,
             }
 
         result: list[dict[str, Any]] = []
         buffered_blocks: list[Any] = []
-        cleared = False
+        active_pending: _PendingAfterTools | None = pending
 
         for block in content:
             block_type = get_block_type(block)
@@ -442,9 +479,15 @@ class AnthropicToOpenAIConverter:
             elif block_type == "tool_result":
                 tuid = get_block_attr(block, "tool_use_id")
                 tuid_s = str(tuid) if tuid is not None else ""
-                if tuid_s not in pending.remaining_tool_ids:
+                if (
+                    active_pending is None
+                    or tuid_s not in active_pending.remaining_tool_ids
+                ):
                     buffered_blocks.append(block)
                     continue
+                AnthropicToOpenAIConverter._buffer_user_blocks(
+                    active_pending, buffered_blocks
+                )
                 tool_content = get_block_attr(block, "content", "")
                 serialized = serialize_tool_result_content(tool_content)
                 result.append(
@@ -454,31 +497,36 @@ class AnthropicToOpenAIConverter:
                         "content": serialized if serialized else "",
                     }
                 )
-                pending.remaining_tool_ids.discard(tuid_s)
-                if not pending.remaining_tool_ids:
-                    result.extend(
-                        AnthropicToOpenAIConverter._complete_pending_messages(pending)
-                    )
-                    if buffered_blocks:
-                        result.extend(
-                            AnthropicToOpenAIConverter._convert_user_message(
-                                buffered_blocks
-                            )
+                active_pending.remaining_tool_ids.discard(tuid_s)
+                if not active_pending.remaining_tool_ids:
+                    completed, active_pending = (
+                        AnthropicToOpenAIConverter._complete_pending_messages(
+                            active_pending
                         )
-                        buffered_blocks.clear()
-                    cleared = True
+                    )
+                    result.extend(completed)
             else:
                 buffered_blocks.append(block)
 
         if buffered_blocks:
-            buffered_messages = AnthropicToOpenAIConverter._convert_user_message(
-                buffered_blocks
-            )
-            if cleared:
-                result.extend(buffered_messages)
+            if active_pending is None:
+                result.extend(
+                    AnthropicToOpenAIConverter._convert_user_message(buffered_blocks)
+                )
             else:
-                pending.buffered_messages.extend(buffered_messages)
-        return {"messages": result, "cleared_pending": cleared}
+                AnthropicToOpenAIConverter._buffer_user_blocks(
+                    active_pending, buffered_blocks
+                )
+        return {"messages": result, "pending": active_pending}
+
+    @staticmethod
+    def _buffer_user_blocks(pending: _PendingAfterTools, blocks: list[Any]) -> None:
+        if not blocks:
+            return
+        pending.buffered_segments.extend(
+            AnthropicToOpenAIConverter._convert_user_message(blocks)
+        )
+        blocks.clear()
 
     @staticmethod
     def _convert_user_message(content: list[Any]) -> list[dict[str, Any]]:

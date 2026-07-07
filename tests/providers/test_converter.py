@@ -776,6 +776,92 @@ def test_user_text_in_tool_result_message_is_replayed_after_tool_sequence():
     assert result[3]["content"] == "Use this result too."
 
 
+def test_nested_pending_tool_use_waits_for_its_own_tool_result_before_deferred_text():
+    messages = [
+        MockMessage(
+            "assistant",
+            [MockBlock(type="tool_use", id="call_a", name="ReadA", input={})],
+        ),
+        MockMessage(
+            "assistant",
+            [
+                MockBlock(type="tool_use", id="call_b", name="ReadB", input={}),
+                MockBlock(type="text", text="Post-call-b commentary"),
+            ],
+        ),
+        MockMessage(
+            "user",
+            [MockBlock(type="tool_result", tool_use_id="call_a", content="result a")],
+        ),
+        MockMessage(
+            "user",
+            [MockBlock(type="tool_result", tool_use_id="call_b", content="result b")],
+        ),
+    ]
+
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert [message["role"] for message in result] == [
+        "assistant",
+        "tool",
+        "assistant",
+        "tool",
+        "assistant",
+    ]
+    assert result[0]["tool_calls"][0]["id"] == "call_a"
+    assert result[1]["tool_call_id"] == "call_a"
+    assert result[2]["tool_calls"][0]["id"] == "call_b"
+    assert result[3]["tool_call_id"] == "call_b"
+    assert result[4]["content"] == "Post-call-b commentary"
+
+
+def test_nested_pending_buffers_user_text_until_all_prior_tool_sequences_complete():
+    messages = [
+        MockMessage(
+            "assistant",
+            [MockBlock(type="tool_use", id="call_a", name="ReadA", input={})],
+        ),
+        MockMessage(
+            "assistant",
+            [
+                MockBlock(type="tool_use", id="call_b", name="ReadB", input={}),
+                MockBlock(type="text", text="Post-call-b commentary"),
+            ],
+        ),
+        MockMessage(
+            "user",
+            [
+                MockBlock(type="text", text="Use both results."),
+                MockBlock(
+                    type="tool_result",
+                    tool_use_id="call_a",
+                    content="result a",
+                ),
+                MockBlock(
+                    type="tool_result",
+                    tool_use_id="call_b",
+                    content="result b",
+                ),
+            ],
+        ),
+    ]
+
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert [message["role"] for message in result] == [
+        "assistant",
+        "tool",
+        "assistant",
+        "tool",
+        "assistant",
+        "user",
+    ]
+    assert result[1]["tool_call_id"] == "call_a"
+    assert result[3]["tool_call_id"] == "call_b"
+    assert result[4]["content"] == "Post-call-b commentary"
+    assert result[5]["content"] == "Use both results."
+
+
 def test_openai_build_accepts_declared_native_top_level_hints() -> None:
     """OpenAI conversion ignores known non-OpenAI hints (e.g. context_management) without 400."""
     req = MessagesRequest.model_validate(
