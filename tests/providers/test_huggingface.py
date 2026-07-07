@@ -5,14 +5,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from core.anthropic import ReasoningReplayMode
 from providers.base import ProviderConfig
 from providers.huggingface import HUGGINGFACE_DEFAULT_BASE, HuggingFaceProvider
 
 
 class MockMessage:
-    def __init__(self, role, content):
+    def __init__(self, role, content, reasoning_content=None):
         self.role = role
         self.content = content
+        self.reasoning_content = reasoning_content
+
+
+class MockBlock:
+    def __init__(self, **kwargs):
+        for key, value in kwargs.items():
+            setattr(self, key, value)
 
 
 class MockRequest:
@@ -89,9 +97,7 @@ def test_init_strips_trailing_slash(huggingface_config):
 
 
 def test_build_request_body_keeps_max_tokens(huggingface_provider):
-    with patch(
-        "providers.transports.openai_chat.request_policy.build_base_request_body"
-    ) as mock_convert:
+    with patch("providers.huggingface.client.build_base_request_body") as mock_convert:
         mock_convert.return_value = {
             "model": "openai/gpt-oss-120b:fastest",
             "messages": [{"role": "user", "name": "alice", "content": "hi"}],
@@ -100,17 +106,68 @@ def test_build_request_body_keeps_max_tokens(huggingface_provider):
 
         body = huggingface_provider._build_request_body(MockRequest())
 
+    mock_convert.assert_called_once()
+    assert (
+        mock_convert.call_args.kwargs["reasoning_replay"]
+        is ReasoningReplayMode.DISABLED
+    )
     assert body["messages"][0].get("name") == "alice"
     assert body["max_tokens"] == 42
     assert "max_completion_tokens" not in body
 
 
 def test_build_request_body_preserves_caller_extra_body(huggingface_provider):
-    req = MockRequest(extra_body={"provider": "auto", "bill_to": "my-org"})
+    extra_body = {"provider": "auto", "routing": {"bill_to": "my-org"}}
+    req = MockRequest(extra_body=extra_body)
 
     body = huggingface_provider._build_request_body(req)
 
-    assert body["extra_body"] == {"provider": "auto", "bill_to": "my-org"}
+    assert body["extra_body"] == extra_body
+    assert body["extra_body"] is not extra_body
+    assert body["extra_body"]["routing"] is not extra_body["routing"]
+
+
+def test_build_request_body_does_not_replay_prior_thinking_blocks(
+    huggingface_provider,
+):
+    req = MockRequest(
+        system=None,
+        messages=[
+            MockMessage(
+                "assistant",
+                [
+                    MockBlock(type="thinking", thinking="hidden prior thought"),
+                    MockBlock(type="text", text="visible answer"),
+                ],
+            )
+        ],
+    )
+
+    body = huggingface_provider._build_request_body(req)
+
+    assert body["messages"] == [{"role": "assistant", "content": "visible answer"}]
+    assert "reasoning_content" not in body["messages"][0]
+    assert "hidden prior thought" not in str(body)
+
+
+def test_build_request_body_does_not_replay_top_level_reasoning_content(
+    huggingface_provider,
+):
+    req = MockRequest(
+        system=None,
+        messages=[
+            MockMessage(
+                "assistant",
+                "visible answer",
+                reasoning_content="hidden prior reasoning",
+            )
+        ],
+    )
+
+    body = huggingface_provider._build_request_body(req)
+
+    assert body["messages"] == [{"role": "assistant", "content": "visible answer"}]
+    assert "hidden prior reasoning" not in str(body)
 
 
 @pytest.mark.asyncio

@@ -379,7 +379,8 @@ Gateway providers such as Vercel AI Gateway, Hugging Face, Cohere, and GitHub
 Models stay thin when their documented OpenAI-compatible Chat Completions
 behavior matches shared transport policy. Provider-specific gateway quirks, such
 as Cohere's supported `reasoning_effort` values, GitHub's API headers/catalog
-filtering, and unsupported compatibility fields, stay in that provider package.
+filtering, Hugging Face's disabled prior reasoning replay, and unsupported
+compatibility fields, stay in that provider package.
 
 ### Adding A Provider
 

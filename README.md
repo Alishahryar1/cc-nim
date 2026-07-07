@@ -269,7 +269,7 @@ Create a Hugging Face token with Inference Providers permission at [huggingface.
 
 Set `MODEL` to a Hugging Face model slug such as `huggingface/openai/gpt-oss-120b:fastest`, `huggingface/Qwen/Qwen3-Coder-480B-A35B-Instruct:fastest`, or `huggingface/deepseek-ai/DeepSeek-R1:fastest`.
 
-Hugging Face routes through the OpenAI-compatible router at `https://router.huggingface.co/v1`. FCC uses the shared OpenAI-chat transport and preserves request `extra_body` for Hugging Face provider options.
+Hugging Face routes through the OpenAI-compatible router at `https://router.huggingface.co/v1`. FCC uses the shared OpenAI-chat transport, preserves request `extra_body` for Hugging Face provider options, and does not replay prior hidden reasoning into Chat Completions because that request field is not documented by Hugging Face. New reasoning emitted by the upstream is still shown as Claude thinking.
 
 If your existing repo `.env` or `~/.fcc/.env` uses the old voice setting `HF_TOKEN`, `fcc-server`/`fcc-init` renames it to `HUGGINGFACE_API_KEY`. Explicit `FCC_ENV_FILE` files are not rewritten automatically; rename the key there manually.
 
