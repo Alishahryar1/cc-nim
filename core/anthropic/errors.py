@@ -21,6 +21,10 @@ def get_user_facing_error_message(
         return "Provider request timed out."
     if isinstance(e, httpx.ConnectTimeout):
         return "Could not connect to provider."
+    if isinstance(e, httpx.ConnectError):
+        return "Could not connect to provider."
+    if isinstance(e, httpx.RemoteProtocolError):
+        return "Provider connection was interrupted before a response was received."
     if isinstance(e, TimeoutError):
         if read_timeout_s is not None:
             return f"Provider request timed out after {read_timeout_s:g}s."

@@ -4,6 +4,8 @@ import logging
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
+import httpx
+import openai
 import pytest
 
 from config.constants import NATIVE_MESSAGES_ERROR_BODY_LOG_CAP_BYTES
@@ -229,6 +231,46 @@ async def test_openai_compat_stream_failure_default_logs_exclude_exception_str(c
     messages = " | ".join(r.getMessage() for r in caplog.records)
     assert "SECRET_OPENAI_COMPAT" not in messages
     assert "exc_type=RuntimeError" in messages
+
+
+@pytest.mark.asyncio
+async def test_openai_compat_stream_failure_default_logs_cause_types_only(caplog):
+    config = ProviderConfig(
+        api_key="k",
+        base_url="http://localhost:1/v1",
+        log_api_error_tracebacks=False,
+    )
+    provider = NvidiaNimProvider(config, nim_settings=NimSettings())
+    req = make_openai_compat_stream_request()
+    error = openai.APIConnectionError(
+        request=httpx.Request("POST", "http://localhost:1/v1/chat/completions")
+    )
+    error.__cause__ = httpx.ConnectError("SECRET_CAUSE_DETAIL")
+
+    @asynccontextmanager
+    async def _noop_slot():
+        yield
+
+    with (
+        patch.object(
+            provider,
+            "_create_stream",
+            new_callable=AsyncMock,
+            side_effect=error,
+        ),
+        patch.object(
+            provider._global_rate_limiter,
+            "concurrency_slot",
+            _noop_slot,
+        ),
+        caplog.at_level(logging.ERROR),
+    ):
+        _ = [e async for e in provider.stream_response(req)]
+
+    messages = " | ".join(r.getMessage() for r in caplog.records)
+    assert "SECRET_CAUSE_DETAIL" not in messages
+    assert "exc_type=APIConnectionError" in messages
+    assert "cause_types=ConnectError" in messages
 
 
 @pytest.mark.asyncio

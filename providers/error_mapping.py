@@ -1,6 +1,7 @@
 """Provider-specific exception mapping and user-visible diagnostics."""
 
 import json
+import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -24,6 +25,12 @@ from providers.rate_limit import GlobalRateLimiter
 
 _BODY_ATTR = "_fcc_provider_error_body"
 _BODY_TRUNCATED_ATTR = "_fcc_provider_error_body_truncated"
+_MAX_CAUSE_CHAIN_DEPTH = 4
+_SECRET_TEXT_PATTERNS = (
+    re.compile(r"(?i)(authorization\s*[:=]\s*)(bearer\s+)?[^\s,;]+"),
+    re.compile(r"(?i)((?:api[_-]?key|token|secret)\s*[:=]\s*)[^\s,;]+"),
+    re.compile(r"(?i)(bearer\s+)[^\s,;]+"),
+)
 
 
 @dataclass(frozen=True)
@@ -33,6 +40,7 @@ class ProviderErrorDetail:
     status_code: int | None = None
     body_text: str | None = None
     exception_text: str | None = None
+    cause_chain_text: str | None = None
     error_type_hint: str | None = None
     body_truncated: bool = False
 
@@ -100,6 +108,49 @@ def _cap_text_bytes(text: str, max_bytes: int) -> tuple[str, bool]:
     return f"{capped}\n... [truncated after {max_bytes} bytes]", True
 
 
+def _sanitize_exception_text(text: str) -> str:
+    sanitized = text
+    for pattern in _SECRET_TEXT_PATTERNS:
+        sanitized = pattern.sub(r"\1<redacted>", sanitized)
+    return sanitized
+
+
+def _exception_causes(exc: BaseException) -> tuple[BaseException, ...]:
+    causes: list[BaseException] = []
+    seen: set[int] = {id(exc)}
+    current: BaseException | None = exc
+    while current is not None and len(causes) < _MAX_CAUSE_CHAIN_DEPTH:
+        next_exc = current.__cause__ or current.__context__
+        if next_exc is None or id(next_exc) in seen:
+            break
+        seen.add(id(next_exc))
+        causes.append(next_exc)
+        current = next_exc
+    return tuple(causes)
+
+
+def exception_cause_types(exc: BaseException) -> tuple[str, ...]:
+    """Return safe exception cause type names for default metadata logging."""
+    return tuple(type(cause).__name__ for cause in _exception_causes(exc))
+
+
+def _exception_cause_chain_text(exc: BaseException) -> str | None:
+    lines: list[str] = []
+    for cause in _exception_causes(exc):
+        raw_text = str(cause).strip()
+        if raw_text:
+            lines.append(
+                f"{type(cause).__name__}: {_sanitize_exception_text(raw_text)}"
+            )
+        else:
+            lines.append(type(cause).__name__)
+    if not lines:
+        return None
+    text = "\n".join(lines)
+    capped, _ = _cap_text_bytes(text, PROVIDER_ERROR_BODY_DISPLAY_CAP_BYTES)
+    return capped
+
+
 def _error_type_hint_from_body(body: Any, body_text: str | None) -> str | None:
     parsed = body
     if isinstance(parsed, bytes):
@@ -152,6 +203,7 @@ def extract_provider_error_detail(exc: Exception) -> ProviderErrorDetail:
 
     exception_text = str(exc).strip() or None
     if exception_text is not None:
+        exception_text = _sanitize_exception_text(exception_text)
         exception_text, _ = _cap_text_bytes(
             exception_text, PROVIDER_ERROR_BODY_DISPLAY_CAP_BYTES
         )
@@ -160,6 +212,7 @@ def extract_provider_error_detail(exc: Exception) -> ProviderErrorDetail:
         status_code=_status_code_from_exception(exc),
         body_text=body_text,
         exception_text=exception_text,
+        cause_chain_text=_exception_cause_chain_text(exc),
         error_type_hint=_error_type_hint_from_body(raw_body, body_text),
         body_truncated=display_truncated,
     )
@@ -194,6 +247,8 @@ def format_provider_error_message(
         lines = [stable_message]
         if detail.exception_text and detail.exception_text != stable_message:
             lines.extend(("", "Provider exception:", detail.exception_text))
+        if detail.cause_chain_text:
+            lines.extend(("", "Caused by:", detail.cause_chain_text))
         _append_request_id_lines(lines, request_id)
         return "\n".join(lines)
 

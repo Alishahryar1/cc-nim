@@ -202,6 +202,7 @@ class AnthropicMessagesStreamAdapter:
                         event="provider.response.error",
                         source="provider",
                         provider=tag,
+                        request_id=self._request_id,
                         error_message=error_message,
                         exc_type=type(error).__name__,
                         mid_stream=(

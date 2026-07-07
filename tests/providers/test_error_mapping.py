@@ -5,7 +5,7 @@ from unittest.mock import MagicMock, patch
 
 import openai
 import pytest
-from httpx import HTTPStatusError, ReadTimeout, Request, Response
+from httpx import ConnectError, HTTPStatusError, ReadTimeout, Request, Response
 
 from config.constants import PROVIDER_ERROR_BODY_DISPLAY_CAP_BYTES
 from core.anthropic import (
@@ -15,6 +15,7 @@ from core.anthropic import (
 )
 from providers.error_mapping import (
     attach_provider_error_body,
+    exception_cause_types,
     extract_provider_error_detail,
     format_provider_error_message,
     map_error,
@@ -311,6 +312,48 @@ def test_empty_http_error_body_is_explicitly_reported():
 
     assert "Upstream provider EMPTY returned HTTP 500." in msg
     assert "(empty upstream error body)" in msg
+
+
+def test_connection_error_without_response_includes_sanitized_cause_chain():
+    request = Request("POST", "http://test")
+    exc = openai.APIConnectionError(request=request)
+    exc.__cause__ = ConnectError(
+        "connect failed authorization: Bearer SECRET token=ALSO_SECRET",
+        request=request,
+    )
+    mapped = map_error(exc)
+    detail = extract_provider_error_detail(exc)
+    msg = format_provider_error_message(
+        mapped,
+        detail,
+        provider_name="NIM",
+        read_timeout_s=30.0,
+        request_id="req_conn",
+    )
+
+    assert "Provider API request failed." in msg
+    assert "Provider exception:" in msg
+    assert "Connection error." in msg
+    assert "Caused by:" in msg
+    assert "ConnectError: connect failed authorization: <redacted>" in msg
+    assert "SECRET" not in msg
+    assert "Request ID: req_conn" in msg
+    assert exception_cause_types(exc) == ("ConnectError",)
+
+
+def test_connection_error_cause_chain_is_capped_for_display():
+    request = Request("POST", "http://test")
+    exc = openai.APIConnectionError(request=request)
+    exc.__cause__ = ConnectError(
+        "x" * (PROVIDER_ERROR_BODY_DISPLAY_CAP_BYTES + 10),
+        request=request,
+    )
+    detail = extract_provider_error_detail(exc)
+
+    assert detail.cause_chain_text is not None
+    assert f"truncated after {PROVIDER_ERROR_BODY_DISPLAY_CAP_BYTES} bytes" in (
+        detail.cause_chain_text
+    )
 
 
 def test_attached_provider_error_body_is_capped_for_display():

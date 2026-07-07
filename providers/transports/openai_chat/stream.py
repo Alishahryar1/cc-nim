@@ -275,6 +275,8 @@ class OpenAIChatStreamAdapter:
                         event="provider.response.error",
                         source="provider",
                         provider=tag,
+                        request_id=self._request_id,
+                        exc_type=type(error).__name__,
                         error_message=error_message,
                         mapped_error_type=type(
                             map_error(
