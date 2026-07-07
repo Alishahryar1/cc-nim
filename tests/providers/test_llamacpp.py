@@ -290,8 +290,10 @@ async def test_stream_network_error(llamacpp_provider):
 
         blob = "".join(events)
         assert_canonical_stream_error_envelope(
-            events, user_message_substr="Connection refused"
+            events, user_message_substr="Could not connect to provider."
         )
+        assert "Provider exception" in blob
+        assert "Connection refused" in blob
         assert "TEST_ID2" in blob
 
 

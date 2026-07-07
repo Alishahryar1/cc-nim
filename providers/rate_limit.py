@@ -7,6 +7,8 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any, ClassVar, TypeVar
 
+import httpx
+import openai
 from loguru import logger
 
 from core.anthropic.streaming import retryable_transient_status
@@ -34,6 +36,26 @@ def retryable_upstream_status(exc: BaseException) -> int | None:
     if status is not None and _upstream_http_retryable(status):
         return status
     return None
+
+
+def retryable_upstream_transport_error(exc: BaseException) -> bool:
+    """Return whether a pre-response transport failure can be retried."""
+    if isinstance(exc, openai.AuthenticationError | openai.BadRequestError):
+        return False
+    return isinstance(
+        exc,
+        (
+            TimeoutError,
+            httpx.TimeoutException,
+            httpx.ConnectError,
+            httpx.ReadError,
+            httpx.WriteError,
+            httpx.RemoteProtocolError,
+            httpx.NetworkError,
+            openai.APITimeoutError,
+            openai.APIConnectionError,
+        ),
+    )
 
 
 class GlobalRateLimiter:
@@ -227,7 +249,9 @@ class GlobalRateLimiter:
 
         Waits for the proactive limiter before each attempt. On ``429`` (rate limit)
         or upstream ``5xx`` server errors, applies exponential backoff with jitter
-        and sets the reactive block before retrying.
+        and sets the reactive block before retrying. Pre-response transport errors
+        use the same attempt budget and backoff schedule without setting the
+        reactive provider block.
 
         Args:
             fn: Async callable to execute.
@@ -252,14 +276,20 @@ class GlobalRateLimiter:
                 return await fn(*args, **kwargs)
             except Exception as e:
                 status = retryable_upstream_status(e)
-                if status is None:
+                transport_error = status is None and retryable_upstream_transport_error(
+                    e
+                )
+                if status is None and not transport_error:
                     raise
 
-                label = (
-                    "Rate limited (429)"
-                    if status == 429
-                    else f"Upstream server error ({status})"
-                )
+                if status is None:
+                    label = f"Provider transport error ({type(e).__name__})"
+                else:
+                    label = (
+                        "Rate limited (429)"
+                        if status == 429
+                        else f"Upstream server error ({status})"
+                    )
                 last_exc = e
                 if attempt >= max_retries:
                     logger.warning(
@@ -285,11 +315,13 @@ class GlobalRateLimiter:
                     event="provider.retry.scheduled",
                     source="provider",
                     status_code=status,
+                    exc_type=type(e).__name__,
                     attempt=attempt_no,
                     max_attempts=total_attempts,
                     delay_s=round(delay, 3),
                 )
-                self.set_blocked(delay)
+                if status is not None:
+                    self.set_blocked(delay)
                 await asyncio.sleep(delay)
 
         assert last_exc is not None

@@ -96,11 +96,13 @@ class BaseProvider(ABC):
         from loguru import logger
 
         from core.trace import trace_event
+        from providers.error_mapping import exception_cause_types
 
         response = getattr(error, "response", None)
         http_status = (
             getattr(response, "status_code", None) if response is not None else None
         )
+        cause_types = exception_cause_types(error)
         trace_event(
             stage="provider",
             event="provider.response.transport_error",
@@ -109,19 +111,21 @@ class BaseProvider(ABC):
             request_id=request_id,
             exc_type=type(error).__name__,
             http_status=http_status,
+            cause_types=cause_types,
         )
 
         if self._config.log_api_error_tracebacks:
-            logger.error(
+            logger.opt(exception=error).error(
                 "{}_ERROR:{} {}: {}", tag, req_tag, type(error).__name__, error
             )
             return
         logger.error(
-            "{}_ERROR:{} exc_type={} http_status={}",
+            "{}_ERROR:{} exc_type={} http_status={} cause_types={}",
             tag,
             req_tag,
             type(error).__name__,
             http_status,
+            ",".join(cause_types) if cause_types else None,
         )
 
     @abstractmethod
