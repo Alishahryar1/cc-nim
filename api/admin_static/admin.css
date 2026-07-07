@@ -408,7 +408,7 @@ textarea:focus-visible,
   border-color: transparent;
 }
 
-.ghost-button:hover {
+.ghost-button:hover:not(:disabled) {
   color: var(--text-strong);
   background: var(--panel-strong);
 }
