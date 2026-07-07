@@ -1,7 +1,5 @@
 """Detect forced Anthropic web server tool requests."""
 
-from __future__ import annotations
-
 from api.models.anthropic import MessagesRequest, Tool
 
 

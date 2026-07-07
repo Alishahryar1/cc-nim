@@ -1,7 +1,5 @@
 """Gateway-safe model id encoding for Claude Code model discovery."""
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 GATEWAY_MODEL_ID_PREFIX = "anthropic"

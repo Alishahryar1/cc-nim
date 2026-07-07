@@ -1,7 +1,5 @@
 """Build Codex model catalogs from the FCC model-list route."""
 
-from __future__ import annotations
-
 import json
 import uuid
 from collections.abc import Mapping

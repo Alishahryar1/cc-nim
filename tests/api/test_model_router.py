@@ -124,6 +124,21 @@ def test_model_router_routes_wafer_provider_model_directly(settings):
     assert routed.resolved.provider_model_ref == "wafer/DeepSeek-V4-Pro"
 
 
+def test_model_router_routes_minimax_provider_model_directly(settings):
+    routed = ModelRouter(settings).resolve_messages_request(
+        MessagesRequest(
+            model="minimax/MiniMax-M3",
+            max_tokens=100,
+            messages=[Message(role="user", content="hello")],
+        )
+    )
+
+    assert routed.request.model == "MiniMax-M3"
+    assert routed.resolved.provider_id == "minimax"
+    assert routed.resolved.provider_model == "MiniMax-M3"
+    assert routed.resolved.provider_model_ref == "minimax/MiniMax-M3"
+
+
 def test_model_router_routes_gateway_encoded_provider_model_directly(settings):
     routed = ModelRouter(settings).resolve_messages_request(
         MessagesRequest(

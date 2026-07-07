@@ -359,6 +359,12 @@ into Anthropic usage fields for Claude-compatible clients. Cloudflare uses its
 account-scoped Workers AI OpenAI-compatible Chat Completions endpoint for
 `@cf/...` model IDs, while account ID composition, model search, and
 Cloudflare-specific reasoning deltas stay in the Cloudflare provider client.
+MiniMax uses its Anthropic-compatible Messages endpoint; its provider client owns
+the MiniMax-specific `adaptive` thinking request shape.
+Mistral La Plateforme keeps its native `reasoning_effort` and thinking-chunk
+request/stream mapping inside
+[providers/mistral/reasoning.py](providers/mistral/reasoning.py), including its
+fallback retry when a selected Mistral model rejects reasoning fields.
 NIM reasoning budget control is also treated as a provider-owned best-effort
 downgrade: if an upstream NIM deployment rejects explicit budget control, FCC
 retries without the budget while preserving thinking enablement.
@@ -369,6 +375,12 @@ where supported, and returning Anthropic SSE strings to the service layer.
 Provider-specific inputs that do not apply to other upstreams, such as
 Cloudflare's account ID, stay in that provider's factory/client instead of being
 added to shared `ProviderConfig`.
+Gateway providers such as Vercel AI Gateway, Hugging Face, Cohere, and GitHub
+Models stay thin when their documented OpenAI-compatible Chat Completions
+behavior matches shared transport policy. Provider-specific gateway quirks, such
+as Cohere's supported `reasoning_effort` values, GitHub's API headers/catalog
+filtering, Hugging Face's disabled prior reasoning replay, and unsupported
+compatibility fields, stay in that provider package.
 
 ### Adding A Provider
 
@@ -564,8 +576,10 @@ Outbound SDK calls live in
 [messaging/platforms/telegram_io.py](messaging/platforms/telegram_io.py) and
 [messaging/platforms/discord_io.py](messaging/platforms/discord_io.py). Shared
 delivery policy lives in [messaging/platforms/outbox.py](messaging/platforms/outbox.py),
-which owns queued send/edit/delete, dedup keys, limiter delegation, and
-fire-and-forget behavior.
+which owns queued send/edit/list-based delete, dedup keys, limiter delegation,
+and fire-and-forget behavior. Workflow and command code request deletion of
+message ID lists; platform IO decides whether to use native batch deletion
+(Telegram) or internal per-message deletion (Discord).
 Shared voice-note orchestration lives in
 [messaging/platforms/voice_flow.py](messaging/platforms/voice_flow.py), which owns
 pending voice registration, temp-file cleanup, transcription, cancellation, error
@@ -582,7 +596,9 @@ creation/extension, initial status messages, persistence, and enqueueing.
 [messaging/node_runner.py](messaging/node_runner.py) owns managed CLI session
 lifecycle for queued nodes: parent-session fork/resume, session registration,
 CLI event parsing, transcript/status updates, cancellation, error propagation,
-and session cleanup.
+and session cleanup. Runner persistence must be guarded by active tree
+membership so late cancellation cleanup cannot restore state after `/clear`
+removed a tree or reset the queue.
 
 [messaging/event_parser.py](messaging/event_parser.py) normalizes managed Claude
 JSON events into low-level transcript events.
@@ -598,7 +614,10 @@ depend on the concrete workflow object or on platform SDK runtimes.
 [messaging/trees/manager.py](messaging/trees/manager.py) preserves
 per-conversation ordering with tree-aware queues. Replies become child nodes, and
 each tree processes one node at a time while separate trees can progress
-independently. [messaging/trees/repository.py](messaging/trees/repository.py)
+independently. Tree cancellation is terminal: cancelling `/stop`, reply
+`/stop`, reply `/clear`, or global `/clear` awaits active task cleanup outside
+tree locks before command state cleanup continues.
+[messaging/trees/repository.py](messaging/trees/repository.py)
 owns the in-memory tree/node index, and
 [messaging/trees/processor.py](messaging/trees/processor.py) owns async queue
 processing. [messaging/trees/node.py](messaging/trees/node.py) owns
@@ -615,7 +634,11 @@ and message IDs to a JSON file under the managed agent workspace.
 APIs to runtime code. Debounced atomic writes live in
 [messaging/session/persistence.py](messaging/session/persistence.py), and
 per-chat message ID tracking for `/clear` lives in
-[messaging/session/message_log.py](messaging/session/message_log.py).
+[messaging/session/message_log.py](messaging/session/message_log.py). `/clear`
+guarantees FCC state cleanup and tries tracked platform deletes through the
+list-based outbound delete port, but Discord/Telegram can still reject
+individual message deletions for platform reasons such as permissions, age, or
+missing messages.
 
 ```mermaid
 sequenceDiagram

@@ -3,16 +3,10 @@
 Commands depend on MessagingCommandContext instead of the concrete workflow.
 """
 
-from __future__ import annotations
-
-from typing import TYPE_CHECKING
-
 from loguru import logger
 
 from .command_context import MessagingCommandContext
-
-if TYPE_CHECKING:
-    from messaging.models import IncomingMessage
+from .models import IncomingMessage
 
 
 async def handle_stop_command(
@@ -114,15 +108,23 @@ async def _delete_message_ids(
     numeric.sort(reverse=True)
     ordered = [mid for _, mid in numeric] + non_numeric
 
+    failed = 0
     try:
-        CHUNK = 100
-        for i in range(0, len(ordered), CHUNK):
-            chunk = ordered[i : i + CHUNK]
-            await handler.outbound.queue_delete_messages(
-                chat_id, chunk, fire_and_forget=False
-            )
+        await handler.outbound.queue_delete_messages(
+            chat_id,
+            ordered,
+            fire_and_forget=False,
+        )
     except Exception as e:
-        logger.debug(f"Batch delete failed: {type(e).__name__}: {e}")
+        failed = len(ordered)
+        logger.debug("Message delete failed for chat {}: {}", chat_id, type(e).__name__)
+
+    if ordered:
+        logger.info(
+            "Clear delete attempted={} failed={}",
+            len(ordered),
+            failed,
+        )
 
 
 async def _handle_clear_branch(
@@ -172,6 +174,9 @@ async def _handle_clear_branch(
             updated_tree = handler.tree_queue.get_tree(root_id)
             if updated_tree:
                 handler.session_store.save_tree_snapshot(updated_tree.snapshot())
+        handler.session_store.forget_message_ids(
+            incoming.platform, incoming.chat_id, msg_ids
+        )
     except Exception as e:
         logger.warning(f"Failed to update session store after branch clear: {e}")
 

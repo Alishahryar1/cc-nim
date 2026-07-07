@@ -1,7 +1,5 @@
 """Gemini request-body quirks for the OpenAI-compatible transport."""
 
-from __future__ import annotations
-
 from copy import deepcopy
 from typing import Any, cast
 

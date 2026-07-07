@@ -1,7 +1,5 @@
 """Pydantic passthrough of Anthropic protocol fields (e.g. ``cache_control``)."""
 
-from __future__ import annotations
-
 from api.models.anthropic import (
     ContentBlockServerToolUse,
     ContentBlockText,

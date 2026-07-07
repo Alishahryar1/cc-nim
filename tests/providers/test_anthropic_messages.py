@@ -180,6 +180,30 @@ def test_default_request_body_preserves_thinking_budget(provider_config):
 
 
 @pytest.mark.asyncio
+async def test_send_stream_request_forces_upstream_streaming(provider_config):
+    provider = NativeProvider(provider_config)
+    request_obj = httpx.Request("POST", "https://custom.test/v1/messages")
+    response = FakeResponse()
+    body = {"model": "test-model", "stream": False}
+
+    with (
+        patch.object(
+            provider._client, "build_request", return_value=request_obj
+        ) as mock_build,
+        patch.object(
+            provider._client,
+            "send",
+            new_callable=AsyncMock,
+            return_value=response,
+        ),
+    ):
+        await provider._send_stream_request(body)
+
+    assert body["stream"] is False
+    assert mock_build.call_args.kwargs["json"]["stream"] is True
+
+
+@pytest.mark.asyncio
 async def test_stream_uses_retry_builds_request_and_closes_response(
     provider_config,
     mock_rate_limiter,

@@ -1,9 +1,10 @@
+import asyncio
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from messaging.models import IncomingMessage
-from messaging.trees import MessageNode, MessageState, MessageTree
+from messaging.trees import MessageNode, MessageState, MessageTree, TreeQueueManager
 from messaging.workflow import MessagingWorkflow
 
 
@@ -557,11 +558,11 @@ async def test_handle_message_clear_command_stops_deletes_and_wipes_state(
         events.append("stop")
         return 0
 
-    async def _del(chat_id, message_id, fire_and_forget=True):
-        events.append(f"del:{chat_id}:{message_id}:{fire_and_forget}")
+    async def _del_many(chat_id, message_ids, fire_and_forget=True):
+        events.append(("del", chat_id, tuple(message_ids), fire_and_forget))
 
     handler.stop_all_tasks = AsyncMock(side_effect=_stop)
-    mock_platform.queue_delete_message = AsyncMock(side_effect=_del)
+    mock_platform.queue_delete_messages = AsyncMock(side_effect=_del_many)
 
     incoming = incoming_message_factory(
         text="/clear", chat_id="chat_1", message_id="150"
@@ -569,9 +570,9 @@ async def test_handle_message_clear_command_stops_deletes_and_wipes_state(
     await handler.handle_message(incoming)
 
     assert events and events[0] == "stop"
-    deleted_ids = {e.split(":")[2] for e in events[1:]}
+    deleted_ids = set(events[1][2])
     assert deleted_ids == {"100", "101", "150"}
-    assert all(e.endswith(":False") for e in events[1:])
+    assert events[1][3] is False
 
     mock_session_store.clear_all.assert_called_once()
     assert handler.tree_queue.get_tree_count() == 0
@@ -590,9 +591,9 @@ async def test_handle_message_clear_command_with_mention(
     await handler.handle_message(incoming)
 
     handler.stop_all_tasks.assert_called_once()
-    mock_platform.queue_delete_message.assert_called_once_with(
+    mock_platform.queue_delete_messages.assert_called_once_with(
         "chat_1",
-        "10",
+        ["10"],
         fire_and_forget=False,
     )
     mock_session_store.clear_all.assert_called_once()
@@ -610,8 +611,36 @@ async def test_handle_message_clear_command_deletes_message_log_ids(
     )
     await handler.handle_message(incoming)
 
-    deleted = {c.args[1] for c in mock_platform.queue_delete_message.call_args_list}
-    assert deleted == {"42", "43", "150"}
+    mock_platform.queue_delete_messages.assert_called_once_with(
+        "chat_1",
+        ["150", "43", "42"],
+        fire_and_forget=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_handle_message_clear_command_continues_after_delete_failure(
+    handler, mock_platform, mock_session_store, incoming_message_factory
+):
+    handler.stop_all_tasks = AsyncMock(return_value=0)
+    mock_session_store.get_message_ids_for_chat.return_value = ["41", "42", "43"]
+
+    async def delete_messages(chat_id, message_ids, fire_and_forget=True):
+        raise RuntimeError("platform rejected delete")
+
+    mock_platform.queue_delete_messages = AsyncMock(side_effect=delete_messages)
+
+    incoming = incoming_message_factory(
+        text="/clear", chat_id="chat_1", message_id="150"
+    )
+    await handler.handle_message(incoming)
+
+    mock_platform.queue_delete_messages.assert_called_once_with(
+        "chat_1",
+        ["150", "43", "42", "41"],
+        fire_and_forget=False,
+    )
+    mock_session_store.clear_all.assert_called_once()
 
 
 @pytest.mark.asyncio
@@ -642,10 +671,10 @@ async def test_handle_message_clear_command_reply_clears_branch(
 
     deleted_ids = []
 
-    async def _capture_delete(chat_id, message_id, fire_and_forget=True):
-        deleted_ids.append(message_id)
+    async def _capture_delete(chat_id, message_ids, fire_and_forget=True):
+        deleted_ids.extend(message_ids)
 
-    mock_platform.queue_delete_message = AsyncMock(side_effect=_capture_delete)
+    mock_platform.queue_delete_messages = AsyncMock(side_effect=_capture_delete)
 
     incoming = incoming_message_factory(
         text="/clear",
@@ -659,6 +688,9 @@ async def test_handle_message_clear_command_reply_clears_branch(
     assert "100" not in deleted_ids
     assert "101" not in deleted_ids
     mock_session_store.save_tree_snapshot.assert_called()
+    mock_session_store.forget_message_ids.assert_called_once_with(
+        "telegram", "chat_1", {"102", "103", "150"}
+    )
     assert handler.tree_queue.get_tree_for_node("102") is None
     assert handler.tree_queue.get_tree_for_node("100") is not None
 
@@ -696,10 +728,10 @@ async def test_handle_message_clear_command_reply_to_root_clears_tree(
 
     deleted_ids = []
 
-    async def _capture_delete(chat_id, message_id, fire_and_forget=True):
-        deleted_ids.append(message_id)
+    async def _capture_delete(chat_id, message_ids, fire_and_forget=True):
+        deleted_ids.extend(message_ids)
 
-    mock_platform.queue_delete_message = AsyncMock(side_effect=_capture_delete)
+    mock_platform.queue_delete_messages = AsyncMock(side_effect=_capture_delete)
 
     incoming = incoming_message_factory(
         text="/clear",
@@ -711,7 +743,54 @@ async def test_handle_message_clear_command_reply_to_root_clears_tree(
 
     assert set(deleted_ids) == {"100", "101", "150"}
     mock_session_store.remove_tree_snapshot.assert_called_once_with("100")
+    mock_session_store.forget_message_ids.assert_called_once_with(
+        "telegram", "chat_1", {"100", "101", "150"}
+    )
     assert handler.tree_queue.get_tree_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_cancelled_node_runner_does_not_save_after_clear_replaces_queue(
+    handler, mock_cli_manager, mock_session_store, incoming_message_factory
+):
+    """Late cancellation cleanup must not restore a tree after /clear reset."""
+    started = asyncio.Event()
+
+    async def start_task(*args, **kwargs):
+        started.set()
+        try:
+            await asyncio.sleep(60)
+        except asyncio.CancelledError:
+            raise
+        if False:
+            yield {}
+
+    cli_session = MagicMock()
+    cli_session.start_task = start_task
+    mock_cli_manager.get_or_create_session.return_value = (
+        cli_session,
+        "pending_1",
+        True,
+    )
+
+    incoming = incoming_message_factory(text="work", chat_id="chat_1", message_id="100")
+    tree = await handler.tree_queue.create_tree("100", incoming, "101")
+    node = tree.get_node("100")
+    assert node is not None
+
+    task = asyncio.create_task(handler.node_runner.process_node("100", node))
+    await started.wait()
+    handler.replace_tree_queue(
+        TreeQueueManager(
+            queue_update_callback=handler.update_queue_positions,
+            node_started_callback=handler.mark_node_processing,
+        )
+    )
+
+    task.cancel()
+    await task
+
+    mock_session_store.save_tree_snapshot.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -726,13 +805,12 @@ async def test_handle_message_clear_command_reply_pending_voice_cancels(
         return None
 
     mock_platform.cancel_pending_voice = AsyncMock(side_effect=cancel_pending)
-    mock_platform.queue_delete_message = AsyncMock()
     deleted_ids = []
 
-    async def _capture_delete(chat_id, message_id, fire_and_forget=True):
-        deleted_ids.append(message_id)
+    async def _capture_delete(chat_id, message_ids, fire_and_forget=True):
+        deleted_ids.extend(message_ids)
 
-    mock_platform.queue_delete_message = AsyncMock(side_effect=_capture_delete)
+    mock_platform.queue_delete_messages = AsyncMock(side_effect=_capture_delete)
 
     incoming = incoming_message_factory(
         text="/clear",

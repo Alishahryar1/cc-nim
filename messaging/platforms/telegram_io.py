@@ -1,7 +1,5 @@
 """Telegram outbound delivery."""
 
-from __future__ import annotations
-
 import asyncio
 from collections.abc import Awaitable, Callable
 from datetime import timedelta
@@ -10,6 +8,8 @@ from typing import Any
 from loguru import logger
 
 from .outbox import PlatformOutbox
+
+TELEGRAM_DELETE_MESSAGES_BATCH_SIZE = 100
 
 TelegramNetworkError: type[BaseException]
 TelegramRetryAfter: type[BaseException]
@@ -51,12 +51,15 @@ class TelegramMessenger:
             get_limiter=get_limiter,
             send=self.send_message,
             edit=self.edit_message,
-            delete=self.delete_message,
             delete_many=self.delete_messages,
         )
 
     async def _with_retry(
-        self, func: Callable[..., Awaitable[Any]], *args: Any, **kwargs: Any
+        self,
+        func: Callable[..., Awaitable[Any]],
+        *args: Any,
+        suppress_known_message_errors: bool = True,
+        **kwargs: Any,
     ) -> Any:
         """Execute a Telegram API call with the platform retry policy."""
         max_retries = 3
@@ -65,7 +68,9 @@ class TelegramMessenger:
                 return await func(*args, **kwargs)
             except (TimeoutError, TelegramNetworkError) as e:
                 if "Message is not modified" in str(e):
-                    return None
+                    if suppress_known_message_errors:
+                        return None
+                    raise
                 if attempt < max_retries - 1:
                     wait_time = 2**attempt
                     logger.warning(
@@ -97,7 +102,9 @@ class TelegramMessenger:
             except TelegramBaseError as e:
                 err_lower = str(e).lower()
                 if "message is not modified" in err_lower:
-                    return None
+                    if suppress_known_message_errors:
+                        return None
+                    raise
                 if any(
                     x in err_lower
                     for x in [
@@ -108,7 +115,9 @@ class TelegramMessenger:
                         "not enough rights to delete",
                     ]
                 ):
-                    return None
+                    if suppress_known_message_errors:
+                        return None
+                    raise
                 if "Can't parse entities" in str(e) and kwargs.get("parse_mode"):
                     logger.warning("Markdown failed, retrying without parse_mode")
                     kwargs["parse_mode"] = None
@@ -185,23 +194,40 @@ class TelegramMessenger:
             raise RuntimeError("Telegram application or bot not initialized")
 
         bot = app.bot
-        if hasattr(bot, "delete_messages"):
-
-            async def _do_bulk() -> None:
-                mids: list[int] = []
-                for mid in message_ids:
-                    try:
-                        mids.append(int(mid))
-                    except Exception:
-                        continue
-                if mids:
-                    await bot.delete_messages(chat_id=chat_id, message_ids=mids)
-
-            await self._with_retry(_do_bulk)
+        mids: list[int] = []
+        for mid in message_ids:
+            try:
+                mids.append(int(mid))
+            except Exception:
+                continue
+        if not mids:
             return
 
-        for mid in message_ids:
-            await self.delete_message(chat_id, mid)
+        if hasattr(bot, "delete_messages"):
+            for start in range(0, len(mids), TELEGRAM_DELETE_MESSAGES_BATCH_SIZE):
+                chunk = mids[start : start + TELEGRAM_DELETE_MESSAGES_BATCH_SIZE]
+                chunk_snapshot = tuple(chunk)
+
+                async def _do_bulk(ids: tuple[int, ...] = chunk_snapshot) -> None:
+                    await bot.delete_messages(chat_id=chat_id, message_ids=list(ids))
+
+                try:
+                    await self._with_retry(
+                        _do_bulk,
+                        suppress_known_message_errors=False,
+                    )
+                except Exception as e:
+                    logger.debug(
+                        "Telegram bulk delete failed for chat {}: {}; falling back",
+                        chat_id,
+                        type(e).__name__,
+                    )
+                    for mid in chunk:
+                        await self.delete_message(chat_id, str(mid))
+            return
+
+        for mid in mids:
+            await self.delete_message(chat_id, str(mid))
 
     async def queue_send_message(
         self,
@@ -238,15 +264,6 @@ class TelegramMessenger:
             parse_mode,
             fire_and_forget,
         )
-
-    async def queue_delete_message(
-        self,
-        chat_id: str,
-        message_id: str,
-        fire_and_forget: bool = True,
-    ) -> None:
-        """Queue a Telegram delete."""
-        await self._outbox.queue_delete_message(chat_id, message_id, fire_and_forget)
 
     async def queue_delete_messages(
         self,

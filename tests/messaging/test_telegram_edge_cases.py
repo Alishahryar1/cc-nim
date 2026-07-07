@@ -114,6 +114,23 @@ async def test_with_retry_drops_parse_mode_on_markdown_entity_error():
 
 
 @pytest.mark.asyncio
+async def test_with_retry_can_raise_known_message_errors_for_bulk_fallback():
+    with patch("messaging.platforms.telegram.TELEGRAM_AVAILABLE", True):
+        from messaging.platforms.telegram import TelegramRuntime
+
+        platform = TelegramRuntime(bot_token="t")
+
+        async def _f():
+            raise TelegramError("message can't be deleted")
+
+        with pytest.raises(TelegramError):
+            await platform.outbound._with_retry(
+                _f,
+                suppress_known_message_errors=False,
+            )
+
+
+@pytest.mark.asyncio
 async def test_queue_send_message_without_limiter_calls_send_message():
     with patch("messaging.platforms.telegram.TELEGRAM_AVAILABLE", True):
         from messaging.platforms.telegram import TelegramRuntime

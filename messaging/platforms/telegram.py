@@ -1,12 +1,10 @@
 """Telegram messaging runtime."""
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 import os
 from collections.abc import Awaitable, Callable
-from typing import TYPE_CHECKING, Any
+from typing import Any
 
 # Opt-in to future behavior for python-telegram-bot (retry_after as timedelta).
 os.environ["PTB_TIMEDELTA"] = "1"
@@ -25,11 +23,8 @@ from .telegram_inbound import (
 from .telegram_io import TelegramMessenger
 from .voice_flow import VoiceNoteFlow
 
-if TYPE_CHECKING:
-    from telegram import Update
-    from telegram.ext import ContextTypes
-
 try:
+    from telegram import Update
     from telegram.ext import (
         Application,
         CommandHandler,
@@ -54,10 +49,11 @@ class TelegramRuntime:
         bot_token: str | None = None,
         allowed_user_id: str | None = None,
         *,
+        telegram_proxy_url: str = "",
         voice_note_enabled: bool = True,
         whisper_model: str = "base",
         whisper_device: str = "cpu",
-        hf_token: str = "",
+        huggingface_api_key: str = "",
         nvidia_nim_api_key: str = "",
         messaging_rate_limit: int = 1,
         messaging_rate_window: float = 1.0,
@@ -71,6 +67,7 @@ class TelegramRuntime:
 
         self.bot_token = bot_token
         self.allowed_user_id = allowed_user_id
+        self.telegram_proxy_url = telegram_proxy_url.strip()
         if not self.bot_token:
             logger.warning("TELEGRAM_BOT_TOKEN not set")
 
@@ -86,7 +83,7 @@ class TelegramRuntime:
             voice_note_enabled=voice_note_enabled,
             whisper_model=whisper_model,
             whisper_device=whisper_device,
-            hf_token=hf_token,
+            huggingface_api_key=huggingface_api_key,
             nvidia_nim_api_key=nvidia_nim_api_key,
             log_raw_messaging_content=log_raw_messaging_content,
             log_api_error_tracebacks=log_api_error_tracebacks,
@@ -107,10 +104,30 @@ class TelegramRuntime:
         if not self.bot_token:
             raise ValueError("TELEGRAM_BOT_TOKEN is required")
 
-        request = HTTPXRequest(
-            connection_pool_size=8, connect_timeout=30.0, read_timeout=30.0
-        )
-        builder = Application.builder().token(self.bot_token).request(request)
+        if self.telegram_proxy_url:
+            request = HTTPXRequest(
+                connection_pool_size=8,
+                connect_timeout=30.0,
+                read_timeout=30.0,
+                proxy=self.telegram_proxy_url,
+            )
+            update_request = HTTPXRequest(
+                connection_pool_size=8,
+                connect_timeout=30.0,
+                read_timeout=30.0,
+                proxy=self.telegram_proxy_url,
+            )
+            builder = (
+                Application.builder()
+                .token(self.bot_token)
+                .request(request)
+                .get_updates_request(update_request)
+            )
+        else:
+            request = HTTPXRequest(
+                connection_pool_size=8, connect_timeout=30.0, read_timeout=30.0
+            )
+            builder = Application.builder().token(self.bot_token).request(request)
         self._application = builder.build()
 
         self._application.add_handler(
@@ -253,5 +270,5 @@ class TelegramRuntime:
             request,
             message_handler=self._message_handler,
             queue_send_message=self.outbound.queue_send_message,
-            queue_delete_message=self.outbound.queue_delete_message,
+            queue_delete_messages=self.outbound.queue_delete_messages,
         )

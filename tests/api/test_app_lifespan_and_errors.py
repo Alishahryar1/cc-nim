@@ -18,10 +18,11 @@ _RUNTIME_EXTRAS = {
     "model_opus": None,
     "model_sonnet": None,
     "model_haiku": None,
+    "telegram_proxy_url": "",
     "voice_note_enabled": True,
     "whisper_model": "base",
     "whisper_device": "cpu",
-    "hf_token": "",
+    "huggingface_api_key": "",
     "nvidia_nim_api_key": "",
     "messaging_rate_limit": 1,
     "messaging_rate_window": 1.0,
@@ -50,7 +51,6 @@ def _fake_messaging_components(runtime: MagicMock | None = None) -> SimpleNamesp
     outbound = MagicMock()
     outbound.queue_send_message = AsyncMock(return_value="msg")
     outbound.queue_edit_message = AsyncMock()
-    outbound.queue_delete_message = AsyncMock()
     outbound.queue_delete_messages = AsyncMock()
     outbound.fire_and_forget = MagicMock()
     return SimpleNamespace(

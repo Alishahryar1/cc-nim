@@ -1,7 +1,5 @@
 """Discord messaging runtime."""
 
-from __future__ import annotations
-
 import asyncio
 import contextlib
 from collections.abc import Awaitable, Callable
@@ -79,7 +77,7 @@ class DiscordRuntime:
         voice_note_enabled: bool = True,
         whisper_model: str = "base",
         whisper_device: str = "cpu",
-        hf_token: str = "",
+        huggingface_api_key: str = "",
         nvidia_nim_api_key: str = "",
         messaging_rate_limit: int = 1,
         messaging_rate_window: float = 1.0,
@@ -115,7 +113,7 @@ class DiscordRuntime:
             voice_note_enabled=voice_note_enabled,
             whisper_model=whisper_model,
             whisper_device=whisper_device,
-            hf_token=hf_token,
+            huggingface_api_key=huggingface_api_key,
             nvidia_nim_api_key=nvidia_nim_api_key,
             log_raw_messaging_content=log_raw_messaging_content,
             log_api_error_tracebacks=log_api_error_tracebacks,
@@ -143,7 +141,7 @@ class DiscordRuntime:
             discord_voice_request_from_event(message, attachment, channel_id),
             message_handler=self._message_handler,
             queue_send_message=self.outbound.queue_send_message,
-            queue_delete_message=self.outbound.queue_delete_message,
+            queue_delete_messages=self.outbound.queue_delete_messages,
         )
 
     async def _on_discord_message(self, message: Any) -> None:

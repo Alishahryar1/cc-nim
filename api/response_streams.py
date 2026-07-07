@@ -1,7 +1,5 @@
 """FastAPI streaming response wrappers for public API wire formats."""
 
-from __future__ import annotations
-
 from collections.abc import AsyncIterator, Mapping
 
 from fastapi.responses import StreamingResponse

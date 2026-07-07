@@ -1,7 +1,5 @@
 """Admin UI configuration manifest."""
 
-from __future__ import annotations
-
 from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
@@ -282,6 +280,16 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         session_sensitive=True,
     ),
     ConfigFieldSpec(
+        "TELEGRAM_PROXY_URL",
+        "Telegram Proxy URL",
+        "messaging",
+        "secret",
+        settings_attr="telegram_proxy_url",
+        secret=True,
+        session_sensitive=True,
+        description="Optional Telegram-only proxy, e.g. socks5://127.0.0.1:1080.",
+    ),
+    ConfigFieldSpec(
         "DISCORD_BOT_TOKEN",
         "Discord Bot Token",
         "messaging",
@@ -338,15 +346,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "voice",
         settings_attr="whisper_model",
         default="openai/whisper-large-v3",
-        session_sensitive=True,
-    ),
-    ConfigFieldSpec(
-        "HF_TOKEN",
-        "Hugging Face Token",
-        "voice",
-        "secret",
-        settings_attr="hf_token",
-        secret=True,
         session_sensitive=True,
     ),
     ConfigFieldSpec(
@@ -544,6 +543,12 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         advanced=True,
     ),
     ConfigFieldSpec(
+        "FCC_SMOKE_MODEL_MINIMAX",
+        "Smoke MiniMax Model",
+        "smoke",
+        advanced=True,
+    ),
+    ConfigFieldSpec(
         "FCC_SMOKE_MODEL_WAFER",
         "Smoke Wafer Model",
         "smoke",
@@ -558,6 +563,30 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
     ConfigFieldSpec(
         "FCC_SMOKE_MODEL_OPENCODE_GO",
         "Smoke OpenCode Go Model",
+        "smoke",
+        advanced=True,
+    ),
+    ConfigFieldSpec(
+        "FCC_SMOKE_MODEL_VERCEL",
+        "Smoke Vercel AI Gateway Model",
+        "smoke",
+        advanced=True,
+    ),
+    ConfigFieldSpec(
+        "FCC_SMOKE_MODEL_HUGGINGFACE",
+        "Smoke Hugging Face Model",
+        "smoke",
+        advanced=True,
+    ),
+    ConfigFieldSpec(
+        "FCC_SMOKE_MODEL_COHERE",
+        "Smoke Cohere Model",
+        "smoke",
+        advanced=True,
+    ),
+    ConfigFieldSpec(
+        "FCC_SMOKE_MODEL_GITHUB_MODELS",
+        "Smoke GitHub Models Model",
         "smoke",
         advanced=True,
     ),
@@ -588,6 +617,12 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
     ConfigFieldSpec(
         "FCC_SMOKE_MODEL_GROQ",
         "Smoke Groq Model",
+        "smoke",
+        advanced=True,
+    ),
+    ConfigFieldSpec(
+        "FCC_SMOKE_MODEL_SAMBANOVA",
+        "Smoke SambaNova Model",
         "smoke",
         advanced=True,
     ),

@@ -1,7 +1,5 @@
 """DeepSeek provider implementation (OpenAI-compatible Chat Completions)."""
 
-from __future__ import annotations
-
 from collections.abc import Mapping
 from typing import Any
 

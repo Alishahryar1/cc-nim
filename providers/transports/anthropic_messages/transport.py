@@ -1,7 +1,5 @@
 """Shared transport for providers with native Anthropic Messages endpoints."""
 
-from __future__ import annotations
-
 from collections.abc import AsyncIterator, Iterator
 from typing import Any, Literal
 
@@ -138,10 +136,14 @@ class AnthropicMessagesTransport(BaseProvider):
 
     async def _send_stream_request(self, body: dict) -> httpx.Response:
         """Create a streaming messages response."""
+        # This transport always parses the upstream response as SSE, so the
+        # upstream request must always be streaming — forwarding a client's
+        # stream=false makes native providers return plain JSON that the SSE
+        # reader misreads as a truncated stream.
         request = self._client.build_request(
             "POST",
             "/messages",
-            json=body,
+            json={**body, "stream": True},
             headers=self._request_headers(),
         )
         return await self._client.send(request, stream=True)

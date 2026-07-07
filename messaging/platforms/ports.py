@@ -1,7 +1,5 @@
 """Messaging platform ports used by the customer-facing workflow."""
 
-from __future__ import annotations
-
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
@@ -48,13 +46,6 @@ class OutboundMessenger(Protocol):
         message_id: str,
         text: str,
         parse_mode: str | None = None,
-        fire_and_forget: bool = True,
-    ) -> None: ...
-
-    async def queue_delete_message(
-        self,
-        chat_id: str,
-        message_id: str,
         fire_and_forget: bool = True,
     ) -> None: ...
 

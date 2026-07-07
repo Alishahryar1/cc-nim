@@ -4,8 +4,6 @@ Adapter factories live in :mod:`providers.runtime.factory`; this module stays fr
 provider implementation imports (see contract tests).
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Literal
 
@@ -16,6 +14,7 @@ NVIDIA_NIM_DEFAULT_BASE = "https://integrate.api.nvidia.com/v1"
 # Moonshot Kimi Anthropic-compatible Messages API (POST …/messages).
 KIMI_DEFAULT_BASE = "https://api.moonshot.ai/anthropic/v1"
 WAFER_DEFAULT_BASE = "https://pass.wafer.ai/v1"
+MINIMAX_DEFAULT_BASE = "https://api.minimax.io/anthropic/v1"
 # DeepSeek Chat Completions API; cache usage is reported on this endpoint.
 DEEPSEEK_DEFAULT_BASE = "https://api.deepseek.com"
 FIREWORKS_DEFAULT_BASE = "https://api.fireworks.ai/inference/v1"
@@ -30,12 +29,17 @@ LLAMACPP_DEFAULT_BASE = "http://localhost:8080/v1"
 OLLAMA_DEFAULT_BASE = "http://localhost:11434"
 OPENCODE_DEFAULT_BASE = "https://opencode.ai/zen/v1"
 OPENCODE_GO_DEFAULT_BASE = "https://opencode.ai/zen/go/v1"
+VERCEL_AI_GATEWAY_DEFAULT_BASE = "https://ai-gateway.vercel.sh/v1"
+HUGGINGFACE_DEFAULT_BASE = "https://router.huggingface.co/v1"
+COHERE_DEFAULT_BASE = "https://api.cohere.ai/compatibility/v1"
+GITHUB_MODELS_DEFAULT_BASE = "https://models.github.ai/inference"
 # Z.ai Anthropic-compatible Messages API (not OpenAI Coding Plan chat completions).
 ZAI_DEFAULT_BASE = "https://api.z.ai/api/anthropic/v1"
 # Google AI Studio Gemini API OpenAI-compat layer (not Vertex AI).
 GEMINI_DEFAULT_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GROQ_DEFAULT_BASE = "https://api.groq.com/openai/v1"
 CEREBRAS_DEFAULT_BASE = "https://api.cerebras.ai/v1"
+SAMBANOVA_DEFAULT_BASE = "https://api.sambanova.ai/v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -143,6 +147,50 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         proxy_attr="opencode_go_proxy",
         capabilities=("chat", "streaming", "tools", "thinking", "rate_limit"),
     ),
+    "vercel": ProviderDescriptor(
+        provider_id="vercel",
+        display_name="Vercel AI Gateway",
+        transport_type="openai_chat",
+        credential_env="AI_GATEWAY_API_KEY",
+        credential_url="https://vercel.com/docs/ai-gateway",
+        credential_attr="vercel_ai_gateway_api_key",
+        default_base_url=VERCEL_AI_GATEWAY_DEFAULT_BASE,
+        proxy_attr="vercel_ai_gateway_proxy",
+        capabilities=("chat", "streaming", "tools", "thinking", "rate_limit"),
+    ),
+    "huggingface": ProviderDescriptor(
+        provider_id="huggingface",
+        display_name="Hugging Face",
+        transport_type="openai_chat",
+        credential_env="HUGGINGFACE_API_KEY",
+        credential_url="https://huggingface.co/settings/tokens",
+        credential_attr="huggingface_api_key",
+        default_base_url=HUGGINGFACE_DEFAULT_BASE,
+        proxy_attr="huggingface_proxy",
+        capabilities=("chat", "streaming", "tools", "thinking", "rate_limit"),
+    ),
+    "cohere": ProviderDescriptor(
+        provider_id="cohere",
+        display_name="Cohere",
+        transport_type="openai_chat",
+        credential_env="COHERE_API_KEY",
+        credential_url="https://dashboard.cohere.com/api-keys",
+        credential_attr="cohere_api_key",
+        default_base_url=COHERE_DEFAULT_BASE,
+        proxy_attr="cohere_proxy",
+        capabilities=("chat", "streaming", "tools", "thinking", "rate_limit"),
+    ),
+    "github_models": ProviderDescriptor(
+        provider_id="github_models",
+        display_name="GitHub Models",
+        transport_type="openai_chat",
+        credential_env="GITHUB_MODELS_TOKEN",
+        credential_url="https://github.com/settings/tokens",
+        credential_attr="github_models_token",
+        default_base_url=GITHUB_MODELS_DEFAULT_BASE,
+        proxy_attr="github_models_proxy",
+        capabilities=("chat", "streaming", "tools", "thinking", "rate_limit"),
+    ),
     "wafer": ProviderDescriptor(
         provider_id="wafer",
         display_name="Wafer",
@@ -171,6 +219,24 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
             "native_anthropic",
         ),
     ),
+    "minimax": ProviderDescriptor(
+        provider_id="minimax",
+        display_name="MiniMax",
+        transport_type="anthropic_messages",
+        credential_env="MINIMAX_API_KEY",
+        credential_url="https://platform.minimax.io/user-center/basic-information/interface-key",
+        credential_attr="minimax_api_key",
+        default_base_url=MINIMAX_DEFAULT_BASE,
+        proxy_attr="minimax_proxy",
+        capabilities=(
+            "chat",
+            "streaming",
+            "tools",
+            "thinking",
+            "native_anthropic",
+            "rate_limit",
+        ),
+    ),
     "cerebras": ProviderDescriptor(
         provider_id="cerebras",
         display_name="Cerebras",
@@ -191,6 +257,17 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="groq_api_key",
         default_base_url=GROQ_DEFAULT_BASE,
         proxy_attr="groq_proxy",
+        capabilities=("chat", "streaming", "tools", "thinking", "rate_limit"),
+    ),
+    "sambanova": ProviderDescriptor(
+        provider_id="sambanova",
+        display_name="SambaNova",
+        transport_type="openai_chat",
+        credential_env="SAMBANOVA_API_KEY",
+        credential_url="https://cloud.sambanova.ai/apis",
+        credential_attr="sambanova_api_key",
+        default_base_url=SAMBANOVA_DEFAULT_BASE,
+        proxy_attr="sambanova_proxy",
         capabilities=("chat", "streaming", "tools", "thinking", "rate_limit"),
     ),
     "fireworks": ProviderDescriptor(
@@ -248,12 +325,12 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     "lmstudio": ProviderDescriptor(
         provider_id="lmstudio",
         display_name="LM Studio",
-        transport_type="anthropic_messages",
+        transport_type="openai_chat",
         static_credential="lm-studio",
         default_base_url=LMSTUDIO_DEFAULT_BASE,
         base_url_attr="lm_studio_base_url",
         proxy_attr="lmstudio_proxy",
-        capabilities=("chat", "streaming", "tools", "native_anthropic", "local"),
+        capabilities=("chat", "streaming", "tools", "local"),
     ),
     "llamacpp": ProviderDescriptor(
         provider_id="llamacpp",
@@ -284,9 +361,11 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
 }
 
 # Key order:
-# NVIDIA NIM first (README default), DeepSeek fourth, Wafer ninth / Kimi tenth; then cerebras /
-# groq / fireworks / Cloudflare overlap; remainder and locals last per project plan (
-# github.com/cheahjs/free-llm-api-resources Free Providers TOC as rough guide beyond fixed slots).
+# NVIDIA NIM first (README default), DeepSeek fourth, OpenCode gateways adjacent,
+# Vercel / Hugging Face / Cohere / GitHub Models follow gateway-style remotes,
+# then native Anthropic remotes and locals per project plan
+# (github.com/cheahjs/free-llm-api-resources Free Providers TOC as rough guide
+# beyond fixed slots).
 # ``SUPPORTED_PROVIDER_IDS`` inherits this insertion order for UI and error-message listing.
 SUPPORTED_PROVIDER_IDS: tuple[str, ...] = tuple(PROVIDER_CATALOG.keys())
 

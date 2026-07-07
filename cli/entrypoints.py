@@ -1,9 +1,8 @@
 """CLI entry points for the installed package."""
 
-from __future__ import annotations
-
 import os
 import shutil
+import sys
 import threading
 import time
 import webbrowser
@@ -16,6 +15,10 @@ from api.app import GracefulLifespanApp, create_app
 from cli.launchers.common import preflight_proxy
 from cli.process_registry import (
     kill_all_best_effort,
+)
+from config.env_migrations import (
+    explicit_env_file_huggingface_warning,
+    migrate_owned_env_files,
 )
 from config.env_template import load_env_template
 from config.paths import (
@@ -35,6 +38,7 @@ def serve() -> None:
         try:
             while True:
                 _migrate_legacy_env_if_missing()
+                _migrate_config_env_keys()
                 settings = get_settings()
                 if not _run_supervised_server(
                     settings, open_admin_browser=not opened_admin_browser
@@ -113,6 +117,7 @@ def init() -> None:
     env_file = managed_env_path()
 
     migrated_from = _migrate_legacy_env_if_missing()
+    _migrate_config_env_keys()
     if migrated_from is not None:
         print(f"Config migrated from {migrated_from} to {env_file}")
         print(
@@ -148,3 +153,12 @@ def _migrate_legacy_env_if_missing() -> Path | None:
         return legacy_env
 
     return None
+
+
+def _migrate_config_env_keys() -> tuple[Path, ...]:
+    """Apply dotenv key migrations before Settings loads config."""
+
+    migrated = migrate_owned_env_files()
+    if warning := explicit_env_file_huggingface_warning(os.environ):
+        print(warning, file=sys.stderr)
+    return migrated

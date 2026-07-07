@@ -1,7 +1,5 @@
 """Persistent messaging conversation state store."""
 
-from __future__ import annotations
-
 import threading
 
 from loguru import logger
@@ -134,6 +132,18 @@ class SessionStore:
             return self._message_log.get_message_ids_for_chat(
                 str(platform), str(chat_id)
             )
+
+    def forget_message_ids(
+        self, platform: str, chat_id: str, message_ids: set[str]
+    ) -> None:
+        with self._lock:
+            removed = self._message_log.remove_message_ids(
+                str(platform),
+                str(chat_id),
+                {str(message_id) for message_id in message_ids},
+            )
+            if removed:
+                self._persistence.schedule_save()
 
     def clear_all(self) -> None:
         with self._lock:

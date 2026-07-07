@@ -1,7 +1,5 @@
 """Reasoning and thinking conversion helpers for OpenAI Responses."""
 
-from __future__ import annotations
-
 from collections.abc import Mapping
 from typing import Any
 
@@ -23,10 +21,14 @@ def reasoning_text_from_item(item: Mapping[str, Any]) -> str | None:
 
 
 def combine_reasoning(existing: str | None, addition: str | None) -> str | None:
-    if not addition:
+    if addition is None:
         return existing
-    if not existing:
+    if existing is None:
         return addition
+    if existing == "":
+        return addition
+    if addition == "":
+        return existing
     return f"{existing}\n{addition}"
 
 
@@ -47,6 +49,6 @@ def _text_parts_from_items(value: Any, *, item_type: str) -> list[str]:
     for item in value:
         if isinstance(item, dict) and item.get("type") == item_type:
             text = optional_str(item.get("text"))
-            if text:
+            if text is not None:
                 parts.append(text)
     return parts

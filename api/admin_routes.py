@@ -1,7 +1,5 @@
 """Local admin UI routes and APIs."""
 
-from __future__ import annotations
-
 import inspect
 import ipaddress
 from pathlib import Path

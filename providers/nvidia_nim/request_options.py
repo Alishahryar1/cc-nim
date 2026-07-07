@@ -1,7 +1,5 @@
 """NVIDIA NIM request option injection."""
 
-from __future__ import annotations
-
 from typing import Any
 
 from config.nim import NimSettings

@@ -58,7 +58,6 @@ class TestMessagingPorts:
         outbound = MagicMock()
         outbound.queue_send_message = AsyncMock()
         outbound.queue_edit_message = AsyncMock()
-        outbound.queue_delete_message = AsyncMock()
         outbound.queue_delete_messages = AsyncMock()
         outbound.fire_and_forget = MagicMock()
         components = MessagingPlatformComponents(

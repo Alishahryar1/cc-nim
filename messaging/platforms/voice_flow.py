@@ -1,7 +1,5 @@
 """Shared voice-note flow for messaging platform adapters."""
 
-from __future__ import annotations
-
 import contextlib
 import tempfile
 from collections.abc import Awaitable, Callable
@@ -24,7 +22,7 @@ VOICE_TRANSCRIPTION_ERROR_MESSAGE = (
 
 MessageHandler = Callable[[IncomingMessage], Awaitable[None]]
 QueueSend = Callable[..., Awaitable[str | None]]
-QueueDelete = Callable[..., Awaitable[None]]
+QueueDeleteMany = Callable[..., Awaitable[None]]
 
 
 @dataclass(frozen=True)
@@ -92,7 +90,7 @@ class VoiceNoteFlow:
         voice_note_enabled: bool,
         whisper_model: str,
         whisper_device: str,
-        hf_token: str,
+        huggingface_api_key: str,
         nvidia_nim_api_key: str,
         log_raw_messaging_content: bool,
         log_api_error_tracebacks: bool,
@@ -104,7 +102,7 @@ class VoiceNoteFlow:
         self._log_api_error_tracebacks = log_api_error_tracebacks
         self._pending_voice = PendingVoiceRegistry()
         self._voice_transcription = VoiceTranscriptionService(
-            hf_token=hf_token,
+            huggingface_api_key=huggingface_api_key,
             nvidia_nim_api_key=nvidia_nim_api_key,
         )
 
@@ -150,7 +148,7 @@ class VoiceNoteFlow:
         *,
         message_handler: MessageHandler | None,
         queue_send_message: QueueSend,
-        queue_delete_message: QueueDelete,
+        queue_delete_messages: QueueDeleteMany,
     ) -> bool:
         """Transcribe a voice note and hand the resulting turn to messaging."""
         if await self.reply_if_disabled(request.reply_text):
@@ -194,7 +192,7 @@ class VoiceNoteFlow:
                 request.chat_id,
                 request.message_id,
             ):
-                await queue_delete_message(request.chat_id, status_msg_id_text)
+                await queue_delete_messages(request.chat_id, [status_msg_id_text])
                 return True
 
             await self.complete_pending_voice(
@@ -224,7 +222,7 @@ class VoiceNoteFlow:
             await self._clear_failed_pending_voice(
                 request,
                 status_msg_id_text,
-                queue_delete_message,
+                queue_delete_messages,
                 handed_off=handed_off,
             )
             await request.reply_text(format_user_error_preview(e))
@@ -233,7 +231,7 @@ class VoiceNoteFlow:
             await self._clear_failed_pending_voice(
                 request,
                 status_msg_id_text,
-                queue_delete_message,
+                queue_delete_messages,
                 handed_off=handed_off,
             )
             await request.reply_text(format_user_error_preview(e))
@@ -242,7 +240,7 @@ class VoiceNoteFlow:
             await self._clear_failed_pending_voice(
                 request,
                 status_msg_id_text,
-                queue_delete_message,
+                queue_delete_messages,
                 handed_off=handed_off,
             )
             if self._log_api_error_tracebacks:
@@ -262,7 +260,7 @@ class VoiceNoteFlow:
         self,
         request: VoiceNoteRequest,
         status_msg_id: str,
-        queue_delete_message: QueueDelete,
+        queue_delete_messages: QueueDeleteMany,
         *,
         handed_off: bool,
     ) -> None:
@@ -273,7 +271,7 @@ class VoiceNoteFlow:
         )
         if not handed_off:
             with contextlib.suppress(Exception):
-                await queue_delete_message(request.chat_id, status_msg_id)
+                await queue_delete_messages(request.chat_id, [status_msg_id])
 
     def _log_transcription(self, request: VoiceNoteRequest, transcribed: str) -> None:
         label = request.platform.upper()

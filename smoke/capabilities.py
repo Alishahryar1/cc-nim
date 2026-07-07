@@ -6,8 +6,6 @@ subfeature contracts, owning module boundary, and coverage owners that protect
 them while the internals are refactored.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 
 

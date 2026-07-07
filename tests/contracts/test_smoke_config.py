@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -11,6 +9,7 @@ from smoke.conftest import (
 from smoke.lib.config import (
     ALL_TARGETS,
     DEFAULT_TARGETS,
+    MISTRAL_REASONING_SMOKE_DEFAULT_MODEL,
     NVIDIA_NIM_CLI_DEFAULT_MODELS,
     OPENROUTER_FREE_CLI_DEFAULT_MODELS,
     OPT_IN_TARGETS,
@@ -35,10 +34,16 @@ def _settings(**overrides):
         "deepseek_api_key": "",
         "kimi_api_key": "",
         "wafer_api_key": "",
+        "minimax_api_key": "",
         "opencode_api_key": "",
+        "vercel_ai_gateway_api_key": "",
+        "huggingface_api_key": "",
+        "cohere_api_key": "",
+        "github_models_token": "",
         "zai_api_key": "",
         "gemini_api_key": "",
         "groq_api_key": "",
+        "sambanova_api_key": "",
         "cerebras_api_key": "",
         "fireworks_api_key": "",
         "cloudflare_api_token": "",
@@ -146,6 +151,22 @@ def test_wafer_provider_configuration_uses_api_key(monkeypatch) -> None:
     assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["wafer"]
 
 
+def test_minimax_provider_configuration_uses_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_MINIMAX", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            minimax_api_key="minimax-key",
+        )
+    )
+
+    assert config.has_provider_configuration("minimax")
+    models = config.provider_smoke_models()
+    assert models[0].provider == "minimax"
+    assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["minimax"]
+
+
 def test_cloudflare_provider_configuration_requires_token_and_account(
     monkeypatch,
 ) -> None:
@@ -175,6 +196,86 @@ def test_cloudflare_provider_configuration_missing_account_is_unconfigured() -> 
     )
 
     assert not config.has_provider_configuration("cloudflare")
+
+
+def test_vercel_provider_configuration_uses_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_VERCEL", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            vercel_ai_gateway_api_key="vercel-key",
+        )
+    )
+
+    assert config.has_provider_configuration("vercel")
+    models = config.provider_smoke_models()
+    assert models[0].provider == "vercel"
+    assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["vercel"]
+
+
+def test_huggingface_provider_configuration_uses_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_HUGGINGFACE", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            huggingface_api_key="hf-key",
+        )
+    )
+
+    assert config.has_provider_configuration("huggingface")
+    models = config.provider_smoke_models()
+    assert models[0].provider == "huggingface"
+    assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["huggingface"]
+
+
+def test_cohere_provider_configuration_uses_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_COHERE", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            cohere_api_key="cohere-key",
+        )
+    )
+
+    assert config.has_provider_configuration("cohere")
+    models = config.provider_smoke_models()
+    assert models[0].provider == "cohere"
+    assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["cohere"]
+
+
+def test_github_models_provider_configuration_uses_token(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_GITHUB_MODELS", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            github_models_token="github-token",
+        )
+    )
+
+    assert config.has_provider_configuration("github_models")
+    models = config.provider_smoke_models()
+    assert models[0].provider == "github_models"
+    assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["github_models"]
+
+
+def test_sambanova_provider_configuration_uses_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_SAMBANOVA", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            sambanova_api_key="sambanova-key",
+        )
+    )
+
+    assert config.has_provider_configuration("sambanova")
+    models = config.provider_smoke_models()
+    assert models[0].provider == "sambanova"
+    assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["sambanova"]
 
 
 def test_provider_smoke_model_override_accepts_model_name_without_prefix(
@@ -235,6 +336,43 @@ def test_provider_smoke_model_override_rejects_wrong_provider_prefix(
         assert "FCC_SMOKE_MODEL_DEEPSEEK" in str(exc)
     else:
         raise AssertionError("expected wrong provider prefix to fail")
+
+
+def test_mistral_reasoning_smoke_uses_reasoning_default(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_MISTRAL_REASONING", raising=False)
+    config = _smoke_config(
+        settings=_settings(mistral_api_key="mistral-key", ollama_base_url="")
+    )
+
+    model = config.mistral_reasoning_smoke_model()
+
+    assert model is not None
+    assert model.provider == "mistral"
+    assert model.full_model == MISTRAL_REASONING_SMOKE_DEFAULT_MODEL
+    assert model.source == "mistral_reasoning_default"
+
+
+def test_mistral_reasoning_smoke_accepts_override(monkeypatch) -> None:
+    monkeypatch.setenv("FCC_SMOKE_MODEL_MISTRAL_REASONING", "mistral-medium-3-5")
+    config = _smoke_config(
+        settings=_settings(mistral_api_key="mistral-key", ollama_base_url="")
+    )
+
+    model = config.mistral_reasoning_smoke_model()
+
+    assert model is not None
+    assert model.full_model == "mistral/mistral-medium-3-5"
+    assert model.source == "FCC_SMOKE_MODEL_MISTRAL_REASONING"
+
+
+def test_mistral_reasoning_smoke_respects_provider_matrix(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_MISTRAL_REASONING", raising=False)
+    config = _smoke_config(
+        settings=_settings(mistral_api_key="mistral-key", ollama_base_url=""),
+        provider_matrix=frozenset({"deepseek"}),
+    )
+
+    assert config.mistral_reasoning_smoke_model() is None
 
 
 def test_provider_smoke_matrix_filters_provider_catalog(monkeypatch) -> None:
@@ -320,17 +458,17 @@ def test_nvidia_nim_cli_default_models_are_normalized() -> None:
 def test_nvidia_nim_cli_models_override_and_append() -> None:
     refs = nvidia_nim_cli_model_refs(
         {
-            "FCC_SMOKE_NIM_MODELS": "z-ai/glm-5.1,nvidia_nim/custom/model",
-            "FCC_SMOKE_NIM_EXTRA_MODELS": "moonshotai/kimi-k2.6,z-ai/glm-5.1",
+            "FCC_SMOKE_NIM_MODELS": "z-ai/glm-5.2,nvidia_nim/custom/model",
+            "FCC_SMOKE_NIM_EXTRA_MODELS": "moonshotai/kimi-k2.6,z-ai/glm-5.2",
         }
     )
 
     assert tuple(refs) == (
-        "nvidia_nim/z-ai/glm-5.1",
+        "nvidia_nim/z-ai/glm-5.2",
         "nvidia_nim/custom/model",
         "nvidia_nim/moonshotai/kimi-k2.6",
     )
-    assert refs["nvidia_nim/z-ai/glm-5.1"] == "FCC_SMOKE_NIM_MODELS"
+    assert refs["nvidia_nim/z-ai/glm-5.2"] == "FCC_SMOKE_NIM_MODELS"
     assert refs["nvidia_nim/moonshotai/kimi-k2.6"] == ("FCC_SMOKE_NIM_EXTRA_MODELS")
 
 
@@ -357,7 +495,7 @@ def test_smoke_config_returns_nvidia_nim_cli_provider_models(monkeypatch) -> Non
     monkeypatch.delenv("FCC_SMOKE_NIM_EXTRA_MODELS", raising=False)
     config = _smoke_config(
         settings=_settings(
-            model="nvidia_nim/z-ai/glm-5.1",
+            model="nvidia_nim/z-ai/glm-5.2",
             nvidia_nim_api_key="nim-key",
             ollama_base_url="",
         )
@@ -366,7 +504,7 @@ def test_smoke_config_returns_nvidia_nim_cli_provider_models(monkeypatch) -> Non
     models = config.nvidia_nim_cli_models()
 
     assert models[0].provider == "nvidia_nim"
-    assert models[0].full_model == "nvidia_nim/z-ai/glm-5.1"
+    assert models[0].full_model == "nvidia_nim/z-ai/glm-5.2"
     assert models[0].source == "nvidia_nim_cli_default"
 
 

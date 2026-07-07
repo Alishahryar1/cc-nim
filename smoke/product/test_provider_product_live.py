@@ -1,5 +1,3 @@
-from __future__ import annotations
-
 from typing import Any
 
 import httpx
@@ -104,6 +102,30 @@ def test_provider_reasoning_tool_continuation_e2e(
         pytest.skip(f"{provider_model.provider} smoke model does not enable thinking")
     _run_provider_scenario(
         smoke_config, provider_model, _scenario_reasoning_tool_continuation
+    )
+
+
+def test_mistral_native_reasoning_model_e2e(smoke_config: SmokeConfig) -> None:
+    provider_model = smoke_config.mistral_reasoning_smoke_model()
+    if provider_model is None:
+        pytest.skip("missing_env: mistral is not configured")
+
+    payload = {
+        "model": "claude-opus-4-7",
+        "max_tokens": 256,
+        "messages": [{"role": "user", "content": "Reply with one short sentence."}],
+        "thinking": {"type": "adaptive"},
+    }
+    with _server_for_provider(
+        smoke_config, provider_model, "mistral-native-reasoning"
+    ) as server:
+        turn = ConversationDriver(server, smoke_config).stream(payload)
+
+    _assert_provider_product_stream(turn.events)
+    event_text = "\n".join(event.raw for event in turn.events)
+    assert "thinking_delta" in event_text, (
+        f"{provider_model.source}={provider_model.full_model} completed without "
+        "native Mistral thinking output"
     )
 
 

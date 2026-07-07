@@ -1,7 +1,5 @@
 """Shared HTTP helpers for provider transports."""
 
-from __future__ import annotations
-
 import inspect
 from typing import Any
 

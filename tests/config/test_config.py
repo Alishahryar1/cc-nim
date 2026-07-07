@@ -284,6 +284,16 @@ class TestSettings:
         settings = Settings()
         assert settings.wafer_api_key == "wafer-key"
 
+    def test_minimax_settings_from_env(self, monkeypatch):
+        """MiniMax key and proxy env vars load into settings."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
+        monkeypatch.setenv("MINIMAX_PROXY", "http://proxy.test:8080")
+        settings = Settings()
+        assert settings.minimax_api_key == "minimax-key"
+        assert settings.minimax_proxy == "http://proxy.test:8080"
+
     def test_cloudflare_settings_from_env(self, monkeypatch):
         """Cloudflare token, account, and proxy env vars load into settings."""
         from config.settings import Settings
@@ -295,6 +305,67 @@ class TestSettings:
         assert settings.cloudflare_api_token == "cf-token"
         assert settings.cloudflare_account_id == "cf-account"
         assert settings.cloudflare_proxy == "http://proxy.test:8080"
+
+    def test_vercel_settings_from_env(self, monkeypatch):
+        """Vercel AI Gateway key and proxy env vars load into settings."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("AI_GATEWAY_API_KEY", "vercel-key")
+        monkeypatch.setenv("VERCEL_AI_GATEWAY_PROXY", "http://proxy.test:8080")
+        settings = Settings()
+        assert settings.vercel_ai_gateway_api_key == "vercel-key"
+        assert settings.vercel_ai_gateway_proxy == "http://proxy.test:8080"
+
+    def test_huggingface_settings_from_env(self, monkeypatch):
+        """Hugging Face key and proxy env vars load into settings."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("HUGGINGFACE_API_KEY", "hf-key")
+        monkeypatch.setenv("HUGGINGFACE_PROXY", "http://proxy.test:8080")
+        settings = Settings()
+        assert settings.huggingface_api_key == "hf-key"
+        assert settings.huggingface_proxy == "http://proxy.test:8080"
+        assert not hasattr(settings, "hf_token")
+
+    def test_cohere_settings_from_env(self, monkeypatch):
+        """Cohere key and proxy env vars load into settings."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("COHERE_API_KEY", "cohere-key")
+        monkeypatch.setenv("COHERE_PROXY", "http://proxy.test:8080")
+        settings = Settings()
+        assert settings.cohere_api_key == "cohere-key"
+        assert settings.cohere_proxy == "http://proxy.test:8080"
+
+    def test_github_models_settings_from_env(self, monkeypatch):
+        """GitHub Models token and proxy env vars load into settings."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("GITHUB_MODELS_TOKEN", "github-token")
+        monkeypatch.setenv("GITHUB_MODELS_PROXY", "http://proxy.test:8080")
+        settings = Settings()
+        assert settings.github_models_token == "github-token"
+        assert settings.github_models_proxy == "http://proxy.test:8080"
+
+    def test_sambanova_settings_from_env(self, monkeypatch):
+        """SambaNova key and proxy env vars load into settings."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("SAMBANOVA_API_KEY", "sambanova-key")
+        monkeypatch.setenv("SAMBANOVA_PROXY", "http://proxy.test:8080")
+        settings = Settings()
+        assert settings.sambanova_api_key == "sambanova-key"
+        assert settings.sambanova_proxy == "http://proxy.test:8080"
+
+    def test_legacy_hf_token_env_is_ignored(self, monkeypatch):
+        """HF_TOKEN is migrated by startup config migration, not read by Settings."""
+        from config.settings import Settings
+
+        monkeypatch.setenv("HF_TOKEN", "legacy-token")
+        monkeypatch.delenv("HUGGINGFACE_API_KEY", raising=False)
+        settings = Settings()
+        assert settings.huggingface_api_key == ""
+        assert not hasattr(settings, "hf_token")
 
     def test_per_model_thinking_from_env(self, monkeypatch):
         """Per-model thinking env vars are loaded into settings."""
@@ -688,6 +759,16 @@ class TestPerModelMapping:
                 "cloudflare/@cf/moonshotai/kimi-k2.6",
                 None,
             ),
+            (
+                {"MODEL": "github_models/openai/gpt-4.1"},
+                "github_models/openai/gpt-4.1",
+                None,
+            ),
+            (
+                {"MODEL": "sambanova/Meta-Llama-3.3-70B-Instruct"},
+                "sambanova/Meta-Llama-3.3-70B-Instruct",
+                None,
+            ),
             ({"MODEL": "lmstudio/qwen2.5-7b"}, "lmstudio/qwen2.5-7b", None),
             ({"MODEL": "llamacpp/local-model"}, "llamacpp/local-model", None),
             ({"MODEL": "ollama/llama3.1"}, "ollama/llama3.1", None),
@@ -869,11 +950,22 @@ class TestPerModelMapping:
         assert parse_provider_type("llamacpp/model") == "llamacpp"
         assert parse_provider_type("ollama/llama3.1") == "ollama"
         assert parse_provider_type("wafer/DeepSeek-V4-Pro") == "wafer"
+        assert parse_provider_type("minimax/MiniMax-M3") == "minimax"
         assert (
             parse_provider_type("cloudflare/@cf/moonshotai/kimi-k2.6") == "cloudflare"
         )
+        assert parse_provider_type("vercel/openai/gpt-5.5") == "vercel"
+        assert (
+            parse_provider_type("huggingface/openai/gpt-oss-120b:fastest")
+            == "huggingface"
+        )
+        assert parse_provider_type("cohere/command-a-plus-05-2026") == "cohere"
+        assert parse_provider_type("github_models/openai/gpt-4.1") == ("github_models")
         assert parse_provider_type("gemini/models/gemini-3.1-flash-lite") == "gemini"
         assert parse_provider_type("groq/llama-3.3-70b-versatile") == "groq"
+        assert (
+            parse_provider_type("sambanova/Meta-Llama-3.3-70B-Instruct") == "sambanova"
+        )
         assert parse_provider_type("cerebras/llama3.1-8b") == "cerebras"
 
     def test_parse_model_name(self):
@@ -891,10 +983,20 @@ class TestPerModelMapping:
         assert parse_model_name("llamacpp/model") == "model"
         assert parse_model_name("ollama/llama3.1") == "llama3.1"
         assert parse_model_name("wafer/DeepSeek-V4-Pro") == "DeepSeek-V4-Pro"
+        assert parse_model_name("minimax/MiniMax-M3") == "MiniMax-M3"
         assert (
             parse_model_name("cloudflare/@cf/moonshotai/kimi-k2.6")
             == "@cf/moonshotai/kimi-k2.6"
         )
+        assert parse_model_name("vercel/openai/gpt-5.5") == "openai/gpt-5.5"
+        assert (
+            parse_model_name("huggingface/openai/gpt-oss-120b:fastest")
+            == "openai/gpt-oss-120b:fastest"
+        )
+        assert parse_model_name("cohere/command-a-plus-05-2026") == (
+            "command-a-plus-05-2026"
+        )
+        assert parse_model_name("github_models/openai/gpt-4.1") == "openai/gpt-4.1"
         assert (
             parse_model_name("gemini/models/gemini-3.1-flash-lite")
             == "models/gemini-3.1-flash-lite"
@@ -902,6 +1004,10 @@ class TestPerModelMapping:
         assert (
             parse_model_name("groq/llama-3.3-70b-versatile")
             == "llama-3.3-70b-versatile"
+        )
+        assert (
+            parse_model_name("sambanova/Meta-Llama-3.3-70B-Instruct")
+            == "Meta-Llama-3.3-70B-Instruct"
         )
         assert parse_model_name("cerebras/llama3.1-8b") == "llama3.1-8b"
 

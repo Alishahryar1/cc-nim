@@ -1,7 +1,5 @@
 """OpenAI-chat stream recovery event construction."""
 
-from __future__ import annotations
-
 from collections.abc import Awaitable, Callable, Iterator
 from typing import Any
 

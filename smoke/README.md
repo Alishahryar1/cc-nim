@@ -102,7 +102,7 @@ uv run pytest smoke/product -n 0 -s --tb=short
 ```powershell
 $env:FCC_LIVE_SMOKE = "1"
 $env:FCC_SMOKE_TARGETS = "nvidia_nim_cli"
-$env:FCC_SMOKE_NIM_MODELS = "z-ai/glm-5.1,moonshotai/kimi-k2.6,minimaxai/minimax-m2.7,nvidia/nemotron-3-super-120b-a12b,deepseek-ai/deepseek-v4-pro,deepseek-ai/deepseek-v4-flash"
+$env:FCC_SMOKE_NIM_MODELS = "z-ai/glm-5.2,moonshotai/kimi-k2.6,minimaxai/minimax-m2.7,nvidia/nemotron-3-super-120b-a12b,deepseek-ai/deepseek-v4-pro,deepseek-ai/deepseek-v4-flash"
 uv run pytest smoke/product -n 0 -s --tb=short
 ```
 
@@ -127,15 +127,19 @@ uv run pytest smoke/product -n 0 -s --tb=short
 - `FCC_SMOKE_TARGETS`: comma-separated targets, or `all`.
 - `FCC_SMOKE_PROVIDER_MATRIX`: comma-separated provider prefixes to require.
 - `FCC_SMOKE_MODEL_NVIDIA_NIM`, `FCC_SMOKE_MODEL_OPEN_ROUTER`,
-  `FCC_SMOKE_MODEL_MISTRAL`, `FCC_SMOKE_MODEL_MISTRAL_CODESTRAL`,
+  `FCC_SMOKE_MODEL_MISTRAL`, `FCC_SMOKE_MODEL_MISTRAL_REASONING`,
+  `FCC_SMOKE_MODEL_MISTRAL_CODESTRAL`,
   `FCC_SMOKE_MODEL_DEEPSEEK`, `FCC_SMOKE_MODEL_KIMI`,
-  `FCC_SMOKE_MODEL_WAFER`, `FCC_SMOKE_MODEL_OPENCODE`, `FCC_SMOKE_MODEL_OPENCODE_GO`,
+  `FCC_SMOKE_MODEL_WAFER`, `FCC_SMOKE_MODEL_MINIMAX`,
+  `FCC_SMOKE_MODEL_OPENCODE`, `FCC_SMOKE_MODEL_OPENCODE_GO`,
   `FCC_SMOKE_MODEL_ZAI`, `FCC_SMOKE_MODEL_FIREWORKS`, `FCC_SMOKE_MODEL_CLOUDFLARE`,
   `FCC_SMOKE_MODEL_GEMINI`, `FCC_SMOKE_MODEL_GROQ`, `FCC_SMOKE_MODEL_CEREBRAS`,
   `FCC_SMOKE_MODEL_LMSTUDIO`,
   `FCC_SMOKE_MODEL_LLAMACPP`, `FCC_SMOKE_MODEL_OLLAMA`: optional per-provider
   smoke model overrides. Values may include the provider prefix or just the model
   name for that provider.
+- `FCC_SMOKE_MODEL_MISTRAL_REASONING`: optional override for the dedicated
+  Mistral native reasoning smoke, default `mistral/mistral-medium-3-5`.
 - `FCC_SMOKE_NIM_MODELS`: optional comma-separated NVIDIA NIM CLI matrix models
   that replace the default characterization set.
 - `FCC_SMOKE_NIM_EXTRA_MODELS`: optional comma-separated NVIDIA NIM CLI matrix

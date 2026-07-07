@@ -1,7 +1,5 @@
 """Per-chat message ID log used by messaging clear commands."""
 
-from __future__ import annotations
-
 from datetime import UTC, datetime
 from typing import Any
 
@@ -69,6 +67,30 @@ class MessageLog:
             for item in self._items.get(chat_key, [])
             if item.get("message_id") is not None
         ]
+
+    def remove_message_ids(
+        self, platform: str, chat_id: str, message_ids: set[str]
+    ) -> bool:
+        chat_key = make_chat_key(platform, chat_id)
+        if not message_ids or chat_key not in self._items:
+            return False
+
+        before_count = len(self._items[chat_key])
+        self._items[chat_key] = [
+            item
+            for item in self._items[chat_key]
+            if str(item.get("message_id")) not in message_ids
+        ]
+        if not self._items[chat_key]:
+            self._items.pop(chat_key, None)
+            self._ids.pop(chat_key, None)
+        else:
+            self._ids[chat_key] = {
+                str(item.get("message_id"))
+                for item in self._items[chat_key]
+                if item.get("message_id") is not None
+            }
+        return len(self._items.get(chat_key, [])) != before_count
 
     def clear(self) -> None:
         self._items.clear()

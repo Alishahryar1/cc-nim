@@ -1,6 +1,7 @@
 """Tests for tree-based message queue system."""
 
 import asyncio
+import contextlib
 from unittest.mock import AsyncMock
 
 import pytest
@@ -13,6 +14,7 @@ from messaging.trees import (
     TreeQueueManager,
     TreeSnapshot,
 )
+from messaging.trees import manager as tree_manager_module
 from messaging.trees.graph import MessageTreeGraph
 from messaging.trees.snapshot import node_from_snapshot, node_to_snapshot
 
@@ -554,6 +556,68 @@ class TestTreeQueueManager:
         processing_complete.set()
 
     @pytest.mark.asyncio
+    async def test_cancel_tree_waits_for_current_task_cleanup(self):
+        """cancel_tree returns only after the cancelled task cleanup runs."""
+        manager = TreeQueueManager()
+        started = asyncio.Event()
+        cleanup_done = asyncio.Event()
+
+        async def slow_processor(node_id, node):
+            started.set()
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                cleanup_done.set()
+                raise
+
+        incoming = IncomingMessage(
+            text="Test",
+            chat_id="1",
+            user_id="1",
+            message_id="m1",
+            platform="test",
+        )
+        await manager.create_tree("m1", incoming, "s1")
+        await manager.enqueue("m1", slow_processor)
+        await started.wait()
+
+        cancelled = await manager.cancel_tree("m1")
+
+        assert [node.node_id for node in cancelled] == ["m1"]
+        assert cleanup_done.is_set()
+
+    @pytest.mark.asyncio
+    async def test_cancel_node_waits_for_current_task_cleanup(self):
+        """cancel_node waits when the target node is actively running."""
+        manager = TreeQueueManager()
+        started = asyncio.Event()
+        cleanup_done = asyncio.Event()
+
+        async def slow_processor(node_id, node):
+            started.set()
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                cleanup_done.set()
+                raise
+
+        incoming = IncomingMessage(
+            text="Test",
+            chat_id="1",
+            user_id="1",
+            message_id="m1",
+            platform="test",
+        )
+        await manager.create_tree("m1", incoming, "s1")
+        await manager.enqueue("m1", slow_processor)
+        await started.wait()
+
+        cancelled = await manager.cancel_node("m1")
+
+        assert [node.node_id for node in cancelled] == ["m1"]
+        assert cleanup_done.is_set()
+
+    @pytest.mark.asyncio
     async def test_cancel_branch(self):
         """Test cancel_branch cancels only nodes in subtree."""
         manager = TreeQueueManager()
@@ -594,6 +658,112 @@ class TestTreeQueueManager:
         sibling_node = tree.get_node("sibling")
         assert sibling_node is not None
         assert sibling_node.state == MessageState.PENDING
+
+    @pytest.mark.asyncio
+    async def test_cancel_branch_waits_for_current_task_cleanup(self):
+        """cancel_branch waits when the active node is inside the branch."""
+        manager = TreeQueueManager()
+        started = asyncio.Event()
+        cleanup_done = asyncio.Event()
+
+        async def slow_processor(node_id, node):
+            started.set()
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                cleanup_done.set()
+                raise
+
+        root_incoming = IncomingMessage(
+            text="Root", chat_id="1", user_id="1", message_id="root", platform="test"
+        )
+        await manager.create_tree("root", root_incoming, "s1")
+        child_incoming = IncomingMessage(
+            text="Child",
+            chat_id="1",
+            user_id="1",
+            message_id="child",
+            platform="test",
+            reply_to_message_id="root",
+        )
+        await manager.add_to_tree("root", "child", child_incoming, "s2")
+        await manager.enqueue("child", slow_processor)
+        await started.wait()
+
+        cancelled = await manager.cancel_branch("child")
+
+        assert [node.node_id for node in cancelled] == ["child"]
+        assert cleanup_done.is_set()
+
+    @pytest.mark.asyncio
+    async def test_cancel_all_waits_for_current_task_cleanup_across_trees(self):
+        """cancel_all waits for active task cleanup in every tree."""
+        manager = TreeQueueManager()
+        started: set[str] = set()
+        cleanup_done: set[str] = set()
+        all_started = asyncio.Event()
+
+        async def slow_processor(node_id, node):
+            started.add(node_id)
+            if started == {"a", "b"}:
+                all_started.set()
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                cleanup_done.add(node_id)
+                raise
+
+        for node_id in ("a", "b"):
+            incoming = IncomingMessage(
+                text="Test",
+                chat_id="1",
+                user_id="1",
+                message_id=node_id,
+                platform="test",
+            )
+            await manager.create_tree(node_id, incoming, f"s_{node_id}")
+            await manager.enqueue(node_id, slow_processor)
+        await all_started.wait()
+
+        cancelled = await manager.cancel_all()
+
+        assert {node.node_id for node in cancelled} == {"a", "b"}
+        assert cleanup_done == {"a", "b"}
+
+    @pytest.mark.asyncio
+    async def test_cancel_task_drain_timeout_is_bounded(self, monkeypatch):
+        """Cancellation drain returns when a task refuses to finish cleanup."""
+        monkeypatch.setattr(tree_manager_module, "CANCEL_TASK_DRAIN_TIMEOUT_S", 0.01)
+        started = asyncio.Event()
+        cleanup_started = asyncio.Event()
+        cleanup_release = asyncio.Event()
+
+        async def stubborn_task():
+            started.set()
+            try:
+                await asyncio.sleep(60)
+            except asyncio.CancelledError:
+                cleanup_started.set()
+                await cleanup_release.wait()
+                raise
+
+        task = asyncio.create_task(stubborn_task())
+        await started.wait()
+        task.cancel()
+        await cleanup_started.wait()
+
+        start = asyncio.get_running_loop().time()
+        try:
+            await tree_manager_module._drain_cancelled_tasks([task])
+            elapsed = asyncio.get_running_loop().time() - start
+            assert not task.done()
+        finally:
+            cleanup_release.set()
+            if not task.done():
+                with contextlib.suppress(asyncio.CancelledError):
+                    await task
+
+        assert elapsed < 0.5
 
     @pytest.mark.asyncio
     async def test_cancel_node_refreshes_queue_positions_for_remaining_nodes(self):

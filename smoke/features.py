@@ -6,8 +6,6 @@ product E2E scenario when that behavior is a user-facing product path. Liveness
 and route probes live in ``smoke/prereq`` and do not count as product coverage.
 """
 
-from __future__ import annotations
-
 from dataclasses import dataclass
 from typing import Literal
 

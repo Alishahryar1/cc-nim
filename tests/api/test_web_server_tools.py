@@ -1,8 +1,10 @@
+import json
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
+from fastapi.responses import JSONResponse, StreamingResponse
 
 import api.web_tools.constants as web_tool_constants
 from api.handlers import MessagesHandler
@@ -105,8 +107,9 @@ def test_web_server_tool_not_detected_when_forced_name_missing_from_tools():
     assert not is_web_server_tool_request(request)
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("provider_id", _OPENAI_CHAT_PROVIDER_IDS)
-def test_service_rejects_forced_server_tool_on_openai_when_disabled(
+async def test_service_rejects_forced_server_tool_on_openai_when_disabled(
     provider_id: str,
 ):
     """OpenAI Chat upstreams cannot run forced server tools without the local handler."""
@@ -130,7 +133,7 @@ def test_service_rejects_forced_server_tool_on_openai_when_disabled(
         tool_choice={"type": "tool", "name": "web_search"},
     )
     with pytest.raises(InvalidRequestError, match="ENABLE_WEB_SERVER_TOOLS"):
-        service.create(request)
+        await service.create(request)
 
 
 @pytest.mark.parametrize(
@@ -177,6 +180,20 @@ def _stream_cm(response: httpx.Response) -> MagicMock:
     cm.__aenter__ = AsyncMock(return_value=response)
     cm.__aexit__ = AsyncMock(return_value=None)
     return cm
+
+
+def _json_body(response: JSONResponse) -> dict[str, Any]:
+    payload = json.loads(bytes(response.body).decode("utf-8"))
+    assert isinstance(payload, dict)
+    return payload
+
+
+async def _streaming_body_text(response: StreamingResponse) -> str:
+    parts = [
+        chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk)
+        async for chunk in response.body_iterator
+    ]
+    return "".join(parts)
 
 
 def _aiohttp_response(
@@ -373,6 +390,75 @@ async def test_streams_web_search_server_tool_result(monkeypatch):
 
 
 @pytest.mark.asyncio
+async def test_service_streams_forced_web_search_by_default(monkeypatch):
+    async def fake_search(_query: str) -> list[dict[str, str]]:
+        return [{"title": "DeepSeek V4 Released", "url": "https://example.com/v4"}]
+
+    monkeypatch.setattr("api.web_tools.outbound._run_web_search", fake_search)
+    settings = Settings.model_validate({"ENABLE_WEB_SERVER_TOOLS": True})
+    provider_getter = MagicMock()
+    service = MessagesHandler(
+        settings,
+        provider_getter=provider_getter,
+        model_router=FixedProviderModelRouter(settings, _OPENAI_CHAT_PROVIDER_IDS[0]),
+    )
+    request = MessagesRequest(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=100,
+        messages=[Message(role="user", content="Search for DeepSeek V4")],
+        tools=[Tool(name="web_search", type="web_search_20250305")],
+        tool_choice={"type": "tool", "name": "web_search"},
+    )
+
+    response = await service.create(request)
+
+    assert isinstance(response, StreamingResponse)
+    assert response.media_type == "text/event-stream"
+    raw = await _streaming_body_text(response)
+    assert "event: message_start" in raw
+    assert "DeepSeek V4 Released" in raw
+    provider_getter.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_service_aggregates_forced_web_search_when_stream_false(monkeypatch):
+    async def fake_search(_query: str) -> list[dict[str, str]]:
+        return [{"title": "DeepSeek V4 Released", "url": "https://example.com/v4"}]
+
+    monkeypatch.setattr("api.web_tools.outbound._run_web_search", fake_search)
+    settings = Settings.model_validate({"ENABLE_WEB_SERVER_TOOLS": True})
+    provider_getter = MagicMock()
+    service = MessagesHandler(
+        settings,
+        provider_getter=provider_getter,
+        model_router=FixedProviderModelRouter(settings, _OPENAI_CHAT_PROVIDER_IDS[0]),
+    )
+    request = MessagesRequest(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=100,
+        messages=[Message(role="user", content="Search for DeepSeek V4")],
+        stream=False,
+        tools=[Tool(name="web_search", type="web_search_20250305")],
+        tool_choice={"type": "tool", "name": "web_search"},
+    )
+
+    response = await service.create(request)
+
+    assert isinstance(response, JSONResponse)
+    assert response.headers["content-type"].startswith("application/json")
+    body = _json_body(response)
+    assert [block["type"] for block in body["content"]] == [
+        "server_tool_use",
+        "web_search_tool_result",
+        "text",
+    ]
+    assert body["content"][1]["content"][0]["url"] == "https://example.com/v4"
+    assert "DeepSeek V4 Released" in body["content"][2]["text"]
+    assert body["usage"]["server_tool_use"] == {"web_search_requests": 1}
+    provider_getter.assert_not_called()
+
+
+@pytest.mark.asyncio
 async def test_forced_web_fetch_ignores_stale_url_from_prior_user_turns(monkeypatch):
     """Only the latest user message supplies the URL (not earlier transcript text)."""
     target = "https://new-only.example.com/page"
@@ -414,6 +500,49 @@ async def test_forced_web_fetch_ignores_stale_url_from_prior_user_turns(monkeypa
         ]
     )
     assert target in raw
+
+
+@pytest.mark.asyncio
+async def test_service_aggregates_forced_web_fetch_when_stream_false(monkeypatch):
+    async def fake_fetch(url: str, _egress: WebFetchEgressPolicy) -> dict[str, str]:
+        return {
+            "url": url,
+            "title": "Example Article",
+            "media_type": "text/plain",
+            "data": "Article body",
+        }
+
+    monkeypatch.setattr("api.web_tools.outbound._run_web_fetch", fake_fetch)
+    settings = Settings.model_validate({"ENABLE_WEB_SERVER_TOOLS": True})
+    provider_getter = MagicMock()
+    service = MessagesHandler(
+        settings,
+        provider_getter=provider_getter,
+        model_router=FixedProviderModelRouter(settings, _OPENAI_CHAT_PROVIDER_IDS[0]),
+    )
+    request = MessagesRequest(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=100,
+        messages=[Message(role="user", content="Fetch https://example.com/article")],
+        stream=False,
+        tools=[Tool(name="web_fetch", type="web_fetch_20250910")],
+        tool_choice={"type": "tool", "name": "web_fetch"},
+    )
+
+    response = await service.create(request)
+
+    assert isinstance(response, JSONResponse)
+    assert response.headers["content-type"].startswith("application/json")
+    body = _json_body(response)
+    assert [block["type"] for block in body["content"]] == [
+        "server_tool_use",
+        "web_fetch_tool_result",
+        "text",
+    ]
+    assert body["content"][1]["content"]["content"]["title"] == "Example Article"
+    assert body["content"][2]["text"] == "Article body"
+    assert body["usage"]["server_tool_use"] == {"web_fetch_requests": 1}
+    provider_getter.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -593,8 +722,9 @@ async def test_drain_response_body_capped_stops_after_first_chunk_when_oversized
     assert chunk_calls["n"] == 1
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("provider_id", _OPENAI_CHAT_PROVIDER_IDS)
-def test_service_rejects_listed_server_tools_on_openai_chat(
+async def test_service_rejects_listed_server_tools_on_openai_chat(
     provider_id: str,
 ) -> None:
     settings = Settings()
@@ -610,11 +740,12 @@ def test_service_rejects_listed_server_tools_on_openai_chat(
         tools=[Tool(name="web_search", type="web_search_20250305")],
     )
     with pytest.raises(InvalidRequestError, match="OpenAI Chat upstreams"):
-        service.create(request)
+        await service.create(request)
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("provider_id", _ANTHROPIC_MESSAGES_PROVIDER_IDS)
-def test_listed_server_tools_routed_on_anthropic_messages_providers(
+async def test_listed_server_tools_routed_on_anthropic_messages_providers(
     provider_id: str,
 ) -> None:
     """Native Anthropic transports may receive listed server tool definitions."""
@@ -637,12 +768,13 @@ def test_listed_server_tools_routed_on_anthropic_messages_providers(
         messages=[Message(role="user", content="q")],
         tools=[Tool(name="web_search", type="web_search_20250305")],
     )
-    service.create(request)
+    await service.create(request)
     mock_provider.preflight_stream.assert_called()
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize("provider_id", _ANTHROPIC_MESSAGES_PROVIDER_IDS)
-def test_forced_server_tools_routed_on_anthropic_messages_providers_when_local_disabled(
+async def test_forced_server_tools_routed_on_anthropic_messages_providers_when_local_disabled(
     provider_id: str,
 ) -> None:
     """Native Anthropic transports may receive forced server tools when local tools are off."""
@@ -666,5 +798,5 @@ def test_forced_server_tools_routed_on_anthropic_messages_providers_when_local_d
         tools=[Tool(name="web_search", type="web_search_20250305")],
         tool_choice={"type": "tool", "name": "web_search"},
     )
-    service.create(request)
+    await service.create(request)
     mock_provider.preflight_stream.assert_called()

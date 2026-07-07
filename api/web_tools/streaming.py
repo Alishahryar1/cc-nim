@@ -1,7 +1,5 @@
 """SSE streaming for local web_search / web_fetch server tool results."""
 
-from __future__ import annotations
-
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime

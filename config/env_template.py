@@ -1,7 +1,5 @@
 """Canonical env template loading for init and Admin UI defaults."""
 
-from __future__ import annotations
-
 import importlib.resources
 from pathlib import Path
 
