@@ -129,7 +129,17 @@ def test_build_request_body_replays_prior_thinking_as_mistral_chunks(
                         input={"value": "x"},
                     ),
                 ],
-            )
+            ),
+            MockMessage(
+                "user",
+                [
+                    MockBlock(
+                        type="tool_result",
+                        tool_use_id="toolu_1",
+                        content="result",
+                    )
+                ],
+            ),
         ],
     )
 
@@ -201,7 +211,7 @@ def test_build_request_body_thinking_disabled_strips_prior_mistral_thinking():
                     MockBlock(type="thinking", thinking="Hidden."),
                     MockBlock(type="text", text="Visible."),
                 ],
-            )
+            ),
         ],
     )
 
@@ -360,7 +370,7 @@ async def test_stream_response_preserves_native_thinking_and_string_text(
                     tool_calls=None,
                 ),
                 finish_reason="stop",
-            )
+            ),
         ],
         usage=MagicMock(completion_tokens=2, prompt_tokens=10),
     )
@@ -521,7 +531,17 @@ async def test_stream_response_retries_without_mistral_reasoning_on_rejection(
                         input={"value": "FCC_TOOL"},
                     ),
                 ],
-            )
+            ),
+            MockMessage(
+                "user",
+                [
+                    MockBlock(
+                        type="tool_result",
+                        tool_use_id="toolu_reasoning",
+                        content="result",
+                    )
+                ],
+            ),
         ],
     )
 
@@ -579,7 +599,17 @@ async def test_stream_response_reasoning_retry_preserves_visible_text_and_tools(
                         input={"value": "FCC_TOOL"},
                     ),
                 ],
-            )
+            ),
+            MockMessage(
+                "user",
+                [
+                    MockBlock(
+                        type="tool_result",
+                        tool_use_id="toolu_reasoning",
+                        content="result",
+                    )
+                ],
+            ),
         ],
     )
 

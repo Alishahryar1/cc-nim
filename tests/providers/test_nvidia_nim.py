@@ -834,7 +834,17 @@ async def test_stream_response_retries_without_reasoning_content(nim_provider):
                         input={"value": "FCC_TOOL"},
                     ),
                 ],
-            )
+            ),
+            MockMessage(
+                "user",
+                [
+                    MockBlock(
+                        type="tool_result",
+                        tool_use_id="toolu_reasoning",
+                        content="result",
+                    )
+                ],
+            ),
         ],
     )
 
