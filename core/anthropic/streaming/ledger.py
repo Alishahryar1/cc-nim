@@ -210,10 +210,13 @@ class AnthropicStreamLedger:
         stop_reason: str,
         output_tokens: int | None,
         *,
+        input_tokens: int | None = None,
         usage_fields: Mapping[str, int] | None = None,
     ) -> str:
         self.stop_reason = stop_reason
-        safe_in = _safe_usage_int(self.input_tokens)
+        safe_in = _safe_usage_int(
+            self.input_tokens if input_tokens is None else input_tokens
+        )
         safe_out = output_tokens if isinstance(output_tokens, int) else 0
         usage = {"input_tokens": safe_in, "output_tokens": safe_out}
         if usage_fields:

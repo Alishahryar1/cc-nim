@@ -82,7 +82,7 @@ def test_build_request_body_openai_chat_shape(deepseek_provider):
     assert body["messages"][1]["role"] == "user"
     assert body["messages"][1] == {"role": "user", "content": "Hello"}
     assert body["max_tokens"] == 100
-    assert body["stream_options"] == {"include_usage": True}
+    assert "stream_options" not in body
 
 
 def test_build_request_body_default_max_tokens(deepseek_provider):
@@ -188,7 +188,7 @@ def test_build_request_body_respects_global_thinking_disable():
     )
     body = provider._build_request_body(request)
     assert "extra_body" not in body
-    assert body["stream_options"] == {"include_usage": True}
+    assert "stream_options" not in body
 
 
 def test_preserve_unsigned_thinking_when_thinking_on(deepseek_provider):
@@ -714,7 +714,7 @@ async def test_stream_uses_chat_completions_and_maps_cache_usage(deepseek_provid
         event.data["usage"] for event in parsed if event.event == "message_delta"
     )
     assert usage == {
-        "input_tokens": 7,
+        "input_tokens": 30,
         "output_tokens": 3,
         "cache_read_input_tokens": 10,
         "cache_creation_input_tokens": 20,

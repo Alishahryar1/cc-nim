@@ -31,6 +31,7 @@ from .tool_calls import (
     iter_heuristic_tool_use_sse,
     tool_call_extra_content,
 )
+from .usage import request_stream_usage, usage_int
 
 
 class OpenAIChatStreamAdapter:
@@ -79,6 +80,7 @@ class OpenAIChatStreamAdapter:
         body = self._transport._build_request_body(
             self._request, thinking_enabled=self._thinking_enabled
         )
+        request_stream_usage(body)
         thinking_enabled = self._transport._is_thinking_enabled(
             self._request, self._thinking_enabled
         )
@@ -113,8 +115,9 @@ class OpenAIChatStreamAdapter:
                     stream_opened = True
                     tool_argument_aliases = self._transport._tool_argument_aliases(body)
                     async for chunk in stream:
-                        if getattr(chunk, "usage", None):
-                            usage_info = chunk.usage
+                        chunk_usage = getattr(chunk, "usage", None)
+                        if chunk_usage is not None:
+                            usage_info = chunk_usage
 
                         if not chunk.choices:
                             continue
@@ -350,24 +353,22 @@ class OpenAIChatStreamAdapter:
         for event in hold_events(ledger.close_all_blocks()):
             yield event
 
-        completion = (
-            getattr(usage_info, "completion_tokens", None)
-            if usage_info is not None
-            else None
-        )
+        completion = usage_int(usage_info, "completion_tokens")
         if isinstance(completion, int):
             output_tokens = completion
         else:
             output_tokens = ledger.estimate_output_tokens()
-        if usage_info and hasattr(usage_info, "prompt_tokens"):
-            provider_input = usage_info.prompt_tokens
-            if isinstance(provider_input, int):
-                logger.debug(
-                    "TOKEN_ESTIMATE: our={} provider={} diff={:+d}",
-                    self._input_tokens,
-                    provider_input,
-                    provider_input - self._input_tokens,
-                )
+        provider_input = usage_int(usage_info, "prompt_tokens")
+        if provider_input is not None:
+            logger.debug(
+                "TOKEN_ESTIMATE: our={} provider={} diff={:+d}",
+                self._input_tokens,
+                provider_input,
+                provider_input - self._input_tokens,
+            )
+        input_tokens = (
+            provider_input if provider_input is not None else self._input_tokens
+        )
         trace_event(
             stage="provider",
             event="provider.response.completed",
@@ -375,12 +376,14 @@ class OpenAIChatStreamAdapter:
             provider=tag,
             finish_reason=(None if finish_reason is None else str(finish_reason)),
             output_tokens=output_tokens,
+            prompt_tokens=input_tokens,
             prompt_tokens_estimate=self._input_tokens,
         )
         for event in hold_event(
             ledger.message_delta(
                 ledger.final_stop_reason(map_stop_reason(finish_reason)),
                 output_tokens,
+                input_tokens=input_tokens,
                 usage_fields=self._transport._anthropic_usage_fields(usage_info),
             )
         ):

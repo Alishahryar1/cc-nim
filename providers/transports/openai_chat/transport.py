@@ -20,6 +20,7 @@ from providers.rate_limit import GlobalRateLimiter
 
 from .output_cap import clamp_output_tokens, parse_output_token_cap
 from .stream import OpenAIChatStreamAdapter
+from .usage import clone_without_stream_usage, is_stream_usage_rejection
 
 
 class OpenAIChatTransport(BaseProvider):
@@ -117,26 +118,51 @@ class OpenAIChatTransport(BaseProvider):
         return {}
 
     async def _create_stream(self, body: dict) -> tuple[Any, dict]:
-        """Create a streaming chat completion, optionally retrying once."""
+        """Create a streaming chat completion with bounded request fallbacks."""
         body = self._apply_learned_output_cap(body)
-        try:
-            create_body = self._prepare_create_body(body)
-            stream = await self._global_rate_limiter.execute_with_retry(
-                self._client.chat.completions.create, **create_body, stream=True
-            )
-            return stream, body
-        except Exception as error:
-            retry_body = self._retry_body_for_output_cap(error, body)
-            if retry_body is None:
-                retry_body = self._get_retry_request_body(error, body)
-            if retry_body is None:
-                raise
+        used_retry_kinds: set[str] = set()
 
-            create_retry_body = self._prepare_create_body(retry_body)
-            stream = await self._global_rate_limiter.execute_with_retry(
-                self._client.chat.completions.create, **create_retry_body, stream=True
-            )
-            return stream, retry_body
+        while True:
+            try:
+                create_body = self._prepare_create_body(body)
+                stream = await self._global_rate_limiter.execute_with_retry(
+                    self._client.chat.completions.create, **create_body, stream=True
+                )
+                return stream, body
+            except Exception as error:
+                retry_body = self._next_create_retry_body(error, body, used_retry_kinds)
+                if retry_body is None:
+                    raise
+                body = retry_body
+
+    def _next_create_retry_body(
+        self,
+        error: Exception,
+        body: dict,
+        used_retry_kinds: set[str],
+    ) -> dict | None:
+        retry_body = self._retry_body_for_output_cap(error, body)
+        if retry_body is not None:
+            return retry_body
+
+        if "stream_usage" not in used_retry_kinds and is_stream_usage_rejection(error):
+            retry_body = clone_without_stream_usage(body)
+            if retry_body is not None:
+                used_retry_kinds.add("stream_usage")
+                logger.warning(
+                    "{}_STREAM: retrying without stream_options.include_usage "
+                    "after upstream rejection",
+                    self._provider_name,
+                )
+                return retry_body
+
+        if "provider_specific" not in used_retry_kinds:
+            retry_body = self._get_retry_request_body(error, body)
+            if retry_body is not None:
+                used_retry_kinds.add("provider_specific")
+                return retry_body
+
+        return None
 
     def _apply_learned_output_cap(self, body: dict) -> dict:
         """Clamp output tokens to a previously learned cap for this model."""

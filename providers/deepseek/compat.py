@@ -428,10 +428,6 @@ def _request_from_dict(request_data: Any, data: dict[str, Any]) -> Any:
 def _apply_deepseek_chat_extras(
     body: dict[str, Any], _request_data: Any, thinking_enabled: bool
 ) -> None:
-    stream_options = body.setdefault("stream_options", {})
-    if isinstance(stream_options, dict):
-        stream_options["include_usage"] = True
-
     if not thinking_enabled or body.get("model") == "deepseek-reasoner":
         return
     extra_body = body.setdefault("extra_body", {})

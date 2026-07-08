@@ -381,6 +381,11 @@ behavior matches shared transport policy. Provider-specific gateway quirks, such
 as Cohere's supported `reasoning_effort` values, GitHub's API headers/catalog
 filtering, Hugging Face's disabled prior reasoning replay, and unsupported
 compatibility fields, stay in that provider package.
+The OpenAI-chat transport owns standard streamed usage handling: it requests
+`stream_options.include_usage`, consumes provider `prompt_tokens` and
+`completion_tokens` when present, and falls back to local estimates when
+providers omit or reject optional usage metadata. Provider modules only own true
+usage quirks such as DeepSeek prompt-cache counters.
 
 ### Adding A Provider
 
