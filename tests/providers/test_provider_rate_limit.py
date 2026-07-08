@@ -262,6 +262,13 @@ class TestProviderRateLimiter:
             GlobalRateLimiter(rate_limit=0, rate_window=60)
 
     @pytest.mark.asyncio
+    async def test_init_rate_limit_none_uses_default(self):
+        """rate_limit=None on the constructor must fall back to the default before validation."""
+        GlobalRateLimiter.reset_instance()
+        limiter = GlobalRateLimiter(rate_limit=None, rate_window=60)
+        assert limiter._rate_limit == 40
+
+    @pytest.mark.asyncio
     async def test_init_rate_window_zero_raises(self):
         """rate_window <= 0 raises ValueError."""
         GlobalRateLimiter.reset_instance()

@@ -77,7 +77,7 @@ class GlobalRateLimiter:
 
     def __init__(
         self,
-        rate_limit: int = 40,
+        rate_limit: int | None = None,
         rate_window: float = 60.0,
         max_concurrency: int = 5,
     ):
@@ -85,6 +85,9 @@ class GlobalRateLimiter:
         if hasattr(self, "_initialized"):
             return
 
+        # None means "use the built-in default of 40 req/window"
+        if rate_limit is None:
+            rate_limit = 40
         if rate_limit <= 0:
             raise ValueError("rate_limit must be > 0")
         if rate_window <= 0:
