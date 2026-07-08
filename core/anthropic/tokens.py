@@ -1,19 +1,93 @@
 """Token estimation for Anthropic-compatible requests."""
 
+from __future__ import annotations
+
 import json
+import unicodedata
 
 import tiktoken
 from loguru import logger
 
 from .content import get_block_attr
 
-ENCODER = tiktoken.get_encoding("cl100k_base")
-
 _DISALLOWED_SPECIAL: tuple[str, ...] = ()
 
 
+class _LazyEncoder:
+    """Lazy initialisation of tiktoken encoder with graceful fallback."""
+
+    __slots__ = ("_encoder", "_fallback_warned")
+
+    def __init__(self) -> None:
+        self._encoder: tiktoken.Encoding | None = None
+        self._fallback_warned: bool = False
+
+    def _init(self) -> tiktoken.Encoding | None:
+        if self._encoder is not None:
+            return self._encoder
+        try:
+            self._encoder = tiktoken.get_encoding("cl100k_base")
+            return self._encoder
+        except Exception as exc:  # noqa: BLE001
+            if not self._fallback_warned:
+                logger.warning(
+                    "tiktoken cl100k_base encoding unavailable ({}). "
+                    "Using approximate whitespace-based fallback for token counting. "
+                    "Install a stable network connection or pre-download tiktoken files "
+                    "to improve accuracy.",
+                    exc,
+                )
+                self._fallback_warned = True
+        return None
+
+    def encode(self, text: str, *, disallowed_special: tuple[str, ...]) -> list[int]:
+        encoder = self._init()
+        if encoder is not None:
+            return encoder.encode(text, disallowed_special=disallowed_special)
+        # Approximate fallback: token ≈ 1 per 4 chars, but count CJK/code points
+        # as individual rough tokens for better approximation.
+        tokens = _fallback_tokenize(text)
+        return tokens
+
+
+def _fallback_tokenize(text: str) -> list[int]:
+    """Rough heuristic tokenisation when tiktoken is unavailable."""
+    # Split on whitespace and count each chunk as roughly one token per 4 chars.
+    # This is intentionally coarse—good enough for request-size heuristics.
+    if not text:
+        return []
+    result: list[int] = []
+    # Use a simple sliding window: every ~4 non-whitespace characters ≈ 1 token
+    parts: list[str] = []
+    for ch in text:
+        if ch.isspace():
+            if parts:
+                result.append(hash("".join(parts)) & 0x7FFFFFFF)
+                parts = []
+        else:
+            # Approximate: CJK characters and emojis are often single tokens
+            cat = unicodedata.category(ch)
+            if cat.startswith("C") or cat.startswith("Lo"):
+                # Likely a single token (control, CJK, symbol, etc.)
+                if parts:
+                    result.append(hash("".join(parts)) & 0x7FFFFFFF)
+                    parts = []
+                result.append(hash(ch) & 0x7FFFFFFF)
+            else:
+                parts.append(ch)
+                if len(parts) >= 4:
+                    result.append(hash("".join(parts)) & 0x7FFFFFFF)
+                    parts = []
+    if parts:
+        result.append(hash("".join(parts)) & 0x7FFFFFFF)
+    return result
+
+
+_LAZY_ENCODER = _LazyEncoder()
+
+
 def _count_text_tokens(text: str) -> int:
-    return len(ENCODER.encode(text, disallowed_special=_DISALLOWED_SPECIAL))
+    return len(_LAZY_ENCODER.encode(text, disallowed_special=_DISALLOWED_SPECIAL))
 
 
 def get_token_count(
@@ -100,7 +174,7 @@ def get_token_count(
                     )
                     try:
                         total_tokens += _count_text_tokens(json.dumps(block))
-                    except TypeError, ValueError:
+                    except (TypeError, ValueError):
                         total_tokens += _count_text_tokens(str(block))
 
     if tools:
