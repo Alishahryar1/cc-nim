@@ -13,6 +13,8 @@ from cli.claude_env import (
     claude_auth_token,
 )
 
+MANAGED_CLAUDE_MODEL_TIER = "opus"
+
 
 @dataclass(frozen=True, slots=True)
 class ManagedClaudeTaskRequest:
@@ -89,6 +91,7 @@ def build_managed_claude_invocation(
             "prompt": request.prompt,
             "cwd": config.workspace_path,
             "claude_binary": config.claude_bin,
+            "managed_model_tier": MANAGED_CLAUDE_MODEL_TIER,
             "cli_argv": cmd,
         },
     )
@@ -134,6 +137,8 @@ def build_managed_claude_command(
         if fork_session:
             cmd.append("--fork-session")
         cmd += [
+            "--model",
+            MANAGED_CLAUDE_MODEL_TIER,
             "-p",
             prompt,
             "--output-format",
@@ -144,6 +149,8 @@ def build_managed_claude_command(
     else:
         cmd = [
             claude_bin,
+            "--model",
+            MANAGED_CLAUDE_MODEL_TIER,
             "-p",
             prompt,
             "--output-format",

@@ -1,6 +1,7 @@
 import os
 
 from cli.managed.claude import (
+    MANAGED_CLAUDE_MODEL_TIER,
     ManagedClaudeConfig,
     ManagedClaudeParseState,
     ManagedClaudeTaskRequest,
@@ -51,7 +52,12 @@ def test_managed_claude_builds_new_task_command_and_env() -> None:
         base_env={"PATH": "keep", "ANTHROPIC_API_KEY": "official"},
     )
 
-    assert invocation.argv[:2] == ("claude", "-p")
+    assert invocation.argv[:4] == (
+        "claude",
+        "--model",
+        MANAGED_CLAUDE_MODEL_TIER,
+        "-p",
+    )
     assert "hello" in invocation.argv
     assert "--output-format" in invocation.argv
     assert "stream-json" in invocation.argv
@@ -65,6 +71,7 @@ def test_managed_claude_builds_new_task_command_and_env() -> None:
     assert "ANTHROPIC_API_KEY" not in invocation.env
     assert invocation.trace_metadata["client_cli_id"] == "claude"
     assert invocation.trace_metadata["claude_binary"] == "claude"
+    assert invocation.trace_metadata["managed_model_tier"] == MANAGED_CLAUDE_MODEL_TIER
 
 
 def test_managed_claude_builds_resume_and_fork_commands() -> None:
@@ -81,9 +88,24 @@ def test_managed_claude_builds_resume_and_fork_commands() -> None:
         base_env={},
     )
 
-    assert resume.argv[:3] == ("claude", "--resume", "sess_1")
+    assert resume.argv[:6] == (
+        "claude",
+        "--resume",
+        "sess_1",
+        "--model",
+        MANAGED_CLAUDE_MODEL_TIER,
+        "-p",
+    )
     assert "--fork-session" not in resume.argv
-    assert fork.argv[:3] == ("claude", "--resume", "sess_1")
+    assert fork.argv[:7] == (
+        "claude",
+        "--resume",
+        "sess_1",
+        "--fork-session",
+        "--model",
+        MANAGED_CLAUDE_MODEL_TIER,
+        "-p",
+    )
     assert "--fork-session" in fork.argv
 
 

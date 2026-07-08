@@ -608,6 +608,11 @@ def test_cli_surfaces_are_explicit_launchers_and_managed_claude() -> None:
     claude_env_text = (cli_root / "claude_env.py").read_text(encoding="utf-8")
     assert 'CLAUDE_CODE_AUTO_COMPACT_WINDOW = "190000"' in claude_env_text
     assert 'CLAUDE_NO_AUTH_SENTINEL = "fcc-no-auth"' in claude_env_text
+    managed_claude_text = (cli_root / "managed" / "claude.py").read_text(
+        encoding="utf-8"
+    )
+    assert 'MANAGED_CLAUDE_MODEL_TIER = "opus"' in managed_claude_text
+    assert '"managed_model_tier": MANAGED_CLAUDE_MODEL_TIER' in managed_claude_text
     for path in {
         cli_root / "launchers" / "claude.py",
         cli_root / "managed" / "claude.py",
