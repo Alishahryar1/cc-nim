@@ -1,48 +1,45 @@
-"""Fireworks AI provider using native Anthropic-compatible Messages."""
+"""Fireworks AI provider using OpenAI-compatible Chat Completions."""
 
 from typing import Any
 
+from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from providers.base import ProviderConfig
-from providers.transports.anthropic_messages import (
-    AnthropicMessagesTransport,
-    NativeMessagesRequestPolicy,
-    build_native_messages_request_body,
+from providers.defaults import FIREWORKS_DEFAULT_BASE
+from providers.transports.openai_chat import (
+    OpenAIChatRequestPolicy,
+    OpenAIChatTransport,
+    build_openai_chat_request_body,
+)
+from providers.transports.openai_chat.extra_body import (
+    validate_extra_body_does_not_override_canonical_fields,
 )
 
-FIREWORKS_BASE_URL = "https://api.fireworks.ai/inference/v1"
-_ANTHROPIC_VERSION = "2023-06-01"
-_REQUEST_POLICY = NativeMessagesRequestPolicy(
+FIREWORKS_BASE_URL = FIREWORKS_DEFAULT_BASE
+
+_REQUEST_POLICY = OpenAIChatRequestPolicy(
     provider_name="FIREWORKS",
-    extra_body="merge_validated",
+    include_extra_body=True,
+    extra_body_validator=validate_extra_body_does_not_override_canonical_fields,
+    default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
 )
 
 
-class FireworksProvider(AnthropicMessagesTransport):
-    """Fireworks AI using Anthropic-compatible Messages."""
+class FireworksProvider(OpenAIChatTransport):
+    """Fireworks AI using ``https://api.fireworks.ai/inference/v1/chat/completions``."""
 
     def __init__(self, config: ProviderConfig):
         super().__init__(
             config,
             provider_name="FIREWORKS",
-            default_base_url=FIREWORKS_BASE_URL,
+            base_url=config.base_url or FIREWORKS_BASE_URL,
+            api_key=config.api_key,
         )
 
     def _build_request_body(
         self, request: Any, thinking_enabled: bool | None = None
     ) -> dict:
-        return build_native_messages_request_body(
+        return build_openai_chat_request_body(
             request,
             thinking_enabled=self._is_thinking_enabled(request, thinking_enabled),
             policy=_REQUEST_POLICY,
         )
-
-    def _request_headers(self) -> dict[str, str]:
-        return {
-            "Accept": "text/event-stream",
-            "Authorization": f"Bearer {self._api_key}",
-            "Content-Type": "application/json",
-            "anthropic-version": _ANTHROPIC_VERSION,
-        }
-
-    def _model_list_headers(self) -> dict[str, str]:
-        return {"Authorization": f"Bearer {self._api_key}"}

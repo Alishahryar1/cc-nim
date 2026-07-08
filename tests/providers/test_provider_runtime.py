@@ -139,8 +139,10 @@ def test_ollama_descriptor_uses_native_anthropic_transport():
 def test_zai_descriptor_uses_fixed_cloud_base_url():
     descriptor = PROVIDER_CATALOG["zai"]
 
+    assert descriptor.transport_type == "openai_chat"
     assert descriptor.default_base_url == ZAI_DEFAULT_BASE
     assert descriptor.base_url_attr is None
+    assert "native_anthropic" not in descriptor.capabilities
 
 
 def test_zai_provider_config_ignores_stale_base_url_setting():
@@ -154,13 +156,13 @@ def test_zai_provider_config_ignores_stale_base_url_setting():
     assert config.base_url == ZAI_DEFAULT_BASE
 
 
-def test_minimax_descriptor_uses_native_anthropic_transport():
+def test_minimax_descriptor_uses_openai_chat_transport():
     descriptor = PROVIDER_CATALOG["minimax"]
 
-    assert descriptor.transport_type == "anthropic_messages"
+    assert descriptor.transport_type == "openai_chat"
     assert descriptor.default_base_url == MINIMAX_DEFAULT_BASE
     assert descriptor.credential_env == "MINIMAX_API_KEY"
-    assert "native_anthropic" in descriptor.capabilities
+    assert "native_anthropic" not in descriptor.capabilities
 
 
 def test_cloudflare_descriptor_uses_api_root_not_account_url():
@@ -306,8 +308,8 @@ def test_build_provider_config_github_models_uses_token_and_proxy() -> None:
     assert config.proxy == "http://proxy.test:8080"
 
 
-def test_create_provider_uses_native_openrouter_by_default():
-    with patch("httpx.AsyncClient"):
+def test_create_provider_uses_openai_chat_openrouter_by_default():
+    with patch("providers.transports.openai_chat.transport.AsyncOpenAI"):
         provider = create_provider("open_router", _make_settings())
 
     assert isinstance(provider, OpenRouterProvider)

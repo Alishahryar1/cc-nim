@@ -1,7 +1,7 @@
 """Shared native Anthropic SSE thinking policy, block remapping, and overlap repair.
 
-Used by :class:`OpenRouterProvider` and line-mode
-:class:`providers.transports.anthropic_messages.AnthropicMessagesTransport` providers.
+Used by line-mode :class:`providers.transports.anthropic_messages.AnthropicMessagesTransport`
+providers.
 """
 
 import copy
@@ -12,7 +12,6 @@ from typing import Any
 __all__ = [
     "NativeSseBlockPolicyState",
     "format_native_sse_event",
-    "is_terminal_openrouter_done_event",
     "parse_native_sse_event",
     "transform_native_sse_block_event",
 ]
@@ -58,13 +57,6 @@ def parse_native_sse_event(event: str) -> tuple[str | None, str]:
         elif line.startswith("data:"):
             data_lines.append(line[5:].lstrip())
     return event_name, "\n".join(data_lines)
-
-
-def is_terminal_openrouter_done_event(event_name: str | None, data_text: str) -> bool:
-    """Return whether an event is OpenAI-style terminal noise (``[DONE]``)."""
-    return (event_name is None or event_name in {"data", "done"}) and (
-        data_text.strip().upper() == "[DONE]"
-    )
 
 
 def _delta_type_to_block_kind(delta_type: Any) -> str | None:

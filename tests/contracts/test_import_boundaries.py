@@ -221,6 +221,34 @@ def test_provider_transports_live_under_transport_family_packages() -> None:
     assert offenders == []
 
 
+def test_native_anthropic_transport_is_local_provider_only() -> None:
+    from config.provider_catalog import PROVIDER_CATALOG
+
+    native_ids = {
+        provider_id
+        for provider_id, descriptor in PROVIDER_CATALOG.items()
+        if descriptor.transport_type == "anthropic_messages"
+    }
+
+    assert native_ids == {"llamacpp", "ollama"}
+    for provider_id in native_ids:
+        assert "local" in PROVIDER_CATALOG[provider_id].capabilities
+
+
+def test_cloud_providers_do_not_import_native_anthropic_transport() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+
+    for provider_dir in ("open_router", "wafer", "kimi", "minimax", "fireworks", "zai"):
+        provider_root = repo_root / "providers" / provider_dir
+        occurrences = [
+            path.relative_to(repo_root).as_posix()
+            for path in provider_root.rglob("*.py")
+            if "providers.transports.anthropic_messages"
+            in path.read_text(encoding="utf-8")
+        ]
+        assert occurrences == []
+
+
 def test_provider_request_policy_lives_with_transport_families() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     providers_root = repo_root / "providers"
@@ -255,6 +283,19 @@ def test_provider_request_policy_lives_with_transport_families() -> None:
         forbidden_prefixes=deleted_request_modules,
     )
     assert offenders == []
+
+
+def test_anthropic_core_has_no_cloud_provider_native_policy() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    anthropic_core = repo_root / "core" / "anthropic"
+
+    occurrences: list[str] = []
+    for path in anthropic_core.rglob("*.py"):
+        text = path.read_text(encoding="utf-8")
+        if "OpenRouter" in text or "openrouter" in text:
+            occurrences.append(path.relative_to(repo_root).as_posix())
+
+    assert occurrences == []
 
 
 def test_anthropic_stream_engine_owns_provider_stream_state() -> None:

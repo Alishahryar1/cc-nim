@@ -1,27 +1,32 @@
-"""MiniMax provider implementation (Anthropic-compatible Messages API)."""
+"""MiniMax provider implementation (OpenAI-compatible Chat Completions)."""
 
 from typing import Any
 
+from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from providers.base import ProviderConfig
 from providers.defaults import MINIMAX_DEFAULT_BASE
-from providers.transports.anthropic_messages import (
-    AnthropicMessagesTransport,
-    NativeMessagesRequestPolicy,
-    build_native_messages_request_body,
+from providers.transports.openai_chat import (
+    OpenAIChatRequestPolicy,
+    OpenAIChatTransport,
+    build_openai_chat_request_body,
 )
 
-_ANTHROPIC_VERSION = "2023-06-01"
-_REQUEST_POLICY = NativeMessagesRequestPolicy(provider_name="MINIMAX")
+_REQUEST_POLICY = OpenAIChatRequestPolicy(
+    provider_name="MINIMAX",
+    default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+    max_tokens_field="max_completion_tokens",
+)
 
 
-class MiniMaxProvider(AnthropicMessagesTransport):
-    """MiniMax using Anthropic-compatible Messages at api.minimax.io/anthropic/v1."""
+class MiniMaxProvider(OpenAIChatTransport):
+    """MiniMax using ``https://api.minimax.io/v1/chat/completions``."""
 
     def __init__(self, config: ProviderConfig):
         super().__init__(
             config,
             provider_name="MINIMAX",
-            default_base_url=MINIMAX_DEFAULT_BASE,
+            base_url=config.base_url or MINIMAX_DEFAULT_BASE,
+            api_key=config.api_key,
         )
 
     def _build_request_body(
@@ -30,32 +35,21 @@ class MiniMaxProvider(AnthropicMessagesTransport):
         effective_thinking_enabled = self._is_thinking_enabled(
             request, thinking_enabled
         )
-        return build_native_messages_request_body(
+        return build_openai_chat_request_body(
             request,
             thinking_enabled=effective_thinking_enabled,
             policy=_REQUEST_POLICY,
             postprocessors=(_apply_minimax_thinking_policy,),
         )
 
-    def _request_headers(self) -> dict[str, str]:
-        return {
-            "Accept": "text/event-stream",
-            "Content-Type": "application/json",
-            "x-api-key": self._api_key,
-            "anthropic-version": _ANTHROPIC_VERSION,
-        }
-
-    def _model_list_headers(self) -> dict[str, str]:
-        return {
-            "x-api-key": self._api_key,
-            "anthropic-version": _ANTHROPIC_VERSION,
-        }
-
 
 def _apply_minimax_thinking_policy(
     body: dict[str, Any], _request: Any, thinking_enabled: bool
 ) -> None:
-    """Use MiniMax's documented Anthropic thinking control values."""
-    body["thinking"] = (
+    extra_body = body.setdefault("extra_body", {})
+    if not isinstance(extra_body, dict):
+        return
+    extra_body["reasoning_split"] = True
+    extra_body["thinking"] = (
         {"type": "adaptive"} if thinking_enabled else {"type": "disabled"}
     )

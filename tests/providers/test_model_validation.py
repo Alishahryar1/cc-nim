@@ -106,84 +106,74 @@ async def test_deepseek_lists_models_from_root_endpoint() -> None:
 async def test_wafer_lists_models_from_default_models_endpoint() -> None:
     provider = WaferProvider(ProviderConfig(api_key="wafer-key"))
     with patch.object(
-        provider._client,
-        "get",
+        provider._client.models,
+        "list",
         new_callable=AsyncMock,
-        return_value=_response(200, {"data": [{"id": "DeepSeek-V4-Pro"}]}),
-    ) as mock_get:
+        return_value=SimpleNamespace(data=[SimpleNamespace(id="DeepSeek-V4-Pro")]),
+    ) as mock_list:
         assert await provider.list_model_ids() == frozenset({"DeepSeek-V4-Pro"})
 
-    mock_get.assert_awaited_once_with(
-        "/models", headers={"Authorization": "Bearer wafer-key"}
-    )
+    mock_list.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio
 async def test_openrouter_lists_only_tool_capable_models() -> None:
     provider = OpenRouterProvider(ProviderConfig(api_key="open-router-key"))
     with patch.object(
-        provider._client,
-        "get",
+        provider._client.models,
+        "list",
         new_callable=AsyncMock,
-        return_value=_response(
-            200,
-            {
-                "data": [
-                    {
-                        "id": "tool-model",
-                        "supported_parameters": ["tools", "max_tokens"],
-                    },
-                    {
-                        "id": "tool-choice-model",
-                        "supported_parameters": ["tool_choice"],
-                    },
-                    {
-                        "id": "chat-only",
-                        "supported_parameters": ["max_tokens", "temperature"],
-                    },
-                    {"id": "missing-metadata"},
-                ]
-            },
+        return_value=SimpleNamespace(
+            data=[
+                SimpleNamespace(
+                    id="tool-model",
+                    supported_parameters=["tools", "max_tokens"],
+                ),
+                SimpleNamespace(
+                    id="tool-choice-model",
+                    supported_parameters=["tool_choice"],
+                ),
+                SimpleNamespace(
+                    id="chat-only",
+                    supported_parameters=["max_tokens", "temperature"],
+                ),
+                SimpleNamespace(id="missing-metadata", supported_parameters=None),
+            ]
         ),
-    ) as mock_get:
+    ) as mock_list:
         assert await provider.list_model_ids() == frozenset(
             {"tool-model", "tool-choice-model"}
         )
 
-    mock_get.assert_awaited_once_with(
-        "/models", headers={"Authorization": "Bearer open-router-key"}
-    )
+    mock_list.assert_awaited_once_with()
 
 
 @pytest.mark.asyncio
 async def test_openrouter_lists_tool_metadata_with_thinking_support() -> None:
     provider = OpenRouterProvider(ProviderConfig(api_key="open-router-key"))
     with patch.object(
-        provider._client,
-        "get",
+        provider._client.models,
+        "list",
         new_callable=AsyncMock,
-        return_value=_response(
-            200,
-            {
-                "data": [
-                    {
-                        "id": "reasoning-tool-model",
-                        "supported_parameters": [
-                            "tools",
-                            "reasoning",
-                            "include_reasoning",
-                        ],
-                    },
-                    {
-                        "id": "plain-tool-model",
-                        "supported_parameters": ["tool_choice", "include_reasoning"],
-                    },
-                    {
-                        "id": "chat-only",
-                        "supported_parameters": ["reasoning", "max_tokens"],
-                    },
-                ]
-            },
+        return_value=SimpleNamespace(
+            data=[
+                SimpleNamespace(
+                    id="reasoning-tool-model",
+                    supported_parameters=[
+                        "tools",
+                        "reasoning",
+                        "include_reasoning",
+                    ],
+                ),
+                SimpleNamespace(
+                    id="plain-tool-model",
+                    supported_parameters=["tool_choice", "include_reasoning"],
+                ),
+                SimpleNamespace(
+                    id="chat-only",
+                    supported_parameters=["reasoning", "max_tokens"],
+                ),
+            ]
         ),
     ):
         infos = await provider.list_model_infos()
@@ -200,17 +190,14 @@ async def test_openrouter_lists_tool_metadata_with_thinking_support() -> None:
 async def test_openrouter_lists_empty_set_when_no_tool_capable_models() -> None:
     provider = OpenRouterProvider(ProviderConfig(api_key="open-router-key"))
     with patch.object(
-        provider._client,
-        "get",
+        provider._client.models,
+        "list",
         new_callable=AsyncMock,
-        return_value=_response(
-            200,
-            {
-                "data": [
-                    {"id": "chat-only", "supported_parameters": ["max_tokens"]},
-                    {"id": "missing-metadata"},
-                ]
-            },
+        return_value=SimpleNamespace(
+            data=[
+                SimpleNamespace(id="chat-only", supported_parameters=["max_tokens"]),
+                SimpleNamespace(id="missing-metadata", supported_parameters=None),
+            ]
         ),
     ):
         assert await provider.list_model_ids() == frozenset()
@@ -221,12 +208,11 @@ async def test_openrouter_model_metadata_rejects_malformed_ids() -> None:
     provider = OpenRouterProvider(ProviderConfig(api_key="open-router-key"))
     with (
         patch.object(
-            provider._client,
-            "get",
+            provider._client.models,
+            "list",
             new_callable=AsyncMock,
-            return_value=_response(
-                200,
-                {"data": [{"supported_parameters": ["tools", "reasoning"]}]},
+            return_value=SimpleNamespace(
+                data=[SimpleNamespace(supported_parameters=["tools", "reasoning"])]
             ),
         ),
         pytest.raises(ModelListResponseError, match="malformed"),

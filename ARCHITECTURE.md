@@ -341,9 +341,10 @@ There are two transport families under [providers/transports/](providers/transpo
   and OpenAI-chat recovery event construction.
 - [providers/transports/anthropic_messages/](providers/transports/anthropic_messages/)
   implements `AnthropicMessagesTransport` for providers with
-  Anthropic-compatible `/messages` APIs. The package owns the thin transport
-  base, native request policy, native stream runner, HTTP response helpers, and
-  native recovery event construction.
+  Anthropic-compatible `/messages` APIs. In FCC this transport is intentionally
+  local-only for llama.cpp and Ollama. The package owns the thin transport base,
+  native request policy, native stream runner, HTTP response helpers, and native
+  recovery event construction.
 
 Provider request construction mirrors the transport family split. OpenAI-chat
 providers call the OpenAI request policy for Anthropic-to-OpenAI conversion,
@@ -352,15 +353,18 @@ Native Anthropic providers call the native request policy for raw request
 dumping, default tokens, stream flags, thinking payloads, and `extra_body`
 handling. Concrete provider packages keep only true upstream quirks such as
 Gemini thought signatures, NIM tool-schema aliases and retry downgrades, or
-DeepSeek attachment/tool/thinking compatibility. DeepSeek intentionally uses its
+DeepSeek attachment/tool/thinking compatibility. Cloud providers use OpenAI-chat
+unless they are local native runtimes. DeepSeek intentionally uses its
 OpenAI-compatible Chat Completions endpoint because that is the endpoint that
 reports prompt-cache hit/miss counters; the provider maps those counters back
 into Anthropic usage fields for Claude-compatible clients. Cloudflare uses its
 account-scoped Workers AI OpenAI-compatible Chat Completions endpoint for
 `@cf/...` model IDs, while account ID composition, model search, and
 Cloudflare-specific reasoning deltas stay in the Cloudflare provider client.
-MiniMax uses its Anthropic-compatible Messages endpoint; its provider client owns
-the MiniMax-specific `adaptive` thinking request shape.
+OpenRouter, Wafer, Kimi, MiniMax, Fireworks, and Z.ai also use the shared
+OpenAI-chat transport; their provider clients own provider-specific thinking,
+reasoning replay, model-list filtering, and `extra_body` policy. Z.ai is treated
+as the GLM Coding Plan provider and uses Z.ai's Coding Plan OpenAI base.
 Mistral La Plateforme keeps its native `reasoning_effort` and thinking-chunk
 request/stream mapping inside
 [providers/mistral/reasoning.py](providers/mistral/reasoning.py), including its
@@ -516,7 +520,7 @@ represent Anthropic server-tool blocks, so the Messages handler rejects unsuppor
 server-tool requests before provider execution instead of performing a lossy
 conversion. Forced `web_search` or `web_fetch` requests are handled locally when
 `ENABLE_WEB_SERVER_TOOLS` is true; otherwise OpenAI-chat upstreams reject them
-and native Anthropic Messages transports may receive them.
+and the local native Anthropic Messages transports may receive them.
 
 ## CLI Launchers And Managed Claude
 

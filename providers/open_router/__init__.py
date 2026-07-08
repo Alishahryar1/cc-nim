@@ -1,4 +1,4 @@
-"""OpenRouter provider - Anthropic-compatible native transport."""
+"""OpenRouter provider exports."""
 
 from providers.defaults import OPENROUTER_DEFAULT_BASE
 

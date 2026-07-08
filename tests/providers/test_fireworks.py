@@ -1,4 +1,4 @@
-"""Tests for Fireworks AI native Anthropic Messages provider."""
+"""Tests for the Fireworks AI OpenAI-chat provider."""
 
 from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -10,17 +10,7 @@ from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from providers.base import ProviderConfig
 from providers.exceptions import InvalidRequestError
 from providers.fireworks import FIREWORKS_BASE_URL, FireworksProvider
-
-
-@pytest.fixture
-def fireworks_config():
-    return ProviderConfig(
-        api_key="test_fireworks_key",
-        base_url=FIREWORKS_BASE_URL,
-        rate_limit=10,
-        rate_window=60,
-        enable_thinking=True,
-    )
+from providers.transports.openai_chat import OpenAIChatTransport
 
 
 @pytest.fixture(autouse=True)
@@ -29,9 +19,7 @@ def mock_rate_limiter():
     async def _slot():
         yield
 
-    with patch(
-        "providers.transports.anthropic_messages.transport.GlobalRateLimiter"
-    ) as mock:
+    with patch("providers.transports.openai_chat.transport.GlobalRateLimiter") as mock:
         instance = mock.get_scoped_instance.return_value
 
         async def _passthrough(fn, *args, **kwargs):
@@ -43,42 +31,44 @@ def mock_rate_limiter():
 
 
 @pytest.fixture
-def fireworks_provider(fireworks_config):
-    return FireworksProvider(fireworks_config)
+def fireworks_provider():
+    return FireworksProvider(
+        ProviderConfig(
+            api_key="test_fireworks_key",
+            base_url=FIREWORKS_BASE_URL,
+            rate_limit=10,
+            rate_window=60,
+            enable_thinking=True,
+        )
+    )
 
 
-def test_init(fireworks_config):
-    with patch("httpx.AsyncClient") as mock_client:
-        provider = FireworksProvider(fireworks_config)
-    assert provider._api_key == "test_fireworks_key"
-    assert provider._base_url == FIREWORKS_BASE_URL
-    assert mock_client.called
+def test_init_uses_openai_chat_transport(fireworks_provider):
+    assert isinstance(fireworks_provider, OpenAIChatTransport)
+    assert fireworks_provider._api_key == "test_fireworks_key"
+    assert fireworks_provider._base_url == FIREWORKS_BASE_URL
 
 
 def test_base_url_constant():
     assert FIREWORKS_BASE_URL == "https://api.fireworks.ai/inference/v1"
 
 
-def test_request_headers(fireworks_provider):
-    h = fireworks_provider._request_headers()
-    assert h["Authorization"] == "Bearer test_fireworks_key"
-    assert h["anthropic-version"] == "2023-06-01"
-    assert h["Accept"] == "text/event-stream"
-
-
-def test_build_request_body_native_shape(fireworks_provider):
+def test_build_request_body_openai_chat_shape(fireworks_provider):
     request = MessagesRequest(
         model="accounts/fireworks/models/glm-5p1",
         max_tokens=100,
         messages=[Message(role="user", content="Hello")],
         system="System prompt",
     )
+
     body = fireworks_provider._build_request_body(request)
+
     assert body["model"] == "accounts/fireworks/models/glm-5p1"
-    assert body["stream"] is True
     assert body["max_tokens"] == 100
-    assert body["system"] == "System prompt"
-    assert body["messages"][0]["role"] == "user"
+    assert body["messages"] == [
+        {"role": "system", "content": "System prompt"},
+        {"role": "user", "content": "Hello"},
+    ]
 
 
 def test_build_request_body_default_max_tokens(fireworks_provider):
@@ -86,7 +76,9 @@ def test_build_request_body_default_max_tokens(fireworks_provider):
         model="m",
         messages=[Message(role="user", content="x")],
     )
+
     body = fireworks_provider._build_request_body(request)
+
     assert body["max_tokens"] == ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 
 
@@ -103,27 +95,21 @@ def test_build_request_body_global_disable_blocks_thinking():
     request = MessagesRequest.model_validate(
         {
             "model": "m",
-            "messages": [{"role": "user", "content": "x"}],
-            "thinking": {"type": "enabled", "budget_tokens": 1},
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [{"type": "thinking", "thinking": "hidden"}],
+                }
+            ],
         }
     )
+
     body = provider._build_request_body(request)
-    assert "thinking" not in body
+
+    assert "reasoning_content" not in body["messages"][0]
 
 
-def test_build_request_body_request_disable_blocks_thinking(fireworks_provider):
-    request = MessagesRequest.model_validate(
-        {
-            "model": "m",
-            "messages": [{"role": "user", "content": "x"}],
-            "thinking": {"enabled": False},
-        }
-    )
-    body = fireworks_provider._build_request_body(request)
-    assert "thinking" not in body
-
-
-def test_build_request_body_merges_safe_extra_body(fireworks_provider):
+def test_build_request_body_preserves_validated_extra_body(fireworks_provider):
     request = MessagesRequest.model_validate(
         {
             "model": "m",
@@ -131,8 +117,10 @@ def test_build_request_body_merges_safe_extra_body(fireworks_provider):
             "extra_body": {"custom_param": "value"},
         }
     )
+
     body = fireworks_provider._build_request_body(request)
-    assert body["custom_param"] == "value"
+
+    assert body["extra_body"] == {"custom_param": "value"}
 
 
 def test_build_request_body_rejects_reserved_extra_body_keys(fireworks_provider):
@@ -143,43 +131,16 @@ def test_build_request_body_rejects_reserved_extra_body_keys(fireworks_provider)
             "extra_body": {"temperature": 0.1},
         }
     )
+
     with pytest.raises(InvalidRequestError, match="extra_body must not override"):
         fireworks_provider._build_request_body(request)
 
 
 @pytest.mark.asyncio
-async def test_stream_uses_post_messages_path(fireworks_provider):
-    request = MessagesRequest(
-        model="m",
-        messages=[Message(role="user", content="hi")],
-    )
-    called: dict[str, str] = {}
-
-    async def fake_send(request, *args, **kwargs):
-        called["path"] = request.url.path
-        mock_resp = MagicMock()
-        mock_resp.status_code = 200
-        mock_resp.is_closed = False
-        mock_resp.raise_for_status = lambda: None
-
-        async def aiter():
-            if False:  # pragma: no cover
-                yield ""
-
-        mock_resp.aiter_lines = aiter
-        mock_resp.aclose = AsyncMock()
-        return mock_resp
-
-    fireworks_provider._client.send = fake_send
-    _ = [x async for x in fireworks_provider.stream_response(request, request_id="r1")]
-
-    assert called["path"].endswith("/messages")
-
-
-@pytest.mark.asyncio
-async def test_cleanup_aclose(fireworks_provider):
-    fireworks_provider._client = AsyncMock()
+async def test_cleanup_closes_openai_client(fireworks_provider):
+    fireworks_provider._client = MagicMock()
+    fireworks_provider._client.close = AsyncMock()
 
     await fireworks_provider.cleanup()
 
-    fireworks_provider._client.aclose.assert_awaited_once()
+    fireworks_provider._client.close.assert_awaited_once()

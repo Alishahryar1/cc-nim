@@ -8,14 +8,11 @@ from loguru import logger
 
 from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from core.anthropic.native_messages_request import (
-    OpenRouterExtraBodyError,
     build_base_native_anthropic_request_body,
-    build_openrouter_native_request_body,
-    validate_openrouter_extra_body,
 )
 from providers.exceptions import InvalidRequestError
 
-NativeExtraBodyPolicy = Literal["drop", "reject", "merge_validated", "openrouter"]
+NativeExtraBodyPolicy = Literal["drop", "reject"]
 NativeMessagesPostprocessor = Callable[[dict[str, Any], Any, bool], None]
 
 
@@ -45,21 +42,14 @@ def build_native_messages_request_body(
         len(getattr(request_data, "messages", [])),
     )
 
-    if policy.extra_body == "openrouter":
-        body = _build_openrouter_body(
-            request_data,
-            thinking_enabled=thinking_enabled,
-            policy=policy,
-        )
-    else:
-        body = build_base_native_anthropic_request_body(
-            request_data,
-            default_max_tokens=policy.default_max_tokens,
-            thinking_enabled=thinking_enabled,
-        )
-        _apply_extra_body_policy(body, request_data, policy)
-        if policy.force_stream:
-            body["stream"] = True
+    body = build_base_native_anthropic_request_body(
+        request_data,
+        default_max_tokens=policy.default_max_tokens,
+        thinking_enabled=thinking_enabled,
+    )
+    _apply_extra_body_policy(body, request_data, policy)
+    if policy.force_stream:
+        body["stream"] = True
 
     for postprocess in postprocessors:
         postprocess(body, request_data, thinking_enabled)
@@ -72,22 +62,6 @@ def build_native_messages_request_body(
         len(body.get("tools", [])),
     )
     return body
-
-
-def _build_openrouter_body(
-    request_data: Any,
-    *,
-    thinking_enabled: bool,
-    policy: NativeMessagesRequestPolicy,
-) -> dict[str, Any]:
-    try:
-        return build_openrouter_native_request_body(
-            request_data,
-            thinking_enabled=thinking_enabled,
-            default_max_tokens=policy.default_max_tokens,
-        )
-    except OpenRouterExtraBodyError as exc:
-        raise InvalidRequestError(str(exc)) from exc
 
 
 def _apply_extra_body_policy(
@@ -107,13 +81,4 @@ def _apply_extra_body_policy(
             or f"{policy.provider_name} native Messages API does not support extra_body on requests."
         )
         raise InvalidRequestError(message)
-    if policy.extra_body == "merge_validated":
-        if isinstance(extra, dict):
-            try:
-                validate_openrouter_extra_body(extra)
-            except OpenRouterExtraBodyError as exc:
-                raise InvalidRequestError(str(exc)) from exc
-            body.update(extra)
-        return
-
     raise AssertionError(f"Unhandled native extra_body policy: {policy.extra_body}")

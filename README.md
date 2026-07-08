@@ -306,7 +306,7 @@ Popular examples:
 - `wafer/Qwen3.5-397B-A17B`
 - `wafer/GLM-5.1`
 
-This provider uses Wafer's Anthropic-compatible endpoint at `https://pass.wafer.ai/v1/messages`.
+This provider uses Wafer's OpenAI-compatible Chat Completions endpoint at `https://pass.wafer.ai/v1/chat/completions`; FCC maps Claude-style thinking to Wafer's explicit thinking controls.
 
 ### 14. [Kimi](https://platform.moonshot.ai/)
 
@@ -314,7 +314,7 @@ Get a key at [platform.moonshot.ai/console/api-keys](https://platform.moonshot.a
 
 In the Admin UI, paste it into `KIMI_API_KEY`, then set `MODEL` to a Kimi slug such as `kimi/kimi-k2.5`.
 
-This provider calls Kimi's **Anthropic-compatible** Messages API (`https://api.moonshot.ai/anthropic/v1/messages`; model discovery uses OpenAI-compat `GET https://api.moonshot.ai/v1/models`). It is **not** the OpenAI Chat Completions path.
+This provider calls Kimi's OpenAI-compatible Chat Completions API at `https://api.moonshot.ai/v1/chat/completions`; FCC keeps Kimi-specific thinking controls inside the Kimi provider.
 
 Browse models at [platform.moonshot.ai](https://platform.moonshot.ai).
 
@@ -324,7 +324,7 @@ Get a key from [MiniMax](https://platform.minimax.io/user-center/basic-informati
 
 In the Admin UI, paste it into `MINIMAX_API_KEY`, then set `MODEL` to a MiniMax slug such as `minimax/MiniMax-M3`.
 
-This provider calls MiniMax's **Anthropic-compatible** Messages API (`https://api.minimax.io/anthropic/v1/messages`). `MiniMax-M3` is the recommended default because MiniMax documents controllable Anthropic thinking for that model; other MiniMax models remain discoverable through the provider model list.
+This provider calls MiniMax's OpenAI-compatible Chat Completions API at `https://api.minimax.io/v1/chat/completions`. `MiniMax-M3` is the recommended default because MiniMax documents controllable thinking for that model; other MiniMax models remain discoverable through the provider model list.
 
 ### 16. [Cerebras Inference](https://inference-docs.cerebras.ai/quickstart)
 
@@ -362,7 +362,7 @@ Get an API key at [fireworks.ai/account/api-keys](https://fireworks.ai/account/a
 
 In the Admin UI, paste it into `FIREWORKS_API_KEY`, then set `MODEL` to a Fireworks model slug such as `fireworks/accounts/fireworks/models/llama-v3p3-70b-instruct`.
 
-Fireworks exposes an **Anthropic-compatible** Messages API at `https://api.fireworks.ai/inference/v1/messages` (same inference host as before; Chat Completions is not used here). Vendor-specific JSON keys can still be merged from request `extra_body` when allowed.
+Fireworks exposes an OpenAI-compatible Chat Completions API at `https://api.fireworks.ai/inference/v1/chat/completions`. Vendor-specific JSON keys can still be passed through request `extra_body` when they do not override FCC-owned chat fields.
 
 Browse models at [fireworks.ai/models](https://fireworks.ai/models).
 
@@ -380,7 +380,7 @@ Get an API key at [Z.ai/manage-apikey/apikey-list](https://z.ai/manage-apikey/ap
 
 In the Admin UI, paste it into `ZAI_API_KEY`, then set `MODEL` to a Z.ai model slug such as `zai/glm-5.2`.
 
-This provider calls Z.ai's **Anthropic-compatible** Messages API (`https://api.z.ai/api/anthropic/v1/messages`). The former OpenAI Coding Plan base (`https://api.z.ai/api/coding/paas/v4`) is **not** used by this gateway.
+This provider calls Z.ai's GLM Coding Plan OpenAI-compatible Chat Completions API at `https://api.z.ai/api/coding/paas/v4/chat/completions`. FCC keeps Z.ai `clear_thinking=false` handling inside the Z.ai provider so tool workflows can preserve prior reasoning.
 
 Popular examples:
 
@@ -631,7 +631,7 @@ Important pieces:
 - `fcc-codex` registers a custom `fcc` provider that points Codex at the local proxy's `/v1/responses` endpoint.
 - Model routing resolves Claude model names to `MODEL_OPUS`, `MODEL_SONNET`, `MODEL_HAIKU`, or `MODEL`.
 - NIM, Gemini, DeepSeek, Mistral, Codestral, OpenCode Zen, OpenCode Go, Vercel AI Gateway, Hugging Face, Cohere, GitHub Models, Cerebras, Groq, SambaNova, and Cloudflare use OpenAI chat streaming translated into Anthropic SSE.
-- Wafer, OpenRouter, Kimi, MiniMax, Fireworks AI, Z.ai, LM Studio, llama.cpp, and Ollama use Anthropic Messages style transports where applicable (with provider-specific quirks and model-list URLs).
+- Cloud providers use OpenAI-compatible Chat Completions transports with provider-specific quirks kept in each provider package. Native Anthropic Messages transports are local-only for llama.cpp and Ollama.
 - The proxy normalizes thinking blocks, tool calls, token usage metadata, and provider errors into the shape each client expects.
 - Request optimizations answer trivial Claude Code probes locally to save latency and quota.
 

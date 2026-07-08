@@ -13,6 +13,7 @@ from providers.exceptions import InvalidRequestError
 
 MaxTokensField = Literal["max_tokens", "max_completion_tokens"]
 OpenAIChatPostprocessor = Callable[[dict[str, Any], Any, bool], None]
+ExtraBodyValidator = Callable[[dict[str, Any]], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +22,9 @@ class OpenAIChatRequestPolicy:
 
     provider_name: str
     include_extra_body: bool = False
+    extra_body_validator: ExtraBodyValidator | None = None
+    reject_extra_body_message: str | None = None
+    default_max_tokens: int | None = None
     max_tokens_field: MaxTokensField = "max_tokens"
     strip_message_names: bool = False
     unsupported_body_keys: frozenset[str] = field(default_factory=frozenset)
@@ -44,6 +48,7 @@ def build_openai_chat_request_body(
     try:
         body = build_base_request_body(
             request_data,
+            default_max_tokens=policy.default_max_tokens,
             reasoning_replay=ReasoningReplayMode.REASONING_CONTENT
             if thinking_enabled
             else ReasoningReplayMode.DISABLED,
@@ -51,10 +56,18 @@ def build_openai_chat_request_body(
     except OpenAIConversionError as exc:
         raise InvalidRequestError(str(exc)) from exc
 
-    if policy.include_extra_body:
-        request_extra = getattr(request_data, "extra_body", None)
-        if isinstance(request_extra, dict) and request_extra:
-            body["extra_body"] = deepcopy(request_extra)
+    request_extra = getattr(request_data, "extra_body", None)
+    if isinstance(request_extra, dict) and request_extra:
+        if policy.reject_extra_body_message:
+            raise InvalidRequestError(policy.reject_extra_body_message)
+        if policy.include_extra_body:
+            extra_body = deepcopy(request_extra)
+            if policy.extra_body_validator is not None:
+                try:
+                    policy.extra_body_validator(extra_body)
+                except ValueError as exc:
+                    raise InvalidRequestError(str(exc)) from exc
+            body["extra_body"] = extra_body
 
     _apply_common_openai_chat_policy(body, policy)
 
