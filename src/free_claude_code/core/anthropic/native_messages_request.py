@@ -138,6 +138,103 @@ def sanitize_native_messages_thinking_policy(
     return sanitized_messages
 
 
+def _fold_blocks_into_tool_result(
+    target: dict[str, Any], *, leading: list[Any], trailing: list[Any]
+) -> None:
+    """Fold non-tool_result blocks into a tool_result's content in place,
+    preserving order: ``leading`` blocks go before the existing content,
+    ``trailing`` after. Keeps a plain-string content as a joined string when
+    only text is involved; otherwise normalizes to list form so non-text
+    blocks (e.g. images) survive."""
+    content = target.get("content")
+
+    def is_text(block: Any) -> bool:
+        return (
+            isinstance(block, dict)
+            and block.get("type") == "text"
+            and isinstance(block.get("text"), str)
+        )
+
+    if isinstance(content, str) and all(is_text(b) for b in (*leading, *trailing)):
+        parts = [b["text"] for b in leading]
+        if content:
+            parts.append(content)
+        parts.extend(b["text"] for b in trailing)
+        target["content"] = "\n\n".join(part for part in parts if part)
+        return
+
+    normalized: list[Any] = list(leading)
+    if isinstance(content, str):
+        if content:
+            normalized.append({"type": "text", "text": content})
+    elif isinstance(content, list):
+        normalized.extend(content)
+    normalized.extend(trailing)
+    target["content"] = normalized
+
+
+def sanitize_tool_result_user_messages(messages: Any) -> Any:
+    """Make user turns that carry a tool_result contain only tool_results.
+
+    Some local chat templates (Mistral/devstral via llama.cpp) fail to render
+    a user turn that mixes a ``tool_result`` block with any other block — e.g.
+    when Claude Code appends a reminder ``text`` block to the same turn as a
+    tool result. Real Anthropic accepts the mixed turn; these templates raise
+    "roles must alternate ... except for tool calls and results". Fold the
+    non-tool_result blocks into an adjacent tool_result so the turn is
+    tool_result-only, which every template renders and which the model reads
+    identically.
+
+    Content block order is part of the prompt, so folding preserves it: blocks
+    that appear *before* a tool_result are folded into that tool_result (ahead
+    of its content); blocks after the last tool_result are folded into it
+    (after its content). A leading ``text`` block therefore stays before the
+    tool output rather than being moved behind it.
+    """
+    if not isinstance(messages, list):
+        return messages
+
+    def is_tool_result(block: Any) -> bool:
+        return isinstance(block, dict) and block.get("type") == "tool_result"
+
+    sanitized_messages: list[Any] = []
+    for message in messages:
+        if not isinstance(message, dict) or message.get("role") != "user":
+            sanitized_messages.append(message)
+            continue
+        content = message.get("content")
+        if not isinstance(content, list):
+            sanitized_messages.append(message)
+            continue
+        if not any(is_tool_result(b) for b in content) or all(
+            is_tool_result(b) for b in content
+        ):
+            # No tool_result to fold into, or already tool_result-only.
+            sanitized_messages.append(message)
+            continue
+
+        new_results: list[Any] = []
+        pending: list[Any] = []  # non-tool_result blocks seen since the last one
+        for block in content:
+            if is_tool_result(block):
+                folded = dict(block)
+                if pending:
+                    _fold_blocks_into_tool_result(folded, leading=pending, trailing=[])
+                    pending = []
+                new_results.append(folded)
+            else:
+                pending.append(block)
+        if pending:
+            # Blocks after the last tool_result attach to it, after its content.
+            _fold_blocks_into_tool_result(new_results[-1], leading=[], trailing=pending)
+
+        sanitized_message = dict(message)
+        sanitized_message["content"] = new_results
+        sanitized_messages.append(sanitized_message)
+
+    return sanitized_messages
+
+
 def build_base_native_anthropic_request_body(
     request: Any,
     *,
@@ -166,5 +263,6 @@ def build_base_native_anthropic_request_body(
             body["messages"],
             thinking_enabled=thinking_enabled,
         )
+        body["messages"] = sanitize_tool_result_user_messages(body["messages"])
 
     return body

@@ -6,13 +6,26 @@ providers.
 
 import copy
 import json
+import re
 from dataclasses import dataclass, field
 from typing import Any
+
+# Mistral-family chat-template control tokens occasionally leak into the
+# tool name field of local-provider tool_use blocks (observed from LM Studio
+# with devstral: name arrives as "[TOOL_CALLS]Read" instead of "Read").
+_TOOL_NAME_CONTROL_TOKEN_RE = re.compile(r"^\s*(?:\[/?TOOL_CALLS\])+\s*")
+
+
+def sanitize_tool_name(name: str) -> str:
+    """Strip leaked chat-template control tokens from a tool name."""
+    return _TOOL_NAME_CONTROL_TOKEN_RE.sub("", name)
+
 
 __all__ = [
     "NativeSseBlockPolicyState",
     "format_native_sse_event",
     "parse_native_sse_event",
+    "sanitize_tool_name",
     "transform_native_sse_block_event",
 ]
 
@@ -180,6 +193,8 @@ def transform_native_sse_block_event(
         if not isinstance(block, dict):
             return event
         block_type = block.get("type")
+        if block_type == "tool_use" and isinstance(block.get("name"), str):
+            block["name"] = sanitize_tool_name(block["name"])
         upstream_index = payload.get("index")
         if not isinstance(upstream_index, int):
             return event
