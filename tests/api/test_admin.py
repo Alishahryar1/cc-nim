@@ -4,10 +4,10 @@ from unittest.mock import patch
 import httpx
 from fastapi.testclient import TestClient
 
-from api.admin_config.values import MASKED_SECRET
-from api.admin_urls import local_admin_url
-from api.app import create_app
-from config.settings import Settings
+from free_claude_code.api.admin_config.values import MASKED_SECRET
+from free_claude_code.api.admin_urls import local_admin_url
+from free_claude_code.api.app import create_app
+from free_claude_code.config.settings import Settings
 
 
 def _local_client(app):
@@ -75,7 +75,9 @@ def test_admin_page_no_longer_renders_global_status_header(monkeypatch, tmp_path
 
 
 def test_admin_static_no_longer_fetches_global_status_header():
-    script = Path("api/admin_static/admin.js").read_text(encoding="utf-8")
+    script = Path("src/free_claude_code/api/admin_static/admin.js").read_text(
+        encoding="utf-8"
+    )
 
     assert 'api("/admin/api/status")' not in script
     assert "updateHeader" not in script
@@ -85,7 +87,9 @@ def test_admin_static_no_longer_fetches_global_status_header():
 
 
 def test_admin_static_hides_managed_source_label():
-    script = Path("api/admin_static/admin.js").read_text(encoding="utf-8")
+    script = Path("src/free_claude_code/api/admin_static/admin.js").read_text(
+        encoding="utf-8"
+    )
 
     assert 'managed_env: "",' in script
     assert "hasOwnProperty.call(labels, source)" in script
@@ -661,7 +665,7 @@ def test_admin_local_provider_status_reports_reachable(monkeypatch, tmp_path):
         async def get(self, url: str):
             return httpx.Response(200, json={"data": []})
 
-    with patch("api.admin_routes.httpx.AsyncClient", FakeAsyncClient):
+    with patch("free_claude_code.api.admin_routes.httpx.AsyncClient", FakeAsyncClient):
         response = _local_client(app).get("/admin/api/providers/local-status")
 
     assert response.status_code == 200

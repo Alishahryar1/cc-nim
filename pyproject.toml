@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "free-claude-code"
-version = "3.4.14"
+version = "3.4.15"
 description = "Middleware between Claude Code CLI (Anthropic API) and NVIDIA NIM"
 readme = "README.md"
 requires-python = ">=3.14.0"
@@ -26,11 +26,11 @@ dependencies = [
 ]
 
 [project.scripts]
-fcc-server = "cli.entrypoints:serve"
-free-claude-code = "cli.entrypoints:serve"
-fcc-init = "cli.entrypoints:init"
-fcc-claude = "cli.launchers.claude:launch"
-fcc-codex = "cli.launchers.codex:launch"
+fcc-server = "free_claude_code.cli.entrypoints:serve"
+free-claude-code = "free_claude_code.cli.entrypoints:serve"
+fcc-init = "free_claude_code.cli.entrypoints:init"
+fcc-claude = "free_claude_code.cli.launchers.claude:launch"
+fcc-codex = "free_claude_code.cli.launchers.codex:launch"
 
 [project.optional-dependencies]
 voice = [
@@ -46,10 +46,10 @@ voice_local = [
 ]
 
 [tool.hatch.build.targets.wheel]
-packages = ["api", "cli", "config", "core", "messaging", "providers"]
+packages = ["src/free_claude_code"]
 
 [tool.hatch.build.targets.wheel.force-include]
-".env.example" = "config/env.example"
+".env.example" = "free_claude_code/config/env.example"
 
 [tool.uv]
 required-version = ">=0.11.0"
@@ -96,7 +96,7 @@ ignore = [
 ]
 
 [tool.ruff.lint.isort]
-known-first-party = ["api", "cli", "config", "core", "messaging", "providers", "smoke"]
+known-first-party = ["free_claude_code", "smoke"]
 
 [tool.ruff.format]
 quote-style = "double"
@@ -105,7 +105,7 @@ line-ending = "auto"
 skip-magic-trailing-comma = false
 
 [tool.pytest.ini_options]
-pythonpath = ["."]
+pythonpath = ["src"]
 addopts = "-n auto"
 testpaths = ["tests"]
 markers = [

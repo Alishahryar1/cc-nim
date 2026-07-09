@@ -1,10 +1,10 @@
 from fastapi.testclient import TestClient
 
-from api.app import create_app
-from api.dependencies import get_settings
-from config.settings import Settings
-from providers.model_listing import ProviderModelInfo
-from providers.runtime import ProviderRuntime
+from free_claude_code.api.app import create_app
+from free_claude_code.api.dependencies import get_settings
+from free_claude_code.config.settings import Settings
+from free_claude_code.providers.model_listing import ProviderModelInfo
+from free_claude_code.providers.runtime import ProviderRuntime
 
 
 def _settings(

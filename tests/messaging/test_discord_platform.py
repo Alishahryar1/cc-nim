@@ -5,23 +5,23 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from messaging.platforms.discord import (
+from free_claude_code.messaging.platforms.discord import (
     DISCORD_AVAILABLE,
     DiscordRuntime,
     _get_discord,
 )
-from messaging.platforms.discord_inbound import (
+from free_claude_code.messaging.platforms.discord_inbound import (
     discord_text_message_from_event,
     parse_allowed_channels,
 )
-from messaging.platforms.discord_io import truncate_discord_message
+from free_claude_code.messaging.platforms.discord_io import truncate_discord_message
 
 
 class TestGetDiscord:
     """Tests for _get_discord helper."""
 
     def test_raises_when_discord_not_available(self):
-        import messaging.platforms.discord as discord_mod
+        import free_claude_code.messaging.platforms.discord as discord_mod
 
         with (
             patch.object(discord_mod, "DISCORD_AVAILABLE", False),
@@ -276,7 +276,9 @@ class TestDiscordRuntime:
             patch.object(
                 platform._client, "get_channel", MagicMock(return_value=mock_channel)
             ),
-            patch("messaging.platforms.discord._get_discord") as mock_get,
+            patch(
+                "free_claude_code.messaging.platforms.discord._get_discord"
+            ) as mock_get,
         ):
             mock_discord = MagicMock()
             mock_get.return_value = mock_discord
@@ -318,7 +320,9 @@ class TestDiscordRuntime:
             patch.object(
                 platform._client, "get_channel", MagicMock(return_value=mock_channel)
             ),
-            patch("messaging.platforms.discord._get_discord") as mock_get,
+            patch(
+                "free_claude_code.messaging.platforms.discord._get_discord"
+            ) as mock_get,
         ):
             mock_get.return_value = MagicMock()
             platform.outbound._get_discord = mock_get
@@ -371,7 +375,7 @@ class TestDiscordRuntime:
                 side_effect=_fake_start,
             ),
             patch(
-                "messaging.limiter.MessagingRateLimiter.get_instance",
+                "free_claude_code.messaging.limiter.MessagingRateLimiter.get_instance",
                 new_callable=AsyncMock,
             ),
         ):

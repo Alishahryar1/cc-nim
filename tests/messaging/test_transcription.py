@@ -6,7 +6,7 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 
-from messaging.transcription import (
+from free_claude_code.messaging.transcription import (
     MAX_AUDIO_SIZE_BYTES,
     transcribe_audio,
 )
@@ -41,9 +41,12 @@ def test_transcribe_local_success():
         fake_audio = {"array": [0.0], "sampling_rate": 16000}
 
         with (
-            patch("messaging.transcription._load_audio", return_value=fake_audio),
             patch(
-                "messaging.transcription._get_pipeline",
+                "free_claude_code.messaging.transcription._load_audio",
+                return_value=fake_audio,
+            ),
+            patch(
+                "free_claude_code.messaging.transcription._get_pipeline",
                 return_value=mock_pipe,
             ),
         ):
@@ -68,9 +71,12 @@ def test_transcribe_local_empty_segments_returns_no_speech():
         fake_audio = {"array": [0.0], "sampling_rate": 16000}
 
         with (
-            patch("messaging.transcription._load_audio", return_value=fake_audio),
             patch(
-                "messaging.transcription._get_pipeline",
+                "free_claude_code.messaging.transcription._load_audio",
+                return_value=fake_audio,
+            ),
+            patch(
+                "free_claude_code.messaging.transcription._get_pipeline",
                 return_value=mock_pipe,
             ),
         ):
@@ -90,7 +96,7 @@ def test_transcribe_invalid_device_raises():
         # Patch _load_audio to avoid ImportError from missing librosa
         # Device validation happens in _get_pipeline before torch import
         with (
-            patch("messaging.transcription._load_audio"),
+            patch("free_claude_code.messaging.transcription._load_audio"),
             pytest.raises(ValueError, match="whisper_device must be 'cpu' or 'cuda'"),
         ):
             transcribe_audio(path, "audio/ogg", whisper_device="auto")
@@ -124,7 +130,7 @@ def test_transcribe_local_import_error_raises():
     try:
         with (
             patch(
-                "messaging.transcription._get_pipeline",
+                "free_claude_code.messaging.transcription._get_pipeline",
                 side_effect=ImportError(
                     "Local Whisper requires the voice_local extra. "
                     "Install with: uv sync --extra voice_local"

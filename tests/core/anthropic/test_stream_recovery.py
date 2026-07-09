@@ -3,7 +3,7 @@
 import httpx
 import openai
 
-from core.anthropic.streaming import (
+from free_claude_code.core.anthropic.streaming import (
     EARLY_TRANSPARENT_MAX_RETRIES,
     EARLY_TRANSPARENT_TOTAL_ATTEMPTS,
     MIDSTREAM_RECOVERY_ATTEMPTS,

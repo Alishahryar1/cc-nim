@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from providers.base import ProviderConfig
-from providers.cerebras import CEREBRAS_DEFAULT_BASE, CerebrasProvider
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.cerebras import CEREBRAS_DEFAULT_BASE, CerebrasProvider
 
 
 class MockMessage:
@@ -50,7 +50,9 @@ def mock_rate_limiter():
     async def _slot():
         yield
 
-    with patch("providers.transports.openai_chat.transport.GlobalRateLimiter") as mock:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
+    ) as mock:
         instance = mock.get_scoped_instance.return_value
 
         async def _passthrough(fn, *args, **kwargs):
@@ -68,7 +70,9 @@ def cerebras_provider(cerebras_config):
 
 def test_init(cerebras_config):
     """Test provider initialization."""
-    with patch("providers.transports.openai_chat.transport.AsyncOpenAI") as mock_openai:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ) as mock_openai:
         provider = CerebrasProvider(cerebras_config)
         assert provider._api_key == "test_cerebras_key"
         assert provider._base_url == CEREBRAS_DEFAULT_BASE
@@ -109,7 +113,7 @@ def test_build_request_body_global_disable_blocks_reasoning_mapping():
 def test_build_request_body_remaps_max_tokens_preserves_message_name(cerebras_provider):
     """Cerebras does not strip message ``name``; ``max_tokens`` maps to completion field."""
     with patch(
-        "providers.transports.openai_chat.request_policy.build_base_request_body"
+        "free_claude_code.providers.transports.openai_chat.request_policy.build_base_request_body"
     ) as mock_convert:
         mock_convert.return_value = {
             "model": "llama3.1-8b",
@@ -126,7 +130,7 @@ def test_build_request_body_remaps_max_tokens_preserves_message_name(cerebras_pr
 
 def test_build_request_body_prefers_existing_max_completion_tokens(cerebras_provider):
     with patch(
-        "providers.transports.openai_chat.request_policy.build_base_request_body"
+        "free_claude_code.providers.transports.openai_chat.request_policy.build_base_request_body"
     ) as mock_convert:
         mock_convert.return_value = {
             "model": "llama3.1-8b",

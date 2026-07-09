@@ -2,10 +2,10 @@ import os
 
 import pytest
 
-from config.provider_catalog import PROVIDER_CATALOG
-from config.settings import Settings
-from messaging.platforms.factory import create_messaging_components
-from providers.runtime import build_provider_config
+from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
+from free_claude_code.config.settings import Settings
+from free_claude_code.messaging.platforms.factory import create_messaging_components
+from free_claude_code.providers.runtime import build_provider_config
 from smoke.lib.child_process import (
     cmd_free_claude_code_serve,
     cmd_python_c,
@@ -29,7 +29,7 @@ def test_env_precedence_e2e(smoke_config: SmokeConfig, tmp_path) -> None:
     env["MODEL"] = "nvidia_nim/process-model"
     env["ANTHROPIC_AUTH_TOKEN"] = "process-token"
     script = (
-        "from config.settings import get_settings; "
+        "from free_claude_code.config.settings import get_settings; "
         "s=get_settings(); "
         "print(s.model); print(s.anthropic_auth_token)"
     )
@@ -52,7 +52,9 @@ def test_removed_env_migration_e2e(smoke_config: SmokeConfig, tmp_path) -> None:
     env = os.environ.copy()
     env["FCC_ENV_FILE"] = str(env_file)
     result = run_captured_text(
-        cmd_python_c("from config.settings import Settings; Settings()"),
+        cmd_python_c(
+            "from free_claude_code.config.settings import Settings; Settings()"
+        ),
         cwd=smoke_config.root,
         env=env,
         timeout=smoke_config.timeout_s,
@@ -74,8 +76,8 @@ def test_per_model_thinking_config_e2e(smoke_config: SmokeConfig, tmp_path) -> N
     env = os.environ.copy()
     env["FCC_ENV_FILE"] = str(env_file)
     script = (
-        "from api.model_router import ModelRouter; "
-        "from config.settings import Settings; "
+        "from free_claude_code.api.model_router import ModelRouter; "
+        "from free_claude_code.config.settings import Settings; "
         "s=Settings(); "
         "r=ModelRouter(s); "
         "print(r.resolve('claude-opus-4-20250514').thinking_enabled); "
@@ -109,9 +111,9 @@ def test_proxy_timeout_config_e2e(smoke_config: SmokeConfig, tmp_path) -> None:
     env = os.environ.copy()
     env["FCC_ENV_FILE"] = str(env_file)
     script = (
-        "from config.settings import Settings; "
-        "from config.provider_catalog import PROVIDER_CATALOG; "
-        "from providers.runtime import build_provider_config; "
+        "from free_claude_code.config.settings import Settings; "
+        "from free_claude_code.config.provider_catalog import PROVIDER_CATALOG; "
+        "from free_claude_code.providers.runtime import build_provider_config; "
         "s=Settings(); c=build_provider_config(PROVIDER_CATALOG['open_router'], s); "
         "print(c.proxy); print(c.http_read_timeout); "
         "print(c.http_connect_timeout); print(c.http_write_timeout)"

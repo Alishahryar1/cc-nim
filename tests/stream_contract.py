@@ -1,6 +1,6 @@
 """Shared assertions for canonical provider streaming error envelopes."""
 
-from core.anthropic.stream_contracts import (
+from free_claude_code.core.anthropic.stream_contracts import (
     assert_anthropic_stream_contract,
     parse_sse_text,
     text_content,

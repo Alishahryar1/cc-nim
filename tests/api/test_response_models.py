@@ -1,11 +1,15 @@
 """Tests for api/models/responses.py Pydantic response models."""
 
-from api.models.anthropic import (
+from free_claude_code.api.models.anthropic import (
     ContentBlockText,
     ContentBlockThinking,
     ContentBlockToolUse,
 )
-from api.models.responses import MessagesResponse, TokenCountResponse, Usage
+from free_claude_code.api.models.responses import (
+    MessagesResponse,
+    TokenCountResponse,
+    Usage,
+)
 
 
 class TestUsage:

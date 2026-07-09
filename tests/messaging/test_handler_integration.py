@@ -3,8 +3,8 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from messaging.trees import MessageState
-from messaging.workflow import MessagingWorkflow
+from free_claude_code.messaging.trees import MessageState
+from free_claude_code.messaging.workflow import MessagingWorkflow
 
 
 @pytest.fixture

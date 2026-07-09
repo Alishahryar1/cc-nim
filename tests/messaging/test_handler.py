@@ -3,8 +3,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from messaging.models import IncomingMessage
-from messaging.trees import (
+from free_claude_code.messaging.models import IncomingMessage
+from free_claude_code.messaging.trees import (
     CancellationReason,
     CancellationUiOwner,
     CancelledNode,
@@ -13,7 +13,7 @@ from messaging.trees import (
     MessageTree,
     TreeQueueManager,
 )
-from messaging.workflow import MessagingWorkflow
+from free_claude_code.messaging.workflow import MessagingWorkflow
 
 
 @pytest.fixture
@@ -41,7 +41,7 @@ async def test_handle_message_turn_trace_includes_full_message_text(
     incoming = incoming_message_factory(text=secret)
     with (
         patch.object(handler.turn_intake, "handle_message", new_callable=AsyncMock),
-        patch("messaging.workflow.trace_event") as trace_mock,
+        patch("free_claude_code.messaging.workflow.trace_event") as trace_mock,
     ):
         await handler.handle_message(incoming)
     kwargs = trace_mock.call_args.kwargs
@@ -64,7 +64,7 @@ async def test_handle_message_log_raw_messaging_does_not_change_turn_received_sh
     incoming = incoming_message_factory(text=text)
     with (
         patch.object(handler.turn_intake, "handle_message", new_callable=AsyncMock),
-        patch("messaging.workflow.trace_event") as trace_mock,
+        patch("free_claude_code.messaging.workflow.trace_event") as trace_mock,
     ):
         await handler.handle_message(incoming)
     assert trace_mock.call_args.kwargs["message_text"] == text

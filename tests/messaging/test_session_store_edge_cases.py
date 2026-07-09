@@ -7,10 +7,10 @@ from unittest.mock import patch
 
 import pytest
 
-import messaging.session.persistence as persistence_module
-from messaging.session import SessionStore
-from messaging.session.persistence import DebouncedJsonPersistence
-from messaging.trees import TreeSnapshot
+import free_claude_code.messaging.session.persistence as persistence_module
+from free_claude_code.messaging.session import SessionStore
+from free_claude_code.messaging.session.persistence import DebouncedJsonPersistence
+from free_claude_code.messaging.trees import TreeSnapshot
 
 
 @pytest.fixture
@@ -142,7 +142,7 @@ class TestSessionStoreSaveEdgeCases:
         """Write failure marks pending state dirty without crashing callers."""
         tmp_store.save_tree_snapshot(TreeSnapshot(root_id="r1", nodes={"r1": {}}))
         with patch(
-            "messaging.session.persistence.os.replace",
+            "free_claude_code.messaging.session.persistence.os.replace",
             side_effect=OSError("disk full"),
         ):
             tmp_store.flush_pending_save()
@@ -254,7 +254,7 @@ class TestSessionStoreAtomicWrites:
         store.save_tree_snapshot(TreeSnapshot(root_id="r2", nodes={"r2": {}}))
 
         with patch(
-            "messaging.session.persistence.os.replace",
+            "free_claude_code.messaging.session.persistence.os.replace",
             side_effect=OSError("replace failed"),
         ):
             store.flush_pending_save()

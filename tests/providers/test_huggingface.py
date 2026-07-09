@@ -5,9 +5,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from core.anthropic import ReasoningReplayMode
-from providers.base import ProviderConfig
-from providers.huggingface import HUGGINGFACE_DEFAULT_BASE, HuggingFaceProvider
+from free_claude_code.core.anthropic import ReasoningReplayMode
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.huggingface import (
+    HUGGINGFACE_DEFAULT_BASE,
+    HuggingFaceProvider,
+)
 
 
 class MockMessage:
@@ -56,7 +59,9 @@ def mock_rate_limiter():
     async def _slot():
         yield
 
-    with patch("providers.transports.openai_chat.transport.GlobalRateLimiter") as mock:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
+    ) as mock:
         instance = mock.get_scoped_instance.return_value
 
         async def _passthrough(fn, *args, **kwargs):
@@ -77,7 +82,9 @@ def test_default_base_url_constant():
 
 
 def test_init_uses_default_base_url_and_api_key(huggingface_config):
-    with patch("providers.transports.openai_chat.transport.AsyncOpenAI") as mock_openai:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ) as mock_openai:
         provider = HuggingFaceProvider(huggingface_config)
 
     assert provider._api_key == "test_hf_key"
@@ -90,14 +97,18 @@ def test_init_strips_trailing_slash(huggingface_config):
         update={"base_url": f"{HUGGINGFACE_DEFAULT_BASE}/"}
     )
 
-    with patch("providers.transports.openai_chat.transport.AsyncOpenAI"):
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ):
         provider = HuggingFaceProvider(config)
 
     assert provider._base_url == HUGGINGFACE_DEFAULT_BASE
 
 
 def test_build_request_body_keeps_max_tokens(huggingface_provider):
-    with patch("providers.huggingface.client.build_base_request_body") as mock_convert:
+    with patch(
+        "free_claude_code.providers.huggingface.client.build_base_request_body"
+    ) as mock_convert:
         mock_convert.return_value = {
             "model": "openai/gpt-oss-120b:fastest",
             "messages": [{"role": "user", "name": "alice", "content": "hi"}],

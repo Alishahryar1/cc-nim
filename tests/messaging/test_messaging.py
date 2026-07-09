@@ -13,7 +13,7 @@ class TestMessagingModels:
 
     def test_incoming_message_creation(self):
         """Test IncomingMessage dataclass."""
-        from messaging.models import IncomingMessage
+        from free_claude_code.messaging.models import IncomingMessage
 
         msg = IncomingMessage(
             text="Hello",
@@ -29,7 +29,7 @@ class TestMessagingModels:
 
     def test_incoming_message_with_reply(self):
         """Test IncomingMessage as a reply."""
-        from messaging.models import IncomingMessage
+        from free_claude_code.messaging.models import IncomingMessage
 
         msg = IncomingMessage(
             text="Reply text",
@@ -48,7 +48,9 @@ class TestMessagingPorts:
 
     def test_components_bundle_runtime_and_outbound(self):
         """Verify the factory handoff shape is explicit."""
-        from messaging.platforms.ports import MessagingPlatformComponents
+        from free_claude_code.messaging.platforms.ports import (
+            MessagingPlatformComponents,
+        )
 
         runtime = MagicMock()
         runtime.name = "telegram"
@@ -75,7 +77,7 @@ class TestSessionStore:
 
     def test_session_store_init(self, tmp_path):
         """Test SessionStore initialization."""
-        from messaging.session import SessionStore
+        from free_claude_code.messaging.session import SessionStore
 
         store = SessionStore(storage_path=str(tmp_path / "sessions.json"))
         assert store.load_conversation_snapshot().is_empty
@@ -84,8 +86,8 @@ class TestSessionStore:
 
     def test_save_and_get_tree(self, tmp_path):
         """Test saving and retrieving trees."""
-        from messaging.session import SessionStore
-        from messaging.trees import TreeSnapshot
+        from free_claude_code.messaging.session import SessionStore
+        from free_claude_code.messaging.trees import TreeSnapshot
 
         store = SessionStore(storage_path=str(tmp_path / "sessions.json"))
 
@@ -111,7 +113,7 @@ class TestSessionStore:
 
     def test_load_existing_file_with_trees(self, tmp_path):
         """Test loading file with trees (legacy sessions ignored)."""
-        from messaging.session import SessionStore
+        from free_claude_code.messaging.session import SessionStore
 
         data = {
             "sessions": {},
@@ -133,7 +135,7 @@ class TestSessionStore:
         with open(p, "w") as f:
             f.write("{invalid json")
 
-        from messaging.session import SessionStore
+        from free_claude_code.messaging.session import SessionStore
 
         # Should log error and start empty, avoiding crash
         store = SessionStore(storage_path=str(p))
@@ -141,15 +143,16 @@ class TestSessionStore:
 
     def test_save_error_handling(self, tmp_path):
         """Test error during save."""
-        from messaging.session import SessionStore
-        from messaging.trees import TreeSnapshot
+        from free_claude_code.messaging.session import SessionStore
+        from free_claude_code.messaging.trees import TreeSnapshot
 
         store = SessionStore(storage_path=str(tmp_path / "sessions.json"))
         snapshot = TreeSnapshot(root_id="r1", nodes={"r1": {}})
         store.save_tree_snapshot(snapshot)
 
         with patch(
-            "messaging.session.persistence.os.replace", side_effect=OSError("Disk full")
+            "free_claude_code.messaging.session.persistence.os.replace",
+            side_effect=OSError("Disk full"),
         ):
             store.flush_pending_save()
 
@@ -162,21 +165,21 @@ class TestTreeQueueManager:
 
     def test_tree_queue_manager_init(self):
         """Test TreeQueueManager initialization."""
-        from messaging.trees import TreeQueueManager
+        from free_claude_code.messaging.trees import TreeQueueManager
 
         mgr = TreeQueueManager()
         assert mgr.get_tree_count() == 0
 
     def test_tree_not_busy_initially(self):
         """Test tree is not busy when no messages."""
-        from messaging.trees import TreeQueueManager
+        from free_claude_code.messaging.trees import TreeQueueManager
 
         mgr = TreeQueueManager()
         assert mgr.is_tree_busy("nonexistent") is False
 
     def test_get_queue_size_empty(self):
         """Test queue size is 0 for non-existent node."""
-        from messaging.trees import TreeQueueManager
+        from free_claude_code.messaging.trees import TreeQueueManager
 
         mgr = TreeQueueManager()
         assert mgr.get_queue_size("nonexistent") == 0
@@ -184,8 +187,8 @@ class TestTreeQueueManager:
     @pytest.mark.asyncio
     async def test_create_tree_and_enqueue(self):
         """Test creating a tree and enqueueing."""
-        from messaging.models import IncomingMessage
-        from messaging.trees import TreeQueueManager
+        from free_claude_code.messaging.models import IncomingMessage
+        from free_claude_code.messaging.trees import TreeQueueManager
 
         mgr = TreeQueueManager()
         processed = []
@@ -206,7 +209,7 @@ class TestTreeQueueManager:
     @pytest.mark.asyncio
     async def test_cancel_tree_empty(self):
         """Test cancelling non-existent tree."""
-        from messaging.trees import TreeQueueManager
+        from free_claude_code.messaging.trees import TreeQueueManager
 
         mgr = TreeQueueManager()
         cancelled = await mgr.cancel_tree("nonexistent")

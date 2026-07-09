@@ -5,9 +5,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from providers.base import ProviderConfig
-from providers.cohere import COHERE_DEFAULT_BASE, CohereProvider
-from providers.exceptions import InvalidRequestError
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.cohere import COHERE_DEFAULT_BASE, CohereProvider
+from free_claude_code.providers.exceptions import InvalidRequestError
 
 
 class MockMessage:
@@ -49,7 +49,9 @@ def mock_rate_limiter():
     async def _slot():
         yield
 
-    with patch("providers.transports.openai_chat.transport.GlobalRateLimiter") as mock:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
+    ) as mock:
         instance = mock.get_scoped_instance.return_value
 
         async def _passthrough(fn, *args, **kwargs):
@@ -70,7 +72,9 @@ def test_default_base_url_constant():
 
 
 def test_init_uses_default_base_url_and_api_key(cohere_config):
-    with patch("providers.transports.openai_chat.transport.AsyncOpenAI") as mock_openai:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ) as mock_openai:
         provider = CohereProvider(cohere_config)
 
     assert provider._api_key == "test_cohere_key"
@@ -81,7 +85,9 @@ def test_init_uses_default_base_url_and_api_key(cohere_config):
 def test_init_strips_trailing_slash(cohere_config):
     config = cohere_config.model_copy(update={"base_url": f"{COHERE_DEFAULT_BASE}/"})
 
-    with patch("providers.transports.openai_chat.transport.AsyncOpenAI"):
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ):
         provider = CohereProvider(config)
 
     assert provider._base_url == COHERE_DEFAULT_BASE
@@ -89,7 +95,7 @@ def test_init_strips_trailing_slash(cohere_config):
 
 def test_build_request_body_sanitizes_documented_unsupported_fields(cohere_provider):
     with patch(
-        "providers.transports.openai_chat.request_policy.build_base_request_body"
+        "free_claude_code.providers.transports.openai_chat.request_policy.build_base_request_body"
     ) as mock_convert:
         mock_convert.return_value = {
             "model": "command-a-plus-05-2026",
@@ -135,7 +141,7 @@ def test_build_request_body_maps_thinking_enabled_to_reasoning_high(cohere_provi
 
 def test_build_request_body_preserves_replayed_reasoning_content(cohere_provider):
     with patch(
-        "providers.transports.openai_chat.request_policy.build_base_request_body"
+        "free_claude_code.providers.transports.openai_chat.request_policy.build_base_request_body"
     ) as mock_convert:
         mock_convert.return_value = {
             "model": "command-a-plus-05-2026",

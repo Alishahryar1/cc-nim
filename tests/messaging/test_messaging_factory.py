@@ -2,7 +2,7 @@
 
 from unittest.mock import MagicMock, patch
 
-from messaging.platforms.factory import (
+from free_claude_code.messaging.platforms.factory import (
     MessagingPlatformOptions,
     create_messaging_components,
 )
@@ -17,9 +17,11 @@ class TestCreateMessagingComponents:
         mock_runtime.name = "telegram"
         mock_runtime.outbound = MagicMock()
         with (
-            patch("messaging.platforms.telegram.TELEGRAM_AVAILABLE", True),
             patch(
-                "messaging.platforms.telegram.TelegramRuntime",
+                "free_claude_code.messaging.platforms.telegram.TELEGRAM_AVAILABLE", True
+            ),
+            patch(
+                "free_claude_code.messaging.platforms.telegram.TelegramRuntime",
                 return_value=mock_runtime,
             ) as runtime_cls,
         ):
@@ -72,9 +74,11 @@ class TestCreateMessagingComponents:
         mock_runtime.name = "discord"
         mock_runtime.outbound = MagicMock()
         with (
-            patch("messaging.platforms.discord.DISCORD_AVAILABLE", True),
             patch(
-                "messaging.platforms.discord.DiscordRuntime",
+                "free_claude_code.messaging.platforms.discord.DISCORD_AVAILABLE", True
+            ),
+            patch(
+                "free_claude_code.messaging.platforms.discord.DiscordRuntime",
                 return_value=mock_runtime,
             ) as runtime_cls,
         ):

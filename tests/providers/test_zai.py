@@ -5,13 +5,13 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from api.models.anthropic import Message, MessagesRequest
-from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
-from providers.base import ProviderConfig
-from providers.defaults import ZAI_DEFAULT_BASE
-from providers.exceptions import InvalidRequestError
-from providers.transports.openai_chat import OpenAIChatTransport
-from providers.zai import ZaiProvider
+from free_claude_code.api.models.anthropic import Message, MessagesRequest
+from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.defaults import ZAI_DEFAULT_BASE
+from free_claude_code.providers.exceptions import InvalidRequestError
+from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
+from free_claude_code.providers.zai import ZaiProvider
 
 
 @pytest.fixture(autouse=True)
@@ -20,7 +20,9 @@ def mock_rate_limiter():
     async def _slot():
         yield
 
-    with patch("providers.transports.openai_chat.transport.GlobalRateLimiter") as mock:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
+    ) as mock:
         instance = mock.get_scoped_instance.return_value
 
         async def _passthrough(fn, *args, **kwargs):

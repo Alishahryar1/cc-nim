@@ -4,14 +4,14 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from api.command_utils import extract_command_prefix
-from api.detection import (
+from free_claude_code.api.command_utils import extract_command_prefix
+from free_claude_code.api.detection import (
     is_prefix_detection_request,
     is_quota_check_request,
     is_title_generation_request,
 )
-from api.models.anthropic import Message, MessagesRequest
-from core.anthropic import get_token_count
+from free_claude_code.api.models.anthropic import Message, MessagesRequest
+from free_claude_code.core.anthropic import get_token_count
 
 
 class TestQuotaCheckRequest:

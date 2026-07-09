@@ -8,7 +8,7 @@ import pytest
 import pytest_asyncio
 from httpx import Request
 
-from providers.rate_limit import (
+from free_claude_code.providers.rate_limit import (
     DEFAULT_UPSTREAM_MAX_RETRIES,
     UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS,
     GlobalRateLimiter,

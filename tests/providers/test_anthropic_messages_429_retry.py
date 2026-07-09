@@ -6,10 +6,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from core.anthropic.stream_contracts import event_names, parse_sse_text
-from providers.base import ProviderConfig
-from providers.exceptions import ProviderError
-from providers.rate_limit import GlobalRateLimiter
+from free_claude_code.core.anthropic.stream_contracts import event_names, parse_sse_text
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.exceptions import ProviderError
+from free_claude_code.providers.rate_limit import GlobalRateLimiter
 from tests.providers.test_anthropic_messages import (
     FakeResponse,
     MockRequest,
@@ -207,7 +207,7 @@ async def test_native_stream_5xx_retry_exhausted(provider_config, status_code, s
             yield
 
         with patch(
-            "providers.transports.anthropic_messages.transport.GlobalRateLimiter"
+            "free_claude_code.providers.transports.anthropic_messages.transport.GlobalRateLimiter"
         ) as mock_gl:
             instance = mock_gl.get_scoped_instance.return_value
             real = GlobalRateLimiter(
@@ -258,7 +258,7 @@ async def test_native_stream_connection_error_retry_exhausted(provider_config):
             yield
 
         with patch(
-            "providers.transports.anthropic_messages.transport.GlobalRateLimiter"
+            "free_claude_code.providers.transports.anthropic_messages.transport.GlobalRateLimiter"
         ) as mock_gl:
             instance = mock_gl.get_scoped_instance.return_value
             real = GlobalRateLimiter(
@@ -289,7 +289,7 @@ async def test_native_stream_connection_error_retry_exhausted(provider_config):
                 ) as mock_send,
                 patch("asyncio.sleep", new_callable=AsyncMock),
                 patch(
-                    "providers.transports.anthropic_messages.stream.trace_event"
+                    "free_claude_code.providers.transports.anthropic_messages.stream.trace_event"
                 ) as trace,
                 pytest.raises(ProviderError) as exc_info,
             ):
@@ -324,7 +324,7 @@ async def test_non_retryable_4xx_http_error_not_retried(provider_config):
             yield
 
         with patch(
-            "providers.transports.anthropic_messages.transport.GlobalRateLimiter"
+            "free_claude_code.providers.transports.anthropic_messages.transport.GlobalRateLimiter"
         ) as mock_gl:
             instance = mock_gl.get_scoped_instance.return_value
 

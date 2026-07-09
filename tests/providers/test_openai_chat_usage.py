@@ -8,11 +8,11 @@ import openai
 import pytest
 from httpx import Request, Response
 
-from core.anthropic.stream_contracts import parse_sse_text
-from providers.base import ProviderConfig
-from providers.rate_limit import GlobalRateLimiter
-from providers.transports.openai_chat import OpenAIChatTransport
-from providers.transports.openai_chat.usage import (
+from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.rate_limit import GlobalRateLimiter
+from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
+from free_claude_code.providers.transports.openai_chat.usage import (
     clone_without_stream_usage,
     is_stream_usage_rejection,
     request_stream_usage,

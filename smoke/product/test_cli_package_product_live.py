@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from cli.managed.manager import ManagedClaudeSessionManager
-from cli.managed.session import ManagedClaudeSession
+from free_claude_code.cli.managed.manager import ManagedClaudeSessionManager
+from free_claude_code.cli.managed.session import ManagedClaudeSession
 from smoke.lib.child_process import cmd_fcc_init, run_captured_text
 from smoke.lib.config import SmokeConfig
 
@@ -86,7 +86,9 @@ async def test_cli_session_stop_kills_child_e2e(tmp_path: Path) -> None:
     process.wait = AsyncMock(side_effect=[asyncio.TimeoutError, 0])
     session.process = process
 
-    with patch("cli.managed.session.kill_pid_tree_best_effort") as kill_tree:
+    with patch(
+        "free_claude_code.cli.managed.session.kill_pid_tree_best_effort"
+    ) as kill_tree:
         stopped = await session.stop()
 
     assert stopped is True

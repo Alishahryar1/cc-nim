@@ -7,18 +7,21 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from config.nim import NimSettings
-from config.settings import Settings
-from providers.base import BaseProvider, ProviderConfig
-from providers.deepseek import DeepSeekProvider
-from providers.exceptions import ModelListResponseError, ServiceUnavailableError
-from providers.llamacpp import LlamaCppProvider
-from providers.model_listing import ProviderModelInfo
-from providers.nvidia_nim import NvidiaNimProvider
-from providers.ollama import OllamaProvider
-from providers.open_router import OpenRouterProvider
-from providers.runtime import ProviderRuntime
-from providers.wafer import WaferProvider
+from free_claude_code.config.nim import NimSettings
+from free_claude_code.config.settings import Settings
+from free_claude_code.providers.base import BaseProvider, ProviderConfig
+from free_claude_code.providers.deepseek import DeepSeekProvider
+from free_claude_code.providers.exceptions import (
+    ModelListResponseError,
+    ServiceUnavailableError,
+)
+from free_claude_code.providers.llamacpp import LlamaCppProvider
+from free_claude_code.providers.model_listing import ProviderModelInfo
+from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
+from free_claude_code.providers.ollama import OllamaProvider
+from free_claude_code.providers.open_router import OpenRouterProvider
+from free_claude_code.providers.runtime import ProviderRuntime
+from free_claude_code.providers.wafer import WaferProvider
 
 
 def _settings(
@@ -60,7 +63,9 @@ def _response(status_code: int, payload: object) -> httpx.Response:
 @pytest.mark.asyncio
 async def test_nim_lists_openai_compatible_model_ids() -> None:
     config = ProviderConfig(api_key="test-key")
-    with patch("providers.transports.openai_chat.transport.AsyncOpenAI"):
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ):
         provider = NvidiaNimProvider(config, nim_settings=NimSettings())
 
     with patch.object(

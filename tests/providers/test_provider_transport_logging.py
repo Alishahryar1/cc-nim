@@ -8,12 +8,14 @@ import httpx
 import openai
 import pytest
 
-from config.constants import NATIVE_MESSAGES_ERROR_BODY_LOG_CAP_BYTES
-from config.nim import NimSettings
-from providers.base import ProviderConfig
-from providers.exceptions import ProviderError
-from providers.nvidia_nim import NvidiaNimProvider
-from providers.transports.anthropic_messages import stream as native_stream
+from free_claude_code.config.constants import NATIVE_MESSAGES_ERROR_BODY_LOG_CAP_BYTES
+from free_claude_code.config.nim import NimSettings
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.exceptions import ProviderError
+from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
+from free_claude_code.providers.transports.anthropic_messages import (
+    stream as native_stream,
+)
 from tests.provider_request_mocks import make_openai_compat_stream_request
 from tests.providers.test_anthropic_messages import (
     FakeResponse,
@@ -43,7 +45,7 @@ def mock_rate_limiter():
         yield
 
     with patch(
-        "providers.transports.anthropic_messages.transport.GlobalRateLimiter"
+        "free_claude_code.providers.transports.anthropic_messages.transport.GlobalRateLimiter"
     ) as mock:
         instance = mock.get_scoped_instance.return_value
 

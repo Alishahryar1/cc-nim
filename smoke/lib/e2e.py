@@ -16,8 +16,8 @@ from typing import Any
 import httpx
 import pytest
 
-from config.provider_ids import SUPPORTED_PROVIDER_IDS
-from core.anthropic.stream_contracts import (
+from free_claude_code.config.provider_ids import SUPPORTED_PROVIDER_IDS
+from free_claude_code.core.anthropic.stream_contracts import (
     SSEEvent,
     assert_anthropic_stream_contract,
     event_index,
@@ -25,9 +25,9 @@ from core.anthropic.stream_contracts import (
     parse_sse_lines,
     text_content,
 )
-from messaging.models import IncomingMessage
-from messaging.session import SessionStore
-from messaging.workflow import MessagingWorkflow
+from free_claude_code.messaging.models import IncomingMessage
+from free_claude_code.messaging.session import SessionStore
+from free_claude_code.messaging.workflow import MessagingWorkflow
 from smoke.lib.child_process import run_captured_text
 from smoke.lib.config import ProviderModel, SmokeConfig, auth_headers
 from smoke.lib.server import RunningServer, start_server

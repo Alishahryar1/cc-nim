@@ -6,13 +6,21 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from api.handlers import MessagesHandler, ResponsesHandler, TokenCountHandler
-from api.models.anthropic import Message, MessagesRequest, TokenCountRequest
-from api.models.openai_responses import OpenAIResponsesRequest
-from config.settings import Settings
-from core.anthropic.streaming import format_sse_event
-from providers.base import BaseProvider, ProviderConfig
-from providers.exceptions import InvalidRequestError
+from free_claude_code.api.handlers import (
+    MessagesHandler,
+    ResponsesHandler,
+    TokenCountHandler,
+)
+from free_claude_code.api.models.anthropic import (
+    Message,
+    MessagesRequest,
+    TokenCountRequest,
+)
+from free_claude_code.api.models.openai_responses import OpenAIResponsesRequest
+from free_claude_code.config.settings import Settings
+from free_claude_code.core.anthropic.streaming import format_sse_event
+from free_claude_code.providers.base import BaseProvider, ProviderConfig
+from free_claude_code.providers.exceptions import InvalidRequestError
 
 _CLASSIFIER_SYSTEM = (
     "You are a security monitor. Respond with <block>yes</block> or <block>no</block>."
@@ -246,7 +254,7 @@ async def test_messages_handler_forces_no_thinking_for_safety_classifier() -> No
         messages=[Message(role="user", content=_CLASSIFIER_USER)],
     )
 
-    with patch("api.handlers.messages.trace_event") as trace_mock:
+    with patch("free_claude_code.api.handlers.messages.trace_event") as trace_mock:
         response = await handler.create(request)
         assert isinstance(response, StreamingResponse)
         await _streaming_body_text(response)
@@ -256,11 +264,11 @@ async def test_messages_handler_forces_no_thinking_for_safety_classifier() -> No
     assert provider.requests[0].model == "test-model"
     assert provider.requests[0].system == _CLASSIFIER_SYSTEM
     assert _trace_events(
-        trace_mock, "api.optimization.safety_classifier_no_thinking"
+        trace_mock, "free_claude_code.api.optimization.safety_classifier_no_thinking"
     ) == [
         {
             "stage": "routing",
-            "event": "api.optimization.safety_classifier_no_thinking",
+            "event": "free_claude_code.api.optimization.safety_classifier_no_thinking",
             "source": "api",
             "model": "test-model",
             "changed": True,
@@ -287,7 +295,7 @@ async def test_messages_handler_preserves_thinking_for_non_classifier() -> None:
         ],
     )
 
-    with patch("api.handlers.messages.trace_event") as trace_mock:
+    with patch("free_claude_code.api.handlers.messages.trace_event") as trace_mock:
         response = await handler.create(request)
         assert isinstance(response, StreamingResponse)
         await _streaming_body_text(response)
@@ -295,7 +303,10 @@ async def test_messages_handler_preserves_thinking_for_non_classifier() -> None:
     assert provider.preflight_calls[0][1] is True
     assert provider.stream_kwargs[0]["thinking_enabled"] is True
     assert (
-        _trace_events(trace_mock, "api.optimization.safety_classifier_no_thinking")
+        _trace_events(
+            trace_mock,
+            "free_claude_code.api.optimization.safety_classifier_no_thinking",
+        )
         == []
     )
 
@@ -311,7 +322,7 @@ async def test_messages_handler_keeps_existing_no_thinking_for_classifier() -> N
         messages=[Message(role="user", content=_CLASSIFIER_USER)],
     )
 
-    with patch("api.handlers.messages.trace_event") as trace_mock:
+    with patch("free_claude_code.api.handlers.messages.trace_event") as trace_mock:
         response = await handler.create(request)
         assert isinstance(response, StreamingResponse)
         await _streaming_body_text(response)
@@ -319,11 +330,11 @@ async def test_messages_handler_keeps_existing_no_thinking_for_classifier() -> N
     assert provider.preflight_calls[0][1] is False
     assert provider.stream_kwargs[0]["thinking_enabled"] is False
     assert _trace_events(
-        trace_mock, "api.optimization.safety_classifier_no_thinking"
+        trace_mock, "free_claude_code.api.optimization.safety_classifier_no_thinking"
     ) == [
         {
             "stage": "routing",
-            "event": "api.optimization.safety_classifier_no_thinking",
+            "event": "free_claude_code.api.optimization.safety_classifier_no_thinking",
             "source": "api",
             "model": "test-model",
             "changed": False,
@@ -344,7 +355,10 @@ async def test_messages_handler_optimization_intercepts_before_provider_executio
     )
     optimized = object()
 
-    with patch("api.handlers.messages.try_optimizations", return_value=optimized):
+    with patch(
+        "free_claude_code.api.handlers.messages.try_optimizations",
+        return_value=optimized,
+    ):
         assert await handler.create(request) is optimized
 
     provider_getter.assert_not_called()
@@ -356,7 +370,7 @@ async def test_responses_handler_bypasses_message_only_optimizations() -> None:
     handler = ResponsesHandler(Settings(), provider_getter=lambda _: provider)
 
     with patch(
-        "api.handlers.messages.try_optimizations",
+        "free_claude_code.api.handlers.messages.try_optimizations",
         side_effect=AssertionError("Responses must not use message optimizations"),
     ):
         response = await handler.create(
@@ -377,7 +391,7 @@ async def test_responses_handler_does_not_apply_safety_classifier_policy() -> No
     provider = FakeProvider()
     handler = ResponsesHandler(Settings(), provider_getter=lambda _: provider)
 
-    with patch("api.handlers.messages.trace_event") as trace_mock:
+    with patch("free_claude_code.api.handlers.messages.trace_event") as trace_mock:
         response = await handler.create(
             OpenAIResponsesRequest(
                 model="nvidia_nim/test-model",
@@ -392,7 +406,10 @@ async def test_responses_handler_does_not_apply_safety_classifier_policy() -> No
     assert provider.preflight_calls[0][1] is True
     assert provider.stream_kwargs[0]["thinking_enabled"] is True
     assert (
-        _trace_events(trace_mock, "api.optimization.safety_classifier_no_thinking")
+        _trace_events(
+            trace_mock,
+            "free_claude_code.api.optimization.safety_classifier_no_thinking",
+        )
         == []
     )
 

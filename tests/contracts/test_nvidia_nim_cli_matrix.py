@@ -3,7 +3,7 @@ import subprocess
 from pathlib import Path
 from typing import cast
 
-from config.settings import Settings
+from free_claude_code.config.settings import Settings
 from smoke.lib.claude_cli_matrix import (
     ClaudeCliRun,
     _build_claude_cli_command,
@@ -404,7 +404,7 @@ def test_cli_matrix_structured_provider_error_is_upstream_unavailable(
         marker="FCC_OPENROUTER_FREE_TOOL",
         run=run,
         log_delta=(
-            '{"event": "api.request.received", "http_method": "POST", '
+            '{"event": "free_claude_code.api.request.received", "http_method": "POST", '
             '"http_path": "/v1/messages"}\n'
             '{"event": "provider.response.error", "exc_type": "HTTPStatusError"}'
         ),

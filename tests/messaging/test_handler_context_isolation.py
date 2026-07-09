@@ -2,8 +2,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from messaging.trees import MessageState
-from messaging.workflow import MessagingWorkflow
+from free_claude_code.messaging.trees import MessageState
+from free_claude_code.messaging.workflow import MessagingWorkflow
 
 
 async def _gen_session(events):

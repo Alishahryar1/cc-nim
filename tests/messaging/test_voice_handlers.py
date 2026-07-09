@@ -6,21 +6,28 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from messaging.platforms.discord import DISCORD_AVAILABLE, DiscordRuntime
-from messaging.platforms.discord_inbound import get_audio_attachment
-from messaging.platforms.telegram import TelegramRuntime
+from free_claude_code.messaging.platforms.discord import (
+    DISCORD_AVAILABLE,
+    DiscordRuntime,
+)
+from free_claude_code.messaging.platforms.discord_inbound import get_audio_attachment
+from free_claude_code.messaging.platforms.telegram import TelegramRuntime
 
 
 @pytest.fixture
 def telegram_platform():
-    with patch("messaging.platforms.telegram.TELEGRAM_AVAILABLE", True):
+    with patch(
+        "free_claude_code.messaging.platforms.telegram.TELEGRAM_AVAILABLE", True
+    ):
         return TelegramRuntime(bot_token="test_token", allowed_user_id="12345")
 
 
 @pytest.mark.asyncio
 async def test_telegram_voice_disabled_sends_reply():
     """When voice_note_enabled is False, reply with disabled message."""
-    with patch("messaging.platforms.telegram.TELEGRAM_AVAILABLE", True):
+    with patch(
+        "free_claude_code.messaging.platforms.telegram.TELEGRAM_AVAILABLE", True
+    ):
         telegram_platform = TelegramRuntime(
             bot_token="test_token",
             allowed_user_id="12345",
@@ -84,7 +91,7 @@ async def test_telegram_voice_success_invokes_handler(telegram_platform):
         mock_queue_send = AsyncMock(return_value="999")
         with (
             patch(
-                "messaging.transcription.transcribe_audio",
+                "free_claude_code.messaging.transcription.transcribe_audio",
                 return_value="Hello from voice",
             ),
             patch.object(

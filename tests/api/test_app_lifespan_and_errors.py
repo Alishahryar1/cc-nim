@@ -8,10 +8,10 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
-from config.settings import Settings
-from messaging.trees import ConversationSnapshot, TreeSnapshot
-from providers.exceptions import ServiceUnavailableError
-from providers.runtime import ProviderRuntime
+from free_claude_code.config.settings import Settings
+from free_claude_code.messaging.trees import ConversationSnapshot, TreeSnapshot
+from free_claude_code.providers.exceptions import ServiceUnavailableError
+from free_claude_code.providers.runtime import ProviderRuntime
 
 _RUNTIME_EXTRAS = {
     "model": "nvidia_nim/test-model",
@@ -69,7 +69,7 @@ def _redirect_fcc_home(monkeypatch, tmp_path):
 
 
 def test_warn_if_process_auth_token_logs_warning(monkeypatch):
-    api_runtime_mod = importlib.import_module("api.runtime")
+    api_runtime_mod = importlib.import_module("free_claude_code.api.runtime")
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "process-token")
     monkeypatch.setitem(Settings.model_config, "env_file", ())
     settings = Settings.model_construct()
@@ -82,7 +82,7 @@ def test_warn_if_process_auth_token_logs_warning(monkeypatch):
 
 
 def test_warn_if_process_auth_token_skips_explicit_dotenv_config(monkeypatch, tmp_path):
-    api_runtime_mod = importlib.import_module("api.runtime")
+    api_runtime_mod = importlib.import_module("free_claude_code.api.runtime")
     env_file = tmp_path / ".env"
     env_file.write_text("ANTHROPIC_AUTH_TOKEN=\n", encoding="utf-8")
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "process-token")
@@ -97,7 +97,7 @@ def test_warn_if_process_auth_token_skips_explicit_dotenv_config(monkeypatch, tm
 
 @pytest.mark.asyncio
 async def test_runtime_startup_logs_admin_url_without_printed_server_banner(tmp_path):
-    import api.runtime as api_runtime_mod
+    import free_claude_code.api.runtime as api_runtime_mod
 
     settings = _app_settings(
         messaging_platform="none",
@@ -125,7 +125,7 @@ async def test_runtime_startup_logs_admin_url_without_printed_server_banner(tmp_
         patch.object(ProviderRuntime, "start_model_list_refresh"),
         patch.object(ProviderRuntime, "cleanup", new=AsyncMock()),
         patch(
-            "messaging.platforms.factory.create_messaging_components",
+            "free_claude_code.messaging.platforms.factory.create_messaging_components",
             return_value=None,
         ),
     ):
@@ -143,8 +143,8 @@ async def test_runtime_startup_logs_admin_url_without_printed_server_banner(tmp_
 
 
 def test_create_app_provider_error_handler_returns_anthropic_format():
-    from api.app import create_app
-    from providers.exceptions import AuthenticationError
+    from free_claude_code.api.app import create_app
+    from free_claude_code.providers.exceptions import AuthenticationError
 
     app = create_app()
 
@@ -152,7 +152,7 @@ def test_create_app_provider_error_handler_returns_anthropic_format():
     async def _raise_provider():
         raise AuthenticationError("bad key")
 
-    api_app_mod = importlib.import_module("api.app")
+    api_app_mod = importlib.import_module("free_claude_code.api.app")
     settings = _app_settings(
         messaging_platform="telegram",
         telegram_bot_token=None,
@@ -178,8 +178,8 @@ def test_create_app_provider_error_handler_returns_anthropic_format():
 
 def test_create_app_provider_error_default_logs_exclude_provider_message():
     """Provider errors must not log exc.message by default."""
-    from api.app import create_app
-    from providers.exceptions import AuthenticationError
+    from free_claude_code.api.app import create_app
+    from free_claude_code.providers.exceptions import AuthenticationError
 
     app = create_app()
     secret = "provider-upstream-secret-detail"
@@ -188,7 +188,7 @@ def test_create_app_provider_error_default_logs_exclude_provider_message():
     async def _raise():
         raise AuthenticationError(secret)
 
-    api_app_mod = importlib.import_module("api.app")
+    api_app_mod = importlib.import_module("free_claude_code.api.app")
     settings = _app_settings(
         messaging_platform="telegram",
         telegram_bot_token=None,
@@ -217,7 +217,7 @@ def test_create_app_provider_error_default_logs_exclude_provider_message():
 
 
 def test_create_app_general_exception_handler_returns_500():
-    from api.app import create_app
+    from free_claude_code.api.app import create_app
 
     app = create_app()
 
@@ -225,7 +225,7 @@ def test_create_app_general_exception_handler_returns_500():
     async def _raise_general():
         raise RuntimeError("boom")
 
-    api_app_mod = importlib.import_module("api.app")
+    api_app_mod = importlib.import_module("free_claude_code.api.app")
     settings = _app_settings(
         messaging_platform="telegram",
         telegram_bot_token=None,
@@ -251,7 +251,7 @@ def test_create_app_general_exception_handler_returns_500():
 
 def test_create_app_general_exception_default_logs_exclude_exception_message():
     """Unhandled errors must not log exception text by default (may echo user content)."""
-    from api.app import create_app
+    from free_claude_code.api.app import create_app
 
     app = create_app()
 
@@ -261,7 +261,7 @@ def test_create_app_general_exception_default_logs_exclude_exception_message():
     async def _raise_secret():
         raise ValueError(secret)
 
-    api_app_mod = importlib.import_module("api.app")
+    api_app_mod = importlib.import_module("free_claude_code.api.app")
     settings = _app_settings(
         messaging_platform="telegram",
         telegram_bot_token=None,
@@ -296,7 +296,7 @@ def test_create_app_general_exception_default_logs_exclude_exception_message():
     "messaging_enabled", [True, False], ids=["with_platform", "no_platform"]
 )
 def test_app_lifespan_sets_state_and_cleans_up(tmp_path, messaging_enabled):
-    from api.app import create_app
+    from free_claude_code.api.app import create_app
 
     app = create_app()
 
@@ -335,20 +335,26 @@ def test_app_lifespan_sets_state_and_cleans_up(tmp_path, messaging_enabled):
     cli_manager = MagicMock()
     cli_manager.stop_all = AsyncMock()
 
-    api_app_mod = importlib.import_module("api.app")
+    api_app_mod = importlib.import_module("free_claude_code.api.app")
 
     runtime_cleanup = AsyncMock()
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
         patch.object(ProviderRuntime, "cleanup", new=runtime_cleanup),
         patch(
-            "messaging.platforms.factory.create_messaging_components",
+            "free_claude_code.messaging.platforms.factory.create_messaging_components",
             return_value=fake_components if messaging_enabled else None,
         ) as create_components,
-        patch("messaging.session.SessionStore", return_value=session_store),
-        patch("cli.managed.ManagedClaudeSessionManager", return_value=cli_manager),
         patch(
-            "messaging.trees.TreeQueueManager.from_snapshot",
+            "free_claude_code.messaging.session.SessionStore",
+            return_value=session_store,
+        ),
+        patch(
+            "free_claude_code.cli.managed.ManagedClaudeSessionManager",
+            return_value=cli_manager,
+        ),
+        patch(
+            "free_claude_code.messaging.trees.TreeQueueManager.from_snapshot",
             return_value=fake_queue,
         ),
         TestClient(app),
@@ -373,7 +379,7 @@ def test_app_lifespan_sets_state_and_cleans_up(tmp_path, messaging_enabled):
 
 
 def test_app_lifespan_cleanup_continues_if_platform_stop_raises(tmp_path):
-    from api.app import create_app
+    from free_claude_code.api.app import create_app
 
     app = create_app()
 
@@ -402,17 +408,23 @@ def test_app_lifespan_cleanup_continues_if_platform_stop_raises(tmp_path):
     cli_manager = MagicMock()
     cli_manager.stop_all = AsyncMock()
 
-    api_app_mod = importlib.import_module("api.app")
+    api_app_mod = importlib.import_module("free_claude_code.api.app")
     runtime_cleanup = AsyncMock()
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
         patch.object(ProviderRuntime, "cleanup", new=runtime_cleanup),
         patch(
-            "messaging.platforms.factory.create_messaging_components",
+            "free_claude_code.messaging.platforms.factory.create_messaging_components",
             return_value=fake_components,
         ),
-        patch("messaging.session.SessionStore", return_value=session_store),
-        patch("cli.managed.ManagedClaudeSessionManager", return_value=cli_manager),
+        patch(
+            "free_claude_code.messaging.session.SessionStore",
+            return_value=session_store,
+        ),
+        patch(
+            "free_claude_code.cli.managed.ManagedClaudeSessionManager",
+            return_value=cli_manager,
+        ),
         TestClient(app),
     ):
         pass
@@ -424,7 +436,7 @@ def test_app_lifespan_cleanup_continues_if_platform_stop_raises(tmp_path):
 
 @pytest.mark.asyncio
 async def test_runtime_startup_validation_failure_does_not_block_server(tmp_path):
-    import api.runtime as api_runtime_mod
+    import free_claude_code.api.runtime as api_runtime_mod
 
     settings = _app_settings(
         messaging_platform="none",
@@ -450,7 +462,7 @@ async def test_runtime_startup_validation_failure_does_not_block_server(tmp_path
         patch.object(ProviderRuntime, "cleanup", new=cleanup),
         patch.object(api_runtime_mod.logger, "warning") as log_warning,
         patch(
-            "messaging.platforms.factory.create_messaging_components",
+            "free_claude_code.messaging.platforms.factory.create_messaging_components",
             return_value=None,
         ) as create_components,
     ):
@@ -471,7 +483,7 @@ async def test_runtime_startup_validation_failure_does_not_block_server(tmp_path
 
 @pytest.mark.asyncio
 async def test_graceful_asgi_lifespan_model_validation_failure_starts(tmp_path):
-    import api.app as api_app_mod
+    import free_claude_code.api.app as api_app_mod
 
     settings = _app_settings(
         messaging_platform="none",
@@ -514,7 +526,7 @@ async def test_graceful_asgi_lifespan_model_validation_failure_starts(tmp_path):
 
 def test_app_lifespan_messaging_import_error_no_crash(tmp_path, caplog):
     """Messaging import failure logs warning and continues without crash."""
-    from api.app import create_app
+    from free_claude_code.api.app import create_app
 
     app = create_app()
 
@@ -530,13 +542,13 @@ def test_app_lifespan_messaging_import_error_no_crash(tmp_path, caplog):
         port=8082,
     )
 
-    api_app_mod = importlib.import_module("api.app")
+    api_app_mod = importlib.import_module("free_claude_code.api.app")
     runtime_cleanup = AsyncMock()
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
         patch.object(ProviderRuntime, "cleanup", new=runtime_cleanup),
         patch(
-            "messaging.platforms.factory.create_messaging_components",
+            "free_claude_code.messaging.platforms.factory.create_messaging_components",
             side_effect=ImportError("discord not installed"),
         ),
         TestClient(app),
@@ -549,7 +561,7 @@ def test_app_lifespan_messaging_import_error_no_crash(tmp_path, caplog):
 
 def test_app_lifespan_platform_start_exception_cleanup_still_runs(tmp_path):
     """Exception during platform.start() logs error, cleanup still runs."""
-    from api.app import create_app
+    from free_claude_code.api.app import create_app
 
     app = create_app()
 
@@ -578,17 +590,23 @@ def test_app_lifespan_platform_start_exception_cleanup_still_runs(tmp_path):
     cli_manager = MagicMock()
     cli_manager.stop_all = AsyncMock()
 
-    api_app_mod = importlib.import_module("api.app")
+    api_app_mod = importlib.import_module("free_claude_code.api.app")
     runtime_cleanup = AsyncMock()
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
         patch.object(ProviderRuntime, "cleanup", new=runtime_cleanup),
         patch(
-            "messaging.platforms.factory.create_messaging_components",
+            "free_claude_code.messaging.platforms.factory.create_messaging_components",
             return_value=fake_components,
         ),
-        patch("messaging.session.SessionStore", return_value=session_store),
-        patch("cli.managed.ManagedClaudeSessionManager", return_value=cli_manager),
+        patch(
+            "free_claude_code.messaging.session.SessionStore",
+            return_value=session_store,
+        ),
+        patch(
+            "free_claude_code.cli.managed.ManagedClaudeSessionManager",
+            return_value=cli_manager,
+        ),
         TestClient(app),
     ):
         pass
@@ -598,7 +616,7 @@ def test_app_lifespan_platform_start_exception_cleanup_still_runs(tmp_path):
 
 def test_app_lifespan_flush_pending_save_exception_warning_only(tmp_path):
     """Session store flush exception on shutdown is logged as warning, no crash."""
-    from api.app import create_app
+    from free_claude_code.api.app import create_app
 
     app = create_app()
 
@@ -628,17 +646,23 @@ def test_app_lifespan_flush_pending_save_exception_warning_only(tmp_path):
     cli_manager = MagicMock()
     cli_manager.stop_all = AsyncMock()
 
-    api_app_mod = importlib.import_module("api.app")
+    api_app_mod = importlib.import_module("free_claude_code.api.app")
     runtime_cleanup = AsyncMock()
     with (
         patch.object(api_app_mod, "get_settings", return_value=settings),
         patch.object(ProviderRuntime, "cleanup", new=runtime_cleanup),
         patch(
-            "messaging.platforms.factory.create_messaging_components",
+            "free_claude_code.messaging.platforms.factory.create_messaging_components",
             return_value=fake_components,
         ),
-        patch("messaging.session.SessionStore", return_value=session_store),
-        patch("cli.managed.ManagedClaudeSessionManager", return_value=cli_manager),
+        patch(
+            "free_claude_code.messaging.session.SessionStore",
+            return_value=session_store,
+        ),
+        patch(
+            "free_claude_code.cli.managed.ManagedClaudeSessionManager",
+            return_value=cli_manager,
+        ),
         TestClient(app),
     ):
         pass
@@ -651,9 +675,9 @@ def test_create_app_writes_server_log_under_fcc_home(monkeypatch, tmp_path):
     """App logging uses ~/.fcc/logs/server.log regardless of cwd."""
     from loguru import logger
 
-    import config.logging_config as logging_config_mod
-    from api.app import create_app
-    from config.paths import server_log_path
+    import free_claude_code.config.logging_config as logging_config_mod
+    from free_claude_code.api.app import create_app
+    from free_claude_code.config.paths import server_log_path
 
     run_dir = tmp_path / "run"
     run_dir.mkdir()
@@ -677,9 +701,9 @@ def test_create_app_honors_process_log_file_override(monkeypatch, tmp_path):
     """Smoke subprocesses can redirect app logs without changing Settings."""
     from loguru import logger
 
-    import config.logging_config as logging_config_mod
-    from api.app import create_app
-    from config.paths import server_log_path
+    import free_claude_code.config.logging_config as logging_config_mod
+    from free_claude_code.api.app import create_app
+    from free_claude_code.config.paths import server_log_path
 
     custom_log = tmp_path / "smoke" / "server.log"
     monkeypatch.setenv("HOME", str(tmp_path))

@@ -1,6 +1,6 @@
 import pytest
 
-from core.openai_responses import OpenAIResponsesAdapter
+from free_claude_code.core.openai_responses import OpenAIResponsesAdapter
 
 _ADAPTER = OpenAIResponsesAdapter()
 _CONVERSION_ERROR = OpenAIResponsesAdapter.ConversionError

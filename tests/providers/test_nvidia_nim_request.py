@@ -7,19 +7,19 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from config.nim import NimSettings
-from core.anthropic import set_if_not_none
-from providers.nvidia_nim.request_options import (
+from free_claude_code.config.nim import NimSettings
+from free_claude_code.core.anthropic import set_if_not_none
+from free_claude_code.providers.nvidia_nim.request_options import (
     _set_extra,
 )
-from providers.nvidia_nim.request_options import (
+from free_claude_code.providers.nvidia_nim.request_options import (
     build_nim_request_body as build_request_body,
 )
-from providers.nvidia_nim.retry import (
+from free_claude_code.providers.nvidia_nim.retry import (
     clone_body_without_chat_template,
     clone_body_without_reasoning_content,
 )
-from providers.nvidia_nim.tool_schema import (
+from free_claude_code.providers.nvidia_nim.tool_schema import (
     NIM_TOOL_ARGUMENT_ALIASES_KEY,
     body_without_nim_tool_argument_aliases,
     nim_tool_argument_aliases_from_body,

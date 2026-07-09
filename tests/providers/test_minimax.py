@@ -6,16 +6,16 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from api.models.anthropic import Message, MessagesRequest, Tool
-from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
-from core.anthropic.stream_contracts import (
+from free_claude_code.api.models.anthropic import Message, MessagesRequest, Tool
+from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from free_claude_code.core.anthropic.stream_contracts import (
     parse_sse_text,
     text_content,
     thinking_content,
 )
-from providers.base import ProviderConfig
-from providers.minimax import MINIMAX_DEFAULT_BASE, MiniMaxProvider
-from providers.transports.openai_chat import OpenAIChatTransport
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.minimax import MINIMAX_DEFAULT_BASE, MiniMaxProvider
+from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
 
 
 class AsyncStream:
@@ -40,7 +40,9 @@ def mock_rate_limiter():
     async def _slot():
         yield
 
-    with patch("providers.transports.openai_chat.transport.GlobalRateLimiter") as mock:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
+    ) as mock:
         instance = mock.get_scoped_instance.return_value
 
         async def _passthrough(fn, *args, **kwargs):

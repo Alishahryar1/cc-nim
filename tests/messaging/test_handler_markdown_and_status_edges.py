@@ -3,16 +3,18 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from messaging.models import IncomingMessage
-from messaging.node_event_pipeline import process_parsed_cli_event
-from messaging.rendering.telegram_markdown import render_markdown_to_mdv2
-from messaging.trees import (
+from free_claude_code.messaging.models import IncomingMessage
+from free_claude_code.messaging.node_event_pipeline import process_parsed_cli_event
+from free_claude_code.messaging.rendering.telegram_markdown import (
+    render_markdown_to_mdv2,
+)
+from free_claude_code.messaging.trees import (
     CancellationUiOwner,
     CancelledNode,
     MessageNode,
     MessageState,
 )
-from messaging.workflow import MessagingWorkflow
+from free_claude_code.messaging.workflow import MessagingWorkflow
 
 
 def test_render_markdown_to_mdv2_empty_returns_empty():

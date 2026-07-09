@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from config.settings import Settings
+from free_claude_code.config.settings import Settings
 
 # Set mock environment BEFORE any imports that use Settings
 os.environ.setdefault("NVIDIA_NIM_API_KEY", "test_key")
@@ -30,7 +30,7 @@ def _isolate_from_dotenv(monkeypatch):
 
 @pytest.fixture
 def provider_config():
-    from providers.base import ProviderConfig
+    from free_claude_code.providers.base import ProviderConfig
 
     return ProviderConfig(
         api_key="test_key",
@@ -42,23 +42,23 @@ def provider_config():
 
 @pytest.fixture
 def nim_provider(provider_config):
-    from config.nim import NimSettings
-    from providers.nvidia_nim import NvidiaNimProvider
+    from free_claude_code.config.nim import NimSettings
+    from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 
     return NvidiaNimProvider(provider_config, nim_settings=NimSettings())
 
 
 @pytest.fixture
 def open_router_provider(provider_config):
-    from providers.open_router import OpenRouterProvider
+    from free_claude_code.providers.open_router import OpenRouterProvider
 
     return OpenRouterProvider(provider_config)
 
 
 @pytest.fixture
 def lmstudio_provider(provider_config):
-    from providers.base import ProviderConfig
-    from providers.lmstudio import LMStudioProvider
+    from free_claude_code.providers.base import ProviderConfig
+    from free_claude_code.providers.lmstudio import LMStudioProvider
 
     lmstudio_config = ProviderConfig(
         api_key="lm-studio",
@@ -71,8 +71,8 @@ def lmstudio_provider(provider_config):
 
 @pytest.fixture
 def llamacpp_provider(provider_config):
-    from providers.base import ProviderConfig
-    from providers.llamacpp import LlamaCppProvider
+    from free_claude_code.providers.base import ProviderConfig
+    from free_claude_code.providers.llamacpp import LlamaCppProvider
 
     llamacpp_config = ProviderConfig(
         api_key="llamacpp",
@@ -85,7 +85,9 @@ def llamacpp_provider(provider_config):
 
 @pytest.fixture
 def mock_cli_session():
-    from messaging.managed_protocols import ManagedClaudeSessionProtocol
+    from free_claude_code.messaging.managed_protocols import (
+        ManagedClaudeSessionProtocol,
+    )
 
     session = MagicMock(spec=ManagedClaudeSessionProtocol)
     session.start_task = MagicMock()  # This will return an async generator
@@ -95,7 +97,9 @@ def mock_cli_session():
 
 @pytest.fixture
 def mock_cli_manager():
-    from messaging.managed_protocols import ManagedClaudeSessionManagerProtocol
+    from free_claude_code.messaging.managed_protocols import (
+        ManagedClaudeSessionManagerProtocol,
+    )
 
     manager = MagicMock(spec=ManagedClaudeSessionManagerProtocol)
     manager.get_or_create_session = AsyncMock()
@@ -108,7 +112,7 @@ def mock_cli_manager():
 
 @pytest.fixture
 def mock_platform():
-    from messaging.platforms.ports import OutboundMessenger
+    from free_claude_code.messaging.platforms.ports import OutboundMessenger
 
     platform = MagicMock(spec=OutboundMessenger)
     platform.send_message = AsyncMock(return_value="msg_123")
@@ -131,7 +135,7 @@ def mock_platform():
 
 @pytest.fixture
 def mock_session_store():
-    from messaging.session import SessionStore
+    from free_claude_code.messaging.session import SessionStore
 
     store = MagicMock(spec=SessionStore)
     store.save_tree = MagicMock()
@@ -162,7 +166,7 @@ def incoming_message_factory():
     )
 
     def _create(**kwargs):
-        from messaging.models import IncomingMessage
+        from free_claude_code.messaging.models import IncomingMessage
 
         defaults: dict[str, Any] = {
             "text": "hello",

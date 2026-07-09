@@ -3,13 +3,15 @@
 from pathlib import Path
 from unittest.mock import patch
 
-from messaging.transcription import transcribe_audio
+from free_claude_code.messaging.transcription import transcribe_audio
 
 
 def test_transcribe_audio_nvidia_nim_forwards_api_key(tmp_path: Path) -> None:
     wav = tmp_path / "stub.wav"
     wav.write_bytes(b"\x00" * 128)
-    with patch("messaging.transcription.transcribe_nvidia_nim_audio") as nim_fn:
+    with patch(
+        "free_claude_code.messaging.transcription.transcribe_nvidia_nim_audio"
+    ) as nim_fn:
         nim_fn.return_value = "ok"
         out = transcribe_audio(
             wav,
@@ -25,7 +27,7 @@ def test_transcribe_audio_nvidia_nim_forwards_api_key(tmp_path: Path) -> None:
 
 
 def test_nim_asr_model_map_entries_are_real_function_ids() -> None:
-    from providers.nvidia_nim.voice import _NIM_ASR_MODEL_MAP
+    from free_claude_code.providers.nvidia_nim.voice import _NIM_ASR_MODEL_MAP
 
     for function_id, language_code in _NIM_ASR_MODEL_MAP.values():
         assert function_id

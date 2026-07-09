@@ -5,7 +5,7 @@ import time
 import pytest
 import pytest_asyncio
 
-from messaging.limiter import MessagingRateLimiter
+from free_claude_code.messaging.limiter import MessagingRateLimiter
 
 
 class TestMessagingRateLimiter:

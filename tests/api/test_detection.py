@@ -2,12 +2,12 @@
 
 from unittest.mock import patch
 
-from api.detection import (
+from free_claude_code.api.detection import (
     is_filepath_extraction_request,
     is_prefix_detection_request,
     is_safety_classifier_request,
 )
-from api.models.anthropic import Message, MessagesRequest
+from free_claude_code.api.models.anthropic import Message, MessagesRequest
 
 
 def _make_request(content: str, **kwargs) -> MessagesRequest:
@@ -45,7 +45,7 @@ class TestIsPrefixDetectionRequest:
                 raise TypeError("bad slice")
 
         with patch(
-            "api.detection.extract_text_from_content",
+            "free_claude_code.api.detection.extract_text_from_content",
             return_value=BadStr("<policy_spec> Command: x"),
         ):
             is_req, cmd = is_prefix_detection_request(req)

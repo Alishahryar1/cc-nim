@@ -10,9 +10,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from providers.base import ProviderConfig
-from providers.groq import GROQ_DEFAULT_BASE, GroqProvider
-from providers.transports.openai_chat.output_cap import (
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.groq import GROQ_DEFAULT_BASE, GroqProvider
+from free_claude_code.providers.transports.openai_chat.output_cap import (
     clamp_output_tokens,
     parse_output_token_cap,
 )
@@ -135,7 +135,9 @@ def mock_rate_limiter():
     async def _slot():
         yield
 
-    with patch("providers.transports.openai_chat.transport.GlobalRateLimiter") as mock:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
+    ) as mock:
         instance = mock.get_scoped_instance.return_value
 
         async def _passthrough(fn, *args, **kwargs):

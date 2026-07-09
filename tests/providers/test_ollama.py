@@ -5,10 +5,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from core.anthropic.stream_contracts import parse_sse_text
-from providers.base import ProviderConfig
-from providers.exceptions import ProviderError
-from providers.ollama import OLLAMA_DEFAULT_BASE, OllamaProvider
+from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.exceptions import ProviderError
+from free_claude_code.providers.ollama import OLLAMA_DEFAULT_BASE, OllamaProvider
 
 
 class MockMessage:
@@ -65,7 +65,7 @@ def ollama_config():
 def mock_rate_limiter():
     """Mock the global rate limiter to prevent waiting."""
     with patch(
-        "providers.transports.anthropic_messages.transport.GlobalRateLimiter"
+        "free_claude_code.providers.transports.anthropic_messages.transport.GlobalRateLimiter"
     ) as mock:
         instance = mock.get_scoped_instance.return_value
         instance.wait_if_blocked = AsyncMock(return_value=False)

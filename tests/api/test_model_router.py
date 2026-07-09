@@ -2,9 +2,13 @@ from unittest.mock import patch
 
 import pytest
 
-from api.model_router import ModelRouter
-from api.models.anthropic import Message, MessagesRequest, TokenCountRequest
-from config.settings import Settings
+from free_claude_code.api.model_router import ModelRouter
+from free_claude_code.api.models.anthropic import (
+    Message,
+    MessagesRequest,
+    TokenCountRequest,
+)
+from free_claude_code.config.settings import Settings
 
 
 @pytest.fixture
@@ -207,7 +211,7 @@ def test_model_router_routes_token_count_request(settings):
 
 
 def test_model_router_logs_mapping(settings):
-    with patch("api.model_router.logger.debug") as mock_log:
+    with patch("free_claude_code.api.model_router.logger.debug") as mock_log:
         ModelRouter(settings).resolve("claude-2.1")
 
     mock_log.assert_called()

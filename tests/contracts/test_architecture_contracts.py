@@ -33,7 +33,7 @@ def test_smoke_lib_has_no_sse_shim_module() -> None:
 
 
 def test_api_package_exports() -> None:
-    import api
+    import free_claude_code.api as api
 
     assert set(api.__all__) == {
         "MessagesRequest",
@@ -47,7 +47,9 @@ def test_api_package_exports() -> None:
 def test_root_env_example_is_the_single_template_source() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     root_example = repo_root / ".env.example"
-    duplicate_example = repo_root / "config" / "env.example"
+    duplicate_example = (
+        repo_root / "src" / "free_claude_code" / "config" / "env.example"
+    )
 
     assert root_example.is_file()
     assert not duplicate_example.exists()
@@ -61,7 +63,7 @@ def test_root_env_example_is_packaged_for_config_template_loader() -> None:
         "force-include"
     ]
 
-    assert force_include[".env.example"] == "config/env.example"
+    assert force_include[".env.example"] == "free_claude_code/config/env.example"
 
 
 def test_pyproject_first_party_packages_match_packaged_roots() -> None:
@@ -75,5 +77,5 @@ def test_pyproject_first_party_packages_match_packaged_roots() -> None:
         for item in match.group("items").split(",")
         if item.strip()
     }
-    expected = {"api", "cli", "config", "core", "messaging", "providers", "smoke"}
+    expected = {"free_claude_code", "smoke"}
     assert configured == expected

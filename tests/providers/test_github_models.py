@@ -8,12 +8,15 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from api.models.anthropic import Message, MessagesRequest
-from core.anthropic.stream_contracts import parse_sse_text
-from providers.base import ProviderConfig
-from providers.exceptions import ModelListResponseError
-from providers.github_models import GITHUB_MODELS_DEFAULT_BASE, GitHubModelsProvider
-from providers.github_models.client import GITHUB_MODELS_CATALOG_URL
+from free_claude_code.api.models.anthropic import Message, MessagesRequest
+from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.exceptions import ModelListResponseError
+from free_claude_code.providers.github_models import (
+    GITHUB_MODELS_DEFAULT_BASE,
+    GitHubModelsProvider,
+)
+from free_claude_code.providers.github_models.client import GITHUB_MODELS_CATALOG_URL
 
 
 @pytest.fixture
@@ -33,7 +36,9 @@ def mock_rate_limiter():
     async def _slot():
         yield
 
-    with patch("providers.transports.openai_chat.transport.GlobalRateLimiter") as mock:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
+    ) as mock:
         instance = mock.get_scoped_instance.return_value
 
         async def _passthrough(fn, *args, **kwargs):
@@ -86,7 +91,9 @@ def test_default_base_url_constant() -> None:
 def test_init_uses_default_base_url_api_key_and_github_headers(
     github_models_config: ProviderConfig,
 ) -> None:
-    with patch("providers.transports.openai_chat.transport.AsyncOpenAI") as mock_openai:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ) as mock_openai:
         provider = GitHubModelsProvider(github_models_config)
 
     assert provider._api_key == "test-github-models-token"
@@ -105,7 +112,9 @@ def test_init_strips_trailing_slash(github_models_config: ProviderConfig) -> Non
         update={"base_url": f"{GITHUB_MODELS_DEFAULT_BASE}/"}
     )
 
-    with patch("providers.transports.openai_chat.transport.AsyncOpenAI"):
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ):
         provider = GitHubModelsProvider(config)
 
     assert provider._base_url == GITHUB_MODELS_DEFAULT_BASE

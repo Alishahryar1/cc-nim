@@ -7,11 +7,11 @@ import openai
 import pytest
 from httpx import Request, Response
 
-from config.nim import NimSettings
-from providers.base import ProviderConfig
-from providers.exceptions import ProviderError
-from providers.nvidia_nim import NvidiaNimProvider
-from providers.rate_limit import GlobalRateLimiter
+from free_claude_code.config.nim import NimSettings
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.exceptions import ProviderError
+from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
+from free_claude_code.providers.rate_limit import GlobalRateLimiter
 from tests.providers.test_nvidia_nim import MockRequest
 
 
@@ -147,7 +147,9 @@ async def test_nim_stream_connection_error_exhausted_emits_cause_chain():
                 side_effect=error,
             ) as mock_create,
             patch("asyncio.sleep", new_callable=AsyncMock),
-            patch("providers.transports.openai_chat.stream.trace_event") as trace,
+            patch(
+                "free_claude_code.providers.transports.openai_chat.stream.trace_event"
+            ) as trace,
             pytest.raises(ProviderError) as exc_info,
         ):
             [e async for e in provider.stream_response(req, request_id="req_conn")]

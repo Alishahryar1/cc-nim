@@ -2,7 +2,7 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from messaging.platforms.outbox import PlatformOutbox
+from free_claude_code.messaging.platforms.outbox import PlatformOutbox
 
 
 def _noop_outbox(*, limiter=None, delete_many=None) -> PlatformOutbox:

@@ -4,7 +4,7 @@ import time
 
 import pytest
 
-from core.rate_limit import StrictSlidingWindowLimiter
+from free_claude_code.core.rate_limit import StrictSlidingWindowLimiter
 
 
 @pytest.mark.asyncio

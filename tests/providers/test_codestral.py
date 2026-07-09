@@ -5,8 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from providers.base import ProviderConfig
-from providers.codestral import CODESTRAL_DEFAULT_BASE, CodestralProvider
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.codestral import (
+    CODESTRAL_DEFAULT_BASE,
+    CodestralProvider,
+)
 
 
 class MockMessage:
@@ -50,7 +53,9 @@ def mock_rate_limiter():
     async def _slot():
         yield
 
-    with patch("providers.transports.openai_chat.transport.GlobalRateLimiter") as mock:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
+    ) as mock:
         instance = mock.get_scoped_instance.return_value
 
         async def _passthrough(fn, *args, **kwargs):
@@ -68,7 +73,9 @@ def codestral_provider(codestral_config):
 
 def test_init(codestral_config):
     """Test provider initialization."""
-    with patch("providers.transports.openai_chat.transport.AsyncOpenAI") as mock_openai:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ) as mock_openai:
         provider = CodestralProvider(codestral_config)
         assert provider._api_key == "test_codestral_key"
         assert provider._base_url == CODESTRAL_DEFAULT_BASE

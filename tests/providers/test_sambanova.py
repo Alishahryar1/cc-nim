@@ -5,8 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from providers.base import ProviderConfig
-from providers.sambanova import SAMBANOVA_DEFAULT_BASE, SambaNovaProvider
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.sambanova import (
+    SAMBANOVA_DEFAULT_BASE,
+    SambaNovaProvider,
+)
 
 
 class MockMessage:
@@ -50,7 +53,9 @@ def mock_rate_limiter():
     async def _slot():
         yield
 
-    with patch("providers.transports.openai_chat.transport.GlobalRateLimiter") as mock:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
+    ) as mock:
         instance = mock.get_scoped_instance.return_value
 
         async def _passthrough(fn, *args, **kwargs):
@@ -71,7 +76,9 @@ def test_default_base_url_constant():
 
 
 def test_init_uses_default_base_url_and_api_key(sambanova_config):
-    with patch("providers.transports.openai_chat.transport.AsyncOpenAI") as mock_openai:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ) as mock_openai:
         provider = SambaNovaProvider(sambanova_config)
 
     assert provider._api_key == "test_sambanova_key"
@@ -84,7 +91,9 @@ def test_init_strips_trailing_slash(sambanova_config):
         update={"base_url": f"{SAMBANOVA_DEFAULT_BASE}/"}
     )
 
-    with patch("providers.transports.openai_chat.transport.AsyncOpenAI"):
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ):
         provider = SambaNovaProvider(config)
 
     assert provider._base_url == SAMBANOVA_DEFAULT_BASE

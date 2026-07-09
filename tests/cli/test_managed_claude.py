@@ -1,6 +1,6 @@
 import os
 
-from cli.managed.claude import (
+from free_claude_code.cli.managed.claude import (
     MANAGED_CLAUDE_MODEL_TIER,
     ManagedClaudeConfig,
     ManagedClaudeParseState,
@@ -10,7 +10,7 @@ from cli.managed.claude import (
     extract_managed_claude_session_id,
     parse_managed_claude_stdout_line,
 )
-from cli.managed.diagnostics import classify_managed_claude_stderr
+from free_claude_code.cli.managed.diagnostics import classify_managed_claude_stderr
 
 
 def _config(**overrides: object) -> ManagedClaudeConfig:

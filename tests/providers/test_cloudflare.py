@@ -8,15 +8,15 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from api.models.anthropic import Message, MessagesRequest
-from core.anthropic.stream_contracts import parse_sse_text
-from providers.base import ProviderConfig
-from providers.cloudflare import (
+from free_claude_code.api.models.anthropic import Message, MessagesRequest
+from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.cloudflare import (
     CLOUDFLARE_AI_REST_ROOT,
     CloudflareProvider,
     cloudflare_ai_base_url,
 )
-from providers.exceptions import AuthenticationError
+from free_claude_code.providers.exceptions import AuthenticationError
 
 _ACCOUNT_ID = "account-123"
 _BASE_URL = f"{CLOUDFLARE_AI_REST_ROOT}/accounts/{_ACCOUNT_ID}/ai/v1"
@@ -40,7 +40,9 @@ def mock_rate_limiter():
     async def _slot():
         yield
 
-    with patch("providers.transports.openai_chat.transport.GlobalRateLimiter") as mock:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
+    ) as mock:
         instance = mock.get_scoped_instance.return_value
 
         async def _passthrough(fn, *args, **kwargs):
@@ -93,7 +95,9 @@ def test_init_composes_account_scoped_openai_chat_base_url(
     cloudflare_config: ProviderConfig,
 ) -> None:
     with (
-        patch("providers.transports.openai_chat.transport.AsyncOpenAI") as mock_openai,
+        patch(
+            "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+        ) as mock_openai,
         patch("httpx.AsyncClient") as mock_httpx_client,
     ):
         provider = CloudflareProvider(cloudflare_config, account_id=_ACCOUNT_ID)

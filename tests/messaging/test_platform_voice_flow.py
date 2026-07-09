@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from messaging.platforms.voice_flow import (
+from free_claude_code.messaging.platforms.voice_flow import (
     VOICE_DISABLED_MESSAGE,
     VOICE_TRANSCRIPTION_ERROR_MESSAGE,
     VoiceNoteFlow,

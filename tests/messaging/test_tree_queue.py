@@ -6,8 +6,8 @@ from unittest.mock import AsyncMock
 
 import pytest
 
-from messaging.models import IncomingMessage
-from messaging.trees import (
+from free_claude_code.messaging.models import IncomingMessage
+from free_claude_code.messaging.trees import (
     CancellationReason,
     CancellationUiOwner,
     MessageNode,
@@ -18,9 +18,12 @@ from messaging.trees import (
     get_cancel_reason,
     set_cancel_reason,
 )
-from messaging.trees import manager as tree_manager_module
-from messaging.trees.graph import MessageTreeGraph
-from messaging.trees.snapshot import node_from_snapshot, node_to_snapshot
+from free_claude_code.messaging.trees import manager as tree_manager_module
+from free_claude_code.messaging.trees.graph import MessageTreeGraph
+from free_claude_code.messaging.trees.snapshot import (
+    node_from_snapshot,
+    node_to_snapshot,
+)
 
 
 class TestMessageState:
@@ -1021,7 +1024,7 @@ class TestSessionStoreTrees:
 
     def test_save_and_get_tree(self, tmp_path):
         """Test saving and retrieving a tree."""
-        from messaging.session import SessionStore
+        from free_claude_code.messaging.session import SessionStore
 
         store = SessionStore(storage_path=str(tmp_path / "sessions.json"))
 
@@ -1046,7 +1049,7 @@ class TestSessionStoreTrees:
 
     def test_get_tree_by_root_id(self, tmp_path):
         """Test getting tree by root ID and node mapping."""
-        from messaging.session import SessionStore
+        from free_claude_code.messaging.session import SessionStore
 
         store = SessionStore(storage_path=str(tmp_path / "sessions.json"))
 

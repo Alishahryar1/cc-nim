@@ -1,6 +1,6 @@
 from pathlib import Path
 
-from cli.managed.session import ManagedClaudeSession
+from free_claude_code.cli.managed.session import ManagedClaudeSession
 
 
 def test_cli_session_owns_typed_runner_config(tmp_path: Path) -> None:

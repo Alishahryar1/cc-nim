@@ -1,4 +1,4 @@
-from messaging.event_parser import parse_cli_event
+from free_claude_code.messaging.event_parser import parse_cli_event
 
 
 def test_parse_cli_event_assistant_content():

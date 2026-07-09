@@ -6,8 +6,12 @@ from pathlib import Path
 import pytest
 from loguru import logger
 
-from config.logging_config import configure_logging
-from core.trace import TRACE_PAYLOAD_BINDING, trace_event, traced_async_stream
+from free_claude_code.config.logging_config import configure_logging
+from free_claude_code.core.trace import (
+    TRACE_PAYLOAD_BINDING,
+    trace_event,
+    traced_async_stream,
+)
 
 
 def _json_log_rows(log_file: str) -> list[dict]:
@@ -34,7 +38,7 @@ def test_trace_payload_merged_into_json_line(tmp_path) -> None:
 
 def test_sanitize_masks_nested_api_key_strings() -> None:
     """Credential-shaped keys redact without touching normal message text."""
-    from core.trace import _sanitize_trace_value
+    from free_claude_code.core.trace import _sanitize_trace_value
 
     out = _sanitize_trace_value(
         {"outer": {"api_key": "secret", "text": "visible"}},

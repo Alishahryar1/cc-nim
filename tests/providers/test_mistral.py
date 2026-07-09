@@ -8,9 +8,9 @@ import openai
 import pytest
 from httpx import Request, Response
 
-from providers.base import ProviderConfig
-from providers.exceptions import ProviderError
-from providers.mistral import MISTRAL_DEFAULT_BASE, MistralProvider
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.exceptions import ProviderError
+from free_claude_code.providers.mistral import MISTRAL_DEFAULT_BASE, MistralProvider
 
 
 class MockMessage:
@@ -73,7 +73,9 @@ def mock_rate_limiter():
     async def _slot():
         yield
 
-    with patch("providers.transports.openai_chat.transport.GlobalRateLimiter") as mock:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
+    ) as mock:
         instance = mock.get_scoped_instance.return_value
 
         async def _passthrough(fn, *args, **kwargs):
@@ -91,7 +93,9 @@ def mistral_provider(mistral_config):
 
 def test_init(mistral_config):
     """Test provider initialization."""
-    with patch("providers.transports.openai_chat.transport.AsyncOpenAI") as mock_openai:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ) as mock_openai:
         provider = MistralProvider(mistral_config)
         assert provider._api_key == "test_mistral_key"
         assert provider._base_url == MISTRAL_DEFAULT_BASE

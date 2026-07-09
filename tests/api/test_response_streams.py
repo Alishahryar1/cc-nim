@@ -7,13 +7,13 @@ from collections.abc import AsyncGenerator
 import pytest
 from fastapi.responses import JSONResponse, StreamingResponse
 
-from api.response_streams import (
+from free_claude_code.api.response_streams import (
     EGRESS_STREAM_INTERRUPTED_MESSAGE,
     anthropic_sse_error_response,
     anthropic_sse_streaming_response,
 )
-from core.anthropic.stream_contracts import parse_sse_text
-from providers.exceptions import RateLimitError
+from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
+from free_claude_code.providers.exceptions import RateLimitError
 
 
 async def _body_chunks(chunks: list[str]) -> AsyncGenerator[str]:

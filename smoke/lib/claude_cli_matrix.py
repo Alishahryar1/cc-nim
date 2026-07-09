@@ -696,7 +696,7 @@ def _has_proxy_request(log_delta: str) -> bool:
     return (
         "POST /v1/messages" in log_delta
         or "API_REQUEST:" in log_delta
-        or '"event": "api.request.received"' in log_delta
+        or '"event": "free_claude_code.api.request.received"' in log_delta
         or (
             '"http_method": "POST"' in log_delta
             and '"http_path": "/v1/messages"' in log_delta
@@ -762,7 +762,9 @@ def _has_upstream_unavailable_text(text: str) -> bool:
 def _request_count(log_delta: str) -> int:
     access_log_count = log_delta.count("POST /v1/messages")
     service_log_count = log_delta.count("API_REQUEST:")
-    structured_log_count = log_delta.count('"event": "api.request.received"')
+    structured_log_count = log_delta.count(
+        '"event": "free_claude_code.api.request.received"'
+    )
     return max(access_log_count, service_log_count, structured_log_count)
 
 

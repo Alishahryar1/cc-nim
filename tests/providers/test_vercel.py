@@ -5,8 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from providers.base import ProviderConfig
-from providers.vercel import VERCEL_AI_GATEWAY_DEFAULT_BASE, VercelProvider
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.vercel import (
+    VERCEL_AI_GATEWAY_DEFAULT_BASE,
+    VercelProvider,
+)
 
 
 class MockMessage:
@@ -48,7 +51,9 @@ def mock_rate_limiter():
     async def _slot():
         yield
 
-    with patch("providers.transports.openai_chat.transport.GlobalRateLimiter") as mock:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
+    ) as mock:
         instance = mock.get_scoped_instance.return_value
 
         async def _passthrough(fn, *args, **kwargs):
@@ -69,7 +74,9 @@ def test_default_base_url_constant():
 
 
 def test_init_uses_default_base_url_and_api_key(vercel_config):
-    with patch("providers.transports.openai_chat.transport.AsyncOpenAI") as mock_openai:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ) as mock_openai:
         provider = VercelProvider(vercel_config)
 
     assert provider._api_key == "test_vercel_key"
@@ -82,7 +89,9 @@ def test_init_strips_trailing_slash(vercel_config):
         update={"base_url": f"{VERCEL_AI_GATEWAY_DEFAULT_BASE}/"}
     )
 
-    with patch("providers.transports.openai_chat.transport.AsyncOpenAI"):
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ):
         provider = VercelProvider(config)
 
     assert provider._base_url == VERCEL_AI_GATEWAY_DEFAULT_BASE
@@ -90,7 +99,7 @@ def test_init_strips_trailing_slash(vercel_config):
 
 def test_build_request_body_keeps_max_tokens(vercel_provider):
     with patch(
-        "providers.transports.openai_chat.request_policy.build_base_request_body"
+        "free_claude_code.providers.transports.openai_chat.request_policy.build_base_request_body"
     ) as mock_convert:
         mock_convert.return_value = {
             "model": "openai/gpt-5.5",

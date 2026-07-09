@@ -4,9 +4,17 @@ import asyncio
 
 import pytest
 
-from messaging.models import IncomingMessage
-from messaging.trees import MessageNode, MessageState, MessageTree, TreeQueueManager
-from messaging.trees.snapshot import node_from_snapshot, node_to_snapshot
+from free_claude_code.messaging.models import IncomingMessage
+from free_claude_code.messaging.trees import (
+    MessageNode,
+    MessageState,
+    MessageTree,
+    TreeQueueManager,
+)
+from free_claude_code.messaging.trees.snapshot import (
+    node_from_snapshot,
+    node_to_snapshot,
+)
 
 
 def _make_incoming(text: str = "hello", msg_id: str = "m1") -> IncomingMessage:

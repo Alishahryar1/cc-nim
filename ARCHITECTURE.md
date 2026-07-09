@@ -44,20 +44,20 @@ flowchart LR
 
 The installable wheel packages are declared in [pyproject.toml](pyproject.toml):
 
-- [api/](api/) owns the FastAPI app, route handlers, API product handlers, shared
+- [src/free_claude_code/api/](src/free_claude_code/api/) owns the FastAPI app, route handlers, API product handlers, shared
   provider execution, model catalog, admin APIs, local optimizations, and
   server-tool handling.
-- [cli/](cli/) owns console entrypoints, client CLI launchers, process/session
+- [src/free_claude_code/cli/](src/free_claude_code/cli/) owns console entrypoints, client CLI launchers, process/session
   management, and client adapter contracts.
-- [config/](config/) owns settings, provider metadata, filesystem paths,
+- [src/free_claude_code/config/](src/free_claude_code/config/) owns settings, provider metadata, filesystem paths,
   logging setup, constants, and provider ID catalogs.
-- [core/](core/) owns provider-neutral protocol logic: Anthropic conversion,
+- [src/free_claude_code/core/](src/free_claude_code/core/) owns provider-neutral protocol logic: Anthropic conversion,
   SSE construction, OpenAI Responses conversion, stream recovery, token counting,
   and structured trace helpers.
-- [messaging/](messaging/) owns optional platform adapters, incoming message
+- [src/free_claude_code/messaging/](src/free_claude_code/messaging/) owns optional platform adapters, incoming message
   handling, tree queues, transcript rendering, persistence, commands, and voice
   support.
-- [providers/](providers/) owns provider construction, shared provider base
+- [src/free_claude_code/providers/](src/free_claude_code/providers/) owns provider construction, shared provider base
   classes, upstream transports, rate limiting, model listing, and concrete
   provider adapters.
 
@@ -66,7 +66,7 @@ The installable wheel packages are declared in [pyproject.toml](pyproject.toml):
 subprocesses or touch real services.
 
 The main ownership rule is that shared Anthropic and Responses protocol behavior
-belongs in [core/](core/). Provider modules should use neutral helpers rather
+belongs in [src/free_claude_code/core/](src/free_claude_code/core/). Provider modules should use neutral helpers rather
 than importing behavior from another provider-specific module.
 
 ## Customer-Facing Contract
@@ -107,21 +107,21 @@ The current package boundaries are intentional, but several modules still carry
 large orchestration responsibilities. Treat these as refactor targets, not as
 new places to add unrelated behavior:
 
-- [api/handlers/](api/handlers/) owns customer-facing API product flows:
+- [api/handlers/](src/free_claude_code/api/handlers/) owns customer-facing API product flows:
   Claude Messages, OpenAI Responses, and token counting. Keep route handlers
   thin, keep Claude-only behavior in the Messages handler, and use
-  [api/provider_execution.py](api/provider_execution.py) only for shared
+  [api/provider_execution.py](src/free_claude_code/api/provider_execution.py) only for shared
   provider resolution, preflight, tracing, token counting, and streaming.
-- [providers/transports/](providers/transports/) owns provider transport
+- [providers/transports/](src/free_claude_code/providers/transports/) owns provider transport
   families. The OpenAI-chat and native Anthropic transport packages split thin
   transport bases from per-request stream runners, recovery event construction,
   request policy, and transport-specific parsing. Shared protocol rules should
-  continue moving toward [core/](core/) when they are not provider-specific.
-- [messaging/workflow.py](messaging/workflow.py) coordinates messaging runtime
+  continue moving toward [src/free_claude_code/core/](src/free_claude_code/core/) when they are not provider-specific.
+- [messaging/workflow.py](src/free_claude_code/messaging/workflow.py) coordinates messaging runtime
   dependencies. Inbound turn intake, queued node execution, slash command
   dependencies, and tree queue internals live in separate modules so new
   behavior has one owner instead of growing the workflow object.
-- [api/admin_config/](api/admin_config/) owns Admin UI config behavior. Keep
+- [api/admin_config/](src/free_claude_code/api/admin_config/) owns Admin UI config behavior. Keep
   provider fields catalog-driven, and keep manifest, source loading, validation,
   env rendering, value presentation, and status metadata in their package owners.
 
@@ -129,31 +129,31 @@ new places to add unrelated behavior:
 
 Console scripts are registered in [pyproject.toml](pyproject.toml):
 
-- `fcc-server` and `free-claude-code` call `cli.entrypoints:serve`.
-- `fcc-init` calls `cli.entrypoints:init`.
-- `fcc-claude` calls `cli.launchers.claude:launch`.
-- `fcc-codex` calls `cli.launchers.codex:launch`.
+- `fcc-server` and `free-claude-code` call `free_claude_code.cli.entrypoints:serve`.
+- `fcc-init` calls `free_claude_code.cli.entrypoints:init`.
+- `fcc-claude` calls `free_claude_code.cli.launchers.claude:launch`.
+- `fcc-codex` calls `free_claude_code.cli.launchers.codex:launch`.
 
 [scripts/install.sh](scripts/install.sh) and [scripts/install.ps1](scripts/install.ps1)
 install or update the uv tool plus optional voice extras. [scripts/uninstall.sh](scripts/uninstall.sh)
 and [scripts/uninstall.ps1](scripts/uninstall.ps1) remove only the FCC uv tool and always
-delete the managed `~/.fcc/` tree from [config/paths.py](config/paths.py); they do not remove
+delete the managed `~/.fcc/` tree from [config/paths.py](src/free_claude_code/config/paths.py); they do not remove
 uv, Claude Code, Codex, or uv-managed Python runtimes. [scripts/ci.sh](scripts/ci.sh) and
 [scripts/ci.ps1](scripts/ci.ps1) mirror [.github/workflows/tests.yml](.github/workflows/tests.yml)
 for local pre-push verification.
 
-[cli/entrypoints.py](cli/entrypoints.py) starts the FastAPI server with Uvicorn.
+[cli/entrypoints.py](src/free_claude_code/cli/entrypoints.py) starts the FastAPI server with Uvicorn.
 `serve()` migrates legacy env files when needed, loads cached settings, runs a
 supervised server instance, and can restart the server after admin config changes.
 On final shutdown it best-effort kills registered child processes.
 
-[api/app.py](api/app.py) builds the FastAPI application. `create_app()` configures
+[api/app.py](src/free_claude_code/api/app.py) builds the FastAPI application. `create_app()` configures
 logging, registers admin and API routers, attaches HTTP correlation metadata, and
 installs exception handlers for validation failures, provider errors, and
 unexpected errors. `GracefulLifespanApp` wraps the app so startup failures are
 reported without noisy Starlette tracebacks.
 
-[api/runtime.py](api/runtime.py) owns process-lifetime resources through
+[api/runtime.py](src/free_claude_code/api/runtime.py) owns process-lifetime resources through
 `AppRuntime`:
 
 - creates and publishes an app-scoped `ProviderRuntime`;
@@ -166,10 +166,10 @@ reported without noisy Starlette tracebacks.
 
 ## Configuration Model
 
-[config/settings.py](config/settings.py) owns the flat Pydantic Settings schema:
+[config/settings.py](src/free_claude_code/config/settings.py) owns the flat Pydantic Settings schema:
 raw env fields, validation, and `get_settings()`. It should not own routing,
 model-ref parsing, launcher defaults, or web-tool policy. Dotenv discovery lives
-in [config/env_files.py](config/env_files.py) and uses this order:
+in [config/env_files.py](src/free_claude_code/config/env_files.py) and uses this order:
 
 1. repo-local `.env`;
 2. managed `~/.fcc/.env`;
@@ -179,9 +179,9 @@ Later dotenv files override earlier dotenv files. Process environment variables
 also participate through Pydantic settings resolution. `ANTHROPIC_AUTH_TOKEN`
 has an extra guard after settings are built: if any configured dotenv file
 defines it, that dotenv value replaces a stale inherited shell token. Auth-token
-source detection for startup warnings also belongs to `config/env_files.py`.
+source detection for startup warnings also belongs to `src/free_claude_code/config/env_files.py`.
 
-[config/paths.py](config/paths.py) defines managed paths:
+[config/paths.py](src/free_claude_code/config/paths.py) defines managed paths:
 
 - config directory: `~/.fcc`;
 - managed env file: `~/.fcc/.env`;
@@ -197,22 +197,22 @@ Model routing configuration is tiered:
 - `ENABLE_OPUS_THINKING`, `ENABLE_SONNET_THINKING`, and
   `ENABLE_HAIKU_THINKING` optionally override thinking by tier.
 
-[config/model_refs.py](config/model_refs.py) owns provider-prefixed model ref
+[config/model_refs.py](src/free_claude_code/config/model_refs.py) owns provider-prefixed model ref
 parsing and configured `MODEL*` inventory. API routing and provider validation
 depend on those helpers instead of adding behavior methods to Settings.
 
-[api/admin_config/](api/admin_config/) owns the Admin UI config manifest and
+[api/admin_config/](src/free_claude_code/api/admin_config/) owns the Admin UI config manifest and
 managed env writes. Provider credential, local URL, proxy, and display-name
-metadata is generated from [config/provider_catalog.py](config/provider_catalog.py);
+metadata is generated from [config/provider_catalog.py](src/free_claude_code/config/provider_catalog.py);
 admin-only help text stays beside the admin manifest. The package splits source
 loading, value presentation, validation, persistence, and provider status into
-separate modules. [api/admin_routes.py](api/admin_routes.py) exposes local-only
+separate modules. [api/admin_routes.py](src/free_claude_code/api/admin_routes.py) exposes local-only
 admin endpoints that load, validate, apply, and test config. After an apply,
 settings are cache-cleared. Depending on the changed fields, the server either
 replaces the app provider runtime or asks the supervised server to restart.
 
 [.env.example](.env.example) is the single install/init/admin template source.
-It is packaged as a [config/](config/) resource for `fcc-init` and Admin UI
+It is packaged as a [src/free_claude_code/config/](src/free_claude_code/config/) resource for `fcc-init` and Admin UI
 template defaults; runtime settings do not read it as a live config file.
 
 Admin routes call `require_loopback_admin()`, which rejects non-loopback clients
@@ -220,7 +220,7 @@ and non-local origins.
 
 ## HTTP Request Flow
 
-[api/routes.py](api/routes.py) exposes the public proxy routes:
+[api/routes.py](src/free_claude_code/api/routes.py) exposes the public proxy routes:
 
 - `POST /v1/messages`: Anthropic Messages-compatible streaming requests.
 - `POST /v1/responses`: OpenAI Responses-compatible requests.
@@ -230,24 +230,24 @@ and non-local origins.
 - `POST /stop`: stop CLI sessions and pending tasks.
 - `HEAD` and `OPTIONS` probes for compatibility on supported endpoints.
 
-Admin routes live beside these in [api/admin_routes.py](api/admin_routes.py).
+Admin routes live beside these in [api/admin_routes.py](src/free_claude_code/api/admin_routes.py).
 
 Authentication is handled by `require_api_key()` in
-[api/dependencies.py](api/dependencies.py). If `ANTHROPIC_AUTH_TOKEN` is blank,
+[api/dependencies.py](src/free_claude_code/api/dependencies.py). If `ANTHROPIC_AUTH_TOKEN` is blank,
 proxy auth is disabled. Otherwise the token may be supplied through `x-api-key`,
 `Authorization: Bearer ...`, or `anthropic-auth-token`. Comparisons use
 constant-time matching.
 
-[api/handlers/](api/handlers/) owns the public API product flows.
+[api/handlers/](src/free_claude_code/api/handlers/) owns the public API product flows.
 `MessagesHandler` validates non-empty messages, resolves models, applies
 Claude-only safety-classifier and local optimization policy, handles local web
 server tools, then streams Anthropic SSE. `ResponsesHandler` owns streaming-only
 OpenAI Responses validation and conversion for Codex clients. `TokenCountHandler`
 owns Anthropic token counting. Shared provider execution lives in
-[api/provider_execution.py](api/provider_execution.py), which resolves a
+[api/provider_execution.py](src/free_claude_code/api/provider_execution.py), which resolves a
 provider, preflights the upstream request, emits trace events, counts input
 tokens, and returns an Anthropic SSE iterator.
-[api/response_streams.py](api/response_streams.py) owns public streaming egress
+[api/response_streams.py](src/free_claude_code/api/response_streams.py) owns public streaming egress
 commit timing. It waits for the first protocol chunk before returning a
 successful `StreamingResponse`. For streaming `/v1/messages`, once FCC has
 accepted the turn and provider execution owns the request, final provider
@@ -284,17 +284,17 @@ sequenceDiagram
 OpenAI Responses uses the same provider execution primitive without importing
 Claude-only message intercepts. `ResponsesHandler` delegates protocol work to
 the `OpenAIResponsesAdapter` in
-[core/openai_responses/adapter.py](core/openai_responses/adapter.py). The adapter
+[src/free_claude_code/core/openai_responses/adapter.py](src/free_claude_code/core/openai_responses/adapter.py). The adapter
 converts the Responses payload into an Anthropic Messages payload before
 provider execution, then converts Anthropic SSE back to Responses SSE.
 
 ## Model Routing
 
-[api/model_router.py](api/model_router.py) resolves incoming client model names.
+[api/model_router.py](src/free_claude_code/api/model_router.py) resolves incoming client model names.
 It supports two forms:
 
 - Direct provider model refs such as `nvidia_nim/nvidia/model-name`.
-- Gateway model IDs decoded by [api/gateway_model_ids.py](api/gateway_model_ids.py).
+- Gateway model IDs decoded by [api/gateway_model_ids.py](src/free_claude_code/api/gateway_model_ids.py).
 
 If the incoming model is not direct, `ModelRouter` maps it by Claude tier. Names
 containing `opus`, `sonnet`, or `haiku` use the matching tier override when set,
@@ -324,32 +324,32 @@ passes it as `model_catalog_json`. Codex users open the native picker with
 ## Provider Architecture
 
 Provider metadata is neutral and centralized in
-[config/provider_catalog.py](config/provider_catalog.py). Each
+[config/provider_catalog.py](src/free_claude_code/config/provider_catalog.py). Each
 `ProviderDescriptor` declares provider ID, transport type, capabilities,
 credential env var, default base URL, settings attribute names, and proxy support.
 
-[providers/runtime/](providers/runtime/) owns the app-scoped provider runtime.
+[providers/runtime/](src/free_claude_code/providers/runtime/) owns the app-scoped provider runtime.
 It validates that descriptors, factories, and supported IDs are in sync, builds
 shared `ProviderConfig`, checks required credentials, creates providers lazily,
 caches them, refreshes model lists, validates configured models, and cleans up
 transports. The package splits factory wiring, config building, provider instance
 cache, model metadata cache, discovery, and validation into separate modules.
 
-[providers/base.py](providers/base.py) defines:
+[providers/base.py](src/free_claude_code/providers/base.py) defines:
 
 - `ProviderConfig`: shared provider settings such as API key, base URL, rate
   limits, timeouts, proxy, thinking, and logging flags.
 - `BaseProvider`: the provider interface for cleanup, model listing, preflight,
   and `stream_response()`.
 
-There are two transport families under [providers/transports/](providers/transports/):
+There are two transport families under [providers/transports/](src/free_claude_code/providers/transports/):
 
-- [providers/transports/openai_chat/](providers/transports/openai_chat/)
+- [providers/transports/openai_chat/](src/free_claude_code/providers/transports/openai_chat/)
   implements `OpenAIChatTransport` for providers with OpenAI-compatible
   `/chat/completions` APIs. The package owns the thin transport base,
   per-request stream runner, OpenAI request policy, OpenAI tool-call assembly,
   and OpenAI-chat recovery event construction.
-- [providers/transports/anthropic_messages/](providers/transports/anthropic_messages/)
+- [providers/transports/anthropic_messages/](src/free_claude_code/providers/transports/anthropic_messages/)
   implements `AnthropicMessagesTransport` for providers with
   Anthropic-compatible `/messages` APIs. In FCC this transport is intentionally
   local-only for llama.cpp and Ollama. The package owns the thin transport base,
@@ -377,7 +377,7 @@ reasoning replay, model-list filtering, and `extra_body` policy. Z.ai is treated
 as the GLM Coding Plan provider and uses Z.ai's Coding Plan OpenAI base.
 Mistral La Plateforme keeps its native `reasoning_effort` and thinking-chunk
 request/stream mapping inside
-[providers/mistral/reasoning.py](providers/mistral/reasoning.py), including its
+[providers/mistral/reasoning.py](src/free_claude_code/providers/mistral/reasoning.py), including its
 fallback retry when a selected Mistral model rejects reasoning fields.
 NIM reasoning budget control is also treated as a provider-owned best-effort
 downgrade: if an upstream NIM deployment rejects explicit budget control, FCC
@@ -403,16 +403,16 @@ usage quirks such as DeepSeek prompt-cache counters.
 
 ### Adding A Provider
 
-1. Add provider metadata to [config/provider_catalog.py](config/provider_catalog.py).
-2. Add credentials and related settings to [config/settings.py](config/settings.py)
+1. Add provider metadata to [config/provider_catalog.py](src/free_claude_code/config/provider_catalog.py).
+2. Add credentials and related settings to [config/settings.py](src/free_claude_code/config/settings.py)
    and [.env.example](.env.example) when user configurable.
 3. Let Admin UI provider credential, local URL, and proxy fields come from the
    catalog. Add admin-only help text or provider-specific fields under
-   [api/admin_config/](api/admin_config/) only when the generated manifest is
+   [api/admin_config/](src/free_claude_code/api/admin_config/) only when the generated manifest is
    insufficient.
-4. Implement the provider under [providers/](providers/) using the appropriate
+4. Implement the provider under [src/free_claude_code/providers/](src/free_claude_code/providers/) using the appropriate
    shared transport family.
-5. Add a factory in [providers/runtime/factory.py](providers/runtime/factory.py).
+5. Add a factory in [providers/runtime/factory.py](src/free_claude_code/providers/runtime/factory.py).
 6. Add deterministic tests under [tests/providers/](tests/providers/) and any
    relevant contract tests.
 7. Add smoke coverage or smoke config in [smoke/](smoke/) when the provider can
@@ -422,20 +422,20 @@ usage quirks such as DeepSeek prompt-cache counters.
 
 ## Protocol Conversion And Streaming Contracts
 
-[core/anthropic/](core/anthropic/) owns Anthropic-side protocol behavior:
+[src/free_claude_code/core/anthropic/](src/free_claude_code/core/anthropic/) owns Anthropic-side protocol behavior:
 
 - content and message conversion for OpenAI-compatible upstreams;
 - request serialization primitives shared by provider request policies;
 - tool schema and tool-result handling;
 - thinking block handling;
-- stream lifecycle through `core/anthropic/streaming`, including the neutral
+- stream lifecycle through `src/free_claude_code/core/anthropic/streaming`, including the neutral
   stream ledger, Anthropic SSE emitter, native event normalization, retry
   holdback, continuation, and tool repair;
 - native Anthropic stream policy;
 - token counting and user-facing error formatting.
 
 Shared stream behavior lives under
-[core/anthropic/streaming/](core/anthropic/streaming/). The shared layer owns the
+[src/free_claude_code/core/anthropic/streaming/](src/free_claude_code/core/anthropic/streaming/). The shared layer owns the
 Anthropic content-block ledger, SSE serialization, early retry classification,
 holdback buffering, retry attempt counting, common flush/discard behavior,
 midstream continuation, tool JSON repair, and final success/error tails. Provider
@@ -456,7 +456,7 @@ The public streaming API boundary owns the final downstream error shape: provide
 errors may be visible to clients, but after FCC exhausts provider retry/recovery
 they must not leak as retryable HTTP statuses for accepted streaming turns.
 
-[core/openai_responses/](core/openai_responses/) owns OpenAI Responses support:
+[src/free_claude_code/core/openai_responses/](src/free_claude_code/core/openai_responses/) owns OpenAI Responses support:
 
 - the `OpenAIResponsesAdapter` facade used by the API layer;
 - streaming-only `/v1/responses` support for Codex/FCC workflows;
@@ -471,7 +471,7 @@ streaming. Request conversion, stream transformation, Anthropic SSE parsing,
 Responses SSE event formatting, output item construction, tool identity mapping,
 reasoning mapping, ID generation, and error envelope construction each live
 behind the adapter boundary. `stream.py` is the public streaming entrypoint;
-[core/openai_responses/streaming/](core/openai_responses/streaming/) owns the
+[src/free_claude_code/core/openai_responses/streaming/](src/free_claude_code/core/openai_responses/streaming/) owns the
 block-indexed Responses stream assembler. The package separates Anthropic SSE
 dispatch, block state, output ledger ordering, block completion, SSE event
 builders, and error mapping. API code should depend on the adapter, not on
@@ -511,7 +511,7 @@ for shared Anthropic behavior.
 
 ## Local Optimizations And Server Tools
 
-[api/optimization_handlers.py](api/optimization_handlers.py) short-circuits
+[api/optimization_handlers.py](src/free_claude_code/api/optimization_handlers.py) short-circuits
 common low-value client requests before they reach a provider:
 
 - quota probes;
@@ -530,14 +530,14 @@ so Claude Code receives a parser-readable `<block>yes</block>` or
 `<block>no</block>` verdict.
 
 Local `web_search` and `web_fetch` handling lives under
-[api/web_tools/](api/web_tools/). When `ENABLE_WEB_SERVER_TOOLS` is true, the
+[api/web_tools/](src/free_claude_code/api/web_tools/). When `ENABLE_WEB_SERVER_TOOLS` is true, the
 Messages handler can stream local Anthropic server-tool responses without sending the
-request upstream. [api/web_tools/egress.py](api/web_tools/egress.py) enforces URL
+request upstream. [api/web_tools/egress.py](src/free_claude_code/api/web_tools/egress.py) enforces URL
 scheme and private-network restrictions for `web_fetch`.
 
 OpenAI-chat upstream providers are identified by
 `ProviderDescriptor.transport_type == "openai_chat"` in
-[config/provider_catalog.py](config/provider_catalog.py). They cannot safely
+[config/provider_catalog.py](src/free_claude_code/config/provider_catalog.py). They cannot safely
 represent Anthropic server-tool blocks, so the Messages handler rejects unsupported
 server-tool requests before provider execution instead of performing a lossy
 conversion. Forced `web_search` or `web_fetch` requests are handled locally when
@@ -546,7 +546,7 @@ and the local native Anthropic Messages transports may receive them.
 
 ## CLI Launchers And Managed Claude
 
-[cli/launchers/claude.py](cli/launchers/claude.py) owns the installed
+[cli/launchers/claude.py](src/free_claude_code/cli/launchers/claude.py) owns the installed
 `fcc-claude` launcher:
 
 - `fcc-claude` strips inherited `ANTHROPIC_*` variables, sets
@@ -555,7 +555,7 @@ and the local native Anthropic Messages transports may receive them.
   becomes the local-only `fcc-no-auth` sentinel so Claude Code reaches the proxy
   instead of stopping at its login gate.
 
-[cli/launchers/codex.py](cli/launchers/codex.py) owns the installed
+[cli/launchers/codex.py](src/free_claude_code/cli/launchers/codex.py) owns the installed
 `fcc-codex` launcher:
 
 - `fcc-codex` strips official OpenAI and Codex credential variables.
@@ -567,7 +567,7 @@ and the local native Anthropic Messages transports may receive them.
   fail-open: launch continues with a warning if the catalog cannot be prepared.
 - It stores the proxy auth token in `FCC_CODEX_API_KEY` for Codex to read.
 
-[cli/managed/](cli/managed/) owns managed Claude Code subprocesses used by
+[cli/managed/](src/free_claude_code/cli/managed/) owns managed Claude Code subprocesses used by
 Discord and Telegram messaging. Managed task invocations set
 `ANTHROPIC_API_URL`, `ANTHROPIC_BASE_URL`, gateway model discovery,
 non-interactive terminal settings, optional `--resume`, optional
@@ -586,89 +586,89 @@ selects Codex for Discord or Telegram.
 
 ## Messaging Architecture
 
-Messaging is optional. [api/runtime.py](api/runtime.py) calls
+Messaging is optional. [api/runtime.py](src/free_claude_code/api/runtime.py) calls
 `create_messaging_components()` from
-[messaging/platforms/factory.py](messaging/platforms/factory.py) during startup.
+[messaging/platforms/factory.py](src/free_claude_code/messaging/platforms/factory.py) during startup.
 If `MESSAGING_PLATFORM` is `none`, or if the selected platform token is missing,
 the messaging bridge is skipped.
 
 The platform factory returns a `MessagingPlatformComponents` bundle from
-[messaging/platforms/ports.py](messaging/platforms/ports.py): a
+[messaging/platforms/ports.py](src/free_claude_code/messaging/platforms/ports.py): a
 `MessagingRuntime` for lifecycle and inbound callbacks, an `OutboundMessenger`
 for queued sends/edits/deletes, and an optional `VoiceCancellation` port for
 reply-scoped `/clear` during voice transcription. Workflow code depends on
 these ports, not on Telegram or Discord SDK objects.
 
 Runtime adapters in
-[messaging/platforms/telegram.py](messaging/platforms/telegram.py) and
-[messaging/platforms/discord.py](messaging/platforms/discord.py) own SDK client
+[messaging/platforms/telegram.py](src/free_claude_code/messaging/platforms/telegram.py) and
+[messaging/platforms/discord.py](src/free_claude_code/messaging/platforms/discord.py) own SDK client
 lifecycle, event subscription, inbound handoff, and voice-note handoff. Inbound
 normalization lives in
-[messaging/platforms/telegram_inbound.py](messaging/platforms/telegram_inbound.py)
-and [messaging/platforms/discord_inbound.py](messaging/platforms/discord_inbound.py).
+[messaging/platforms/telegram_inbound.py](src/free_claude_code/messaging/platforms/telegram_inbound.py)
+and [messaging/platforms/discord_inbound.py](src/free_claude_code/messaging/platforms/discord_inbound.py).
 Outbound SDK calls live in
-[messaging/platforms/telegram_io.py](messaging/platforms/telegram_io.py) and
-[messaging/platforms/discord_io.py](messaging/platforms/discord_io.py). Shared
-delivery policy lives in [messaging/platforms/outbox.py](messaging/platforms/outbox.py),
+[messaging/platforms/telegram_io.py](src/free_claude_code/messaging/platforms/telegram_io.py) and
+[messaging/platforms/discord_io.py](src/free_claude_code/messaging/platforms/discord_io.py). Shared
+delivery policy lives in [messaging/platforms/outbox.py](src/free_claude_code/messaging/platforms/outbox.py),
 which owns queued send/edit/list-based delete, dedup keys, limiter delegation,
 and fire-and-forget behavior. Workflow and command code request deletion of
 message ID lists; platform IO decides whether to use native batch deletion
 (Telegram) or internal per-message deletion (Discord).
 Shared voice-note orchestration lives in
-[messaging/platforms/voice_flow.py](messaging/platforms/voice_flow.py), which owns
+[messaging/platforms/voice_flow.py](src/free_claude_code/messaging/platforms/voice_flow.py), which owns
 pending voice registration, temp-file cleanup, transcription, cancellation, error
 replies, and the handoff to `IncomingMessage`.
 
-[messaging/workflow.py](messaging/workflow.py) contains `MessagingWorkflow`, the
+[messaging/workflow.py](src/free_claude_code/messaging/workflow.py) contains `MessagingWorkflow`, the
 platform-agnostic coordinator. It owns dependencies, callback wiring, stop/clear
 side effects, render settings, and shutdown-visible state.
 
-[messaging/turn_intake.py](messaging/turn_intake.py) owns inbound message
+[messaging/turn_intake.py](src/free_claude_code/messaging/turn_intake.py) owns inbound message
 recording, slash command dispatch, status-echo filtering, reply resolution, tree
 creation/extension, initial status messages, persistence, and enqueueing.
 
-[messaging/node_runner.py](messaging/node_runner.py) owns managed CLI session
+[messaging/node_runner.py](src/free_claude_code/messaging/node_runner.py) owns managed CLI session
 lifecycle for queued nodes: parent-session fork/resume, session registration,
 CLI event parsing, transcript/status updates, cancellation, error propagation,
 and session cleanup. Runner persistence must be guarded by active tree
 membership so late cancellation cleanup cannot restore state after `/clear`
 removed a tree or reset the queue.
 
-[messaging/event_parser.py](messaging/event_parser.py) normalizes managed Claude
+[messaging/event_parser.py](src/free_claude_code/messaging/event_parser.py) normalizes managed Claude
 JSON events into low-level transcript events.
-[messaging/transcript/](messaging/transcript/) owns transcript assembly and
+[messaging/transcript/](src/free_claude_code/messaging/transcript/) owns transcript assembly and
 rendering: open content-block tracking, Task/subagent display state, segment
 models, render context, and truncation. Platform markdown details stay in
-[messaging/rendering/](messaging/rendering/).
+[messaging/rendering/](src/free_claude_code/messaging/rendering/).
 
-[messaging/command_context.py](messaging/command_context.py) defines the typed
+[messaging/command_context.py](src/free_claude_code/messaging/command_context.py) defines the typed
 dependency surface for `/stop`, `/clear`, and `/stats`; commands should not
 depend on the concrete workflow object or on platform SDK runtimes.
 
-[messaging/trees/manager.py](messaging/trees/manager.py) preserves
+[messaging/trees/manager.py](src/free_claude_code/messaging/trees/manager.py) preserves
 per-conversation ordering with tree-aware queues. Replies become child nodes, and
 each tree processes one node at a time while separate trees can progress
 independently. Tree cancellation is terminal: cancelling `/stop`, reply
 `/stop`, reply `/clear`, or global `/clear` awaits active task cleanup outside
 tree locks before command state cleanup continues.
-[messaging/trees/repository.py](messaging/trees/repository.py)
+[messaging/trees/repository.py](src/free_claude_code/messaging/trees/repository.py)
 owns the in-memory tree/node index, and
-[messaging/trees/processor.py](messaging/trees/processor.py) owns async queue
-processing. [messaging/trees/node.py](messaging/trees/node.py) owns
+[messaging/trees/processor.py](src/free_claude_code/messaging/trees/processor.py) owns async queue
+processing. [messaging/trees/node.py](src/free_claude_code/messaging/trees/node.py) owns
 `MessageNode` and `MessageState`,
-[messaging/trees/graph.py](messaging/trees/graph.py) owns parent/child and
-status-message lookup state, [messaging/trees/runtime.py](messaging/trees/runtime.py)
+[messaging/trees/graph.py](src/free_claude_code/messaging/trees/graph.py) owns parent/child and
+status-message lookup state, [messaging/trees/runtime.py](src/free_claude_code/messaging/trees/runtime.py)
 owns locks/current-task/processing state, and
-[messaging/trees/snapshot.py](messaging/trees/snapshot.py) owns typed persisted
+[messaging/trees/snapshot.py](src/free_claude_code/messaging/trees/snapshot.py) owns typed persisted
 conversation snapshots.
 
-[messaging/session/](messaging/session/) persists typed conversation snapshots
+[messaging/session/](src/free_claude_code/messaging/session/) persists typed conversation snapshots
 and message IDs to a JSON file under the managed agent workspace.
 `SessionStore` reads existing `sessions.json` files but exposes typed snapshot
 APIs to runtime code. Debounced atomic writes live in
-[messaging/session/persistence.py](messaging/session/persistence.py), and
+[messaging/session/persistence.py](src/free_claude_code/messaging/session/persistence.py), and
 per-chat message ID tracking for `/clear` lives in
-[messaging/session/message_log.py](messaging/session/message_log.py). `/clear`
+[messaging/session/message_log.py](src/free_claude_code/messaging/session/message_log.py). `/clear`
 guarantees FCC state cleanup and tries tracked platform deletes through the
 list-based outbound delete port, but Discord/Telegram can still reject
 individual message deletions for platform reasons such as permissions, age, or
@@ -699,7 +699,7 @@ sequenceDiagram
 
 ## Observability, Diagnostics, And Safety
 
-[core/trace.py](core/trace.py) emits structured trace events across stages such
+[core/trace.py](src/free_claude_code/core/trace.py) emits structured trace events across stages such
 as ingress, routing, provider, egress, messaging, and client CLI execution. Trace
 payloads are intended to connect API, provider, CLI, and messaging activity
 without requiring raw transport logs by default.
@@ -760,9 +760,9 @@ when maintainers want branch-level assurance.
 
 ### Add An Admin Setting
 
-1. Add or expose the setting in [config/settings.py](config/settings.py).
+1. Add or expose the setting in [config/settings.py](src/free_claude_code/config/settings.py).
 2. Add the template key to [.env.example](.env.example) if users configure it.
-3. Add a `ConfigFieldSpec` under [api/admin_config/](api/admin_config/), or add
+3. Add a `ConfigFieldSpec` under [api/admin_config/](src/free_claude_code/api/admin_config/), or add
    provider catalog metadata when the setting is provider credential, local URL,
    proxy, or display-name metadata.
 4. Mark `restart_required` or `session_sensitive` when runtime state cannot be
@@ -772,38 +772,38 @@ when maintainers want branch-level assurance.
 ### Add Or Change A Client Surface
 
 1. For an installed wrapper, add or update a launcher under
-   [cli/launchers/](cli/launchers/) and keep credential stripping local to that
+   [cli/launchers/](src/free_claude_code/cli/launchers/) and keep credential stripping local to that
    client.
-2. For messaging-managed execution, update [cli/managed/](cli/managed/) only
+2. For messaging-managed execution, update [cli/managed/](src/free_claude_code/cli/managed/) only
    when Discord or Telegram should actually run a different managed client.
 3. Ensure managed task parsing emits the event shapes expected by
-   [messaging/event_parser.py](messaging/event_parser.py) and
-   [messaging/node_event_pipeline.py](messaging/node_event_pipeline.py).
+   [messaging/event_parser.py](src/free_claude_code/messaging/event_parser.py) and
+   [messaging/node_event_pipeline.py](src/free_claude_code/messaging/node_event_pipeline.py).
 4. Add launcher, managed-session, and customer-flow tests under
    [tests/cli/](tests/cli/) and [tests/messaging/](tests/messaging/).
 
 ### Add A Messaging Platform
 
 1. Implement a `MessagingRuntime`, `OutboundMessenger`, and inbound normalizer
-   under [messaging/platforms/](messaging/platforms/).
-2. Reuse [messaging/platforms/outbox.py](messaging/platforms/outbox.py) for
+   under [messaging/platforms/](src/free_claude_code/messaging/platforms/).
+2. Reuse [messaging/platforms/outbox.py](src/free_claude_code/messaging/platforms/outbox.py) for
    queued outbound delivery and
-   [messaging/platforms/voice_flow.py](messaging/platforms/voice_flow.py) for
+   [messaging/platforms/voice_flow.py](src/free_claude_code/messaging/platforms/voice_flow.py) for
    voice-note handoff when the platform supports audio.
 3. Add construction logic to
-   [messaging/platforms/factory.py](messaging/platforms/factory.py).
+   [messaging/platforms/factory.py](src/free_claude_code/messaging/platforms/factory.py).
 4. Add settings and admin fields for tokens, allowlists, and platform-specific
    runtime options.
 5. Add rendering profile support in
-   [messaging/rendering/profiles.py](messaging/rendering/profiles.py) if needed.
+   [messaging/rendering/profiles.py](src/free_claude_code/messaging/rendering/profiles.py) if needed.
 6. Add deterministic runtime/outbound/workflow tests and optional live smoke
    targets.
 
 ### Add Protocol Behavior
 
-1. Put shared Anthropic behavior under [core/anthropic/](core/anthropic/).
+1. Put shared Anthropic behavior under [src/free_claude_code/core/anthropic/](src/free_claude_code/core/anthropic/).
 2. Put OpenAI Responses behavior under
-   [core/openai_responses/](core/openai_responses/).
+   [src/free_claude_code/core/openai_responses/](src/free_claude_code/core/openai_responses/).
 3. Keep provider-specific request quirks inside the provider module or transport
    subclass.
 4. Add stream contract tests under [tests/contracts/](tests/contracts/) or

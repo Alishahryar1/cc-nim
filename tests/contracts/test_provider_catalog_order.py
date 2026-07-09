@@ -1,6 +1,9 @@
 """Freeze ``PROVIDER_CATALOG`` insertion order used as canonical provider ranking."""
 
-from config.provider_catalog import PROVIDER_CATALOG, SUPPORTED_PROVIDER_IDS
+from free_claude_code.config.provider_catalog import (
+    PROVIDER_CATALOG,
+    SUPPORTED_PROVIDER_IDS,
+)
 
 _EXPECTED_PROVIDER_ORDER: tuple[str, ...] = (
     "nvidia_nim",

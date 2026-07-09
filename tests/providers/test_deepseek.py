@@ -7,20 +7,20 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from api.models.anthropic import (
+from free_claude_code.api.models.anthropic import (
     ContentBlockImage,
     Message,
     MessagesRequest,
     Tool,
 )
-from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
-from core.anthropic.stream_contracts import parse_sse_text
-from providers.base import ProviderConfig
-from providers.deepseek import (
+from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.deepseek import (
     DEEPSEEK_DEFAULT_BASE,
     DeepSeekProvider,
 )
-from providers.exceptions import InvalidRequestError
+from free_claude_code.providers.exceptions import InvalidRequestError
 
 
 @pytest.fixture
@@ -40,7 +40,9 @@ def mock_rate_limiter():
     async def _slot():
         yield
 
-    with patch("providers.transports.openai_chat.transport.GlobalRateLimiter") as mock:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
+    ) as mock:
         instance = mock.get_scoped_instance.return_value
 
         async def _passthrough(fn, *args, **kwargs):
@@ -61,7 +63,9 @@ def test_default_base_url_alias():
 
 
 def test_init(deepseek_config):
-    with patch("providers.transports.openai_chat.transport.AsyncOpenAI") as mock_client:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ) as mock_client:
         provider = DeepSeekProvider(deepseek_config)
     assert provider._api_key == "test_deepseek_key"
     assert provider._base_url == "https://api.deepseek.com"

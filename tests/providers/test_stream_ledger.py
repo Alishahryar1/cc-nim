@@ -5,9 +5,13 @@ from unittest.mock import patch
 
 import pytest
 
-from core.anthropic import AnthropicStreamLedger, StreamBlockLedger, map_stop_reason
-from core.anthropic.stream_contracts import SSEEvent, parse_sse_text
-from core.anthropic.streaming import ToolBlockState
+from free_claude_code.core.anthropic import (
+    AnthropicStreamLedger,
+    StreamBlockLedger,
+    map_stop_reason,
+)
+from free_claude_code.core.anthropic.stream_contracts import SSEEvent, parse_sse_text
+from free_claude_code.core.anthropic.streaming import ToolBlockState
 
 
 def _parse_sse(sse_str: str) -> dict:
@@ -741,7 +745,7 @@ class TestAnthropicStreamLedgerTokenEstimation:
         builder.start_text_block()
         builder.emit_text_delta("a" * 100)  # 100 chars -> ~25 tokens
 
-        with patch("core.anthropic.streaming.ledger.ENCODER", None):
+        with patch("free_claude_code.core.anthropic.streaming.ledger.ENCODER", None):
             tokens = builder.estimate_output_tokens()
             assert tokens == 25  # 100 // 4
 
@@ -751,7 +755,7 @@ class TestAnthropicStreamLedgerTokenEstimation:
         builder.start_tool_block(0, "t1", "Read")
         builder.emit_tool_delta(0, '{"path":"test.py"}')
 
-        with patch("core.anthropic.streaming.ledger.ENCODER", None):
+        with patch("free_claude_code.core.anthropic.streaming.ledger.ENCODER", None):
             tokens = builder.estimate_output_tokens()
             # 1 tool * 50 = 50
             assert tokens == 50
@@ -791,7 +795,9 @@ class TestAnthropicStreamLedgerTokenEstimation:
             )
         )
 
-        with patch("core.anthropic.streaming.ledger.ENCODER", _CharEncoder()):
+        with patch(
+            "free_claude_code.core.anthropic.streaming.ledger.ENCODER", _CharEncoder()
+        ):
             tokens = builder.estimate_output_tokens()
 
         assert tokens == len(tool_name) + len(tool_args) + 15 + 4
@@ -803,7 +809,9 @@ class TestAnthropicStreamLedgerTokenEstimation:
         builder.start_tool_block(0, "toolu_openai", tool_name)
         builder.emit_tool_delta(0, tool_args)
 
-        with patch("core.anthropic.streaming.ledger.ENCODER", _CharEncoder()):
+        with patch(
+            "free_claude_code.core.anthropic.streaming.ledger.ENCODER", _CharEncoder()
+        ):
             tokens = builder.estimate_output_tokens()
 
         assert tokens == len(tool_name) + len(tool_args) + 15 + 4
@@ -814,7 +822,9 @@ class TestAnthropicStreamLedgerTokenEstimation:
         state.name = "Read"
         state.pre_start_args = '{"path":"test.py"}'
 
-        with patch("core.anthropic.streaming.ledger.ENCODER", _CharEncoder()):
+        with patch(
+            "free_claude_code.core.anthropic.streaming.ledger.ENCODER", _CharEncoder()
+        ):
             tokens = builder.estimate_output_tokens()
 
         assert tokens == 0
@@ -827,7 +837,9 @@ class TestAnthropicStreamLedgerTokenEstimation:
         builder.content_block_delta(0, "input_json_delta", tool_args)
         builder.content_block_stop(0)
 
-        with patch("core.anthropic.streaming.ledger.ENCODER", _CharEncoder()):
+        with patch(
+            "free_claude_code.core.anthropic.streaming.ledger.ENCODER", _CharEncoder()
+        ):
             tokens = builder.estimate_output_tokens()
 
         assert tokens == len(tool_name) + len(tool_args) + 15 + 4

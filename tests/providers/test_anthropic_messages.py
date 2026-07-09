@@ -6,18 +6,22 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
-from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
-from core.anthropic.stream_contracts import parse_sse_text
-from core.anthropic.streaming import (
+from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
+from free_claude_code.core.anthropic.streaming import (
     MIDSTREAM_RECOVERY_ATTEMPTS,
     AnthropicStreamLedger,
     TruncatedProviderStreamError,
     format_sse_event,
 )
-from providers.base import ProviderConfig
-from providers.exceptions import ProviderError
-from providers.transports.anthropic_messages import AnthropicMessagesTransport
-from providers.transports.anthropic_messages.recovery import AnthropicMessagesRecovery
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.exceptions import ProviderError
+from free_claude_code.providers.transports.anthropic_messages import (
+    AnthropicMessagesTransport,
+)
+from free_claude_code.providers.transports.anthropic_messages.recovery import (
+    AnthropicMessagesRecovery,
+)
 
 
 class NativeProvider(AnthropicMessagesTransport):
@@ -125,7 +129,7 @@ def mock_rate_limiter():
         yield
 
     with patch(
-        "providers.transports.anthropic_messages.transport.GlobalRateLimiter"
+        "free_claude_code.providers.transports.anthropic_messages.transport.GlobalRateLimiter"
     ) as mock:
         instance = mock.get_scoped_instance.return_value
 

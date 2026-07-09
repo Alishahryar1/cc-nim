@@ -1,8 +1,8 @@
 """Tests for the OpenCode OpenAI-compatible provider."""
 
-from api.models.anthropic import MessagesRequest
-from providers.base import ProviderConfig
-from providers.opencode import OpenCodeProvider
+from free_claude_code.api.models.anthropic import MessagesRequest
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.opencode import OpenCodeProvider
 
 
 def test_build_request_body_preserves_empty_reasoning_content() -> None:

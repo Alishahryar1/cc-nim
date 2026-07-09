@@ -2,7 +2,7 @@
 
 import json
 
-from core.anthropic.native_sse_block_policy import (
+from free_claude_code.core.anthropic.native_sse_block_policy import (
     NativeSseBlockPolicyState,
     format_native_sse_event,
     transform_native_sse_block_event,

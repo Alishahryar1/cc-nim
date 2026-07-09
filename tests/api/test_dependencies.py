@@ -7,17 +7,17 @@ from fastapi import HTTPException
 from starlette.applications import Starlette
 from starlette.datastructures import State
 
-from api.dependencies import (
+from free_claude_code.api.dependencies import (
     get_provider_runtime,
     get_settings,
     maybe_provider_runtime,
     require_api_key,
     resolve_provider,
 )
-from config.nim import NimSettings
-from providers.exceptions import ServiceUnavailableError
-from providers.nvidia_nim import NvidiaNimProvider
-from providers.runtime import ProviderRuntime
+from free_claude_code.config.nim import NimSettings
+from free_claude_code.providers.exceptions import ServiceUnavailableError
+from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
+from free_claude_code.providers.runtime import ProviderRuntime
 
 
 def _make_mock_settings(**overrides):
@@ -93,7 +93,7 @@ def _request(headers=None, token: str = ""):
 def test_get_settings():
     settings = get_settings()
     assert settings is not None
-    with patch("api.dependencies._get_settings") as mock_get:
+    with patch("free_claude_code.api.dependencies._get_settings") as mock_get:
         get_settings()
         mock_get.assert_called_once()
 
@@ -119,7 +119,9 @@ def test_resolve_provider_per_app_uses_separate_runtimes() -> None:
     app1 = _app_with_runtime()
     app2 = _app_with_runtime()
 
-    with patch("providers.transports.openai_chat.transport.AsyncOpenAI"):
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ):
         p1 = resolve_provider("nvidia_nim", app=app1)
         p2 = resolve_provider("nvidia_nim", app=app2)
 
@@ -149,7 +151,7 @@ def test_resolve_provider_missing_runtime_raises_service_unavailable() -> None:
 
 
 def test_resolve_provider_unrelated_value_error_is_not_unknown_provider_log() -> None:
-    import api.dependencies as deps
+    import free_claude_code.api.dependencies as deps
 
     app = _app_with_runtime()
     runtime = get_provider_runtime(app)

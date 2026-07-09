@@ -3,10 +3,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from api.app import create_app
-from core.anthropic.stream_contracts import parse_sse_text
-from providers.exceptions import RateLimitError
-from providers.nvidia_nim import NvidiaNimProvider
+from free_claude_code.api.app import create_app
+from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
+from free_claude_code.providers.exceptions import RateLimitError
+from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 
 app = create_app()
 
@@ -46,12 +46,17 @@ mock_provider.stream_response = _mock_stream_response
 def client():
     """HTTP client with provider resolution stubbed; patch only for this file."""
     with (
-        patch("api.dependencies.resolve_provider", return_value=mock_provider),
         patch(
-            "providers.runtime.ProviderRuntime.validate_configured_models",
+            "free_claude_code.api.dependencies.resolve_provider",
+            return_value=mock_provider,
+        ),
+        patch(
+            "free_claude_code.providers.runtime.ProviderRuntime.validate_configured_models",
             new_callable=AsyncMock,
         ),
-        patch("providers.runtime.ProviderRuntime.start_model_list_refresh"),
+        patch(
+            "free_claude_code.providers.runtime.ProviderRuntime.start_model_list_refresh"
+        ),
         TestClient(app) as test_client,
     ):
         yield test_client
@@ -172,7 +177,7 @@ def test_model_mapping(client: TestClient):
 
 
 def test_error_fallbacks(client: TestClient):
-    from providers.exceptions import (
+    from free_claude_code.providers.exceptions import (
         AuthenticationError,
         OverloadedError,
         RateLimitError,

@@ -1,6 +1,6 @@
 """Pydantic passthrough of Anthropic protocol fields (e.g. ``cache_control``)."""
 
-from api.models.anthropic import (
+from free_claude_code.api.models.anthropic import (
     ContentBlockServerToolUse,
     ContentBlockText,
     ContentBlockWebSearchToolResult,
@@ -9,8 +9,8 @@ from api.models.anthropic import (
     SystemContent,
     Tool,
 )
-from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
-from core.anthropic.native_messages_request import (
+from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from free_claude_code.core.anthropic.native_messages_request import (
     build_base_native_anthropic_request_body,
 )
 

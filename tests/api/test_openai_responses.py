@@ -4,10 +4,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from api.app import create_app
-from core.anthropic.stream_contracts import parse_sse_text
-from core.anthropic.streaming import format_sse_event
-from providers.exceptions import RateLimitError
+from free_claude_code.api.app import create_app
+from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
+from free_claude_code.core.anthropic.streaming import format_sse_event
+from free_claude_code.providers.exceptions import RateLimitError
 
 
 class FakeProvider:
@@ -52,7 +52,9 @@ def responses_client():
     provider = FakeProvider(_anthropic_text_stream("Hello from provider"))
     app = create_app(lifespan_enabled=False)
     with (
-        patch("api.dependencies.resolve_provider", return_value=provider),
+        patch(
+            "free_claude_code.api.dependencies.resolve_provider", return_value=provider
+        ),
         TestClient(app) as client,
     ):
         yield client, provider
@@ -101,7 +103,9 @@ def test_create_response_pre_start_provider_error_returns_openai_error() -> None
     provider = PreStartFailingProvider()
     app = create_app(lifespan_enabled=False)
     with (
-        patch("api.dependencies.resolve_provider", return_value=provider),
+        patch(
+            "free_claude_code.api.dependencies.resolve_provider", return_value=provider
+        ),
         TestClient(app) as client,
     ):
         response = client.post(
@@ -122,7 +126,9 @@ def test_create_response_post_start_failure_preserves_response_id() -> None:
     provider = PostStartFailingProvider()
     app = create_app(lifespan_enabled=False)
     with (
-        patch("api.dependencies.resolve_provider", return_value=provider),
+        patch(
+            "free_claude_code.api.dependencies.resolve_provider", return_value=provider
+        ),
         TestClient(app) as client,
     ):
         response = client.post(
@@ -144,9 +150,11 @@ def test_create_response_stream_bypasses_local_message_optimizations() -> None:
     provider = FakeProvider(_anthropic_text_stream("Provider response"))
     app = create_app(lifespan_enabled=False)
     with (
-        patch("api.dependencies.resolve_provider", return_value=provider),
         patch(
-            "api.handlers.messages.try_optimizations",
+            "free_claude_code.api.dependencies.resolve_provider", return_value=provider
+        ),
+        patch(
+            "free_claude_code.api.handlers.messages.try_optimizations",
             side_effect=AssertionError("Responses must not use message optimizations"),
         ),
         TestClient(app) as client,
@@ -190,7 +198,9 @@ def test_create_response_stream_preserves_interleaved_reasoning_order() -> None:
     provider = FakeProvider(_anthropic_interleaved_reasoning_stream())
     app = create_app(lifespan_enabled=False)
     with (
-        patch("api.dependencies.resolve_provider", return_value=provider),
+        patch(
+            "free_claude_code.api.dependencies.resolve_provider", return_value=provider
+        ),
         TestClient(app) as client,
     ):
         response = client.post(
@@ -231,7 +241,9 @@ def test_create_response_tool_stream_emits_function_call() -> None:
     provider = FakeProvider(_anthropic_tool_stream())
     app = create_app(lifespan_enabled=False)
     with (
-        patch("api.dependencies.resolve_provider", return_value=provider),
+        patch(
+            "free_claude_code.api.dependencies.resolve_provider", return_value=provider
+        ),
         TestClient(app) as client,
     ):
         response = client.post(
@@ -265,7 +277,9 @@ def test_create_response_malformed_provider_function_call_fails_stream() -> None
     )
     app = create_app(lifespan_enabled=False)
     with (
-        patch("api.dependencies.resolve_provider", return_value=provider),
+        patch(
+            "free_claude_code.api.dependencies.resolve_provider", return_value=provider
+        ),
         TestClient(app) as client,
     ):
         response = client.post(
@@ -297,7 +311,9 @@ def test_create_response_accepts_codex_namespace_tool_request() -> None:
     provider = FakeProvider(_anthropic_tool_stream(tool_name="mcp__node_repl__js"))
     app = create_app(lifespan_enabled=False)
     with (
-        patch("api.dependencies.resolve_provider", return_value=provider),
+        patch(
+            "free_claude_code.api.dependencies.resolve_provider", return_value=provider
+        ),
         TestClient(app) as client,
     ):
         response = client.post(
@@ -345,7 +361,9 @@ def test_create_response_accepts_codex_custom_tool_request() -> None:
     )
     app = create_app(lifespan_enabled=False)
     with (
-        patch("api.dependencies.resolve_provider", return_value=provider),
+        patch(
+            "free_claude_code.api.dependencies.resolve_provider", return_value=provider
+        ),
         TestClient(app) as client,
     ):
         response = client.post(
@@ -396,7 +414,9 @@ def test_create_response_stream_provider_error_returns_response_failed() -> None
     )
     app = create_app(lifespan_enabled=False)
     with (
-        patch("api.dependencies.resolve_provider", return_value=provider),
+        patch(
+            "free_claude_code.api.dependencies.resolve_provider", return_value=provider
+        ),
         TestClient(app) as client,
     ):
         response = client.post(
@@ -426,7 +446,9 @@ def test_create_response_replays_prior_reasoning_as_reasoning_content() -> None:
     provider = FakeProvider(_anthropic_text_stream("done"))
     app = create_app(lifespan_enabled=False)
     with (
-        patch("api.dependencies.resolve_provider", return_value=provider),
+        patch(
+            "free_claude_code.api.dependencies.resolve_provider", return_value=provider
+        ),
         TestClient(app) as client,
     ):
         response = client.post(
@@ -484,7 +506,9 @@ def test_create_response_quarantines_malformed_prior_function_call() -> None:
     provider = FakeProvider(_anthropic_text_stream("done"))
     app = create_app(lifespan_enabled=False)
     with (
-        patch("api.dependencies.resolve_provider", return_value=provider),
+        patch(
+            "free_claude_code.api.dependencies.resolve_provider", return_value=provider
+        ),
         TestClient(app) as client,
     ):
         response = client.post(
@@ -534,7 +558,9 @@ def test_create_response_maps_reasoning_effort_to_thinking_request(
     provider = FakeProvider(_anthropic_text_stream("done"))
     app = create_app(lifespan_enabled=False)
     with (
-        patch("api.dependencies.resolve_provider", return_value=provider),
+        patch(
+            "free_claude_code.api.dependencies.resolve_provider", return_value=provider
+        ),
         TestClient(app) as client,
     ):
         response = client.post(
@@ -557,7 +583,9 @@ def test_create_response_maps_redacted_thinking_to_encrypted_reasoning() -> None
     provider = FakeProvider(_anthropic_redacted_thinking_stream())
     app = create_app(lifespan_enabled=False)
     with (
-        patch("api.dependencies.resolve_provider", return_value=provider),
+        patch(
+            "free_claude_code.api.dependencies.resolve_provider", return_value=provider
+        ),
         TestClient(app) as client,
     ):
         response = client.post(

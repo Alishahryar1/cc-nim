@@ -641,13 +641,14 @@ Important pieces:
 
 ```text
 free-claude-code/
-├── api/                   # FastAPI routes, service layer, routing, optimizations
-├── core/                  # Shared Anthropic protocol helpers, SSE, OpenAI Responses
-│   └── openai_responses/  # Responses ↔ Anthropic conversion and SSE mapping
-├── providers/             # Provider runtime, transports, rate limiting
-├── messaging/             # Discord/Telegram runtimes, outbound ports, voice
-├── cli/                   # Package entry points and client CLI process management
-├── config/                # Settings, provider catalog, logging
+├── src/free_claude_code/   # Installable runtime package
+│   ├── api/                # FastAPI routes, service layer, routing, optimizations
+│   ├── core/               # Shared Anthropic protocol helpers, SSE, OpenAI Responses
+│   │   └── openai_responses/
+│   ├── providers/          # Provider runtime, transports, rate limiting
+│   ├── messaging/          # Discord/Telegram runtimes, outbound ports, voice
+│   ├── cli/                # Package entry points and client CLI process management
+│   └── config/             # Settings, provider catalog, logging
 └── tests/                 # Unit and contract tests
 ```
 
@@ -705,9 +706,9 @@ CI also enforces a ban on `# type: ignore` / `# ty: ignore` suppressions; `scrip
 
 - Add OpenAI-compatible providers by extending `OpenAIChatTransport`.
 - Add Anthropic Messages providers by extending `AnthropicMessagesTransport`.
-- Extend OpenAI Responses conversion in `core/openai_responses/` when Codex adds new request or stream shapes.
-- Register provider metadata in `config.provider_catalog` and factory wiring in `providers.runtime`.
-- Add messaging platforms by wiring runtime, outbound, and inbound-normalizer ports in `messaging/platforms/`.
+- Extend OpenAI Responses conversion in `src/free_claude_code/core/openai_responses/` when Codex adds new request or stream shapes.
+- Register provider metadata in `free_claude_code.free_claude_code.config.provider_catalog` and factory wiring in `free_claude_code.free_claude_code.providers.runtime`.
+- Add messaging platforms by wiring runtime, outbound, and inbound-normalizer ports in `src/free_claude_code/messaging/platforms/`.
 
 ## Contributing
 

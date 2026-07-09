@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from messaging.trees import MessageState
+from free_claude_code.messaging.trees import MessageState
 from smoke.lib.e2e import FakePlatformDriver, default_cli_events
 
 pytestmark = [pytest.mark.live, pytest.mark.smoke_target("messaging")]

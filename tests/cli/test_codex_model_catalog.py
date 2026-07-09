@@ -7,7 +7,7 @@ from typing import Any, cast
 
 import pytest
 
-from cli.launchers.codex_model_catalog import (
+from free_claude_code.cli.launchers.codex_model_catalog import (
     build_codex_model_catalog,
     write_codex_model_catalog,
 )

@@ -6,7 +6,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from config.logging_config import configure_logging
+from free_claude_code.config.logging_config import configure_logging
 
 
 def test_configure_logging_creates_parent_directories(tmp_path) -> None:

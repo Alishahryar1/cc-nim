@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from messaging.models import IncomingMessage
-from messaging.trees import MessageNode, MessageState, MessageTree
-from messaging.trees.processor import TreeQueueProcessor
+from free_claude_code.messaging.models import IncomingMessage
+from free_claude_code.messaging.trees import MessageNode, MessageState, MessageTree
+from free_claude_code.messaging.trees.processor import TreeQueueProcessor
 
 
 @pytest.fixture

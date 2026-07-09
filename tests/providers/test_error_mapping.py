@@ -7,13 +7,13 @@ import openai
 import pytest
 from httpx import ConnectError, HTTPStatusError, ReadTimeout, Request, Response
 
-from config.constants import PROVIDER_ERROR_BODY_DISPLAY_CAP_BYTES
-from core.anthropic import (
+from free_claude_code.config.constants import PROVIDER_ERROR_BODY_DISPLAY_CAP_BYTES
+from free_claude_code.core.anthropic import (
     append_request_id,
     format_user_error_preview,
     get_user_facing_error_message,
 )
-from providers.error_mapping import (
+from free_claude_code.providers.error_mapping import (
     attach_provider_error_body,
     exception_cause_types,
     extract_provider_error_detail,
@@ -21,7 +21,7 @@ from providers.error_mapping import (
     map_error,
     user_visible_message_for_mapped_provider_error,
 )
-from providers.exceptions import (
+from free_claude_code.providers.exceptions import (
     APIError,
     AuthenticationError,
     InvalidRequestError,
@@ -61,7 +61,9 @@ class TestMapError:
     def test_rate_limit_error(self):
         """openai.RateLimitError -> RateLimitError and triggers global block."""
         exc = _make_openai_error(openai.RateLimitError, status_code=429)
-        with patch("providers.error_mapping.GlobalRateLimiter") as mock_rl:
+        with patch(
+            "free_claude_code.providers.error_mapping.GlobalRateLimiter"
+        ) as mock_rl:
             mock_instance = MagicMock()
             mock_rl.get_instance.return_value = mock_instance
             result = map_error(exc)
@@ -380,8 +382,20 @@ def test_streaming_transports_pass_scoped_rate_limiter_to_map_error():
     """Guardrail: streaming adapters must scope reactive 429 handling per provider."""
     root = Path(__file__).resolve().parents[2]
     for path in (
-        root / "providers" / "transports" / "anthropic_messages" / "transport.py",
-        root / "providers" / "transports" / "openai_chat" / "transport.py",
+        root
+        / "src"
+        / "free_claude_code"
+        / "providers"
+        / "transports"
+        / "anthropic_messages"
+        / "transport.py",
+        root
+        / "src"
+        / "free_claude_code"
+        / "providers"
+        / "transports"
+        / "openai_chat"
+        / "transport.py",
     ):
         text = path.read_text(encoding="utf-8")
         assert "map_error(" in text, str(path)

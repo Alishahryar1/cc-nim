@@ -6,11 +6,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from api.models.anthropic import Message, MessagesRequest, Tool
-from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
-from providers.base import ProviderConfig
-from providers.transports.openai_chat import OpenAIChatTransport
-from providers.wafer import WAFER_DEFAULT_BASE, WaferProvider
+from free_claude_code.api.models.anthropic import Message, MessagesRequest, Tool
+from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
+from free_claude_code.providers.wafer import WAFER_DEFAULT_BASE, WaferProvider
 
 
 class CountingWaferProvider(WaferProvider):
@@ -31,7 +31,9 @@ def mock_rate_limiter():
     async def _slot():
         yield
 
-    with patch("providers.transports.openai_chat.transport.GlobalRateLimiter") as mock:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
+    ) as mock:
         instance = mock.get_scoped_instance.return_value
 
         async def _passthrough(fn, *args, **kwargs):

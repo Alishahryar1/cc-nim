@@ -5,9 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from providers.base import ProviderConfig
-from providers.gemini import GEMINI_DEFAULT_BASE, GeminiProvider
-from providers.gemini.quirks import GEMINI_SKIP_THOUGHT_SIGNATURE_VALIDATOR
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.gemini import GEMINI_DEFAULT_BASE, GeminiProvider
+from free_claude_code.providers.gemini.quirks import (
+    GEMINI_SKIP_THOUGHT_SIGNATURE_VALIDATOR,
+)
 
 
 class MockMessage:
@@ -59,7 +61,9 @@ def mock_rate_limiter():
     async def _slot():
         yield
 
-    with patch("providers.transports.openai_chat.transport.GlobalRateLimiter") as mock:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
+    ) as mock:
         instance = mock.get_scoped_instance.return_value
 
         async def _passthrough(fn, *args, **kwargs):
@@ -77,7 +81,9 @@ def gemini_provider(gemini_config):
 
 def test_init(gemini_config):
     """Test provider initialization."""
-    with patch("providers.transports.openai_chat.transport.AsyncOpenAI") as mock_openai:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ) as mock_openai:
         provider = GeminiProvider(gemini_config)
         assert provider._api_key == "test_gemini_key"
         assert (

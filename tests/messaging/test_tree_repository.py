@@ -2,9 +2,9 @@ from unittest.mock import MagicMock
 
 import pytest
 
-from messaging.models import IncomingMessage
-from messaging.trees import MessageNode, MessageTree
-from messaging.trees.repository import TreeRepository
+from free_claude_code.messaging.models import IncomingMessage
+from free_claude_code.messaging.trees import MessageNode, MessageTree
+from free_claude_code.messaging.trees.repository import TreeRepository
 
 
 @pytest.fixture

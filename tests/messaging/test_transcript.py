@@ -1,14 +1,14 @@
-from messaging.rendering.telegram_markdown import (
+from free_claude_code.messaging.rendering.telegram_markdown import (
     escape_md_v2,
     escape_md_v2_code,
     mdv2_bold,
     mdv2_code_inline,
     render_markdown_to_mdv2,
 )
-from messaging.transcript import RenderCtx, TranscriptBuffer
-from messaging.transcript.renderer import render_segments
-from messaging.transcript.segments import Segment, SubagentSegment
-from messaging.transcript.subagents import SubagentState
+from free_claude_code.messaging.transcript import RenderCtx, TranscriptBuffer
+from free_claude_code.messaging.transcript.renderer import render_segments
+from free_claude_code.messaging.transcript.segments import Segment, SubagentSegment
+from free_claude_code.messaging.transcript.subagents import SubagentState
 
 
 def _ctx() -> RenderCtx:

@@ -1,4 +1,8 @@
-from api.models.anthropic import Message, MessagesRequest, TokenCountRequest
+from free_claude_code.api.models.anthropic import (
+    Message,
+    MessagesRequest,
+    TokenCountRequest,
+)
 
 
 def test_messages_request_parses_without_model_mapping_side_effects():

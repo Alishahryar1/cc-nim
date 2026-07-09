@@ -11,7 +11,7 @@ from tests.api.test_app_lifespan_and_errors import _app_settings
 
 @pytest.mark.asyncio
 async def test_messaging_start_failure_default_logs_exclude_traceback(caplog):
-    api_runtime_mod = importlib.import_module("api.runtime")
+    api_runtime_mod = importlib.import_module("free_claude_code.api.runtime")
     settings = _app_settings(
         messaging_platform="telegram",
         telegram_bot_token="t",
@@ -28,7 +28,7 @@ async def test_messaging_start_failure_default_logs_exclude_traceback(caplog):
 
     with (
         patch(
-            "messaging.platforms.factory.create_messaging_components",
+            "free_claude_code.messaging.platforms.factory.create_messaging_components",
             side_effect=RuntimeError("SECRET_RUNTIME_DETAIL"),
         ),
         caplog.at_level(logging.ERROR),
@@ -42,7 +42,7 @@ async def test_messaging_start_failure_default_logs_exclude_traceback(caplog):
 
 @pytest.mark.asyncio
 async def test_best_effort_default_logs_exclude_exception_text(caplog):
-    api_runtime_mod = importlib.import_module("api.runtime")
+    api_runtime_mod = importlib.import_module("free_claude_code.api.runtime")
 
     async def boom():
         raise ValueError("SECRET_SHUTDOWN")
@@ -57,7 +57,7 @@ async def test_best_effort_default_logs_exclude_exception_text(caplog):
 
 @pytest.mark.asyncio
 async def test_best_effort_verbose_includes_exception_text(caplog):
-    api_runtime_mod = importlib.import_module("api.runtime")
+    api_runtime_mod = importlib.import_module("free_claude_code.api.runtime")
 
     async def boom():
         raise ValueError("VISIBLE_SHUTDOWN")

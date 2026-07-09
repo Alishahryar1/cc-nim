@@ -5,11 +5,13 @@ import openai
 import pytest
 from httpx import Request, Response
 
-from config.nim import NimSettings
-from providers.defaults import NVIDIA_NIM_DEFAULT_BASE
-from providers.exceptions import ProviderError
-from providers.nvidia_nim import NvidiaNimProvider
-from providers.nvidia_nim.tool_schema import NIM_TOOL_ARGUMENT_ALIASES_KEY
+from free_claude_code.config.nim import NimSettings
+from free_claude_code.providers.defaults import NVIDIA_NIM_DEFAULT_BASE
+from free_claude_code.providers.exceptions import ProviderError
+from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
+from free_claude_code.providers.nvidia_nim.tool_schema import (
+    NIM_TOOL_ARGUMENT_ALIASES_KEY,
+)
 
 
 # Mock data classes
@@ -116,7 +118,9 @@ def _make_internal_server_error(message: str) -> openai.InternalServerError:
 @pytest.fixture(autouse=True)
 def mock_rate_limiter():
     """Mock the global rate limiter to prevent waiting."""
-    with patch("providers.transports.openai_chat.transport.GlobalRateLimiter") as mock:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
+    ) as mock:
         instance = mock.get_scoped_instance.return_value
         instance.wait_if_blocked = AsyncMock(return_value=False)
 
@@ -131,7 +135,9 @@ def mock_rate_limiter():
 @pytest.mark.asyncio
 async def test_init(provider_config):
     """Test provider initialization."""
-    with patch("providers.transports.openai_chat.transport.AsyncOpenAI") as mock_openai:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ) as mock_openai:
         provider = NvidiaNimProvider(provider_config, nim_settings=NimSettings())
         assert provider._api_key == "test_key"
         assert provider._base_url == "https://test.api.nvidia.com/v1"
@@ -141,7 +147,7 @@ async def test_init(provider_config):
 @pytest.mark.asyncio
 async def test_init_uses_configurable_timeouts():
     """Test that provider passes configurable read/write/connect timeouts to client."""
-    from providers.base import ProviderConfig
+    from free_claude_code.providers.base import ProviderConfig
 
     config = ProviderConfig(
         api_key="test_key",
@@ -150,7 +156,9 @@ async def test_init_uses_configurable_timeouts():
         http_write_timeout=15.0,
         http_connect_timeout=5.0,
     )
-    with patch("providers.transports.openai_chat.transport.AsyncOpenAI") as mock_openai:
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ) as mock_openai:
         NvidiaNimProvider(config, nim_settings=NimSettings())
         call_kwargs = mock_openai.call_args[1]
         timeout = call_kwargs["timeout"]

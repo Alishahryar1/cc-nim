@@ -3,9 +3,9 @@ from typing import Any
 
 import pytest
 
-from core.anthropic.stream_contracts import parse_sse_text
-from core.anthropic.streaming import format_sse_event
-from core.openai_responses import OpenAIResponsesAdapter
+from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
+from free_claude_code.core.anthropic.streaming import format_sse_event
+from free_claude_code.core.openai_responses import OpenAIResponsesAdapter
 
 _ADAPTER = OpenAIResponsesAdapter()
 

@@ -2,9 +2,9 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from api.app import create_app
-from api.dependencies import get_settings
-from config.settings import Settings
+from free_claude_code.api.app import create_app
+from free_claude_code.api.dependencies import get_settings
+from free_claude_code.config.settings import Settings
 
 app = create_app()
 
@@ -20,7 +20,7 @@ def test_anthropic_auth_token_required_and_accepts_x_api_key():
         "messages": [{"role": "user", "content": "hello"}],
     }
 
-    with patch("api.routes.get_token_count", return_value=1):
+    with patch("free_claude_code.api.routes.get_token_count", return_value=1):
         # No header -> 401
         r = client.post("/v1/messages/count_tokens", json=payload)
         assert r.status_code == 401
@@ -46,7 +46,7 @@ def test_anthropic_auth_token_accepts_bearer_authorization():
         "messages": [{"role": "user", "content": "hello"}],
     }
 
-    with patch("api.routes.get_token_count", return_value=2):
+    with patch("free_claude_code.api.routes.get_token_count", return_value=2):
         # Authorization Bearer -> 200
         r = client.post(
             "/v1/messages/count_tokens",
@@ -70,7 +70,7 @@ def test_anthropic_auth_token_normalizes_configured_whitespace():
         "messages": [{"role": "user", "content": "hello"}],
     }
 
-    with patch("api.routes.get_token_count", return_value=3):
+    with patch("free_claude_code.api.routes.get_token_count", return_value=3):
         r = client.post(
             "/v1/messages/count_tokens",
             json=payload,

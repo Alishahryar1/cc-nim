@@ -4,39 +4,49 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from config.nim import NimSettings
-from config.provider_catalog import (
+from free_claude_code.config.nim import NimSettings
+from free_claude_code.config.provider_catalog import (
     COHERE_DEFAULT_BASE,
     GITHUB_MODELS_DEFAULT_BASE,
     MINIMAX_DEFAULT_BASE,
     PROVIDER_CATALOG,
     ZAI_DEFAULT_BASE,
 )
-from config.provider_ids import SUPPORTED_PROVIDER_IDS
-from providers.cerebras import CerebrasProvider
-from providers.cloudflare import CloudflareProvider
-from providers.codestral import CodestralProvider
-from providers.cohere import CohereProvider
-from providers.deepseek import DeepSeekProvider
-from providers.exceptions import UnknownProviderTypeError
-from providers.fireworks import FireworksProvider
-from providers.gemini import GeminiProvider
-from providers.github_models import GitHubModelsProvider
-from providers.groq import GroqProvider
-from providers.huggingface import HUGGINGFACE_DEFAULT_BASE, HuggingFaceProvider
-from providers.kimi import KimiProvider
-from providers.llamacpp import LlamaCppProvider
-from providers.lmstudio import LMStudioProvider
-from providers.minimax import MiniMaxProvider
-from providers.mistral import MistralProvider
-from providers.nvidia_nim import NvidiaNimProvider
-from providers.ollama import OllamaProvider
-from providers.open_router import OpenRouterProvider
-from providers.opencode import OpenCodeProvider
-from providers.runtime import ProviderRuntime, build_provider_config, create_provider
-from providers.vercel import VERCEL_AI_GATEWAY_DEFAULT_BASE, VercelProvider
-from providers.wafer import WaferProvider
-from providers.zai import ZaiProvider
+from free_claude_code.config.provider_ids import SUPPORTED_PROVIDER_IDS
+from free_claude_code.providers.cerebras import CerebrasProvider
+from free_claude_code.providers.cloudflare import CloudflareProvider
+from free_claude_code.providers.codestral import CodestralProvider
+from free_claude_code.providers.cohere import CohereProvider
+from free_claude_code.providers.deepseek import DeepSeekProvider
+from free_claude_code.providers.exceptions import UnknownProviderTypeError
+from free_claude_code.providers.fireworks import FireworksProvider
+from free_claude_code.providers.gemini import GeminiProvider
+from free_claude_code.providers.github_models import GitHubModelsProvider
+from free_claude_code.providers.groq import GroqProvider
+from free_claude_code.providers.huggingface import (
+    HUGGINGFACE_DEFAULT_BASE,
+    HuggingFaceProvider,
+)
+from free_claude_code.providers.kimi import KimiProvider
+from free_claude_code.providers.llamacpp import LlamaCppProvider
+from free_claude_code.providers.lmstudio import LMStudioProvider
+from free_claude_code.providers.minimax import MiniMaxProvider
+from free_claude_code.providers.mistral import MistralProvider
+from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
+from free_claude_code.providers.ollama import OllamaProvider
+from free_claude_code.providers.open_router import OpenRouterProvider
+from free_claude_code.providers.opencode import OpenCodeProvider
+from free_claude_code.providers.runtime import (
+    ProviderRuntime,
+    build_provider_config,
+    create_provider,
+)
+from free_claude_code.providers.vercel import (
+    VERCEL_AI_GATEWAY_DEFAULT_BASE,
+    VercelProvider,
+)
+from free_claude_code.providers.wafer import WaferProvider
+from free_claude_code.providers.zai import ZaiProvider
 
 
 def _make_settings(**overrides):
@@ -108,8 +118,8 @@ def test_importing_runtime_does_not_eager_load_other_adapters() -> None:
     """Runtime metadata must not import every provider adapter up front."""
     code = (
         "import sys\n"
-        "import providers.runtime\n"
-        "assert 'providers.open_router' not in sys.modules\n"
+        "import free_claude_code.providers.runtime\n"
+        "assert 'free_claude_code.providers.open_router' not in sys.modules\n"
     )
     proc = subprocess.run(
         [sys.executable, "-c", code],
@@ -181,7 +191,9 @@ def test_create_cloudflare_provider_uses_account_scoped_base_url():
         cloudflare_account_id="test-account",
     )
 
-    with patch("providers.transports.openai_chat.transport.AsyncOpenAI"):
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ):
         provider = create_provider("cloudflare", settings)
 
     assert isinstance(provider, CloudflareProvider)
@@ -309,7 +321,9 @@ def test_build_provider_config_github_models_uses_token_and_proxy() -> None:
 
 
 def test_create_provider_uses_openai_chat_openrouter_by_default():
-    with patch("providers.transports.openai_chat.transport.AsyncOpenAI"):
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ):
         provider = create_provider("open_router", _make_settings())
 
     assert isinstance(provider, OpenRouterProvider)
@@ -355,7 +369,9 @@ def test_create_provider_instantiates_each_builtin():
     }
 
     with (
-        patch("providers.transports.openai_chat.transport.AsyncOpenAI"),
+        patch(
+            "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+        ),
         patch("httpx.AsyncClient"),
     ):
         for provider_id, provider_cls in cases.items():
@@ -365,7 +381,9 @@ def test_create_provider_instantiates_each_builtin():
 def test_provider_runtime_caches_by_provider_id():
     runtime = ProviderRuntime(_make_settings())
 
-    with patch("providers.transports.openai_chat.transport.AsyncOpenAI"):
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ):
         first = runtime.resolve_provider("nvidia_nim")
         second = runtime.resolve_provider("nvidia_nim")
 
