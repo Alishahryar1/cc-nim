@@ -7,6 +7,7 @@ from httpx import Request, Response
 
 from config.nim import NimSettings
 from providers.defaults import NVIDIA_NIM_DEFAULT_BASE
+from providers.exceptions import ProviderError
 from providers.nvidia_nim import NvidiaNimProvider
 from providers.nvidia_nim.tool_schema import NIM_TOOL_ARGUMENT_ALIASES_KEY
 
@@ -499,12 +500,11 @@ async def test_stream_response_does_not_retry_unrelated_bad_request(provider_con
     ) as mock_create:
         mock_create.side_effect = _make_bad_request_error("unrelated bad request")
 
-        events = [e async for e in provider.stream_response(req)]
+        with pytest.raises(ProviderError) as exc_info:
+            [e async for e in provider.stream_response(req)]
 
     assert mock_create.await_count == 1
-    event_text = "".join(events)
-    assert "Invalid request sent to provider" in event_text
-    assert "event: message_stop" in event_text
+    assert "Invalid request sent to provider" in exc_info.value.message
 
 
 @pytest.mark.asyncio
@@ -891,11 +891,11 @@ async def test_stream_response_bad_request_without_reasoning_budget_does_not_ret
     ) as mock_create:
         mock_create.side_effect = error
 
-        events = [e async for e in nim_provider.stream_response(req)]
+        with pytest.raises(ProviderError) as exc_info:
+            [e async for e in nim_provider.stream_response(req)]
 
     assert mock_create.await_count == 1
-    assert any("Invalid request sent to provider" in event for event in events)
-    assert any("message_stop" in event for event in events)
+    assert "Invalid request sent to provider" in exc_info.value.message
 
 
 @pytest.mark.asyncio
@@ -910,11 +910,11 @@ async def test_stream_response_unrelated_internal_error_does_not_downgrade(
     ) as mock_create:
         mock_create.side_effect = error
 
-        events = [e async for e in nim_provider.stream_response(req)]
+        with pytest.raises(ProviderError) as exc_info:
+            [e async for e in nim_provider.stream_response(req)]
 
     assert mock_create.await_count == 1
-    assert any("Provider API request failed" in event for event in events)
-    assert any("message_stop" in event for event in events)
+    assert "Provider API request failed" in exc_info.value.message
 
 
 @pytest.mark.asyncio
@@ -931,8 +931,8 @@ async def test_stream_response_internal_reasoning_content_error_does_not_downgra
     ) as mock_create:
         mock_create.side_effect = error
 
-        events = [e async for e in nim_provider.stream_response(req)]
+        with pytest.raises(ProviderError) as exc_info:
+            [e async for e in nim_provider.stream_response(req)]
 
     assert mock_create.await_count == 1
-    assert any("Provider API request failed" in event for event in events)
-    assert any("message_stop" in event for event in events)
+    assert "Provider API request failed" in exc_info.value.message

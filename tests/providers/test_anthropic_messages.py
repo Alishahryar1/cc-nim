@@ -7,7 +7,7 @@ import httpx
 import pytest
 
 from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
-from core.anthropic.stream_contracts import event_index, parse_sse_text
+from core.anthropic.stream_contracts import parse_sse_text
 from core.anthropic.streaming import (
     MIDSTREAM_RECOVERY_ATTEMPTS,
     AnthropicStreamLedger,
@@ -15,9 +15,9 @@ from core.anthropic.streaming import (
     format_sse_event,
 )
 from providers.base import ProviderConfig
+from providers.exceptions import ProviderError
 from providers.transports.anthropic_messages import AnthropicMessagesTransport
 from providers.transports.anthropic_messages.recovery import AnthropicMessagesRecovery
-from tests.stream_contract import assert_canonical_stream_error_envelope
 
 
 class NativeProvider(AnthropicMessagesTransport):
@@ -251,7 +251,7 @@ async def test_stream_uses_retry_builds_request_and_closes_response(
 
 
 @pytest.mark.asyncio
-async def test_stream_maps_non_200_to_error_event_and_closes_response(
+async def test_stream_maps_pre_start_non_200_to_provider_error_and_closes_response(
     provider_config,
 ):
     provider = NativeProvider(provider_config)
@@ -266,25 +266,21 @@ async def test_stream_maps_non_200_to_error_event_and_closes_response(
             new_callable=AsyncMock,
             return_value=response,
         ),
+        pytest.raises(ProviderError) as exc_info,
     ):
-        events = [
-            event async for event in provider.stream_response(req, request_id="REQ_123")
-        ]
+        [event async for event in provider.stream_response(req, request_id="REQ_123")]
 
     assert response.is_closed
-    assert_canonical_stream_error_envelope(
-        events, user_message_substr="Upstream provider TEST_NATIVE returned HTTP 500."
-    )
-    blob = "".join(events)
-    assert "Internal Server Error" in blob
-    assert "REQ_123" in blob
+    assert "Upstream provider TEST_NATIVE returned HTTP 500." in exc_info.value.message
+    assert "Internal Server Error" in exc_info.value.message
+    assert "REQ_123" in exc_info.value.message
 
 
 @pytest.mark.asyncio
-async def test_midstream_error_closes_open_block_and_uses_fresh_content_index(
+async def test_precommit_native_error_raises_without_leaking_open_block(
     provider_config,
 ):
-    """After upstream message_start + content_block_start, synthetic errors must not reuse index 0."""
+    """A native error before holdback commit raises instead of sending HTTP 200 SSE."""
     provider = NativeProvider(provider_config)
     req = MockRequest()
     mid = "msg_midstream_err"
@@ -325,17 +321,11 @@ async def test_midstream_error_closes_open_block_and_uses_fresh_content_index(
             new_callable=AsyncMock,
             return_value=response,
         ),
+        pytest.raises(ProviderError) as exc_info,
     ):
-        events = [e async for e in provider.stream_response(req)]
+        [e async for e in provider.stream_response(req)]
 
-    assert_canonical_stream_error_envelope(
-        events, user_message_substr="mid-stream failure"
-    )
-    parsed = parse_sse_text("".join(events))
-    starts = [e for e in parsed if e.event == "content_block_start"]
-    assert event_index(starts[0]) == 0
-    assert event_index(starts[-1]) == 1
-    assert {event_index(e) for e in parsed if e.event == "content_block_stop"} == {0, 1}
+    assert "mid-stream failure" in exc_info.value.message
 
 
 @pytest.mark.asyncio

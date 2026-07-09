@@ -4,6 +4,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 from api.app import create_app
+from providers.exceptions import RateLimitError
 from providers.nvidia_nim import NvidiaNimProvider
 
 app = create_app()
@@ -20,6 +21,13 @@ async def _mock_stream_response(*args, **kwargs):
     _stream_response_calls.append((args, kwargs))
     yield "event: message_start\ndata: {}\n\n"
     yield "[DONE]\n\n"
+
+
+async def _mock_pre_start_rate_limit(*args, **kwargs):
+    """Provider stream that fails before any downstream-visible SSE chunk."""
+    _stream_response_calls.append((args, kwargs))
+    raise RateLimitError("upstream is busy")
+    yield "unreachable"
 
 
 mock_provider.stream_response = _mock_stream_response
@@ -93,6 +101,29 @@ def test_create_message_stream(client: TestClient):
     assert "text/event-stream" in response.headers.get("content-type", "")
     content = b"".join(response.iter_bytes())
     assert b"message_start" in content or b"event:" in content
+
+
+def test_create_message_pre_start_provider_error_returns_non_200_json(
+    client: TestClient,
+):
+    """Pre-first-chunk provider errors should not commit HTTP 200."""
+    mock_provider.stream_response = _mock_pre_start_rate_limit
+    payload = {
+        "model": "claude-3-sonnet",
+        "messages": [{"role": "user", "content": "Hi"}],
+        "max_tokens": 100,
+        "stream": True,
+    }
+
+    response = client.post("/v1/messages", json=payload)
+
+    assert response.status_code == 429
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.json() == {
+        "type": "error",
+        "error": {"type": "rate_limit_error", "message": "upstream is busy"},
+    }
+    mock_provider.stream_response = _mock_stream_response
 
 
 def test_create_message_accepts_system_role_messages(client: TestClient):

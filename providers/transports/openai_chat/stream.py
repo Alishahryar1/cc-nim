@@ -20,7 +20,7 @@ from core.anthropic.streaming import (
     map_stop_reason,
 )
 from core.trace import provider_chat_body_snapshot, trace_event
-from providers.error_mapping import map_error
+from providers.error_mapping import map_error, map_stream_start_error
 from providers.transports.http import maybe_await_aclose
 
 from .recovery import OpenAIChatRecovery
@@ -288,12 +288,22 @@ class OpenAIChatStreamAdapter:
                             )
                         ).__name__,
                     )
-                    if not decision.committed and decision.has_buffered:
+                    if (
+                        not decision.committed
+                        and decision.has_buffered
+                        and complete_tool_salvageable
+                    ):
                         for event in recovery.flush():
                             yield event
                     elif not decision.committed:
                         recovery.discard()
-                        ledger = self._new_ledger()
+                        raise map_stream_start_error(
+                            error,
+                            provider_name=tag,
+                            read_timeout_s=self._transport._config.http_read_timeout,
+                            request_id=self._request_id,
+                            rate_limiter=self._transport._global_rate_limiter,
+                        ) from error
                     for event in self._recovery.emit_error_tail(ledger, error_message):
                         yield event
                     return

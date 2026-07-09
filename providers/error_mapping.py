@@ -19,6 +19,7 @@ from providers.exceptions import (
     AuthenticationError,
     InvalidRequestError,
     OverloadedError,
+    ProviderError,
     RateLimitError,
 )
 from providers.rate_limit import GlobalRateLimiter
@@ -311,6 +312,40 @@ def user_visible_message_for_mapped_provider_error(
             "or endpoint (HTTP 405)."
         )
     return get_user_facing_error_message(mapped, read_timeout_s=read_timeout_s)
+
+
+def map_stream_start_error(
+    error: Exception,
+    *,
+    provider_name: str,
+    read_timeout_s: float | None,
+    request_id: str | None,
+    rate_limiter: GlobalRateLimiter | None = None,
+) -> ProviderError:
+    """Map a final pre-start stream failure into an HTTP-serializable provider error.
+
+    Providers call this only when no downstream-visible SSE chunk has escaped.
+    At that boundary the API can still return a real non-200 response, which is
+    preferable to synthesizing a successful SSE stream that starts with an error
+    message.
+    """
+    mapped = map_error(error, rate_limiter=rate_limiter)
+    detail = extract_provider_error_detail(error)
+    message = user_visible_message_for_mapped_provider_error(
+        mapped,
+        provider_name=provider_name,
+        read_timeout_s=read_timeout_s,
+        detail=detail,
+        request_id=request_id,
+    )
+    if isinstance(mapped, ProviderError):
+        return ProviderError(
+            message,
+            status_code=mapped.status_code,
+            error_type=mapped.error_type,
+            raw_error=mapped.raw_error,
+        )
+    return APIError(message, status_code=502, raw_error=str(error))
 
 
 def map_error(

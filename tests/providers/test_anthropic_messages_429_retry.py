@@ -8,13 +8,13 @@ import pytest
 
 from core.anthropic.stream_contracts import event_names, parse_sse_text
 from providers.base import ProviderConfig
+from providers.exceptions import ProviderError
 from providers.rate_limit import GlobalRateLimiter
 from tests.providers.test_anthropic_messages import (
     FakeResponse,
     MockRequest,
     NativeProvider,
 )
-from tests.stream_contract import assert_canonical_stream_error_envelope
 
 
 def _assert_minimal_success_stream(events: list[str]) -> None:
@@ -236,15 +236,13 @@ async def test_native_stream_5xx_retry_exhausted(provider_config, status_code, s
                     return_value=bad,
                 ) as mock_send,
                 patch("asyncio.sleep", new_callable=AsyncMock),
+                pytest.raises(ProviderError) as exc_info,
             ):
-                events = [e async for e in provider.stream_response(req)]
+                [e async for e in provider.stream_response(req)]
 
             assert mock_send.await_count == 5
             assert bad.is_closed
-            assert_canonical_stream_error_envelope(
-                events,
-                user_message_substr=substr,
-            )
+            assert substr in exc_info.value.message
     finally:
         GlobalRateLimiter.reset_instance()
 
@@ -293,8 +291,9 @@ async def test_native_stream_connection_error_retry_exhausted(provider_config):
                 patch(
                     "providers.transports.anthropic_messages.stream.trace_event"
                 ) as trace,
+                pytest.raises(ProviderError) as exc_info,
             ):
-                events = [
+                [
                     e
                     async for e in provider.stream_response(
                         req, request_id="req_native_conn"
@@ -309,10 +308,7 @@ async def test_native_stream_connection_error_retry_exhausted(provider_config):
             ]
             assert error_traces[-1]["request_id"] == "req_native_conn"
             assert error_traces[-1]["exc_type"] == "ConnectError"
-            assert_canonical_stream_error_envelope(
-                events,
-                user_message_substr="Provider exception:\nconnect failed",
-            )
+            assert "Provider exception:\nconnect failed" in exc_info.value.message
     finally:
         GlobalRateLimiter.reset_instance()
 
@@ -352,13 +348,12 @@ async def test_non_retryable_4xx_http_error_not_retried(provider_config):
                     new_callable=AsyncMock,
                     return_value=err,
                 ) as mock_send,
+                pytest.raises(ProviderError) as exc_info,
             ):
-                events = [e async for e in provider.stream_response(req)]
+                [e async for e in provider.stream_response(req)]
 
             mock_send.assert_awaited_once()
             assert err.is_closed
-            assert_canonical_stream_error_envelope(
-                events, user_message_substr="Invalid request sent to provider"
-            )
+            assert "Invalid request sent to provider" in exc_info.value.message
     finally:
         GlobalRateLimiter.reset_instance()

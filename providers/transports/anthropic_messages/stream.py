@@ -14,6 +14,7 @@ from core.anthropic.streaming import (
     tool_schemas_by_name,
 )
 from core.trace import provider_native_messages_body_snapshot, trace_event
+from providers.error_mapping import map_stream_start_error
 from providers.transports.http import maybe_await_aclose
 
 from .recovery import AnthropicMessagesRecovery
@@ -205,28 +206,26 @@ class AnthropicMessagesStreamAdapter:
                         request_id=self._request_id,
                         error_message=error_message,
                         exc_type=type(error).__name__,
-                        mid_stream=(
-                            sent_any_event
-                            or decision.committed
-                            or decision.has_buffered
-                        ),
+                        mid_stream=(sent_any_event or decision.committed),
                     )
-                    if decision.committed or decision.has_buffered:
-                        if not decision.committed:
-                            for event in recovery.flush():
-                                sent_any_event = True
-                                yield event
+                    if decision.committed:
+                        for event in ledger.midstream_error_tail(error_message):
+                            yield event
+                    elif decision.has_buffered and complete_tool_salvageable:
+                        for event in recovery.flush():
+                            sent_any_event = True
+                            yield event
                         for event in ledger.midstream_error_tail(error_message):
                             yield event
                     else:
                         recovery.discard()
-                        for event in self._transport._emit_error_events(
-                            request=self._request,
-                            input_tokens=self._input_tokens,
-                            error_message=error_message,
-                            sent_any_event=False,
-                        ):
-                            yield event
+                        raise map_stream_start_error(
+                            error,
+                            provider_name=tag,
+                            read_timeout_s=self._transport._config.http_read_timeout,
+                            request_id=self._request_id,
+                            rate_limiter=self._transport._global_rate_limiter,
+                        ) from error
                     return
                 finally:
                     if response is not None and not response.is_closed:

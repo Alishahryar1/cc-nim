@@ -11,8 +11,16 @@ from api.model_router import ModelRouter, RoutedMessagesRequest
 from api.models.anthropic import MessagesRequest
 from api.optimization_handlers import try_optimizations
 from api.provider_execution import ProviderExecutionService, TokenCounter
-from api.request_errors import require_non_empty_messages, unexpected_http_exception
-from api.response_streams import anthropic_sse_streaming_response
+from api.request_errors import (
+    http_status_for_unexpected_api_exception,
+    log_unexpected_api_exception,
+    require_non_empty_messages,
+    unexpected_http_exception,
+)
+from api.response_streams import (
+    EmptyStreamError,
+    anthropic_sse_streaming_response,
+)
 from api.web_tools.egress import WebFetchEgressPolicy, web_fetch_allowed_scheme_set
 from api.web_tools.request import (
     is_web_server_tool_request,
@@ -21,7 +29,11 @@ from api.web_tools.request import (
 from api.web_tools.streaming import stream_web_server_tool_response
 from config.provider_catalog import PROVIDER_CATALOG
 from config.settings import Settings
-from core.anthropic import aggregate_anthropic_sse_to_message, get_token_count
+from core.anthropic import (
+    aggregate_anthropic_sse_to_message,
+    get_token_count,
+    get_user_facing_error_message,
+)
 from core.trace import trace_event
 from providers.base import BaseProvider
 from providers.exceptions import InvalidRequestError, ProviderError
@@ -46,6 +58,12 @@ class _MessagesCompleteResult:
 ProviderGetter = Callable[[str], BaseProvider]
 _MessagesResult = _MessagesStreamResult | _MessagesCompleteResult
 MessageIntercept = Callable[[RoutedMessagesRequest], _MessagesResult | None]
+
+
+def _unexpected_stream_error_message(exc: BaseException) -> str:
+    if isinstance(exc, Exception):
+        return get_user_facing_error_message(exc)
+    return str(exc).strip() or f"{type(exc).__name__} occurred."
 
 
 class MessagesHandler:
@@ -116,7 +134,36 @@ class MessagesHandler:
                     content={"type": "error", "error": error},
                 )
             return JSONResponse(content=message)
-        return anthropic_sse_streaming_response(result.body)
+        return await anthropic_sse_streaming_response(
+            result.body,
+            pre_start_error_response=self._pre_start_error_response,
+        )
+
+    def _pre_start_error_response(self, exc: BaseException) -> JSONResponse:
+        if isinstance(exc, ProviderError):
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=exc.to_anthropic_format(),
+            )
+        log_unexpected_api_exception(
+            self._settings,
+            exc,
+            context=(
+                "CREATE_MESSAGE_EMPTY_STREAM"
+                if isinstance(exc, EmptyStreamError)
+                else "CREATE_MESSAGE_STREAM_START_ERROR"
+            ),
+        )
+        return JSONResponse(
+            status_code=http_status_for_unexpected_api_exception(exc),
+            content={
+                "type": "error",
+                "error": {
+                    "type": "api_error",
+                    "message": _unexpected_stream_error_message(exc),
+                },
+            },
+        )
 
     def _reject_unsupported_server_tools(self, routed: RoutedMessagesRequest) -> None:
         if routed.resolved.provider_id not in _OPENAI_CHAT_UPSTREAM_IDS:

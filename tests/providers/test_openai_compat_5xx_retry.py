@@ -9,10 +9,10 @@ from httpx import Request, Response
 
 from config.nim import NimSettings
 from providers.base import ProviderConfig
+from providers.exceptions import ProviderError
 from providers.nvidia_nim import NvidiaNimProvider
 from providers.rate_limit import GlobalRateLimiter
 from tests.providers.test_nvidia_nim import MockRequest
-from tests.stream_contract import assert_canonical_stream_error_envelope
 
 
 def _internal_5xx(code: int) -> openai.InternalServerError:
@@ -148,10 +148,9 @@ async def test_nim_stream_connection_error_exhausted_emits_cause_chain():
             ) as mock_create,
             patch("asyncio.sleep", new_callable=AsyncMock),
             patch("providers.transports.openai_chat.stream.trace_event") as trace,
+            pytest.raises(ProviderError) as exc_info,
         ):
-            events = [
-                e async for e in provider.stream_response(req, request_id="req_conn")
-            ]
+            [e async for e in provider.stream_response(req, request_id="req_conn")]
 
         assert mock_create.await_count == 5
         error_traces = [
@@ -161,9 +160,8 @@ async def test_nim_stream_connection_error_exhausted_emits_cause_chain():
         ]
         assert error_traces[-1]["request_id"] == "req_conn"
         assert error_traces[-1]["exc_type"] == "APIConnectionError"
-        assert_canonical_stream_error_envelope(
-            events,
-            user_message_substr="Caused by:\nConnectError: upstream disconnected",
+        assert (
+            "Caused by:\nConnectError: upstream disconnected" in exc_info.value.message
         )
     finally:
         GlobalRateLimiter.reset_instance()
@@ -206,10 +204,10 @@ async def test_nim_stream_openai_5xx_exhausted_emits_user_message(
             patch("asyncio.sleep", new_callable=AsyncMock),
         ):
             mock_create.side_effect = _internal_5xx(status_code)
-            events = [e async for e in provider.stream_response(req)]
+            with pytest.raises(ProviderError) as exc_info:
+                [e async for e in provider.stream_response(req)]
 
         assert mock_create.await_count == 5
-        blob = "".join(events)
-        assert expect_substr in blob.lower()
+        assert expect_substr in exc_info.value.message.lower()
     finally:
         GlobalRateLimiter.reset_instance()

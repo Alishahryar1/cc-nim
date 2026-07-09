@@ -11,6 +11,7 @@ import pytest
 from config.constants import NATIVE_MESSAGES_ERROR_BODY_LOG_CAP_BYTES
 from config.nim import NimSettings
 from providers.base import ProviderConfig
+from providers.exceptions import ProviderError
 from providers.nvidia_nim import NvidiaNimProvider
 from providers.transports.anthropic_messages import stream as native_stream
 from tests.provider_request_mocks import make_openai_compat_stream_request
@@ -71,8 +72,9 @@ async def test_native_non_200_logs_exclude_body_text_by_default(
             return_value=response,
         ),
         caplog.at_level(logging.ERROR),
+        pytest.raises(ProviderError),
     ):
-        _ = [e async for e in provider.stream_response(req)]
+        [e async for e in provider.stream_response(req)]
 
     messages = " | ".join(r.getMessage() for r in caplog.records)
     assert "SECRET_UPSTREAM_BODY" not in messages
@@ -96,8 +98,9 @@ async def test_native_non_200_logs_body_when_verbose(caplog, provider_config):
             return_value=response,
         ),
         caplog.at_level(logging.ERROR),
+        pytest.raises(ProviderError),
     ):
-        _ = [e async for e in provider.stream_response(req)]
+        [e async for e in provider.stream_response(req)]
 
     messages = " | ".join(r.getMessage() for r in caplog.records)
     assert "SECRET_UPSTREAM_BODY" in messages
@@ -124,8 +127,9 @@ async def test_native_non_200_verbose_logs_only_capped_error_body(
             return_value=response,
         ),
         caplog.at_level(logging.ERROR),
+        pytest.raises(ProviderError),
     ):
-        _ = [e async for e in provider.stream_response(req)]
+        [e async for e in provider.stream_response(req)]
 
     messages = " | ".join(r.getMessage() for r in caplog.records)
     assert "SECRET_TAIL_NOT_LOGGED" not in messages
@@ -151,8 +155,9 @@ async def test_native_non_200_default_does_not_read_oversized_body(
             return_value=response,
         ),
         caplog.at_level(logging.ERROR),
+        pytest.raises(ProviderError),
     ):
-        _ = [e async for e in provider.stream_response(req)]
+        [e async for e in provider.stream_response(req)]
 
     messages = " | ".join(r.getMessage() for r in caplog.records)
     assert "LEAK_MARKER" not in messages
@@ -189,8 +194,9 @@ async def test_native_stream_failure_logs_exclude_exception_str_by_default(
         ),
         patch.object(native_stream, "iter_sse_events", boom),
         caplog.at_level(logging.ERROR),
+        pytest.raises(ProviderError),
     ):
-        _ = [e async for e in provider.stream_response(req)]
+        [e async for e in provider.stream_response(req)]
 
     messages = " | ".join(r.getMessage() for r in caplog.records)
     assert "SECRET_DETAIL" not in messages
@@ -225,8 +231,9 @@ async def test_openai_compat_stream_failure_default_logs_exclude_exception_str(c
             _noop_slot,
         ),
         caplog.at_level(logging.ERROR),
+        pytest.raises(ProviderError),
     ):
-        _ = [e async for e in provider.stream_response(req)]
+        [e async for e in provider.stream_response(req)]
 
     messages = " | ".join(r.getMessage() for r in caplog.records)
     assert "SECRET_OPENAI_COMPAT" not in messages
@@ -264,8 +271,9 @@ async def test_openai_compat_stream_failure_default_logs_cause_types_only(caplog
             _noop_slot,
         ),
         caplog.at_level(logging.ERROR),
+        pytest.raises(ProviderError),
     ):
-        _ = [e async for e in provider.stream_response(req)]
+        [e async for e in provider.stream_response(req)]
 
     messages = " | ".join(r.getMessage() for r in caplog.records)
     assert "SECRET_CAUSE_DETAIL" not in messages
@@ -300,8 +308,9 @@ async def test_openai_compat_stream_failure_respects_verbose_flag(caplog):
             _noop_slot,
         ),
         caplog.at_level(logging.ERROR),
+        pytest.raises(ProviderError),
     ):
-        _ = [e async for e in provider.stream_response(req)]
+        [e async for e in provider.stream_response(req)]
 
     messages = " | ".join(r.getMessage() for r in caplog.records)
     assert "SECRET_OPENAI_COMPAT" in messages

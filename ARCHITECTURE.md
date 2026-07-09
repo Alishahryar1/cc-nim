@@ -247,6 +247,12 @@ owns Anthropic token counting. Shared provider execution lives in
 [api/provider_execution.py](api/provider_execution.py), which resolves a
 provider, preflights the upstream request, emits trace events, counts input
 tokens, and returns an Anthropic SSE iterator.
+[api/response_streams.py](api/response_streams.py) owns public streaming egress
+commit timing. It waits for the first protocol chunk before returning a
+successful `StreamingResponse`, so provider setup failures can still become real
+non-200 JSON errors that Claude Code and Codex can retry. After the first chunk
+has escaped, HTTP status is committed; any unexpected failure must be represented
+as a protocol terminal frame where feasible.
 
 ```mermaid
 sequenceDiagram
@@ -438,6 +444,11 @@ classification also lives in this shared layer so stream recovery, provider
 backoff, and provider error mapping agree on retryable overload/rate-limit
 signals.
 
+Provider transports raise typed provider errors for final stream failures before
+any downstream-visible SSE chunk has escaped the recovery holdback. Once output
+has committed, transports keep ownership of midstream recovery, continuation,
+tool salvage, and protocol-specific success/error tails.
+
 [core/openai_responses/](core/openai_responses/) owns OpenAI Responses support:
 
 - the `OpenAIResponsesAdapter` facade used by the API layer;
@@ -460,6 +471,10 @@ builders, and error mapping. API code should depend on the adapter, not on
 those internal module owners directly. Responses output payloads stay
 OpenAI-shaped; Anthropic terminal metadata is used internally only when it
 affects streamed behavior.
+Post-start Responses failures are assembler-owned: the active
+`ResponsesStreamAssembler` emits `response.failed` so the terminal event keeps
+the same `response.id`, output ledger, and usage state as the earlier
+`response.created`.
 
 Responses custom tools are also boundary-owned. The adapter accepts native
 Responses `custom` tool declarations, represents them internally as Anthropic

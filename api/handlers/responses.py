@@ -13,7 +13,10 @@ from api.request_errors import (
     log_unexpected_api_exception,
     require_non_empty_messages,
 )
-from api.response_streams import openai_responses_sse_streaming_response
+from api.response_streams import (
+    EGRESS_STREAM_INTERRUPTED_MESSAGE,
+    openai_responses_sse_streaming_response,
+)
 from config.settings import Settings
 from core.anthropic import get_user_facing_error_message
 from core.openai_responses import OpenAIResponsesAdapter
@@ -21,6 +24,12 @@ from providers.base import BaseProvider
 from providers.exceptions import InvalidRequestError, ProviderError
 
 ProviderGetter = Callable[[str], BaseProvider]
+
+
+def _unexpected_stream_error_message(exc: BaseException) -> str:
+    if isinstance(exc, Exception):
+        return get_user_facing_error_message(exc)
+    return str(exc).strip() or f"{type(exc).__name__} occurred."
 
 
 class ResponsesHandler:
@@ -72,12 +81,14 @@ class ResponsesHandler:
                 raw_log_label="FULL_RESPONSES_PAYLOAD",
                 raw_log_payload=request_payload,
             )
-            return openai_responses_sse_streaming_response(
+            return await openai_responses_sse_streaming_response(
                 self._responses_adapter.iter_sse_from_anthropic(
                     streamed,
                     request_payload,
+                    stream_error_message=EGRESS_STREAM_INTERRUPTED_MESSAGE,
                 ),
                 headers=self._responses_adapter.sse_headers,
+                pre_start_error_response=self._pre_start_error_response,
             )
         except OpenAIResponsesAdapter.ConversionError as exc:
             invalid_request = InvalidRequestError(str(exc))
@@ -109,3 +120,25 @@ class ResponsesHandler:
                     error_type="api_error",
                 ),
             )
+
+    def _pre_start_error_response(self, exc: BaseException) -> JSONResponse:
+        if isinstance(exc, ProviderError):
+            return JSONResponse(
+                status_code=exc.status_code,
+                content=self._responses_adapter.error_payload(
+                    message=exc.message,
+                    error_type=exc.error_type,
+                ),
+            )
+        log_unexpected_api_exception(
+            self._settings,
+            exc,
+            context="CREATE_RESPONSE_STREAM_START_ERROR",
+        )
+        return JSONResponse(
+            status_code=http_status_for_unexpected_api_exception(exc),
+            content=self._responses_adapter.error_payload(
+                message=_unexpected_stream_error_message(exc),
+                error_type="api_error",
+            ),
+        )

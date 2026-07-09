@@ -3,6 +3,7 @@
 from .emitter import (
     ANTHROPIC_SSE_RESPONSE_HEADERS,
     AnthropicSseEmitter,
+    anthropic_terminal_error_frame,
     format_sse_event,
     map_stop_reason,
 )
@@ -43,6 +44,7 @@ __all__ = [
     "ToolSchema",
     "TruncatedProviderStreamError",
     "accept_tool_json_repair",
+    "anthropic_terminal_error_frame",
     "continuation_suffix",
     "format_sse_event",
     "is_retryable_stream_error",

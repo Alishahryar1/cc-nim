@@ -9,6 +9,7 @@ import pytest
 from httpx import Request, Response
 
 from providers.base import ProviderConfig
+from providers.exceptions import ProviderError
 from providers.mistral import MISTRAL_DEFAULT_BASE, MistralProvider
 
 
@@ -740,10 +741,11 @@ async def test_stream_response_unrelated_bad_request_does_not_retry(mistral_prov
     ) as mock_create:
         mock_create.side_effect = error
 
-        events = [e async for e in mistral_provider.stream_response(req)]
+        with pytest.raises(ProviderError) as exc_info:
+            [e async for e in mistral_provider.stream_response(req)]
 
     assert mock_create.await_count == 1
-    assert any("message_stop" in event for event in events)
+    assert "Invalid request sent to provider" in exc_info.value.message
 
 
 @pytest.mark.asyncio
@@ -758,10 +760,11 @@ async def test_stream_response_generic_thinking_error_does_not_retry(
     ) as mock_create:
         mock_create.side_effect = error
 
-        events = [e async for e in mistral_provider.stream_response(req)]
+        with pytest.raises(ProviderError) as exc_info:
+            [e async for e in mistral_provider.stream_response(req)]
 
     assert mock_create.await_count == 1
-    assert any("message_stop" in event for event in events)
+    assert "Invalid request sent to provider" in exc_info.value.message
 
 
 def test_retry_body_without_reasoning_returns_none(mistral_provider):

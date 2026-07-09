@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 from api.app import create_app
 from core.anthropic.stream_contracts import parse_sse_text
 from core.anthropic.streaming import format_sse_event
+from providers.exceptions import RateLimitError
 
 
 class FakeProvider:
@@ -21,6 +22,29 @@ class FakeProvider:
         self.stream_kwargs.append(_kwargs)
         for chunk in self.chunks:
             yield chunk
+
+
+class PreStartFailingProvider(FakeProvider):
+    def __init__(self) -> None:
+        super().__init__([])
+
+    async def stream_response(self, request_data, **_kwargs):
+        self.requests.append(request_data)
+        self.stream_kwargs.append(_kwargs)
+        raise RateLimitError("upstream is busy")
+        yield "unreachable"
+
+
+class PostStartFailingProvider(FakeProvider):
+    def __init__(self) -> None:
+        super().__init__([format_sse_event("message_start", {"type": "message_start"})])
+
+    async def stream_response(self, request_data, **_kwargs):
+        self.requests.append(request_data)
+        self.stream_kwargs.append(_kwargs)
+        for chunk in self.chunks:
+            yield chunk
+        raise RuntimeError("socket closed")
 
 
 @pytest.fixture
@@ -71,6 +95,49 @@ def test_create_response_stream_routes_through_provider(
     assert routed.messages[0].role == "user"
     assert routed.messages[0].content == "Hello"
     assert routed.max_tokens == 32
+
+
+def test_create_response_pre_start_provider_error_returns_openai_error() -> None:
+    provider = PreStartFailingProvider()
+    app = create_app(lifespan_enabled=False)
+    with (
+        patch("api.dependencies.resolve_provider", return_value=provider),
+        TestClient(app) as client,
+    ):
+        response = client.post(
+            "/v1/responses",
+            json={
+                "model": "nvidia_nim/test-model",
+                "input": "Hello",
+            },
+        )
+
+    assert response.status_code == 429
+    payload = response.json()
+    assert payload["error"]["type"] == "rate_limit_error"
+    assert payload["error"]["message"] == "upstream is busy"
+
+
+def test_create_response_post_start_failure_preserves_response_id() -> None:
+    provider = PostStartFailingProvider()
+    app = create_app(lifespan_enabled=False)
+    with (
+        patch("api.dependencies.resolve_provider", return_value=provider),
+        TestClient(app) as client,
+    ):
+        response = client.post(
+            "/v1/responses",
+            json={
+                "model": "nvidia_nim/test-model",
+                "input": "Hello",
+            },
+        )
+
+    assert response.status_code == 200
+    events = parse_sse_text(response.text)
+    assert [event.event for event in events] == ["response.created", "response.failed"]
+    assert events[-1].data["response"]["id"] == events[0].data["response"]["id"]
+    assert events[-1].data["response"]["status"] == "failed"
 
 
 def test_create_response_stream_bypasses_local_message_optimizations() -> None:

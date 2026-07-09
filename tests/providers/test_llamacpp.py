@@ -8,8 +8,8 @@ import pytest
 from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from core.anthropic.stream_contracts import parse_sse_text
 from providers.base import ProviderConfig
+from providers.exceptions import ProviderError
 from providers.llamacpp import LlamaCppProvider
-from tests.stream_contract import assert_canonical_stream_error_envelope
 
 
 class MockMessage:
@@ -43,6 +43,15 @@ class MockRequest:
             "extra_body": self.extra_body,
             "thinking": {"enabled": self.thinking.enabled} if self.thinking else None,
         }
+
+
+async def _minimal_native_lines():
+    yield "event: message_start"
+    yield 'data: {"type":"message_start"}'
+    yield ""
+    yield "event: message_stop"
+    yield 'data: {"type":"message_stop"}'
+    yield ""
 
 
 @pytest.fixture
@@ -125,11 +134,7 @@ async def test_stream_response_omits_thinking_when_globally_disabled(llamacpp_co
     mock_response = MagicMock()
     mock_response.status_code = 200
 
-    async def empty_aiter():
-        if False:
-            yield ""
-
-    mock_response.aiter_lines = empty_aiter
+    mock_response.aiter_lines = _minimal_native_lines
 
     with (
         patch.object(provider._client, "build_request") as mock_build,
@@ -208,11 +213,7 @@ async def test_stream_response_adds_max_tokens_if_missing(llamacpp_provider):
     mock_response = MagicMock()
     mock_response.status_code = 200
 
-    async def empty_aiter():
-        if False:
-            yield ""
-
-    mock_response.aiter_lines = empty_aiter
+    mock_response.aiter_lines = _minimal_native_lines
 
     with (
         patch.object(req, "model_dump", return_value={"model": "test"}),
@@ -233,7 +234,7 @@ async def test_stream_response_adds_max_tokens_if_missing(llamacpp_provider):
 
 @pytest.mark.asyncio
 async def test_stream_error_status_code(llamacpp_provider):
-    """Non-200 status code raises an error that gets caught and yielded as an SSE API error."""
+    """Pre-start non-200 status code raises for API-level non-200 handling."""
     req = MockRequest()
 
     mock_response = MagicMock()
@@ -256,20 +257,21 @@ async def test_stream_error_status_code(llamacpp_provider):
             return_value=mock_response,
         ),
     ):
-        events = [
-            e
-            async for e in llamacpp_provider.stream_response(req, request_id="TEST_ID")
-        ]
+        with pytest.raises(ProviderError) as exc_info:
+            [
+                e
+                async for e in llamacpp_provider.stream_response(
+                    req, request_id="TEST_ID"
+                )
+            ]
 
-        assert_canonical_stream_error_envelope(
-            events, user_message_substr="Provider API request failed"
-        )
-        assert "TEST_ID" in "".join(events)
+        assert "Provider API request failed" in exc_info.value.message
+        assert "TEST_ID" in exc_info.value.message
 
 
 @pytest.mark.asyncio
 async def test_stream_network_error(llamacpp_provider):
-    """Network errors are caught and yielded as SSE API error events."""
+    """Pre-start network errors raise for API-level non-200 handling."""
     req = MockRequest()
 
     with (
@@ -283,18 +285,18 @@ async def test_stream_network_error(llamacpp_provider):
             side_effect=httpx.ConnectError("Connection refused"),
         ),
     ):
-        events = [
-            e
-            async for e in llamacpp_provider.stream_response(req, request_id="TEST_ID2")
-        ]
+        with pytest.raises(ProviderError) as exc_info:
+            [
+                e
+                async for e in llamacpp_provider.stream_response(
+                    req, request_id="TEST_ID2"
+                )
+            ]
 
-        blob = "".join(events)
-        assert_canonical_stream_error_envelope(
-            events, user_message_substr="Could not connect to provider."
-        )
-        assert "Provider exception" in blob
-        assert "Connection refused" in blob
-        assert "TEST_ID2" in blob
+        assert "Could not connect to provider." in exc_info.value.message
+        assert "Provider exception" in exc_info.value.message
+        assert "Connection refused" in exc_info.value.message
+        assert "TEST_ID2" in exc_info.value.message
 
 
 @pytest.mark.asyncio
@@ -319,18 +321,20 @@ async def test_stream_error_405_mentions_upstream_provider(llamacpp_provider):
             "send",
             new_callable=AsyncMock,
             return_value=mock_response,
-        ),
+        ),pytest.raises(ProviderError) as exc_info
     ):
-        events = [
-            e async for e in llamacpp_provider.stream_response(req, request_id="REQ405")
+        [
+            e
+            async for e in llamacpp_provider.stream_response(
+                req, request_id="REQ405"
+            )
         ]
 
-    blob = "".join(events)
     assert (
         "Upstream provider LLAMACPP rejected the request method or endpoint (HTTP 405)."
-        in blob
+        in exc_info.value.message
     )
-    assert "REQ405" in blob
+    assert "REQ405" in exc_info.value.message
 
 
 def test_build_request_body_disabled_thinking_strips_native_thinking_history(
