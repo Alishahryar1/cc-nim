@@ -321,14 +321,10 @@ async def test_stream_error_405_mentions_upstream_provider(llamacpp_provider):
             "send",
             new_callable=AsyncMock,
             return_value=mock_response,
-        ),pytest.raises(ProviderError) as exc_info
+        ),
+        pytest.raises(ProviderError) as exc_info,
     ):
-        [
-            e
-            async for e in llamacpp_provider.stream_response(
-                req, request_id="REQ405"
-            )
-        ]
+        [e async for e in llamacpp_provider.stream_response(req, request_id="REQ405")]
 
     assert (
         "Upstream provider LLAMACPP rejected the request method or endpoint (HTTP 405)."

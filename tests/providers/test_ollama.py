@@ -253,13 +253,12 @@ async def test_stream_error_status_code(ollama_provider):
             "send",
             new_callable=AsyncMock,
             return_value=mock_response,
-        ),pytest.raises(ProviderError) as exc_info
+        ),
+        pytest.raises(ProviderError) as exc_info,
     ):
         [
             event
-            async for event in ollama_provider.stream_response(
-                req, request_id="REQ"
-            )
+            async for event in ollama_provider.stream_response(req, request_id="REQ")
         ]
 
     assert "Provider API request failed" in exc_info.value.message
