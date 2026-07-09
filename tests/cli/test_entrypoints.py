@@ -392,6 +392,224 @@ def test_claude_child_env_uses_sentinel_for_blank_configured_auth_token() -> Non
     assert "ANTHROPIC_API_KEY" not in env
 
 
+def test_claude_child_env_strips_inherited_session_identity_vars() -> None:
+    """A nested fcc-claude invocation (e.g. from inside an agent's shell) must
+    not inherit the parent Claude Code session's identity vars: doing so makes
+    the child process see itself as a host-managed child session and ignore
+    ANTHROPIC_AUTH_TOKEN entirely, 401ing every request against the proxy."""
+    from free_claude_code.cli.launchers.claude import build_claude_launcher_env
+
+    env = build_claude_launcher_env(
+        proxy_root_url="http://127.0.0.1:8082",
+        auth_token="proxy-token",
+        base_env={
+            "PATH": "keep",
+            "CLAUDECODE": "1",
+            "CLAUDE_CODE_CHILD_SESSION": "1",
+            "CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH": "1",
+            "CLAUDE_CODE_OAUTH_SCOPES": "user:inference",
+            "CLAUDE_CODE_SESSION_ID": "abc-123",
+            "CLAUDE_AGENT_SDK_VERSION": "0.3.0",
+            "CLAUDE_EFFORT": "high",
+            "AI_AGENT": "claude-code",
+            "BAGGAGE": "sentry-trace=1",
+        },
+    )
+
+    assert env["PATH"] == "keep"
+    for stripped_key in (
+        "CLAUDECODE",
+        "CLAUDE_CODE_CHILD_SESSION",
+        "CLAUDE_CODE_SDK_HAS_HOST_AUTH_REFRESH",
+        "CLAUDE_CODE_OAUTH_SCOPES",
+        "CLAUDE_CODE_SESSION_ID",
+        "CLAUDE_AGENT_SDK_VERSION",
+        "CLAUDE_EFFORT",
+        "AI_AGENT",
+        "BAGGAGE",
+    ):
+        assert stripped_key not in env
+    # The launcher still re-sets its own two CLAUDE_CODE_* vars explicitly.
+    assert env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] == "1"
+    assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "190000"
+
+
+def test_resolve_auto_compact_window_falls_back_for_non_lmstudio_provider() -> None:
+    from free_claude_code.cli.launchers.claude import (
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+        resolve_auto_compact_window,
+    )
+
+    settings = _launcher_settings()  # model="nvidia_nim/test-model"
+
+    assert resolve_auto_compact_window(settings) == CLAUDE_CODE_AUTO_COMPACT_WINDOW
+
+
+def test_resolve_auto_compact_window_uses_lmstudio_loaded_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from free_claude_code.cli.launchers.claude import resolve_auto_compact_window
+
+    settings = Settings.model_construct(
+        host="0.0.0.0",
+        port=8082,
+        anthropic_auth_token="freecc",
+        model="lmstudio/mistralai/devstral-small-2-2512",
+        lm_studio_base_url="http://localhost:1234/v1",
+    )
+
+    class _FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            # The not-loaded decoy uses a *small* context so that if the
+            # state=="loaded" filter ever broke, min() would pick it up and the
+            # 28960 assertion would fail — keeping the filter genuinely covered.
+            return {
+                "data": [
+                    {"state": "loaded", "loaded_context_length": 40960},
+                    {"state": "not-loaded", "loaded_context_length": 2048},
+                ]
+            }
+
+    def _fake_get(url: str, timeout: float) -> _FakeResponse:
+        assert url == "http://localhost:1234/api/v0/models"
+        return _FakeResponse()
+
+    monkeypatch.setattr("free_claude_code.cli.launchers.claude.httpx.get", _fake_get)
+
+    # max(8192, min(0.85 * 40960, 40960 - 12000)) == 28960
+    assert resolve_auto_compact_window(settings) == "28960"
+
+
+def test_resolve_auto_compact_window_sizes_to_smallest_loaded_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """With several models loaded at different contexts, the single global
+    window must fit the SMALLEST — a request routed to it must still compact
+    before LM Studio truncates. Sizing to the largest leaves it unprotected."""
+    from free_claude_code.cli.launchers.claude import resolve_auto_compact_window
+
+    settings = Settings.model_construct(
+        host="0.0.0.0",
+        port=8082,
+        anthropic_auth_token="freecc",
+        model="lmstudio/mistralai/devstral-small-2-2512",
+        lm_studio_base_url="http://localhost:1234/v1",
+    )
+
+    class _FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {
+                "data": [
+                    {"state": "loaded", "loaded_context_length": 4096},
+                    {"state": "loaded", "loaded_context_length": 130048},
+                ]
+            }
+
+    monkeypatch.setattr(
+        "free_claude_code.cli.launchers.claude.httpx.get",
+        lambda url, timeout: _FakeResponse(),
+    )
+
+    # min loaded = 4096; window clamps to it, not 98548 (which max() would give).
+    assert resolve_auto_compact_window(settings) == "4096"
+
+
+def test_resolve_auto_compact_window_uses_lmstudio_override_under_non_lmstudio_default(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Routing sends a request through MODEL_OPUS/SONNET/HAIKU when set, so an
+    LM Studio override under a non-LM-Studio default must still get a truthful
+    window — otherwise override requests miss compaction and truncate."""
+    from free_claude_code.cli.launchers.claude import resolve_auto_compact_window
+
+    settings = Settings.model_construct(
+        host="0.0.0.0",
+        port=8082,
+        anthropic_auth_token="freecc",
+        model="nvidia_nim/test-model",
+        model_haiku="lmstudio/mistralai/devstral-small-2-2512",
+        lm_studio_base_url="http://localhost:1234/v1",
+    )
+
+    class _FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"data": [{"state": "loaded", "loaded_context_length": 40960}]}
+
+    def _fake_get(url: str, timeout: float) -> _FakeResponse:
+        assert url == "http://localhost:1234/api/v0/models"
+        return _FakeResponse()
+
+    monkeypatch.setattr("free_claude_code.cli.launchers.claude.httpx.get", _fake_get)
+
+    assert resolve_auto_compact_window(settings) == "28960"
+
+
+def test_resolve_auto_compact_window_clamps_to_a_small_loaded_context(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A model loaded with a context smaller than the 8192 floor must not get
+    a window that exceeds its actual ceiling — otherwise Claude Code still
+    won't compact before LM Studio silently truncates the stream."""
+    from free_claude_code.cli.launchers.claude import resolve_auto_compact_window
+
+    settings = Settings.model_construct(
+        host="0.0.0.0",
+        port=8082,
+        anthropic_auth_token="freecc",
+        model="lmstudio/mistralai/devstral-small-2-2512",
+        lm_studio_base_url="http://localhost:1234/v1",
+    )
+
+    class _FakeResponse:
+        def raise_for_status(self) -> None:
+            return None
+
+        def json(self) -> dict:
+            return {"data": [{"state": "loaded", "loaded_context_length": 4096}]}
+
+    def _fake_get(url: str, timeout: float) -> _FakeResponse:
+        return _FakeResponse()
+
+    monkeypatch.setattr("free_claude_code.cli.launchers.claude.httpx.get", _fake_get)
+
+    # Without the clamp: max(8192, min(0.85*4096, 4096-12000)) == 8192, which
+    # exceeds the real 4096-token ceiling. With it: min(8192, 4096) == 4096.
+    assert resolve_auto_compact_window(settings) == "4096"
+
+
+def test_resolve_auto_compact_window_fails_open_on_lookup_error(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    from free_claude_code.cli.launchers.claude import (
+        CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+        resolve_auto_compact_window,
+    )
+
+    settings = Settings.model_construct(
+        host="0.0.0.0",
+        port=8082,
+        anthropic_auth_token="freecc",
+        model="lmstudio/mistralai/devstral-small-2-2512",
+        lm_studio_base_url="http://localhost:1234/v1",
+    )
+
+    def _raise(*_args: object, **_kwargs: object):
+        raise OSError("connection refused")
+
+    monkeypatch.setattr("free_claude_code.cli.launchers.claude.httpx.get", _raise)
+
+    assert resolve_auto_compact_window(settings) == CLAUDE_CODE_AUTO_COMPACT_WINDOW
+
+
 def test_launch_claude_passes_args_and_child_env(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
