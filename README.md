@@ -707,7 +707,7 @@ CI also enforces a ban on `# type: ignore` / `# ty: ignore` suppressions; `scrip
 - Add OpenAI-compatible providers by extending `OpenAIChatTransport`.
 - Add Anthropic Messages providers by extending `AnthropicMessagesTransport`.
 - Extend OpenAI Responses conversion in `src/free_claude_code/core/openai_responses/` when Codex adds new request or stream shapes.
-- Register provider metadata in `free_claude_code.free_claude_code.config.provider_catalog` and factory wiring in `free_claude_code.free_claude_code.providers.runtime`.
+- Register provider metadata in `free_claude_code.config.provider_catalog` and factory wiring in `free_claude_code.providers.runtime`.
 - Add messaging platforms by wiring runtime, outbound, and inbound-normalizer ports in `src/free_claude_code/messaging/platforms/`.
 
 ## Contributing
