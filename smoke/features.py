@@ -38,11 +38,7 @@ README_FEATURES: tuple[str, ...] = (
     "per_model_mapping",
     "thinking_token_support",
     "heuristic_tool_parser",
-    "request_optimization",
-    "smart_rate_limiting",
     "discord_telegram_bot",
-    "subagent_control",
-    "extensible_provider_platform_abcs",
     "optional_authentication",
     "vscode_extension",
     "intellij_extension",
@@ -173,7 +169,7 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "request_optimization",
         "Local request optimizations return product responses without providers",
-        "readme",
+        "public_surface",
         (
             "tests/api/test_optimization_handlers.py",
             "tests/api/test_routes_optimizations.py",
@@ -187,7 +183,7 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "smart_rate_limiting",
         "Disconnect and limiter cleanup preserve follow-up requests",
-        "readme",
+        "public_surface",
         ("tests/providers/test_provider_rate_limit.py",),
         ("test_client_disconnect_mid_stream_does_not_crash_server",),
         ("test_provider_disconnect_e2e",),
@@ -219,7 +215,7 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "subagent_control",
         "Task-like tool output is rendered and controlled as foreground work",
-        "readme",
+        "public_surface",
         ("tests/providers/test_subagent_interception.py",),
         (),
         ("test_messaging_subagent_control_e2e",),
@@ -230,7 +226,7 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "extensible_provider_platform_abcs",
         "Provider and platform factories expose built-in extension points",
-        "readme",
+        "public_surface",
         (
             "tests/contracts/test_feature_manifest.py",
             "tests/providers/test_provider_runtime.py",

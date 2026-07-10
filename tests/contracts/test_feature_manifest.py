@@ -1,6 +1,7 @@
 import re
 from pathlib import Path
 
+from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.messaging.platforms.factory import create_messaging_components
 from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.cerebras import CerebrasProvider
@@ -38,6 +39,24 @@ def test_every_readme_feature_has_inventory_entry() -> None:
     assert not extra_readme, (
         f"README inventory entries not in README_FEATURES: {extra_readme}"
     )
+
+
+def test_readme_provider_table_covers_full_catalog() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    readme = (repo_root / "README.md").read_text(encoding="utf-8")
+    provider_section = readme.split("## Choose A Provider", 1)[1].split("\n## ", 1)[0]
+    rows = [line for line in provider_section.splitlines() if line.startswith("| [")]
+
+    prefixes: list[str] = []
+    for row in rows:
+        example_cell = row.split("|")[3]
+        match = re.search(r"`([a-z0-9_]+)/", example_cell)
+        assert match is not None, row
+        prefixes.append(match.group(1))
+
+    assert len(rows) == len(PROVIDER_CATALOG)
+    assert len(prefixes) == len(set(prefixes))
+    assert set(prefixes) == set(PROVIDER_CATALOG)
 
 
 def test_feature_inventory_is_unique_and_decision_complete() -> None:
