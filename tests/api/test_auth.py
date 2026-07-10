@@ -24,6 +24,8 @@ def test_anthropic_auth_token_required_and_accepts_x_api_key():
         # No header -> 401
         r = client.post("/v1/messages/count_tokens", json=payload)
         assert r.status_code == 401
+        assert r.headers["request-id"].startswith("req_")
+        assert "x-should-retry" not in r.headers
 
         # X-API-Key header -> 200
         r = client.post(
@@ -90,6 +92,8 @@ def test_anthropic_auth_token_applies_to_models_endpoint():
 
     r = client.get("/v1/models")
     assert r.status_code == 401
+    assert r.headers["x-request-id"] == r.headers["request-id"]
+    assert "x-should-retry" not in r.headers
 
     r = client.get("/v1/models", headers={"X-API-Key": "models-token"})
     assert r.status_code == 200

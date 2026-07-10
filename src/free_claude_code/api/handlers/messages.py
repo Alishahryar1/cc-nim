@@ -1,5 +1,6 @@
 """Claude Messages API product flow."""
 
+import asyncio
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, replace
 
@@ -20,10 +21,11 @@ from free_claude_code.api.request_errors import (
     require_non_empty_messages,
     unexpected_http_exception,
 )
+from free_claude_code.api.request_ids import new_request_id
 from free_claude_code.api.response_streams import (
     EmptyStreamError,
-    anthropic_sse_error_response,
     anthropic_sse_streaming_response,
+    terminal_execution_error_response,
 )
 from free_claude_code.api.web_tools.egress import (
     WebFetchEgressPolicy,
@@ -38,6 +40,8 @@ from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import (
     aggregate_anthropic_sse_to_message,
+    anthropic_error_payload,
+    anthropic_status_for_error_type,
     get_token_count,
     get_user_facing_error_message,
 )
@@ -67,12 +71,6 @@ _MessagesResult = _MessagesStreamResult | _MessagesCompleteResult
 MessageIntercept = Callable[[RoutedMessagesRequest], _MessagesResult | None]
 
 
-def _unexpected_stream_error_message(exc: BaseException) -> str:
-    if isinstance(exc, Exception):
-        return get_user_facing_error_message(exc)
-    return str(exc).strip() or f"{type(exc).__name__} occurred."
-
-
 class MessagesHandler:
     """Handle Anthropic-compatible Messages requests."""
 
@@ -98,8 +96,11 @@ class MessagesHandler:
             self._intercept_local_optimization,
         )
 
-    async def create(self, request_data: MessagesRequest) -> object:
+    async def create(
+        self, request_data: MessagesRequest, *, request_id: str | None = None
+    ) -> object:
         """Create an Anthropic-compatible message response."""
+        request_id = request_id or new_request_id()
         try:
             require_non_empty_messages(request_data.messages)
             routed = self._model_router.resolve_messages_request(request_data)
@@ -115,9 +116,14 @@ class MessagesHandler:
                         wire_api="messages",
                         raw_log_label="FULL_PAYLOAD",
                         raw_log_payload=routed.request.model_dump(),
+                        request_id=request_id,
                     )
                 )
-            return await self._to_public_response(result, stream=request_data.stream)
+            return await self._to_public_response(
+                result,
+                stream=request_data.stream,
+                request_id=request_id,
+            )
         except ProviderError:
             raise
         except Exception as exc:
@@ -126,7 +132,11 @@ class MessagesHandler:
             ) from exc
 
     async def _to_public_response(
-        self, result: _MessagesResult, *, stream: bool | None
+        self,
+        result: _MessagesResult,
+        *,
+        stream: bool | None,
+        request_id: str,
     ) -> object:
         if isinstance(result, _MessagesCompleteResult):
             return result.response
@@ -134,51 +144,135 @@ class MessagesHandler:
             # Non-streaming clients (e.g. Claude Code utility calls) need a
             # complete JSON Message; the internal pipeline is always SSE, so
             # serving that raw here breaks the client SDK's response parse.
-            message, error = await aggregate_anthropic_sse_to_message(result.body)
-            if error is not None and not message.get("content"):
-                return JSONResponse(
-                    status_code=502,
-                    content={"type": "error", "error": error},
+            try:
+                message, error = await aggregate_anthropic_sse_to_message(result.body)
+            except GeneratorExit:
+                raise
+            except asyncio.CancelledError:
+                raise
+            except ProviderError as exc:
+                return self._provider_execution_error_response(
+                    exc, request_id=request_id
+                )
+            except BaseExceptionGroup as exc:
+                return self._unexpected_execution_error_response(
+                    exc,
+                    request_id=request_id,
+                    context="CREATE_MESSAGE_NON_STREAM_ERROR",
+                )
+            except Exception as exc:
+                return self._unexpected_execution_error_response(
+                    exc,
+                    request_id=request_id,
+                    context="CREATE_MESSAGE_NON_STREAM_ERROR",
+                )
+            if error is not None:
+                error_type, message_text = _stream_error_fields(error)
+                status_code = anthropic_status_for_error_type(error_type)
+                self._trace_terminal_execution_error(
+                    request_id=request_id,
+                    status_code=status_code,
+                    error_type=error_type,
+                )
+                return terminal_execution_error_response(
+                    status_code=status_code,
+                    content=anthropic_error_payload(
+                        error_type=error_type,
+                        message=message_text,
+                        request_id=request_id,
+                    ),
                 )
             return JSONResponse(content=message)
         return await anthropic_sse_streaming_response(
             result.body,
-            pre_start_error_response=self._pre_start_error_response,
+            pre_start_error_response=lambda exc: self._pre_start_error_response(
+                exc, request_id=request_id
+            ),
         )
 
-    def _pre_start_error_response(self, exc: BaseException) -> Response:
+    def _pre_start_error_response(
+        self, exc: BaseException, *, request_id: str
+    ) -> Response:
         if isinstance(exc, ProviderError):
-            trace_event(
-                stage="egress",
-                event="free_claude_code.api.response.provider_error_terminalized",
-                source="api",
-                status_code=exc.status_code,
-                error_type=exc.error_type,
-            )
-            return anthropic_sse_error_response(
+            return self._provider_execution_error_response(exc, request_id=request_id)
+        context = (
+            "CREATE_MESSAGE_EMPTY_STREAM"
+            if isinstance(exc, EmptyStreamError)
+            else "CREATE_MESSAGE_STREAM_START_ERROR"
+        )
+        return self._unexpected_execution_error_response(
+            exc,
+            request_id=request_id,
+            context=context,
+        )
+
+    def _provider_execution_error_response(
+        self, exc: ProviderError, *, request_id: str
+    ) -> JSONResponse:
+        self._trace_terminal_execution_error(
+            request_id=request_id,
+            status_code=exc.status_code,
+            error_type=exc.error_type,
+        )
+        return terminal_execution_error_response(
+            status_code=exc.status_code,
+            content=anthropic_error_payload(
                 error_type=exc.error_type,
                 message=exc.message,
-            )
+                request_id=request_id,
+            ),
+        )
+
+    def _unexpected_execution_error_response(
+        self,
+        exc: BaseException,
+        *,
+        request_id: str,
+        context: str,
+    ) -> JSONResponse:
         log_unexpected_api_exception(
             self._settings,
             exc,
-            context=(
-                "CREATE_MESSAGE_EMPTY_STREAM"
-                if isinstance(exc, EmptyStreamError)
-                else "CREATE_MESSAGE_STREAM_START_ERROR"
+            context=context,
+            request_id=request_id,
+        )
+        status_code = http_status_for_unexpected_api_exception(exc)
+        self._trace_terminal_execution_error(
+            request_id=request_id,
+            status_code=status_code,
+            error_type="api_error",
+            exc_type=type(exc).__name__,
+        )
+        return terminal_execution_error_response(
+            status_code=status_code,
+            content=anthropic_error_payload(
+                error_type="api_error",
+                message=get_user_facing_error_message(exc),
+                request_id=request_id,
             ),
         )
-        trace_event(
-            stage="egress",
-            event="free_claude_code.api.response.stream_start_error_terminalized",
-            source="api",
-            exc_type=type(exc).__name__,
-            status_code=http_status_for_unexpected_api_exception(exc),
-        )
-        return anthropic_sse_error_response(
-            error_type="api_error",
-            message=_unexpected_stream_error_message(exc),
-        )
+
+    @staticmethod
+    def _trace_terminal_execution_error(
+        *,
+        request_id: str,
+        status_code: int,
+        error_type: str,
+        exc_type: str | None = None,
+    ) -> None:
+        fields: dict[str, object] = {
+            "stage": "egress",
+            "event": "free_claude_code.api.response.terminal_execution_error",
+            "source": "api",
+            "wire_api": "messages",
+            "request_id": request_id,
+            "status_code": status_code,
+            "error_type": error_type,
+            "client_should_retry": False,
+        }
+        if exc_type is not None:
+            fields["exc_type"] = exc_type
+        trace_event(**fields)
 
     def _reject_unsupported_server_tools(self, routed: RoutedMessagesRequest) -> None:
         if routed.resolved.provider_id not in _OPENAI_CHAT_UPSTREAM_IDS:
@@ -264,3 +358,19 @@ class MessagesHandler:
             model=routed.request.model,
         )
         return _MessagesCompleteResult(optimized)
+
+
+def _stream_error_fields(error: dict[str, object]) -> tuple[str, str]:
+    raw_type = error.get("type")
+    error_type = (
+        raw_type.strip()
+        if isinstance(raw_type, str) and raw_type.strip()
+        else "api_error"
+    )
+    raw_message = error.get("message")
+    message = (
+        raw_message.strip()
+        if isinstance(raw_message, str) and raw_message.strip()
+        else "Provider request failed unexpectedly."
+    )
+    return error_type, message

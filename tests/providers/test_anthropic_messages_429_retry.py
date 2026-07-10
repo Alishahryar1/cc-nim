@@ -308,6 +308,7 @@ async def test_native_stream_connection_error_retry_exhausted(provider_config):
             ]
             assert error_traces[-1]["request_id"] == "req_native_conn"
             assert error_traces[-1]["exc_type"] == "ConnectError"
+            assert "error_message" not in error_traces[-1]
             assert "Provider exception:\nconnect failed" in exc_info.value.message
     finally:
         GlobalRateLimiter.reset_instance()

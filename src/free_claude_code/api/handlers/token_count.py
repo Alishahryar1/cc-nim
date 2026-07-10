@@ -1,7 +1,5 @@
 """Anthropic token-count API product flow."""
 
-import uuid
-
 from fastapi import HTTPException
 from loguru import logger
 
@@ -14,6 +12,7 @@ from free_claude_code.api.request_errors import (
     log_unexpected_api_exception,
     require_non_empty_messages,
 )
+from free_claude_code.api.request_ids import new_request_id
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import (
     get_token_count,
@@ -37,9 +36,11 @@ class TokenCountHandler:
         self._model_router = model_router or ModelRouter(settings)
         self._token_counter = token_counter
 
-    def count(self, request_data: TokenCountRequest) -> TokenCountResponse:
+    def count(
+        self, request_data: TokenCountRequest, *, request_id: str | None = None
+    ) -> TokenCountResponse:
         """Count tokens for a request after applying configured model routing."""
-        request_id = f"req_{uuid.uuid4().hex[:12]}"
+        request_id = request_id or new_request_id()
         with logger.contextualize(request_id=request_id):
             try:
                 require_non_empty_messages(request_data.messages)
@@ -51,6 +52,7 @@ class TokenCountHandler:
                     stage="routing",
                     event="free_claude_code.api.route.resolved",
                     source="api",
+                    request_id=request_id,
                     kind="count_tokens",
                     provider_id=routed.resolved.provider_id,
                     provider_model=routed.resolved.provider_model,
@@ -61,6 +63,7 @@ class TokenCountHandler:
                     stage="ingress",
                     event="free_claude_code.api.count_tokens.completed",
                     source="api",
+                    request_id=request_id,
                     message_count=len(routed.request.messages),
                     input_tokens=tokens,
                     snapshot=api_messages_request_snapshot(routed.request),

@@ -4,8 +4,14 @@ import pytest
 from fastapi.testclient import TestClient
 
 from free_claude_code.api.app import create_app
-from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
-from free_claude_code.providers.exceptions import RateLimitError
+from free_claude_code.providers.exceptions import (
+    APIError,
+    AuthenticationError,
+    InvalidRequestError,
+    OverloadedError,
+    ProviderError,
+    RateLimitError,
+)
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 
 app = create_app()
@@ -31,12 +37,21 @@ async def _mock_pre_start_rate_limit(*args, **kwargs):
     yield "unreachable"
 
 
-def _stream_error(response):
-    assert response.status_code == 200
-    assert "text/event-stream" in response.headers.get("content-type", "")
-    events = parse_sse_text(response.text)
-    assert [event.event for event in events] == ["error"]
-    return events[0].data["error"]
+async def _mock_empty_stream(*args, **kwargs):
+    """Provider stream that completes without a protocol frame."""
+    _stream_response_calls.append((args, kwargs))
+    if False:
+        yield "unreachable"
+
+
+def _terminal_json_error(response, *, status_code: int):
+    assert response.status_code == status_code
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.headers["x-should-retry"] == "false"
+    request_id = response.headers["request-id"]
+    payload = response.json()
+    assert payload["request_id"] == request_id
+    return payload["error"]
 
 
 mock_provider.stream_response = _mock_stream_response
@@ -66,12 +81,14 @@ def test_root(client: TestClient):
     response = client.get("/")
     assert response.status_code == 200
     assert response.json()["status"] == "ok"
+    assert response.headers["request-id"].startswith("req_")
 
 
 def test_health(client: TestClient):
     response = client.get("/health")
     assert response.status_code == 200
     assert response.json()["status"] == "healthy"
+    assert response.headers["request-id"].startswith("req_")
 
 
 def test_models_list(client: TestClient):
@@ -83,6 +100,7 @@ def test_models_list(client: TestClient):
     assert "claude-sonnet-4-20250514" in ids
     assert data["first_id"] == ids[0]
     assert data["last_id"] == ids[-1]
+    assert response.headers["x-request-id"] == response.headers["request-id"]
 
 
 def test_probe_endpoints_return_204_with_allow_headers(client: TestClient):
@@ -104,6 +122,7 @@ def test_probe_endpoints_return_204_with_allow_headers(client: TestClient):
 
 def test_create_message_stream(client: TestClient):
     """Create message returns streaming response."""
+    _stream_response_calls.clear()
     payload = {
         "model": "claude-3-sonnet",
         "messages": [{"role": "user", "content": "Hi"}],
@@ -115,13 +134,41 @@ def test_create_message_stream(client: TestClient):
     assert "text/event-stream" in response.headers.get("content-type", "")
     content = b"".join(response.iter_bytes())
     assert b"message_start" in content or b"event:" in content
+    assert _stream_response_calls[0][1]["request_id"] == response.headers["request-id"]
 
 
-def test_create_message_pre_start_provider_error_returns_terminal_sse(
+def test_create_message_ingress_error_has_request_id_without_terminal_header(
     client: TestClient,
 ):
-    """Provider execution failures should not leak retryable HTTP status."""
+    response = client.post(
+        "/v1/messages",
+        json={"model": "test", "messages": [], "max_tokens": 10, "stream": True},
+    )
+
+    assert response.status_code == 400
+    assert "x-should-retry" not in response.headers
+    assert response.json()["request_id"] == response.headers["request-id"]
+
+
+def test_create_message_schema_validation_has_request_id_without_terminal_header(
+    client: TestClient,
+):
+    response = client.post(
+        "/v1/messages",
+        json={"model": "test", "messages": "not-a-list"},
+    )
+
+    assert response.status_code == 422
+    assert response.headers["request-id"].startswith("req_")
+    assert "x-should-retry" not in response.headers
+
+
+def test_create_message_pre_start_provider_error_returns_terminal_json(
+    client: TestClient,
+):
+    """Pre-start provider failures keep status without enabling client retries."""
     mock_provider.stream_response = _mock_pre_start_rate_limit
+    _stream_response_calls.clear()
     payload = {
         "model": "claude-3-sonnet",
         "messages": [{"role": "user", "content": "Hi"}],
@@ -129,10 +176,38 @@ def test_create_message_pre_start_provider_error_returns_terminal_sse(
         "stream": True,
     }
 
-    response = client.post("/v1/messages", json=payload)
+    with (
+        patch("free_claude_code.api.handlers.messages.trace_event") as trace,
+        patch("free_claude_code.api.provider_execution.trace_event") as execution_trace,
+    ):
+        response = client.post("/v1/messages", json=payload)
 
-    error = _stream_error(response)
+    error = _terminal_json_error(response, status_code=429)
     assert error == {"type": "rate_limit_error", "message": "upstream is busy"}
+    request_id = response.headers["request-id"]
+    assert _stream_response_calls[0][1]["request_id"] == request_id
+    route_trace = next(
+        call.kwargs
+        for call in execution_trace.call_args_list
+        if call.kwargs.get("event") == "free_claude_code.api.route.resolved"
+    )
+    assert route_trace["request_id"] == request_id
+    terminal_trace = next(
+        call.kwargs
+        for call in trace.call_args_list
+        if call.kwargs.get("event")
+        == "free_claude_code.api.response.terminal_execution_error"
+    )
+    assert terminal_trace == {
+        "stage": "egress",
+        "event": "free_claude_code.api.response.terminal_execution_error",
+        "source": "api",
+        "wire_api": "messages",
+        "request_id": request_id,
+        "status_code": 429,
+        "error_type": "rate_limit_error",
+        "client_should_retry": False,
+    }
     mock_provider.stream_response = _mock_stream_response
 
 
@@ -176,13 +251,26 @@ def test_model_mapping(client: TestClient):
     assert kwargs["thinking_enabled"] is True
 
 
-def test_error_fallbacks(client: TestClient):
-    from free_claude_code.providers.exceptions import (
-        AuthenticationError,
-        OverloadedError,
-        RateLimitError,
-    )
-
+@pytest.mark.parametrize(
+    ("provider_error", "expected_status", "expected_type"),
+    [
+        (AuthenticationError("Invalid Key"), 401, "authentication_error"),
+        (
+            InvalidRequestError("Invalid request api_key=SECRET useful detail"),
+            400,
+            "invalid_request_error",
+        ),
+        (RateLimitError("Too Many Requests"), 429, "rate_limit_error"),
+        (OverloadedError("Server Overloaded"), 529, "overloaded_error"),
+        (APIError("Upstream failed", status_code=503), 503, "api_error"),
+    ],
+)
+def test_provider_execution_errors_preserve_status_and_type(
+    client: TestClient,
+    provider_error: ProviderError,
+    expected_status: int,
+    expected_type: str,
+):
     base_payload = {
         "model": "test",
         "messages": [{"role": "user", "content": "Hi"}],
@@ -190,36 +278,42 @@ def test_error_fallbacks(client: TestClient):
         "stream": True,
     }
 
-    def _raise_auth(*args, **kwargs):
-        raise AuthenticationError("Invalid Key")
+    def _raise_provider_error(*args, **kwargs):
+        raise provider_error
 
-    def _raise_rate_limit(*args, **kwargs):
-        raise RateLimitError("Too Many Requests")
-
-    def _raise_overloaded(*args, **kwargs):
-        raise OverloadedError("Server Overloaded")
-
-    # 1. Provider authentication during execution is terminal SSE, not retryable HTTP.
-    mock_provider.stream_response = _raise_auth
-    response = client.post("/v1/messages", json=base_payload)
-    assert _stream_error(response)["type"] == "authentication_error"
-
-    # 2. Provider rate limit during execution is terminal SSE, not retryable HTTP.
-    mock_provider.stream_response = _raise_rate_limit
-    response = client.post("/v1/messages", json=base_payload)
-    assert _stream_error(response)["type"] == "rate_limit_error"
-
-    # 3. Provider overload during execution is terminal SSE, not retryable HTTP.
-    mock_provider.stream_response = _raise_overloaded
-    response = client.post("/v1/messages", json=base_payload)
-    assert _stream_error(response)["type"] == "overloaded_error"
-
-    # Reset for subsequent tests
-    mock_provider.stream_response = _mock_stream_response
+    try:
+        mock_provider.stream_response = _raise_provider_error
+        response = client.post("/v1/messages", json=base_payload)
+        error = _terminal_json_error(response, status_code=expected_status)
+        assert error["type"] == expected_type
+        assert "SECRET" not in error["message"]
+        if expected_type == "invalid_request_error":
+            assert "useful detail" in error["message"]
+    finally:
+        mock_provider.stream_response = _mock_stream_response
 
 
-def test_generic_stream_exception_returns_terminal_sse(client: TestClient):
-    """Unexpected provider execution failures also terminalize the accepted stream."""
+def test_empty_provider_stream_returns_terminal_json(client: TestClient):
+    mock_provider.stream_response = _mock_empty_stream
+    try:
+        response = client.post(
+            "/v1/messages",
+            json={
+                "model": "test",
+                "messages": [{"role": "user", "content": "Hi"}],
+                "max_tokens": 10,
+                "stream": True,
+            },
+        )
+        error = _terminal_json_error(response, status_code=500)
+        assert error["type"] == "api_error"
+        assert error["message"] == "Stream ended before emitting a response."
+    finally:
+        mock_provider.stream_response = _mock_stream_response
+
+
+def test_generic_stream_exception_returns_terminal_json(client: TestClient):
+    """Unexpected provider execution failures return detailed terminal JSON."""
 
     def _raise_runtime(*args, **kwargs):
         raise RuntimeError("unexpected crash")
@@ -234,13 +328,13 @@ def test_generic_stream_exception_returns_terminal_sse(client: TestClient):
             "stream": True,
         },
     )
-    error = _stream_error(response)
+    error = _terminal_json_error(response, status_code=500)
     assert error["type"] == "api_error"
     assert error["message"] == "unexpected crash"
     mock_provider.stream_response = _mock_stream_response
 
 
-def test_generic_stream_exception_with_status_code_returns_terminal_sse(
+def test_generic_stream_exception_with_status_code_returns_terminal_json(
     client: TestClient,
 ):
     """Ad-hoc status_code attrs do not become retryable HTTP responses."""
@@ -263,7 +357,7 @@ def test_generic_stream_exception_with_status_code_returns_terminal_sse(
             "stream": True,
         },
     )
-    error = _stream_error(response)
+    error = _terminal_json_error(response, status_code=500)
     assert error["type"] == "api_error"
     assert error["message"] == "bad gateway"
     mock_provider.stream_response = _mock_stream_response
@@ -291,7 +385,7 @@ def test_generic_stream_exception_empty_message_returns_non_empty_error(
             "stream": True,
         },
     )
-    error = _stream_error(response)
+    error = _terminal_json_error(response, status_code=500)
     assert error["type"] == "api_error"
     assert error["message"] != ""
     mock_provider.stream_response = _mock_stream_response
@@ -305,6 +399,7 @@ def test_count_tokens_endpoint(client: TestClient):
     )
     assert response.status_code == 200
     assert "input_tokens" in response.json()
+    assert response.headers["request-id"].startswith("req_")
 
 
 def test_stop_endpoint_no_workflow_no_cli_503(client: TestClient):

@@ -636,39 +636,22 @@ class TestAnthropicStreamLedgerStateManagement:
 
 
 class TestAnthropicStreamLedgerError:
-    """Tests for emit_error."""
+    """Tests for protocol-native terminal errors."""
 
-    def test_emit_error(self):
+    def test_terminal_error_tail_closes_open_block_without_success_stop(self):
         builder = AnthropicStreamLedger("msg_1", "model")
-        events = list(builder.emit_error("Something went wrong"))
+        builder.start_text_block()
 
-        assert len(events) == 3  # start, delta, stop
-        start_data = _parse_sse(events[0])
-        assert start_data["content_block"]["type"] == "text"
-
-        delta_data = _parse_sse(events[1])
-        assert delta_data["delta"]["text"] == "Something went wrong"
-
-        stop_data = _parse_sse(events[2])
-        assert stop_data["type"] == "content_block_stop"
-
-    def test_midstream_error_tail_without_terminal_state_emits_message_tail(self):
-        builder = AnthropicStreamLedger("msg_1", "model")
-
-        events = list(builder.midstream_error_tail("Something went wrong"))
+        events = list(builder.terminal_error_tail("Something went wrong"))
         parsed = parse_sse_text("".join(events))
 
         assert [event.event for event in parsed] == [
-            "content_block_start",
-            "content_block_delta",
             "content_block_stop",
-            "message_delta",
-            "message_stop",
+            "error",
         ]
-        assert parsed[1].data["delta"]["text"] == "Something went wrong"
-        assert parsed[3].data["delta"]["stop_reason"] == "end_turn"
+        assert parsed[-1].data["error"]["message"] == "Something went wrong"
 
-    def test_midstream_error_tail_after_message_delta_uses_top_level_error(self):
+    def test_terminal_error_tail_after_message_delta_does_not_fake_message_stop(self):
         builder = AnthropicStreamLedger("msg_1", "model")
         builder.ingest_native_event(
             SSEEvent(
@@ -682,13 +665,13 @@ class TestAnthropicStreamLedgerError:
             )
         )
 
-        events = list(builder.midstream_error_tail("Something went wrong"))
+        events = list(builder.terminal_error_tail("Something went wrong"))
         parsed = parse_sse_text("".join(events))
 
-        assert [event.event for event in parsed] == ["error", "message_stop"]
+        assert [event.event for event in parsed] == ["error"]
         assert parsed[0].data["error"]["message"] == "Something went wrong"
 
-    def test_midstream_error_tail_after_message_stop_does_not_duplicate_terminal(self):
+    def test_terminal_error_tail_after_message_stop_still_reports_failure(self):
         builder = AnthropicStreamLedger("msg_1", "model")
         builder.ingest_native_event(
             SSEEvent(
@@ -705,7 +688,7 @@ class TestAnthropicStreamLedgerError:
             SSEEvent("message_stop", {"type": "message_stop"}, "")
         )
 
-        events = list(builder.midstream_error_tail("Something went wrong"))
+        events = list(builder.terminal_error_tail("Something went wrong"))
         parsed = parse_sse_text("".join(events))
 
         assert [event.event for event in parsed] == ["error"]

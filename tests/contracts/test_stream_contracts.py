@@ -105,6 +105,19 @@ def test_redacted_thinking_block_start_stop_is_valid() -> None:
     assert_anthropic_stream_contract(events)
 
 
+def test_terminal_error_is_valid_without_fake_message_stop() -> None:
+    builder = AnthropicStreamLedger("msg_error", "contract-model")
+    chunks = [builder.message_start()]
+    chunks.extend(builder.ensure_text_block())
+    chunks.append(builder.emit_text_delta("partial"))
+    chunks.extend(builder.terminal_error_tail("provider interrupted"))
+    events = parse_sse_text("".join(chunks))
+
+    assert_anthropic_stream_contract(events, allow_error=True)
+    assert event_names(events)[-2:] == ["content_block_stop", "error"]
+    assert "message_stop" not in event_names(events)
+
+
 def test_enable_thinking_false_suppresses_reasoning_only() -> None:
     events = _parse_builder_events(
         _events_from_text_chunks(

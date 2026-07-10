@@ -20,7 +20,7 @@ from free_claude_code.api.models.openai_responses import OpenAIResponsesRequest
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
-from free_claude_code.providers.exceptions import InvalidRequestError
+from free_claude_code.providers.exceptions import InvalidRequestError, RateLimitError
 
 _CLASSIFIER_SYSTEM = (
     "You are a security monitor. Respond with <block>yes</block> or <block>no</block>."
@@ -235,11 +235,123 @@ async def test_messages_handler_returns_error_json_for_stream_false_sse_error() 
     response = await handler.create(request)
 
     assert isinstance(response, JSONResponse)
-    assert response.status_code == 502
+    assert response.status_code == 500
+    assert response.headers["x-should-retry"] == "false"
     body = _json_response_content(response)
-    assert body == {
-        "type": "error",
-        "error": {"type": "api_error", "message": "upstream failed"},
+    assert body["type"] == "error"
+    assert body["error"] == {"type": "api_error", "message": "upstream failed"}
+    assert body["request_id"].startswith("req_")
+
+
+@pytest.mark.asyncio
+async def test_messages_handler_discards_partial_stream_false_output_on_error() -> None:
+    provider = FakeProvider(
+        [
+            format_sse_event(
+                "message_start",
+                {
+                    "type": "message_start",
+                    "message": {
+                        "id": "msg_partial",
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [],
+                        "model": "test-model",
+                        "stop_reason": None,
+                        "stop_sequence": None,
+                        "usage": {"input_tokens": 1, "output_tokens": 1},
+                    },
+                },
+            ),
+            format_sse_event(
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                },
+            ),
+            format_sse_event(
+                "content_block_delta",
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "incomplete"},
+                },
+            ),
+            format_sse_event(
+                "error",
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "overloaded_error",
+                        "message": "provider overloaded",
+                    },
+                },
+            ),
+        ]
+    )
+    handler = MessagesHandler(Settings(), provider_getter=lambda _: provider)
+    request = MessagesRequest(
+        model="nvidia_nim/test-model",
+        max_tokens=100,
+        stream=False,
+        messages=[Message(role="user", content="hi")],
+    )
+
+    response = await handler.create(request)
+
+    assert isinstance(response, JSONResponse)
+    assert response.status_code == 529
+    assert response.headers["x-should-retry"] == "false"
+    body = _json_response_content(response)
+    assert body["error"] == {
+        "type": "overloaded_error",
+        "message": "provider overloaded",
+    }
+    assert "content" not in body
+
+
+@pytest.mark.asyncio
+async def test_messages_handler_stream_false_provider_exception_keeps_status() -> None:
+    class FailingProvider(FakeProvider):
+        async def stream_response(
+            self,
+            request: Any,
+            input_tokens: int = 0,
+            *,
+            request_id: str | None = None,
+            thinking_enabled: bool | None = None,
+        ) -> AsyncIterator[str]:
+            self.requests.append(request)
+            self.stream_kwargs.append(
+                {
+                    "input_tokens": input_tokens,
+                    "request_id": request_id,
+                    "thinking_enabled": thinking_enabled,
+                }
+            )
+            raise RateLimitError("upstream is busy")
+            yield "unreachable"
+
+    provider = FailingProvider()
+    handler = MessagesHandler(Settings(), provider_getter=lambda _: provider)
+    request = MessagesRequest(
+        model="nvidia_nim/test-model",
+        max_tokens=100,
+        stream=False,
+        messages=[Message(role="user", content="hi")],
+    )
+
+    response = await handler.create(request)
+
+    assert isinstance(response, JSONResponse)
+    assert response.status_code == 429
+    assert response.headers["x-should-retry"] == "false"
+    body = _json_response_content(response)
+    assert body["error"] == {
+        "type": "rate_limit_error",
+        "message": "upstream is busy",
     }
 
 
@@ -420,11 +532,16 @@ def test_token_count_handler_routes_and_counts_tokens() -> None:
         token_counter=lambda messages, system, tools: len(messages) + 41,
     )
 
-    response = handler.count(
-        TokenCountRequest(
-            model="nvidia_nim/test-model",
-            messages=[Message(role="user", content="hi")],
+    with patch("free_claude_code.api.handlers.token_count.trace_event") as trace:
+        response = handler.count(
+            TokenCountRequest(
+                model="nvidia_nim/test-model",
+                messages=[Message(role="user", content="hi")],
+            ),
+            request_id="req_ingress",
         )
-    )
 
     assert response.input_tokens == 42
+    assert all(
+        call.kwargs["request_id"] == "req_ingress" for call in trace.call_args_list
+    )

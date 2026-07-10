@@ -430,6 +430,7 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         ("tests/cli/test_cli.py",),
         (
             "test_claude_cli_prompt_when_available",
+            "test_claude_cli_provider_error_e2e",
             "test_nvidia_nim_cli_matrix_e2e",
             "test_openrouter_free_cli_matrix_e2e",
         ),

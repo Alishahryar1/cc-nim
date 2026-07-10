@@ -1,11 +1,87 @@
-"""User-facing error formatting shared by API, providers, and integrations."""
+"""Anthropic error shaping shared by API, providers, and integrations."""
+
+import re
+from typing import Any
 
 import httpx
 import openai
 
+_SECRET_TEXT_REPLACEMENTS = (
+    (
+        re.compile(
+            r"(?i)(?P<prefix>[\"']?authorization[\"']?\s*[:=]\s*)"
+            r"(?P<quote>[\"']?)(?:(?:bearer|basic)\s+)?"
+            r"[^\"'\s,;&}\]]+(?P=quote)"
+        ),
+        r"\g<prefix>\g<quote><redacted>\g<quote>",
+    ),
+    (
+        re.compile(
+            r"(?i)(?P<prefix>[\"']?(?:api[_-]?key|access[_-]?token|"
+            r"refresh[_-]?token|token|client[_-]?secret|secret|password)"
+            r"[\"']?\s*[:=]\s*)(?P<quote>[\"']?)"
+            r"[^\"'\s,;&}\]]+(?P=quote)"
+        ),
+        r"\g<prefix>\g<quote><redacted>\g<quote>",
+    ),
+    (re.compile(r"(?i)(bearer\s+)[^\s,;]+"), r"\1<redacted>"),
+    (
+        re.compile(
+            r"(?i)(?<![a-z0-9])(?:sk-[a-z0-9._-]{8,}|"
+            r"nvapi-[a-z0-9._-]{8,}|hf_[a-z0-9_-]{8,}|"
+            r"gsk_[a-z0-9_-]{8,}|github_pat_[a-z0-9_]{8,}|"
+            r"gh[pousr]_[a-z0-9]{8,}|AIza[a-z0-9_-]{20,})"
+            r"(?![a-z0-9])"
+        ),
+        "<redacted>",
+    ),
+)
+
+_ANTHROPIC_ERROR_STATUS_CODES = {
+    "invalid_request_error": 400,
+    "authentication_error": 401,
+    "billing_error": 402,
+    "permission_error": 403,
+    "not_found_error": 404,
+    "request_too_large": 413,
+    "rate_limit_error": 429,
+    "api_error": 500,
+    "timeout_error": 504,
+    "overloaded_error": 529,
+}
+
+
+def redact_sensitive_error_text(text: str) -> str:
+    """Redact recognizable credentials while preserving diagnostic context."""
+    sanitized = text
+    for pattern, replacement in _SECRET_TEXT_REPLACEMENTS:
+        sanitized = pattern.sub(replacement, sanitized)
+    return sanitized
+
+
+def anthropic_error_payload(
+    *, error_type: str, message: str, request_id: str | None = None
+) -> dict[str, Any]:
+    """Return one Anthropic-compatible JSON error envelope."""
+    payload: dict[str, Any] = {
+        "type": "error",
+        "error": {
+            "type": error_type,
+            "message": redact_sensitive_error_text(message),
+        },
+    }
+    if request_id:
+        payload["request_id"] = request_id
+    return payload
+
+
+def anthropic_status_for_error_type(error_type: str) -> int:
+    """Return the standard HTTP status for an Anthropic error type."""
+    return _ANTHROPIC_ERROR_STATUS_CODES.get(error_type, 500)
+
 
 def get_user_facing_error_message(
-    e: Exception,
+    e: BaseException,
     *,
     read_timeout_s: float | None = None,
 ) -> str:
@@ -54,7 +130,7 @@ def get_user_facing_error_message(
     if name.endswith("ProviderError") or name == "ProviderError":
         return "Provider request failed."
 
-    message = str(e).strip()
+    message = redact_sensitive_error_text(str(e).strip())
     if message:
         return message
 

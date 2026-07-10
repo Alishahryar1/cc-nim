@@ -75,6 +75,7 @@ class AnthropicMessagesStreamAdapter:
             event="provider.request.sent",
             source="provider",
             provider=tag,
+            request_id=self._request_id,
             gateway_model=self._request.model,
             downstream_model=body.get("model"),
             message_count=len(body.get("messages", [])),
@@ -130,6 +131,7 @@ class AnthropicMessagesStreamAdapter:
                         event="provider.response.completed",
                         source="provider",
                         provider=tag,
+                        request_id=self._request_id,
                         gateway_model=self._request.model,
                         sse_chunks_out=chunk_count,
                         sse_bytes_out=chunk_bytes,
@@ -194,31 +196,46 @@ class AnthropicMessagesStreamAdapter:
                         self._transport._log_stream_transport_error(
                             tag, req_tag, error, request_id=self._request_id
                         )
-                    error_message = self._transport._get_error_message(
+                    mapped_error, error_message = self._transport._map_error_details(
                         error, self._request_id
+                    )
+                    mapped_error_type = getattr(mapped_error, "error_type", None)
+                    terminal_error_type = (
+                        mapped_error_type
+                        if isinstance(mapped_error_type, str) and mapped_error_type
+                        else "api_error"
                     )
 
                     if response is not None and not response.is_closed:
                         await maybe_await_aclose(response)
 
-                    trace_event(
-                        stage="provider",
-                        event="provider.response.error",
-                        source="provider",
-                        provider=tag,
-                        request_id=self._request_id,
-                        error_message=error_message,
-                        exc_type=type(error).__name__,
-                        mid_stream=(sent_any_event or decision.committed),
-                    )
+                    error_trace: dict[str, Any] = {
+                        "stage": "provider",
+                        "event": "provider.response.error",
+                        "source": "provider",
+                        "provider": tag,
+                        "request_id": self._request_id,
+                        "exc_type": type(error).__name__,
+                        "mapped_error_type": type(mapped_error).__name__,
+                        "mid_stream": sent_any_event or decision.committed,
+                    }
+                    if self._transport._config.log_api_error_tracebacks:
+                        error_trace["error_message"] = error_message
+                    trace_event(**error_trace)
                     if decision.committed:
-                        for event in ledger.midstream_error_tail(error_message):
+                        for event in ledger.terminal_error_tail(
+                            error_message,
+                            error_type=terminal_error_type,
+                        ):
                             yield event
                     elif decision.has_buffered and complete_tool_salvageable:
                         for event in recovery.flush():
                             sent_any_event = True
                             yield event
-                        for event in ledger.midstream_error_tail(error_message):
+                        for event in ledger.terminal_error_tail(
+                            error_message,
+                            error_type=terminal_error_type,
+                        ):
                             yield event
                     else:
                         recovery.discard()

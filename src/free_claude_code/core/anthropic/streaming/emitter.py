@@ -5,6 +5,8 @@ from typing import Any
 
 from loguru import logger
 
+from ..errors import anthropic_error_payload
+
 ANTHROPIC_SSE_RESPONSE_HEADERS: dict[str, str] = {
     "X-Accel-Buffering": "no",
     "Cache-Control": "no-cache",
@@ -36,8 +38,7 @@ def anthropic_terminal_error_frame(
 ) -> str:
     """Serialize a terminal Anthropic SSE error event for egress failures."""
     return format_sse_event(
-        "error",
-        {"type": "error", "error": {"type": error_type, "message": message}},
+        "error", anthropic_error_payload(error_type=error_type, message=message)
     )
 
 

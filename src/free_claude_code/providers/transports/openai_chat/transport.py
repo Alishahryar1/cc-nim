@@ -195,14 +195,19 @@ class OpenAIChatTransport(BaseProvider):
         )
         return clamped
 
-    def _openai_error_message(self, error: Exception, request_id: str | None) -> str:
+    def _map_error_details(
+        self, error: Exception, request_id: str | None
+    ) -> tuple[Exception, str]:
         mapped_error = map_error(error, rate_limiter=self._global_rate_limiter)
-        return user_visible_message_for_mapped_provider_error(
+        return (
             mapped_error,
-            provider_name=self._provider_name,
-            read_timeout_s=self._config.http_read_timeout,
-            detail=extract_provider_error_detail(error),
-            request_id=request_id,
+            user_visible_message_for_mapped_provider_error(
+                mapped_error,
+                provider_name=self._provider_name,
+                read_timeout_s=self._config.http_read_timeout,
+                detail=extract_provider_error_detail(error),
+                request_id=request_id,
+            ),
         )
 
     async def stream_response(

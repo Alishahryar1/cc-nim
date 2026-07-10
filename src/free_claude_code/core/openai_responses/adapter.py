@@ -22,13 +22,8 @@ class OpenAIResponsesAdapter:
         self,
         chunks: AsyncIterable[Any],
         request: Mapping[str, Any],
-        *,
-        stream_error_message: str | None = None,
     ) -> AsyncIterator[str]:
-        kwargs: dict[str, str] = {}
-        if stream_error_message is not None:
-            kwargs["stream_error_message"] = stream_error_message
-        return iter_responses_sse_from_anthropic(chunks, request, **kwargs)
+        return iter_responses_sse_from_anthropic(chunks, request)
 
     def error_payload(self, *, message: str, error_type: str) -> dict[str, Any]:
         return openai_error_payload(message=message, error_type=error_type)

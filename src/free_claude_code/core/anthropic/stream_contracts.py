@@ -95,16 +95,19 @@ def _append_event(
 def assert_anthropic_stream_contract(
     events: list[SSEEvent], *, allow_error: bool = False
 ) -> None:
-    """Check minimal Anthropic-style SSE invariants: start/stop, block nesting.
+    """Check minimal Anthropic-style SSE invariants and block nesting.
 
     Does *not* assert strict event ordering (e.g. :class:`message_delta` vs
-    content blocks) beyond presence of a final ``message_stop``; stricter
-    ordering can be tested in product or transport-specific suites.
+    content blocks). Successful streams end in ``message_stop``; when explicitly
+    allowed, failed streams may instead end in a protocol-native ``error``.
     """
     assert events, "stream produced no SSE events"
     event_names = [event.event for event in events]
     assert "message_start" in event_names, event_names
-    assert event_names[-1] == "message_stop", event_names
+    allowed_terminal_events = (
+        {"message_stop", "error"} if allow_error else {"message_stop"}
+    )
+    assert event_names[-1] in allowed_terminal_events, event_names
 
     open_blocks: dict[int, str] = {}
     seen_blocks: set[int] = set()

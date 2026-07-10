@@ -297,6 +297,29 @@ def test_http_status_error_json_body_is_compact_and_visible():
     assert "Request ID: req_json" in msg
 
 
+def test_http_status_error_body_redacts_credentials_but_keeps_context():
+    response = Response(
+        status_code=400,
+        request=Request("POST", "http://test"),
+        json={
+            "error": {
+                "type": "BadRequest",
+                "message": "bad field api_key=SECRET authorization: Bearer TOKEN",
+            }
+        },
+    )
+    exc = HTTPStatusError("Bad Request", request=response.request, response=response)
+
+    detail = extract_provider_error_detail(exc)
+
+    assert detail.body_text is not None
+    assert "bad field" in detail.body_text
+    assert "api_key=<redacted>" in detail.body_text
+    assert "authorization: <redacted>" in detail.body_text
+    assert "SECRET" not in detail.body_text
+    assert "TOKEN" not in detail.body_text
+
+
 def test_empty_http_error_body_is_explicitly_reported():
     response = Response(
         status_code=500,

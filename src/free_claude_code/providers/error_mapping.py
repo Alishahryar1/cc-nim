@@ -1,7 +1,6 @@
 """Provider-specific exception mapping and user-visible diagnostics."""
 
 import json
-import re
 from dataclasses import dataclass
 from typing import Any
 
@@ -9,7 +8,10 @@ import httpx
 import openai
 
 from free_claude_code.config.constants import PROVIDER_ERROR_BODY_DISPLAY_CAP_BYTES
-from free_claude_code.core.anthropic import get_user_facing_error_message
+from free_claude_code.core.anthropic import (
+    get_user_facing_error_message,
+    redact_sensitive_error_text,
+)
 from free_claude_code.core.anthropic.streaming import (
     is_transient_overload_error,
     retryable_transient_status,
@@ -27,11 +29,6 @@ from free_claude_code.providers.rate_limit import GlobalRateLimiter
 _BODY_ATTR = "_fcc_provider_error_body"
 _BODY_TRUNCATED_ATTR = "_fcc_provider_error_body_truncated"
 _MAX_CAUSE_CHAIN_DEPTH = 4
-_SECRET_TEXT_PATTERNS = (
-    re.compile(r"(?i)(authorization\s*[:=]\s*)(bearer\s+)?[^\s,;]+"),
-    re.compile(r"(?i)((?:api[_-]?key|token|secret)\s*[:=]\s*)[^\s,;]+"),
-    re.compile(r"(?i)(bearer\s+)[^\s,;]+"),
-)
 
 
 @dataclass(frozen=True)
@@ -109,13 +106,6 @@ def _cap_text_bytes(text: str, max_bytes: int) -> tuple[str, bool]:
     return f"{capped}\n... [truncated after {max_bytes} bytes]", True
 
 
-def _sanitize_exception_text(text: str) -> str:
-    sanitized = text
-    for pattern in _SECRET_TEXT_PATTERNS:
-        sanitized = pattern.sub(r"\1<redacted>", sanitized)
-    return sanitized
-
-
 def _exception_causes(exc: BaseException) -> tuple[BaseException, ...]:
     causes: list[BaseException] = []
     seen: set[int] = {id(exc)}
@@ -141,7 +131,7 @@ def _exception_cause_chain_text(exc: BaseException) -> str | None:
         raw_text = str(cause).strip()
         if raw_text:
             lines.append(
-                f"{type(cause).__name__}: {_sanitize_exception_text(raw_text)}"
+                f"{type(cause).__name__}: {redact_sensitive_error_text(raw_text)}"
             )
         else:
             lines.append(type(cause).__name__)
@@ -197,6 +187,7 @@ def extract_provider_error_detail(exc: Exception) -> ProviderErrorDetail:
     body_text = _normalize_body_text(raw_body)
     display_truncated = raw_body_truncated
     if body_text is not None:
+        body_text = redact_sensitive_error_text(body_text)
         body_text, cap_truncated = _cap_text_bytes(
             body_text, PROVIDER_ERROR_BODY_DISPLAY_CAP_BYTES
         )
@@ -204,7 +195,7 @@ def extract_provider_error_detail(exc: Exception) -> ProviderErrorDetail:
 
     exception_text = str(exc).strip() or None
     if exception_text is not None:
-        exception_text = _sanitize_exception_text(exception_text)
+        exception_text = redact_sensitive_error_text(exception_text)
         exception_text, _ = _cap_text_bytes(
             exception_text, PROVIDER_ERROR_BODY_DISPLAY_CAP_BYTES
         )

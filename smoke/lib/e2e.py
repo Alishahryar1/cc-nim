@@ -275,26 +275,31 @@ class ClientProtocolDriver:
         config: SmokeConfig,
         cwd: Path,
         prompt: str,
+        model: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
         env = os.environ.copy()
         env["ANTHROPIC_BASE_URL"] = server.base_url
         env["ANTHROPIC_API_URL"] = f"{server.base_url}/v1"
+        env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
         env.pop("ANTHROPIC_API_KEY", None)
         if config.settings.anthropic_auth_token:
             env["ANTHROPIC_AUTH_TOKEN"] = config.settings.anthropic_auth_token
         else:
             env.pop("ANTHROPIC_AUTH_TOKEN", None)
+        command = [
+            claude_bin,
+            "--bare",
+            "--no-session-persistence",
+            "--tools",
+            "",
+            "--system-prompt",
+            "Reply with exactly the requested smoke token and no other text.",
+        ]
+        if model is not None:
+            command.extend(["--model", model])
+        command.extend(["-p", prompt])
         return run_captured_text(
-            [
-                claude_bin,
-                "--bare",
-                "--tools",
-                "",
-                "--system-prompt",
-                "Reply with exactly the requested smoke token and no other text.",
-                "-p",
-                prompt,
-            ],
+            command,
             cwd=cwd,
             env=env,
             timeout=config.timeout_s,

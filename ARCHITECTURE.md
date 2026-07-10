@@ -238,6 +238,12 @@ proxy auth is disabled. Otherwise the token may be supplied through `x-api-key`,
 `Authorization: Bearer ...`, or `anthropic-auth-token`. Comparisons use
 constant-time matching.
 
+HTTP request correlation is owned at ingress. Middleware creates one opaque FCC
+request ID before routing, places it in log context and request state, and adds
+`request-id` to every response. OpenAI-compatible Responses and the shared model
+catalog also expose the same value as `x-request-id`. Provider execution and
+trace events receive that existing ID; they do not create a second identifier.
+
 [api/handlers/](src/free_claude_code/api/handlers/) owns the public API product flows.
 `MessagesHandler` validates non-empty messages, resolves models, applies
 Claude-only safety-classifier and local optimization policy, handles local web
@@ -249,14 +255,19 @@ provider, preflights the upstream request, emits trace events, counts input
 tokens, and returns an Anthropic SSE iterator.
 [api/response_streams.py](src/free_claude_code/api/response_streams.py) owns public streaming egress
 commit timing. It waits for the first protocol chunk before returning a
-successful `StreamingResponse`. For streaming `/v1/messages`, once FCC has
-accepted the turn and provider execution owns the request, final provider
-failures are returned as terminal Anthropic SSE error events rather than
-retryable HTTP 429/5xx responses. HTTP error responses remain for ingress,
-auth, request validation, and preflight request-shape failures before provider
-execution. After the first chunk has escaped, HTTP status is committed; any
-unexpected failure must be represented as a protocol terminal frame where
-feasible.
+successful `StreamingResponse`. A provider-execution failure before that commit
+boundary remains a real typed non-2xx JSON response. Once FCC has finalized the
+failure, the response includes `x-should-retry: false` so FCC retains ownership
+of upstream retry/recovery without causing a second client retry loop. After the
+first chunk has escaped, HTTP status is committed; Messages emits an Anthropic
+`event: error` and closes without a synthetic `message_stop`; Responses emits
+`response.failed` with the original response ID. Non-streaming Messages
+aggregate internally and return non-2xx JSON for any terminal stream error,
+discarding incomplete content rather than presenting a partial success.
+
+Ingress authentication, request validation, model routing, and deterministic
+preflight failures remain ordinary HTTP errors and do not receive the terminal
+provider-execution retry header.
 
 ```mermaid
 sequenceDiagram
@@ -453,8 +464,10 @@ any downstream-visible SSE chunk has escaped the recovery holdback. Once output
 has committed, transports keep ownership of midstream recovery, continuation,
 tool salvage, and protocol-specific success/error tails.
 The public streaming API boundary owns the final downstream error shape: provider
-errors may be visible to clients, but after FCC exhausts provider retry/recovery
-they must not leak as retryable HTTP statuses for accepted streaming turns.
+errors remain visible to clients, but after FCC exhausts provider retry/recovery
+they are returned as typed HTTP errors with explicit retry suppression when the
+HTTP response is still uncommitted. Only already-committed streams use terminal
+protocol events.
 
 [src/free_claude_code/core/openai_responses/](src/free_claude_code/core/openai_responses/) owns OpenAI Responses support:
 

@@ -409,7 +409,7 @@ async def test_midstream_error_after_native_message_delta_does_not_duplicate_ter
     parsed = parse_sse_text("".join(events))
     assert mock_collect.await_count == 0
     assert sum(event.event == "message_delta" for event in parsed) == 1
-    assert sum(event.event == "message_stop" for event in parsed) == 1
+    assert sum(event.event == "message_stop" for event in parsed) == 0
     assert sum(event.event == "error" for event in parsed) == 1
     message_delta_index = next(
         index for index, event in enumerate(parsed) if event.event == "message_delta"
@@ -815,6 +815,9 @@ async def test_truncated_native_recovery_stream_falls_back_to_error_tail(
     assert original_text in event_text
     assert "world" not in event_text
     assert "Provider stream ended without message_stop." in event_text
+    parsed = parse_sse_text(event_text)
+    assert parsed[-1].event == "error"
+    assert not any(event.event == "message_stop" for event in parsed)
     assert not any(
         event.event == "content_block_delta"
         and event.data.get("delta", {}).get("text") == "ld"

@@ -2,19 +2,18 @@
 
 import asyncio
 from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping
+from typing import Any
 
-from fastapi.responses import Response, StreamingResponse
+from fastapi.responses import JSONResponse, Response, StreamingResponse
 
+from free_claude_code.core.anthropic import get_user_facing_error_message
 from free_claude_code.core.anthropic.streaming import (
     ANTHROPIC_SSE_RESPONSE_HEADERS,
     anthropic_terminal_error_frame,
 )
 from free_claude_code.core.trace import trace_event
 
-EGRESS_STREAM_INTERRUPTED_MESSAGE = (
-    "The upstream response stream ended unexpectedly; the request could not be "
-    "completed."
-)
+TERMINAL_EXECUTION_ERROR_HEADERS = {"x-should-retry": "false"}
 
 PreStartErrorResponse = Callable[[BaseException], Response]
 TerminalFrameEmitter = Callable[[BaseException], str]
@@ -24,18 +23,14 @@ class EmptyStreamError(RuntimeError):
     """Raised when a public stream ends before emitting any protocol chunk."""
 
 
-async def _single_chunk_body(chunk: str) -> AsyncGenerator[str]:
-    yield chunk
-
-
-def anthropic_sse_error_response(*, error_type: str, message: str) -> StreamingResponse:
-    """Return a committed Anthropic SSE stream containing one terminal error."""
-    return StreamingResponse(
-        _single_chunk_body(
-            anthropic_terminal_error_frame(message, error_type=error_type)
-        ),
-        media_type="text/event-stream",
-        headers=dict(ANTHROPIC_SSE_RESPONSE_HEADERS),
+def terminal_execution_error_response(
+    *, status_code: int, content: dict[str, Any]
+) -> JSONResponse:
+    """Return a final provider-execution error without enabling client retries."""
+    return JSONResponse(
+        status_code=status_code,
+        content=content,
+        headers=dict(TERMINAL_EXECUTION_ERROR_HEADERS),
     )
 
 
@@ -117,8 +112,8 @@ async def anthropic_sse_streaming_response(
         body,
         headers=ANTHROPIC_SSE_RESPONSE_HEADERS,
         pre_start_error_response=pre_start_error_response,
-        terminal_frame=lambda _exc: anthropic_terminal_error_frame(
-            EGRESS_STREAM_INTERRUPTED_MESSAGE
+        terminal_frame=lambda exc: anthropic_terminal_error_frame(
+            get_user_facing_error_message(exc)
         ),
     )
 

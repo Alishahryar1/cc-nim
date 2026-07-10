@@ -15,6 +15,7 @@ from .model_catalog import build_models_list_response
 from .models.anthropic import MessagesRequest, TokenCountRequest
 from .models.openai_responses import OpenAIResponsesRequest
 from .models.responses import ModelsListResponse
+from .request_ids import get_request_id
 
 router = APIRouter()
 
@@ -65,12 +66,13 @@ def _probe_response(allow: str) -> Response:
 # =============================================================================
 @router.post("/v1/messages")
 async def create_message(
+    request: Request,
     request_data: MessagesRequest,
     handler: MessagesHandler = Depends(get_messages_handler),
     _auth=Depends(require_api_key),
 ):
     """Create a message (streaming by default; stream=false gets aggregated JSON)."""
-    return await handler.create(request_data)
+    return await handler.create(request_data, request_id=get_request_id(request))
 
 
 @router.api_route("/v1/messages", methods=["HEAD", "OPTIONS"])
@@ -81,12 +83,13 @@ async def probe_messages(_auth=Depends(require_api_key)):
 
 @router.post("/v1/responses")
 async def create_response(
+    request: Request,
     request_data: OpenAIResponsesRequest,
     handler: ResponsesHandler = Depends(get_responses_handler),
     _auth=Depends(require_api_key),
 ):
     """Create an OpenAI Responses-compatible response through this proxy."""
-    return await handler.create(request_data)
+    return await handler.create(request_data, request_id=get_request_id(request))
 
 
 @router.api_route("/v1/responses", methods=["HEAD", "OPTIONS"])
@@ -97,12 +100,13 @@ async def probe_responses(_auth=Depends(require_api_key)):
 
 @router.post("/v1/messages/count_tokens")
 async def count_tokens(
+    request: Request,
     request_data: TokenCountRequest,
     handler: TokenCountHandler = Depends(get_token_count_handler),
     _auth=Depends(require_api_key),
 ):
     """Count tokens for a request."""
-    return handler.count(request_data)
+    return handler.count(request_data, request_id=get_request_id(request))
 
 
 @router.api_route("/v1/messages/count_tokens", methods=["HEAD", "OPTIONS"])

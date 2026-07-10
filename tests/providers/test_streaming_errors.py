@@ -290,7 +290,7 @@ class TestStreamingExceptionHandling:
         assert "tool_use" in event_text
         assert "Connection lost after tool" in event_text
         assert "event: error\n" in event_text
-        assert "message_stop" in event_text
+        assert "message_stop" not in event_text
         _assert_error_not_in_text_deltas_after_tool(
             events, "Connection lost after tool"
         )
@@ -642,6 +642,9 @@ class TestStreamingExceptionHandling:
         assert "event: error\n" in event_text
         assert "bad after tool" in event_text
         assert "Request ID: REQ_TOOL_BODY" in event_text
+        assert "message_stop" not in event_text
+        terminal_error = parse_sse_text(event_text)[-1]
+        assert terminal_error.data["error"]["type"] == "invalid_request_error"
         _assert_error_not_in_text_deltas_after_tool(events, "bad after tool")
 
     @pytest.mark.asyncio
@@ -962,6 +965,9 @@ class TestStreamingExceptionHandling:
         assert original_text in event_text
         assert "world" not in event_text
         assert "Provider stream ended without finish_reason." in event_text
+        parsed = parse_sse_text(event_text)
+        assert parsed[-1].event == "error"
+        assert not any(event.event == "message_stop" for event in parsed)
         assert not any(
             event.event == "content_block_delta"
             and event.data.get("delta", {}).get("text") == "ld"

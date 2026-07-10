@@ -16,6 +16,10 @@ from starlette.types import Receive, Scope, Send
 from free_claude_code.config.logging_config import configure_logging
 from free_claude_code.config.paths import server_log_path
 from free_claude_code.config.settings import get_settings
+from free_claude_code.core.anthropic import (
+    anthropic_error_payload,
+    get_user_facing_error_message,
+)
 from free_claude_code.core.trace import (
     extract_claude_session_id_from_headers,
     trace_event,
@@ -23,6 +27,12 @@ from free_claude_code.core.trace import (
 from free_claude_code.providers.exceptions import ProviderError
 
 from .admin_routes import router as admin_router
+from .request_ids import (
+    attach_request_id_headers,
+    get_request_id,
+    new_request_id,
+    set_request_id,
+)
 from .routes import router
 from .runtime import AppRuntime, startup_failure_message
 from .validation_log import summarize_request_validation_body
@@ -104,13 +114,21 @@ def create_app(*, lifespan_enabled: bool = True) -> FastAPI:
     @app.middleware("http")
     async def trace_http_correlation(request: Request, call_next):
         """Attach HTTP identifiers and optional Claude session id to logs."""
+        request_id = new_request_id()
+        set_request_id(request, request_id)
         claude_sid = extract_claude_session_id_from_headers(request.headers)
         with logger.contextualize(
             http_method=request.method,
             http_path=request.url.path,
             claude_session_id=claude_sid,
+            request_id=request_id,
         ):
             response = await call_next(request)
+            attach_request_id_headers(
+                response,
+                request_id=request_id,
+                path=request.url.path,
+            )
         return response
 
     # Register routes
@@ -161,33 +179,49 @@ def create_app(*, lifespan_enabled: bool = True) -> FastAPI:
             )
         return JSONResponse(
             status_code=exc.status_code,
-            content=exc.to_anthropic_format(),
+            content=anthropic_error_payload(
+                error_type=exc.error_type,
+                message=exc.message,
+                request_id=get_request_id(request),
+            ),
         )
 
     @app.exception_handler(Exception)
     async def general_error_handler(request: Request, exc: Exception):
         """Handle general errors and return Anthropic format."""
+        request_id = get_request_id(request)
+        claude_sid = extract_claude_session_id_from_headers(request.headers)
         settings = get_settings()
-        if settings.log_api_error_tracebacks:
-            logger.error("General Error: {}", exc)
-            logger.error(traceback.format_exc())
-        else:
-            logger.error(
-                "General Error: path={} method={} exc_type={}",
-                request.url.path,
-                request.method,
-                type(exc).__name__,
+        with logger.contextualize(
+            http_method=request.method,
+            http_path=request.url.path,
+            claude_session_id=claude_sid,
+            request_id=request_id,
+        ):
+            if settings.log_api_error_tracebacks:
+                logger.error("General Error: {}", exc)
+                logger.error(traceback.format_exc())
+            else:
+                logger.error(
+                    "General Error: path={} method={} exc_type={}",
+                    request.url.path,
+                    request.method,
+                    type(exc).__name__,
+                )
+            response = JSONResponse(
+                status_code=500,
+                content=anthropic_error_payload(
+                    error_type="api_error",
+                    message=get_user_facing_error_message(exc),
+                    request_id=request_id,
+                ),
             )
-        return JSONResponse(
-            status_code=500,
-            content={
-                "type": "error",
-                "error": {
-                    "type": "api_error",
-                    "message": "An unexpected error occurred.",
-                },
-            },
+        attach_request_id_headers(
+            response,
+            request_id=request_id,
+            path=request.url.path,
         )
+        return response
 
     return app
 

@@ -4,14 +4,13 @@ from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi import HTTPException
-from fastapi.responses import StreamingResponse
+from fastapi.responses import JSONResponse
 
 from free_claude_code.api import provider_execution, request_errors
 from free_claude_code.api.handlers import MessagesHandler, TokenCountHandler
 from free_claude_code.api.models.anthropic import Message, MessagesRequest
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import AnthropicStreamLedger
-from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 
 
 @pytest.mark.asyncio
@@ -98,16 +97,6 @@ def _flatten_log_calls(mock_log) -> str:
     return " ".join(parts)
 
 
-async def _streaming_body_text(response: StreamingResponse) -> str:
-    parts: list[str] = []
-    async for chunk in response.body_iterator:
-        if isinstance(chunk, bytes):
-            parts.append(chunk.decode("utf-8"))
-        else:
-            parts.append(str(chunk))
-    return "".join(parts)
-
-
 @pytest.mark.asyncio
 async def test_create_message_unexpected_error_default_logs_exclude_exception_text():
     settings = Settings()
@@ -133,14 +122,14 @@ async def test_create_message_unexpected_error_default_logs_exclude_exception_te
     blob = _flatten_log_calls(log_err)
     assert secret not in blob
     assert "RuntimeError" in blob
-    assert isinstance(response, StreamingResponse)
-    events = parse_sse_text(await _streaming_body_text(response))
-    assert [event.event for event in events] == ["error"]
-    assert events[0].data["error"]["type"] == "api_error"
+    assert isinstance(response, JSONResponse)
+    assert response.status_code == 500
+    assert response.headers["x-should-retry"] == "false"
+    assert response.body
 
 
 @pytest.mark.asyncio
-async def test_create_message_unexpected_error_terminal_sse_ignores_status_code():
+async def test_create_message_unexpected_error_terminal_json_ignores_status_code():
     """Non-provider stream failures must not leak arbitrary HTTP status attributes."""
 
     class WeirdError(Exception):
@@ -162,11 +151,12 @@ async def test_create_message_unexpected_error_terminal_sse_ignores_status_code(
 
     response = await service.create(request)
 
-    assert isinstance(response, StreamingResponse)
-    assert response.status_code == 200
-    events = parse_sse_text(await _streaming_body_text(response))
-    assert [event.event for event in events] == ["error"]
-    assert events[0].data["error"] == {"type": "api_error", "message": "no"}
+    assert isinstance(response, JSONResponse)
+    assert response.status_code == 500
+    assert response.headers["x-should-retry"] == "false"
+    payload = bytes(response.body).decode("utf-8")
+    assert '"type":"api_error"' in payload
+    assert '"message":"no"' in payload
 
 
 def test_parse_cli_event_error_logs_metadata_by_default():

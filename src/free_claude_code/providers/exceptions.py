@@ -19,16 +19,6 @@ class ProviderError(Exception):
         self.error_type = error_type
         self.raw_error = raw_error
 
-    def to_anthropic_format(self) -> dict:
-        """Convert to Anthropic-compatible error response."""
-        return {
-            "type": "error",
-            "error": {
-                "type": self.error_type,
-                "message": self.message,
-            },
-        }
-
 
 class AuthenticationError(ProviderError):
     """Raised when API key is invalid or missing."""

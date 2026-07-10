@@ -20,7 +20,7 @@ from free_claude_code.core.anthropic.streaming import (
     map_stop_reason,
 )
 from free_claude_code.core.trace import provider_chat_body_snapshot, trace_event
-from free_claude_code.providers.error_mapping import map_error, map_stream_start_error
+from free_claude_code.providers.error_mapping import map_stream_start_error
 from free_claude_code.providers.transports.http import maybe_await_aclose
 
 from .recovery import OpenAIChatRecovery
@@ -89,6 +89,7 @@ class OpenAIChatStreamAdapter:
             event="provider.request.sent",
             source="provider",
             provider=tag,
+            request_id=self._request_id,
             gateway_model=self._request.model,
             downstream_model=body.get("model"),
             message_count=len(body.get("messages", [])),
@@ -270,24 +271,27 @@ class OpenAIChatStreamAdapter:
                     self._transport._log_stream_transport_error(
                         tag, req_tag, error, request_id=self._request_id
                     )
-                    error_message = self._transport._openai_error_message(
+                    mapped_error, error_message = self._transport._map_error_details(
                         error, self._request_id
                     )
-                    trace_event(
-                        stage="provider",
-                        event="provider.response.error",
-                        source="provider",
-                        provider=tag,
-                        request_id=self._request_id,
-                        exc_type=type(error).__name__,
-                        error_message=error_message,
-                        mapped_error_type=type(
-                            map_error(
-                                error,
-                                rate_limiter=self._transport._global_rate_limiter,
-                            )
-                        ).__name__,
+                    mapped_error_type = getattr(mapped_error, "error_type", None)
+                    terminal_error_type = (
+                        mapped_error_type
+                        if isinstance(mapped_error_type, str) and mapped_error_type
+                        else "api_error"
                     )
+                    error_trace: dict[str, Any] = {
+                        "stage": "provider",
+                        "event": "provider.response.error",
+                        "source": "provider",
+                        "provider": tag,
+                        "request_id": self._request_id,
+                        "exc_type": type(error).__name__,
+                        "mapped_error_type": type(mapped_error).__name__,
+                    }
+                    if self._transport._config.log_api_error_tracebacks:
+                        error_trace["error_message"] = error_message
+                    trace_event(**error_trace)
                     if (
                         not decision.committed
                         and decision.has_buffered
@@ -304,7 +308,10 @@ class OpenAIChatStreamAdapter:
                             request_id=self._request_id,
                             rate_limiter=self._transport._global_rate_limiter,
                         ) from error
-                    for event in self._recovery.emit_error_tail(ledger, error_message):
+                    for event in ledger.terminal_error_tail(
+                        error_message,
+                        error_type=terminal_error_type,
+                    ):
                         yield event
                     return
                 finally:
@@ -384,6 +391,7 @@ class OpenAIChatStreamAdapter:
             event="provider.response.completed",
             source="provider",
             provider=tag,
+            request_id=self._request_id,
             finish_reason=(None if finish_reason is None else str(finish_reason)),
             output_tokens=output_tokens,
             prompt_tokens=input_tokens,

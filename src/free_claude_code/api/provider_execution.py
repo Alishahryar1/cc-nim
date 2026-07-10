@@ -1,6 +1,5 @@
 """Shared provider execution primitive for API product handlers."""
 
-import uuid
 from collections.abc import AsyncIterator, Callable
 from typing import Any
 
@@ -42,6 +41,7 @@ class ProviderExecutionService:
         wire_api: str,
         raw_log_label: str,
         raw_log_payload: Any,
+        request_id: str,
     ) -> AsyncIterator[str]:
         provider = self._provider_getter(routed.resolved.provider_id)
         provider.preflight_stream(
@@ -53,6 +53,7 @@ class ProviderExecutionService:
             "stage": "routing",
             "event": "free_claude_code.api.route.resolved",
             "source": "api",
+            "request_id": request_id,
             "provider_id": routed.resolved.provider_id,
             "provider_model": routed.resolved.provider_model,
             "provider_model_ref": routed.resolved.provider_model_ref,
@@ -63,7 +64,6 @@ class ProviderExecutionService:
             route_trace["wire_api"] = "responses"
         trace_event(**route_trace)
 
-        request_id = f"req_{uuid.uuid4().hex[:12]}"
         trace_event(
             stage="ingress",
             event=(

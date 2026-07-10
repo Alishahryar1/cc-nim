@@ -7,9 +7,7 @@ from free_claude_code.api.model_router import ModelRouter
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.core.anthropic.stream_contracts import (
     SSEEvent,
-    assert_anthropic_stream_contract,
     parse_sse_lines,
-    text_content,
 )
 from smoke.lib.config import ProviderModel, SmokeConfig, auth_headers
 from smoke.lib.e2e import (
@@ -145,8 +143,9 @@ def test_provider_error_e2e(smoke_config: SmokeConfig) -> None:
             name=f"product-provider-error-{provider_model.provider}",
             env_overrides={"MODEL": broken_model, "MESSAGING_PLATFORM": "none"},
         ).run() as server,
-        httpx.stream(
-            "POST",
+        httpx.Client(timeout=smoke_config.timeout_s) as client,
+    ):
+        response = client.post(
             f"{server.base_url}/v1/messages",
             headers=auth_headers(),
             json={
@@ -154,13 +153,16 @@ def test_provider_error_e2e(smoke_config: SmokeConfig) -> None:
                 "max_tokens": 32,
                 "messages": [{"role": "user", "content": "hello"}],
             },
-            timeout=smoke_config.timeout_s,
-        ) as response,
-    ):
-        assert response.status_code == 200, response.read()
-        events = parse_sse_lines(response.iter_lines())
-    assert_anthropic_stream_contract(events, allow_error=True)
-    assert any(event.event == "error" for event in events) or text_content(events)
+        )
+
+    assert response.status_code >= 400
+    assert response.headers["content-type"].startswith("application/json")
+    assert response.headers["x-should-retry"] == "false"
+    payload = response.json()
+    assert payload["type"] == "error"
+    assert payload["error"]["type"]
+    assert payload["error"]["message"]
+    assert payload["request_id"] == response.headers["request-id"]
 
 
 def test_provider_codex_responses_text_e2e(

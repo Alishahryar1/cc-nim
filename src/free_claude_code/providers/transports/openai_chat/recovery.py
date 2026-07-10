@@ -1,6 +1,6 @@
 """OpenAI-chat stream recovery event construction."""
 
-from collections.abc import Awaitable, Callable, Iterator
+from collections.abc import Awaitable, Callable
 from typing import Any
 
 from free_claude_code.core.anthropic.streaming import (
@@ -160,18 +160,6 @@ class OpenAIChatRecovery:
             request_id=request_id,
         )
         return events
-
-    def emit_error_tail(
-        self, ledger: AnthropicStreamLedger, error_message: str
-    ) -> Iterator[str]:
-        """Emit the canonical OpenAI-chat final error tail."""
-        yield from ledger.close_all_blocks()
-        if ledger.has_emitted_tool_block():
-            yield ledger.emit_top_level_error(error_message)
-        else:
-            yield from ledger.emit_error(error_message)
-        yield ledger.message_delta("end_turn", 1)
-        yield ledger.message_stop()
 
     async def _repair_tool_args(
         self,

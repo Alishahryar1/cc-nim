@@ -85,6 +85,7 @@ def test_create_response_stream_routes_through_provider(
 
     assert response.status_code == 200
     assert "text/event-stream" in response.headers["content-type"]
+    assert response.headers["x-request-id"] == response.headers["request-id"]
     events = parse_sse_text(response.text)
     assert events[0].event == "response.created"
     assert events[-1].event == "response.completed"
@@ -97,6 +98,7 @@ def test_create_response_stream_routes_through_provider(
     assert routed.messages[0].role == "user"
     assert routed.messages[0].content == "Hello"
     assert routed.max_tokens == 32
+    assert provider.stream_kwargs[0]["request_id"] == response.headers["request-id"]
 
 
 def test_create_response_pre_start_provider_error_returns_openai_error() -> None:
@@ -106,6 +108,7 @@ def test_create_response_pre_start_provider_error_returns_openai_error() -> None
         patch(
             "free_claude_code.api.dependencies.resolve_provider", return_value=provider
         ),
+        patch("free_claude_code.api.handlers.responses.trace_event") as trace,
         TestClient(app) as client,
     ):
         response = client.post(
@@ -117,9 +120,24 @@ def test_create_response_pre_start_provider_error_returns_openai_error() -> None
         )
 
     assert response.status_code == 429
+    assert response.headers["x-should-retry"] == "false"
+    assert response.headers["x-request-id"] == response.headers["request-id"]
     payload = response.json()
     assert payload["error"]["type"] == "rate_limit_error"
     assert payload["error"]["message"] == "upstream is busy"
+    request_id = response.headers["request-id"]
+    assert provider.stream_kwargs[0]["request_id"] == request_id
+    terminal_trace = next(
+        call.kwargs
+        for call in trace.call_args_list
+        if call.kwargs.get("event")
+        == "free_claude_code.api.response.terminal_execution_error"
+    )
+    assert terminal_trace["wire_api"] == "responses"
+    assert terminal_trace["request_id"] == request_id
+    assert terminal_trace["status_code"] == 429
+    assert terminal_trace["error_type"] == "rate_limit_error"
+    assert terminal_trace["client_should_retry"] is False
 
 
 def test_create_response_post_start_failure_preserves_response_id() -> None:
@@ -144,6 +162,7 @@ def test_create_response_post_start_failure_preserves_response_id() -> None:
     assert [event.event for event in events] == ["response.created", "response.failed"]
     assert events[-1].data["response"]["id"] == events[0].data["response"]["id"]
     assert events[-1].data["response"]["status"] == "failed"
+    assert events[-1].data["response"]["error"]["message"] == "socket closed"
 
 
 def test_create_response_stream_bypasses_local_message_optimizations() -> None:

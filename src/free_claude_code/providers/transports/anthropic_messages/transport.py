@@ -1,11 +1,10 @@
 """Shared transport for providers with native Anthropic Messages endpoints."""
 
-from collections.abc import AsyncIterator, Iterator
+from collections.abc import AsyncIterator
 from typing import Any, Literal
 
 import httpx
 
-from free_claude_code.core.anthropic import iter_provider_stream_error_sse_events
 from free_claude_code.core.anthropic.native_sse_block_policy import (
     NativeSseBlockPolicyState,
     transform_native_sse_block_event,
@@ -179,15 +178,20 @@ class AnthropicMessagesTransport(BaseProvider):
             )
         return event
 
-    def _get_error_message(self, error: Exception, request_id: str | None) -> str:
+    def _map_error_details(
+        self, error: Exception, request_id: str | None
+    ) -> tuple[Exception, str]:
         """Map an exception into a user-facing provider error message."""
         mapped_error = map_error(error, rate_limiter=self._global_rate_limiter)
-        return user_visible_message_for_mapped_provider_error(
+        return (
             mapped_error,
-            provider_name=self._provider_name,
-            read_timeout_s=self._config.http_read_timeout,
-            detail=extract_provider_error_detail(error),
-            request_id=request_id,
+            user_visible_message_for_mapped_provider_error(
+                mapped_error,
+                provider_name=self._provider_name,
+                read_timeout_s=self._config.http_read_timeout,
+                detail=extract_provider_error_detail(error),
+                request_id=request_id,
+            ),
         )
 
     async def _validated_stream_send(
@@ -202,23 +206,6 @@ class AnthropicMessagesTransport(BaseProvider):
                 if not send_response.is_closed:
                     await maybe_await_aclose(send_response)
         return send_response
-
-    def _emit_error_events(
-        self,
-        *,
-        request: Any,
-        input_tokens: int,
-        error_message: str,
-        sent_any_event: bool,
-    ) -> Iterator[str]:
-        """Emit the same Anthropic message lifecycle used by OpenAI-chat providers."""
-        yield from iter_provider_stream_error_sse_events(
-            request=request,
-            input_tokens=input_tokens,
-            error_message=error_message,
-            sent_any_event=sent_any_event,
-            log_raw_sse_events=self._config.log_raw_sse_events,
-        )
 
     async def stream_response(
         self,

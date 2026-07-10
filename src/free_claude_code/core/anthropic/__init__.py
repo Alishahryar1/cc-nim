@@ -8,12 +8,14 @@ from .conversion import (
     build_base_request_body,
 )
 from .errors import (
+    anthropic_error_payload,
+    anthropic_status_for_error_type,
     append_request_id,
     format_user_error_preview,
     get_user_facing_error_message,
+    redact_sensitive_error_text,
 )
 from .native_messages_request import sanitize_native_messages_thinking_policy
-from .provider_stream_error import iter_provider_stream_error_sse_events
 from .request_serialization import serialize_tool_result_content
 from .sse_aggregation import aggregate_anthropic_sse_to_message
 from .streaming import (
@@ -40,6 +42,8 @@ __all__ = [
     "ThinkTagParser",
     "ToolBlockState",
     "aggregate_anthropic_sse_to_message",
+    "anthropic_error_payload",
+    "anthropic_status_for_error_type",
     "append_request_id",
     "build_base_request_body",
     "extract_text_from_content",
@@ -49,8 +53,8 @@ __all__ = [
     "get_block_type",
     "get_token_count",
     "get_user_facing_error_message",
-    "iter_provider_stream_error_sse_events",
     "map_stop_reason",
+    "redact_sensitive_error_text",
     "sanitize_native_messages_thinking_policy",
     "serialize_tool_result_content",
     "set_if_not_none",

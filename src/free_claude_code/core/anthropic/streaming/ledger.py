@@ -10,6 +10,7 @@ from typing import Any
 
 from loguru import logger
 
+from free_claude_code.core.anthropic.errors import anthropic_error_payload
 from free_claude_code.core.anthropic.stream_contracts import SSEEvent
 
 from .emitter import AnthropicSseEmitter
@@ -388,19 +389,12 @@ class AnthropicStreamLedger:
             if state.started:
                 yield self.stop_tool_block(tool_index)
 
-    def emit_error(self, error_message: str) -> Iterator[str]:
-        error_index = self.blocks.allocate_index()
-        yield self.content_block_start(error_index, "text")
-        yield self.content_block_delta(error_index, "text_delta", error_message)
-        yield self.content_block_stop(error_index)
-
-    def emit_top_level_error(self, error_message: str) -> str:
+    def emit_top_level_error(
+        self, error_message: str, *, error_type: str = "api_error"
+    ) -> str:
         return self._emitter.event(
             "error",
-            {
-                "type": "error",
-                "error": {"type": "api_error", "message": error_message},
-            },
+            anthropic_error_payload(error_type=error_type, message=error_message),
         )
 
     def ingest_native_event(self, event: SSEEvent) -> str | None:
@@ -504,15 +498,12 @@ class AnthropicStreamLedger:
         if not self.message_stopped:
             yield self.message_stop()
 
-    def midstream_error_tail(self, error_message: str) -> Iterator[str]:
+    def terminal_error_tail(
+        self, error_message: str, *, error_type: str = "api_error"
+    ) -> Iterator[str]:
+        """Close open blocks and terminate with an error, never a success stop."""
         yield from self.close_unclosed_blocks()
-        if self.stop_reason is None and not self.message_stopped:
-            yield from self.emit_error(error_message)
-            yield self.message_delta("end_turn", 1)
-        else:
-            yield self.emit_top_level_error(error_message)
-        if not self.message_stopped:
-            yield self.message_stop()
+        yield self.emit_top_level_error(error_message, error_type=error_type)
 
     def can_salvage_tool_use(self, schemas: dict[str, ToolSchema]) -> bool:
         tool_blocks = self.tool_blocks()

@@ -174,6 +174,8 @@ def test_create_app_provider_error_handler_returns_anthropic_format():
     body = resp.json()
     assert body["type"] == "error"
     assert body["error"]["type"] == "authentication_error"
+    assert body["request_id"] == resp.headers["request-id"]
+    assert "x-should-retry" not in resp.headers
 
 
 def test_create_app_provider_error_default_logs_exclude_provider_message():
@@ -247,6 +249,7 @@ def test_create_app_general_exception_handler_returns_500():
         body = resp.json()
         assert body["type"] == "error"
         assert body["error"]["type"] == "api_error"
+        assert body["request_id"] == resp.headers["request-id"]
 
 
 def test_create_app_general_exception_default_logs_exclude_exception_message():

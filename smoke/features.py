@@ -67,6 +67,7 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         (
             "test_api_basic_conversation_e2e",
             "test_claude_cli_adaptive_thinking_e2e",
+            "test_claude_cli_provider_error_e2e",
             "test_nvidia_nim_cli_matrix_e2e",
             "test_openrouter_free_cli_matrix_e2e",
             "test_vscode_protocol_e2e",
@@ -497,8 +498,12 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
             "tests/providers/test_error_mapping.py",
         ),
         (),
-        ("test_api_error_shape_e2e", "test_provider_error_e2e"),
-        ("api", "providers"),
+        (
+            "test_api_error_shape_e2e",
+            "test_provider_error_e2e",
+            "test_claude_cli_provider_error_e2e",
+        ),
+        ("api", "providers", "cli"),
         ("configured provider for provider error scenario",),
         "invalid request path is required; provider error path requires provider",
     ),

@@ -13,23 +13,19 @@ from free_claude_code.api.request_errors import (
     log_unexpected_api_exception,
     require_non_empty_messages,
 )
+from free_claude_code.api.request_ids import new_request_id
 from free_claude_code.api.response_streams import (
-    EGRESS_STREAM_INTERRUPTED_MESSAGE,
     openai_responses_sse_streaming_response,
+    terminal_execution_error_response,
 )
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import get_user_facing_error_message
 from free_claude_code.core.openai_responses import OpenAIResponsesAdapter
+from free_claude_code.core.trace import trace_event
 from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.exceptions import InvalidRequestError, ProviderError
 
 ProviderGetter = Callable[[str], BaseProvider]
-
-
-def _unexpected_stream_error_message(exc: BaseException) -> str:
-    if isinstance(exc, Exception):
-        return get_user_facing_error_message(exc)
-    return str(exc).strip() or f"{type(exc).__name__} occurred."
 
 
 class ResponsesHandler:
@@ -52,8 +48,11 @@ class ResponsesHandler:
             provider_getter,
         )
 
-    async def create(self, request_data: OpenAIResponsesRequest) -> object:
+    async def create(
+        self, request_data: OpenAIResponsesRequest, *, request_id: str | None = None
+    ) -> object:
         """Create a streaming OpenAI Responses-compatible response."""
+        request_id = request_id or new_request_id()
         request_payload = request_data.model_dump(mode="json", exclude_none=True)
         if request_data.stream is False:
             invalid_request = InvalidRequestError(
@@ -80,15 +79,17 @@ class ResponsesHandler:
                 wire_api="responses",
                 raw_log_label="FULL_RESPONSES_PAYLOAD",
                 raw_log_payload=request_payload,
+                request_id=request_id,
             )
             return await openai_responses_sse_streaming_response(
                 self._responses_adapter.iter_sse_from_anthropic(
                     streamed,
                     request_payload,
-                    stream_error_message=EGRESS_STREAM_INTERRUPTED_MESSAGE,
                 ),
                 headers=self._responses_adapter.sse_headers,
-                pre_start_error_response=self._pre_start_error_response,
+                pre_start_error_response=lambda exc: self._pre_start_error_response(
+                    exc, request_id=request_id
+                ),
             )
         except OpenAIResponsesAdapter.ConversionError as exc:
             invalid_request = InvalidRequestError(str(exc))
@@ -121,9 +122,16 @@ class ResponsesHandler:
                 ),
             )
 
-    def _pre_start_error_response(self, exc: BaseException) -> JSONResponse:
+    def _pre_start_error_response(
+        self, exc: BaseException, *, request_id: str
+    ) -> JSONResponse:
         if isinstance(exc, ProviderError):
-            return JSONResponse(
+            self._trace_terminal_execution_error(
+                request_id=request_id,
+                status_code=exc.status_code,
+                error_type=exc.error_type,
+            )
+            return terminal_execution_error_response(
                 status_code=exc.status_code,
                 content=self._responses_adapter.error_payload(
                     message=exc.message,
@@ -134,11 +142,43 @@ class ResponsesHandler:
             self._settings,
             exc,
             context="CREATE_RESPONSE_STREAM_START_ERROR",
+            request_id=request_id,
         )
-        return JSONResponse(
-            status_code=http_status_for_unexpected_api_exception(exc),
+        status_code = http_status_for_unexpected_api_exception(exc)
+        self._trace_terminal_execution_error(
+            request_id=request_id,
+            status_code=status_code,
+            error_type="api_error",
+            exc_type=type(exc).__name__,
+        )
+        return terminal_execution_error_response(
+            status_code=status_code,
             content=self._responses_adapter.error_payload(
-                message=_unexpected_stream_error_message(exc),
+                message=get_user_facing_error_message(exc),
                 error_type="api_error",
             ),
+        )
+
+    @staticmethod
+    def _trace_terminal_execution_error(
+        *,
+        request_id: str,
+        status_code: int,
+        error_type: str,
+        exc_type: str | None = None,
+    ) -> None:
+        fields: dict[str, object] = {
+            "wire_api": "responses",
+            "request_id": request_id,
+            "status_code": status_code,
+            "error_type": error_type,
+            "client_should_retry": False,
+        }
+        if exc_type is not None:
+            fields["exc_type"] = exc_type
+        trace_event(
+            stage="egress",
+            event="free_claude_code.api.response.terminal_execution_error",
+            source="api",
+            **fields,
         )
