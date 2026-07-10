@@ -32,16 +32,11 @@ def test_smoke_lib_has_no_sse_shim_module() -> None:
     assert not (repo_root / "smoke" / "lib" / "sse.py").exists()
 
 
-def test_api_package_exports() -> None:
+def test_api_package_marker_is_import_light() -> None:
     import free_claude_code.api as api
 
-    assert set(api.__all__) == {
-        "MessagesRequest",
-        "MessagesResponse",
-        "TokenCountRequest",
-        "TokenCountResponse",
-        "create_app",
-    }
+    assert not hasattr(api, "__all__")
+    assert "create_app" not in vars(api)
 
 
 def test_root_env_example_is_the_single_template_source() -> None:

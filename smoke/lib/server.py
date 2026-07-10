@@ -4,7 +4,7 @@ import os
 import socket
 import subprocess
 import time
-from collections.abc import Iterator
+from collections.abc import Iterable, Iterator
 from contextlib import contextmanager, suppress
 from dataclasses import dataclass
 from pathlib import Path
@@ -34,6 +34,7 @@ def start_server(
     config: SmokeConfig,
     *,
     env_overrides: dict[str, str] | None = None,
+    env_unset: Iterable[str] = (),
     command: list[str] | None = None,
     name: str = "server",
 ) -> Iterator[RunningServer]:
@@ -42,6 +43,8 @@ def start_server(
     log_path = config.results_dir / f"{name}-{config.worker_id}-{port}.log"
 
     env = os.environ.copy()
+    for key in env_unset:
+        env.pop(key, None)
     env.update(
         {
             "HOST": "127.0.0.1",

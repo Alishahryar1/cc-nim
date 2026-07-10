@@ -9,14 +9,9 @@ from .manifest import FIELDS
 
 
 def provider_config_status(
-    state: Mapping[str, Mapping[str, Any]] | None = None,
+    state: Mapping[str, Mapping[str, Any]],
 ) -> list[dict[str, Any]]:
     """Return provider configuration status without making network calls."""
-
-    if state is None:
-        from .values import load_value_state
-
-        state = load_value_state()
     statuses: list[dict[str, Any]] = []
     for provider_id, descriptor in PROVIDER_CATALOG.items():
         if descriptor.credential_env is None:

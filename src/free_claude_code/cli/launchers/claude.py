@@ -4,12 +4,12 @@ import os
 import sys
 from collections.abc import Mapping, Sequence
 
-from free_claude_code.api.admin_urls import local_proxy_root_url
 from free_claude_code.cli.claude_env import (
     CLAUDE_BINARY_NAME,
     CLAUDE_CODE_AUTO_COMPACT_WINDOW,
     claude_auth_token,
 )
+from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.config.settings import get_settings
 
 from .common import preflight_proxy, resolve_client_binary, run_client_process

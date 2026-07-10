@@ -2,7 +2,6 @@
 
 import asyncio
 from collections.abc import Callable
-from contextlib import suppress
 
 from loguru import logger
 
@@ -53,7 +52,6 @@ class ProviderModelDiscovery:
         self._settings = settings
         self._provider_resolver = provider_resolver
         self._model_cache = model_cache
-        self._refresh_task: asyncio.Task[None] | None = None
 
     async def refresh_model_list_cache(self, *, only_missing: bool = False) -> None:
         """Best-effort refresh of model lists for usable providers."""
@@ -65,44 +63,6 @@ class ProviderModelDiscovery:
                 if not self._model_cache.has_provider(provider_id)
             )
         await self._refresh_model_infos(provider_ids)
-
-    def start_model_list_refresh(self) -> None:
-        """Start a non-blocking cache warmup for missing eligible provider lists."""
-        if self._refresh_task is not None and not self._refresh_task.done():
-            return
-
-        provider_ids = tuple(
-            provider_id
-            for provider_id in model_list_provider_ids_for_settings(self._settings)
-            if not self._model_cache.has_provider(provider_id)
-        )
-        if not provider_ids:
-            logger.info(
-                "Provider model discovery cache already warm: providers={}",
-                len(self._model_cache.cached_model_ids()),
-            )
-            return
-
-        self._refresh_task = asyncio.create_task(self._run_refresh(provider_ids))
-
-    async def cleanup(self) -> None:
-        """Cancel any background model-list refresh."""
-        if self._refresh_task is None or self._refresh_task.done():
-            return
-        self._refresh_task.cancel()
-        with suppress(asyncio.CancelledError):
-            await self._refresh_task
-
-    async def _run_refresh(self, provider_ids: tuple[str, ...]) -> None:
-        try:
-            await self._refresh_model_infos(provider_ids)
-        except asyncio.CancelledError:
-            raise
-        except Exception as exc:
-            logger.warning(
-                "Provider model discovery task failed: exc_type={}",
-                type(exc).__name__,
-            )
 
     async def _refresh_model_infos(self, provider_ids: tuple[str, ...]) -> None:
         tasks: dict[str, asyncio.Task[frozenset[ProviderModelInfo]]] = {}

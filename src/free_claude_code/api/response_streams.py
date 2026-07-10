@@ -1,8 +1,15 @@
 """FastAPI streaming response wrappers for public API wire formats."""
 
 import asyncio
-from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping
-from typing import Any
+from collections.abc import (
+    AsyncGenerator,
+    AsyncIterable,
+    AsyncIterator,
+    Awaitable,
+    Callable,
+    Mapping,
+)
+from typing import Any, Protocol, runtime_checkable
 
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
@@ -17,10 +24,47 @@ TERMINAL_EXECUTION_ERROR_HEADERS = {"x-should-retry": "false"}
 
 PreStartErrorResponse = Callable[[BaseException], Response]
 TerminalFrameEmitter = Callable[[BaseException], str]
+ReleaseResponseResource = Callable[[], Awaitable[None]]
+
+
+@runtime_checkable
+class _AsyncCloseable(Protocol):
+    async def aclose(self) -> None: ...
 
 
 class EmptyStreamError(RuntimeError):
     """Raised when a public stream ends before emitting any protocol chunk."""
+
+
+async def bind_response_lifetime(
+    response: object,
+    release: ReleaseResponseResource,
+) -> object:
+    """Retain a runtime resource until a response body is fully consumed."""
+    if isinstance(response, StreamingResponse):
+        response.body_iterator = _release_after_stream(
+            response.body_iterator,
+            release,
+        )
+        return response
+    await release()
+    return response
+
+
+async def _release_after_stream(
+    body: AsyncIterable[Any],
+    release: ReleaseResponseResource,
+) -> AsyncGenerator[Any]:
+    iterator = body.__aiter__()
+    try:
+        async for chunk in iterator:
+            yield chunk
+    finally:
+        try:
+            if isinstance(iterator, _AsyncCloseable):
+                await iterator.aclose()
+        finally:
+            await release()
 
 
 def terminal_execution_error_response(

@@ -1,26 +1,21 @@
 """Local admin UI routes and APIs."""
 
-import inspect
 import ipaddress
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
-from fastapi import APIRouter, BackgroundTasks, HTTPException, Request
+from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
-from free_claude_code.config.model_refs import parse_provider_type
-from free_claude_code.config.settings import Settings
-from free_claude_code.config.settings import get_settings as get_cached_settings
-from free_claude_code.providers.runtime import ProviderRuntime
+from free_claude_code.config.admin.manifest import FIELD_BY_KEY
+from free_claude_code.config.admin.persistence import validate_updates
+from free_claude_code.config.admin.values import load_config_response
 
-from .admin_config.manifest import FIELD_BY_KEY
-from .admin_config.persistence import validate_updates, write_managed_env
-from .admin_config.status import provider_config_status
-from .admin_config.values import load_config_response
-from .admin_urls import local_admin_url
+from .dependencies import get_services
+from .ports import ApiServices
 
 router = APIRouter()
 
@@ -107,50 +102,23 @@ async def apply_admin_config(
     payload: AdminConfigPayload,
     request: Request,
     background_tasks: BackgroundTasks,
+    services: ApiServices = Depends(get_services),
 ):
     require_loopback_admin(request)
-    result = write_managed_env(_filtered_values(payload.values))
-    if not result["applied"]:
-        return result
-
-    get_cached_settings.cache_clear()
-    restart = _restart_metadata(result["pending_fields"], request)
-    result["restart"] = restart
-    if restart["required"] and restart["automatic"]:
-        callback = request.app.state.admin_restart_callback
-        background_tasks.add_task(_invoke_admin_restart_callback, callback)
-        request.app.state.admin_pending_fields = []
-        return result
-
-    old_runtime = getattr(request.app.state, "provider_runtime", None)
-    if isinstance(old_runtime, ProviderRuntime):
-        await old_runtime.cleanup()
-    request.app.state.provider_runtime = ProviderRuntime(get_cached_settings())
-    request.app.state.admin_pending_fields = result["pending_fields"]
+    result = await services.admin.apply_admin_config(_filtered_values(payload.values))
+    restart = result.get("restart")
+    if isinstance(restart, dict) and restart.get("automatic"):
+        background_tasks.add_task(services.admin.request_restart)
     return result
 
 
 @router.get("/admin/api/status")
-async def admin_status(request: Request):
+async def admin_status(
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
     require_loopback_admin(request)
-    settings = get_cached_settings()
-    runtime = getattr(request.app.state, "provider_runtime", None)
-    cached_models: dict[str, list[str]] = {}
-    if isinstance(runtime, ProviderRuntime):
-        cached_models = {
-            provider_id: sorted(model_ids)
-            for provider_id, model_ids in runtime.cached_model_ids().items()
-        }
-    return {
-        "status": "running",
-        "host": settings.host,
-        "port": settings.port,
-        "model": settings.model,
-        "provider": parse_provider_type(settings.model),
-        "pending_fields": getattr(request.app.state, "admin_pending_fields", []),
-        "provider_status": provider_config_status(),
-        "cached_models": cached_models,
-    }
+    return services.admin.admin_status()
 
 
 @router.get("/admin/api/providers/local-status")
@@ -166,82 +134,26 @@ async def local_provider_status(request: Request):
 
 
 @router.post("/admin/api/providers/{provider_id}/test")
-async def test_provider(provider_id: str, request: Request):
+async def test_provider(
+    provider_id: str,
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
     require_loopback_admin(request)
-    settings = get_cached_settings()
-    runtime = _provider_runtime_for_admin(request, settings)
-    try:
-        provider = runtime.resolve_provider(provider_id)
-        infos = await provider.list_model_infos()
-    except Exception as exc:
-        return {
-            "provider_id": provider_id,
-            "ok": False,
-            "error_type": type(exc).__name__,
-        }
-    runtime.cache_model_infos(provider_id, infos)
-    return {
-        "provider_id": provider_id,
-        "ok": True,
-        "models": sorted(info.model_id for info in infos),
-    }
+    return await services.admin.test_provider(provider_id)
 
 
 @router.post("/admin/api/models/refresh")
-async def refresh_models(request: Request):
+async def refresh_models(
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
     require_loopback_admin(request)
-    settings = get_cached_settings()
-    runtime = _provider_runtime_for_admin(request, settings)
-    await runtime.refresh_model_list_cache()
-    return {
-        "cached_models": {
-            provider_id: sorted(model_ids)
-            for provider_id, model_ids in runtime.cached_model_ids().items()
-        }
-    }
-
-
-def _provider_runtime_for_admin(
-    request: Request, settings: Settings
-) -> ProviderRuntime:
-    runtime = getattr(request.app.state, "provider_runtime", None)
-    if isinstance(runtime, ProviderRuntime):
-        return runtime
-    runtime = ProviderRuntime(settings)
-    request.app.state.provider_runtime = runtime
-    return runtime
+    return await services.admin.refresh_models()
 
 
 def _filtered_values(values: dict[str, Any]) -> dict[str, Any]:
     return {key: value for key, value in values.items() if key in FIELD_BY_KEY}
-
-
-async def _invoke_admin_restart_callback(callback: Any) -> None:
-    result = callback()
-    if inspect.isawaitable(result):
-        await result
-
-
-def _restart_metadata(fields: list[str], request: Request) -> dict[str, Any]:
-    callback = getattr(request.app.state, "admin_restart_callback", None)
-    automatic = bool(fields and callable(callback))
-    return {
-        "required": bool(fields),
-        "automatic": automatic,
-        "admin_url": _next_admin_url() if automatic else None,
-        "fields": fields,
-    }
-
-
-def _next_admin_url() -> str:
-    fields = {
-        field["key"]: field["value"] for field in load_config_response()["fields"]
-    }
-    settings = Settings.model_construct(
-        host=fields.get("HOST") or "0.0.0.0",
-        port=int(fields.get("PORT") or 8082),
-    )
-    return local_admin_url(settings)
 
 
 def _local_provider_url(provider_id: str, values: dict[str, str]) -> str:

@@ -1,4 +1,4 @@
-"""Helpers for presenting local admin URLs."""
+"""Browser-friendly local server URLs shared by runtime and launchers."""
 
 from free_claude_code.config.settings import Settings
 
@@ -24,9 +24,3 @@ def local_admin_url(settings: Settings) -> str:
     """Return a browser-friendly URL for the localhost-only admin UI."""
 
     return f"{local_proxy_root_url(settings)}/admin"
-
-
-def admin_launch_message(settings: Settings) -> str:
-    """Return the startup message shown by supported launch commands."""
-
-    return f"Admin UI: {local_admin_url(settings)} (local-only)"

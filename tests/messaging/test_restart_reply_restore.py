@@ -34,13 +34,7 @@ async def test_reply_to_old_status_message_after_restore_routes_to_parent(
     # "Restart": new store instance loads from disk, and we restore TreeQueueManager.
     store2 = SessionStore(storage_path=str(store_path))
     handler2 = MessagingWorkflow(mock_platform, mock_cli_manager, store2)
-    handler2.replace_tree_queue(
-        TreeQueueManager.from_snapshot(
-            store2.load_conversation_snapshot(),
-            queue_update_callback=handler2.update_queue_positions,
-            node_started_callback=handler2.mark_node_processing,
-        )
-    )
+    handler2.restore()
 
     # Prevent background task scheduling; we only want to validate routing/tree mutation.
     mock_platform.queue_send_message = AsyncMock(return_value="status_reply")
@@ -87,13 +81,7 @@ async def test_save_tree_persists_status_message_mapping_without_manual_register
 
     store2 = SessionStore(storage_path=str(store_path))
     handler2 = MessagingWorkflow(mock_platform, mock_cli_manager, store2)
-    handler2.replace_tree_queue(
-        TreeQueueManager.from_snapshot(
-            store2.load_conversation_snapshot(),
-            queue_update_callback=handler2.update_queue_positions,
-            node_started_callback=handler2.mark_node_processing,
-        )
-    )
+    handler2.restore()
     mock_platform.queue_send_message = AsyncMock(return_value="status_reply")
 
     reply = IncomingMessage(
@@ -170,3 +158,17 @@ async def test_reply_clear_purges_removed_status_mapping_from_persisted_store(
     assert restored_tree_queue.get_tree_for_node("root_status") is not None
     assert restored_tree_queue.get_tree_for_node("child") is None
     assert restored_tree_queue.get_tree_for_node("child_status") is None
+
+
+def test_workflow_close_flushes_owned_session_store(
+    mock_platform, mock_cli_manager, mock_session_store
+) -> None:
+    workflow = MessagingWorkflow(
+        mock_platform,
+        mock_cli_manager,
+        mock_session_store,
+    )
+
+    workflow.close()
+
+    mock_session_store.flush_pending_save.assert_called_once()

@@ -1,0 +1,440 @@
+"""Single owner for application startup, shutdown, and runtime operations."""
+
+import asyncio
+import inspect
+import logging
+import os
+import traceback
+from collections.abc import Awaitable, Callable, Mapping
+from typing import Any
+
+from loguru import logger
+
+import free_claude_code.cli.managed as cli_managed
+import free_claude_code.messaging.limiter as messaging_limiter
+import free_claude_code.messaging.session as messaging_session
+import free_claude_code.messaging.workflow as messaging_workflow_module
+from free_claude_code.api.ports import StopResult
+from free_claude_code.config.admin.persistence import (
+    PreparedAdminUpdate,
+    commit_prepared_admin_update,
+    prepare_admin_update,
+)
+from free_claude_code.config.admin.status import provider_config_status
+from free_claude_code.config.admin.values import load_value_state
+from free_claude_code.config.env_files import (
+    ANTHROPIC_AUTH_TOKEN_ENV,
+    process_env_key_is_effective,
+)
+from free_claude_code.config.model_refs import parse_provider_type
+from free_claude_code.config.paths import default_claude_workspace_path
+from free_claude_code.config.server_urls import local_admin_url
+from free_claude_code.config.settings import Settings, get_settings
+from free_claude_code.messaging.platforms import factory as messaging_platform_factory
+from free_claude_code.messaging.platforms.factory import MessagingPlatformOptions
+from free_claude_code.messaging.platforms.ports import (
+    MessagingPlatformComponents,
+    MessagingRuntime,
+)
+from free_claude_code.providers.exceptions import ServiceUnavailableError
+
+from .provider_manager import ProviderRuntimeManager
+
+_SHUTDOWN_TIMEOUT_S = 5.0
+RestartCallback = Callable[[], Awaitable[None] | None]
+
+
+async def best_effort(
+    name: str,
+    awaitable: Awaitable[Any],
+    timeout_s: float = _SHUTDOWN_TIMEOUT_S,
+    *,
+    log_verbose_errors: bool = False,
+) -> None:
+    """Run one bounded cleanup step without masking later cleanup."""
+    try:
+        await asyncio.wait_for(awaitable, timeout=timeout_s)
+    except TimeoutError:
+        logger.warning("Shutdown step timed out: {} ({}s)", name, timeout_s)
+    except Exception as exc:
+        if log_verbose_errors:
+            logger.warning(
+                "Shutdown step failed: {}: {}: {}",
+                name,
+                type(exc).__name__,
+                exc,
+            )
+        else:
+            logger.warning(
+                "Shutdown step failed: {}: exc_type={}",
+                name,
+                type(exc).__name__,
+            )
+
+
+def warn_if_process_auth_token(settings: Settings) -> None:
+    """Warn when server auth was implicitly inherited from the shell."""
+    model_config = getattr(settings, "model_config", Settings.model_config)
+    if process_env_key_is_effective(model_config, ANTHROPIC_AUTH_TOKEN_ENV):
+        logger.warning(
+            "ANTHROPIC_AUTH_TOKEN is set in the process environment but not in "
+            "a configured .env file. The proxy will require that token. Add "
+            "ANTHROPIC_AUTH_TOKEN= to .env to disable proxy auth, or set the "
+            "same token in .env to make server auth explicit."
+        )
+
+
+def startup_failure_message(settings: Settings, exc: Exception) -> str:
+    """Return the existing concise ASGI startup failure message."""
+    if isinstance(exc, ServiceUnavailableError):
+        return exc.message.strip() or "Server startup failed."
+    if settings.log_api_error_tracebacks:
+        return f"{type(exc).__name__}: {exc}"
+    return f"Server startup failed: exc_type={type(exc).__name__}"
+
+
+class ApplicationRuntime:
+    """Own every process-lifetime resource used by one server instance."""
+
+    def __init__(
+        self,
+        provider_manager: ProviderRuntimeManager,
+        *,
+        restart_callback: RestartCallback | None = None,
+    ) -> None:
+        self.provider_manager = provider_manager
+        self._restart_callback = restart_callback
+        self._config_lock = asyncio.Lock()
+        self._pending_fields: list[str] = []
+        self._messaging_runtime: MessagingRuntime | None = None
+        self._messaging_workflow: messaging_workflow_module.MessagingWorkflow | None = (
+            None
+        )
+        self._cli_manager: cli_managed.ManagedClaudeSessionManager | None = None
+        self._started = False
+        self._closed = False
+
+    @property
+    def settings(self) -> Settings:
+        return self.provider_manager.current_settings()
+
+    async def start(self) -> None:
+        if self._started:
+            return
+        logger.info("Starting Claude Code Proxy...")
+        try:
+            warn_if_process_auth_token(self.settings)
+            await self._validate_configured_models_best_effort()
+            self.provider_manager.start_model_list_refresh()
+            await self._start_messaging_if_configured()
+            logging.getLogger("uvicorn.error").info(
+                "Admin UI: %s (local-only)",
+                local_admin_url(self.settings),
+            )
+            self._started = True
+        except Exception as exc:
+            logger.error(
+                "Startup failed:\n{}",
+                startup_failure_message(self.settings, exc),
+            )
+            await self._cleanup_messaging()
+            await best_effort(
+                "provider_manager.close",
+                self.provider_manager.close(),
+                log_verbose_errors=self.settings.log_api_error_tracebacks,
+            )
+            raise
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        logger.info("Shutdown requested, cleaning up...")
+        await self._cleanup_messaging()
+        await best_effort(
+            "provider_manager.close",
+            self.provider_manager.close(),
+            log_verbose_errors=self.settings.log_api_error_tracebacks,
+        )
+        await self._shutdown_limiter()
+        logger.info("Server shut down cleanly")
+
+    async def apply_admin_config(
+        self,
+        updates: Mapping[str, Any],
+    ) -> dict[str, Any]:
+        """Apply one validated config update without splitting runtime ownership."""
+        async with self._config_lock:
+            prepared = prepare_admin_update(updates)
+            if not prepared.valid:
+                return prepared.applied_response()
+            assert prepared.settings is not None
+
+            if prepared.pending_fields:
+                result = self._commit_admin_update(prepared)
+                restart = self._restart_metadata(
+                    prepared.pending_fields,
+                    prepared.settings,
+                )
+                result["restart"] = restart
+                self._pending_fields = (
+                    [] if restart["automatic"] else list(prepared.pending_fields)
+                )
+                return result
+
+            result: dict[str, Any] = {}
+
+            def commit() -> None:
+                result.update(self._commit_admin_update(prepared))
+
+            await self.provider_manager.replace(
+                prepared.settings,
+                commit=commit,
+                reason="admin_apply",
+            )
+            self._pending_fields = []
+            result["restart"] = self._restart_metadata((), prepared.settings)
+            return result
+
+    def admin_status(self) -> dict[str, Any]:
+        settings = self.settings
+        return {
+            "status": "running",
+            "host": settings.host,
+            "port": settings.port,
+            "model": settings.model,
+            "provider": parse_provider_type(settings.model),
+            "pending_fields": list(self._pending_fields),
+            "provider_status": provider_config_status(load_value_state()),
+            "cached_models": {
+                provider_id: sorted(model_ids)
+                for provider_id, model_ids in self.provider_manager.cached_model_ids().items()
+            },
+        }
+
+    async def test_provider(self, provider_id: str) -> dict[str, Any]:
+        lease = await self.provider_manager.acquire()
+        try:
+            provider = lease.resolve_provider(provider_id)
+            infos = await provider.list_model_infos()
+        except Exception as exc:
+            return {
+                "provider_id": provider_id,
+                "ok": False,
+                "error_type": type(exc).__name__,
+            }
+        finally:
+            await lease.release()
+        self.provider_manager.cache_model_infos(provider_id, infos)
+        return {
+            "provider_id": provider_id,
+            "ok": True,
+            "models": sorted(info.model_id for info in infos),
+        }
+
+    async def refresh_models(self) -> dict[str, Any]:
+        await self.provider_manager.refresh_model_list_cache()
+        return {
+            "cached_models": {
+                provider_id: sorted(model_ids)
+                for provider_id, model_ids in self.provider_manager.cached_model_ids().items()
+            }
+        }
+
+    async def request_restart(self) -> None:
+        callback = self._restart_callback
+        if callback is None:
+            return
+        result = callback()
+        if inspect.isawaitable(result):
+            await result
+
+    async def stop_all(self) -> StopResult | None:
+        if self._messaging_workflow is not None:
+            count = await self._messaging_workflow.stop_all_tasks()
+            return StopResult(cancelled_count=count)
+        if self._cli_manager is not None:
+            await self._cli_manager.stop_all()
+            return StopResult(source="cli_manager")
+        return None
+
+    def _commit_admin_update(
+        self,
+        prepared: PreparedAdminUpdate,
+    ) -> dict[str, Any]:
+        result = commit_prepared_admin_update(prepared)
+        get_settings.cache_clear()
+        return result
+
+    def _restart_metadata(
+        self,
+        fields: tuple[str, ...],
+        settings: Settings,
+    ) -> dict[str, Any]:
+        automatic = bool(fields and self._restart_callback is not None)
+        return {
+            "required": bool(fields),
+            "automatic": automatic,
+            "admin_url": local_admin_url(settings) if automatic else None,
+            "fields": list(fields),
+        }
+
+    async def _validate_configured_models_best_effort(self) -> None:
+        try:
+            await self.provider_manager.validate_configured_models()
+        except ServiceUnavailableError as exc:
+            logger.warning(
+                "Configured provider model validation failed during startup; "
+                "server will continue and requests will fail at provider resolution "
+                "when config is incomplete. {}",
+                exc.message,
+            )
+
+    async def _start_messaging_if_configured(self) -> None:
+        try:
+            components = messaging_platform_factory.create_messaging_components(
+                self.settings.messaging_platform,
+                self._messaging_options(),
+            )
+            if components is not None:
+                await self._start_messaging_workflow(components)
+        except ImportError as exc:
+            await self._cleanup_messaging()
+            if self.settings.log_api_error_tracebacks:
+                logger.warning("Messaging module import error: {}", exc)
+            else:
+                logger.warning(
+                    "Messaging module import error: exc_type={}",
+                    type(exc).__name__,
+                )
+        except Exception as exc:
+            await self._cleanup_messaging()
+            if self.settings.log_api_error_tracebacks:
+                logger.error("Failed to start messaging platform: {}", exc)
+                logger.error(traceback.format_exc())
+            else:
+                logger.error(
+                    "Failed to start messaging platform: exc_type={}",
+                    type(exc).__name__,
+                )
+
+    def _messaging_options(self) -> MessagingPlatformOptions:
+        settings = self.settings
+        return MessagingPlatformOptions(
+            telegram_bot_token=settings.telegram_bot_token,
+            allowed_telegram_user_id=settings.allowed_telegram_user_id,
+            telegram_proxy_url=settings.telegram_proxy_url,
+            discord_bot_token=settings.discord_bot_token,
+            allowed_discord_channels=settings.allowed_discord_channels,
+            voice_note_enabled=settings.voice_note_enabled,
+            whisper_model=settings.whisper_model,
+            whisper_device=settings.whisper_device,
+            huggingface_api_key=settings.huggingface_api_key,
+            nvidia_nim_api_key=settings.nvidia_nim_api_key,
+            messaging_rate_limit=settings.messaging_rate_limit,
+            messaging_rate_window=settings.messaging_rate_window,
+            log_raw_messaging_content=settings.log_raw_messaging_content,
+            log_api_error_tracebacks=settings.log_api_error_tracebacks,
+        )
+
+    async def _start_messaging_workflow(
+        self,
+        components: MessagingPlatformComponents,
+    ) -> None:
+        settings = self.settings
+        workspace = (
+            os.path.abspath(settings.allowed_dir)
+            if settings.allowed_dir
+            else os.getcwd()
+        )
+        os.makedirs(workspace, exist_ok=True)
+        data_path = os.path.abspath(default_claude_workspace_path())
+        os.makedirs(data_path, exist_ok=True)
+        allowed_dirs = [workspace] if settings.allowed_dir else []
+        plans_dir_abs = os.path.abspath(os.path.join(data_path, "plans"))
+
+        self._cli_manager = cli_managed.ManagedClaudeSessionManager(
+            workspace_path=workspace,
+            api_url=f"http://{settings.host}:{settings.port}/v1",
+            allowed_dirs=allowed_dirs,
+            plans_directory=os.path.relpath(plans_dir_abs, workspace),
+            auth_token=settings.anthropic_auth_token,
+            log_raw_cli_diagnostics=settings.log_raw_cli_diagnostics,
+            log_messaging_error_details=settings.log_messaging_error_details,
+        )
+        session_store = messaging_session.SessionStore(
+            storage_path=os.path.join(data_path, "sessions.json"),
+            message_log_cap=settings.max_message_log_entries_per_chat,
+        )
+        self._messaging_runtime = components.runtime
+        self._messaging_workflow = messaging_workflow_module.MessagingWorkflow(
+            platform_name=components.name,
+            outbound=components.outbound,
+            voice_cancellation=components.voice_cancellation,
+            cli_manager=self._cli_manager,
+            session_store=session_store,
+            debug_platform_edits=settings.debug_platform_edits,
+            debug_subagent_stack=settings.debug_subagent_stack,
+            log_raw_messaging_content=settings.log_raw_messaging_content,
+            log_raw_cli_diagnostics=settings.log_raw_cli_diagnostics,
+            log_messaging_error_details=settings.log_messaging_error_details,
+        )
+        self._messaging_workflow.restore()
+        components.runtime.on_message(self._messaging_workflow.handle_message)
+        await components.runtime.start()
+        logger.info("{} platform started with messaging workflow", components.name)
+
+    async def _cleanup_messaging(self) -> None:
+        verbose = self.settings.log_api_error_tracebacks
+        workflow = self._messaging_workflow
+        runtime = self._messaging_runtime
+        cli_manager = self._cli_manager
+        self._messaging_workflow = None
+        self._messaging_runtime = None
+        self._cli_manager = None
+
+        if workflow is not None:
+            try:
+                workflow.close()
+            except Exception as exc:
+                if verbose:
+                    logger.warning("Session store flush on shutdown: {}", exc)
+                else:
+                    logger.warning(
+                        "Session store flush on shutdown: exc_type={}",
+                        type(exc).__name__,
+                    )
+        if runtime is not None:
+            await best_effort(
+                "messaging_runtime.stop",
+                runtime.stop(),
+                log_verbose_errors=verbose,
+            )
+        if cli_manager is not None:
+            await best_effort(
+                "cli_manager.stop_all",
+                cli_manager.stop_all(),
+                log_verbose_errors=verbose,
+            )
+
+    async def _shutdown_limiter(self) -> None:
+        verbose = self.settings.log_api_error_tracebacks
+        try:
+            await best_effort(
+                "MessagingRateLimiter.shutdown_instance",
+                messaging_limiter.MessagingRateLimiter.shutdown_instance(),
+                timeout_s=2.0,
+                log_verbose_errors=verbose,
+            )
+        except Exception as exc:
+            if verbose:
+                logger.debug(
+                    "Rate limiter shutdown skipped: {}: {}",
+                    type(exc).__name__,
+                    exc,
+                )
+            else:
+                logger.debug(
+                    "Rate limiter shutdown skipped: exc_type={}",
+                    type(exc).__name__,
+                )

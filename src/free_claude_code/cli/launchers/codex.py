@@ -6,8 +6,8 @@ import sys
 from collections.abc import Mapping, Sequence
 from urllib.request import Request, urlopen
 
-from free_claude_code.api.admin_urls import local_proxy_root_url
 from free_claude_code.config.paths import codex_model_catalog_path
+from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.config.settings import Settings, get_settings
 
 from .codex_model_catalog import build_codex_model_catalog, write_codex_model_catalog

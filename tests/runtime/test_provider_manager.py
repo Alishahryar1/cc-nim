@@ -1,0 +1,281 @@
+import asyncio
+from typing import cast
+from unittest.mock import AsyncMock, MagicMock, patch
+
+import pytest
+
+from free_claude_code.config.settings import Settings
+from free_claude_code.providers.base import BaseProvider
+from free_claude_code.providers.exceptions import ServiceUnavailableError
+from free_claude_code.providers.model_listing import ProviderModelInfo
+from free_claude_code.providers.runtime import ProviderRuntime
+from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
+
+
+class FakeRuntime(ProviderRuntime):
+    def __init__(self, settings: Settings) -> None:
+        self.settings = settings
+        self.cleanup_calls = 0
+        self.cleanup_error: Exception | None = None
+        self.provider = MagicMock()
+        self.provider.list_model_infos = AsyncMock(return_value=frozenset())
+
+    def is_cached(self, provider_id: str) -> bool:
+        return provider_id == "cached"
+
+    def resolve_provider(self, provider_id: str) -> BaseProvider:
+        return cast(BaseProvider, self.provider)
+
+    async def cleanup(self) -> None:
+        self.cleanup_calls += 1
+        if self.cleanup_error is not None:
+            raise self.cleanup_error
+
+
+class RuntimeFactory:
+    def __init__(self) -> None:
+        self.runtimes: list[FakeRuntime] = []
+        self.error: Exception | None = None
+
+    def __call__(self, settings: Settings) -> ProviderRuntime:
+        if self.error is not None:
+            raise self.error
+        runtime = FakeRuntime(settings)
+        self.runtimes.append(runtime)
+        return runtime
+
+
+def _settings(model: str) -> Settings:
+    return Settings().model_copy(update={"model": model})
+
+
+@pytest.mark.asyncio
+async def test_startup_generation_lease_and_shutdown_close_exactly_once() -> None:
+    factory = RuntimeFactory()
+    settings = _settings("nvidia_nim/one")
+    manager = ProviderRuntimeManager(settings, runtime_factory=factory)
+
+    lease = await manager.acquire()
+
+    assert lease.generation_id == 1
+    assert lease.settings is settings
+    assert lease.is_provider_cached("cached") is True
+    assert lease.resolve_provider("nvidia_nim") is factory.runtimes[0].provider
+    await lease.release()
+    await lease.release()
+    await manager.close()
+    await manager.close()
+
+    assert factory.runtimes[0].cleanup_calls == 1
+    with pytest.raises(ServiceUnavailableError, match="shutting down"):
+        await manager.acquire()
+
+
+@pytest.mark.asyncio
+async def test_replacement_keeps_leased_generation_open_until_final_release() -> None:
+    factory = RuntimeFactory()
+    first_settings = _settings("nvidia_nim/one")
+    second_settings = _settings("nvidia_nim/two")
+    manager = ProviderRuntimeManager(first_settings, runtime_factory=factory)
+    old_lease = await manager.acquire()
+    committed: list[str] = []
+
+    generation_id = await manager.replace(
+        second_settings,
+        commit=lambda: committed.append("persisted"),
+    )
+    new_lease = await manager.acquire()
+
+    assert generation_id == 2
+    assert committed == ["persisted"]
+    assert new_lease.generation_id == 2
+    assert new_lease.settings is second_settings
+    assert factory.runtimes[0].cleanup_calls == 0
+    await new_lease.release()
+    await old_lease.release()
+    assert factory.runtimes[0].cleanup_calls == 1
+    await manager.close()
+    assert factory.runtimes[1].cleanup_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_replacement_closes_unleased_generation_immediately() -> None:
+    factory = RuntimeFactory()
+    manager = ProviderRuntimeManager(
+        _settings("nvidia_nim/one"),
+        runtime_factory=factory,
+    )
+
+    await manager.replace(
+        _settings("nvidia_nim/two"),
+        commit=lambda: None,
+    )
+
+    assert factory.runtimes[0].cleanup_calls == 1
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_candidate_construction_failure_preserves_current_generation() -> None:
+    factory = RuntimeFactory()
+    manager = ProviderRuntimeManager(
+        _settings("nvidia_nim/one"),
+        runtime_factory=factory,
+    )
+    factory.error = RuntimeError("cannot construct")
+
+    with pytest.raises(RuntimeError, match="cannot construct"):
+        await manager.replace(
+            _settings("nvidia_nim/two"),
+            commit=lambda: None,
+        )
+
+    assert manager.current_generation_id == 1
+    assert manager.current_settings().model == "nvidia_nim/one"
+    assert factory.runtimes[0].cleanup_calls == 0
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_persistence_failure_closes_candidate_and_preserves_current() -> None:
+    factory = RuntimeFactory()
+    manager = ProviderRuntimeManager(
+        _settings("nvidia_nim/one"),
+        runtime_factory=factory,
+    )
+
+    def fail_commit() -> None:
+        raise OSError("disk full")
+
+    with pytest.raises(OSError, match="disk full"):
+        await manager.replace(
+            _settings("nvidia_nim/two"),
+            commit=fail_commit,
+        )
+
+    assert manager.current_generation_id == 1
+    assert factory.runtimes[0].cleanup_calls == 0
+    assert factory.runtimes[1].cleanup_calls == 1
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_replacements_are_serialized_in_call_order() -> None:
+    factory = RuntimeFactory()
+    manager = ProviderRuntimeManager(
+        _settings("nvidia_nim/one"),
+        runtime_factory=factory,
+    )
+    first_entered = asyncio.Event()
+    release_first = asyncio.Event()
+    cancel_calls = 0
+    original_cancel = manager._cancel_refresh
+
+    async def controlled_cancel() -> None:
+        nonlocal cancel_calls
+        cancel_calls += 1
+        if cancel_calls == 1:
+            first_entered.set()
+            await release_first.wait()
+        await original_cancel()
+
+    with patch.object(manager, "_cancel_refresh", side_effect=controlled_cancel):
+        first = asyncio.create_task(
+            manager.replace(
+                _settings("nvidia_nim/two"),
+                commit=lambda: None,
+            )
+        )
+        await first_entered.wait()
+        second = asyncio.create_task(
+            manager.replace(
+                _settings("nvidia_nim/three"),
+                commit=lambda: None,
+            )
+        )
+        await asyncio.sleep(0)
+        assert len(factory.runtimes) == 1
+        assert not second.done()
+        release_first.set()
+        assert await asyncio.gather(first, second) == [2, 3]
+
+    assert manager.current_settings().model == "nvidia_nim/three"
+    assert [runtime.cleanup_calls for runtime in factory.runtimes[:2]] == [1, 1]
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_waits_for_active_lease_then_rejects_new_work() -> None:
+    factory = RuntimeFactory()
+    manager = ProviderRuntimeManager(
+        _settings("nvidia_nim/one"),
+        runtime_factory=factory,
+    )
+    lease = await manager.acquire()
+
+    close_task = asyncio.create_task(manager.close())
+    await asyncio.sleep(0)
+
+    assert not close_task.done()
+    with pytest.raises(ServiceUnavailableError, match="shutting down"):
+        await manager.acquire()
+    await lease.release()
+    await close_task
+    assert factory.runtimes[0].cleanup_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_application_catalog_survives_generation_replacement() -> None:
+    factory = RuntimeFactory()
+    manager = ProviderRuntimeManager(
+        _settings("open_router/one"),
+        runtime_factory=factory,
+    )
+    manager.cache_model_infos(
+        "open_router",
+        {ProviderModelInfo("persisted", supports_thinking=True)},
+    )
+
+    await manager.replace(
+        _settings("open_router/two"),
+        commit=lambda: None,
+    )
+
+    assert manager.cached_model_ids() == {"open_router": frozenset({"persisted"})}
+    assert manager.cached_model_supports_thinking("open_router", "persisted") is True
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_generation_lifecycle_traces_contain_minimal_correlation_fields() -> None:
+    factory = RuntimeFactory()
+
+    with patch("free_claude_code.runtime.provider_manager.trace_event") as trace:
+        manager = ProviderRuntimeManager(
+            _settings("nvidia_nim/one"),
+            runtime_factory=factory,
+        )
+        lease = await manager.acquire()
+        await manager.replace(
+            _settings("nvidia_nim/two"),
+            commit=lambda: None,
+            reason="test_replace",
+        )
+        await lease.release()
+        await manager.close()
+
+    events = [call.kwargs for call in trace.call_args_list]
+    names = [event["event"] for event in events]
+    assert names == [
+        "provider_generation.published",
+        "provider_generation.published",
+        "provider_generation.retired",
+        "provider_generation.closed",
+        "provider_generation.retired",
+        "provider_generation.closed",
+    ]
+    assert events[1]["generation_id"] == 2
+    assert events[1]["previous_generation_id"] == 1
+    assert events[1]["reason"] == "test_replace"
+    assert events[2]["active_leases"] == 1
+    assert events[3]["forced"] is False

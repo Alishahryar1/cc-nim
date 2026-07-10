@@ -3,12 +3,15 @@
 import asyncio
 import json
 from collections.abc import AsyncGenerator
+from typing import cast
+from unittest.mock import AsyncMock
 
 import pytest
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from free_claude_code.api.response_streams import (
     anthropic_sse_streaming_response,
+    bind_response_lifetime,
     terminal_execution_error_response,
 )
 from free_claude_code.core.anthropic import anthropic_error_payload
@@ -133,3 +136,94 @@ async def test_anthropic_post_start_exception_emits_terminal_error_frame() -> No
     events = parse_sse_text(text)
     assert [event.event for event in events] == ["message_start", "error"]
     assert events[-1].data["error"]["message"] == "socket cut"
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_response_releases_resource_before_return() -> None:
+    release = AsyncMock()
+    response = JSONResponse({"ok": True})
+
+    result = await bind_response_lifetime(response, release)
+
+    assert result is response
+    release.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_streaming_response_releases_after_normal_completion() -> None:
+    release = AsyncMock()
+    response = StreamingResponse(_body_chunks(["one", "two"]))
+
+    result = await bind_response_lifetime(response, release)
+
+    assert result is response
+    release.assert_not_awaited()
+    assert await _drain(response) == "onetwo"
+    release.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_streaming_response_releases_after_body_failure() -> None:
+    release = AsyncMock()
+    response = StreamingResponse(
+        _body_then_raises(["one"], RuntimeError("stream failed"))
+    )
+    await bind_response_lifetime(response, release)
+
+    with pytest.raises(RuntimeError, match="stream failed"):
+        await _drain(response)
+
+    release.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_streaming_response_releases_when_consumer_closes_early() -> None:
+    release = AsyncMock()
+    source_closed = asyncio.Event()
+
+    async def body() -> AsyncGenerator[str]:
+        try:
+            yield "one"
+            await asyncio.Event().wait()
+        finally:
+            source_closed.set()
+
+    response = StreamingResponse(body())
+    await bind_response_lifetime(response, release)
+    iterator = cast(
+        AsyncGenerator[str],
+        response.body_iterator.__aiter__(),
+    )
+
+    assert await anext(iterator) == "one"
+    await iterator.aclose()
+
+    assert source_closed.is_set()
+    release.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_streaming_response_releases_when_consumer_is_cancelled() -> None:
+    release = AsyncMock()
+    entered = asyncio.Event()
+    source_closed = asyncio.Event()
+
+    async def body() -> AsyncGenerator[str]:
+        try:
+            yield "one"
+            entered.set()
+            await asyncio.Event().wait()
+        finally:
+            source_closed.set()
+
+    response = StreamingResponse(body())
+    await bind_response_lifetime(response, release)
+    drain_task = asyncio.create_task(_drain(response))
+    await entered.wait()
+
+    drain_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await drain_task
+
+    assert source_closed.is_set()
+    release.assert_awaited_once()

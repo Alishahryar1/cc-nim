@@ -1,4 +1,4 @@
-"""Catalog-derived Admin UI provider fields."""
+"""Catalog-derived Admin provider fields."""
 
 from typing import Any
 

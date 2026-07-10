@@ -3,11 +3,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from free_claude_code.api.app import create_app
 from free_claude_code.api.dependencies import get_settings
+from free_claude_code.api.ports import ApiServices, StopResult
 from free_claude_code.config.settings import Settings
+from tests.api.support import create_test_app
 
-app = create_app()
+app = create_test_app()
 
 
 @pytest.fixture
@@ -151,37 +152,34 @@ def test_count_tokens_error_returns_500(client):
 
 
 def test_stop_cli_with_messaging_workflow(client):
-    mock_workflow = MagicMock()
-    # Mock the async method to return a completed future or just mock it since TestClient
-    # will run the app in a way that respects it?
-    # Actually, we need to mock it as an async function.
-    mock_workflow.stop_all_tasks = AsyncMock(return_value=3)
-    app.state.messaging_workflow = mock_workflow
+    session_control = MagicMock()
+    session_control.stop_all = AsyncMock(return_value=StopResult(cancelled_count=3))
+    services = app.state.services
+    app.state.services = ApiServices(
+        requests=services.requests,
+        admin=services.admin,
+        sessions=session_control,
+    )
 
     response = client.post("/stop")
 
     assert response.status_code == 200
     assert response.json()["cancelled_count"] == 3
-    mock_workflow.stop_all_tasks.assert_called_once()
-
-    # Cleanup state
-    if hasattr(app.state, "messaging_workflow"):
-        del app.state.messaging_workflow
+    session_control.stop_all.assert_awaited_once()
 
 
 def test_stop_cli_fallback_to_manager(client):
-    if hasattr(app.state, "messaging_workflow"):
-        del app.state.messaging_workflow
-
-    mock_manager = MagicMock()
-    mock_manager.stop_all = AsyncMock()
-    app.state.cli_manager = mock_manager
+    session_control = MagicMock()
+    session_control.stop_all = AsyncMock(return_value=StopResult(source="cli_manager"))
+    services = app.state.services
+    app.state.services = ApiServices(
+        requests=services.requests,
+        admin=services.admin,
+        sessions=session_control,
+    )
 
     response = client.post("/stop")
 
     assert response.status_code == 200
     assert response.json()["source"] == "cli_manager"
-    mock_manager.stop_all.assert_called_once()
-
-    if hasattr(app.state, "cli_manager"):
-        del app.state.cli_manager
+    session_control.stop_all.assert_awaited_once()

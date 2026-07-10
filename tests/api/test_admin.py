@@ -4,10 +4,10 @@ from unittest.mock import patch
 import httpx
 from fastapi.testclient import TestClient
 
-from free_claude_code.api.admin_config.values import MASKED_SECRET
-from free_claude_code.api.admin_urls import local_admin_url
-from free_claude_code.api.app import create_app
+from free_claude_code.config.admin.values import MASKED_SECRET
+from free_claude_code.config.server_urls import local_admin_url
 from free_claude_code.config.settings import Settings
+from tests.api.support import create_test_app
 
 
 def _local_client(app):
@@ -44,7 +44,7 @@ def _clear_process_config(monkeypatch) -> None:
 
 def test_admin_page_is_loopback_only(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     assert _local_client(app).get("/admin").status_code == 200
     remote_client = TestClient(app, client=("203.0.113.10", 50000))
@@ -53,7 +53,7 @@ def test_admin_page_is_loopback_only(monkeypatch, tmp_path):
 
 def test_admin_page_no_longer_renders_generated_env_panel(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     response = _local_client(app).get("/admin")
 
@@ -64,7 +64,7 @@ def test_admin_page_no_longer_renders_generated_env_panel(monkeypatch, tmp_path)
 
 def test_admin_page_no_longer_renders_global_status_header(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     response = _local_client(app).get("/admin")
 
@@ -100,7 +100,7 @@ def test_admin_static_hides_managed_source_label():
 def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     response = _local_client(app).get("/admin/api/config")
 
@@ -140,7 +140,7 @@ def test_admin_config_preserves_managed_env_source_contract(monkeypatch, tmp_pat
     env_file = tmp_path / ".fcc" / ".env"
     env_file.parent.mkdir(parents=True)
     env_file.write_text("MODEL=open_router/managed-model\n", encoding="utf-8")
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     response = _local_client(app).get("/admin/api/config")
 
@@ -154,7 +154,7 @@ def test_admin_config_preserves_managed_env_source_contract(monkeypatch, tmp_pat
 def test_admin_apply_masks_telegram_proxy_credentials(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
     proxy_url = "https://user:password@proxy.example:8443"
 
     response = _local_client(app).post(
@@ -175,7 +175,7 @@ def test_admin_apply_masks_telegram_proxy_credentials(monkeypatch, tmp_path):
 def test_admin_validate_rejects_bad_model_shape(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     response = _local_client(app).post(
         "/admin/api/config/validate",
@@ -193,7 +193,7 @@ def test_admin_apply_writes_complete_managed_env_and_masks_preview(
 ):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     response = _local_client(app).post(
         "/admin/api/config/apply",
@@ -225,7 +225,7 @@ def test_admin_apply_writes_complete_managed_env_and_masks_preview(
 def test_admin_apply_writes_fireworks_key_and_masks_preview(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     response = _local_client(app).post(
         "/admin/api/config/apply",
@@ -250,7 +250,7 @@ def test_admin_apply_writes_fireworks_key_and_masks_preview(monkeypatch, tmp_pat
 def test_admin_apply_writes_gemini_key_and_masks_preview(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     response = _local_client(app).post(
         "/admin/api/config/apply",
@@ -275,7 +275,7 @@ def test_admin_apply_writes_gemini_key_and_masks_preview(monkeypatch, tmp_path):
 def test_admin_apply_writes_groq_key_and_masks_preview(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     response = _local_client(app).post(
         "/admin/api/config/apply",
@@ -300,7 +300,7 @@ def test_admin_apply_writes_groq_key_and_masks_preview(monkeypatch, tmp_path):
 def test_admin_apply_writes_sambanova_key_and_masks_preview(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     response = _local_client(app).post(
         "/admin/api/config/apply",
@@ -325,7 +325,7 @@ def test_admin_apply_writes_sambanova_key_and_masks_preview(monkeypatch, tmp_pat
 def test_admin_apply_writes_cerebras_key_and_masks_preview(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     response = _local_client(app).post(
         "/admin/api/config/apply",
@@ -350,7 +350,7 @@ def test_admin_apply_writes_cerebras_key_and_masks_preview(monkeypatch, tmp_path
 def test_admin_apply_writes_cloudflare_fields_and_masks_preview(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     response = _local_client(app).post(
         "/admin/api/config/apply",
@@ -378,7 +378,7 @@ def test_admin_apply_writes_cloudflare_fields_and_masks_preview(monkeypatch, tmp
 def test_admin_apply_writes_huggingface_key_and_masks_preview(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     response = _local_client(app).post(
         "/admin/api/config/apply",
@@ -403,7 +403,7 @@ def test_admin_apply_writes_huggingface_key_and_masks_preview(monkeypatch, tmp_p
 def test_admin_apply_writes_cohere_key_and_masks_preview(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     response = _local_client(app).post(
         "/admin/api/config/apply",
@@ -430,7 +430,7 @@ def test_admin_apply_writes_github_models_token_and_masks_preview(
 ):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     response = _local_client(app).post(
         "/admin/api/config/apply",
@@ -470,7 +470,7 @@ def test_admin_apply_preserves_hidden_diagnostics_and_smoke_values(
         ),
         encoding="utf-8",
     )
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     response = _local_client(app).post(
         "/admin/api/config/apply",
@@ -502,7 +502,7 @@ def test_admin_apply_omits_stale_zai_base_url(monkeypatch, tmp_path):
         ),
         encoding="utf-8",
     )
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     response = _local_client(app).post(
         "/admin/api/config/apply",
@@ -533,7 +533,7 @@ def test_admin_apply_omits_stale_fixed_claude_runtime_settings(monkeypatch, tmp_
         ),
         encoding="utf-8",
     )
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     response = _local_client(app).post(
         "/admin/api/config/apply",
@@ -552,13 +552,12 @@ def test_admin_apply_omits_stale_fixed_claude_runtime_settings(monkeypatch, tmp_
 def test_admin_apply_restart_required_reports_automatic_restart(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
-    app = create_app(lifespan_enabled=False)
     callbacks: list[str] = []
 
     async def restart_callback() -> None:
         callbacks.append("restart")
 
-    app.state.admin_restart_callback = restart_callback
+    app = create_test_app(restart_callback=restart_callback)
 
     response = _local_client(app).post(
         "/admin/api/config/apply",
@@ -581,7 +580,7 @@ def test_admin_apply_restart_required_reports_automatic_restart(monkeypatch, tmp
 def test_admin_apply_restart_required_reports_manual_fallback(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     response = _local_client(app).post(
         "/admin/api/config/apply",
@@ -604,7 +603,7 @@ def test_admin_process_env_values_are_locked_and_not_written(monkeypatch, tmp_pa
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
     monkeypatch.setenv("MODEL", "open_router/process-model")
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     config = _local_client(app).get("/admin/api/config").json()
     model_field = next(field for field in config["fields"] if field["key"] == "MODEL")
@@ -629,7 +628,7 @@ def test_admin_first_apply_migrates_repo_env(monkeypatch, tmp_path):
         "MODEL=deepseek/deepseek-chat\nDEEPSEEK_API_KEY=deepseek-secret\n",
         encoding="utf-8",
     )
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     config = _local_client(app).get("/admin/api/config").json()
     model_field = next(field for field in config["fields"] if field["key"] == "MODEL")
@@ -650,7 +649,7 @@ def test_admin_first_apply_migrates_repo_env(monkeypatch, tmp_path):
 def test_admin_local_provider_status_reports_reachable(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
-    app = create_app(lifespan_enabled=False)
+    app = create_test_app()
 
     class FakeAsyncClient:
         def __init__(self, *args, **kwargs):

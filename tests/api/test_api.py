@@ -1,9 +1,8 @@
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
-from free_claude_code.api.app import create_app
 from free_claude_code.providers.exceptions import (
     APIError,
     AuthenticationError,
@@ -13,8 +12,9 @@ from free_claude_code.providers.exceptions import (
     RateLimitError,
 )
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
+from tests.api.support import create_test_app
 
-app = create_app()
+app = create_test_app()
 
 # Mock provider
 mock_provider = MagicMock(spec=NvidiaNimProvider)
@@ -62,15 +62,8 @@ def client():
     """HTTP client with provider resolution stubbed; patch only for this file."""
     with (
         patch(
-            "free_claude_code.api.dependencies.resolve_provider",
+            "free_claude_code.api.routes.resolve_provider",
             return_value=mock_provider,
-        ),
-        patch(
-            "free_claude_code.providers.runtime.ProviderRuntime.validate_configured_models",
-            new_callable=AsyncMock,
-        ),
-        patch(
-            "free_claude_code.providers.runtime.ProviderRuntime.start_model_list_refresh"
         ),
         TestClient(app) as test_client,
     ):

@@ -10,8 +10,6 @@ from pathlib import Path
 
 import uvicorn
 
-from free_claude_code.api.admin_urls import local_admin_url, local_proxy_root_url
-from free_claude_code.api.app import GracefulLifespanApp, create_app
 from free_claude_code.cli.launchers.common import preflight_proxy
 from free_claude_code.cli.process_registry import (
     kill_all_best_effort,
@@ -26,7 +24,9 @@ from free_claude_code.config.paths import (
     legacy_env_paths,
     managed_env_path,
 )
+from free_claude_code.config.server_urls import local_admin_url, local_proxy_root_url
 from free_claude_code.config.settings import Settings, get_settings
+from free_claude_code.runtime.bootstrap import build_asgi_app
 
 SERVER_GRACEFUL_SHUTDOWN_SECONDS = 5
 
@@ -93,9 +93,7 @@ def _run_supervised_server(settings: Settings, *, open_admin_browser: bool) -> b
         if server := server_holder.get("server"):
             server.should_exit = True
 
-    app = create_app(lifespan_enabled=False)
-    app.state.admin_restart_callback = request_restart
-    asgi_app = GracefulLifespanApp(app)
+    asgi_app = build_asgi_app(settings, restart_callback=request_restart)
     config = uvicorn.Config(
         asgi_app,
         host=settings.host,

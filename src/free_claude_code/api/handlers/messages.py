@@ -82,6 +82,7 @@ class MessagesHandler:
         model_router: ModelRouter | None = None,
         token_counter: TokenCounter = get_token_count,
         provider_execution: ProviderExecutionService | None = None,
+        generation_id: int | None = None,
     ) -> None:
         self._settings = settings
         self._model_router = model_router or ModelRouter(settings)
@@ -90,6 +91,7 @@ class MessagesHandler:
             settings,
             provider_getter,
             token_counter=token_counter,
+            generation_id=generation_id,
         )
         self._message_intercepts: tuple[MessageIntercept, ...] = (
             self._intercept_web_server_tool,

@@ -35,7 +35,8 @@ flowchart LR
     ProxyAPI --> Handlers[API Product Handlers]
     Handlers --> Router[ModelRouter]
     Handlers --> Executor[ProviderExecutionService]
-    Executor --> Providers[ProviderRuntime]
+    Executor --> Lease[Provider Generation Lease]
+    Lease --> Providers[ProviderRuntime]
     Providers --> OpenAIChat[OpenAI Chat Providers]
     Providers --> NativeAnthropic[Anthropic Messages Providers]
 ```
@@ -44,9 +45,9 @@ flowchart LR
 
 The installable wheel packages are declared in [pyproject.toml](pyproject.toml):
 
-- [src/free_claude_code/api/](src/free_claude_code/api/) owns the FastAPI app, route handlers, API product handlers, shared
-  provider execution, model catalog, admin APIs, local optimizations, and
-  server-tool handling.
+- [src/free_claude_code/api/](src/free_claude_code/api/) is the HTTP adapter. It owns the FastAPI app, routes, API product
+  handlers, protocol serialization, local optimizations, and narrow
+  consumer-owned runtime ports.
 - [src/free_claude_code/cli/](src/free_claude_code/cli/) owns console entrypoints, client CLI launchers, process/session
   management, and client adapter contracts.
 - [src/free_claude_code/config/](src/free_claude_code/config/) owns settings, provider metadata, filesystem paths,
@@ -60,6 +61,9 @@ The installable wheel packages are declared in [pyproject.toml](pyproject.toml):
 - [src/free_claude_code/providers/](src/free_claude_code/providers/) owns provider construction, shared provider base
   classes, upstream transports, rate limiting, model listing, and concrete
   provider adapters.
+- [src/free_claude_code/runtime/](src/free_claude_code/runtime/) is the process composition root. It owns application
+  startup and shutdown, provider generations, Admin runtime operations, and the
+  concrete wiring between API, providers, messaging, and managed CLI sessions.
 
 [tests/](tests/) contains deterministic unit and contract coverage.
 [smoke/](smoke/) contains local and live product smoke tests that can launch
@@ -121,7 +125,7 @@ new places to add unrelated behavior:
   dependencies. Inbound turn intake, queued node execution, slash command
   dependencies, and tree queue internals live in separate modules so new
   behavior has one owner instead of growing the workflow object.
-- [api/admin_config/](src/free_claude_code/api/admin_config/) owns Admin UI config behavior. Keep
+- [config/admin/](src/free_claude_code/config/admin/) owns Admin UI config behavior. Keep
   provider fields catalog-driven, and keep manifest, source loading, validation,
   env rendering, value presentation, and status metadata in their package owners.
 
@@ -147,22 +151,34 @@ for local pre-push verification.
 supervised server instance, and can restart the server after admin config changes.
 On final shutdown it best-effort kills registered child processes.
 
-[api/app.py](src/free_claude_code/api/app.py) builds the FastAPI application. `create_app()` configures
-logging, registers admin and API routers, attaches HTTP correlation metadata, and
-installs exception handlers for validation failures, provider errors, and
-unexpected errors. `GracefulLifespanApp` wraps the app so startup failures are
-reported without noisy Starlette tracebacks.
+[runtime/bootstrap.py](src/free_claude_code/runtime/bootstrap.py) is the single production composition function. The CLI
+supervisor supplies one settings snapshot and its restart callback; bootstrap
+configures logging, constructs the runtime owners, supplies
+[api/ports.py](src/free_claude_code/api/ports.py) to the pure API factory, and returns the ASGI application.
 
-[api/runtime.py](src/free_claude_code/api/runtime.py) owns process-lifetime resources through
-`AppRuntime`:
+[api/app.py](src/free_claude_code/api/app.py) registers routers, HTTP correlation middleware, and exception handlers around
+an explicit `ApiServices` value. It does not read global settings or construct
+runtime resources. `app.state.services` is the only runtime state published to
+FastAPI.
 
-- creates and publishes an app-scoped `ProviderRuntime`;
-- validates configured models best-effort without blocking first-run admin access;
-- starts provider model-list refresh;
-- starts optional Discord or Telegram messaging when configured;
-- publishes messaging, CLI, and provider state onto `app.state`;
-- shuts down messaging platforms, CLI sessions, provider transports, and rate
-  limiters with bounded best-effort cleanup.
+[runtime/application.py](src/free_claude_code/runtime/application.py) owns process startup and shutdown, optional messaging,
+the managed CLI session manager, Admin pending state, and the injected restart
+callback. [runtime/asgi.py](src/free_claude_code/runtime/asgi.py) drives that owner from ASGI lifespan messages and preserves
+the concise startup-failure contract.
+
+[runtime/provider_manager.py](src/free_claude_code/runtime/provider_manager.py) is the only owner that constructs, publishes,
+retires, and closes provider generations. Each request acquires a generation
+lease before routing. Non-streaming responses release it after aggregation;
+streaming responses release it from the response iterator's `finally` path on
+completion, failure, cancellation, or disconnect. A provider-only Admin Apply
+prepares a candidate and commits configuration before publication. New requests
+then use the candidate while old streams finish on the retired generation; its
+last lease closes it exactly once.
+
+The manager also owns one application-lifetime provider model catalog and its
+single best-effort discovery task. The catalog survives provider replacement.
+This keeps the server model inventory stable without extra synchronization;
+Claude clients may independently retain the list they fetched at startup.
 
 ## Configuration Model
 
@@ -201,15 +217,17 @@ Model routing configuration is tiered:
 parsing and configured `MODEL*` inventory. API routing and provider validation
 depend on those helpers instead of adding behavior methods to Settings.
 
-[api/admin_config/](src/free_claude_code/api/admin_config/) owns the Admin UI config manifest and
+[config/admin/](src/free_claude_code/config/admin/) owns the Admin UI config manifest and
 managed env writes. Provider credential, local URL, proxy, and display-name
 metadata is generated from [config/provider_catalog.py](src/free_claude_code/config/provider_catalog.py);
 admin-only help text stays beside the admin manifest. The package splits source
 loading, value presentation, validation, persistence, and provider status into
 separate modules. [api/admin_routes.py](src/free_claude_code/api/admin_routes.py) exposes local-only
-admin endpoints that load, validate, apply, and test config. After an apply,
-settings are cache-cleared. Depending on the changed fields, the server either
-replaces the app provider runtime or asks the supervised server to restart.
+admin endpoints that load and validate config, then delegate runtime operations
+through `AdminRuntimePort`. Provider-only Apply prepares prospective settings,
+atomically commits the managed env, and publishes a new provider generation.
+Restart-required changes preserve the existing supervisor restart flow and do
+not publish an in-process generation first.
 
 [.env.example](.env.example) is the single install/init/admin template source.
 It is packaged as a [src/free_claude_code/config/](src/free_claude_code/config/) resource for `fcc-init` and Admin UI
@@ -276,20 +294,26 @@ sequenceDiagram
     participant Handler as ProductHandler
     participant Router as ModelRouter
     participant Exec as ProviderExecution
-    participant Runtime as ProviderRuntime
+    participant Manager as ProviderRuntimeManager
+    participant Lease as ProviderGenerationLease
+    participant Runtime as ProviderRuntimeGeneration
     participant Provider
 
     Client->>Route: POST /v1/messages
     Route->>Route: require_api_key
+    Route->>Manager: acquire current generation
+    Manager-->>Route: Lease(settings, provider resolver)
     Route->>Handler: create message
     Handler->>Router: resolve model and thinking
     Handler->>Handler: server tools or optimizations
     Handler->>Exec: stream routed request
-    Exec->>Runtime: resolve provider
+    Exec->>Lease: resolve provider
+    Lease->>Runtime: cached or new provider
     Runtime->>Provider: cached or new provider
     Exec->>Provider: preflight_stream
     Exec->>Provider: stream_response
     Provider-->>Client: Anthropic SSE events
+    Route->>Lease: release after complete body
 ```
 
 OpenAI Responses uses the same provider execution primitive without importing
@@ -305,7 +329,7 @@ provider execution, then converts Anthropic SSE back to Responses SSE.
 It supports two forms:
 
 - Direct provider model refs such as `nvidia_nim/nvidia/model-name`.
-- Gateway model IDs decoded by [api/gateway_model_ids.py](src/free_claude_code/api/gateway_model_ids.py).
+- Gateway model IDs decoded by [core/gateway_model_ids.py](src/free_claude_code/core/gateway_model_ids.py).
 
 If the incoming model is not direct, `ModelRouter` maps it by Claude tier. Names
 containing `opus`, `sonnet`, or `haiku` use the matching tier override when set,
@@ -322,9 +346,10 @@ global setting.
 - no-thinking variants when appropriate;
 - built-in Claude model IDs for compatibility with Claude clients.
 
-Provider model discovery is app-scoped through `ProviderRuntime`, which caches
-model IDs and optional thinking capability metadata for the model-list route and
-admin status.
+Provider model discovery and optional thinking metadata live in the
+application-level catalog owned by `ProviderRuntimeManager`. The catalog is not
+part of an individual provider generation, so a hot replacement does not erase
+the last useful model list. Discovery failures retain prior entries.
 
 Codex-specific model picker shaping stays out of this route. `fcc-codex` fetches
 the same `/v1/models` response at launch, converts FCC gateway IDs into
@@ -339,12 +364,13 @@ Provider metadata is neutral and centralized in
 `ProviderDescriptor` declares provider ID, transport type, capabilities,
 credential env var, default base URL, settings attribute names, and proxy support.
 
-[providers/runtime/](src/free_claude_code/providers/runtime/) owns the app-scoped provider runtime.
-It validates that descriptors, factories, and supported IDs are in sync, builds
-shared `ProviderConfig`, checks required credentials, creates providers lazily,
-caches them, refreshes model lists, validates configured models, and cleans up
-transports. The package splits factory wiring, config building, provider instance
-cache, model metadata cache, discovery, and validation into separate modules.
+[providers/runtime/](src/free_claude_code/providers/runtime/) owns construction details for one
+closable provider generation: factory wiring, provider configuration, lazy
+provider instances, and transport cleanup. Application-level generation
+publication, request leases, model metadata, discovery orchestration, and
+configured-model validation belong to `ProviderRuntimeManager` in the runtime
+package. This separates a single generation's resources from process-lifetime
+state.
 
 [providers/base.py](src/free_claude_code/providers/base.py) defines:
 
@@ -419,7 +445,7 @@ usage quirks such as DeepSeek prompt-cache counters.
    and [.env.example](.env.example) when user configurable.
 3. Let Admin UI provider credential, local URL, and proxy fields come from the
    catalog. Add admin-only help text or provider-specific fields under
-   [api/admin_config/](src/free_claude_code/api/admin_config/) only when the generated manifest is
+   [config/admin/](src/free_claude_code/config/admin/) only when the generated manifest is
    insufficient.
 4. Implement the provider under [src/free_claude_code/providers/](src/free_claude_code/providers/) using the appropriate
    shared transport family.
@@ -599,11 +625,16 @@ selects Codex for Discord or Telegram.
 
 ## Messaging Architecture
 
-Messaging is optional. [api/runtime.py](src/free_claude_code/api/runtime.py) calls
+Messaging is optional. [runtime/application.py](src/free_claude_code/runtime/application.py) calls
 `create_messaging_components()` from
 [messaging/platforms/factory.py](src/free_claude_code/messaging/platforms/factory.py) during startup.
 If `MESSAGING_PLATFORM` is `none`, or if the selected platform token is missing,
 the messaging bridge is skipped.
+
+`ApplicationRuntime` privately owns the selected platform runtime, the
+`MessagingWorkflow`, and its managed CLI session manager. The workflow owns
+conversation snapshot restoration and final persistence flush. The API sees only
+the `SessionControlPort` used to preserve `/stop` behavior.
 
 The platform factory returns a `MessagingPlatformComponents` bundle from
 [messaging/platforms/ports.py](src/free_claude_code/messaging/platforms/ports.py): a
@@ -775,7 +806,7 @@ when maintainers want branch-level assurance.
 
 1. Add or expose the setting in [config/settings.py](src/free_claude_code/config/settings.py).
 2. Add the template key to [.env.example](.env.example) if users configure it.
-3. Add a `ConfigFieldSpec` under [api/admin_config/](src/free_claude_code/api/admin_config/), or add
+3. Add a `ConfigFieldSpec` under [config/admin/](src/free_claude_code/config/admin/), or add
    provider catalog metadata when the setting is provider credential, local URL,
    proxy, or display-name metadata.
 4. Mark `restart_required` or `session_sensitive` when runtime state cannot be

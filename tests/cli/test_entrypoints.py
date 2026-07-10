@@ -2,6 +2,7 @@
 
 import json
 import tomllib
+from collections.abc import Callable
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import MagicMock, patch
@@ -183,8 +184,8 @@ def test_schedule_open_admin_browser_opens_when_health_ready(
 ) -> None:
     """Opening /admin runs after /health preflight succeeds."""
     monkeypatch.delenv("FCC_OPEN_BROWSER", raising=False)
-    from free_claude_code.api.admin_urls import local_admin_url
     from free_claude_code.cli import entrypoints
+    from free_claude_code.config.server_urls import local_admin_url
 
     settings = _launcher_settings(port=31337)
     opened_urls: list[str] = []
@@ -233,6 +234,11 @@ def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
     get_settings = MagicMock(side_effect=[settings, settings])
     get_settings.cache_clear = MagicMock()
     servers: list[object] = []
+    restart_callbacks: list[Callable[[], None]] = []
+
+    def build_asgi_app(_settings: Settings, restart_callback: Callable[[], None]):
+        restart_callbacks.append(restart_callback)
+        return MagicMock()
 
     class FakeServer:
         def __init__(self, config):
@@ -242,7 +248,7 @@ def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
 
         def run(self):
             if len(servers) == 1:
-                self.config.app.app.state.admin_restart_callback()
+                restart_callbacks[-1]()
                 assert self.should_exit is True
 
     def fake_config(app, **kwargs):
@@ -252,6 +258,7 @@ def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
         patch.object(entrypoints, "get_settings", get_settings),
         patch.object(entrypoints.uvicorn, "Config", side_effect=fake_config),
         patch.object(entrypoints.uvicorn, "Server", side_effect=FakeServer),
+        patch.object(entrypoints, "build_asgi_app", side_effect=build_asgi_app),
         patch.object(entrypoints, "_schedule_open_admin_browser"),
         patch.object(entrypoints, "kill_all_best_effort") as kill_all,
     ):

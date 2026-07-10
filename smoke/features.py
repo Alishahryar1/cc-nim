@@ -193,6 +193,21 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         "upstream disconnects are skips only when classified upstream_unavailable",
     ),
     FeatureCoverage(
+        "provider_hot_swap",
+        "Provider config changes preserve active streams while new requests switch",
+        "public_surface",
+        (
+            "tests/runtime/test_provider_manager.py",
+            "tests/api/test_response_streams.py",
+            "tests/api/test_admin.py",
+        ),
+        (),
+        ("test_provider_hot_swap_preserves_inflight_stream_e2e",),
+        ("api",),
+        (),
+        "credential-free local fake upstreams make the scenario always runnable",
+    ),
+    FeatureCoverage(
         "discord_telegram_bot",
         "Discord and Telegram product flows render progress and transcripts",
         "readme",

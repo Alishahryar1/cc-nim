@@ -112,6 +112,20 @@ class MessagingWorkflow:
         self._tree_queue = tree_queue
         self._wire_tree_callbacks()
 
+    def restore(self) -> None:
+        """Restore persisted conversations into this workflow's owned queue."""
+        snapshot = self.session_store.load_conversation_snapshot()
+        if snapshot.is_empty:
+            return
+        logger.info("Restoring {} conversation trees...", len(snapshot.trees))
+        self.replace_tree_queue(TreeQueueManager.from_snapshot(snapshot))
+        if self.tree_queue.cleanup_stale_nodes() > 0:
+            self.session_store.save_conversation_snapshot(self.tree_queue.snapshot())
+
+    def close(self) -> None:
+        """Flush pending session persistence before runtime shutdown."""
+        self.session_store.flush_pending_save()
+
     async def handle_message(self, incoming: IncomingMessage) -> None:
         """
         Main entry point for handling an incoming platform message.

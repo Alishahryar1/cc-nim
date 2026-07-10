@@ -7,11 +7,11 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
-from free_claude_code.api.gateway_model_ids import (
+from free_claude_code.config.provider_ids import SUPPORTED_PROVIDER_IDS
+from free_claude_code.core.gateway_model_ids import (
     GATEWAY_MODEL_ID_PREFIX,
     NO_THINKING_GATEWAY_MODEL_ID_PREFIX,
 )
-from free_claude_code.config.provider_ids import SUPPORTED_PROVIDER_IDS
 
 SUPPORTED_REASONING_LEVELS = [
     {"effort": "low", "description": "Fast responses with lighter reasoning"},

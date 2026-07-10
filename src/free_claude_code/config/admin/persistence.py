@@ -2,14 +2,57 @@
 
 import os
 from collections.abc import Mapping
+from dataclasses import dataclass
+from pathlib import Path
 from typing import Any
 
 from free_claude_code.config.paths import managed_env_path
+from free_claude_code.config.settings import Settings
 
 from .manifest import FIELD_BY_KEY, FIELDS, SECTIONS, ConfigFieldSpec
 from .sources import dotenv_values_from_file, is_locked_source, template_values
-from .validation import validate_values
+from .validation import settings_from_values
 from .values import MASKED_SECRET, load_value_state, normalize_for_env
+
+
+@dataclass(frozen=True, slots=True)
+class PreparedAdminUpdate:
+    """Validated Admin update ready for an atomic managed-file commit."""
+
+    target_values: dict[str, str]
+    settings: Settings | None
+    errors: tuple[str, ...]
+    pending_fields: tuple[str, ...]
+    path: Path
+
+    @property
+    def valid(self) -> bool:
+        return self.settings is not None
+
+    def validation_response(self) -> dict[str, Any]:
+        return {
+            "valid": self.valid,
+            "errors": list(self.errors),
+            "env_preview": render_env_file(self.target_values, mask_secrets=True),
+        }
+
+    def applied_response(self) -> dict[str, Any]:
+        if not self.valid:
+            return self.validation_response() | {
+                "applied": False,
+                "pending_fields": [],
+            }
+        return {
+            "applied": True,
+            "valid": True,
+            "errors": [],
+            "env_preview": render_env_file(
+                self.target_values,
+                mask_secrets=True,
+            ),
+            "path": str(self.path),
+            "pending_fields": list(self.pending_fields),
+        }
 
 
 def target_values_with_updates(updates: Mapping[str, Any]) -> dict[str, str]:
@@ -60,14 +103,7 @@ def effective_values_for_validation(
 def validate_updates(updates: Mapping[str, Any]) -> dict[str, Any]:
     """Validate partial admin updates and return a masked generated env preview."""
 
-    target_values = target_values_with_updates(updates)
-    effective_values = effective_values_for_validation(target_values)
-    valid, errors = validate_values(effective_values)
-    return {
-        "valid": valid,
-        "errors": errors,
-        "env_preview": render_env_file(target_values, mask_secrets=True),
-    }
+    return prepare_admin_update(updates).validation_response()
 
 
 def changed_pending_fields(updates: Mapping[str, Any]) -> list[str]:
@@ -85,28 +121,42 @@ def changed_pending_fields(updates: Mapping[str, Any]) -> list[str]:
     return pending
 
 
-def write_managed_env(updates: Mapping[str, Any]) -> dict[str, Any]:
-    """Validate and atomically write the admin-managed env file."""
-
-    validation = validate_updates(updates)
-    if not validation["valid"]:
-        return validation | {"applied": False, "pending_fields": []}
+def prepare_admin_update(updates: Mapping[str, Any]) -> PreparedAdminUpdate:
+    """Validate an update and construct its prospective Settings snapshot."""
 
     target_values = target_values_with_updates(updates)
-    pending_fields = changed_pending_fields(updates)
-    path = managed_env_path()
+    effective_values = effective_values_for_validation(target_values)
+    settings, errors = settings_from_values(effective_values)
+    pending_fields = (
+        tuple(changed_pending_fields(updates)) if settings is not None else ()
+    )
+    return PreparedAdminUpdate(
+        target_values=target_values,
+        settings=settings,
+        errors=tuple(errors),
+        pending_fields=pending_fields,
+        path=managed_env_path(),
+    )
+
+
+def commit_prepared_admin_update(prepared: PreparedAdminUpdate) -> dict[str, Any]:
+    """Atomically persist a previously validated Admin update."""
+
+    if not prepared.valid:
+        raise ValueError("Cannot commit an invalid Admin update")
+
+    path = prepared.path
     path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = path.with_suffix(path.suffix + ".tmp")
-    temp_path.write_text(render_env_file(target_values), encoding="utf-8")
-    os.replace(temp_path, path)
-    return {
-        "applied": True,
-        "valid": True,
-        "errors": [],
-        "env_preview": render_env_file(target_values, mask_secrets=True),
-        "path": str(path),
-        "pending_fields": pending_fields,
-    }
+    try:
+        temp_path.write_text(
+            render_env_file(prepared.target_values),
+            encoding="utf-8",
+        )
+        os.replace(temp_path, path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+    return prepared.applied_response()
 
 
 def quote_env_value(value: str) -> str:

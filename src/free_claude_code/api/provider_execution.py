@@ -29,10 +29,12 @@ class ProviderExecutionService:
         provider_getter: ProviderGetter,
         *,
         token_counter: TokenCounter = get_token_count,
+        generation_id: int | None = None,
     ) -> None:
         self._settings = settings
         self._provider_getter = provider_getter
         self._token_counter = token_counter
+        self._generation_id = generation_id
 
     def stream(
         self,
@@ -62,6 +64,8 @@ class ProviderExecutionService:
         }
         if wire_api == "responses":
             route_trace["wire_api"] = "responses"
+        if self._generation_id is not None:
+            route_trace["generation_id"] = self._generation_id
         trace_event(**route_trace)
 
         trace_event(
@@ -95,6 +99,14 @@ class ProviderExecutionService:
             ):
                 yield chunk
 
+        stream_trace: dict[str, Any] = {
+            "request_id": request_id,
+            "provider_id": routed.resolved.provider_id,
+            "gateway_model": routed.request.model,
+        }
+        if self._generation_id is not None:
+            stream_trace["generation_id"] = self._generation_id
+
         return traced_async_stream(
             provider_body(),
             stage="egress",
@@ -110,9 +122,5 @@ class ProviderExecutionService:
                 else "free_claude_code.api.response.stream_interrupted"
             ),
             chunk_event=None,
-            extra={
-                "request_id": request_id,
-                "provider_id": routed.resolved.provider_id,
-                "gateway_model": routed.request.model,
-            },
+            extra=stream_trace,
         )

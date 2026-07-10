@@ -2,11 +2,11 @@ from unittest.mock import patch
 
 from fastapi.testclient import TestClient
 
-from free_claude_code.api.app import create_app
 from free_claude_code.api.dependencies import get_settings
 from free_claude_code.config.settings import Settings
+from tests.api.support import create_test_app
 
-app = create_app()
+app = create_test_app()
 
 
 def test_anthropic_auth_token_required_and_accepts_x_api_key():

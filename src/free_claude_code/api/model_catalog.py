@@ -2,10 +2,13 @@
 
 from free_claude_code.config.model_refs import configured_chat_model_refs
 from free_claude_code.config.settings import Settings
-from free_claude_code.providers.runtime import ProviderRuntime
+from free_claude_code.core.gateway_model_ids import (
+    gateway_model_id,
+    no_thinking_gateway_model_id,
+)
 
-from .gateway_model_ids import gateway_model_id, no_thinking_gateway_model_id
 from .models.responses import ModelResponse, ModelsListResponse
+from .ports import RequestRuntimePort
 
 DISCOVERED_MODEL_CREATED_AT = "1970-01-01T00:00:00Z"
 
@@ -50,18 +53,16 @@ SUPPORTED_CLAUDE_MODELS = [
 
 
 def build_models_list_response(
-    settings: Settings, provider_runtime: ProviderRuntime | None
+    settings: Settings, runtime: RequestRuntimePort
 ) -> ModelsListResponse:
     """Return configured, cached, and compatibility model ids."""
     models: list[ModelResponse] = []
     seen: set[str] = set()
 
     for ref in configured_chat_model_refs(settings):
-        supports_thinking = None
-        if provider_runtime is not None:
-            supports_thinking = provider_runtime.cached_model_supports_thinking(
-                ref.provider_id, ref.model_id
-            )
+        supports_thinking = runtime.cached_model_supports_thinking(
+            ref.provider_id, ref.model_id
+        )
         _append_provider_model_variants(
             models,
             seen,
@@ -69,14 +70,13 @@ def build_models_list_response(
             supports_thinking=supports_thinking,
         )
 
-    if provider_runtime is not None:
-        for model_info in provider_runtime.cached_prefixed_model_infos():
-            _append_provider_model_variants(
-                models,
-                seen,
-                model_info.model_id,
-                supports_thinking=model_info.supports_thinking,
-            )
+    for model_info in runtime.cached_prefixed_model_infos():
+        _append_provider_model_variants(
+            models,
+            seen,
+            model_info.model_id,
+            supports_thinking=model_info.supports_thinking,
+        )
 
     for model in SUPPORTED_CLAUDE_MODELS:
         _append_unique_model(models, seen, model)

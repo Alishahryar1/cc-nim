@@ -9,6 +9,7 @@ _API_ALLOWED_PROVIDER_MODULES = frozenset(
         "free_claude_code.providers",
         "free_claude_code.providers.base",
         "free_claude_code.providers.exceptions",
+        "free_claude_code.providers.model_listing",
         "free_claude_code.providers.runtime",
     }
 )
@@ -52,14 +53,30 @@ def test_runtime_packages_live_only_under_src_namespace() -> None:
     package_root = repo_root / "src" / "free_claude_code"
 
     assert (package_root / "__init__.py").exists()
-    for package_name in {"api", "cli", "config", "core", "messaging", "providers"}:
+    for package_name in {
+        "api",
+        "cli",
+        "config",
+        "core",
+        "messaging",
+        "providers",
+        "runtime",
+    }:
         assert (package_root / package_name).is_dir()
         assert not (repo_root / package_name).exists()
 
 
 def test_no_old_top_level_first_party_imports_remain() -> None:
     repo_root = Path(__file__).resolve().parents[2]
-    forbidden = {"api", "cli", "config", "core", "messaging", "providers"}
+    forbidden = {
+        "api",
+        "cli",
+        "config",
+        "core",
+        "messaging",
+        "providers",
+        "runtime",
+    }
     offenders: list[str] = []
 
     for path in repo_root.rglob("*.py"):
@@ -99,6 +116,7 @@ def test_provider_adapters_do_not_import_runtime_layers() -> None:
             "free_claude_code.api.",
             "free_claude_code.messaging.",
             "free_claude_code.cli.",
+            "free_claude_code.runtime.",
         ),
     )
 
@@ -213,7 +231,7 @@ _MESSAGING_ALLOWED_PROVIDER_MODULES = frozenset(
 
 
 def test_messaging_does_not_import_disallowed_modules() -> None:
-    """Messaging is wired by ``api.runtime``; narrow provider imports only for NIM voice ASR."""
+    """Runtime composition is external; only NIM voice ASR crosses provider bounds."""
     repo_root = Path(__file__).resolve().parents[2]
     offenders: list[str] = []
     for path in (repo_root / "src" / "free_claude_code" / "messaging").rglob("*.py"):
@@ -237,6 +255,83 @@ def test_messaging_does_not_import_disallowed_modules() -> None:
                 offenders.append(f"{rel}: {imported}")
 
     assert sorted(offenders) == []
+
+
+def test_single_owner_runtime_dependency_direction() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    package_root = repo_root / "src" / "free_claude_code"
+    api_root = package_root / "api"
+    cli_root = package_root / "cli"
+    runtime_root = package_root / "runtime"
+
+    assert runtime_root.is_dir()
+    for removed in {
+        api_root / "runtime.py",
+        api_root / "admin_urls.py",
+        api_root / "gateway_model_ids.py",
+        api_root / "admin_config",
+    }:
+        assert not removed.exists()
+
+    assert (
+        _imports_matching(
+            [api_root],
+            forbidden_prefixes=(
+                "free_claude_code.cli",
+                "free_claude_code.messaging",
+                "free_claude_code.runtime",
+            ),
+        )
+        == []
+    )
+    assert (
+        _imports_matching(
+            [cli_root],
+            forbidden_prefixes=("free_claude_code.api",),
+        )
+        == []
+    )
+
+    api_text = "\n".join(
+        path.read_text(encoding="utf-8") for path in api_root.rglob("*.py")
+    )
+    for removed_state in {
+        "app.state.provider_runtime",
+        "app.state.messaging_runtime",
+        "app.state.messaging_workflow",
+        "app.state.cli_manager",
+        "app.state.admin_restart_callback",
+        "app.state.admin_pending_fields",
+    }:
+        assert removed_state not in api_text
+    assert "app.state.services" in api_text
+
+    for marker in {api_root / "__init__.py", runtime_root / "__init__.py"}:
+        marker_text = marker.read_text(encoding="utf-8")
+        assert "from " not in marker_text
+        assert "import " not in marker_text
+        assert "__all__" not in marker_text
+
+
+def test_neutral_moved_helpers_keep_their_dependency_boundaries() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    package_root = repo_root / "src" / "free_claude_code"
+    admin_root = package_root / "config" / "admin"
+    gateway_ids = package_root / "core" / "gateway_model_ids.py"
+
+    admin_offenders: list[str] = []
+    for path in admin_root.rglob("*.py"):
+        for imported in _imports_from(path, repo_root):
+            if imported is None or not imported.startswith("free_claude_code."):
+                continue
+            if not imported.startswith("free_claude_code.config"):
+                admin_offenders.append(f"{path.relative_to(repo_root)}: {imported}")
+    assert admin_offenders == []
+
+    assert all(
+        not imported.startswith("free_claude_code.")
+        for imported in _imports_from(gateway_ids, repo_root)
+    )
 
 
 def test_api_may_only_import_narrow_provider_facade() -> None:
@@ -528,9 +623,11 @@ def test_openai_responses_uses_adapter_boundary() -> None:
 def test_admin_config_uses_package_owners_and_catalog_manifest() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     api_root = repo_root / "src" / "free_claude_code" / "api"
-    admin_config_root = api_root / "admin_config"
+    config_root = repo_root / "src" / "free_claude_code" / "config"
+    admin_config_root = config_root / "admin"
 
     assert not (api_root / "admin_config.py").exists()
+    assert not (api_root / "admin_config").exists()
     for filename in {
         "__init__.py",
         "manifest.py",
@@ -550,10 +647,9 @@ def test_admin_config_uses_package_owners_and_catalog_manifest() -> None:
     routes_imports = set(_imports_from(api_root / "admin_routes.py", repo_root))
     assert "free_claude_code.api.admin_config" not in routes_imports
     for expected in {
-        "free_claude_code.api.admin_config.manifest",
-        "free_claude_code.api.admin_config.persistence",
-        "free_claude_code.api.admin_config.status",
-        "free_claude_code.api.admin_config.values",
+        "free_claude_code.config.admin.manifest",
+        "free_claude_code.config.admin.persistence",
+        "free_claude_code.config.admin.values",
     }:
         assert expected in routes_imports
 
@@ -636,8 +732,9 @@ def test_messaging_conversation_state_uses_package_owners() -> None:
     assert offenders == []
 
     runtime_text = (
-        repo_root / "src" / "free_claude_code" / "api" / "runtime.py"
+        repo_root / "src" / "free_claude_code" / "runtime" / "application.py"
     ).read_text(encoding="utf-8")
+    workflow_text = (messaging_root / "workflow.py").read_text(encoding="utf-8")
     for removed_api in {
         "get_all_trees",
         "get_node_mapping",
@@ -645,6 +742,7 @@ def test_messaging_conversation_state_uses_package_owners() -> None:
         "TreeQueueManager.from_dict",
     }:
         assert removed_api not in runtime_text
+        assert removed_api not in workflow_text
 
 
 def test_messaging_workflow_uses_split_runtime_owners() -> None:
@@ -889,6 +987,7 @@ def _text_occurrences(repo_root: Path, needle: str) -> list[str]:
         repo_root / "src" / "free_claude_code" / "core",
         repo_root / "src" / "free_claude_code" / "messaging",
         repo_root / "src" / "free_claude_code" / "providers",
+        repo_root / "src" / "free_claude_code" / "runtime",
         repo_root / "smoke",
         repo_root / "tests",
         repo_root / ".env.example",

@@ -39,6 +39,7 @@ class ResponsesHandler:
         model_router: ModelRouter | None = None,
         responses_adapter: OpenAIResponsesAdapter | None = None,
         provider_execution: ProviderExecutionService | None = None,
+        generation_id: int | None = None,
     ) -> None:
         self._settings = settings
         self._model_router = model_router or ModelRouter(settings)
@@ -46,6 +47,7 @@ class ResponsesHandler:
         self._provider_execution = provider_execution or ProviderExecutionService(
             settings,
             provider_getter,
+            generation_id=generation_id,
         )
 
     async def create(

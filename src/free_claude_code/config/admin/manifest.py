@@ -1,4 +1,4 @@
-"""Admin UI configuration manifest."""
+"""Admin configuration manifest."""
 
 from collections.abc import Iterable
 from dataclasses import dataclass
