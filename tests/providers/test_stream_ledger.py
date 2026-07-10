@@ -671,7 +671,7 @@ class TestAnthropicStreamLedgerError:
         assert [event.event for event in parsed] == ["error"]
         assert parsed[0].data["error"]["message"] == "Something went wrong"
 
-    def test_terminal_error_tail_after_message_stop_still_reports_failure(self):
+    def test_terminal_error_tail_after_message_stop_emits_nothing(self):
         builder = AnthropicStreamLedger("msg_1", "model")
         builder.ingest_native_event(
             SSEEvent(
@@ -689,10 +689,8 @@ class TestAnthropicStreamLedgerError:
         )
 
         events = list(builder.terminal_error_tail("Something went wrong"))
-        parsed = parse_sse_text("".join(events))
 
-        assert [event.event for event in parsed] == ["error"]
-        assert parsed[0].data["error"]["message"] == "Something went wrong"
+        assert events == []
 
 
 class TestAnthropicStreamLedgerTokenEstimation:

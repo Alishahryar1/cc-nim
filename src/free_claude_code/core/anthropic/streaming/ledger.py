@@ -501,7 +501,9 @@ class AnthropicStreamLedger:
     def terminal_error_tail(
         self, error_message: str, *, error_type: str = "api_error"
     ) -> Iterator[str]:
-        """Close open blocks and terminate with an error, never a success stop."""
+        """Terminate an incomplete message with an error, never a success stop."""
+        if self.message_stopped:
+            return
         yield from self.close_unclosed_blocks()
         yield self.emit_top_level_error(error_message, error_type=error_type)
 

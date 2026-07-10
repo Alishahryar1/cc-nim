@@ -142,6 +142,23 @@ class AnthropicMessagesStreamAdapter:
                     return
 
                 except Exception as error:
+                    if ledger.has_terminal_message():
+                        trace_event(
+                            stage="provider",
+                            event="provider.response.completed",
+                            source="provider",
+                            provider=tag,
+                            request_id=self._request_id,
+                            gateway_model=self._request.model,
+                            sse_chunks_out=chunk_count,
+                            sse_bytes_out=chunk_bytes,
+                            late_exc_type=type(error).__name__,
+                        )
+                        for event in recovery.flush():
+                            sent_any_event = True
+                            yield event
+                        return
+
                     generated_output = ledger.has_content_block()
                     complete_tool_salvageable = generated_output and (
                         ledger.can_salvage_tool_use(tool_schemas_by_name(self._request))
