@@ -1,3 +1,4 @@
+from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -20,7 +21,7 @@ app = create_app()
 mock_provider = MagicMock(spec=NvidiaNimProvider)
 
 # Track stream_response calls for test_model_mapping
-_stream_response_calls: list = []
+_stream_response_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
 
 
 async def _mock_stream_response(*args, **kwargs):
@@ -411,3 +412,23 @@ def test_stop_endpoint_no_workflow_no_cli_503(client: TestClient):
         delattr(app.state, "cli_manager")
     response = client.post("/stop")
     assert response.status_code == 503
+
+
+def test_stop_endpoint_cli_manager_fallback(client: TestClient):
+    """POST /stop falls back to cli_manager when message_handler is absent."""
+    if hasattr(app.state, "message_handler"):
+        delattr(app.state, "message_handler")
+
+    cli_manager = MagicMock()
+    cli_manager.stop_all = AsyncMock()
+    app.state.cli_manager = cli_manager
+
+    try:
+        response = client.post("/stop")
+        assert response.status_code == 200
+        data = response.json()
+        assert data["status"] == "stopped"
+        assert data["source"] == "cli_manager"
+        cli_manager.stop_all.assert_awaited_once()
+    finally:
+        delattr(app.state, "cli_manager")

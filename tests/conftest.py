@@ -149,7 +149,7 @@ def mock_session_store():
 
 @pytest.fixture
 def incoming_message_factory():
-    _valid_keys = frozenset(
+    _valid_keys: frozenset[str] = frozenset(
         {
             "text",
             "chat_id",
