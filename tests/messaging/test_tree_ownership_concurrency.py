@@ -92,6 +92,48 @@ async def test_cancelled_finisher_cannot_erase_or_overlap_a_new_claim() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancelled_runner_exception_cannot_fail_or_skip_queued_claim() -> None:
+    root_started = asyncio.Event()
+    child_started = asyncio.Event()
+    release_child = asyncio.Event()
+    unexpected_failures = []
+
+    async def process(claim: NodeClaim) -> None:
+        if claim.node.node_id == "root":
+            root_started.set()
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                raise RuntimeError("runner escaped after cancellation") from None
+        child_started.set()
+        await release_child.wait()
+
+    manager = TreeQueueManager(
+        process,
+        unexpected_failure_callback=unexpected_failures.append,
+    )
+    await manager.admit(_incoming("root"), "status-root")
+    await root_started.wait()
+    await manager.admit(
+        _incoming("child", reply_to="root"),
+        "status-child",
+        parent_node_id="root",
+    )
+
+    try:
+        await manager.cancel_node(_SCOPE, "root", reason=CancellationReason.STOP)
+        await asyncio.wait_for(child_started.wait(), timeout=1)
+
+        assert len(unexpected_failures) == 1
+        assert unexpected_failures[0].affected == ()
+        assert unexpected_failures[0].queue_update is None
+        assert unexpected_failures[0].snapshot is None
+    finally:
+        release_child.set()
+        await _wait_for_no_tasks(manager)
+
+
+@pytest.mark.asyncio
 async def test_duplicate_admission_is_rejected_and_processed_once() -> None:
     started = asyncio.Event()
     release = asyncio.Event()

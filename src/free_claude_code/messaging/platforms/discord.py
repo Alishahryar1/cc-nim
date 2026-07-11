@@ -10,7 +10,7 @@ from loguru import logger
 from free_claude_code.core.diagnostics import format_user_error_preview
 
 from ..limiter import MessagingRateLimiter
-from ..models import IncomingMessage
+from ..models import IncomingMessage, MessageScope
 from ..rendering.discord_markdown import format_status_discord
 from ..voice import Transcriber
 from .discord_inbound import (
@@ -139,10 +139,10 @@ class DiscordRuntime:
         logger.info("Discord platform connected")
 
     async def cancel_pending_voice(
-        self, chat_id: str, reply_id: str
+        self, scope: MessageScope, reply_id: str
     ) -> tuple[str, str] | None:
         """Cancel a pending voice transcription."""
-        return await self._voice_flow.cancel_pending_voice(chat_id, reply_id)
+        return await self._voice_flow.cancel_pending_voice(scope, reply_id)
 
     async def _handle_voice_note(
         self, message: Any, attachment: Any, channel_id: str

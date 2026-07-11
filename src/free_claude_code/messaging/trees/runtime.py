@@ -376,7 +376,11 @@ class MessageTree:
     ) -> FailureResult:
         """Atomically fail the active claim and its pending descendants."""
         async with self._lock:
-            if self._active is None or self._active.claim.claim_id != claim_id:
+            if (
+                self._active is None
+                or self._active.claim.claim_id != claim_id
+                or self._active.cancellation_requested
+            ):
                 return FailureResult(affected=(), queue_update=None, snapshot=None)
             node = self._graph.get_node(self._active.claim.node.node_id)
             if node is None:

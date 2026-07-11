@@ -160,7 +160,7 @@ async def handle_clear_command(
         if not branch_root_id:
             if handler.voice_cancellation is not None:
                 cancelled = await handler.voice_cancellation.cancel_pending_voice(
-                    incoming.chat_id, reply_id
+                    incoming.scope, reply_id
                 )
                 if cancelled is not None:
                     voice_msg_id, status_msg_id = cancelled

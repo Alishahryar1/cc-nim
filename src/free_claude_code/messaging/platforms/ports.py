@@ -4,7 +4,7 @@ from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
-from ..models import IncomingMessage
+from ..models import IncomingMessage, MessageScope
 
 InboundMessageHandler = Callable[[IncomingMessage], Awaitable[None]]
 
@@ -66,7 +66,7 @@ class VoiceCancellation(Protocol):
     """Optional voice-note cancellation port used by /clear replies."""
 
     async def cancel_pending_voice(
-        self, chat_id: str, reply_id: str
+        self, scope: MessageScope, reply_id: str
     ) -> tuple[str, str] | None: ...
 
 

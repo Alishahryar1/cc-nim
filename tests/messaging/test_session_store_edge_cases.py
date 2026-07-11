@@ -248,6 +248,43 @@ class TestSessionStoreSaveEdgeCases:
 
 
 class TestSessionStoreTreeSnapshots:
+    def test_unscoped_tree_without_legacy_ingress_is_reported_and_skipped(
+        self, tmp_path
+    ):
+        path = tmp_path / "sessions.json"
+        path.write_text(
+            json.dumps(
+                {
+                    "conversation": {
+                        "trees": [
+                            {
+                                "root_id": "root",
+                                "nodes": {
+                                    "root": {
+                                        "node_id": "root",
+                                        "status_message_id": "status",
+                                        "state": "completed",
+                                    }
+                                },
+                            }
+                        ]
+                    }
+                }
+            ),
+            encoding="utf-8",
+        )
+
+        with patch(
+            "free_claude_code.messaging.trees.snapshot.logger.warning"
+        ) as warning:
+            store = SessionStore(storage_path=str(path))
+
+        assert store.load_conversation_snapshot().is_empty
+        warning.assert_called_once_with(
+            "Skipping messaging tree snapshot without recoverable scope: root_id={}",
+            "root",
+        )
+
     def test_snapshot_ingress_and_egress_are_deeply_detached(self, tmp_path):
         store = SessionStore(storage_path=str(tmp_path / "sessions.json"))
         snapshot = TreeSnapshot(

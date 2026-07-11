@@ -788,7 +788,9 @@ Shared voice-note orchestration lives in
 pending voice registration, file-size validation, temp-file cleanup,
 transcription, cancellation, error replies, and the handoff to
 `IncomingMessage`. It depends only on the consumer-owned `Transcriber` protocol
-from [messaging/voice.py](src/free_claude_code/messaging/voice.py). Bootstrap selects either the
+from [messaging/voice.py](src/free_claude_code/messaging/voice.py). Pending voice lookups use the
+same `(platform, chat_id)` `MessageScope` as tree references, so raw IDs from
+different transports cannot share cancellation ownership. Bootstrap selects either the
 instance-owned local Whisper `TranscriptionService` or the provider-owned
 `NvidiaNimTranscriber`. Messaging no longer imports a provider adapter, and the
 local service retains only one lazy pipeline for its immutable runtime settings;
@@ -892,6 +894,9 @@ conversation snapshots. New snapshots serialize scoped trees as a list, while
 loading derives scope from existing pre-scope `sessions.json` tree roots. Nodes
 persist only their canonical parent relation; runtime child indexes are rebuilt
 on restore, and transport ingress payloads do not leak into aggregate storage.
+A malformed tree carrying neither current scope nor legacy root ingress is
+reported and skipped because assigning it to an inferred chat would violate the
+same ownership boundary.
 
 [messaging/session/](src/free_claude_code/messaging/session/) persists typed conversation snapshots
 and message IDs to a JSON file under the managed agent workspace.

@@ -4,6 +4,7 @@ from unittest.mock import AsyncMock
 
 import pytest
 
+from free_claude_code.messaging.models import MessageScope
 from free_claude_code.messaging.platforms.voice_flow import (
     VOICE_DISABLED_MESSAGE,
     VOICE_TRANSCRIPTION_ERROR_MESSAGE,
@@ -13,6 +14,8 @@ from free_claude_code.messaging.platforms.voice_flow import (
     is_audio_metadata,
 )
 from free_claude_code.messaging.voice import Transcriber
+
+VOICE_SCOPE = MessageScope(platform="telegram", chat_id="chat")
 
 
 class MockTranscriber:
@@ -132,7 +135,7 @@ async def test_voice_flow_cancelled_transcription_deletes_status() -> None:
     flow, transcriber = _flow()
 
     async def canceling_transcribe(_path: Path) -> str:
-        await flow.cancel_pending_voice("chat", "voice")
+        await flow.cancel_pending_voice(VOICE_SCOPE, "voice")
         return "ignored"
 
     transcriber.run.side_effect = canceling_transcribe
@@ -188,7 +191,7 @@ async def test_voice_flow_task_cancellation_waits_then_cleans_pending_state() ->
     await cancellation_received.wait()
 
     assert not handle_task.done()
-    assert await flow.is_voice_still_pending("chat", "voice") is True
+    assert await flow.is_voice_still_pending(VOICE_SCOPE, "voice") is True
     queue_delete.assert_not_awaited()
 
     release.set()
@@ -198,7 +201,7 @@ async def test_voice_flow_task_cancellation_waits_then_cleans_pending_state() ->
     assert stopped.is_set()
     handler.assert_not_awaited()
     queue_delete.assert_awaited_once_with("chat", ["status"])
-    assert await flow.cancel_pending_voice("chat", "voice") is None
+    assert await flow.cancel_pending_voice(VOICE_SCOPE, "voice") is None
 
 
 @pytest.mark.asyncio
@@ -221,7 +224,7 @@ async def test_voice_flow_download_failure_cleans_pending_state() -> None:
     transcriber.run.assert_not_awaited()
     queue_delete.assert_awaited_once_with("chat", ["status"])
     reply_text.assert_awaited_once_with(VOICE_TRANSCRIPTION_ERROR_MESSAGE)
-    assert await flow.cancel_pending_voice("chat", "voice") is None
+    assert await flow.cancel_pending_voice(VOICE_SCOPE, "voice") is None
 
 
 @pytest.mark.asyncio
@@ -241,7 +244,7 @@ async def test_voice_flow_transcription_failure_cleans_pending_state() -> None:
     assert handled is True
     queue_delete.assert_awaited_once_with("chat", ["status"])
     reply_text.assert_awaited_once_with(VOICE_TRANSCRIPTION_ERROR_MESSAGE)
-    assert await flow.cancel_pending_voice("chat", "voice") is None
+    assert await flow.cancel_pending_voice(VOICE_SCOPE, "voice") is None
 
 
 @pytest.mark.asyncio
@@ -265,7 +268,7 @@ async def test_voice_flow_handler_failure_cleans_pending_without_deleting_status
     assert handled is True
     queue_delete.assert_not_awaited()
     reply_text.assert_awaited_once_with(VOICE_TRANSCRIPTION_ERROR_MESSAGE)
-    assert await flow.cancel_pending_voice("chat", "voice") is None
+    assert await flow.cancel_pending_voice(VOICE_SCOPE, "voice") is None
 
 
 @pytest.mark.asyncio

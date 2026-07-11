@@ -3,6 +3,8 @@
 from dataclasses import dataclass, field
 from typing import Any
 
+from loguru import logger
+
 from ..models import MessageScope
 from .identity import TreeIdentity
 from .node import MessageNode, MessageState
@@ -49,6 +51,11 @@ class TreeSnapshot:
         if scope is None:
             scope = _legacy_scope(normalized_root_id, nodes)
         if scope is None:
+            logger.warning(
+                "Skipping messaging tree snapshot without recoverable scope: "
+                "root_id={}",
+                normalized_root_id,
+            )
             return None
         return cls(scope=scope, root_id=normalized_root_id, nodes=dict(nodes))
 

@@ -1177,6 +1177,6 @@ async def test_reply_clear_pending_voice_cancels_and_reports(
 
     await handler.handle_message(incoming)
 
-    mock_platform.cancel_pending_voice.assert_awaited_once_with("chat_1", "100")
+    mock_platform.cancel_pending_voice.assert_awaited_once_with(incoming.scope, "100")
     assert set(deleted_ids) == {"100", "101", "150"}
     assert "Voice note cancelled" in mock_platform.queue_send_message.call_args.args[1]

@@ -4,7 +4,7 @@ from dataclasses import FrozenInstanceError
 import pytest
 
 from free_claude_code.messaging.models import MessageScope
-from free_claude_code.messaging.trees.node import MessageNode
+from free_claude_code.messaging.trees.node import MessageNode, MessageState
 from free_claude_code.messaging.trees.runtime import MessageTree
 
 _SCOPE = MessageScope(platform="telegram", chat_id="chat")
@@ -109,6 +109,33 @@ async def test_cancellation_keeps_active_identity_until_matching_finish() -> Non
     assert cancelled.active_claim == root.claim
     assert [node.node_id for node in cancelled.nodes] == ["root"]
 
+    completion = await tree.finish_and_claim_next(root.claim.claim_id)
+    assert completion.next_claim is not None
+    assert completion.next_claim.node.node_id == "queued"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("propagate", [False, True])
+async def test_cancelled_claim_rejects_late_failure_and_descendant_propagation(
+    propagate: bool,
+) -> None:
+    tree = _tree()
+    root = await tree.enqueue_or_claim("root")
+    queued = await _add(tree, "queued", "status-queued")
+    assert root.claim is not None and queued.position == 1
+
+    await tree.cancel_node("root")
+    late_failure = await tree.fail_claim(
+        root.claim.claim_id,
+        propagate=propagate,
+    )
+
+    assert late_failure.snapshot is None
+    assert late_failure.affected == ()
+    assert late_failure.queue_update is None
+    queued_view = await tree.node_view("queued")
+    assert queued_view is not None
+    assert queued_view.state is MessageState.PENDING
     completion = await tree.finish_and_claim_next(root.claim.claim_id)
     assert completion.next_claim is not None
     assert completion.next_claim.node.node_id == "queued"

@@ -13,7 +13,7 @@ from loguru import logger
 from free_claude_code.core.diagnostics import format_user_error_preview
 
 from ..limiter import MessagingRateLimiter
-from ..models import IncomingMessage
+from ..models import IncomingMessage, MessageScope
 from ..rendering.telegram_markdown import escape_md_v2
 from ..voice import Transcriber
 from .ports import InboundMessageHandler
@@ -84,10 +84,10 @@ class TelegramRuntime:
         self._log_api_error_tracebacks = log_api_error_tracebacks
 
     async def cancel_pending_voice(
-        self, chat_id: str, reply_id: str
+        self, scope: MessageScope, reply_id: str
     ) -> tuple[str, str] | None:
         """Cancel a pending voice transcription."""
-        return await self._voice_flow.cancel_pending_voice(chat_id, reply_id)
+        return await self._voice_flow.cancel_pending_voice(scope, reply_id)
 
     async def start(self) -> None:
         """Initialize and connect to Telegram."""

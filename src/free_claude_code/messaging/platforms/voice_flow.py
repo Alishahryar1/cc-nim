@@ -12,7 +12,7 @@ from loguru import logger
 
 from free_claude_code.core.diagnostics import format_user_error_preview
 
-from ..models import IncomingMessage
+from ..models import IncomingMessage, MessageScope
 from ..voice import PendingVoiceRegistry, Transcriber
 
 AUDIO_EXTENSIONS = (".ogg", ".mp4", ".mp3", ".wav", ".m4a")
@@ -45,6 +45,10 @@ class VoiceNoteRequest:
     status_parse_mode: str | None = None
     message_thread_id: str | None = None
     username: str | None = None
+
+    @property
+    def scope(self) -> MessageScope:
+        return MessageScope(platform=self.platform, chat_id=self.chat_id)
 
 
 def is_audio_metadata(filename: str | None, content_type: str | None) -> bool:
@@ -113,26 +117,28 @@ class VoiceNoteFlow:
         return True
 
     async def register_pending_voice(
-        self, chat_id: str, voice_msg_id: str, status_msg_id: str
+        self, scope: MessageScope, voice_msg_id: str, status_msg_id: str
     ) -> None:
         """Register a voice note as pending transcription."""
-        await self._pending_voice.register(chat_id, voice_msg_id, status_msg_id)
+        await self._pending_voice.register(scope, voice_msg_id, status_msg_id)
 
     async def cancel_pending_voice(
-        self, chat_id: str, reply_id: str
+        self, scope: MessageScope, reply_id: str
     ) -> tuple[str, str] | None:
         """Cancel a pending voice transcription."""
-        return await self._pending_voice.cancel(chat_id, reply_id)
+        return await self._pending_voice.cancel(scope, reply_id)
 
-    async def is_voice_still_pending(self, chat_id: str, voice_msg_id: str) -> bool:
+    async def is_voice_still_pending(
+        self, scope: MessageScope, voice_msg_id: str
+    ) -> bool:
         """Return whether a voice note is still pending."""
-        return await self._pending_voice.is_pending(chat_id, voice_msg_id)
+        return await self._pending_voice.is_pending(scope, voice_msg_id)
 
     async def complete_pending_voice(
-        self, chat_id: str, voice_msg_id: str, status_msg_id: str
+        self, scope: MessageScope, voice_msg_id: str, status_msg_id: str
     ) -> None:
         """Mark a voice note as no longer pending."""
-        await self._pending_voice.complete(chat_id, voice_msg_id, status_msg_id)
+        await self._pending_voice.complete(scope, voice_msg_id, status_msg_id)
 
     async def handle(
         self,
@@ -159,7 +165,7 @@ class VoiceNoteFlow:
         )
         status_msg_id_text = str(status_msg_id)
         await self.register_pending_voice(
-            request.chat_id,
+            request.scope,
             request.message_id,
             status_msg_id_text,
         )
@@ -180,14 +186,14 @@ class VoiceNoteFlow:
             transcribed = await transcriber.transcribe(tmp_path)
 
             if not await self.is_voice_still_pending(
-                request.chat_id,
+                request.scope,
                 request.message_id,
             ):
                 await queue_delete_messages(request.chat_id, [status_msg_id_text])
                 return True
 
             await self.complete_pending_voice(
-                request.chat_id,
+                request.scope,
                 request.message_id,
                 status_msg_id_text,
             )
@@ -264,7 +270,7 @@ class VoiceNoteFlow:
         handed_off: bool,
     ) -> None:
         await self.complete_pending_voice(
-            request.chat_id,
+            request.scope,
             request.message_id,
             status_msg_id,
         )

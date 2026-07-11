@@ -25,7 +25,7 @@ from free_claude_code.core.anthropic.stream_contracts import (
     parse_sse_lines,
     text_content,
 )
-from free_claude_code.messaging.models import IncomingMessage
+from free_claude_code.messaging.models import IncomingMessage, MessageScope
 from free_claude_code.messaging.session import SessionStore
 from free_claude_code.messaging.workflow import MessagingWorkflow
 from smoke.lib.child_process import run_captured_text
@@ -318,7 +318,7 @@ class FakePlatform:
         self.deletes: list[dict[str, Any]] = []
         self._counter = 0
         self._tasks: list[asyncio.Future[Any]] = []
-        self._pending_voice: dict[tuple[str, str], tuple[str, str]] = {}
+        self._pending_voice: dict[tuple[MessageScope, str], tuple[str, str]] = {}
 
     async def start(self) -> None:
         return None
@@ -432,15 +432,16 @@ class FakePlatform:
     def register_pending_voice(
         self, chat_id: str, voice_message_id: str, status_message_id: str
     ) -> None:
-        self._pending_voice[(chat_id, voice_message_id)] = (
+        scope = MessageScope(platform=self.name, chat_id=chat_id)
+        self._pending_voice[(scope, voice_message_id)] = (
             voice_message_id,
             status_message_id,
         )
 
     async def cancel_pending_voice(
-        self, chat_id: str, reply_id: str
+        self, scope: MessageScope, reply_id: str
     ) -> tuple[str, str] | None:
-        return self._pending_voice.pop((chat_id, reply_id), None)
+        return self._pending_voice.pop((scope, reply_id), None)
 
 
 class FakeCLISession:

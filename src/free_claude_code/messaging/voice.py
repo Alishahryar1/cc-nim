@@ -4,6 +4,8 @@ import asyncio
 from pathlib import Path
 from typing import Protocol
 
+from .models import MessageScope
+
 
 class Transcriber(Protocol):
     """Consumer-owned voice transcription boundary."""
@@ -17,34 +19,36 @@ class PendingVoiceRegistry:
     """Track voice notes that are still waiting on transcription."""
 
     def __init__(self) -> None:
-        self._pending: dict[tuple[str, str], tuple[str, str]] = {}
+        self._pending: dict[tuple[MessageScope, str], tuple[str, str]] = {}
         self._lock = asyncio.Lock()
 
     async def register(
-        self, chat_id: str, voice_msg_id: str, status_msg_id: str
+        self, scope: MessageScope, voice_msg_id: str, status_msg_id: str
     ) -> None:
         async with self._lock:
             entry = (voice_msg_id, status_msg_id)
-            self._pending[(chat_id, voice_msg_id)] = entry
-            self._pending[(chat_id, status_msg_id)] = entry
+            self._pending[(scope, voice_msg_id)] = entry
+            self._pending[(scope, status_msg_id)] = entry
 
-    async def cancel(self, chat_id: str, reply_id: str) -> tuple[str, str] | None:
+    async def cancel(
+        self, scope: MessageScope, reply_id: str
+    ) -> tuple[str, str] | None:
         async with self._lock:
-            entry = self._pending.pop((chat_id, reply_id), None)
+            entry = self._pending.pop((scope, reply_id), None)
             if entry is None:
                 return None
             voice_msg_id, status_msg_id = entry
-            self._pending.pop((chat_id, voice_msg_id), None)
-            self._pending.pop((chat_id, status_msg_id), None)
+            self._pending.pop((scope, voice_msg_id), None)
+            self._pending.pop((scope, status_msg_id), None)
             return entry
 
-    async def is_pending(self, chat_id: str, voice_msg_id: str) -> bool:
+    async def is_pending(self, scope: MessageScope, voice_msg_id: str) -> bool:
         async with self._lock:
-            return (chat_id, voice_msg_id) in self._pending
+            return (scope, voice_msg_id) in self._pending
 
     async def complete(
-        self, chat_id: str, voice_msg_id: str, status_msg_id: str
+        self, scope: MessageScope, voice_msg_id: str, status_msg_id: str
     ) -> None:
         async with self._lock:
-            self._pending.pop((chat_id, voice_msg_id), None)
-            self._pending.pop((chat_id, status_msg_id), None)
+            self._pending.pop((scope, voice_msg_id), None)
+            self._pending.pop((scope, status_msg_id), None)
