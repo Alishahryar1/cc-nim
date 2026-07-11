@@ -20,7 +20,7 @@ from free_claude_code.application.routing import ModelRouter
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import MessagesRequest
 from free_claude_code.core.diagnostics import safe_exception_message
-from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.failures import ExecutionFailure, find_execution_failure
 from free_claude_code.core.openai_responses import (
     OpenAIResponsesAdapter,
     OpenAIResponsesRequest,
@@ -100,6 +100,9 @@ class ResponsesHandler:
         except ExecutionFailure as exc:
             return self._execution_failure_response(exc, request_id=request_id)
         except Exception as exc:
+            failure = find_execution_failure(exc)
+            if failure is not None:
+                return self._execution_failure_response(failure, request_id=request_id)
             log_unexpected_api_exception(
                 self._settings,
                 exc,
@@ -116,8 +119,9 @@ class ResponsesHandler:
     def _pre_start_error_response(
         self, exc: BaseException, *, request_id: str
     ) -> JSONResponse:
-        if isinstance(exc, ExecutionFailure):
-            return self._execution_failure_response(exc, request_id=request_id)
+        failure = find_execution_failure(exc)
+        if failure is not None:
+            return self._execution_failure_response(failure, request_id=request_id)
         log_unexpected_api_exception(
             self._settings,
             exc,
@@ -165,7 +169,7 @@ class ResponsesHandler:
         *,
         request_id: str,
     ) -> None:
-        failure = exc if isinstance(exc, ExecutionFailure) else None
+        failure = find_execution_failure(exc)
         trace_terminal_execution_error(
             wire_api="responses",
             request_id=request_id,

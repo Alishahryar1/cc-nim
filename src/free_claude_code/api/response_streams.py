@@ -20,7 +20,7 @@ from free_claude_code.core.anthropic.streaming import (
     anthropic_terminal_failure_frame,
 )
 from free_claude_code.core.diagnostics import safe_exception_message
-from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.failures import find_execution_failure
 from free_claude_code.core.trace import trace_event
 
 TERMINAL_EXECUTION_ERROR_HEADERS = {"x-should-retry": "false"}
@@ -102,11 +102,12 @@ def trace_terminal_execution_error(
         "error_type": error_type,
         "client_should_retry": False,
     }
+    failure = find_execution_failure(error) if error is not None else None
     if error is not None:
-        fields["exc_type"] = type(error).__name__
-    if isinstance(error, ExecutionFailure):
-        fields["failure_kind"] = error.kind.value
-        fields["provider_retryable"] = error.retryable
+        fields["exc_type"] = type(failure or error).__name__
+    if failure is not None:
+        fields["failure_kind"] = failure.kind.value
+        fields["provider_retryable"] = failure.retryable
     trace_event(**fields)
 
 
@@ -163,9 +164,10 @@ async def _replay_first_chunk_then_stream(
     except BaseExceptionGroup as exc:
         if terminal_frame is None:
             raise
+        terminal_error = find_execution_failure(exc) or exc
         if terminal_failure_observer is not None:
-            terminal_failure_observer(exc)
-        yield terminal_frame(exc)
+            terminal_failure_observer(terminal_error)
+        yield terminal_frame(terminal_error)
     except Exception as exc:
         if terminal_frame is None:
             raise
@@ -194,8 +196,9 @@ async def anthropic_sse_streaming_response(
 
 
 def _anthropic_terminal_frame(exc: BaseException) -> str:
-    if isinstance(exc, ExecutionFailure):
-        return anthropic_terminal_failure_frame(exc)
+    failure = find_execution_failure(exc)
+    if failure is not None:
+        return anthropic_terminal_failure_frame(failure)
     return anthropic_terminal_error_frame(safe_exception_message(exc))
 
 
@@ -204,7 +207,7 @@ def _trace_anthropic_terminal_failure(
     *,
     request_id: str,
 ) -> None:
-    failure = exc if isinstance(exc, ExecutionFailure) else None
+    failure = find_execution_failure(exc)
     trace_terminal_execution_error(
         wire_api="messages",
         request_id=request_id,

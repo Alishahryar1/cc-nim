@@ -35,3 +35,15 @@ class ExecutionFailure(Exception):
         if name in self.__slots__ and hasattr(self, name):
             raise FrozenInstanceError(f"cannot assign to field {name!r}")
         super().__setattr__(name, value)
+
+
+def find_execution_failure(exc: BaseException) -> ExecutionFailure | None:
+    """Return the first canonical failure in an exception or nested group."""
+    pending = [exc]
+    while pending:
+        current = pending.pop()
+        if isinstance(current, ExecutionFailure):
+            return current
+        if isinstance(current, BaseExceptionGroup):
+            pending.extend(reversed(current.exceptions))
+    return None

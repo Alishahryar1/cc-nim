@@ -215,6 +215,25 @@ async def test_post_start_failure_observer_runs_before_terminal_failure_event() 
 
 
 @pytest.mark.asyncio
+async def test_unrelated_post_start_exception_group_remains_unexpected() -> None:
+    grouped = ExceptionGroup("stream failed", [RuntimeError("socket closed")])
+    observed: list[BaseException] = []
+    stream = _ADAPTER.iter_sse_from_anthropic(
+        _aiter_then_raise(_anthropic_text_stream("partial")[:3], grouped),
+        OpenAIResponsesRequest.model_validate(
+            {"model": "nvidia_nim/test-model", "stream": True}
+        ),
+        on_post_start_terminal_failure=observed.append,
+    )
+
+    events = parse_sse_text(await _collect_sse(stream))
+
+    assert observed == [grouped]
+    assert events[-1].event == "response.failed"
+    assert events[-1].data["response"]["error"]["type"] == "api_error"
+
+
+@pytest.mark.asyncio
 async def test_namespaced_anthropic_tool_stream_restores_responses_namespace() -> None:
     text = await _collect_sse(
         _responses_sse(

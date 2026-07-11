@@ -5,7 +5,7 @@ from collections.abc import AsyncIterable, AsyncIterator, Callable
 from typing import Any
 
 from free_claude_code.core.diagnostics import safe_exception_message
-from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.failures import ExecutionFailure, find_execution_failure
 
 from .anthropic_sse import iter_sse_events
 from .models import OpenAIResponsesRequest
@@ -46,9 +46,17 @@ async def iter_responses_sse_from_anthropic(
     except BaseExceptionGroup as exc:
         if not emitted_any_chunk:
             raise
-        _observe_post_start_terminal_failure(on_post_start_terminal_failure, exc)
-        for chunk in assembler.fail_response(_unexpected_error_data(exc)):
-            yield chunk
+        failure = find_execution_failure(exc)
+        if failure is not None:
+            _observe_post_start_terminal_failure(
+                on_post_start_terminal_failure, failure
+            )
+            for chunk in assembler.fail_execution(failure):
+                yield chunk
+        else:
+            _observe_post_start_terminal_failure(on_post_start_terminal_failure, exc)
+            for chunk in assembler.fail_response(_unexpected_error_data(exc)):
+                yield chunk
     except Exception as exc:
         if not emitted_any_chunk:
             raise

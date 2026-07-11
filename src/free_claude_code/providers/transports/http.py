@@ -25,7 +25,7 @@ async def close_provider_stream(
     provider_name: str,
     request_id: str | None,
 ) -> None:
-    """Close one stream without letting cleanup replace an active failure."""
+    """Close one stream without letting cleanup change its established outcome."""
     try:
         await maybe_await_aclose(stream)
     except Exception as close_error:
@@ -49,5 +49,3 @@ async def close_provider_stream(
             type(close_error).__name__,
             active_error_type,
         )
-        if active_error is None:
-            raise

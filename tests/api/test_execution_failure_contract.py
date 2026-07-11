@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import MagicMock, patch
 
+import pytest
 from fastapi.testclient import TestClient
 
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
@@ -25,12 +26,14 @@ class CanonicalFailureProvider:
         status_code: int,
         message: str,
         retryable: bool,
+        grouped: bool = False,
     ) -> None:
         self._chunks = chunks
         self._kind = kind
         self._status_code = status_code
         self._message = message
         self._retryable = retryable
+        self._grouped = grouped
         self.preflight_stream = MagicMock()
         self.stream_kwargs: list[dict[str, Any]] = []
 
@@ -43,12 +46,21 @@ class CanonicalFailureProvider:
         for chunk in self._chunks:
             yield chunk
         request_id = kwargs["request_id"]
-        raise ExecutionFailure(
+        failure = ExecutionFailure(
             kind=self._kind,
             status_code=self._status_code,
             message=f"{self._message}\n\nRequest ID: {request_id}",
             retryable=self._retryable,
         )
+        if self._grouped:
+            raise ExceptionGroup(
+                "provider stream and cleanup failed",
+                [
+                    RuntimeError("cleanup failed"),
+                    ExceptionGroup("provider request failed", [failure]),
+                ],
+            )
+        raise failure
 
 
 def _messages_payload(*, stream: bool) -> dict[str, object]:
@@ -115,6 +127,113 @@ def _terminal_trace(trace_mock: MagicMock) -> dict[str, Any]:
             == "free_claude_code.api.response.terminal_execution_error"
         )
     )
+
+
+def _grouped_rate_limit_provider(chunks: list[str]) -> CanonicalFailureProvider:
+    return CanonicalFailureProvider(
+        chunks,
+        kind=FailureKind.RATE_LIMIT,
+        status_code=429,
+        message="upstream is busy",
+        retryable=True,
+        grouped=True,
+    )
+
+
+@pytest.mark.parametrize(
+    ("path", "payload", "expected_type"),
+    [
+        ("/v1/messages", _messages_payload(stream=True), "rate_limit_error"),
+        ("/v1/responses", _responses_payload(), "rate_limit_error"),
+    ],
+)
+def test_grouped_pre_start_execution_failure_keeps_canonical_wire_error(
+    path: str,
+    payload: dict[str, object],
+    expected_type: str,
+) -> None:
+    provider = _grouped_rate_limit_provider([])
+    resolver_patch, client = _client_for(provider)
+
+    with (
+        resolver_patch,
+        patch("free_claude_code.api.response_streams.trace_event") as trace_mock,
+        client,
+    ):
+        response = client.post(path, json=payload)
+
+    request_id = response.headers["request-id"]
+    assert response.status_code == 429
+    assert response.headers["x-should-retry"] == "false"
+    error = response.json()["error"]
+    assert error["type"] == expected_type
+    assert error["message"] == f"upstream is busy\n\nRequest ID: {request_id}"
+    trace = _terminal_trace(trace_mock)
+    assert trace["status_code"] == 429
+    assert trace["error_type"] == "rate_limit_error"
+    assert trace["exc_type"] == "ExecutionFailure"
+    assert trace["failure_kind"] == "rate_limit"
+
+
+@pytest.mark.parametrize("path", ["/v1/messages", "/v1/responses"])
+def test_grouped_post_start_execution_failure_keeps_canonical_terminal_event(
+    path: str,
+) -> None:
+    provider = _grouped_rate_limit_provider(_partial_anthropic_stream(close_block=True))
+    payload = (
+        _messages_payload(stream=True)
+        if path == "/v1/messages"
+        else _responses_payload()
+    )
+    resolver_patch, client = _client_for(provider)
+
+    with (
+        resolver_patch,
+        patch("free_claude_code.api.response_streams.trace_event") as trace_mock,
+        client,
+    ):
+        response = client.post(path, json=payload)
+
+    request_id = response.headers["request-id"]
+    events = parse_sse_text(response.text)
+    if path == "/v1/messages":
+        assert events[-1].event == "error"
+        error = events[-1].data["error"]
+    else:
+        assert events[-1].event == "response.failed"
+        error = events[-1].data["response"]["error"]
+    assert response.status_code == 200
+    assert error["type"] == "rate_limit_error"
+    assert error["message"] == f"upstream is busy\n\nRequest ID: {request_id}"
+    assert _terminal_trace(trace_mock)["failure_kind"] == "rate_limit"
+
+
+def test_grouped_stream_false_execution_failure_discards_partial_content() -> None:
+    provider = _grouped_rate_limit_provider(
+        _partial_anthropic_stream(close_block=False)
+    )
+    resolver_patch, client = _client_for(provider)
+
+    with (
+        resolver_patch,
+        patch("free_claude_code.api.response_streams.trace_event") as trace_mock,
+        client,
+    ):
+        response = client.post("/v1/messages", json=_messages_payload(stream=False))
+
+    request_id = response.headers["request-id"]
+    assert response.status_code == 429
+    assert response.headers["x-should-retry"] == "false"
+    assert response.json()["error"] == {
+        "type": "rate_limit_error",
+        "message": f"upstream is busy\n\nRequest ID: {request_id}",
+    }
+    assert _PARTIAL_CONTENT not in response.text
+    trace = _terminal_trace(trace_mock)
+    assert trace["status_code"] == 429
+    assert trace["error_type"] == "rate_limit_error"
+    assert trace["exc_type"] == "ExecutionFailure"
+    assert trace["failure_kind"] == "rate_limit"
 
 
 def test_messages_pre_start_execution_failure_is_correlated_terminal_json() -> None:

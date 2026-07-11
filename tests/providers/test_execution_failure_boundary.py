@@ -20,7 +20,7 @@ class _FailingStream:
     def __init__(
         self,
         chunks: list[object],
-        error: Exception,
+        error: Exception | None,
         *,
         close_error: Exception | None = None,
     ) -> None:
@@ -35,7 +35,8 @@ class _FailingStream:
     async def _iterate(self) -> AsyncIterator[object]:
         for chunk in self._chunks:
             yield chunk
-        raise self._error
+        if self._error is not None:
+            raise self._error
 
     async def aclose(self) -> None:
         self.close_calls += 1
@@ -43,9 +44,9 @@ class _FailingStream:
             raise self._close_error
 
 
-def _chunk(*, content: str | None = None) -> object:
+def _chunk(*, content: str | None = None, finish_reason: str | None = None) -> object:
     delta = MagicMock(content=content, tool_calls=None, reasoning_content=None)
-    choice = MagicMock(delta=delta, finish_reason=None)
+    choice = MagicMock(delta=delta, finish_reason=finish_reason)
     return MagicMock(choices=[choice], usage=None)
 
 
@@ -155,17 +156,16 @@ async def test_openai_stream_close_failure_cannot_mask_execution_failure() -> No
 
 
 @pytest.mark.asyncio
-async def test_stream_close_failure_without_active_error_still_propagates() -> None:
+async def test_stream_close_failure_without_active_error_is_observability_only() -> (
+    None
+):
     stream = _FailingStream(
         [],
         RuntimeError("unused"),
         close_error=RuntimeError("normal close failed"),
     )
 
-    with (
-        patch("free_claude_code.providers.transports.http.trace_event") as trace_event,
-        pytest.raises(RuntimeError, match="normal close failed"),
-    ):
+    with patch("free_claude_code.providers.transports.http.trace_event") as trace_event:
         await close_provider_stream(
             stream,
             active_error=None,
@@ -183,3 +183,51 @@ async def test_stream_close_failure_without_active_error_still_propagates() -> N
         close_exc_type="RuntimeError",
         preserved_exc_type=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_completed_stream_close_failure_preserves_success_lifecycle() -> None:
+    provider = _provider()
+    request = make_messages_request(
+        "test-model",
+        messages=[],
+        max_tokens=32,
+    )
+    stream = _FailingStream(
+        [_chunk(content="complete", finish_reason="stop")],
+        None,
+        close_error=RuntimeError("cleanup api_key=SECRET"),
+    )
+
+    with (
+        patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            return_value=stream,
+        ),
+        patch("free_claude_code.providers.transports.http.trace_event") as trace_event,
+    ):
+        emitted = [
+            event
+            async for event in provider.stream_response(
+                request,
+                request_id="req_successful_close_failure",
+            )
+        ]
+
+    events = parse_sse_text("".join(emitted))
+    assert events[-1].event == "message_stop"
+    assert sum(event.event == "message_stop" for event in events) == 1
+    assert not any(event.event == "error" for event in events)
+    assert stream.close_calls == 1
+    trace_event.assert_called_once_with(
+        stage="provider",
+        event="provider.stream.close_failed",
+        source="provider",
+        provider="NIM",
+        request_id="req_successful_close_failure",
+        close_exc_type="RuntimeError",
+        preserved_exc_type=None,
+    )
+    assert "SECRET" not in repr(trace_event.call_args)

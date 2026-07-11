@@ -47,7 +47,7 @@ from free_claude_code.core.anthropic import (
     get_token_count,
 )
 from free_claude_code.core.diagnostics import safe_exception_message
-from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.failures import ExecutionFailure, find_execution_failure
 from free_claude_code.core.trace import trace_event
 
 _OPENAI_CHAT_UPSTREAM_IDS = frozenset(
@@ -131,6 +131,9 @@ class MessagesHandler:
         except ExecutionFailure as exc:
             return self._execution_failure_response(exc, request_id=request_id)
         except Exception as exc:
+            failure = find_execution_failure(exc)
+            if failure is not None:
+                return self._execution_failure_response(failure, request_id=request_id)
             raise unexpected_http_exception(
                 self._settings, exc, context="CREATE_MESSAGE_ERROR"
             ) from exc
@@ -157,6 +160,11 @@ class MessagesHandler:
             except ExecutionFailure as exc:
                 return self._execution_failure_response(exc, request_id=request_id)
             except BaseExceptionGroup as exc:
+                failure = find_execution_failure(exc)
+                if failure is not None:
+                    return self._execution_failure_response(
+                        failure, request_id=request_id
+                    )
                 return self._unexpected_execution_error_response(
                     exc,
                     request_id=request_id,
@@ -197,8 +205,9 @@ class MessagesHandler:
     def _pre_start_error_response(
         self, exc: BaseException, *, request_id: str
     ) -> Response:
-        if isinstance(exc, ExecutionFailure):
-            return self._execution_failure_response(exc, request_id=request_id)
+        failure = find_execution_failure(exc)
+        if failure is not None:
+            return self._execution_failure_response(failure, request_id=request_id)
         context = (
             "CREATE_MESSAGE_EMPTY_STREAM"
             if isinstance(exc, EmptyStreamError)
