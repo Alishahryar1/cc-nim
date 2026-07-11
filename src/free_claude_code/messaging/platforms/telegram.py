@@ -15,7 +15,7 @@ from free_claude_code.core.diagnostics import format_user_error_preview
 from ..limiter import MessagingRateLimiter
 from ..models import IncomingMessage, MessageScope
 from ..rendering.telegram_markdown import escape_md_v2
-from ..voice import Transcriber
+from ..voice import Transcriber, VoiceCancellationResult
 from .ports import InboundMessageHandler
 from .telegram_inbound import (
     telegram_text_message_from_update,
@@ -85,7 +85,7 @@ class TelegramRuntime:
 
     async def cancel_pending_voice(
         self, scope: MessageScope, reply_id: str
-    ) -> tuple[str, str] | None:
+    ) -> VoiceCancellationResult | None:
         """Cancel a pending voice transcription."""
         return await self._voice_flow.cancel_pending_voice(scope, reply_id)
 

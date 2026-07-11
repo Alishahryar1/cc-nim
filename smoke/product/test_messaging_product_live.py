@@ -267,7 +267,7 @@ async def test_same_message_ids_are_isolated_by_chat_e2e(
 @pytest.mark.parametrize("platform_name", ["discord", "telegram"])
 async def test_voice_platform_fake_e2e(platform_name: str, tmp_path) -> None:
     driver = FakePlatformDriver(platform_name, tmp_path)
-    driver.platform.register_pending_voice("chat_1", "voice_msg_1", "voice_status_1")
+    driver.platform.seed_pending_voice("chat_1", "voice_msg_1", "voice_status_1")
 
     await driver.send("/clear", message_id="clear_voice", reply_to="voice_msg_1")
 

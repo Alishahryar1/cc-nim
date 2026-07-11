@@ -12,7 +12,7 @@ from free_claude_code.core.diagnostics import format_user_error_preview
 from ..limiter import MessagingRateLimiter
 from ..models import IncomingMessage, MessageScope
 from ..rendering.discord_markdown import format_status_discord
-from ..voice import Transcriber
+from ..voice import Transcriber, VoiceCancellationResult
 from .discord_inbound import (
     discord_text_message_from_event,
     discord_voice_request_from_event,
@@ -140,7 +140,7 @@ class DiscordRuntime:
 
     async def cancel_pending_voice(
         self, scope: MessageScope, reply_id: str
-    ) -> tuple[str, str] | None:
+    ) -> VoiceCancellationResult | None:
         """Cancel a pending voice transcription."""
         return await self._voice_flow.cancel_pending_voice(scope, reply_id)
 

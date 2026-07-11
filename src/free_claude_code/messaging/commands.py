@@ -163,8 +163,9 @@ async def handle_clear_command(
                     incoming.scope, reply_id
                 )
                 if cancelled is not None:
-                    voice_msg_id, status_msg_id = cancelled
-                    msg_ids_to_del: set[str] = {voice_msg_id, status_msg_id}
+                    msg_ids_to_del = {cancelled.voice_message_id}
+                    if cancelled.status_message_id is not None:
+                        msg_ids_to_del.add(cancelled.status_message_id)
                     if incoming.message_id is not None:
                         msg_ids_to_del.add(str(incoming.message_id))
                     await _delete_message_ids(handler, incoming.chat_id, msg_ids_to_del)

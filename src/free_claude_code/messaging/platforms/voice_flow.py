@@ -13,7 +13,12 @@ from loguru import logger
 from free_claude_code.core.diagnostics import format_user_error_preview
 
 from ..models import IncomingMessage, MessageScope
-from ..voice import PendingVoiceRegistry, Transcriber
+from ..voice import (
+    PendingVoiceClaim,
+    PendingVoiceRegistry,
+    Transcriber,
+    VoiceCancellationResult,
+)
 
 AUDIO_EXTENSIONS = (".ogg", ".mp4", ".mp3", ".wav", ".m4a")
 MAX_AUDIO_SIZE_BYTES = 25 * 1024 * 1024
@@ -116,29 +121,11 @@ class VoiceNoteFlow:
         await reply_text(VOICE_DISABLED_MESSAGE)
         return True
 
-    async def register_pending_voice(
-        self, scope: MessageScope, voice_msg_id: str, status_msg_id: str
-    ) -> None:
-        """Register a voice note as pending transcription."""
-        await self._pending_voice.register(scope, voice_msg_id, status_msg_id)
-
     async def cancel_pending_voice(
         self, scope: MessageScope, reply_id: str
-    ) -> tuple[str, str] | None:
+    ) -> VoiceCancellationResult | None:
         """Cancel a pending voice transcription."""
         return await self._pending_voice.cancel(scope, reply_id)
-
-    async def is_voice_still_pending(
-        self, scope: MessageScope, voice_msg_id: str
-    ) -> bool:
-        """Return whether a voice note is still pending."""
-        return await self._pending_voice.is_pending(scope, voice_msg_id)
-
-    async def complete_pending_voice(
-        self, scope: MessageScope, voice_msg_id: str, status_msg_id: str
-    ) -> None:
-        """Mark a voice note as no longer pending."""
-        await self._pending_voice.complete(scope, voice_msg_id, status_msg_id)
 
     async def handle(
         self,
@@ -155,28 +142,44 @@ class VoiceNoteFlow:
         if message_handler is None:
             return False
 
-        status_msg_id = await queue_send_message(
-            request.chat_id,
-            request.status_text,
-            reply_to=request.message_id,
-            parse_mode=request.status_parse_mode,
-            fire_and_forget=False,
-            message_thread_id=request.message_thread_id,
-        )
-        status_msg_id_text = str(status_msg_id)
-        await self.register_pending_voice(
+        claim = await self._pending_voice.reserve(
             request.scope,
             request.message_id,
-            status_msg_id_text,
         )
+        if claim is None:
+            return True
+
+        status_msg_id: str | None = None
+        tmp_path: Path | None = None
         handed_off = False
 
-        with tempfile.NamedTemporaryFile(
-            suffix=request.temp_suffix, delete=False
-        ) as tmp:
-            tmp_path = Path(tmp.name)
-
         try:
+            delivered_status_id = await queue_send_message(
+                request.chat_id,
+                request.status_text,
+                reply_to=request.message_id,
+                parse_mode=request.status_parse_mode,
+                fire_and_forget=False,
+                message_thread_id=request.message_thread_id,
+            )
+            if delivered_status_id is None:
+                raise RuntimeError("Voice status delivery returned no message ID.")
+            status_msg_id = str(delivered_status_id)
+            if not await self._pending_voice.bind_status(claim, status_msg_id):
+                await self._clear_failed_pending_voice(
+                    request,
+                    claim,
+                    status_msg_id,
+                    queue_delete_messages,
+                    handed_off=False,
+                )
+                return True
+
+            with tempfile.NamedTemporaryFile(
+                suffix=request.temp_suffix, delete=False
+            ) as tmp:
+                tmp_path = Path(tmp.name)
+
             await request.download_to(tmp_path)
             _validate_audio_file(tmp_path)
 
@@ -184,20 +187,6 @@ class VoiceNoteFlow:
             if transcriber is None:
                 raise RuntimeError("Voice transcription is not configured.")
             transcribed = await transcriber.transcribe(tmp_path)
-
-            if not await self.is_voice_still_pending(
-                request.scope,
-                request.message_id,
-            ):
-                await queue_delete_messages(request.chat_id, [status_msg_id_text])
-                return True
-
-            await self.complete_pending_voice(
-                request.scope,
-                request.message_id,
-                status_msg_id_text,
-            )
-            handed_off = True
 
             incoming = IncomingMessage(
                 text=transcribed,
@@ -211,43 +200,51 @@ class VoiceNoteFlow:
                 raw_event=request.raw_event,
                 status_message_id=status_msg_id,
             )
-
             self._log_transcription(request, transcribed)
+            if not await self._pending_voice.claim_for_handoff(claim):
+                await self._clear_failed_pending_voice(
+                    request,
+                    claim,
+                    status_msg_id,
+                    queue_delete_messages,
+                    handed_off=False,
+                )
+                return True
+            handed_off = True
+
             await message_handler(incoming)
             return True
         except asyncio.CancelledError:
             await self._clear_failed_pending_voice(
                 request,
-                status_msg_id_text,
+                claim,
+                status_msg_id,
                 queue_delete_messages,
                 handed_off=handed_off,
             )
             raise
-        except ValueError as e:
-            await self._clear_failed_pending_voice(
+        except (ValueError, ImportError) as e:
+            discarded = await self._clear_failed_pending_voice(
                 request,
-                status_msg_id_text,
+                claim,
+                status_msg_id,
                 queue_delete_messages,
                 handed_off=handed_off,
             )
-            await request.reply_text(format_user_error_preview(e))
-            return True
-        except ImportError as e:
-            await self._clear_failed_pending_voice(
-                request,
-                status_msg_id_text,
-                queue_delete_messages,
-                handed_off=handed_off,
-            )
+            if not handed_off and not discarded:
+                return True
             await request.reply_text(format_user_error_preview(e))
             return True
         except Exception as e:
-            await self._clear_failed_pending_voice(
+            discarded = await self._clear_failed_pending_voice(
                 request,
-                status_msg_id_text,
+                claim,
+                status_msg_id,
                 queue_delete_messages,
                 handed_off=handed_off,
             )
+            if not handed_off and not discarded:
+                return True
             if self._log_api_error_tracebacks:
                 logger.error("Voice transcription failed: {}", e)
             else:
@@ -258,25 +255,24 @@ class VoiceNoteFlow:
             await request.reply_text(VOICE_TRANSCRIPTION_ERROR_MESSAGE)
             return True
         finally:
-            with contextlib.suppress(OSError):
-                tmp_path.unlink(missing_ok=True)
+            if tmp_path is not None:
+                with contextlib.suppress(OSError):
+                    tmp_path.unlink(missing_ok=True)
 
     async def _clear_failed_pending_voice(
         self,
         request: VoiceNoteRequest,
-        status_msg_id: str,
+        claim: PendingVoiceClaim,
+        status_msg_id: str | None,
         queue_delete_messages: QueueDeleteMany,
         *,
         handed_off: bool,
-    ) -> None:
-        await self.complete_pending_voice(
-            request.scope,
-            request.message_id,
-            status_msg_id,
-        )
-        if not handed_off:
+    ) -> bool:
+        discarded = await self._pending_voice.discard(claim)
+        if not handed_off and status_msg_id is not None:
             with contextlib.suppress(Exception):
                 await queue_delete_messages(request.chat_id, [status_msg_id])
+        return discarded
 
     def _log_transcription(self, request: VoiceNoteRequest, transcribed: str) -> None:
         label = request.platform.upper()

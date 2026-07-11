@@ -131,6 +131,28 @@ async def test_voice_flow_disabled_replies_without_transcribing() -> None:
 
 
 @pytest.mark.asyncio
+async def test_voice_flow_missing_status_id_stops_before_transcription() -> None:
+    flow, transcriber = _flow()
+    reply_text = AsyncMock()
+    handler = AsyncMock()
+    queue_delete = AsyncMock()
+
+    handled = await flow.handle(
+        _request(reply_text=reply_text),
+        message_handler=handler,
+        queue_send_message=AsyncMock(return_value=None),
+        queue_delete_messages=queue_delete,
+    )
+
+    assert handled is True
+    transcriber.run.assert_not_awaited()
+    handler.assert_not_awaited()
+    queue_delete.assert_not_awaited()
+    reply_text.assert_awaited_once_with(VOICE_TRANSCRIPTION_ERROR_MESSAGE)
+    assert await flow.cancel_pending_voice(VOICE_SCOPE, "voice") is None
+
+
+@pytest.mark.asyncio
 async def test_voice_flow_cancelled_transcription_deletes_status() -> None:
     flow, transcriber = _flow()
 
@@ -153,6 +175,182 @@ async def test_voice_flow_cancelled_transcription_deletes_status() -> None:
     assert handled is True
     handler.assert_not_awaited()
     queue_delete.assert_awaited_once_with("chat", ["status"])
+
+
+@pytest.mark.asyncio
+async def test_voice_flow_cancel_during_status_delivery_prevents_transcription() -> (
+    None
+):
+    flow, transcriber = _flow()
+    status_send_started = asyncio.Event()
+    release_status_send = asyncio.Event()
+    handler = AsyncMock()
+    queue_delete = AsyncMock()
+
+    async def send_status(*_args, **_kwargs) -> str:
+        status_send_started.set()
+        await release_status_send.wait()
+        return "status"
+
+    handle_task = asyncio.create_task(
+        flow.handle(
+            _request(),
+            message_handler=handler,
+            queue_send_message=send_status,
+            queue_delete_messages=queue_delete,
+        )
+    )
+
+    try:
+        await asyncio.wait_for(status_send_started.wait(), timeout=1)
+        cancelled = await flow.cancel_pending_voice(VOICE_SCOPE, "voice")
+
+        assert cancelled is not None
+        assert cancelled.voice_message_id == "voice"
+        assert cancelled.status_message_id is None
+
+        release_status_send.set()
+        assert await asyncio.wait_for(handle_task, timeout=1) is True
+    finally:
+        release_status_send.set()
+        if not handle_task.done():
+            handle_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await handle_task
+
+    transcriber.run.assert_not_awaited()
+    handler.assert_not_awaited()
+    queue_delete.assert_awaited_once_with("chat", ["status"])
+
+
+@pytest.mark.asyncio
+async def test_voice_flow_cancel_during_status_delivery_suppresses_late_failure() -> (
+    None
+):
+    flow, transcriber = _flow()
+    status_send_started = asyncio.Event()
+    release_status_send = asyncio.Event()
+    reply_text = AsyncMock()
+    handler = AsyncMock()
+
+    async def fail_status_send(*_args, **_kwargs) -> str:
+        status_send_started.set()
+        await release_status_send.wait()
+        raise RuntimeError("late status failure")
+
+    handle_task = asyncio.create_task(
+        flow.handle(
+            _request(reply_text=reply_text),
+            message_handler=handler,
+            queue_send_message=fail_status_send,
+            queue_delete_messages=AsyncMock(),
+        )
+    )
+
+    try:
+        await asyncio.wait_for(status_send_started.wait(), timeout=1)
+        assert await flow.cancel_pending_voice(VOICE_SCOPE, "voice") is not None
+
+        release_status_send.set()
+        assert await asyncio.wait_for(handle_task, timeout=1) is True
+    finally:
+        release_status_send.set()
+        if not handle_task.done():
+            handle_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await handle_task
+
+    transcriber.run.assert_not_awaited()
+    handler.assert_not_awaited()
+    reply_text.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_voice_flow_cancel_during_transcription_suppresses_late_failure() -> None:
+    flow, transcriber = _flow()
+    transcription_started = asyncio.Event()
+    release_transcription = asyncio.Event()
+    reply_text = AsyncMock()
+    handler = AsyncMock()
+    queue_delete = AsyncMock()
+
+    async def fail_transcription(_path: Path) -> str:
+        transcription_started.set()
+        await release_transcription.wait()
+        raise RuntimeError("late transcription failure")
+
+    transcriber.run.side_effect = fail_transcription
+    handle_task = asyncio.create_task(
+        flow.handle(
+            _request(reply_text=reply_text),
+            message_handler=handler,
+            queue_send_message=AsyncMock(return_value="status"),
+            queue_delete_messages=queue_delete,
+        )
+    )
+
+    try:
+        await asyncio.wait_for(transcription_started.wait(), timeout=1)
+        cancelled = await flow.cancel_pending_voice(VOICE_SCOPE, "voice")
+        assert cancelled is not None
+        assert cancelled.status_message_id == "status"
+
+        release_transcription.set()
+        assert await asyncio.wait_for(handle_task, timeout=1) is True
+    finally:
+        release_transcription.set()
+        if not handle_task.done():
+            handle_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await handle_task
+
+    handler.assert_not_awaited()
+    reply_text.assert_not_awaited()
+    queue_delete.assert_awaited_once_with("chat", ["status"])
+
+
+@pytest.mark.asyncio
+async def test_voice_flow_cancel_at_handoff_boundary_prevents_handler(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    flow, _transcriber = _flow()
+    claim_started = asyncio.Event()
+    release_claim = asyncio.Event()
+    handler = AsyncMock()
+    registry = flow._pending_voice
+    claim_for_handoff = registry.claim_for_handoff
+
+    async def gated_claim(claim) -> bool:
+        claim_started.set()
+        await release_claim.wait()
+        return await claim_for_handoff(claim)
+
+    monkeypatch.setattr(registry, "claim_for_handoff", gated_claim)
+    handle_task = asyncio.create_task(
+        flow.handle(
+            _request(),
+            message_handler=handler,
+            queue_send_message=AsyncMock(return_value="status"),
+            queue_delete_messages=AsyncMock(),
+        )
+    )
+
+    try:
+        await asyncio.wait_for(claim_started.wait(), timeout=1)
+        cancelled = await flow.cancel_pending_voice(VOICE_SCOPE, "voice")
+        assert cancelled is not None
+        assert cancelled.status_message_id == "status"
+
+        release_claim.set()
+        assert await asyncio.wait_for(handle_task, timeout=1) is True
+    finally:
+        release_claim.set()
+        if not handle_task.done():
+            handle_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await handle_task
+
+    handler.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -191,7 +389,6 @@ async def test_voice_flow_task_cancellation_waits_then_cleans_pending_state() ->
     await cancellation_received.wait()
 
     assert not handle_task.done()
-    assert await flow.is_voice_still_pending(VOICE_SCOPE, "voice") is True
     queue_delete.assert_not_awaited()
 
     release.set()

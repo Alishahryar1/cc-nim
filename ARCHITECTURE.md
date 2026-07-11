@@ -841,12 +841,19 @@ message ID lists; platform IO decides whether to use native batch deletion
 (Telegram) or internal per-message deletion (Discord).
 Shared voice-note orchestration lives in
 [messaging/platforms/voice_flow.py](src/free_claude_code/messaging/platforms/voice_flow.py), which owns
-pending voice registration, file-size validation, temp-file cleanup,
-transcription, cancellation, error replies, and the handoff to
-`IncomingMessage`. It depends only on the consumer-owned `Transcriber` protocol
-from [messaging/voice.py](src/free_claude_code/messaging/voice.py). Pending voice lookups use the
-same `(platform, chat_id)` `MessageScope` as tree references, so raw IDs from
-different transports cannot share cancellation ownership. Bootstrap selects either the
+file-size validation, temp-file cleanup, transcription, error replies, and the
+handoff to `IncomingMessage`. Before status delivery it reserves an opaque claim
+in the `PendingVoiceRegistry` owned by [messaging/voice.py](src/free_claude_code/messaging/voice.py).
+That registry atomically owns optional status binding, cancellation by either
+message ID, and the exclusive handoff claim; only a flow that wins the handoff
+transition may invoke the message workflow. Cancellation can therefore win while
+status delivery is still pending, and a stale flow cannot bind or remove a newer
+generation reusing the same ID. Once cancellation wins, late status or
+transcription completion is cleanup-only and cannot hand off work or emit a
+second error reply. Pending voice identities use the same
+`(platform, chat_id)` `MessageScope` as tree references, so raw IDs from different
+transports cannot share cancellation ownership. The flow depends only on the
+consumer-owned `Transcriber` protocol. Bootstrap selects either the
 instance-owned local Whisper `TranscriptionService` or the provider-owned
 `NvidiaNimTranscriber`. Messaging no longer imports a provider adapter, and the
 local service retains only one lazy pipeline for its immutable runtime settings;

@@ -27,6 +27,7 @@ from free_claude_code.core.anthropic.stream_contracts import (
 )
 from free_claude_code.messaging.models import IncomingMessage, MessageScope
 from free_claude_code.messaging.session import SessionStore
+from free_claude_code.messaging.voice import VoiceCancellationResult
 from free_claude_code.messaging.workflow import MessagingWorkflow
 from smoke.lib.child_process import run_captured_text
 from smoke.lib.config import ProviderModel, SmokeConfig, auth_headers
@@ -429,7 +430,7 @@ class FakePlatform:
         for message_id in message_ids:
             await self.delete_message(chat_id, message_id)
 
-    def register_pending_voice(
+    def seed_pending_voice(
         self, chat_id: str, voice_message_id: str, status_message_id: str
     ) -> None:
         scope = MessageScope(platform=self.name, chat_id=chat_id)
@@ -440,8 +441,15 @@ class FakePlatform:
 
     async def cancel_pending_voice(
         self, scope: MessageScope, reply_id: str
-    ) -> tuple[str, str] | None:
-        return self._pending_voice.pop((scope, reply_id), None)
+    ) -> VoiceCancellationResult | None:
+        pending = self._pending_voice.pop((scope, reply_id), None)
+        if pending is None:
+            return None
+        voice_message_id, status_message_id = pending
+        return VoiceCancellationResult(
+            voice_message_id=voice_message_id,
+            status_message_id=status_message_id,
+        )
 
 
 class FakeCLISession:

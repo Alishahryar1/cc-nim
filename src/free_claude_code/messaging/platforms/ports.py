@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any, Protocol, runtime_checkable
 
 from ..models import IncomingMessage, MessageScope
+from ..voice import VoiceCancellationResult
 
 InboundMessageHandler = Callable[[IncomingMessage], Awaitable[None]]
 
@@ -67,7 +68,7 @@ class VoiceCancellation(Protocol):
 
     async def cancel_pending_voice(
         self, scope: MessageScope, reply_id: str
-    ) -> tuple[str, str] | None: ...
+    ) -> VoiceCancellationResult | None: ...
 
 
 @dataclass(frozen=True, slots=True)
