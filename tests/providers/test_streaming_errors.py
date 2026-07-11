@@ -23,13 +23,13 @@ from free_claude_code.providers.stream_recovery import (
     MIDSTREAM_RECOVERY_ATTEMPTS,
     TruncatedProviderStreamError,
 )
-from free_claude_code.providers.transports.openai_chat.recovery import (
-    OpenAIChatRecovery,
-)
 from free_claude_code.providers.transports.openai_chat.tool_calls import (
     OpenAIToolCallAssembler,
     has_committed_sse_output,
     iter_heuristic_tool_use_sse,
+)
+from free_claude_code.providers.transports.openai_chat.transport import (
+    _OpenAIChatStreamRunner,
 )
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
@@ -115,6 +115,21 @@ def _make_request(model: str = "test-model", stream: bool = True, **overrides: o
     }
     request_overrides.update(overrides)
     return make_messages_request(model, **request_overrides)
+
+
+def _make_stream_runner(
+    provider: NvidiaNimProvider,
+    *,
+    request=None,
+    request_id: str | None = None,
+) -> _OpenAIChatStreamRunner:
+    return _OpenAIChatStreamRunner(
+        provider,
+        request=request or _make_request(),
+        input_tokens=0,
+        request_id=request_id,
+        thinking_enabled=None,
+    )
 
 
 def _make_chunk(
@@ -803,8 +818,8 @@ class TestStreamingExceptionHandling:
                 return_value=stream_mock,
             ),
             patch.object(
-                OpenAIChatRecovery,
-                "collect_text",
+                _OpenAIChatStreamRunner,
+                "_collect_recovery_text",
                 new_callable=AsyncMock,
                 return_value=("world", ""),
             ),
@@ -834,13 +849,14 @@ class TestStreamingExceptionHandling:
             for index in range(MIDSTREAM_RECOVERY_ATTEMPTS)
         ]
         create_stream = AsyncMock(side_effect=[(stream, {}) for stream in streams])
-        recovery = OpenAIChatRecovery(
-            provider_name="NIM",
-            create_stream=create_stream,
-        )
+        provider = _make_provider()
+        runner = _make_stream_runner(provider)
 
-        with pytest.raises(TruncatedProviderStreamError):
-            await recovery.collect_text({"messages": []})
+        with (
+            patch.object(provider, "_create_stream", create_stream),
+            pytest.raises(TruncatedProviderStreamError),
+        ):
+            await runner._collect_recovery_text({"messages": []})
 
         assert create_stream.await_count == MIDSTREAM_RECOVERY_ATTEMPTS
         assert all(stream.closed for stream in streams)
@@ -856,13 +872,14 @@ class TestStreamingExceptionHandling:
             for index in range(MIDSTREAM_RECOVERY_ATTEMPTS)
         ]
         create_stream = AsyncMock(side_effect=[(stream, {}) for stream in streams])
-        recovery = OpenAIChatRecovery(
-            provider_name="NIM",
-            create_stream=create_stream,
-        )
+        provider = _make_provider()
+        runner = _make_stream_runner(provider)
 
-        with pytest.raises(TimeoutError):
-            await recovery.collect_text({"messages": []})
+        with (
+            patch.object(provider, "_create_stream", create_stream),
+            pytest.raises(TimeoutError),
+        ):
+            await runner._collect_recovery_text({"messages": []})
 
         assert create_stream.await_count == MIDSTREAM_RECOVERY_ATTEMPTS
         assert all(stream.closed for stream in streams)
@@ -882,12 +899,13 @@ class TestStreamingExceptionHandling:
                 {},
             )
         )
-        recovery = OpenAIChatRecovery(
-            provider_name="NIM",
-            create_stream=create_stream,
-        )
+        provider = _make_provider()
+        runner = _make_stream_runner(provider)
 
-        assert await recovery.collect_text({"messages": []}) == ("world", "")
+        with patch.object(provider, "_create_stream", create_stream):
+            result = await runner._collect_recovery_text({"messages": []})
+
+        assert result == ("world", "")
         assert stream.closed is True
 
     def test_text_recovery_body_preserves_thinking_context(self):
@@ -918,9 +936,8 @@ class TestStreamingExceptionHandling:
     @pytest.mark.asyncio
     async def test_openai_text_recovery_passes_thinking_context(self):
         """OpenAI-chat recovery call sites seed emitted thinking in the prompt."""
-        recovery = OpenAIChatRecovery(
-            provider_name="NIM",
-            create_stream=AsyncMock(),
+        runner = _make_stream_runner(
+            _make_provider(), request=_make_request(), request_id="req_recovery"
         )
         ledger = AnthropicStreamLedger("msg_recovery", "model")
         ledger.start_thinking_block()
@@ -929,16 +946,14 @@ class TestStreamingExceptionHandling:
         ledger.emit_text_delta("visible answer")
 
         with patch.object(
-            recovery,
-            "collect_text",
+            runner,
+            "_collect_recovery_text",
             new_callable=AsyncMock,
             return_value=("visible answer done", "hidden reasoning more"),
         ) as mock_collect:
-            events = await recovery.events(
+            events = await runner._recovery_events(
                 body={"messages": [{"role": "user", "content": "hello"}]},
                 ledger=ledger,
-                request=_make_request(),
-                request_id="req_recovery",
                 error=TimeoutError("cutoff"),
                 tool_argument_alias_buffers={},
             )
@@ -985,8 +1000,8 @@ class TestStreamingExceptionHandling:
                 return_value=original_stream,
             ) as mock_create,
             patch.object(
-                OpenAIChatRecovery,
-                "collect_text",
+                _OpenAIChatStreamRunner,
+                "_collect_recovery_text",
                 new_callable=AsyncMock,
                 side_effect=TruncatedProviderStreamError(
                     "Recovery stream ended without finish_reason."
@@ -1043,8 +1058,8 @@ class TestStreamingExceptionHandling:
                 return_value=stream_mock,
             ),
             patch.object(
-                OpenAIChatRecovery,
-                "collect_text",
+                _OpenAIChatStreamRunner,
+                "_collect_recovery_text",
                 new_callable=AsyncMock,
                 return_value=('"ok"}', ""),
             ),

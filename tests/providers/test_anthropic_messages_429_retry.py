@@ -234,7 +234,7 @@ async def test_native_stream_connection_error_retry_exhausted(provider_config):
         ) as mock_send,
         patch("asyncio.sleep", new_callable=AsyncMock),
         patch(
-            "free_claude_code.providers.transports.anthropic_messages.stream.trace_event"
+            "free_claude_code.providers.transports.anthropic_messages.transport.trace_event"
         ) as trace,
         pytest.raises(ExecutionFailure) as exc_info,
     ):

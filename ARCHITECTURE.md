@@ -518,15 +518,16 @@ There are two transport families under [providers/transports/](src/free_claude_c
 
 - [providers/transports/openai_chat/](src/free_claude_code/providers/transports/openai_chat/)
   implements `OpenAIChatTransport` for providers with OpenAI-compatible
-  `/chat/completions` APIs. The package owns the thin transport base,
-  per-request stream runner, OpenAI request policy, OpenAI tool-call assembly,
-  and OpenAI-chat recovery event construction.
+  `/chat/completions` APIs. Its `transport.py` co-locates the transport base with
+  the exactly typed private per-request runner and its recovery operations; no
+  cross-module object reaches through an untyped transport backchannel. The
+  package also owns OpenAI request policy and tool-call assembly.
 - [providers/transports/anthropic_messages/](src/free_claude_code/providers/transports/anthropic_messages/)
   implements `AnthropicMessagesTransport` for providers with
   Anthropic-compatible `/messages` APIs. In FCC this transport is intentionally
-  local-only for llama.cpp and Ollama. The package owns the thin transport base,
-  native request policy, native stream runner, HTTP response helpers, and native
-  recovery event construction.
+  local-only for llama.cpp and Ollama. Its `transport.py` likewise owns the
+  transport and exactly typed private stream/recovery lifecycle together. The
+  package also owns native request policy and HTTP response helpers.
 
 Both transport families explicitly implement preflight by constructing the same
 upstream request body they will later stream. `BaseProvider` makes that operation
@@ -1082,8 +1083,10 @@ adapters, import boundaries, provider catalog contracts, and other invariants.
 The import-boundary contract derives every static production edge with one AST
 scanner and checks the package matrix, exact exceptions, facade ownership, and
 lazy optional imports. The resulting first-party module graph must remain
-acyclic. These tests protect current architectural properties rather than
-preserving deleted modules or an exact internal file layout.
+acyclic. The same contract rejects untyped transport collaborators and private
+transport access from helper modules. These tests protect current architectural
+properties rather than preserving deleted modules or an exact internal file
+layout.
 
 Live and local product tests live under [smoke/](smoke/). See
 [smoke/README.md](smoke/README.md) for target taxonomy, environment variables,

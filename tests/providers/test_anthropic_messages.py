@@ -23,8 +23,8 @@ from free_claude_code.providers.stream_recovery import (
 from free_claude_code.providers.transports.anthropic_messages import (
     AnthropicMessagesTransport,
 )
-from free_claude_code.providers.transports.anthropic_messages.recovery import (
-    AnthropicMessagesRecovery,
+from free_claude_code.providers.transports.anthropic_messages.transport import (
+    _AnthropicMessagesStreamRunner,
 )
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
@@ -598,8 +598,8 @@ async def test_midstream_error_after_native_message_delta_raises_without_wire_te
             return_value=response,
         ),
         patch.object(
-            AnthropicMessagesRecovery,
-            "collect_text",
+            _AnthropicMessagesStreamRunner,
+            "_collect_recovery_text",
             new_callable=AsyncMock,
             return_value=("hello recovered", ""),
         ) as mock_collect,
@@ -625,30 +625,35 @@ async def test_midstream_error_after_native_message_delta_raises_without_wire_te
 
 
 @pytest.mark.asyncio
-async def test_native_text_recovery_closes_thinking_before_text_suffix():
+async def test_native_text_recovery_closes_thinking_before_text_suffix(
+    provider_config,
+):
     """Recovery suffixes preserve Anthropic block ordering when switching types."""
-    transport = MagicMock()
-    transport._provider_name = "TEST_NATIVE"
-    recovery = AnthropicMessagesRecovery(
-        transport,
-        iter_stream_chunks=MagicMock(),
+    provider = NativeProvider(
+        provider_config,
+        rate_limiter=passthrough_rate_limiter(),
+    )
+    runner = _AnthropicMessagesStreamRunner(
+        provider,
+        request=make_messages_request(),
+        input_tokens=0,
+        request_id="req_native_recovery",
+        thinking_enabled=True,
     )
     ledger = AnthropicStreamLedger("msg_recovery", "test-model")
     ledger.start_thinking_block()
     ledger.emit_thinking_delta("thinking")
 
     with patch.object(
-        recovery,
-        "collect_text",
+        runner,
+        "_collect_recovery_text",
         new_callable=AsyncMock,
         return_value=("answer", "thinking more"),
     ) as mock_collect:
-        events = await recovery.events(
+        events = await runner._recovery_events(
             body={"messages": []},
-            request=make_messages_request(),
             ledger=ledger,
             error=TimeoutError("cutoff"),
-            request_id="req_native_recovery",
             req_tag="",
             thinking_enabled=True,
         )
@@ -803,8 +808,8 @@ async def test_clean_eof_after_native_text_continues_with_overlap_trim(
             return_value=response,
         ),
         patch.object(
-            AnthropicMessagesRecovery,
-            "collect_text",
+            _AnthropicMessagesStreamRunner,
+            "_collect_recovery_text",
             new_callable=AsyncMock,
             return_value=("world", ""),
         ),
@@ -846,9 +851,16 @@ async def test_native_recovery_collect_text_requires_message_stop(provider_confi
     async def _iter_chunks(_response, *, state, thinking_enabled):
         yield text_delta
 
-    recovery = AnthropicMessagesRecovery(provider, iter_stream_chunks=_iter_chunks)
+    runner = _AnthropicMessagesStreamRunner(
+        provider,
+        request=make_messages_request(),
+        input_tokens=0,
+        request_id=None,
+        thinking_enabled=True,
+    )
 
     with (
+        patch.object(runner, "_iter_stream_chunks", _iter_chunks),
         patch.object(
             provider,
             "_validated_stream_send",
@@ -857,7 +869,11 @@ async def test_native_recovery_collect_text_requires_message_stop(provider_confi
         ) as mock_send,
         pytest.raises(TruncatedProviderStreamError),
     ):
-        await recovery.collect_text({"messages": []}, req_tag="", thinking_enabled=True)
+        await runner._collect_recovery_text(
+            {"messages": []},
+            req_tag="",
+            thinking_enabled=True,
+        )
 
     assert mock_send.await_count == MIDSTREAM_RECOVERY_ATTEMPTS
 
@@ -883,15 +899,24 @@ async def test_native_recovery_collect_text_accepts_message_stop(provider_config
         yield text_delta
         yield message_stop
 
-    recovery = AnthropicMessagesRecovery(provider, iter_stream_chunks=_iter_chunks)
-
-    with patch.object(
+    runner = _AnthropicMessagesStreamRunner(
         provider,
-        "_validated_stream_send",
-        new_callable=AsyncMock,
-        return_value=FakeResponse(),
+        request=make_messages_request(),
+        input_tokens=0,
+        request_id=None,
+        thinking_enabled=True,
+    )
+
+    with (
+        patch.object(runner, "_iter_stream_chunks", _iter_chunks),
+        patch.object(
+            provider,
+            "_validated_stream_send",
+            new_callable=AsyncMock,
+            return_value=FakeResponse(),
+        ),
     ):
-        result = await recovery.collect_text(
+        result = await runner._collect_recovery_text(
             {"messages": []}, req_tag="", thinking_enabled=True
         )
 
@@ -946,15 +971,24 @@ async def test_native_recovery_collect_text_reads_eager_start_content(provider_c
         yield thinking_delta
         yield message_stop
 
-    recovery = AnthropicMessagesRecovery(provider, iter_stream_chunks=_iter_chunks)
-
-    with patch.object(
+    runner = _AnthropicMessagesStreamRunner(
         provider,
-        "_validated_stream_send",
-        new_callable=AsyncMock,
-        return_value=FakeResponse(),
+        request=make_messages_request(),
+        input_tokens=0,
+        request_id=None,
+        thinking_enabled=True,
+    )
+
+    with (
+        patch.object(runner, "_iter_stream_chunks", _iter_chunks),
+        patch.object(
+            provider,
+            "_validated_stream_send",
+            new_callable=AsyncMock,
+            return_value=FakeResponse(),
+        ),
     ):
-        result = await recovery.collect_text(
+        result = await runner._collect_recovery_text(
             {"messages": []}, req_tag="", thinking_enabled=True
         )
 

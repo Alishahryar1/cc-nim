@@ -14,7 +14,7 @@ from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.transports.anthropic_messages import (
-    stream as native_stream,
+    transport as native_transport,
 )
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
@@ -195,7 +195,7 @@ async def test_native_stream_failure_logs_exclude_exception_str_by_default(
             new_callable=AsyncMock,
             return_value=response,
         ),
-        patch.object(native_stream, "iter_sse_events", boom),
+        patch.object(native_transport, "_iter_sse_events", boom),
         caplog.at_level(logging.ERROR),
         pytest.raises(ExecutionFailure),
     ):
@@ -240,7 +240,7 @@ async def test_native_stream_failure_verbose_traceback_redacts_credentials(
             new_callable=AsyncMock,
             return_value=response,
         ),
-        patch.object(native_stream, "iter_sse_events", boom),
+        patch.object(native_transport, "_iter_sse_events", boom),
         caplog.at_level(logging.ERROR),
         pytest.raises(ExecutionFailure),
     ):

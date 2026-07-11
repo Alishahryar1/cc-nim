@@ -150,7 +150,7 @@ async def test_nim_stream_connection_error_exhausted_emits_cause_chain():
         ) as mock_create,
         patch("asyncio.sleep", new_callable=AsyncMock),
         patch(
-            "free_claude_code.providers.transports.openai_chat.stream.trace_event"
+            "free_claude_code.providers.transports.openai_chat.transport.trace_event"
         ) as trace,
         pytest.raises(ExecutionFailure) as exc_info,
     ):

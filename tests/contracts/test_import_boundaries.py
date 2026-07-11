@@ -190,6 +190,34 @@ def test_first_party_imports_use_the_installable_namespace() -> None:
     assert offenders == []
 
 
+def test_transport_collaborators_have_explicit_ownership_boundaries() -> None:
+    transport_root = _PACKAGE_ROOT / "providers" / "transports"
+
+    assert _transport_backchannel_offenders(transport_root) == []
+
+
+def test_transport_backchannel_detector_reports_untyped_private_access(
+    tmp_path: Path,
+) -> None:
+    transport_root = tmp_path / "transports"
+    _write_module(
+        transport_root / "sample" / "runner.py",
+        "from typing import Any\n"
+        "\n"
+        "class Runner:\n"
+        "    def __init__(self, transport: object | Any) -> None:\n"
+        "        self._transport = transport\n"
+        "\n"
+        "    def run(self) -> object:\n"
+        "        return self._transport._send()\n",
+    )
+
+    assert _transport_backchannel_offenders(transport_root) == [
+        "sample/runner.py:4: untyped transport collaborator",
+        "sample/runner.py:8: private transport member _send outside transport.py",
+    ]
+
+
 def test_legacy_first_party_import_detector_rejects_bare_owner_names() -> None:
     record = ImportRecord(
         importer="free_claude_code.api.routes",
@@ -600,6 +628,56 @@ def _legacy_first_party_import_offenders(
         if record.imported.split(".", 1)[0] in owner_names
     ]
     return sorted(offenders)
+
+
+def _transport_backchannel_offenders(transport_root: Path) -> list[str]:
+    offenders: list[str] = []
+    for path in sorted(transport_root.rglob("*.py")):
+        relative_path = path.relative_to(transport_root).as_posix()
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        for node in ast.walk(tree):
+            if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                arguments = (
+                    *node.args.posonlyargs,
+                    *node.args.args,
+                    *node.args.kwonlyargs,
+                )
+                offenders.extend(
+                    f"{relative_path}:{argument.lineno}: untyped transport collaborator"
+                    for argument in arguments
+                    if argument.arg == "transport"
+                    and _annotation_is_any(argument.annotation)
+                )
+            if (
+                path.name != "transport.py"
+                and isinstance(node, ast.Attribute)
+                and node.attr.startswith("_")
+                and _is_transport_reference(node.value)
+            ):
+                offenders.append(
+                    f"{relative_path}:{node.lineno}: private transport member "
+                    f"{node.attr} outside transport.py"
+                )
+    return sorted(offenders)
+
+
+def _annotation_is_any(annotation: ast.expr | None) -> bool:
+    if annotation is None:
+        return False
+    return any(
+        (isinstance(node, ast.Name) and node.id == "Any")
+        or (isinstance(node, ast.Attribute) and node.attr == "Any")
+        for node in ast.walk(annotation)
+    )
+
+
+def _is_transport_reference(expression: ast.expr) -> bool:
+    return (isinstance(expression, ast.Name) and expression.id == "transport") or (
+        isinstance(expression, ast.Attribute)
+        and isinstance(expression.value, ast.Name)
+        and expression.value.id == "self"
+        and expression.attr == "_transport"
+    )
 
 
 def _ancestor_facade_offenders(
