@@ -564,9 +564,10 @@ thinking replay selection, `extra_body`, and chat-completion field normalization
 Native Anthropic providers call the native request policy for raw request
 dumping, default tokens, stream flags, thinking payloads, and `extra_body`
 handling. Concrete provider packages keep only true upstream quirks such as
-Gemini thought signatures, NIM tool-schema aliases and retry downgrades, or
-DeepSeek attachment/tool/thinking compatibility. Cloud providers use OpenAI-chat
-unless they are local native runtimes. DeepSeek intentionally uses its
+Gemini thought signatures, NIM tool-schema aliases, retry downgrades, and NVCF
+deployment-failure classification, or DeepSeek attachment/tool/thinking
+compatibility. Cloud providers use OpenAI-chat unless they are local native
+runtimes. DeepSeek intentionally uses its
 OpenAI-compatible Chat Completions endpoint because that is the endpoint that
 reports prompt-cache hit/miss counters; the provider maps those counters back
 into Anthropic usage fields for Claude-compatible clients. Cloudflare uses its
@@ -662,11 +663,21 @@ copyable request-ID diagnostics. Anthropic and Responses packages independently
 map the canonical kind and status to their wire error types.
 
 [providers/failure_policy.py](src/free_claude_code/providers/failure_policy.py)
-is the only owner of raw OpenAI SDK and `httpx` exception classification,
+owns generic raw OpenAI SDK and `httpx` exception classification,
 transient status/body inference, stable provider wording, and final diagnostic
 construction for those failures. Native Anthropic wire errors are instead
 mapped to canonical failures by the Anthropic protocol package, then consumed
 by provider retry/recovery policy.
+Concrete adapters may supply one narrow semantic override for an upstream quirk
+that the shared SDK cannot express correctly. The concrete adapter owns the
+exact upstream marker, while the shared failure policy owns its canonical
+meaning and wording. The limiter uses that meaning for retry qualification and
+its existing provider-wide reactive backoff while retaining the raw exception,
+so exhausted retries still receive the original HTTP status/body through the
+shared redaction and diagnostic path. For NVCF's function-scoped failure this
+deliberately keeps the simple one-limiter-per-provider policy; a degraded NIM
+function can therefore briefly delay other NIM models during backoff. No
+provider-specific marker enters `core/`, another provider, or an API adapter.
 [providers/stream_recovery.py](src/free_claude_code/providers/stream_recovery.py)
 owns the 0.75-second/65,536-byte holdback, four transparent early retries after
 the first attempt, and five midstream recovery attempts. Provider opening keeps

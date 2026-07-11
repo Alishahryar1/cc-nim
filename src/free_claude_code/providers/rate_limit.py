@@ -12,6 +12,7 @@ from loguru import logger
 from free_claude_code.core.rate_limit import StrictSlidingWindowLimiter
 from free_claude_code.core.trace import trace_event
 from free_claude_code.providers.failure_policy import (
+    ProviderFailureOverride,
     retryable_upstream_status,
     retryable_upstream_transport_error,
 )
@@ -133,6 +134,7 @@ class ProviderRateLimiter:
         self,
         fn: Callable[..., Any],
         *args: Any,
+        provider_failure_override: ProviderFailureOverride | None = None,
         max_retries: int = DEFAULT_UPSTREAM_MAX_RETRIES,
         base_delay: float = 2.0,
         max_delay: float = 60.0,
@@ -149,6 +151,8 @@ class ProviderRateLimiter:
 
         Args:
             fn: Async callable to execute.
+            provider_failure_override: Optional provider-specific semantic
+                classifier applied before shared retry qualification.
             max_retries: Maximum number of retry attempts after the first failure.
             base_delay: Base delay in seconds for exponential backoff.
             max_delay: Maximum delay cap in seconds.
@@ -169,9 +173,16 @@ class ProviderRateLimiter:
             try:
                 return await fn(*args, **kwargs)
             except Exception as e:
-                status = retryable_upstream_status(e)
+                effective_error = (
+                    provider_failure_override(e)
+                    if provider_failure_override is not None
+                    else None
+                )
+                if effective_error is None:
+                    effective_error = e
+                status = retryable_upstream_status(effective_error)
                 transport_error = status is None and retryable_upstream_transport_error(
-                    e
+                    effective_error
                 )
                 if status is None and not transport_error:
                     raise

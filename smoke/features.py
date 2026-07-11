@@ -183,9 +183,12 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     ),
     FeatureCoverage(
         "smart_rate_limiting",
-        "Disconnect and limiter cleanup preserve follow-up requests",
+        "Transient retries and disconnect cleanup preserve follow-up requests",
         "public_surface",
-        ("tests/providers/test_provider_rate_limit.py",),
+        (
+            "tests/providers/test_provider_rate_limit.py",
+            "tests/providers/test_nvidia_nim_degraded_retry.py",
+        ),
         ("test_client_disconnect_mid_stream_does_not_crash_server",),
         ("test_provider_disconnect_e2e",),
         ("rate_limit", "providers"),

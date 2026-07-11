@@ -22,6 +22,7 @@ class PassthroughProviderRateLimiter(ProviderRateLimiter):
         *args: Any,
         **kwargs: Any,
     ) -> Any:
+        kwargs.pop("provider_failure_override", None)
         return await fn(*args, **kwargs)
 
 

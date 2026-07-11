@@ -17,6 +17,7 @@ from free_claude_code.core.diagnostics import (
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 
 MarkRateLimited = Callable[[float], None]
+ProviderFailureOverride = Callable[[Exception], ExecutionFailure | None]
 
 _RATE_LIMIT_MARKERS = frozenset({"rate_limit", "rate limit", "too many requests"})
 _OVERLOAD_MARKERS = frozenset(
@@ -42,19 +43,28 @@ def classify_provider_failure(
     read_timeout_s: float | None,
     request_id: str | None,
     mark_rate_limited: MarkRateLimited,
+    provider_failure_override: ProviderFailureOverride | None = None,
 ) -> ExecutionFailure:
     """Return one detailed canonical failure after provider retries are exhausted."""
-    failure = _classify_provider_failure(
-        exc,
-        read_timeout_s=read_timeout_s,
-        mark_rate_limited=mark_rate_limited,
-    )
     if isinstance(exc, ExecutionFailure):
+        failure = exc
         message = failure.message
         request_id_line = f"Request ID: {request_id}" if request_id else None
         if request_id_line and request_id_line not in message:
             message = f"{message}\n\n{request_id_line}"
         return replace(failure, message=message)
+
+    failure = (
+        provider_failure_override(exc)
+        if provider_failure_override is not None
+        else None
+    )
+    if failure is None:
+        failure = _classify_provider_failure(
+            exc,
+            read_timeout_s=read_timeout_s,
+            mark_rate_limited=mark_rate_limited,
+        )
     message = format_execution_failure_message(
         failure,
         extract_upstream_error_detail(exc),
@@ -62,6 +72,11 @@ def classify_provider_failure(
         request_id=request_id,
     )
     return replace(failure, message=message)
+
+
+def overloaded_provider_failure() -> ExecutionFailure:
+    """Return the canonical provider-overload meaning and stable wording."""
+    return _failure(FailureKind.OVERLOADED, 529, _OVERLOADED_MESSAGE, True)
 
 
 def retryable_transient_status(exc: BaseException) -> int | None:
@@ -221,7 +236,7 @@ def _classify_provider_failure(
     if isinstance(exc, openai.InternalServerError):
         status = retryable_transient_status(exc) or getattr(exc, "status_code", None)
         if is_transient_overload_error(exc):
-            return _failure(FailureKind.OVERLOADED, 529, _OVERLOADED_MESSAGE, True)
+            return overloaded_provider_failure()
         if isinstance(status, int) and 500 <= status <= 599:
             return _failure(
                 FailureKind.UPSTREAM,
@@ -236,7 +251,7 @@ def _classify_provider_failure(
             mark_rate_limited(60)
             return _failure(FailureKind.RATE_LIMIT, 429, _RATE_LIMIT_MESSAGE, True)
         if is_transient_overload_error(exc):
-            return _failure(FailureKind.OVERLOADED, 529, _OVERLOADED_MESSAGE, True)
+            return overloaded_provider_failure()
         effective_status = status or getattr(exc, "status_code", None)
         if not isinstance(effective_status, int):
             effective_status = 500
@@ -261,7 +276,7 @@ def _classify_provider_failure(
                 FailureKind.INVALID_REQUEST, 400, _INVALID_REQUEST_MESSAGE, False
             )
         if status in (502, 503, 504):
-            return _failure(FailureKind.OVERLOADED, 529, _OVERLOADED_MESSAGE, True)
+            return overloaded_provider_failure()
         return _failure(
             FailureKind.UPSTREAM,
             status,

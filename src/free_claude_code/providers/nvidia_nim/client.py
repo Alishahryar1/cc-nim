@@ -1,6 +1,7 @@
 """NVIDIA NIM provider implementation."""
 
 import json
+from collections.abc import Mapping
 from typing import Any
 
 import openai
@@ -8,8 +9,12 @@ from loguru import logger
 
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.defaults import NVIDIA_NIM_DEFAULT_BASE
+from free_claude_code.providers.failure_policy import (
+    overloaded_provider_failure,
+)
 from free_claude_code.providers.rate_limit import ProviderRateLimiter
 from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
 
@@ -23,6 +28,8 @@ from .tool_schema import (
     body_without_nim_tool_argument_aliases,
     nim_tool_argument_aliases_from_body,
 )
+
+_DEGRADED_FUNCTION_STATE = "degraded function cannot be invoked"
 
 
 class NvidiaNimProvider(OpenAIChatTransport):
@@ -106,6 +113,29 @@ class NvidiaNimProvider(OpenAIChatTransport):
             return retry_body
 
         return None
+
+    def _provider_failure_override(self, error: Exception) -> ExecutionFailure | None:
+        """Map NVIDIA Cloud Function deployment failure onto canonical overload."""
+        if not isinstance(error, openai.BadRequestError):
+            return None
+        if getattr(error, "status_code", None) != 400:
+            return None
+        body = getattr(error, "body", None)
+        if not isinstance(body, Mapping):
+            return None
+        detail = body.get("detail")
+        if not isinstance(detail, str):
+            return None
+        function_ref, separator, state = detail.lower().partition(": ")
+        function_id = function_ref.removeprefix("function id ").strip(" '\"")
+        if (
+            not separator
+            or not function_ref.startswith("function id ")
+            or not function_id
+            or state.strip() != _DEGRADED_FUNCTION_STATE
+        ):
+            return None
+        return overloaded_provider_failure()
 
 
 def _is_reasoning_budget_rejection(error_text: str) -> bool:

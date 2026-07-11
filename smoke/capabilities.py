@@ -279,10 +279,13 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         "rate_limit_and_disconnect",
         "smart_rate_limiting",
         "free_claude_code.providers.rate_limit.ProviderRateLimiter",
-        "concurrent provider requests and 429/disconnect failures",
-        "proactive throttle, retry, cleanup",
+        "concurrent provider requests and transient upstream/disconnect failures",
+        "provider-specific classification, proactive throttle, retry, cleanup",
         "mapped provider error or smoke skip for upstream disconnect",
-        ("tests/providers/test_provider_rate_limit.py",),
+        (
+            "tests/providers/test_provider_rate_limit.py",
+            "tests/providers/test_nvidia_nim_degraded_retry.py",
+        ),
         ("test_client_disconnect_mid_stream_does_not_crash_server",),
     ),
     CapabilityContract(

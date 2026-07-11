@@ -27,6 +27,7 @@ from free_claude_code.core.anthropic.streaming import (
     parse_complete_tool_input,
     tool_schemas_by_name,
 )
+from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.core.trace import provider_chat_body_snapshot, trace_event
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.failure_policy import classify_provider_failure
@@ -140,6 +141,10 @@ class OpenAIChatTransport(BaseProvider):
         """Return a modified request body for one retry, or None."""
         return None
 
+    def _provider_failure_override(self, error: Exception) -> ExecutionFailure | None:
+        """Return provider-specific failure semantics, or defer to shared policy."""
+        return None
+
     def _prepare_create_body(self, body: dict[str, Any]) -> dict[str, Any]:
         """Return the body passed to the upstream OpenAI-compatible client."""
         return body
@@ -166,7 +171,10 @@ class OpenAIChatTransport(BaseProvider):
             try:
                 create_body = self._prepare_create_body(body)
                 stream = await self._rate_limiter.execute_with_retry(
-                    self._client.chat.completions.create, **create_body, stream=True
+                    self._client.chat.completions.create,
+                    provider_failure_override=self._provider_failure_override,
+                    **create_body,
+                    stream=True,
                 )
                 return stream, body
             except Exception as error:
@@ -492,6 +500,9 @@ class _OpenAIChatStreamRunner:
                         request_id=self._request_id,
                         mark_rate_limited=(
                             self._transport._rate_limiter.extend_reactive_block
+                        ),
+                        provider_failure_override=(
+                            self._transport._provider_failure_override
                         ),
                     )
                     error_trace: dict[str, Any] = {
