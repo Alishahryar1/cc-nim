@@ -20,7 +20,10 @@ async def test_messaging_start_failure_default_logs_exclude_traceback(caplog):
             "log_api_error_tracebacks": False,
         }
     )
-    runtime = ApplicationRuntime(ProviderRuntimeManager(settings))
+    runtime = ApplicationRuntime(
+        ProviderRuntimeManager(settings),
+        transcriber=None,
+    )
 
     with (
         patch(

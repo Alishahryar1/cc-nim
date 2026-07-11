@@ -4,7 +4,6 @@ import asyncio
 import contextlib
 import os
 from collections.abc import Awaitable, Callable
-from typing import Any
 
 # Opt-in to future behavior for python-telegram-bot (retry_after as timedelta).
 os.environ["PTB_TIMEDELTA"] = "1"
@@ -13,8 +12,10 @@ from loguru import logger
 
 from free_claude_code.core.anthropic import format_user_error_preview
 
+from ..limiter import MessagingRateLimiter
 from ..models import IncomingMessage
 from ..rendering.telegram_markdown import escape_md_v2
+from ..voice import Transcriber
 from .ports import InboundMessageHandler
 from .telegram_inbound import (
     telegram_text_message_from_update,
@@ -50,13 +51,8 @@ class TelegramRuntime:
         allowed_user_id: str | None = None,
         *,
         telegram_proxy_url: str = "",
-        voice_note_enabled: bool = True,
-        whisper_model: str = "base",
-        whisper_device: str = "cpu",
-        huggingface_api_key: str = "",
-        nvidia_nim_api_key: str = "",
-        messaging_rate_limit: int = 1,
-        messaging_rate_window: float = 1.0,
+        limiter: MessagingRateLimiter,
+        transcriber: Transcriber | None,
         log_raw_messaging_content: bool = False,
         log_api_error_tracebacks: bool = False,
     ) -> None:
@@ -74,22 +70,16 @@ class TelegramRuntime:
         self._application: Application | None = None
         self._message_handler: InboundMessageHandler | None = None
         self._connected = False
-        self._limiter: Any | None = None
+        self._limiter = limiter
         self.outbound = TelegramMessenger(
             get_application=lambda: self._application,
-            get_limiter=lambda: self._limiter,
+            limiter=limiter,
         )
         self._voice_flow = VoiceNoteFlow(
-            voice_note_enabled=voice_note_enabled,
-            whisper_model=whisper_model,
-            whisper_device=whisper_device,
-            huggingface_api_key=huggingface_api_key,
-            nvidia_nim_api_key=nvidia_nim_api_key,
+            transcriber=transcriber,
             log_raw_messaging_content=log_raw_messaging_content,
             log_api_error_tracebacks=log_api_error_tracebacks,
         )
-        self._messaging_rate_limit = messaging_rate_limit
-        self._messaging_rate_window = messaging_rate_window
         self._log_raw_messaging_content = log_raw_messaging_content
         self._log_api_error_tracebacks = log_api_error_tracebacks
 
@@ -128,51 +118,31 @@ class TelegramRuntime:
                 connection_pool_size=8, connect_timeout=30.0, read_timeout=30.0
             )
             builder = Application.builder().token(self.bot_token).request(request)
-        self._application = builder.build()
+        application = builder.build()
+        self._application = application
 
-        self._application.add_handler(
+        application.add_handler(
             MessageHandler(filters.TEXT & (~filters.COMMAND), self._on_telegram_message)
         )
-        self._application.add_handler(CommandHandler("start", self._on_start_command))
-        self._application.add_handler(
+        application.add_handler(CommandHandler("start", self._on_start_command))
+        application.add_handler(
             MessageHandler(filters.COMMAND, self._on_telegram_message)
         )
-        self._application.add_handler(
-            MessageHandler(filters.VOICE, self._on_telegram_voice)
+        application.add_handler(MessageHandler(filters.VOICE, self._on_telegram_voice))
+
+        await self._retry_connection_step(
+            application.initialize,
+            step="initialization",
         )
-
-        max_retries = 3
-        for attempt in range(max_retries):
-            try:
-                await self._application.initialize()
-                await self._application.start()
-                if self._application.updater:
-                    await self._application.updater.start_polling(
-                        drop_pending_updates=False
-                    )
-                self._connected = True
-                break
-            except Exception as e:
-                if attempt < max_retries - 1:
-                    wait_time = 2 * (attempt + 1)
-                    logger.warning(
-                        "Connection failed (attempt {}/{}): {}. Retrying in {}s...",
-                        attempt + 1,
-                        max_retries,
-                        e,
-                        wait_time,
-                    )
-                    await asyncio.sleep(wait_time)
-                else:
-                    logger.error("Failed to connect after {} attempts", max_retries)
-                    raise
-
-        from ..limiter import MessagingRateLimiter
-
-        self._limiter = await MessagingRateLimiter.get_instance(
-            rate_limit=self._messaging_rate_limit,
-            rate_window=self._messaging_rate_window,
-        )
+        await application.start()
+        self._limiter.start()
+        updater = application.updater
+        if updater is not None:
+            await self._retry_connection_step(
+                lambda: updater.start_polling(drop_pending_updates=False),
+                step="polling",
+            )
+        self._connected = True
 
         try:
             target = self.allowed_user_id
@@ -193,15 +163,75 @@ class TelegramRuntime:
 
         logger.info("Telegram platform started (Bot API)")
 
-    async def stop(self) -> None:
-        """Stop Telegram polling and SDK resources."""
-        if self._application and self._application.updater:
-            await self._application.updater.stop()
-            await self._application.stop()
-            await self._application.shutdown()
+    async def _retry_connection_step(
+        self,
+        operation: Callable[[], Awaitable[object]],
+        *,
+        step: str,
+    ) -> None:
+        """Retry one independently repeatable Telegram connection step."""
+        max_attempts = 3
+        for attempt in range(1, max_attempts + 1):
+            try:
+                await operation()
+                return
+            except Exception as exc:
+                if attempt == max_attempts:
+                    logger.error(
+                        "Telegram {} failed after {} attempts",
+                        step,
+                        max_attempts,
+                    )
+                    raise
+                wait_time = 2 * attempt
+                if self._log_api_error_tracebacks:
+                    logger.warning(
+                        "Telegram {} failed (attempt {}/{}): {}. Retrying in {}s...",
+                        step,
+                        attempt,
+                        max_attempts,
+                        exc,
+                        wait_time,
+                    )
+                else:
+                    logger.warning(
+                        "Telegram {} failed (attempt {}/{}): exc_type={}. Retrying in {}s...",
+                        step,
+                        attempt,
+                        max_attempts,
+                        type(exc).__name__,
+                        wait_time,
+                    )
+                await asyncio.sleep(wait_time)
 
-        self._connected = False
-        logger.info("Telegram platform stopped")
+    async def quiesce(self) -> None:
+        """Stop Telegram ingress after draining active SDK handlers."""
+        application = self._application
+        updater = application.updater if application is not None else None
+        try:
+            if updater is not None and updater.running:
+                await updater.stop()
+        finally:
+            try:
+                if application is not None and application.running:
+                    await application.stop()
+            finally:
+                self._connected = False
+
+    async def close(self) -> None:
+        """Close Telegram delivery and initialized SDK resources."""
+        application = self._application
+        try:
+            await self.outbound.close()
+        finally:
+            try:
+                await self._limiter.shutdown()
+            finally:
+                try:
+                    if application is not None:
+                        await application.shutdown()
+                finally:
+                    logger.info("Telegram platform closed")
 
     def on_message(self, handler: Callable[[IncomingMessage], Awaitable[None]]) -> None:
         """Register the workflow callback for inbound messages."""

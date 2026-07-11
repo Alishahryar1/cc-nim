@@ -9,6 +9,7 @@ from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.exceptions import ProviderError
 from free_claude_code.providers.ollama import OLLAMA_DEFAULT_BASE, OllamaProvider
+from tests.providers.support import passthrough_rate_limiter
 
 
 class MockMessage:
@@ -61,31 +62,17 @@ def ollama_config():
     )
 
 
-@pytest.fixture(autouse=True)
-def mock_rate_limiter():
-    """Mock the global rate limiter to prevent waiting."""
-    with patch(
-        "free_claude_code.providers.transports.anthropic_messages.transport.GlobalRateLimiter"
-    ) as mock:
-        instance = mock.get_scoped_instance.return_value
-        instance.wait_if_blocked = AsyncMock(return_value=False)
-
-        async def _passthrough(fn, *args, **kwargs):
-            return await fn(*args, **kwargs)
-
-        instance.execute_with_retry = AsyncMock(side_effect=_passthrough)
-        yield instance
-
-
 @pytest.fixture
 def ollama_provider(ollama_config):
-    return OllamaProvider(ollama_config)
+    return OllamaProvider(ollama_config, rate_limiter=passthrough_rate_limiter())
 
 
 def test_init(ollama_config):
     """Test provider initialization."""
     with patch("httpx.AsyncClient"):
-        provider = OllamaProvider(ollama_config)
+        provider = OllamaProvider(
+            ollama_config, rate_limiter=passthrough_rate_limiter()
+        )
         assert provider._base_url == "http://localhost:11434"
         assert provider._provider_name == "OLLAMA"
         assert provider._api_key == "ollama"
@@ -95,7 +82,7 @@ def test_init_uses_default_base_url():
     """Test that provider uses default root URL when not configured."""
     config = ProviderConfig(api_key="ollama", base_url=None)
     with patch("httpx.AsyncClient"):
-        provider = OllamaProvider(config)
+        provider = OllamaProvider(config, rate_limiter=passthrough_rate_limiter())
         assert provider._base_url == OLLAMA_DEFAULT_BASE
 
 
@@ -109,7 +96,7 @@ def test_init_uses_configurable_timeouts():
         http_connect_timeout=5.0,
     )
     with patch("httpx.AsyncClient") as mock_client:
-        OllamaProvider(config)
+        OllamaProvider(config, rate_limiter=passthrough_rate_limiter())
         call_kwargs = mock_client.call_args[1]
         timeout = call_kwargs["timeout"]
         assert timeout.read == 600.0
@@ -126,7 +113,7 @@ def test_init_base_url_strips_trailing_slash():
         rate_window=60,
     )
     with patch("httpx.AsyncClient"):
-        provider = OllamaProvider(config)
+        provider = OllamaProvider(config, rate_limiter=passthrough_rate_limiter())
         assert provider._base_url == "http://localhost:11434"
 
 
@@ -139,7 +126,7 @@ def test_init_uses_default_api_key():
         rate_window=60,
     )
     with patch("httpx.AsyncClient"):
-        provider = OllamaProvider(config)
+        provider = OllamaProvider(config, rate_limiter=passthrough_rate_limiter())
         assert provider._api_key == "ollama"
 
 
@@ -197,7 +184,8 @@ async def test_stream_response(ollama_provider):
 async def test_build_request_body_omits_thinking_when_disabled(ollama_config):
     """Global disable suppresses provider-side thinking."""
     provider = OllamaProvider(
-        ollama_config.model_copy(update={"enable_thinking": False})
+        ollama_config.model_copy(update={"enable_thinking": False}),
+        rate_limiter=passthrough_rate_limiter(),
     )
     req = MockRequest()
 
@@ -212,7 +200,8 @@ def test_build_request_body_disabled_thinking_strips_assistant_thinking_blocks(
 ):
     """Prior assistant thinking/redacted blocks are removed when policy is off."""
     provider = OllamaProvider(
-        ollama_config.model_copy(update={"enable_thinking": False})
+        ollama_config.model_copy(update={"enable_thinking": False}),
+        rate_limiter=passthrough_rate_limiter(),
     )
     req = MockRequest(
         system=None,

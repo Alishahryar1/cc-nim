@@ -1,7 +1,6 @@
 """Tests for GitHub Models OpenAI-compatible provider."""
 
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -17,6 +16,7 @@ from free_claude_code.providers.github_models import (
     GitHubModelsProvider,
 )
 from free_claude_code.providers.github_models.client import GITHUB_MODELS_CATALOG_URL
+from tests.providers.support import passthrough_rate_limiter
 
 
 @pytest.fixture
@@ -30,30 +30,13 @@ def github_models_config() -> ProviderConfig:
     )
 
 
-@pytest.fixture(autouse=True)
-def mock_rate_limiter():
-    @asynccontextmanager
-    async def _slot():
-        yield
-
-    with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
-    ) as mock:
-        instance = mock.get_scoped_instance.return_value
-
-        async def _passthrough(fn, *args, **kwargs):
-            return await fn(*args, **kwargs)
-
-        instance.execute_with_retry = AsyncMock(side_effect=_passthrough)
-        instance.concurrency_slot.side_effect = _slot
-        yield instance
-
-
 @pytest.fixture
 def github_models_provider(
     github_models_config: ProviderConfig,
 ) -> GitHubModelsProvider:
-    return GitHubModelsProvider(github_models_config)
+    return GitHubModelsProvider(
+        github_models_config, rate_limiter=passthrough_rate_limiter()
+    )
 
 
 def _request(model: str = "openai/gpt-4.1") -> MessagesRequest:
@@ -94,7 +77,9 @@ def test_init_uses_default_base_url_api_key_and_github_headers(
     with patch(
         "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
     ) as mock_openai:
-        provider = GitHubModelsProvider(github_models_config)
+        provider = GitHubModelsProvider(
+            github_models_config, rate_limiter=passthrough_rate_limiter()
+        )
 
     assert provider._api_key == "test-github-models-token"
     assert provider._base_url == GITHUB_MODELS_DEFAULT_BASE
@@ -115,7 +100,7 @@ def test_init_strips_trailing_slash(github_models_config: ProviderConfig) -> Non
     with patch(
         "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
     ):
-        provider = GitHubModelsProvider(config)
+        provider = GitHubModelsProvider(config, rate_limiter=passthrough_rate_limiter())
 
     assert provider._base_url == GITHUB_MODELS_DEFAULT_BASE
 

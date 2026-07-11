@@ -5,6 +5,7 @@ import httpx
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.defaults import OLLAMA_DEFAULT_BASE
 from free_claude_code.providers.model_listing import extract_ollama_model_ids
+from free_claude_code.providers.rate_limit import ProviderRateLimiter
 from free_claude_code.providers.transports.anthropic_messages import (
     AnthropicMessagesTransport,
 )
@@ -13,11 +14,12 @@ from free_claude_code.providers.transports.anthropic_messages import (
 class OllamaProvider(AnthropicMessagesTransport):
     """Ollama provider using native Anthropic Messages API."""
 
-    def __init__(self, config: ProviderConfig):
+    def __init__(self, config: ProviderConfig, *, rate_limiter: ProviderRateLimiter):
         super().__init__(
             config,
             provider_name="OLLAMA",
             default_base_url=OLLAMA_DEFAULT_BASE,
+            rate_limiter=rate_limiter,
         )
         self._api_key = config.api_key or "ollama"
 

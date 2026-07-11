@@ -24,7 +24,7 @@ from free_claude_code.providers.exceptions import (
     ProviderError,
     RateLimitError,
 )
-from free_claude_code.providers.rate_limit import GlobalRateLimiter
+from free_claude_code.providers.rate_limit import ProviderRateLimiter
 
 _BODY_ATTR = "_fcc_provider_error_body"
 _BODY_TRUNCATED_ATTR = "_fcc_provider_error_body_truncated"
@@ -311,7 +311,7 @@ def map_stream_start_error(
     provider_name: str,
     read_timeout_s: float | None,
     request_id: str | None,
-    rate_limiter: GlobalRateLimiter | None = None,
+    rate_limiter: ProviderRateLimiter,
 ) -> ProviderError:
     """Map a final pre-start stream failure into an HTTP-serializable provider error.
 
@@ -339,17 +339,14 @@ def map_stream_start_error(
     return APIError(message, status_code=502, raw_error=str(error))
 
 
-def map_error(
-    e: Exception, *, rate_limiter: GlobalRateLimiter | None = None
-) -> Exception:
+def map_error(e: Exception, *, rate_limiter: ProviderRateLimiter) -> Exception:
     """Map OpenAI or HTTPX exception to specific ProviderError.
 
-    Streaming transports should pass their scoped limiter (``self._global_rate_limiter``)
-    so reactive 429 handling applies to the correct provider. Tests may omit
-    ``rate_limiter`` to use the process-wide singleton.
+    Streaming transports pass their owned limiter so reactive 429 handling
+    applies only to that provider instance.
     """
     message = get_user_facing_error_message(e)
-    limiter = rate_limiter or GlobalRateLimiter.get_instance()
+    limiter = rate_limiter
 
     if isinstance(e, openai.AuthenticationError):
         return AuthenticationError(message, raw_error=str(e))

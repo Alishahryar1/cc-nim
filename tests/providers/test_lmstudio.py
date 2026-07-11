@@ -1,6 +1,5 @@
 """Tests for LM Studio (OpenAI-compatible chat completions) provider."""
 
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
@@ -10,6 +9,7 @@ from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.exceptions import InvalidRequestError
 from free_claude_code.providers.lmstudio import LMStudioProvider
 from free_claude_code.providers.lmstudio.client import LMSTUDIO_DEFAULT_BASE
+from tests.providers.support import passthrough_rate_limiter
 
 
 class MockMessage:
@@ -44,30 +44,9 @@ def lmstudio_config():
     )
 
 
-@pytest.fixture(autouse=True)
-def mock_rate_limiter():
-    """Mock the global rate limiter to prevent waiting."""
-
-    @asynccontextmanager
-    async def _slot():
-        yield
-
-    with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
-    ) as mock:
-        instance = mock.get_scoped_instance.return_value
-
-        async def _passthrough(fn, *args, **kwargs):
-            return await fn(*args, **kwargs)
-
-        instance.execute_with_retry = AsyncMock(side_effect=_passthrough)
-        instance.concurrency_slot.side_effect = _slot
-        yield instance
-
-
 @pytest.fixture
 def lmstudio_provider(lmstudio_config):
-    return LMStudioProvider(lmstudio_config)
+    return LMStudioProvider(lmstudio_config, rate_limiter=passthrough_rate_limiter())
 
 
 def test_init(lmstudio_config):
@@ -75,7 +54,9 @@ def test_init(lmstudio_config):
     with patch(
         "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
     ) as mock_openai:
-        provider = LMStudioProvider(lmstudio_config)
+        provider = LMStudioProvider(
+            lmstudio_config, rate_limiter=passthrough_rate_limiter()
+        )
         assert provider._api_key == "lm-studio"
         assert provider._base_url == LMSTUDIO_DEFAULT_BASE
         assert provider._provider_name == "LMSTUDIO"

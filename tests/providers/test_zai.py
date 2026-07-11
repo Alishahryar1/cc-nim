@@ -1,7 +1,6 @@
 """Tests for the Z.ai OpenAI-chat Coding Plan provider."""
 
-from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -12,25 +11,7 @@ from free_claude_code.providers.defaults import ZAI_DEFAULT_BASE
 from free_claude_code.providers.exceptions import InvalidRequestError
 from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
 from free_claude_code.providers.zai import ZaiProvider
-
-
-@pytest.fixture(autouse=True)
-def mock_rate_limiter():
-    @asynccontextmanager
-    async def _slot():
-        yield
-
-    with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
-    ) as mock:
-        instance = mock.get_scoped_instance.return_value
-
-        async def _passthrough(fn, *args, **kwargs):
-            return await fn(*args, **kwargs)
-
-        instance.execute_with_retry = AsyncMock(side_effect=_passthrough)
-        instance.concurrency_slot.side_effect = _slot
-        yield instance
+from tests.providers.support import passthrough_rate_limiter
 
 
 @pytest.fixture
@@ -42,7 +23,8 @@ def zai_provider():
             rate_limit=10,
             rate_window=60,
             enable_thinking=True,
-        )
+        ),
+        rate_limiter=passthrough_rate_limiter(),
     )
 
 

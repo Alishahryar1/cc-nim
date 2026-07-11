@@ -2,6 +2,15 @@
 
 import asyncio
 from pathlib import Path
+from typing import Protocol
+
+
+class Transcriber(Protocol):
+    """Consumer-owned voice transcription boundary."""
+
+    async def transcribe(self, file_path: Path) -> str: ...
+
+    async def close(self) -> None: ...
 
 
 class PendingVoiceRegistry:
@@ -39,36 +48,3 @@ class PendingVoiceRegistry:
         async with self._lock:
             self._pending.pop((chat_id, voice_msg_id), None)
             self._pending.pop((chat_id, status_msg_id), None)
-
-
-class VoiceTranscriptionService:
-    """Run configured transcription backends off the event loop."""
-
-    def __init__(
-        self,
-        *,
-        huggingface_api_key: str = "",
-        nvidia_nim_api_key: str = "",
-    ) -> None:
-        self._huggingface_api_key = huggingface_api_key
-        self._nvidia_nim_api_key = nvidia_nim_api_key
-
-    async def transcribe(
-        self,
-        file_path: Path,
-        mime_type: str,
-        *,
-        whisper_model: str,
-        whisper_device: str,
-    ) -> str:
-        from .transcription import transcribe_audio
-
-        return await asyncio.to_thread(
-            transcribe_audio,
-            file_path,
-            mime_type,
-            whisper_model=whisper_model,
-            whisper_device=whisper_device,
-            huggingface_api_key=self._huggingface_api_key,
-            nvidia_nim_api_key=self._nvidia_nim_api_key,
-        )

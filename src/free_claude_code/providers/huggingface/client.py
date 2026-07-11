@@ -8,18 +8,20 @@ from free_claude_code.core.anthropic.conversion import OpenAIConversionError
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.defaults import HUGGINGFACE_DEFAULT_BASE
 from free_claude_code.providers.exceptions import InvalidRequestError
+from free_claude_code.providers.rate_limit import ProviderRateLimiter
 from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
 
 
 class HuggingFaceProvider(OpenAIChatTransport):
     """Hugging Face Inference Providers router at ``https://router.huggingface.co/v1``."""
 
-    def __init__(self, config: ProviderConfig):
+    def __init__(self, config: ProviderConfig, *, rate_limiter: ProviderRateLimiter):
         super().__init__(
             config,
             provider_name="HUGGINGFACE",
             base_url=config.base_url or HUGGINGFACE_DEFAULT_BASE,
             api_key=config.api_key,
+            rate_limiter=rate_limiter,
         )
 
     def _build_request_body(

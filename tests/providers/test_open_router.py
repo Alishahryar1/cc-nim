@@ -1,6 +1,5 @@
 """Tests for the OpenRouter OpenAI-chat provider."""
 
-from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -16,6 +15,7 @@ from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.exceptions import InvalidRequestError
 from free_claude_code.providers.open_router import OpenRouterProvider
 from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
+from tests.providers.support import passthrough_rate_limiter
 
 
 class AsyncStream:
@@ -58,25 +58,6 @@ class MockRequest:
             setattr(self, key, value)
 
 
-@pytest.fixture(autouse=True)
-def mock_rate_limiter():
-    @asynccontextmanager
-    async def _slot():
-        yield
-
-    with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
-    ) as mock:
-        instance = mock.get_scoped_instance.return_value
-
-        async def _passthrough(fn, *args, **kwargs):
-            return await fn(*args, **kwargs)
-
-        instance.execute_with_retry = AsyncMock(side_effect=_passthrough)
-        instance.concurrency_slot.side_effect = _slot
-        yield instance
-
-
 @pytest.fixture
 def open_router_provider():
     return OpenRouterProvider(
@@ -85,7 +66,8 @@ def open_router_provider():
             base_url="https://openrouter.ai/api/v1",
             rate_limit=10,
             rate_window=60,
-        )
+        ),
+        rate_limiter=passthrough_rate_limiter(),
     )
 
 

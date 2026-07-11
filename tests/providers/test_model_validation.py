@@ -24,6 +24,7 @@ from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.providers.runtime.model_cache import ProviderModelCache
 from free_claude_code.providers.wafer import WaferProvider
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
+from tests.providers.support import passthrough_rate_limiter
 
 
 def _settings(
@@ -79,7 +80,9 @@ async def test_nim_lists_openai_compatible_model_ids() -> None:
     with patch(
         "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
     ):
-        provider = NvidiaNimProvider(config, nim_settings=NimSettings())
+        provider = NvidiaNimProvider(
+            config, nim_settings=NimSettings(), rate_limiter=passthrough_rate_limiter()
+        )
 
     with patch.object(
         provider._client.models,
@@ -93,7 +96,8 @@ async def test_nim_lists_openai_compatible_model_ids() -> None:
 @pytest.mark.asyncio
 async def test_native_anthropic_messages_provider_lists_model_ids() -> None:
     provider = LlamaCppProvider(
-        ProviderConfig(api_key="llamacpp", base_url="http://localhost:8080/v1")
+        ProviderConfig(api_key="llamacpp", base_url="http://localhost:8080/v1"),
+        rate_limiter=passthrough_rate_limiter(),
     )
     with patch.object(
         provider._client,
@@ -108,7 +112,9 @@ async def test_native_anthropic_messages_provider_lists_model_ids() -> None:
 
 @pytest.mark.asyncio
 async def test_deepseek_lists_models_from_root_endpoint() -> None:
-    provider = DeepSeekProvider(ProviderConfig(api_key="deepseek-key"))
+    provider = DeepSeekProvider(
+        ProviderConfig(api_key="deepseek-key"), rate_limiter=passthrough_rate_limiter()
+    )
     with patch.object(
         provider._client.models,
         "list",
@@ -122,7 +128,9 @@ async def test_deepseek_lists_models_from_root_endpoint() -> None:
 
 @pytest.mark.asyncio
 async def test_wafer_lists_models_from_default_models_endpoint() -> None:
-    provider = WaferProvider(ProviderConfig(api_key="wafer-key"))
+    provider = WaferProvider(
+        ProviderConfig(api_key="wafer-key"), rate_limiter=passthrough_rate_limiter()
+    )
     with patch.object(
         provider._client.models,
         "list",
@@ -136,7 +144,10 @@ async def test_wafer_lists_models_from_default_models_endpoint() -> None:
 
 @pytest.mark.asyncio
 async def test_openrouter_lists_only_tool_capable_models() -> None:
-    provider = OpenRouterProvider(ProviderConfig(api_key="open-router-key"))
+    provider = OpenRouterProvider(
+        ProviderConfig(api_key="open-router-key"),
+        rate_limiter=passthrough_rate_limiter(),
+    )
     with patch.object(
         provider._client.models,
         "list",
@@ -168,7 +179,10 @@ async def test_openrouter_lists_only_tool_capable_models() -> None:
 
 @pytest.mark.asyncio
 async def test_openrouter_lists_tool_metadata_with_thinking_support() -> None:
-    provider = OpenRouterProvider(ProviderConfig(api_key="open-router-key"))
+    provider = OpenRouterProvider(
+        ProviderConfig(api_key="open-router-key"),
+        rate_limiter=passthrough_rate_limiter(),
+    )
     with patch.object(
         provider._client.models,
         "list",
@@ -206,7 +220,10 @@ async def test_openrouter_lists_tool_metadata_with_thinking_support() -> None:
 
 @pytest.mark.asyncio
 async def test_openrouter_lists_empty_set_when_no_tool_capable_models() -> None:
-    provider = OpenRouterProvider(ProviderConfig(api_key="open-router-key"))
+    provider = OpenRouterProvider(
+        ProviderConfig(api_key="open-router-key"),
+        rate_limiter=passthrough_rate_limiter(),
+    )
     with patch.object(
         provider._client.models,
         "list",
@@ -223,7 +240,10 @@ async def test_openrouter_lists_empty_set_when_no_tool_capable_models() -> None:
 
 @pytest.mark.asyncio
 async def test_openrouter_model_metadata_rejects_malformed_ids() -> None:
-    provider = OpenRouterProvider(ProviderConfig(api_key="open-router-key"))
+    provider = OpenRouterProvider(
+        ProviderConfig(api_key="open-router-key"),
+        rate_limiter=passthrough_rate_limiter(),
+    )
     with (
         patch.object(
             provider._client.models,
@@ -241,7 +261,8 @@ async def test_openrouter_model_metadata_rejects_malformed_ids() -> None:
 @pytest.mark.asyncio
 async def test_ollama_lists_native_tag_model_ids() -> None:
     provider = OllamaProvider(
-        ProviderConfig(api_key="ollama", base_url="http://localhost:11434")
+        ProviderConfig(api_key="ollama", base_url="http://localhost:11434"),
+        rate_limiter=passthrough_rate_limiter(),
     )
     with patch.object(
         provider._client,
@@ -267,7 +288,8 @@ async def test_ollama_lists_native_tag_model_ids() -> None:
 @pytest.mark.asyncio
 async def test_model_listing_rejects_malformed_payload() -> None:
     provider = LlamaCppProvider(
-        ProviderConfig(api_key="llamacpp", base_url="http://localhost:8080/v1")
+        ProviderConfig(api_key="llamacpp", base_url="http://localhost:8080/v1"),
+        rate_limiter=passthrough_rate_limiter(),
     )
     with (
         patch.object(
@@ -284,7 +306,8 @@ async def test_model_listing_rejects_malformed_payload() -> None:
 @pytest.mark.asyncio
 async def test_model_listing_raises_http_status_errors() -> None:
     provider = LlamaCppProvider(
-        ProviderConfig(api_key="llamacpp", base_url="http://localhost:8080/v1")
+        ProviderConfig(api_key="llamacpp", base_url="http://localhost:8080/v1"),
+        rate_limiter=passthrough_rate_limiter(),
     )
     with (
         patch.object(

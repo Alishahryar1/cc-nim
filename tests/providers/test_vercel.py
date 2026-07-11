@@ -1,6 +1,5 @@
 """Tests for Vercel AI Gateway provider."""
 
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -10,6 +9,7 @@ from free_claude_code.providers.vercel import (
     VERCEL_AI_GATEWAY_DEFAULT_BASE,
     VercelProvider,
 )
+from tests.providers.support import passthrough_rate_limiter
 
 
 class MockMessage:
@@ -45,28 +45,12 @@ def vercel_config():
     )
 
 
-@pytest.fixture(autouse=True)
-def mock_rate_limiter():
-    @asynccontextmanager
-    async def _slot():
-        yield
-
-    with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
-    ) as mock:
-        instance = mock.get_scoped_instance.return_value
-
-        async def _passthrough(fn, *args, **kwargs):
-            return await fn(*args, **kwargs)
-
-        instance.execute_with_retry = AsyncMock(side_effect=_passthrough)
-        instance.concurrency_slot.side_effect = _slot
-        yield instance
-
-
 @pytest.fixture
 def vercel_provider(vercel_config):
-    return VercelProvider(vercel_config)
+    return VercelProvider(
+        vercel_config,
+        rate_limiter=passthrough_rate_limiter(),
+    )
 
 
 def test_default_base_url_constant():
@@ -77,7 +61,10 @@ def test_init_uses_default_base_url_and_api_key(vercel_config):
     with patch(
         "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
     ) as mock_openai:
-        provider = VercelProvider(vercel_config)
+        provider = VercelProvider(
+            vercel_config,
+            rate_limiter=passthrough_rate_limiter(),
+        )
 
     assert provider._api_key == "test_vercel_key"
     assert provider._base_url == VERCEL_AI_GATEWAY_DEFAULT_BASE
@@ -92,7 +79,10 @@ def test_init_strips_trailing_slash(vercel_config):
     with patch(
         "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
     ):
-        provider = VercelProvider(config)
+        provider = VercelProvider(
+            config,
+            rate_limiter=passthrough_rate_limiter(),
+        )
 
     assert provider._base_url == VERCEL_AI_GATEWAY_DEFAULT_BASE
 

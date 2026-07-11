@@ -3,6 +3,7 @@
 from free_claude_code.api.models.anthropic import MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.opencode import OpenCodeProvider
+from tests.providers.support import passthrough_rate_limiter
 
 
 def test_build_request_body_preserves_empty_reasoning_content() -> None:
@@ -13,7 +14,8 @@ def test_build_request_body_preserves_empty_reasoning_content() -> None:
             rate_limit=1,
             rate_window=1,
             enable_thinking=True,
-        )
+        ),
+        rate_limiter=passthrough_rate_limiter(),
     )
     request = MessagesRequest.model_validate(
         {

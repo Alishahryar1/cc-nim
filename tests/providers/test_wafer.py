@@ -1,21 +1,22 @@
 """Tests for the Wafer OpenAI-chat provider."""
 
-from contextlib import asynccontextmanager
 from typing import Any
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
 from free_claude_code.api.models.anthropic import Message, MessagesRequest, Tool
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.rate_limit import ProviderRateLimiter
 from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
 from free_claude_code.providers.wafer import WAFER_DEFAULT_BASE, WaferProvider
+from tests.providers.support import passthrough_rate_limiter
 
 
 class CountingWaferProvider(WaferProvider):
-    def __init__(self, config: ProviderConfig):
-        super().__init__(config)
+    def __init__(self, config: ProviderConfig, *, rate_limiter: ProviderRateLimiter):
+        super().__init__(config, rate_limiter=rate_limiter)
         self.thinking_checks = 0
 
     def _is_thinking_enabled(
@@ -23,25 +24,6 @@ class CountingWaferProvider(WaferProvider):
     ) -> bool:
         self.thinking_checks += 1
         return super()._is_thinking_enabled(request, thinking_enabled)
-
-
-@pytest.fixture(autouse=True)
-def mock_rate_limiter():
-    @asynccontextmanager
-    async def _slot():
-        yield
-
-    with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
-    ) as mock:
-        instance = mock.get_scoped_instance.return_value
-
-        async def _passthrough(fn, *args, **kwargs):
-            return await fn(*args, **kwargs)
-
-        instance.execute_with_retry = AsyncMock(side_effect=_passthrough)
-        instance.concurrency_slot.side_effect = _slot
-        yield instance
 
 
 @pytest.fixture
@@ -56,7 +38,10 @@ def wafer_config():
 
 @pytest.fixture
 def wafer_provider(wafer_config):
-    return WaferProvider(wafer_config)
+    return WaferProvider(
+        wafer_config,
+        rate_limiter=passthrough_rate_limiter(),
+    )
 
 
 def test_default_base_url():
@@ -123,7 +108,10 @@ def test_build_request_body_preserves_request_disabled_thinking(wafer_provider):
 
 
 def test_build_request_body_resolves_thinking_once(wafer_config):
-    provider = CountingWaferProvider(wafer_config)
+    provider = CountingWaferProvider(
+        wafer_config,
+        rate_limiter=passthrough_rate_limiter(),
+    )
     request = MessagesRequest.model_validate(
         {
             "model": "DeepSeek-V4-Pro",

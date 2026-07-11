@@ -7,6 +7,7 @@ from typing import Any
 
 from loguru import logger
 
+from ..limiter import MessagingRateLimiter
 from .outbox import PlatformOutbox
 
 TELEGRAM_DELETE_MESSAGES_BATCH_SIZE = 100
@@ -34,7 +35,6 @@ except ImportError:
     TelegramBaseError = Exception
 
 ApplicationGetter = Callable[[], Any | None]
-LimiterGetter = Callable[[], Any | None]
 
 
 class TelegramMessenger:
@@ -44,11 +44,11 @@ class TelegramMessenger:
         self,
         *,
         get_application: ApplicationGetter,
-        get_limiter: LimiterGetter,
+        limiter: MessagingRateLimiter,
     ) -> None:
         self._get_application = get_application
         self._outbox = PlatformOutbox(
-            get_limiter=get_limiter,
+            limiter=limiter,
             send=self.send_message,
             edit=self.edit_message,
             delete_many=self.delete_messages,
@@ -281,3 +281,7 @@ class TelegramMessenger:
     def fire_and_forget(self, task: Awaitable[Any]) -> None:
         """Execute a coroutine without awaiting it."""
         self._outbox.fire_and_forget(task)
+
+    async def close(self) -> None:
+        """Cancel outstanding outbound work."""
+        await self._outbox.close()

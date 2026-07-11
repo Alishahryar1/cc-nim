@@ -1,5 +1,6 @@
 """Shared voice-note flow for messaging platform adapters."""
 
+import asyncio
 import contextlib
 import tempfile
 from collections.abc import Awaitable, Callable
@@ -12,9 +13,10 @@ from loguru import logger
 from free_claude_code.core.anthropic import format_user_error_preview
 
 from ..models import IncomingMessage
-from ..voice import PendingVoiceRegistry, VoiceTranscriptionService
+from ..voice import PendingVoiceRegistry, Transcriber
 
 AUDIO_EXTENSIONS = (".ogg", ".mp4", ".mp3", ".wav", ".m4a")
+MAX_AUDIO_SIZE_BYTES = 25 * 1024 * 1024
 VOICE_DISABLED_MESSAGE = "Voice notes are disabled."
 VOICE_TRANSCRIPTION_ERROR_MESSAGE = (
     "Could not transcribe voice note. Please try again or send text."
@@ -87,35 +89,25 @@ class VoiceNoteFlow:
     def __init__(
         self,
         *,
-        voice_note_enabled: bool,
-        whisper_model: str,
-        whisper_device: str,
-        huggingface_api_key: str,
-        nvidia_nim_api_key: str,
+        transcriber: Transcriber | None,
         log_raw_messaging_content: bool,
         log_api_error_tracebacks: bool,
     ) -> None:
-        self._voice_note_enabled = voice_note_enabled
-        self._whisper_model = whisper_model
-        self._whisper_device = whisper_device
+        self._transcriber = transcriber
         self._log_raw_messaging_content = log_raw_messaging_content
         self._log_api_error_tracebacks = log_api_error_tracebacks
         self._pending_voice = PendingVoiceRegistry()
-        self._voice_transcription = VoiceTranscriptionService(
-            huggingface_api_key=huggingface_api_key,
-            nvidia_nim_api_key=nvidia_nim_api_key,
-        )
 
     @property
     def is_enabled(self) -> bool:
         """Return whether voice-note handling is enabled."""
-        return self._voice_note_enabled
+        return self._transcriber is not None
 
     async def reply_if_disabled(
         self, reply_text: Callable[[str], Awaitable[None]]
     ) -> bool:
         """Reply with the disabled message when voice-note handling is disabled."""
-        if self._voice_note_enabled:
+        if self.is_enabled:
             return False
         await reply_text(VOICE_DISABLED_MESSAGE)
         return True
@@ -180,13 +172,12 @@ class VoiceNoteFlow:
 
         try:
             await request.download_to(tmp_path)
+            _validate_audio_file(tmp_path)
 
-            transcribed = await self._voice_transcription.transcribe(
-                tmp_path,
-                request.content_type,
-                whisper_model=self._whisper_model,
-                whisper_device=self._whisper_device,
-            )
+            transcriber = self._transcriber
+            if transcriber is None:
+                raise RuntimeError("Voice transcription is not configured.")
+            transcribed = await transcriber.transcribe(tmp_path)
 
             if not await self.is_voice_still_pending(
                 request.chat_id,
@@ -218,6 +209,14 @@ class VoiceNoteFlow:
             self._log_transcription(request, transcribed)
             await message_handler(incoming)
             return True
+        except asyncio.CancelledError:
+            await self._clear_failed_pending_voice(
+                request,
+                status_msg_id_text,
+                queue_delete_messages,
+                handed_off=handed_off,
+            )
+            raise
         except ValueError as e:
             await self._clear_failed_pending_voice(
                 request,
@@ -291,3 +290,13 @@ class VoiceNoteFlow:
                 request.message_id,
                 len(transcribed),
             )
+
+
+def _validate_audio_file(file_path: Path) -> None:
+    if not file_path.exists():
+        raise FileNotFoundError(f"Audio file not found: {file_path}")
+    size = file_path.stat().st_size
+    if size > MAX_AUDIO_SIZE_BYTES:
+        raise ValueError(
+            f"Audio file too large ({size} bytes). Max {MAX_AUDIO_SIZE_BYTES} bytes."
+        )

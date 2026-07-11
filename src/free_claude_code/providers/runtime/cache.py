@@ -1,5 +1,6 @@
 """Provider instance cache and cleanup."""
 
+import asyncio
 from collections.abc import Callable, MutableMapping
 
 from free_claude_code.config.settings import Settings
@@ -35,17 +36,18 @@ class ProviderCache:
         return self._providers[provider_id]
 
     async def cleanup(self) -> None:
-        """Clean up every cached provider, then clear the cache."""
+        """Clean every cached provider, retaining unfinished entries for retry."""
         items = list(self._providers.items())
         errors: list[Exception] = []
-        try:
-            for _provider_id, provider in items:
-                try:
-                    await provider.cleanup()
-                except Exception as exc:
-                    errors.append(exc)
-        finally:
-            self._providers.clear()
+        for provider_id, provider in items:
+            try:
+                await provider.cleanup()
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                errors.append(exc)
+            else:
+                self._providers.pop(provider_id, None)
         if len(errors) == 1:
             raise errors[0]
         if len(errors) > 1:

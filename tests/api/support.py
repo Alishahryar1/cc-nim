@@ -31,7 +31,11 @@ def create_test_app(
                 dict(providers),
             ),
         )
-    runtime = ApplicationRuntime(manager, restart_callback=restart_callback)
+    runtime = ApplicationRuntime(
+        manager,
+        transcriber=None,
+        restart_callback=restart_callback,
+    )
     return create_app(
         ApiServices(
             requests=manager,

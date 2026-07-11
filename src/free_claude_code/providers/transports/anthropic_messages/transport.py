@@ -20,7 +20,7 @@ from free_claude_code.providers.model_listing import (
     extract_openai_model_ids,
     model_infos_from_ids,
 )
-from free_claude_code.providers.rate_limit import GlobalRateLimiter
+from free_claude_code.providers.rate_limit import ProviderRateLimiter
 from free_claude_code.providers.transports.http import maybe_await_aclose
 
 from .http import model_list_json, raise_for_status_with_body
@@ -44,18 +44,14 @@ class AnthropicMessagesTransport(BaseProvider):
         *,
         provider_name: str,
         default_base_url: str,
+        rate_limiter: ProviderRateLimiter,
     ):
         super().__init__(config)
         self._provider_name = provider_name
         self._api_key = config.api_key
         self._base_url = (config.base_url or default_base_url).rstrip("/")
         self._request_policy = NativeMessagesRequestPolicy(provider_name=provider_name)
-        self._global_rate_limiter = GlobalRateLimiter.get_scoped_instance(
-            provider_name.lower(),
-            rate_limit=config.rate_limit,
-            rate_window=config.rate_window,
-            max_concurrency=config.max_concurrency,
-        )
+        self._rate_limiter = rate_limiter
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
             proxy=config.proxy or None,
@@ -182,7 +178,7 @@ class AnthropicMessagesTransport(BaseProvider):
         self, error: Exception, request_id: str | None
     ) -> tuple[Exception, str]:
         """Map an exception into a user-facing provider error message."""
-        mapped_error = map_error(error, rate_limiter=self._global_rate_limiter)
+        mapped_error = map_error(error, rate_limiter=self._rate_limiter)
         return (
             mapped_error,
             user_visible_message_for_mapped_provider_error(

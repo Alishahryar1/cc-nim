@@ -1,6 +1,5 @@
 """Tests for voice note handling in Telegram and Discord platforms."""
 
-import tempfile
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -16,10 +15,19 @@ from free_claude_code.messaging.platforms.telegram import TelegramRuntime
 
 @pytest.fixture
 def telegram_platform():
+    transcriber = MagicMock()
+    transcriber.transcribe = AsyncMock(return_value="Hello from voice")
+    transcriber.close = AsyncMock()
     with patch(
         "free_claude_code.messaging.platforms.telegram.TELEGRAM_AVAILABLE", True
     ):
-        return TelegramRuntime(bot_token="test_token", allowed_user_id="12345")
+        platform = TelegramRuntime(
+            bot_token="test_token",
+            allowed_user_id="12345",
+            limiter=MagicMock(),
+            transcriber=transcriber,
+        )
+    return platform, transcriber
 
 
 @pytest.mark.asyncio
@@ -31,7 +39,8 @@ async def test_telegram_voice_disabled_sends_reply():
         telegram_platform = TelegramRuntime(
             bot_token="test_token",
             allowed_user_id="12345",
-            voice_note_enabled=False,
+            limiter=MagicMock(),
+            transcriber=None,
         )
     mock_update = MagicMock()
     mock_update.message.voice = MagicMock(file_id="f1", mime_type="audio/ogg")
@@ -47,21 +56,24 @@ async def test_telegram_voice_disabled_sends_reply():
 @pytest.mark.asyncio
 async def test_telegram_voice_unauthorized_ignored(telegram_platform):
     """Voice from unauthorized user is ignored (no reply)."""
+    platform, transcriber = telegram_platform
     mock_update = MagicMock()
     mock_update.message.voice = MagicMock(file_id="f1", mime_type="audio/ogg")
     mock_update.effective_user.id = 99999  # Not 12345
     mock_update.message.reply_text = AsyncMock()
 
-    await telegram_platform._on_telegram_voice(mock_update, MagicMock())
+    await platform._on_telegram_voice(mock_update, MagicMock())
 
     mock_update.message.reply_text.assert_not_called()
+    transcriber.transcribe.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_telegram_voice_success_invokes_handler(telegram_platform):
     """Successful transcription invokes message handler with transcribed text."""
+    platform, transcriber = telegram_platform
     handler = AsyncMock()
-    telegram_platform.on_message(handler)
+    platform.on_message(handler)
 
     mock_update = MagicMock()
     mock_voice = MagicMock(file_id="f1", mime_type="audio/ogg")
@@ -76,47 +88,34 @@ async def test_telegram_voice_success_invokes_handler(telegram_platform):
     mock_context = MagicMock()
     mock_context.bot.get_file = AsyncMock(return_value=mock_file)
 
-    with tempfile.NamedTemporaryFile(suffix=".ogg", delete=False) as f:
-        f.write(b"fake")
-        tmp_path = Path(f.name)
+    async def fake_download(custom_path=None):
+        if custom_path:
+            Path(custom_path).write_bytes(b"fake ogg")
 
-    try:
+    mock_file.download_to_drive = fake_download
 
-        async def fake_download(custom_path=None):
-            if custom_path:
-                Path(custom_path).write_bytes(b"fake ogg")
+    mock_queue_send = AsyncMock(return_value="999")
+    with patch.object(
+        platform.outbound,
+        "queue_send_message",
+        mock_queue_send,
+    ):
+        await platform._on_telegram_voice(mock_update, mock_context)
 
-        mock_file.download_to_drive = fake_download
+    mock_queue_send.assert_called_once()
+    call_args, call_kw = mock_queue_send.call_args
+    assert "Transcribing voice note" in call_args[1]
+    assert call_kw["reply_to"] == "42"
+    assert call_kw["fire_and_forget"] is False
+    transcriber.transcribe.assert_awaited_once()
 
-        mock_queue_send = AsyncMock(return_value="999")
-        with (
-            patch(
-                "free_claude_code.messaging.transcription.transcribe_audio",
-                return_value="Hello from voice",
-            ),
-            patch.object(
-                telegram_platform.outbound,
-                "queue_send_message",
-                mock_queue_send,
-            ),
-        ):
-            await telegram_platform._on_telegram_voice(mock_update, mock_context)
-
-        mock_queue_send.assert_called_once()
-        call_args, call_kw = mock_queue_send.call_args
-        assert "Transcribing voice note" in call_args[1]
-        assert call_kw["reply_to"] == "42"
-        assert call_kw["fire_and_forget"] is False
-
-        handler.assert_called_once()
-        incoming = handler.call_args[0][0]
-        assert incoming.text == "Hello from voice"
-        assert incoming.chat_id == "6789"
-        assert incoming.user_id == "12345"
-        assert incoming.platform == "telegram"
-        assert incoming.status_message_id == "999"
-    finally:
-        tmp_path.unlink(missing_ok=True)
+    handler.assert_called_once()
+    incoming = handler.call_args[0][0]
+    assert incoming.text == "Hello from voice"
+    assert incoming.chat_id == "6789"
+    assert incoming.user_id == "12345"
+    assert incoming.platform == "telegram"
+    assert incoming.status_message_id == "999"
 
 
 @pytest.mark.skipif(not DISCORD_AVAILABLE, reason="discord.py not installed")
@@ -160,7 +159,8 @@ async def test_discord_voice_disabled_sends_reply():
     platform = DiscordRuntime(
         bot_token="token",
         allowed_channel_ids="123",
-        voice_note_enabled=False,
+        limiter=MagicMock(),
+        transcriber=None,
     )
     platform._message_handler = None
 

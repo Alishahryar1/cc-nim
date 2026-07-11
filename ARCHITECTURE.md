@@ -153,7 +153,8 @@ On final shutdown it best-effort kills registered child processes.
 
 [runtime/bootstrap.py](src/free_claude_code/runtime/bootstrap.py) is the single production composition function. The CLI
 supervisor supplies one settings snapshot and its restart callback; bootstrap
-configures logging, constructs the runtime owners, supplies
+configures logging, constructs the runtime owners and the configured voice
+transcriber, supplies
 [api/ports.py](src/free_claude_code/api/ports.py) to the pure API factory, and returns the ASGI application.
 
 [api/app.py](src/free_claude_code/api/app.py) registers routers, HTTP correlation middleware, and exception handlers around
@@ -162,8 +163,13 @@ runtime resources. `app.state.services` is the only runtime state published to
 FastAPI.
 
 [runtime/application.py](src/free_claude_code/runtime/application.py) owns process startup and shutdown, optional messaging,
-the managed CLI session manager, Admin pending state, and the injected restart
-callback. [runtime/asgi.py](src/free_claude_code/runtime/asgi.py) drives that owner from ASGI lifespan messages and preserves
+the selected transcriber, the managed CLI session manager, Admin pending state,
+and the injected restart callback. Shutdown is serialized and ordered: quiesce
+messaging ingress, cancel and drain workflow/CLI work, flush persistence, close
+delivery, close transcription, then close providers. An owner reference is
+released only after its cleanup succeeds; cancellation or failure leaves the
+incomplete graph retryable.
+[runtime/asgi.py](src/free_claude_code/runtime/asgi.py) drives that owner from ASGI lifespan messages and preserves
 the concise startup-failure contract.
 
 [runtime/provider_manager.py](src/free_claude_code/runtime/provider_manager.py) is the only owner that constructs, publishes,
@@ -173,7 +179,11 @@ streaming responses release it from the response iterator's `finally` path on
 completion, failure, cancellation, or disconnect. A provider-only Admin Apply
 prepares a candidate and commits configuration before publication. New requests
 then use the candidate while old streams finish on the retired generation; its
-last lease closes it exactly once.
+last lease closes it exactly once. Final shutdown rejects new acquisition and
+replacement, waits every lease, and awaits the same manager-owned cleanup task
+even if the initiating request or lease release is cancelled. Failed generation
+or unpublished-candidate cleanup remains owned and retryable; the manager does
+not become terminal or clear its model catalog until every owned runtime closes.
 
 The manager also owns one application-lifetime provider model catalog and its
 single best-effort discovery task. The catalog survives provider replacement.
@@ -366,7 +376,14 @@ credential env var, default base URL, settings attribute names, and proxy suppor
 
 [providers/runtime/](src/free_claude_code/providers/runtime/) owns construction details for one
 closable provider generation: factory wiring, provider configuration, lazy
-provider instances, and transport cleanup. Application-level generation
+provider instances, provider-owned rate limiters, and transport cleanup. Each
+lazy provider receives a fresh `ProviderRateLimiter`; there is no process
+singleton or second limiter registry. The provider cache already guarantees one
+provider and limiter per provider ID within a generation. Retired generations
+retain their own synchronization state until request leases drain, while new
+generations and separate server instances never reuse it. Hot replacement
+therefore begins with fresh quota state; an old and new generation enforce
+independent budgets while old request leases drain. Application-level generation
 publication, request leases, model metadata, discovery orchestration, and
 configured-model validation belong to `ProviderRuntimeManager` in the runtime
 package. This separates a single generation's resources from process-lifetime
@@ -632,13 +649,14 @@ If `MESSAGING_PLATFORM` is `none`, or if the selected platform token is missing,
 the messaging bridge is skipped.
 
 `ApplicationRuntime` privately owns the selected platform runtime, the
-`MessagingWorkflow`, and its managed CLI session manager. The workflow owns
+`MessagingWorkflow`, configured `Transcriber`, and managed CLI session manager.
+The workflow owns
 conversation snapshot restoration and final persistence flush. The API sees only
 the `SessionControlPort` used to preserve `/stop` behavior.
 
 The platform factory returns a `MessagingPlatformComponents` bundle from
 [messaging/platforms/ports.py](src/free_claude_code/messaging/platforms/ports.py): a
-`MessagingRuntime` for lifecycle and inbound callbacks, an `OutboundMessenger`
+`MessagingRuntime` with separate `quiesce()` and `close()` phases, an `OutboundMessenger`
 for queued sends/edits/deletes, and an optional `VoiceCancellation` port for
 reply-scoped `/clear` during voice transcription. Workflow code depends on
 these ports, not on Telegram or Discord SDK objects.
@@ -646,7 +664,16 @@ these ports, not on Telegram or Discord SDK objects.
 Runtime adapters in
 [messaging/platforms/telegram.py](src/free_claude_code/messaging/platforms/telegram.py) and
 [messaging/platforms/discord.py](src/free_claude_code/messaging/platforms/discord.py) own SDK client
-lifecycle, event subscription, inbound handoff, and voice-note handoff. Inbound
+lifecycle, event subscription, inbound handoff, voice-note handoff, and one
+injected `MessagingRateLimiter`. The platform factory creates a fresh limiter
+for the selected runtime. `quiesce()` stops new SDK ingress and drains active
+handlers while delivery remains available; after workflow tasks settle,
+`close()` drains the outbox and limiter. Discord additionally retains, observes,
+and drains its long-lived client task and inbound-handler tasks, so an SDK exit
+after initial readiness immediately withdraws the runtime's connected state.
+Telegram retries initialization and polling as separate repeatable steps; it
+never restarts an already-running SDK application after polling bootstrap fails.
+Separate application runtimes cannot share or stop each other's queue. Inbound
 normalization lives in
 [messaging/platforms/telegram_inbound.py](src/free_claude_code/messaging/platforms/telegram_inbound.py)
 and [messaging/platforms/discord_inbound.py](src/free_claude_code/messaging/platforms/discord_inbound.py).
@@ -654,14 +681,27 @@ Outbound SDK calls live in
 [messaging/platforms/telegram_io.py](src/free_claude_code/messaging/platforms/telegram_io.py) and
 [messaging/platforms/discord_io.py](src/free_claude_code/messaging/platforms/discord_io.py). Shared
 delivery policy lives in [messaging/platforms/outbox.py](src/free_claude_code/messaging/platforms/outbox.py),
-which owns queued send/edit/list-based delete, dedup keys, limiter delegation,
-and fire-and-forget behavior. Workflow and command code request deletion of
+which requires that limiter directly and owns queued send/edit/list-based delete,
+dedup keys, and retained fire-and-forget tasks. Shutdown cancels and awaits both
+queued limiter work and arbitrary outbox work; there is no optional unthrottled
+fallback, and both owners reject admission once close begins. Workflow and command code request deletion of
 message ID lists; platform IO decides whether to use native batch deletion
 (Telegram) or internal per-message deletion (Discord).
 Shared voice-note orchestration lives in
 [messaging/platforms/voice_flow.py](src/free_claude_code/messaging/platforms/voice_flow.py), which owns
-pending voice registration, temp-file cleanup, transcription, cancellation, error
-replies, and the handoff to `IncomingMessage`.
+pending voice registration, file-size validation, temp-file cleanup,
+transcription, cancellation, error replies, and the handoff to
+`IncomingMessage`. It depends only on the consumer-owned `Transcriber` protocol
+from [messaging/voice.py](src/free_claude_code/messaging/voice.py). Bootstrap selects either the
+instance-owned local Whisper `TranscriptionService` or the provider-owned
+`NvidiaNimTranscriber`. Messaging no longer imports a provider adapter, and the
+local service retains only one lazy pipeline for its immutable runtime settings;
+caller cancellation waits for thread-backed transcription to actually exit
+before temporary files, pipelines, or credentials are released. The NIM adapter
+closes its per-call authenticated gRPC channel before that worker exits. Changing the
+credential used by an active voice backend through Admin is therefore
+restart-required, while the same provider credential remains hot-replaceable
+when voice does not use it.
 
 [messaging/workflow.py](src/free_claude_code/messaging/workflow.py) contains `MessagingWorkflow`, the
 platform-agnostic coordinator. It owns dependencies, callback wiring, stop/clear
@@ -755,6 +795,10 @@ Logging defaults are conservative:
   message logging are opt-in.
 - Messaging text, transcription previews, CLI diagnostics, and detailed
   messaging exception strings are controlled by separate diagnostic flags.
+- Process logging, server/managed-CLI authentication, and messaging diagnostics
+  are captured by their lifecycle owners at construction. Admin marks those
+  settings restart-required so an Apply cannot report success while an existing
+  runtime continues using stale security or privacy policy.
 - Values under keys that look like API keys, authorization, tokens, or secrets
   are redacted by trace helpers where structured traces are emitted.
 

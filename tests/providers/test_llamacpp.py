@@ -10,6 +10,7 @@ from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.exceptions import ProviderError
 from free_claude_code.providers.llamacpp import LlamaCppProvider
+from tests.providers.support import passthrough_rate_limiter
 
 
 class MockMessage:
@@ -64,31 +65,17 @@ def llamacpp_config():
     )
 
 
-@pytest.fixture(autouse=True)
-def mock_rate_limiter():
-    """Mock the global rate limiter to prevent waiting."""
-    with patch(
-        "free_claude_code.providers.transports.anthropic_messages.transport.GlobalRateLimiter"
-    ) as mock:
-        instance = mock.get_scoped_instance.return_value
-        instance.wait_if_blocked = AsyncMock(return_value=False)
-
-        async def _passthrough(fn, *args, **kwargs):
-            return await fn(*args, **kwargs)
-
-        instance.execute_with_retry = AsyncMock(side_effect=_passthrough)
-        yield instance
-
-
 @pytest.fixture
 def llamacpp_provider(llamacpp_config):
-    return LlamaCppProvider(llamacpp_config)
+    return LlamaCppProvider(llamacpp_config, rate_limiter=passthrough_rate_limiter())
 
 
 def test_init(llamacpp_config):
     """Test provider initialization."""
     with patch("httpx.AsyncClient"):
-        provider = LlamaCppProvider(llamacpp_config)
+        provider = LlamaCppProvider(
+            llamacpp_config, rate_limiter=passthrough_rate_limiter()
+        )
         assert provider._base_url == "http://localhost:8080/v1"
         assert provider._provider_name == "LLAMACPP"
 
@@ -103,7 +90,7 @@ def test_init_uses_configurable_timeouts():
         http_connect_timeout=5.0,
     )
     with patch("httpx.AsyncClient") as mock_client:
-        LlamaCppProvider(config)
+        LlamaCppProvider(config, rate_limiter=passthrough_rate_limiter())
         call_kwargs = mock_client.call_args[1]
         timeout = call_kwargs["timeout"]
         assert timeout.read == 600.0
@@ -120,14 +107,15 @@ def test_init_base_url_strips_trailing_slash():
         rate_window=60,
     )
     with patch("httpx.AsyncClient"):
-        provider = LlamaCppProvider(config)
+        provider = LlamaCppProvider(config, rate_limiter=passthrough_rate_limiter())
         assert provider._base_url == "http://localhost:8080/v1"
 
 
 @pytest.mark.asyncio
 async def test_stream_response_omits_thinking_when_globally_disabled(llamacpp_config):
     provider = LlamaCppProvider(
-        llamacpp_config.model_copy(update={"enable_thinking": False})
+        llamacpp_config.model_copy(update={"enable_thinking": False}),
+        rate_limiter=passthrough_rate_limiter(),
     )
     req = MockRequest()
 
@@ -338,7 +326,7 @@ def test_build_request_body_disabled_thinking_strips_native_thinking_history(
 ):
     """With thinking disabled, prior assistant thinking/redacted blocks are omitted."""
     config = llamacpp_config.model_copy(update={"enable_thinking": False})
-    provider = LlamaCppProvider(config)
+    provider = LlamaCppProvider(config, rate_limiter=passthrough_rate_limiter())
     messages = [
         MockMessage("user", "Hi"),
         MockMessage(

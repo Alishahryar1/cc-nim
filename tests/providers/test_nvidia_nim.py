@@ -12,6 +12,7 @@ from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.nvidia_nim.tool_schema import (
     NIM_TOOL_ARGUMENT_ALIASES_KEY,
 )
+from tests.providers.support import passthrough_rate_limiter
 
 
 # Mock data classes
@@ -115,30 +116,17 @@ def _make_internal_server_error(message: str) -> openai.InternalServerError:
     return openai.InternalServerError(message, response=response, body=body)
 
 
-@pytest.fixture(autouse=True)
-def mock_rate_limiter():
-    """Mock the global rate limiter to prevent waiting."""
-    with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
-    ) as mock:
-        instance = mock.get_scoped_instance.return_value
-        instance.wait_if_blocked = AsyncMock(return_value=False)
-
-        # execute_with_retry should call through to the actual function
-        async def _passthrough(fn, *args, **kwargs):
-            return await fn(*args, **kwargs)
-
-        instance.execute_with_retry = AsyncMock(side_effect=_passthrough)
-        yield instance
-
-
 @pytest.mark.asyncio
 async def test_init(provider_config):
     """Test provider initialization."""
     with patch(
         "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
     ) as mock_openai:
-        provider = NvidiaNimProvider(provider_config, nim_settings=NimSettings())
+        provider = NvidiaNimProvider(
+            provider_config,
+            nim_settings=NimSettings(),
+            rate_limiter=passthrough_rate_limiter(),
+        )
         assert provider._api_key == "test_key"
         assert provider._base_url == "https://test.api.nvidia.com/v1"
         mock_openai.assert_called_once()
@@ -159,7 +147,9 @@ async def test_init_uses_configurable_timeouts():
     with patch(
         "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
     ) as mock_openai:
-        NvidiaNimProvider(config, nim_settings=NimSettings())
+        NvidiaNimProvider(
+            config, nim_settings=NimSettings(), rate_limiter=passthrough_rate_limiter()
+        )
         call_kwargs = mock_openai.call_args[1]
         timeout = call_kwargs["timeout"]
         assert timeout.read == 600.0
@@ -170,7 +160,11 @@ async def test_init_uses_configurable_timeouts():
 @pytest.mark.asyncio
 async def test_build_request_body(provider_config):
     """Test request body construction."""
-    provider = NvidiaNimProvider(provider_config, nim_settings=NimSettings())
+    provider = NvidiaNimProvider(
+        provider_config,
+        nim_settings=NimSettings(),
+        rate_limiter=passthrough_rate_limiter(),
+    )
     req = MockRequest()
     body = provider._build_request_body(req)
 
@@ -195,6 +189,7 @@ async def test_build_request_body_omits_reasoning_when_globally_disabled(
     provider = NvidiaNimProvider(
         provider_config.model_copy(update={"enable_thinking": False}),
         nim_settings=NimSettings(),
+        rate_limiter=passthrough_rate_limiter(),
     )
     req = MockRequest()
     body = provider._build_request_body(req)
@@ -208,7 +203,11 @@ async def test_build_request_body_omits_reasoning_when_globally_disabled(
 async def test_build_request_body_omits_reasoning_when_request_disables_thinking(
     provider_config,
 ):
-    provider = NvidiaNimProvider(provider_config, nim_settings=NimSettings())
+    provider = NvidiaNimProvider(
+        provider_config,
+        nim_settings=NimSettings(),
+        rate_limiter=passthrough_rate_limiter(),
+    )
     req = MockRequest()
     req.thinking.enabled = False
     body = provider._build_request_body(req)
@@ -355,6 +354,7 @@ async def test_stream_response_suppresses_thinking_when_disabled(provider_config
     provider = NvidiaNimProvider(
         provider_config.model_copy(update={"enable_thinking": False}),
         nim_settings=NimSettings(),
+        rate_limiter=passthrough_rate_limiter(),
     )
     req = MockRequest()
 
@@ -397,6 +397,7 @@ async def test_stream_response_retries_without_chat_template(provider_config):
     provider = NvidiaNimProvider(
         provider_config,
         nim_settings=NimSettings(chat_template="custom_template"),
+        rate_limiter=passthrough_rate_limiter(),
     )
     req = MockRequest(model="mistralai/mixtral-8x7b-instruct-v0.1")
 
@@ -449,7 +450,11 @@ async def test_stream_response_retries_without_chat_template(provider_config):
 async def test_stream_response_retries_without_chat_template_kwargs_issue_993(
     provider_config,
 ):
-    provider = NvidiaNimProvider(provider_config, nim_settings=NimSettings())
+    provider = NvidiaNimProvider(
+        provider_config,
+        nim_settings=NimSettings(),
+        rate_limiter=passthrough_rate_limiter(),
+    )
     req = MockRequest(model="mistralai/mistral-small-4-119b-2603")
 
     mock_chunk = MagicMock()
@@ -500,6 +505,7 @@ async def test_stream_response_does_not_retry_unrelated_bad_request(provider_con
     provider = NvidiaNimProvider(
         provider_config,
         nim_settings=NimSettings(chat_template="custom_template"),
+        rate_limiter=passthrough_rate_limiter(),
     )
     req = MockRequest(model="mistralai/mixtral-8x7b-instruct-v0.1")
 

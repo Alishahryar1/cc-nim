@@ -10,7 +10,6 @@ from httpx import Request, Response
 
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.rate_limit import GlobalRateLimiter
 from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
 from free_claude_code.providers.transports.openai_chat.usage import (
     clone_without_stream_usage,
@@ -18,6 +17,7 @@ from free_claude_code.providers.transports.openai_chat.usage import (
     request_stream_usage,
     usage_int,
 )
+from tests.providers.support import passthrough_rate_limiter
 
 
 class _UsageTestProvider(OpenAIChatTransport):
@@ -32,6 +32,7 @@ class _UsageTestProvider(OpenAIChatTransport):
             provider_name="USAGE_TEST",
             base_url="https://provider.example/v1",
             api_key="test_key",
+            rate_limiter=passthrough_rate_limiter(),
         )
 
     def _build_request_body(
@@ -148,71 +149,60 @@ def test_stream_usage_rejection_does_not_match_unrelated_400():
 
 @pytest.mark.asyncio
 async def test_openai_chat_stream_requests_usage_and_uses_provider_prompt_tokens():
-    GlobalRateLimiter.reset_instance()
-    try:
-        provider = _UsageTestProvider()
-        request = SimpleNamespace(model="m")
-        usage = SimpleNamespace(prompt_tokens=22, completion_tokens=4)
-        create = AsyncMock(
-            return_value=_stream(
-                [
-                    _chunk(content="hello"),
-                    _chunk(finish_reason="stop"),
-                    _chunk(usage=usage),
-                ]
-            )
-        )
-
-        with patch.object(provider._client.chat.completions, "create", create):
-            events = [
-                event
-                async for event in provider.stream_response(request, input_tokens=7)
+    provider = _UsageTestProvider()
+    request = SimpleNamespace(model="m")
+    usage = SimpleNamespace(prompt_tokens=22, completion_tokens=4)
+    create = AsyncMock(
+        return_value=_stream(
+            [
+                _chunk(content="hello"),
+                _chunk(finish_reason="stop"),
+                _chunk(usage=usage),
             ]
+        )
+    )
 
-        create.assert_awaited_once()
-        await_args = create.await_args
-        assert await_args is not None
-        assert await_args.kwargs["stream_options"] == {"include_usage": True}
-        parsed = parse_sse_text("".join(events))
-        start_usage = next(
-            event.data["message"]["usage"]
-            for event in parsed
-            if event.event == "message_start"
-        )
-        final_usage = next(
-            event.data["usage"] for event in parsed if event.event == "message_delta"
-        )
-        assert start_usage["input_tokens"] == 7
-        assert final_usage == {"input_tokens": 22, "output_tokens": 4}
-    finally:
-        GlobalRateLimiter.reset_instance()
+    with patch.object(provider._client.chat.completions, "create", create):
+        events = [
+            event async for event in provider.stream_response(request, input_tokens=7)
+        ]
+
+    create.assert_awaited_once()
+    await_args = create.await_args
+    assert await_args is not None
+    assert await_args.kwargs["stream_options"] == {"include_usage": True}
+    parsed = parse_sse_text("".join(events))
+    start_usage = next(
+        event.data["message"]["usage"]
+        for event in parsed
+        if event.event == "message_start"
+    )
+    final_usage = next(
+        event.data["usage"] for event in parsed if event.event == "message_delta"
+    )
+    assert start_usage["input_tokens"] == 7
+    assert final_usage == {"input_tokens": 22, "output_tokens": 4}
 
 
 @pytest.mark.asyncio
 async def test_openai_chat_stream_retries_without_usage_when_option_is_rejected():
-    GlobalRateLimiter.reset_instance()
-    try:
-        provider = _UsageTestProvider()
-        body = {"model": "m", "messages": [{"role": "user", "content": "x"}]}
-        request_stream_usage(body)
-        create = AsyncMock(
-            side_effect=[
-                _bad_request(
-                    "stream_options is unsupported",
-                    {"error": {"message": "stream_options is unsupported"}},
-                ),
-                object(),
-            ]
-        )
+    provider = _UsageTestProvider()
+    body = {"model": "m", "messages": [{"role": "user", "content": "x"}]}
+    request_stream_usage(body)
+    create = AsyncMock(
+        side_effect=[
+            _bad_request(
+                "stream_options is unsupported",
+                {"error": {"message": "stream_options is unsupported"}},
+            ),
+            object(),
+        ]
+    )
 
-        with patch.object(provider._client.chat.completions, "create", create):
-            _stream_obj, used_body = await provider._create_stream(body)
+    with patch.object(provider._client.chat.completions, "create", create):
+        _stream_obj, used_body = await provider._create_stream(body)
 
-        assert create.await_count == 2
-        assert create.await_args_list[0].kwargs["stream_options"] == {
-            "include_usage": True
-        }
-        assert "stream_options" not in create.await_args_list[1].kwargs
-        assert "stream_options" not in used_body
-    finally:
-        GlobalRateLimiter.reset_instance()
+    assert create.await_count == 2
+    assert create.await_args_list[0].kwargs["stream_options"] == {"include_usage": True}
+    assert "stream_options" not in create.await_args_list[1].kwargs
+    assert "stream_options" not in used_body

@@ -6,18 +6,36 @@ from telegram.error import TelegramError
 from free_claude_code.messaging.platforms.telegram import TelegramRuntime
 
 
+def _limiter_mock() -> MagicMock:
+    limiter = MagicMock()
+    limiter.start = MagicMock()
+    limiter.shutdown = AsyncMock()
+    return limiter
+
+
+def _telegram_runtime(
+    *args, limiter=None, transcriber=None, **kwargs
+) -> TelegramRuntime:
+    return TelegramRuntime(
+        *args,
+        limiter=limiter or _limiter_mock(),
+        transcriber=transcriber,
+        **kwargs,
+    )
+
+
 @pytest.fixture
 def telegram_platform():
     with patch(
         "free_claude_code.messaging.platforms.telegram.TELEGRAM_AVAILABLE", True
     ):
-        platform = TelegramRuntime(bot_token="test_token", allowed_user_id="12345")
+        platform = _telegram_runtime(bot_token="test_token", allowed_user_id="12345")
         return platform
 
 
 def test_telegram_platform_init_no_token():
     with patch.dict("os.environ", {}, clear=True):
-        platform = TelegramRuntime(bot_token=None)
+        platform = _telegram_runtime(bot_token=None)
         assert platform.bot_token is None
 
 
@@ -31,27 +49,25 @@ async def test_telegram_platform_start_success(telegram_platform):
 
         mock_builder.return_value.token.return_value.request.return_value.build.return_value = mock_app
 
-        # Mock MessagingRateLimiter
-        with patch(
-            "free_claude_code.messaging.limiter.MessagingRateLimiter.get_instance",
-            AsyncMock(),
-        ):
-            await telegram_platform.start()
+        await telegram_platform.start()
 
-            assert telegram_platform._connected is True
-            mock_app.initialize.assert_called_once()
-            mock_app.start.assert_called_once()
+        assert telegram_platform._connected is True
+        mock_app.initialize.assert_called_once()
+        mock_app.start.assert_called_once()
+        telegram_platform._limiter.start.assert_called_once_with()
 
 
 @pytest.mark.asyncio
 async def test_telegram_platform_start_with_proxy():
+    limiter = _limiter_mock()
     with patch(
         "free_claude_code.messaging.platforms.telegram.TELEGRAM_AVAILABLE", True
     ):
-        platform = TelegramRuntime(
+        platform = _telegram_runtime(
             bot_token="test_token",
             allowed_user_id="12345",
             telegram_proxy_url="socks5://127.0.0.1:1080",
+            limiter=limiter,
         )
 
     with (
@@ -74,11 +90,7 @@ async def test_telegram_platform_start_with_proxy():
         update_request = MagicMock()
         request_cls.side_effect = [request, update_request]
 
-        with patch(
-            "free_claude_code.messaging.limiter.MessagingRateLimiter.get_instance",
-            AsyncMock(),
-        ):
-            await platform.start()
+        await platform.start()
 
         assert request_cls.call_count == 2
         request_cls.assert_any_call(
@@ -90,6 +102,7 @@ async def test_telegram_platform_start_with_proxy():
         builder.request.assert_called_once_with(request)
         builder.get_updates_request.assert_called_once_with(update_request)
         assert platform._connected is True
+        limiter.start.assert_called_once_with()
 
 
 @pytest.mark.asyncio
@@ -254,8 +267,8 @@ async def test_telegram_platform_single_delete_still_swallows_known_error(
 
 @pytest.mark.asyncio
 async def test_telegram_platform_queue_send_message(telegram_platform):
-    mock_limiter = AsyncMock()
-    telegram_platform._limiter = mock_limiter
+    mock_limiter = telegram_platform._limiter
+    mock_limiter.enqueue = AsyncMock()
 
     await telegram_platform.outbound.queue_send_message(
         "chat_1", "hello", fire_and_forget=False

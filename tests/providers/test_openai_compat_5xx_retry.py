@@ -11,7 +11,7 @@ from free_claude_code.config.nim import NimSettings
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.exceptions import ProviderError
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
-from free_claude_code.providers.rate_limit import GlobalRateLimiter
+from tests.providers.support import retrying_rate_limiter
 from tests.providers.test_nvidia_nim import MockRequest
 
 
@@ -34,140 +34,138 @@ def _connection_error(message: str = "connect failed") -> openai.APIConnectionEr
 @pytest.mark.parametrize("status_code", [500, 502, 503, 504])
 @pytest.mark.asyncio
 async def test_nim_stream_retries_on_openai_5xx_then_streams(status_code):
-    GlobalRateLimiter.reset_instance()
-    try:
-        config = ProviderConfig(
-            api_key="test_key",
-            base_url="https://test.api.nvidia.com/v1",
-            rate_limit=100,
-            rate_window=60,
-            http_read_timeout=600.0,
-            http_write_timeout=15.0,
-            http_connect_timeout=5.0,
+    config = ProviderConfig(
+        api_key="test_key",
+        base_url="https://test.api.nvidia.com/v1",
+        rate_limit=100,
+        rate_window=60,
+        http_read_timeout=600.0,
+        http_write_timeout=15.0,
+        http_connect_timeout=5.0,
+    )
+    provider = NvidiaNimProvider(
+        config,
+        nim_settings=NimSettings(),
+        rate_limiter=retrying_rate_limiter(),
+    )
+    req = MockRequest()
+
+    mock_chunk = MagicMock()
+    mock_chunk.choices = [
+        MagicMock(
+            delta=MagicMock(content="Hi", reasoning_content=""),
+            finish_reason="stop",
         )
-        provider = NvidiaNimProvider(config, nim_settings=NimSettings())
-        req = MockRequest()
+    ]
+    mock_chunk.usage = None
 
-        mock_chunk = MagicMock()
-        mock_chunk.choices = [
-            MagicMock(
-                delta=MagicMock(content="Hi", reasoning_content=""),
-                finish_reason="stop",
-            )
-        ]
-        mock_chunk.usage = None
+    async def mock_stream():
+        yield mock_chunk
 
-        async def mock_stream():
-            yield mock_chunk
+    with (
+        patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+        ) as mock_create,
+        patch("asyncio.sleep", new_callable=AsyncMock),
+    ):
+        mock_create.side_effect = [_internal_5xx(status_code), mock_stream()]
+        events = [e async for e in provider.stream_response(req)]
 
-        with (
-            patch.object(
-                provider._client.chat.completions,
-                "create",
-                new_callable=AsyncMock,
-            ) as mock_create,
-            patch("asyncio.sleep", new_callable=AsyncMock),
-        ):
-            mock_create.side_effect = [_internal_5xx(status_code), mock_stream()]
-            events = [e async for e in provider.stream_response(req)]
-
-        assert mock_create.await_count == 2
-        assert any("Hi" in e for e in events)
-    finally:
-        GlobalRateLimiter.reset_instance()
+    assert mock_create.await_count == 2
+    assert any("Hi" in e for e in events)
 
 
 @pytest.mark.asyncio
 async def test_nim_stream_retries_on_pre_stream_connection_error_then_streams():
-    GlobalRateLimiter.reset_instance()
-    try:
-        config = ProviderConfig(
-            api_key="test_key",
-            base_url="https://test.api.nvidia.com/v1",
-            rate_limit=100,
-            rate_window=60,
-            http_read_timeout=600.0,
-            http_write_timeout=15.0,
-            http_connect_timeout=5.0,
+    config = ProviderConfig(
+        api_key="test_key",
+        base_url="https://test.api.nvidia.com/v1",
+        rate_limit=100,
+        rate_window=60,
+        http_read_timeout=600.0,
+        http_write_timeout=15.0,
+        http_connect_timeout=5.0,
+    )
+    provider = NvidiaNimProvider(
+        config,
+        nim_settings=NimSettings(),
+        rate_limiter=retrying_rate_limiter(),
+    )
+    req = MockRequest()
+
+    mock_chunk = MagicMock()
+    mock_chunk.choices = [
+        MagicMock(
+            delta=MagicMock(content="Recovered", reasoning_content=""),
+            finish_reason="stop",
         )
-        provider = NvidiaNimProvider(config, nim_settings=NimSettings())
-        req = MockRequest()
+    ]
+    mock_chunk.usage = None
 
-        mock_chunk = MagicMock()
-        mock_chunk.choices = [
-            MagicMock(
-                delta=MagicMock(content="Recovered", reasoning_content=""),
-                finish_reason="stop",
-            )
-        ]
-        mock_chunk.usage = None
+    async def mock_stream():
+        yield mock_chunk
 
-        async def mock_stream():
-            yield mock_chunk
+    with (
+        patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+        ) as mock_create,
+        patch("asyncio.sleep", new_callable=AsyncMock),
+    ):
+        mock_create.side_effect = [_connection_error(), mock_stream()]
+        events = [e async for e in provider.stream_response(req)]
 
-        with (
-            patch.object(
-                provider._client.chat.completions,
-                "create",
-                new_callable=AsyncMock,
-            ) as mock_create,
-            patch("asyncio.sleep", new_callable=AsyncMock),
-        ):
-            mock_create.side_effect = [_connection_error(), mock_stream()]
-            events = [e async for e in provider.stream_response(req)]
-
-        assert mock_create.await_count == 2
-        assert any("Recovered" in e for e in events)
-    finally:
-        GlobalRateLimiter.reset_instance()
+    assert mock_create.await_count == 2
+    assert any("Recovered" in e for e in events)
 
 
 @pytest.mark.asyncio
 async def test_nim_stream_connection_error_exhausted_emits_cause_chain():
-    GlobalRateLimiter.reset_instance()
-    try:
-        config = ProviderConfig(
-            api_key="test_key",
-            base_url="https://test.api.nvidia.com/v1",
-            rate_limit=100,
-            rate_window=60,
-            http_read_timeout=600.0,
-            http_write_timeout=15.0,
-            http_connect_timeout=5.0,
-        )
-        provider = NvidiaNimProvider(config, nim_settings=NimSettings())
-        req = MockRequest()
-        error = _connection_error("upstream disconnected")
+    config = ProviderConfig(
+        api_key="test_key",
+        base_url="https://test.api.nvidia.com/v1",
+        rate_limit=100,
+        rate_window=60,
+        http_read_timeout=600.0,
+        http_write_timeout=15.0,
+        http_connect_timeout=5.0,
+    )
+    provider = NvidiaNimProvider(
+        config,
+        nim_settings=NimSettings(),
+        rate_limiter=retrying_rate_limiter(),
+    )
+    req = MockRequest()
+    error = _connection_error("upstream disconnected")
 
-        with (
-            patch.object(
-                provider._client.chat.completions,
-                "create",
-                new_callable=AsyncMock,
-                side_effect=error,
-            ) as mock_create,
-            patch("asyncio.sleep", new_callable=AsyncMock),
-            patch(
-                "free_claude_code.providers.transports.openai_chat.stream.trace_event"
-            ) as trace,
-            pytest.raises(ProviderError) as exc_info,
-        ):
-            [e async for e in provider.stream_response(req, request_id="req_conn")]
+    with (
+        patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=error,
+        ) as mock_create,
+        patch("asyncio.sleep", new_callable=AsyncMock),
+        patch(
+            "free_claude_code.providers.transports.openai_chat.stream.trace_event"
+        ) as trace,
+        pytest.raises(ProviderError) as exc_info,
+    ):
+        [e async for e in provider.stream_response(req, request_id="req_conn")]
 
-        assert mock_create.await_count == 5
-        error_traces = [
-            call.kwargs
-            for call in trace.call_args_list
-            if call.kwargs.get("event") == "provider.response.error"
-        ]
-        assert error_traces[-1]["request_id"] == "req_conn"
-        assert error_traces[-1]["exc_type"] == "APIConnectionError"
-        assert "error_message" not in error_traces[-1]
-        assert (
-            "Caused by:\nConnectError: upstream disconnected" in exc_info.value.message
-        )
-    finally:
-        GlobalRateLimiter.reset_instance()
+    assert mock_create.await_count == 5
+    error_traces = [
+        call.kwargs
+        for call in trace.call_args_list
+        if call.kwargs.get("event") == "provider.response.error"
+    ]
+    assert error_traces[-1]["request_id"] == "req_conn"
+    assert error_traces[-1]["exc_type"] == "APIConnectionError"
+    assert "error_message" not in error_traces[-1]
+    assert "Caused by:\nConnectError: upstream disconnected" in exc_info.value.message
 
 
 @pytest.mark.parametrize(
@@ -184,33 +182,33 @@ async def test_nim_stream_openai_5xx_exhausted_emits_user_message(
     status_code,
     expect_substr,
 ):
-    GlobalRateLimiter.reset_instance()
-    try:
-        config = ProviderConfig(
-            api_key="test_key",
-            base_url="https://test.api.nvidia.com/v1",
-            rate_limit=100,
-            rate_window=60,
-            http_read_timeout=600.0,
-            http_write_timeout=15.0,
-            http_connect_timeout=5.0,
-        )
-        provider = NvidiaNimProvider(config, nim_settings=NimSettings())
-        req = MockRequest()
+    config = ProviderConfig(
+        api_key="test_key",
+        base_url="https://test.api.nvidia.com/v1",
+        rate_limit=100,
+        rate_window=60,
+        http_read_timeout=600.0,
+        http_write_timeout=15.0,
+        http_connect_timeout=5.0,
+    )
+    provider = NvidiaNimProvider(
+        config,
+        nim_settings=NimSettings(),
+        rate_limiter=retrying_rate_limiter(),
+    )
+    req = MockRequest()
 
-        with (
-            patch.object(
-                provider._client.chat.completions,
-                "create",
-                new_callable=AsyncMock,
-            ) as mock_create,
-            patch("asyncio.sleep", new_callable=AsyncMock),
-        ):
-            mock_create.side_effect = _internal_5xx(status_code)
-            with pytest.raises(ProviderError) as exc_info:
-                [e async for e in provider.stream_response(req)]
+    with (
+        patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+        ) as mock_create,
+        patch("asyncio.sleep", new_callable=AsyncMock),
+    ):
+        mock_create.side_effect = _internal_5xx(status_code)
+        with pytest.raises(ProviderError) as exc_info:
+            [e async for e in provider.stream_response(req)]
 
-        assert mock_create.await_count == 5
-        assert expect_substr in exc_info.value.message.lower()
-    finally:
-        GlobalRateLimiter.reset_instance()
+    assert mock_create.await_count == 5
+    assert expect_substr in exc_info.value.message.lower()

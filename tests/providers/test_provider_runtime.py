@@ -1,3 +1,4 @@
+import asyncio
 import subprocess
 import sys
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -36,11 +37,13 @@ from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.ollama import OllamaProvider
 from free_claude_code.providers.open_router import OpenRouterProvider
 from free_claude_code.providers.opencode import OpenCodeProvider
+from free_claude_code.providers.rate_limit import ProviderRateLimiter
 from free_claude_code.providers.runtime import (
     ProviderRuntime,
     build_provider_config,
     create_provider,
 )
+from free_claude_code.providers.sambanova import SambaNovaProvider
 from free_claude_code.providers.vercel import (
     VERCEL_AI_GATEWAY_DEFAULT_BASE,
     VercelProvider,
@@ -342,9 +345,14 @@ def test_create_provider_instantiates_each_builtin():
         cohere_api_key="test_cohere_key",
         github_models_token="test_github_models_token",
         kimi_api_key="test_kimi_key",
+        provider_rate_limit=7,
+        provider_rate_window=11,
+        provider_max_concurrency=3,
+        sambanova_api_key="test_sambanova_key",
     )
     cases = {
         "nvidia_nim": NvidiaNimProvider,
+        "open_router": OpenRouterProvider,
         "mistral": MistralProvider,
         "mistral_codestral": CodestralProvider,
         "deepseek": DeepSeekProvider,
@@ -365,17 +373,34 @@ def test_create_provider_instantiates_each_builtin():
         "zai": ZaiProvider,
         "gemini": GeminiProvider,
         "groq": GroqProvider,
+        "sambanova": SambaNovaProvider,
         "cerebras": CerebrasProvider,
     }
+    sentinel_limiter = MagicMock(spec=ProviderRateLimiter)
 
     with (
         patch(
             "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
         ),
         patch("httpx.AsyncClient"),
+        patch(
+            "free_claude_code.providers.runtime.factory.ProviderRateLimiter",
+            return_value=sentinel_limiter,
+        ) as limiter_factory,
     ):
         for provider_id, provider_cls in cases.items():
-            assert isinstance(create_provider(provider_id, settings), provider_cls)
+            provider = create_provider(provider_id, settings)
+
+            assert isinstance(provider, provider_cls)
+            assert provider._rate_limiter is sentinel_limiter
+            limiter_factory.assert_called_once_with(
+                rate_limit=7,
+                rate_window=11,
+                max_concurrency=3,
+            )
+            limiter_factory.reset_mock()
+
+    assert set(cases) == set(PROVIDER_CATALOG)
 
 
 def test_provider_runtime_caches_by_provider_id():
@@ -390,6 +415,50 @@ def test_provider_runtime_caches_by_provider_id():
     assert first is second
 
 
+def test_provider_runtime_provider_owns_one_limiter() -> None:
+    runtime = ProviderRuntime(_make_settings())
+
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ):
+        first = runtime.resolve_provider("nvidia_nim")
+        second = runtime.resolve_provider("nvidia_nim")
+
+    assert isinstance(first, NvidiaNimProvider)
+    assert isinstance(second, NvidiaNimProvider)
+    assert first._rate_limiter is second._rate_limiter
+
+
+def test_separate_provider_runtimes_never_share_limiters() -> None:
+    first_runtime = ProviderRuntime(_make_settings())
+    second_runtime = ProviderRuntime(_make_settings())
+
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ):
+        first = first_runtime.resolve_provider("nvidia_nim")
+        second = second_runtime.resolve_provider("nvidia_nim")
+
+    assert isinstance(first, NvidiaNimProvider)
+    assert isinstance(second, NvidiaNimProvider)
+    assert first is not second
+    assert first._rate_limiter is not second._rate_limiter
+
+
+def test_different_providers_in_one_runtime_have_independent_limiters() -> None:
+    runtime = ProviderRuntime(_make_settings())
+
+    with patch(
+        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+    ):
+        nim = runtime.resolve_provider("nvidia_nim")
+        open_router = runtime.resolve_provider("open_router")
+
+    assert isinstance(nim, NvidiaNimProvider)
+    assert isinstance(open_router, OpenRouterProvider)
+    assert nim._rate_limiter is not open_router._rate_limiter
+
+
 def test_unknown_provider_raises_unknown_provider_type_error():
     with pytest.raises(UnknownProviderTypeError, match="Unknown provider_type"):
         create_provider("unknown", _make_settings())
@@ -397,7 +466,7 @@ def test_unknown_provider_raises_unknown_provider_type_error():
 
 @pytest.mark.asyncio
 async def test_provider_runtime_cleanup_runs_all_even_if_one_fails() -> None:
-    """Every provider gets cleanup; cache is cleared even when one raises."""
+    """Successful providers leave the cache while failed providers remain retryable."""
     p1 = MagicMock()
     p1.cleanup = AsyncMock(side_effect=RuntimeError("first"))
     p2 = MagicMock()
@@ -409,8 +478,59 @@ async def test_provider_runtime_cleanup_runs_all_even_if_one_fails() -> None:
 
     p1.cleanup.assert_awaited_once()
     p2.cleanup.assert_awaited_once()
-    assert not runtime.is_cached("a")
+    assert runtime.is_cached("a")
     assert not runtime.is_cached("b")
+
+    p1.cleanup = AsyncMock()
+    await runtime.cleanup()
+
+    p1.cleanup.assert_awaited_once()
+    assert not runtime.is_cached("a")
+
+
+@pytest.mark.asyncio
+async def test_cancelled_cleanup_retains_current_and_unvisited_providers() -> None:
+    first = MagicMock()
+    second = MagicMock()
+    third = MagicMock()
+    second_started = asyncio.Event()
+    second_attempts = 0
+
+    async def cleanup_second() -> None:
+        nonlocal second_attempts
+        second_attempts += 1
+        if second_attempts == 1:
+            second_started.set()
+            await asyncio.Event().wait()
+
+    first.cleanup = AsyncMock()
+    second.cleanup = AsyncMock(side_effect=cleanup_second)
+    third.cleanup = AsyncMock()
+    runtime = ProviderRuntime(
+        _make_settings(),
+        {"first": first, "second": second, "third": third},
+    )
+    cleanup_task = asyncio.create_task(runtime.cleanup())
+    await second_started.wait()
+
+    cleanup_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await cleanup_task
+
+    assert runtime.is_cached("first") is False
+    assert runtime.is_cached("second") is True
+    assert runtime.is_cached("third") is True
+    first.cleanup.assert_awaited_once_with()
+    third.cleanup.assert_not_awaited()
+
+    await runtime.cleanup()
+
+    first.cleanup.assert_awaited_once_with()
+    assert second.cleanup.await_count == 2
+    third.cleanup.assert_awaited_once_with()
+    assert runtime.is_cached("first") is False
+    assert runtime.is_cached("second") is False
+    assert runtime.is_cached("third") is False
 
 
 @pytest.mark.asyncio
@@ -425,5 +545,12 @@ async def test_provider_runtime_cleanup_exceptiongroup_on_multiple_failures() ->
         await runtime.cleanup()
 
     assert len(exc_info.value.exceptions) == 2
+    assert runtime.is_cached("x")
+    assert runtime.is_cached("y")
+
+    p1.cleanup = AsyncMock()
+    p2.cleanup = AsyncMock()
+    await runtime.cleanup()
+
     assert not runtime.is_cached("x")
     assert not runtime.is_cached("y")

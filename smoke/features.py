@@ -214,6 +214,9 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         (
             "tests/messaging/test_discord_platform.py",
             "tests/messaging/test_telegram.py",
+            "tests/messaging/test_limiter.py",
+            "tests/messaging/test_platform_outbox.py",
+            "tests/runtime/test_application_runtime.py",
         ),
         (
             "test_telegram_bot_api_permissions",

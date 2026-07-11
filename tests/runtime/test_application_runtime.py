@@ -1,9 +1,15 @@
-from unittest.mock import AsyncMock, patch
+import asyncio
+from pathlib import Path
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from free_claude_code.config.admin.persistence import PreparedAdminUpdate
 from free_claude_code.config.settings import Settings
+from free_claude_code.messaging.platforms.ports import (
+    InboundMessageHandler,
+    MessagingPlatformComponents,
+)
 from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.runtime.application import ApplicationRuntime
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
@@ -32,6 +38,76 @@ class TrackingFactory:
         runtime = TrackingRuntime(settings)
         self.runtimes.append(runtime)
         return runtime
+
+
+class TrackingTranscriber:
+    def __init__(self, events: list[str]) -> None:
+        self.events = events
+        self.close_calls = 0
+
+    async def transcribe(self, file_path: Path) -> str:
+        assert isinstance(file_path, Path)
+        return "transcribed"
+
+    async def close(self) -> None:
+        self.close_calls += 1
+        self.events.append("transcriber.close")
+
+
+class FailingTranscriber(TrackingTranscriber):
+    async def close(self) -> None:
+        await super().close()
+        raise RuntimeError("transcriber close failed")
+
+
+class CancelledTranscriber(TrackingTranscriber):
+    async def close(self) -> None:
+        await super().close()
+        raise asyncio.CancelledError
+
+
+class CancellingOnceTranscriber(TrackingTranscriber):
+    async def close(self) -> None:
+        await super().close()
+        if self.close_calls == 1:
+            raise asyncio.CancelledError
+
+
+class TrackingMessagingRuntime:
+    name = "tracking"
+
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        fail_quiesce_once: bool = False,
+        fail_close_once: bool = False,
+    ) -> None:
+        self.events = events
+        self.fail_quiesce_once = fail_quiesce_once
+        self.fail_close_once = fail_close_once
+
+    async def start(self) -> None:
+        self.events.append("messaging.start")
+
+    async def quiesce(self) -> None:
+        self.events.append("messaging.quiesce")
+        if self.fail_quiesce_once:
+            self.fail_quiesce_once = False
+            raise RuntimeError("quiesce failed")
+
+    async def close(self) -> None:
+        self.events.append("messaging.close")
+        if self.fail_close_once:
+            self.fail_close_once = False
+            raise RuntimeError("close failed")
+
+    def on_message(self, handler: InboundMessageHandler) -> None:
+        assert callable(handler)
+
+    @property
+    def is_connected(self) -> bool:
+        return True
 
 
 def _settings(model: str, *, port: int = 8082) -> Settings:
@@ -71,7 +147,7 @@ async def test_provider_apply_constructs_before_commit_then_publishes(tmp_path) 
         _settings("nvidia_nim/old"),
         runtime_factory=factory,
     )
-    runtime = ApplicationRuntime(manager)
+    runtime = ApplicationRuntime(manager, transcriber=None)
     prepared = _prepared(_settings("nvidia_nim/new"), tmp_path)
     factory.events.clear()
 
@@ -111,7 +187,7 @@ async def test_candidate_failure_never_commits_and_preserves_current(tmp_path) -
         _settings("nvidia_nim/old"),
         runtime_factory=factory,
     )
-    runtime = ApplicationRuntime(manager)
+    runtime = ApplicationRuntime(manager, transcriber=None)
     prepared = _prepared(_settings("nvidia_nim/new"), tmp_path)
     factory.fail = True
 
@@ -142,7 +218,7 @@ async def test_persistence_failure_closes_candidate_and_preserves_current(
         _settings("nvidia_nim/old"),
         runtime_factory=factory,
     )
-    runtime = ApplicationRuntime(manager)
+    runtime = ApplicationRuntime(manager, transcriber=None)
     prepared = _prepared(_settings("nvidia_nim/new"), tmp_path)
 
     with (
@@ -172,7 +248,11 @@ async def test_restart_required_apply_commits_without_hot_publication(tmp_path) 
         runtime_factory=factory,
     )
     restart = AsyncMock()
-    runtime = ApplicationRuntime(manager, restart_callback=restart)
+    runtime = ApplicationRuntime(
+        manager,
+        transcriber=None,
+        restart_callback=restart,
+    )
     prepared = _prepared(
         _settings("nvidia_nim/old", port=9090),
         tmp_path,
@@ -204,3 +284,278 @@ async def test_restart_required_apply_commits_without_hot_publication(tmp_path) 
     await runtime.request_restart()
     restart.assert_awaited_once()
     await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_close_drains_messaging_before_transcriber_and_is_idempotent() -> None:
+    events: list[str] = []
+    manager = ProviderRuntimeManager(_settings("nvidia_nim/model"))
+    transcriber = TrackingTranscriber(events)
+    runtime = ApplicationRuntime(manager, transcriber=transcriber)
+    runtime._messaging_runtime = TrackingMessagingRuntime(events)
+    workflow = MagicMock()
+    workflow.stop_all_tasks = AsyncMock(
+        side_effect=lambda: events.append("workflow.stop_all")
+    )
+    workflow.close.side_effect = lambda: events.append("workflow.close")
+    runtime._messaging_workflow = workflow
+    runtime._cli_manager = MagicMock()
+
+    await runtime.close()
+    await runtime.close()
+
+    assert events == [
+        "messaging.quiesce",
+        "workflow.stop_all",
+        "workflow.close",
+        "messaging.close",
+        "transcriber.close",
+    ]
+    assert transcriber.close_calls == 1
+    assert runtime._transcriber is None
+    assert runtime._messaging_runtime is None
+    assert runtime._messaging_workflow is None
+
+
+@pytest.mark.asyncio
+async def test_close_retains_transcriber_ownership_when_close_fails() -> None:
+    events: list[str] = []
+    manager = ProviderRuntimeManager(_settings("nvidia_nim/model"))
+    transcriber = FailingTranscriber(events)
+    runtime = ApplicationRuntime(manager, transcriber=transcriber)
+    runtime._messaging_runtime = TrackingMessagingRuntime(events)
+
+    await runtime.close()
+
+    assert events == [
+        "messaging.quiesce",
+        "messaging.close",
+        "transcriber.close",
+    ]
+    assert transcriber.close_calls == 1
+    assert runtime._transcriber is transcriber
+    assert runtime._closed is False
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_close_retries_runtime_before_closing_later_resources() -> None:
+    events: list[str] = []
+    manager = ProviderRuntimeManager(_settings("nvidia_nim/model"))
+    transcriber = TrackingTranscriber(events)
+    runtime = ApplicationRuntime(manager, transcriber=transcriber)
+    messaging = TrackingMessagingRuntime(events, fail_close_once=True)
+    runtime._messaging_runtime = messaging
+
+    await runtime.close()
+
+    assert events == ["messaging.quiesce", "messaging.close"]
+    assert runtime._messaging_runtime is messaging
+    assert runtime._transcriber is transcriber
+    assert runtime._closed is False
+
+    await runtime.close()
+
+    assert events == [
+        "messaging.quiesce",
+        "messaging.close",
+        "messaging.quiesce",
+        "messaging.close",
+        "transcriber.close",
+    ]
+    assert runtime._messaging_runtime is None
+    assert runtime._transcriber is None
+    assert runtime._closed is True
+
+
+@pytest.mark.asyncio
+async def test_close_does_not_drain_workflow_until_ingress_is_quiescent() -> None:
+    events: list[str] = []
+    manager = ProviderRuntimeManager(_settings("nvidia_nim/model"))
+    runtime = ApplicationRuntime(manager, transcriber=None)
+    messaging = TrackingMessagingRuntime(events, fail_quiesce_once=True)
+    workflow = MagicMock()
+    workflow.stop_all_tasks = AsyncMock(
+        side_effect=lambda: events.append("workflow.stop_all")
+    )
+    workflow.close.side_effect = lambda: events.append("workflow.close")
+    runtime._messaging_runtime = messaging
+    runtime._messaging_workflow = workflow
+
+    await runtime.close()
+
+    workflow.stop_all_tasks.assert_not_awaited()
+    assert runtime._messaging_runtime is messaging
+    assert runtime._messaging_workflow is workflow
+
+    await runtime.close()
+
+    assert events == [
+        "messaging.quiesce",
+        "messaging.quiesce",
+        "workflow.stop_all",
+        "workflow.close",
+        "messaging.close",
+    ]
+    assert runtime._closed is True
+
+
+@pytest.mark.asyncio
+async def test_close_retries_failed_persistence_before_closing_delivery() -> None:
+    events: list[str] = []
+    manager = ProviderRuntimeManager(_settings("nvidia_nim/model"))
+    runtime = ApplicationRuntime(manager, transcriber=None)
+    messaging = TrackingMessagingRuntime(events)
+    workflow = MagicMock()
+    workflow.stop_all_tasks = AsyncMock(
+        side_effect=lambda: events.append("workflow.stop_all")
+    )
+    close_calls = 0
+
+    def close_workflow() -> None:
+        nonlocal close_calls
+        close_calls += 1
+        if close_calls == 1:
+            raise RuntimeError("flush failed")
+        events.append("workflow.close")
+
+    workflow.close.side_effect = close_workflow
+    runtime._messaging_runtime = messaging
+    runtime._messaging_workflow = workflow
+
+    await runtime.close()
+
+    assert runtime._messaging_workflow is workflow
+    assert runtime._messaging_runtime is messaging
+    assert "messaging.close" not in events
+
+    await runtime.close()
+
+    assert events == [
+        "messaging.quiesce",
+        "workflow.stop_all",
+        "messaging.quiesce",
+        "workflow.stop_all",
+        "workflow.close",
+        "messaging.close",
+    ]
+    assert runtime._closed is True
+
+
+@pytest.mark.asyncio
+async def test_cancelled_transcriber_close_retains_ownership() -> None:
+    events: list[str] = []
+    manager = ProviderRuntimeManager(_settings("nvidia_nim/model"))
+    transcriber = CancelledTranscriber(events)
+    runtime = ApplicationRuntime(manager, transcriber=transcriber)
+
+    with pytest.raises(asyncio.CancelledError):
+        await runtime._cleanup_transcriber()
+
+    assert transcriber.close_calls == 1
+    assert runtime._transcriber is transcriber
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_application_close_remains_retryable() -> None:
+    events: list[str] = []
+    manager = ProviderRuntimeManager(_settings("nvidia_nim/model"))
+    transcriber = CancellingOnceTranscriber(events)
+    runtime = ApplicationRuntime(manager, transcriber=transcriber)
+
+    with pytest.raises(asyncio.CancelledError):
+        await runtime.close()
+
+    assert runtime._closed is False
+    assert runtime._transcriber is transcriber
+
+    await runtime.close()
+
+    assert transcriber.close_calls == 2
+    assert runtime._transcriber is None
+    assert runtime._closed is True
+
+
+@pytest.mark.asyncio
+async def test_startup_failure_closes_owned_transcriber() -> None:
+    events: list[str] = []
+    manager = ProviderRuntimeManager(_settings("nvidia_nim/model"))
+    transcriber = TrackingTranscriber(events)
+    runtime = ApplicationRuntime(manager, transcriber=transcriber)
+
+    with (
+        patch.object(
+            manager,
+            "validate_configured_models",
+            AsyncMock(side_effect=RuntimeError("startup failed")),
+        ),
+        pytest.raises(RuntimeError, match="startup failed"),
+    ):
+        await runtime.start()
+
+    assert transcriber.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_startup_cancellation_cleans_partial_messaging_and_reraises() -> None:
+    events: list[str] = []
+    manager = ProviderRuntimeManager(_settings("nvidia_nim/model"))
+    transcriber = TrackingTranscriber(events)
+    runtime = ApplicationRuntime(manager, transcriber=transcriber)
+    messaging = TrackingMessagingRuntime(events)
+    entered = asyncio.Event()
+
+    async def start_messaging() -> None:
+        runtime._messaging_runtime = messaging
+        entered.set()
+        await asyncio.Event().wait()
+
+    with patch.object(
+        runtime,
+        "_start_messaging_if_configured",
+        side_effect=start_messaging,
+    ):
+        start_task = asyncio.create_task(runtime.start())
+        await entered.wait()
+        start_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await start_task
+
+    assert events == [
+        "messaging.quiesce",
+        "messaging.close",
+        "transcriber.close",
+    ]
+    assert runtime._closed is True
+    assert runtime._messaging_runtime is None
+    assert runtime._transcriber is None
+
+
+@pytest.mark.asyncio
+async def test_composition_records_runtime_before_workspace_setup() -> None:
+    events: list[str] = []
+    manager = ProviderRuntimeManager(_settings("nvidia_nim/model"))
+    runtime = ApplicationRuntime(manager, transcriber=None)
+    messaging = TrackingMessagingRuntime(events)
+    components = MessagingPlatformComponents(
+        name="tracking",
+        runtime=messaging,
+        outbound=MagicMock(),
+    )
+
+    with (
+        patch(
+            "free_claude_code.runtime.application.os.makedirs",
+            side_effect=OSError("workspace failed"),
+        ),
+        pytest.raises(OSError, match="workspace failed"),
+    ):
+        await runtime._start_messaging_workflow(components)
+
+    assert runtime._messaging_runtime is messaging
+
+    await runtime.close()
+
+    assert events == ["messaging.quiesce", "messaging.close"]
+    assert runtime._closed is True

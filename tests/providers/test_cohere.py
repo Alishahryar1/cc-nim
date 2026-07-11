@@ -1,6 +1,5 @@
 """Tests for Cohere Compatibility API provider."""
 
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -8,6 +7,7 @@ import pytest
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.cohere import COHERE_DEFAULT_BASE, CohereProvider
 from free_claude_code.providers.exceptions import InvalidRequestError
+from tests.providers.support import passthrough_rate_limiter
 
 
 class MockMessage:
@@ -43,28 +43,9 @@ def cohere_config():
     )
 
 
-@pytest.fixture(autouse=True)
-def mock_rate_limiter():
-    @asynccontextmanager
-    async def _slot():
-        yield
-
-    with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
-    ) as mock:
-        instance = mock.get_scoped_instance.return_value
-
-        async def _passthrough(fn, *args, **kwargs):
-            return await fn(*args, **kwargs)
-
-        instance.execute_with_retry = AsyncMock(side_effect=_passthrough)
-        instance.concurrency_slot.side_effect = _slot
-        yield instance
-
-
 @pytest.fixture
 def cohere_provider(cohere_config):
-    return CohereProvider(cohere_config)
+    return CohereProvider(cohere_config, rate_limiter=passthrough_rate_limiter())
 
 
 def test_default_base_url_constant():
@@ -75,7 +56,9 @@ def test_init_uses_default_base_url_and_api_key(cohere_config):
     with patch(
         "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
     ) as mock_openai:
-        provider = CohereProvider(cohere_config)
+        provider = CohereProvider(
+            cohere_config, rate_limiter=passthrough_rate_limiter()
+        )
 
     assert provider._api_key == "test_cohere_key"
     assert provider._base_url == COHERE_DEFAULT_BASE
@@ -88,7 +71,7 @@ def test_init_strips_trailing_slash(cohere_config):
     with patch(
         "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
     ):
-        provider = CohereProvider(config)
+        provider = CohereProvider(config, rate_limiter=passthrough_rate_limiter())
 
     assert provider._base_url == COHERE_DEFAULT_BASE
 
@@ -174,7 +157,8 @@ def test_build_request_body_maps_thinking_disabled_to_reasoning_none():
             rate_limit=10,
             rate_window=60,
             enable_thinking=False,
-        )
+        ),
+        rate_limiter=passthrough_rate_limiter(),
     )
 
     body = provider._build_request_body(MockRequest())

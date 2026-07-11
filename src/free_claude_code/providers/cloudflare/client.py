@@ -17,6 +17,7 @@ from free_claude_code.providers.model_listing import (
     extract_openai_model_ids,
     model_infos_from_ids,
 )
+from free_claude_code.providers.rate_limit import ProviderRateLimiter
 from free_claude_code.providers.transports.http import maybe_await_aclose
 from free_claude_code.providers.transports.openai_chat import (
     OpenAIChatRequestPolicy,
@@ -59,7 +60,13 @@ def _cloudflare_account_api_url(api_root: str | None, account_id: str) -> str:
 class CloudflareProvider(OpenAIChatTransport):
     """Cloudflare Workers AI OpenAI-compatible chat provider."""
 
-    def __init__(self, config: ProviderConfig, *, account_id: str):
+    def __init__(
+        self,
+        config: ProviderConfig,
+        *,
+        account_id: str,
+        rate_limiter: ProviderRateLimiter,
+    ):
         base_url = cloudflare_ai_base_url(config.base_url, account_id)
         self._model_search_url = _cloudflare_model_search_url(
             config.base_url, account_id
@@ -78,6 +85,7 @@ class CloudflareProvider(OpenAIChatTransport):
             provider_name="CLOUDFLARE",
             base_url=base_url,
             api_key=config.api_key,
+            rate_limiter=rate_limiter,
         )
 
     async def cleanup(self) -> None:

@@ -225,13 +225,8 @@ def test_settings_stays_schema_only() -> None:
         assert removed_api not in settings_text
 
 
-_MESSAGING_ALLOWED_PROVIDER_MODULES = frozenset(
-    {"free_claude_code.providers.nvidia_nim.voice"}
-)
-
-
 def test_messaging_does_not_import_disallowed_modules() -> None:
-    """Runtime composition is external; only NIM voice ASR crosses provider bounds."""
+    """Runtime composition keeps messaging independent of concrete products."""
     repo_root = Path(__file__).resolve().parents[2]
     offenders: list[str] = []
     for path in (repo_root / "src" / "free_claude_code" / "messaging").rglob("*.py"):
@@ -245,12 +240,7 @@ def test_messaging_does_not_import_disallowed_modules() -> None:
                 or imported.startswith("free_claude_code.cli.")
                 or imported == "smoke"
                 or imported.startswith("smoke.")
-            ):
-                rel = path.relative_to(repo_root)
-                offenders.append(f"{rel}: {imported}")
-            elif imported.startswith("free_claude_code.providers."):
-                if imported in _MESSAGING_ALLOWED_PROVIDER_MODULES:
-                    continue
+            ) or imported.startswith("free_claude_code.providers."):
                 rel = path.relative_to(repo_root)
                 offenders.append(f"{rel}: {imported}")
 
@@ -801,7 +791,7 @@ def test_messaging_platforms_use_shared_outbox_and_voice_flow() -> None:
         text = runtime.read_text(encoding="utf-8")
         assert "PlatformOutbox" not in text
         assert "VoiceNoteFlow" in text
-        assert "from ..voice" not in text
+        assert "PendingVoiceRegistry" not in text
         assert "NamedTemporaryFile" not in text
 
     for messenger in {

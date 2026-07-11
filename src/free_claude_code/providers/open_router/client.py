@@ -13,6 +13,7 @@ from free_claude_code.providers.model_listing import (
     extract_openrouter_tool_model_ids,
     extract_openrouter_tool_model_infos,
 )
+from free_claude_code.providers.rate_limit import ProviderRateLimiter
 from free_claude_code.providers.transports.openai_chat import (
     OpenAIChatRequestPolicy,
     OpenAIChatTransport,
@@ -33,12 +34,13 @@ _REQUEST_POLICY = OpenAIChatRequestPolicy(
 class OpenRouterProvider(OpenAIChatTransport):
     """OpenRouter provider using the OpenAI-compatible Chat Completions API."""
 
-    def __init__(self, config: ProviderConfig):
+    def __init__(self, config: ProviderConfig, *, rate_limiter: ProviderRateLimiter):
         super().__init__(
             config,
             provider_name="OPENROUTER",
             base_url=config.base_url or OPENROUTER_DEFAULT_BASE,
             api_key=config.api_key,
+            rate_limiter=rate_limiter,
         )
 
     def _build_request_body(

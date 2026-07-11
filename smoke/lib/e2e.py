@@ -323,7 +323,10 @@ class FakePlatform:
     async def start(self) -> None:
         return None
 
-    async def stop(self) -> None:
+    async def quiesce(self) -> None:
+        return None
+
+    async def close(self) -> None:
         for task in self._tasks:
             if not task.done():
                 task.cancel()

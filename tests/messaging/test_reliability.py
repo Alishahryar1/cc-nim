@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 from telegram.error import NetworkError, RetryAfter, TelegramError
 
+from free_claude_code.messaging.limiter import MessagingRateLimiter
 from free_claude_code.messaging.platforms.telegram import TelegramRuntime
 
 
@@ -11,7 +12,12 @@ def telegram_platform():
     with patch(
         "free_claude_code.messaging.platforms.telegram.TELEGRAM_AVAILABLE", True
     ):
-        platform = TelegramRuntime(bot_token="test_token", allowed_user_id="12345")
+        platform = TelegramRuntime(
+            bot_token="test_token",
+            allowed_user_id="12345",
+            limiter=MessagingRateLimiter(rate_limit=1, rate_window=1.0),
+            transcriber=None,
+        )
         return platform
 
 

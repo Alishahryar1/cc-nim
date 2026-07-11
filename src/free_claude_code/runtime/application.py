@@ -11,7 +11,6 @@ from typing import Any
 from loguru import logger
 
 import free_claude_code.cli.managed as cli_managed
-import free_claude_code.messaging.limiter as messaging_limiter
 import free_claude_code.messaging.session as messaging_session
 import free_claude_code.messaging.workflow as messaging_workflow_module
 from free_claude_code.api.ports import StopResult
@@ -36,26 +35,23 @@ from free_claude_code.messaging.platforms.ports import (
     MessagingPlatformComponents,
     MessagingRuntime,
 )
+from free_claude_code.messaging.voice import Transcriber
 from free_claude_code.providers.exceptions import ServiceUnavailableError
 
 from .provider_manager import ProviderRuntimeManager
 
-_SHUTDOWN_TIMEOUT_S = 5.0
 RestartCallback = Callable[[], Awaitable[None] | None]
 
 
 async def best_effort(
     name: str,
     awaitable: Awaitable[Any],
-    timeout_s: float = _SHUTDOWN_TIMEOUT_S,
     *,
     log_verbose_errors: bool = False,
-) -> None:
-    """Run one bounded cleanup step without masking later cleanup."""
+) -> bool:
+    """Run one cleanup step and report whether it completed."""
     try:
-        await asyncio.wait_for(awaitable, timeout=timeout_s)
-    except TimeoutError:
-        logger.warning("Shutdown step timed out: {} ({}s)", name, timeout_s)
+        await awaitable
     except Exception as exc:
         if log_verbose_errors:
             logger.warning(
@@ -70,6 +66,8 @@ async def best_effort(
                 name,
                 type(exc).__name__,
             )
+        return False
+    return True
 
 
 def warn_if_process_auth_token(settings: Settings) -> None:
@@ -100,9 +98,11 @@ class ApplicationRuntime:
         self,
         provider_manager: ProviderRuntimeManager,
         *,
+        transcriber: Transcriber | None,
         restart_callback: RestartCallback | None = None,
     ) -> None:
         self.provider_manager = provider_manager
+        self._transcriber = transcriber
         self._restart_callback = restart_callback
         self._config_lock = asyncio.Lock()
         self._pending_fields: list[str] = []
@@ -113,6 +113,8 @@ class ApplicationRuntime:
         self._cli_manager: cli_managed.ManagedClaudeSessionManager | None = None
         self._started = False
         self._closed = False
+        self._provider_manager_closed = False
+        self._close_lock = asyncio.Lock()
 
     @property
     def settings(self) -> Settings:
@@ -132,32 +134,30 @@ class ApplicationRuntime:
                 local_admin_url(self.settings),
             )
             self._started = True
+        except asyncio.CancelledError:
+            await self.close()
+            raise
         except Exception as exc:
             logger.error(
                 "Startup failed:\n{}",
                 startup_failure_message(self.settings, exc),
             )
-            await self._cleanup_messaging()
-            await best_effort(
-                "provider_manager.close",
-                self.provider_manager.close(),
-                log_verbose_errors=self.settings.log_api_error_tracebacks,
-            )
+            await self.close()
             raise
 
     async def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        logger.info("Shutdown requested, cleaning up...")
-        await self._cleanup_messaging()
-        await best_effort(
-            "provider_manager.close",
-            self.provider_manager.close(),
-            log_verbose_errors=self.settings.log_api_error_tracebacks,
-        )
-        await self._shutdown_limiter()
-        logger.info("Server shut down cleanly")
+        async with self._close_lock:
+            if self._closed:
+                return
+            logger.info("Shutdown requested, cleaning up...")
+            self._closed = await self._close_owned_resources()
+            if self._closed:
+                self._started = False
+                logger.info("Server shut down cleanly")
+            else:
+                logger.warning(
+                    "Server shutdown incomplete; owned resources remain for retry"
+                )
 
     async def apply_admin_config(
         self,
@@ -326,14 +326,11 @@ class ApplicationRuntime:
             telegram_proxy_url=settings.telegram_proxy_url,
             discord_bot_token=settings.discord_bot_token,
             allowed_discord_channels=settings.allowed_discord_channels,
-            voice_note_enabled=settings.voice_note_enabled,
-            whisper_model=settings.whisper_model,
-            whisper_device=settings.whisper_device,
-            huggingface_api_key=settings.huggingface_api_key,
-            nvidia_nim_api_key=settings.nvidia_nim_api_key,
+            transcriber=self._transcriber,
             messaging_rate_limit=settings.messaging_rate_limit,
             messaging_rate_window=settings.messaging_rate_window,
             log_raw_messaging_content=settings.log_raw_messaging_content,
+            log_messaging_error_details=settings.log_messaging_error_details,
             log_api_error_tracebacks=settings.log_api_error_tracebacks,
         )
 
@@ -342,6 +339,7 @@ class ApplicationRuntime:
         components: MessagingPlatformComponents,
     ) -> None:
         settings = self.settings
+        self._messaging_runtime = components.runtime
         workspace = (
             os.path.abspath(settings.allowed_dir)
             if settings.allowed_dir
@@ -366,7 +364,6 @@ class ApplicationRuntime:
             storage_path=os.path.join(data_path, "sessions.json"),
             message_log_cap=settings.max_message_log_entries_per_chat,
         )
-        self._messaging_runtime = components.runtime
         self._messaging_workflow = messaging_workflow_module.MessagingWorkflow(
             platform_name=components.name,
             outbound=components.outbound,
@@ -384,16 +381,44 @@ class ApplicationRuntime:
         await components.runtime.start()
         logger.info("{} platform started with messaging workflow", components.name)
 
-    async def _cleanup_messaging(self) -> None:
+    async def _close_owned_resources(self) -> bool:
+        if not await self._cleanup_messaging():
+            return False
+        if not await self._cleanup_transcriber():
+            return False
+        if self._provider_manager_closed:
+            return True
+        verbose = self.settings.log_api_error_tracebacks
+        self._provider_manager_closed = await best_effort(
+            "provider_manager.close",
+            self.provider_manager.close(),
+            log_verbose_errors=verbose,
+        )
+        return self._provider_manager_closed
+
+    async def _cleanup_messaging(self) -> bool:
         verbose = self.settings.log_api_error_tracebacks
         workflow = self._messaging_workflow
         runtime = self._messaging_runtime
         cli_manager = self._cli_manager
-        self._messaging_workflow = None
-        self._messaging_runtime = None
-        self._cli_manager = None
+
+        if runtime is not None:
+            quiesced = await best_effort(
+                "messaging_runtime.quiesce",
+                runtime.quiesce(),
+                log_verbose_errors=verbose,
+            )
+            if not quiesced:
+                return False
 
         if workflow is not None:
+            drained = await best_effort(
+                "messaging_workflow.stop_all_tasks",
+                workflow.stop_all_tasks(),
+                log_verbose_errors=verbose,
+            )
+            if not drained:
+                return False
             try:
                 workflow.close()
             except Exception as exc:
@@ -404,37 +429,43 @@ class ApplicationRuntime:
                         "Session store flush on shutdown: exc_type={}",
                         type(exc).__name__,
                     )
-        if runtime is not None:
-            await best_effort(
-                "messaging_runtime.stop",
-                runtime.stop(),
-                log_verbose_errors=verbose,
-            )
-        if cli_manager is not None:
-            await best_effort(
+                return False
+            if self._messaging_workflow is workflow:
+                self._messaging_workflow = None
+            if self._cli_manager is cli_manager:
+                self._cli_manager = None
+        elif cli_manager is not None:
+            drained = await best_effort(
                 "cli_manager.stop_all",
                 cli_manager.stop_all(),
                 log_verbose_errors=verbose,
             )
+            if not drained:
+                return False
+            if self._cli_manager is cli_manager:
+                self._cli_manager = None
 
-    async def _shutdown_limiter(self) -> None:
-        verbose = self.settings.log_api_error_tracebacks
-        try:
-            await best_effort(
-                "MessagingRateLimiter.shutdown_instance",
-                messaging_limiter.MessagingRateLimiter.shutdown_instance(),
-                timeout_s=2.0,
+        if runtime is not None:
+            closed = await best_effort(
+                "messaging_runtime.close",
+                runtime.close(),
                 log_verbose_errors=verbose,
             )
-        except Exception as exc:
-            if verbose:
-                logger.debug(
-                    "Rate limiter shutdown skipped: {}: {}",
-                    type(exc).__name__,
-                    exc,
-                )
-            else:
-                logger.debug(
-                    "Rate limiter shutdown skipped: exc_type={}",
-                    type(exc).__name__,
-                )
+            if not closed:
+                return False
+            if self._messaging_runtime is runtime:
+                self._messaging_runtime = None
+        return True
+
+    async def _cleanup_transcriber(self) -> bool:
+        transcriber = self._transcriber
+        if transcriber is None:
+            return True
+        closed = await best_effort(
+            "transcriber.close",
+            transcriber.close(),
+            log_verbose_errors=self.settings.log_api_error_tracebacks,
+        )
+        if closed and self._transcriber is transcriber:
+            self._transcriber = None
+        return closed

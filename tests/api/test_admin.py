@@ -2,6 +2,7 @@ from pathlib import Path
 from unittest.mock import patch
 
 import httpx
+import pytest
 from fastapi.testclient import TestClient
 
 from free_claude_code.config.admin.values import MASKED_SECRET
@@ -24,6 +25,7 @@ def _clear_process_config(monkeypatch) -> None:
     for key in (
         "MODEL",
         "NVIDIA_NIM_API_KEY",
+        "HUGGINGFACE_API_KEY",
         "OPENROUTER_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
         "TELEGRAM_PROXY_URL",
@@ -34,6 +36,8 @@ def _clear_process_config(monkeypatch) -> None:
         "SAMBANOVA_API_KEY",
         "HOST",
         "PORT",
+        "VOICE_NOTE_ENABLED",
+        "WHISPER_DEVICE",
         "LOG_FILE",
         "ZAI_BASE_URL",
         "CLAUDE_WORKSPACE",
@@ -132,6 +136,19 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
         field for field in body["fields"] if field["key"] == "TELEGRAM_PROXY_URL"
     )
     assert telegram_proxy_field["secret"] is True
+    restart_required = {
+        field["key"] for field in body["fields"] if field["restart_required"] is True
+    }
+    assert {
+        "ANTHROPIC_AUTH_TOKEN",
+        "DEBUG_PLATFORM_EDITS",
+        "DEBUG_SUBAGENT_STACK",
+        "LOG_RAW_API_PAYLOADS",
+        "LOG_API_ERROR_TRACEBACKS",
+        "LOG_RAW_MESSAGING_CONTENT",
+        "LOG_RAW_CLI_DIAGNOSTICS",
+        "LOG_MESSAGING_ERROR_DETAILS",
+    } <= restart_required
 
 
 def test_admin_config_preserves_managed_env_source_contract(monkeypatch, tmp_path):
@@ -393,11 +410,103 @@ def test_admin_apply_writes_huggingface_key_and_masks_preview(monkeypatch, tmp_p
     assert response.status_code == 200
     body = response.json()
     assert body["applied"] is True
+    assert body["pending_fields"] == []
     assert "HUGGINGFACE_API_KEY=********" in body["env_preview"]
     env_file = tmp_path / ".fcc" / ".env"
     text = env_file.read_text(encoding="utf-8")
     assert "MODEL=huggingface/openai/gpt-oss-120b:fastest" in text
     assert "HUGGINGFACE_API_KEY=hf-secret" in text
+
+
+@pytest.mark.parametrize(
+    ("device", "credential_key"),
+    [
+        ("nvidia_nim", "NVIDIA_NIM_API_KEY"),
+        ("cpu", "HUGGINGFACE_API_KEY"),
+    ],
+)
+def test_admin_key_change_requires_restart_for_active_voice_backend(
+    monkeypatch,
+    tmp_path,
+    device,
+    credential_key,
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    env_file = tmp_path / ".fcc" / ".env"
+    env_file.parent.mkdir(parents=True)
+    env_file.write_text(
+        "\n".join(
+            [
+                "VOICE_NOTE_ENABLED=true",
+                f"WHISPER_DEVICE={device}",
+                f"{credential_key}=old-key",
+                "",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    app = create_test_app()
+
+    response = _local_client(app).post(
+        "/admin/api/config/apply",
+        json={"values": {credential_key: "new-key"}},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["applied"] is True
+    assert body["pending_fields"] == [credential_key]
+    assert body["restart"] == {
+        "required": True,
+        "automatic": False,
+        "admin_url": None,
+        "fields": [credential_key],
+    }
+
+
+@pytest.mark.parametrize(
+    ("key", "initial", "updated"),
+    [
+        ("ANTHROPIC_AUTH_TOKEN", "old-token", "new-token"),
+        ("DEBUG_PLATFORM_EDITS", "true", "false"),
+        ("DEBUG_SUBAGENT_STACK", "true", "false"),
+        ("LOG_RAW_API_PAYLOADS", "true", "false"),
+        ("LOG_API_ERROR_TRACEBACKS", "true", "false"),
+        ("LOG_RAW_MESSAGING_CONTENT", "true", "false"),
+        ("LOG_RAW_CLI_DIAGNOSTICS", "true", "false"),
+        ("LOG_MESSAGING_ERROR_DETAILS", "true", "false"),
+    ],
+)
+def test_admin_constructor_captured_setting_requires_restart(
+    monkeypatch,
+    tmp_path,
+    key,
+    initial,
+    updated,
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    env_file = tmp_path / ".fcc" / ".env"
+    env_file.parent.mkdir(parents=True)
+    env_file.write_text(f"{key}={initial}\n", encoding="utf-8")
+    app = create_test_app()
+
+    response = _local_client(app).post(
+        "/admin/api/config/apply",
+        json={"values": {key: updated}},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["applied"] is True
+    assert body["pending_fields"] == [key]
+    assert body["restart"] == {
+        "required": True,
+        "automatic": False,
+        "admin_url": None,
+        "fields": [key],
+    }
 
 
 def test_admin_apply_writes_cohere_key_and_masks_preview(monkeypatch, tmp_path):

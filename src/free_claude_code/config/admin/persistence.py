@@ -106,19 +106,38 @@ def validate_updates(updates: Mapping[str, Any]) -> dict[str, Any]:
     return prepare_admin_update(updates).validation_response()
 
 
-def changed_pending_fields(updates: Mapping[str, Any]) -> list[str]:
+def changed_pending_fields(
+    updates: Mapping[str, Any],
+    *,
+    settings: Settings,
+) -> list[str]:
     """Return changed fields that require manual runtime action."""
 
     state = load_value_state()
     pending: list[str] = []
     for key, value in updates.items():
         field = FIELD_BY_KEY.get(key)
-        if field is None or not (field.restart_required or field.session_sensitive):
+        if field is None or is_locked_source(state[key]["source"]):
+            continue
+        if field.secret and value == MASKED_SECRET:
+            continue
+        requires_restart = field.restart_required or field.session_sensitive
+        if not requires_restart:
+            requires_restart = _active_voice_credential(settings) == key
+        if not requires_restart:
             continue
         if normalize_for_env(value) == str(state[key]["value"]):
             continue
         pending.append(key)
     return pending
+
+
+def _active_voice_credential(settings: Settings) -> str | None:
+    if not settings.voice_note_enabled:
+        return None
+    if settings.whisper_device == "nvidia_nim":
+        return "NVIDIA_NIM_API_KEY"
+    return "HUGGINGFACE_API_KEY"
 
 
 def prepare_admin_update(updates: Mapping[str, Any]) -> PreparedAdminUpdate:
@@ -128,7 +147,9 @@ def prepare_admin_update(updates: Mapping[str, Any]) -> PreparedAdminUpdate:
     effective_values = effective_values_for_validation(target_values)
     settings, errors = settings_from_values(effective_values)
     pending_fields = (
-        tuple(changed_pending_fields(updates)) if settings is not None else ()
+        tuple(changed_pending_fields(updates, settings=settings))
+        if settings is not None
+        else ()
     )
     return PreparedAdminUpdate(
         target_values=target_values,

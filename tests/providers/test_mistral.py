@@ -1,6 +1,5 @@
 """Tests for Mistral La Plateforme provider."""
 
-from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,6 +10,7 @@ from httpx import Request, Response
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.exceptions import ProviderError
 from free_claude_code.providers.mistral import MISTRAL_DEFAULT_BASE, MistralProvider
+from tests.providers.support import passthrough_rate_limiter
 
 
 class MockMessage:
@@ -65,30 +65,9 @@ def mistral_config():
     )
 
 
-@pytest.fixture(autouse=True)
-def mock_rate_limiter():
-    """Mock the global rate limiter to prevent waiting."""
-
-    @asynccontextmanager
-    async def _slot():
-        yield
-
-    with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
-    ) as mock:
-        instance = mock.get_scoped_instance.return_value
-
-        async def _passthrough(fn, *args, **kwargs):
-            return await fn(*args, **kwargs)
-
-        instance.execute_with_retry = AsyncMock(side_effect=_passthrough)
-        instance.concurrency_slot.side_effect = _slot
-        yield instance
-
-
 @pytest.fixture
 def mistral_provider(mistral_config):
-    return MistralProvider(mistral_config)
+    return MistralProvider(mistral_config, rate_limiter=passthrough_rate_limiter())
 
 
 def test_init(mistral_config):
@@ -96,7 +75,9 @@ def test_init(mistral_config):
     with patch(
         "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
     ) as mock_openai:
-        provider = MistralProvider(mistral_config)
+        provider = MistralProvider(
+            mistral_config, rate_limiter=passthrough_rate_limiter()
+        )
         assert provider._api_key == "test_mistral_key"
         assert provider._base_url == MISTRAL_DEFAULT_BASE
         mock_openai.assert_called_once()
@@ -188,7 +169,8 @@ def test_build_request_body_global_disable_blocks_reasoning_mapping():
             rate_limit=10,
             rate_window=60,
             enable_thinking=False,
-        )
+        ),
+        rate_limiter=passthrough_rate_limiter(),
     )
     req = MockRequest()
     body = provider._build_request_body(req)
@@ -205,7 +187,8 @@ def test_build_request_body_thinking_disabled_strips_prior_mistral_thinking():
             rate_limit=10,
             rate_window=60,
             enable_thinking=False,
-        )
+        ),
+        rate_limiter=passthrough_rate_limiter(),
     )
     req = MockRequest(
         system=None,

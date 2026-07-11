@@ -1,9 +1,4 @@
-"""
-Global Rate Limiter for Messaging Platforms.
-
-Centralizes outgoing message requests and ensures compliance with rate limits
-using a strict sliding window algorithm and a task queue.
-"""
+"""Runtime-owned queued delivery for one messaging platform."""
 
 import asyncio
 from collections import deque
@@ -12,7 +7,6 @@ from typing import Any
 
 from loguru import logger
 
-from free_claude_code.config.settings import get_settings
 from free_claude_code.core.rate_limit import (
     StrictSlidingWindowLimiter as SlidingWindowLimiter,
 )
@@ -22,43 +16,21 @@ from .safe_diagnostics import format_exception_for_log
 
 class MessagingRateLimiter:
     """
-    A thread-safe global rate limiter for messaging.
+    Rate limiter and compacting work queue for one messaging runtime.
 
     Uses a custom queue with task compaction (deduplication) to ensure
     only the latest version of a message update is processed.
     """
 
-    _instance: MessagingRateLimiter | None = None
-    _lock = asyncio.Lock()
-
-    def __new__(cls, *args, **kwargs):
-        return super().__new__(cls)
-
-    @classmethod
-    async def get_instance(
-        cls,
+    def __init__(
+        self,
         *,
-        rate_limit: int = 1,
-        rate_window: float = 1.0,
-    ) -> MessagingRateLimiter:
-        """Get the singleton instance of the limiter.
-
-        ``rate_limit`` and ``rate_window`` apply only when the singleton is first
-        created. Call :meth:`shutdown_instance` before changing parameters.
-        """
-        async with cls._lock:
-            if cls._instance is None:
-                cls._instance = cls(rate_limit=rate_limit, rate_window=rate_window)
-                # Start the background worker (tracked for graceful shutdown).
-                cls._instance._start_worker()
-        return cls._instance
-
-    def __init__(self, *, rate_limit: int, rate_window: float) -> None:
-        # Prevent double initialization in singleton
-        if hasattr(self, "_initialized"):
-            return
-
+        rate_limit: int,
+        rate_window: float,
+        log_error_details: bool = False,
+    ) -> None:
         self.limiter = SlidingWindowLimiter(rate_limit, rate_window)
+        self._log_error_details = log_error_details
         # Custom queue state - using deque for O(1) popleft
         self._queue_list: deque[str] = deque()  # Deque of dedup_keys in order
         self._queue_map: dict[
@@ -66,25 +38,27 @@ class MessagingRateLimiter:
         ] = {}
         self._condition = asyncio.Condition()
         self._shutdown = asyncio.Event()
-        self._worker_task: asyncio.Task | None = None
-
-        self._initialized = True
+        self._worker_task: asyncio.Task[None] | None = None
+        self._background_tasks: set[asyncio.Task[None]] = set()
+        self._active_futures: list[asyncio.Future[Any]] = []
+        self._closed = False
         self._paused_until = 0
 
         logger.info(
             f"MessagingRateLimiter initialized ({rate_limit} req / {rate_window}s with Task Compaction)"
         )
 
-    def _start_worker(self) -> None:
-        """Ensure the worker task exists."""
+    def start(self) -> None:
+        """Start the owned worker on the current event loop."""
+        if self._closed:
+            raise RuntimeError("Messaging rate limiter is closed.")
         if self._worker_task and not self._worker_task.done():
             return
-        # Named task helps debugging shutdown hangs.
         self._worker_task = asyncio.create_task(
             self._worker(), name="msg-limiter-worker"
         )
 
-    async def _worker(self):
+    async def _worker(self) -> None:
         """Background worker that processes queued messaging tasks."""
         logger.info("MessagingRateLimiter worker started")
         while not self._shutdown.is_set():
@@ -99,6 +73,7 @@ class MessagingRateLimiter:
 
                     dedup_key = self._queue_list.popleft()
                     func, futures = self._queue_map.pop(dedup_key)
+                    self._active_futures = futures
 
                 # Check for manual pause (FloodWait)
                 now = asyncio.get_event_loop().time()
@@ -116,6 +91,19 @@ class MessagingRateLimiter:
                         for f in futures:
                             if not f.done():
                                 f.set_result(result)
+                    except asyncio.CancelledError:
+                        for f in futures:
+                            if not f.done():
+                                f.cancel()
+                        worker = asyncio.current_task()
+                        if self._shutdown.is_set() or (
+                            worker is not None and worker.cancelling()
+                        ):
+                            raise
+                        logger.debug(
+                            "Messaging operation cancelled for key {}; worker remains active",
+                            dedup_key,
+                        )
                     except Exception as e:
                         # Report error to all futures and log it
                         for f in futures:
@@ -148,17 +136,26 @@ class MessagingRateLimiter:
                                 asyncio.get_event_loop().time() + wait_secs
                             )
                         else:
-                            d = get_settings().log_messaging_error_details
                             logger.error(
                                 "Error in limiter worker for key {}: {}",
                                 dedup_key,
-                                format_exception_for_log(e, log_full_message=d),
+                                format_exception_for_log(
+                                    e,
+                                    log_full_message=self._log_error_details,
+                                ),
                             )
+                    finally:
+                        self._active_futures = []
             except asyncio.CancelledError:
-                break
+                for future in self._active_futures:
+                    if not future.done():
+                        future.cancel()
+                self._active_futures = []
+                if self._shutdown.is_set():
+                    break
+                raise
             except Exception as e:
-                d = get_settings().log_messaging_error_details
-                if d:
+                if self._log_error_details:
                     logger.error(
                         "MessagingRateLimiter worker critical error: {}",
                         e,
@@ -171,53 +168,84 @@ class MessagingRateLimiter:
                     )
                 await asyncio.sleep(1)
 
-    async def shutdown(self, timeout: float = 2.0) -> None:
-        """Stop the background worker so process shutdown doesn't hang."""
+    async def shutdown(self, timeout: float | None = None) -> None:
+        """Cancel queued work and stop every task owned by this limiter."""
+        self._closed = True
         self._shutdown.set()
-        try:
-            async with self._condition:
-                self._condition.notify_all()
-        except Exception:
-            # Best-effort: condition may be bound to a closing loop.
-            pass
+        async with self._condition:
+            queued_futures = [
+                future
+                for _func, futures in self._queue_map.values()
+                for future in futures
+            ]
+            self._queue_list.clear()
+            self._queue_map.clear()
+            for future in queued_futures:
+                if not future.done():
+                    future.cancel()
+            for future in self._active_futures:
+                if not future.done():
+                    future.cancel()
+            self._condition.notify_all()
 
+        cancellation: asyncio.CancelledError | None = None
+        timeout_error: TimeoutError | None = None
         task = self._worker_task
-        if not task or task.done():
-            self._worker_task = None
-            return
-
-        task.cancel()
-        try:
-            await asyncio.wait_for(task, timeout=timeout)
-        except TimeoutError:
-            logger.warning("MessagingRateLimiter worker did not stop before timeout")
-        except asyncio.CancelledError:
-            pass
-        except Exception as e:
-            d = get_settings().log_messaging_error_details
-            logger.debug(
-                "MessagingRateLimiter worker shutdown error: {}",
-                format_exception_for_log(e, log_full_message=d),
-            )
-        finally:
+        if task and not task.done():
+            task.cancel()
+            try:
+                drain = asyncio.gather(task, return_exceptions=True)
+                if timeout is None:
+                    await drain
+                else:
+                    await asyncio.wait_for(drain, timeout=timeout)
+            except TimeoutError as exc:
+                timeout_error = exc
+            except asyncio.CancelledError as exc:
+                cancellation = exc
+        if task is None or task.done():
             self._worker_task = None
 
-    @classmethod
-    async def shutdown_instance(cls, timeout: float = 2.0) -> None:
-        """Shutdown and clear the singleton instance (safe to call multiple times)."""
-        inst = cls._instance
-        if not inst:
-            return
-        try:
-            await inst.shutdown(timeout=timeout)
-        finally:
-            cls._instance = None
+        background_tasks = tuple(self._background_tasks)
+        for background_task in background_tasks:
+            background_task.cancel()
+        if background_tasks:
+            try:
+                await asyncio.gather(*background_tasks, return_exceptions=True)
+            except asyncio.CancelledError as exc:
+                cancellation = exc
+        self._background_tasks.difference_update(
+            task for task in background_tasks if task.done()
+        )
 
-    async def _enqueue_internal(self, func, future, dedup_key, front=False):
+        if cancellation is not None:
+            raise cancellation
+        if timeout_error is not None:
+            raise TimeoutError(
+                "MessagingRateLimiter worker did not stop before timeout"
+            ) from timeout_error
+
+    async def _enqueue_internal(
+        self,
+        func: Callable[[], Awaitable[Any]],
+        future: asyncio.Future[Any],
+        dedup_key: str,
+        front: bool = False,
+    ) -> None:
         await self._enqueue_internal_multi(func, [future], dedup_key, front)
 
-    async def _enqueue_internal_multi(self, func, futures, dedup_key, front=False):
+    async def _enqueue_internal_multi(
+        self,
+        func: Callable[[], Awaitable[Any]],
+        futures: list[asyncio.Future[Any]],
+        dedup_key: str,
+        front: bool = False,
+    ) -> None:
         async with self._condition:
+            if self._closed:
+                raise RuntimeError("Messaging rate limiter is closed.")
+            if self._worker_task is None or self._worker_task.done():
+                raise RuntimeError("Messaging rate limiter has not been started.")
             if dedup_key in self._queue_map:
                 # Compaction: Update existing task with new func, append new futures
                 _old_func, old_futures = self._queue_map[dedup_key]
@@ -241,28 +269,33 @@ class MessagingRateLimiter:
         Enqueue a messaging task and return its future result.
         If dedup_key is provided, subsequent tasks with the same key will replace this one.
         """
+        self._require_running()
         if dedup_key is None:
             # Unique key to avoid deduplication
-            dedup_key = f"task_{id(func)}_{asyncio.get_event_loop().time()}"
+            dedup_key = f"task_{id(func)}_{asyncio.get_running_loop().time()}"
 
-        future = asyncio.get_event_loop().create_future()
-        await self._enqueue_internal(func, future, dedup_key)
+        future = asyncio.get_running_loop().create_future()
+        try:
+            await self._enqueue_internal(func, future, dedup_key)
+        except BaseException:
+            future.cancel()
+            raise
         return await future
 
     def fire_and_forget(
         self, func: Callable[[], Awaitable[Any]], dedup_key: str | None = None
-    ):
+    ) -> None:
         """Enqueue a task without waiting for the result."""
+        self._require_running()
         if dedup_key is None:
-            dedup_key = f"task_{id(func)}_{asyncio.get_event_loop().time()}"
+            dedup_key = f"task_{id(func)}_{asyncio.get_running_loop().time()}"
 
-        future = asyncio.get_event_loop().create_future()
-
-        async def _wrapped():
+        async def _wrapped() -> None:
             max_retries = 2
             for attempt in range(max_retries + 1):
                 try:
-                    return await self.enqueue(func, dedup_key)
+                    await self.enqueue(func, dedup_key)
+                    return
                 except Exception as e:
                     error_msg = str(e).lower()
                     # Only retry transient connectivity issues that might have slipped through
@@ -271,8 +304,7 @@ class MessagingRateLimiter:
                         x in error_msg for x in ["connect", "timeout", "broken"]
                     ):
                         wait = 2**attempt
-                        d = get_settings().log_messaging_error_details
-                        if d:
+                        if self._log_error_details:
                             logger.warning(
                                 "Limiter fire_and_forget transient error (attempt {}): {}. Retrying in {}s...",
                                 attempt + 1,
@@ -289,14 +321,22 @@ class MessagingRateLimiter:
                         await asyncio.sleep(wait)
                         continue
 
-                    d = get_settings().log_messaging_error_details
                     logger.error(
                         "Final error in fire_and_forget for key {}: {}",
                         dedup_key,
-                        format_exception_for_log(e, log_full_message=d),
+                        format_exception_for_log(
+                            e,
+                            log_full_message=self._log_error_details,
+                        ),
                     )
-                    if not future.done():
-                        future.set_exception(e)
                     break
 
-        _ = asyncio.create_task(_wrapped())
+        task = asyncio.create_task(_wrapped(), name=f"msg-limiter:{dedup_key}")
+        self._background_tasks.add(task)
+        task.add_done_callback(self._background_tasks.discard)
+
+    def _require_running(self) -> None:
+        if self._closed:
+            raise RuntimeError("Messaging rate limiter is closed.")
+        if self._worker_task is None or self._worker_task.done():
+            raise RuntimeError("Messaging rate limiter has not been started.")

@@ -5,7 +5,6 @@ Covers the pure parse/clamp helpers and the transport behavior that clamps
 and learns the cap so later requests clamp proactively.
 """
 
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
@@ -16,6 +15,7 @@ from free_claude_code.providers.transports.openai_chat.output_cap import (
     clamp_output_tokens,
     parse_output_token_cap,
 )
+from tests.providers.support import passthrough_rate_limiter
 
 
 class _BadRequest(Exception):
@@ -129,25 +129,6 @@ class MockRequest:
         self.thinking.enabled = False
 
 
-@pytest.fixture(autouse=True)
-def mock_rate_limiter():
-    @asynccontextmanager
-    async def _slot():
-        yield
-
-    with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
-    ) as mock:
-        instance = mock.get_scoped_instance.return_value
-
-        async def _passthrough(fn, *args, **kwargs):
-            return await fn(*args, **kwargs)
-
-        instance.execute_with_retry = AsyncMock(side_effect=_passthrough)
-        instance.concurrency_slot.side_effect = _slot
-        yield instance
-
-
 @pytest.fixture
 def groq_provider():
     return GroqProvider(
@@ -157,7 +138,8 @@ def groq_provider():
             rate_limit=10,
             rate_window=60,
             enable_thinking=False,
-        )
+        ),
+        rate_limiter=passthrough_rate_limiter(),
     )
 
 

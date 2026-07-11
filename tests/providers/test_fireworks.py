@@ -1,7 +1,6 @@
 """Tests for the Fireworks AI OpenAI-chat provider."""
 
-from contextlib import asynccontextmanager
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
@@ -11,25 +10,7 @@ from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.exceptions import InvalidRequestError
 from free_claude_code.providers.fireworks import FIREWORKS_BASE_URL, FireworksProvider
 from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
-
-
-@pytest.fixture(autouse=True)
-def mock_rate_limiter():
-    @asynccontextmanager
-    async def _slot():
-        yield
-
-    with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
-    ) as mock:
-        instance = mock.get_scoped_instance.return_value
-
-        async def _passthrough(fn, *args, **kwargs):
-            return await fn(*args, **kwargs)
-
-        instance.execute_with_retry = AsyncMock(side_effect=_passthrough)
-        instance.concurrency_slot.side_effect = _slot
-        yield instance
+from tests.providers.support import passthrough_rate_limiter
 
 
 @pytest.fixture
@@ -41,7 +22,8 @@ def fireworks_provider():
             rate_limit=10,
             rate_window=60,
             enable_thinking=True,
-        )
+        ),
+        rate_limiter=passthrough_rate_limiter(),
     )
 
 
@@ -92,7 +74,8 @@ def test_build_request_body_global_disable_blocks_thinking():
             rate_limit=1,
             rate_window=1,
             enable_thinking=False,
-        )
+        ),
+        rate_limiter=passthrough_rate_limiter(),
     )
     request = MessagesRequest.model_validate(
         {

@@ -48,10 +48,8 @@ class AnthropicMessagesRecovery:
         for attempt in range(MIDSTREAM_RECOVERY_ATTEMPTS):
             response: httpx.Response | None = None
             try:
-                response = (
-                    await self._transport._global_rate_limiter.execute_with_retry(
-                        self._transport._validated_stream_send, body, req_tag=req_tag
-                    )
+                response = await self._transport._rate_limiter.execute_with_retry(
+                    self._transport._validated_stream_send, body, req_tag=req_tag
                 )
                 state = self._transport._new_stream_state(
                     None, thinking_enabled=thinking_enabled

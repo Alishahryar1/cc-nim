@@ -1,5 +1,6 @@
 """NVIDIA NIM / Riva offline ASR for voice notes (provider-owned transport)."""
 
+import asyncio
 from pathlib import Path
 
 from loguru import logger
@@ -23,71 +24,90 @@ _NIM_ASR_MODEL_MAP: dict[str, tuple[str, str]] = {
 _RIVA_SERVER = "grpc.nvcf.nvidia.com:443"
 
 
-def transcribe_audio_file(
-    file_path: Path,
-    model: str,
-    *,
-    api_key: str,
-) -> str:
-    """Transcribe audio using NVIDIA NIM / Riva gRPC (offline recognition).
+class NvidiaNimTranscriber:
+    """Own configured NVIDIA NIM / Riva transcription."""
 
-    Args:
-        file_path: Path to encoded audio bytes readable by Riva.
-        model: Hugging Face-style NIM model id (see ``_NIM_ASR_MODEL_MAP``).
-        api_key: NVIDIA API key (Bearer token); must be non-empty.
+    def __init__(self, *, model: str, api_key: str) -> None:
+        self._model = model
+        self._key = api_key.strip()
+        self._lock = asyncio.Lock()
+        self._closed = False
 
-    Returns:
-        Transcript text, or ``(no speech detected)`` when empty.
-    """
-    key = (api_key or "").strip()
-    if not key:
-        raise ValueError(
-            "NVIDIA NIM transcription requires a non-empty nvidia_nim_api_key "
-            "(configure NVIDIA_NIM_API_KEY or pass api_key explicitly)."
+    async def transcribe(self, file_path: Path) -> str:
+        """Transcribe one audio file without blocking the event loop."""
+        async with self._lock:
+            if self._closed:
+                raise RuntimeError("NVIDIA NIM transcriber is closed.")
+            worker = asyncio.create_task(
+                asyncio.to_thread(self._transcribe_sync, file_path)
+            )
+            try:
+                return await asyncio.shield(worker)
+            except asyncio.CancelledError:
+                await _wait_for_thread_exit(worker)
+                raise
+
+    async def close(self) -> None:
+        """Close this stateless adapter to future work."""
+        self._closed = True
+        async with self._lock:
+            self._key = ""
+
+    def _transcribe_sync(self, file_path: Path) -> str:
+        if not self._key:
+            raise ValueError(
+                "NVIDIA NIM transcription requires a non-empty "
+                "nvidia_nim_api_key (configure NVIDIA_NIM_API_KEY)."
+            )
+        model_config = _NIM_ASR_MODEL_MAP.get(self._model)
+        if model_config is None:
+            raise ValueError(
+                f"No NVIDIA NIM config found for model: {self._model}. "
+                f"Supported models: {', '.join(_NIM_ASR_MODEL_MAP)}"
+            )
+        function_id, language_code = model_config
+        try:
+            import riva.client
+        except ImportError as exc:
+            raise ImportError(
+                "NVIDIA NIM transcription requires the voice extra. "
+                "Install with: uv sync --extra voice"
+            ) from exc
+
+        auth = riva.client.Auth(
+            use_ssl=True,
+            uri=_RIVA_SERVER,
+            metadata_args=[
+                ["function-id", function_id],
+                ["authorization", f"Bearer {self._key}"],
+            ],
         )
+        try:
+            asr_service = riva.client.ASRService(auth)
+            config = riva.client.RecognitionConfig(
+                language_code=language_code,
+                max_alternatives=1,
+                verbatim_transcripts=True,
+            )
+            data = file_path.read_bytes()
+            response = asr_service.offline_recognize(data, config)
 
-    try:
-        import riva.client
-    except ImportError as e:
-        raise ImportError(
-            "NVIDIA NIM transcription requires the voice extra. "
-            "Install with: uv sync --extra voice"
-        ) from e
+            transcript = ""
+            results = getattr(response, "results", None)
+            if results and results[0].alternatives:
+                transcript = results[0].alternatives[0].transcript
+            logger.debug("NIM transcription: {} chars", len(transcript))
+            return transcript or "(no speech detected)"
+        finally:
+            auth.channel.close()
 
-    model_config = _NIM_ASR_MODEL_MAP.get(model)
-    if not model_config:
-        raise ValueError(
-            f"No NVIDIA NIM config found for model: {model}. "
-            f"Supported models: {', '.join(_NIM_ASR_MODEL_MAP.keys())}"
-        )
-    function_id, language_code = model_config
 
-    auth = riva.client.Auth(
-        use_ssl=True,
-        uri=_RIVA_SERVER,
-        metadata_args=[
-            ["function-id", function_id],
-            ["authorization", f"Bearer {key}"],
-        ],
-    )
-
-    asr_service = riva.client.ASRService(auth)
-
-    config = riva.client.RecognitionConfig(
-        language_code=language_code,
-        max_alternatives=1,
-        verbatim_transcripts=True,
-    )
-
-    with open(file_path, "rb") as f:
-        data = f.read()
-
-    response = asr_service.offline_recognize(data, config)
-
-    transcript = ""
-    results = getattr(response, "results", None)
-    if results and results[0].alternatives:
-        transcript = results[0].alternatives[0].transcript
-
-    logger.debug(f"NIM transcription: {len(transcript)} chars")
-    return transcript or "(no speech detected)"
+async def _wait_for_thread_exit(worker: asyncio.Task[str]) -> None:
+    """Wait through repeated caller cancellation without cancelling thread work."""
+    while not worker.done():
+        try:
+            await asyncio.shield(asyncio.wait((worker,)))
+        except asyncio.CancelledError:
+            continue
+    if not worker.cancelled():
+        worker.exception()

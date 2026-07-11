@@ -1,7 +1,6 @@
 """Tests for DeepSeek OpenAI-compatible Chat Completions provider."""
 
 import logging
-from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -21,6 +20,7 @@ from free_claude_code.providers.deepseek import (
     DeepSeekProvider,
 )
 from free_claude_code.providers.exceptions import InvalidRequestError
+from tests.providers.support import passthrough_rate_limiter
 
 
 @pytest.fixture
@@ -34,28 +34,9 @@ def deepseek_config():
     )
 
 
-@pytest.fixture(autouse=True)
-def mock_rate_limiter():
-    @asynccontextmanager
-    async def _slot():
-        yield
-
-    with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
-    ) as mock:
-        instance = mock.get_scoped_instance.return_value
-
-        async def _passthrough(fn, *args, **kwargs):
-            return await fn(*args, **kwargs)
-
-        instance.execute_with_retry = AsyncMock(side_effect=_passthrough)
-        instance.concurrency_slot.side_effect = _slot
-        yield instance
-
-
 @pytest.fixture
 def deepseek_provider(deepseek_config):
-    return DeepSeekProvider(deepseek_config)
+    return DeepSeekProvider(deepseek_config, rate_limiter=passthrough_rate_limiter())
 
 
 def test_default_base_url_alias():
@@ -66,7 +47,9 @@ def test_init(deepseek_config):
     with patch(
         "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
     ) as mock_client:
-        provider = DeepSeekProvider(deepseek_config)
+        provider = DeepSeekProvider(
+            deepseek_config, rate_limiter=passthrough_rate_limiter()
+        )
     assert provider._api_key == "test_deepseek_key"
     assert provider._base_url == "https://api.deepseek.com"
     assert mock_client.called
@@ -181,7 +164,8 @@ def test_build_request_body_respects_global_thinking_disable():
             rate_limit=1,
             rate_window=1,
             enable_thinking=False,
-        )
+        ),
+        rate_limiter=passthrough_rate_limiter(),
     )
     request = MessagesRequest.model_validate(
         {
@@ -480,7 +464,8 @@ def test_thinking_off_strips_thinking_history():
             rate_limit=1,
             rate_window=1,
             enable_thinking=False,
-        )
+        ),
+        rate_limiter=passthrough_rate_limiter(),
     )
     request = MessagesRequest.model_validate(
         {
@@ -561,7 +546,8 @@ def test_preflight_strips_user_image():
             base_url=DEEPSEEK_DEFAULT_BASE,
             rate_limit=1,
             rate_window=1,
-        )
+        ),
+        rate_limiter=passthrough_rate_limiter(),
     )
     # Should not raise; image is stripped.
     provider.preflight_stream(request, thinking_enabled=True)
@@ -583,7 +569,8 @@ def test_preflight_rejects_mcp_servers():
             base_url=DEEPSEEK_DEFAULT_BASE,
             rate_limit=1,
             rate_window=1,
-        )
+        ),
+        rate_limiter=passthrough_rate_limiter(),
     )
     with pytest.raises(InvalidRequestError, match="mcp_servers"):
         provider.preflight_stream(request)
@@ -601,7 +588,8 @@ def test_preflight_rejects_listed_server_tools_in_tools_list():
             base_url=DEEPSEEK_DEFAULT_BASE,
             rate_limit=1,
             rate_window=1,
-        )
+        ),
+        rate_limiter=passthrough_rate_limiter(),
     )
     with pytest.raises(InvalidRequestError, match="web_search"):
         provider.preflight_stream(request)
@@ -637,7 +625,8 @@ def test_preflight_rejects_server_tool_result_blocks():
             base_url=DEEPSEEK_DEFAULT_BASE,
             rate_limit=1,
             rate_window=1,
-        )
+        ),
+        rate_limiter=passthrough_rate_limiter(),
     )
     with pytest.raises(InvalidRequestError, match=r"web_search_tool_result|server"):
         provider.preflight_stream(request)

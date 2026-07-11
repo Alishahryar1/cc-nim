@@ -9,8 +9,10 @@ from loguru import logger
 
 from free_claude_code.core.anthropic import format_user_error_preview
 
+from ..limiter import MessagingRateLimiter
 from ..models import IncomingMessage
 from ..rendering.discord_markdown import format_status_discord
+from ..voice import Transcriber
 from .discord_inbound import (
     discord_text_message_from_event,
     discord_voice_request_from_event,
@@ -55,8 +57,7 @@ if DISCORD_AVAILABLE and _discord_module is not None:
             self._runtime = runtime
 
         async def on_ready(self) -> None:
-            self._runtime._connected = True
-            logger.info("Discord platform connected")
+            self._runtime._mark_connected()
 
         async def on_message(self, message: Any) -> None:
             await self._runtime._handle_client_message(message)
@@ -74,13 +75,8 @@ class DiscordRuntime:
         bot_token: str | None = None,
         allowed_channel_ids: str | None = None,
         *,
-        voice_note_enabled: bool = True,
-        whisper_model: str = "base",
-        whisper_device: str = "cpu",
-        huggingface_api_key: str = "",
-        nvidia_nim_api_key: str = "",
-        messaging_rate_limit: int = 1,
-        messaging_rate_window: float = 1.0,
+        limiter: MessagingRateLimiter,
+        transcriber: Transcriber | None,
         log_raw_messaging_content: bool = False,
         log_api_error_tracebacks: bool = False,
     ) -> None:
@@ -102,30 +98,45 @@ class DiscordRuntime:
         self._client = _DiscordClient(self, intents)
         self._message_handler: InboundMessageHandler | None = None
         self._connected = False
-        self._limiter: Any | None = None
-        self._start_task: asyncio.Task | None = None
+        self._accepting_messages = False
+        self._ready = asyncio.Event()
+        self._inbound_tasks: set[asyncio.Task[Any]] = set()
+        self._limiter = limiter
+        self._start_task: asyncio.Task[None] | None = None
         self.outbound = DiscordMessenger(
             get_client=lambda: self._client,
             get_discord=_get_discord,
-            get_limiter=lambda: self._limiter,
+            limiter=limiter,
         )
         self._voice_flow = VoiceNoteFlow(
-            voice_note_enabled=voice_note_enabled,
-            whisper_model=whisper_model,
-            whisper_device=whisper_device,
-            huggingface_api_key=huggingface_api_key,
-            nvidia_nim_api_key=nvidia_nim_api_key,
+            transcriber=transcriber,
             log_raw_messaging_content=log_raw_messaging_content,
             log_api_error_tracebacks=log_api_error_tracebacks,
         )
-        self._messaging_rate_limit = messaging_rate_limit
-        self._messaging_rate_window = messaging_rate_window
         self._log_raw_messaging_content = log_raw_messaging_content
         self._log_api_error_tracebacks = log_api_error_tracebacks
 
     async def _handle_client_message(self, message: Any) -> None:
         """Adapter entry point used by the internal Discord client."""
-        await self._on_discord_message(message)
+        if not self._accepting_messages:
+            return
+        task = asyncio.current_task()
+        if task is not None:
+            self._inbound_tasks.add(task)
+        try:
+            if self._accepting_messages:
+                await self._on_discord_message(message)
+        finally:
+            if task is not None:
+                self._inbound_tasks.discard(task)
+
+    def _mark_connected(self) -> None:
+        """Publish Discord readiness while this runtime accepts ingress."""
+        if not self._accepting_messages:
+            return
+        self._connected = True
+        self._ready.set()
+        logger.info("Discord platform connected")
 
     async def cancel_pending_voice(
         self, chat_id: str, reply_id: str
@@ -185,46 +196,105 @@ class DiscordRuntime:
         if not self.bot_token:
             raise ValueError("DISCORD_BOT_TOKEN is required")
 
-        from ..limiter import MessagingRateLimiter
-
-        self._limiter = await MessagingRateLimiter.get_instance(
-            rate_limit=self._messaging_rate_limit,
-            rate_window=self._messaging_rate_window,
-        )
+        self._limiter.start()
+        self._accepting_messages = True
+        self._ready.clear()
 
         self._start_task = asyncio.create_task(
             self._client.start(self.bot_token),
             name="discord-client-start",
         )
-
-        max_wait = 30
-        waited = 0.0
-        while not self._connected and waited < max_wait:
-            await asyncio.sleep(0.5)
-            waited += 0.5
-
-        if not self._connected:
-            raise RuntimeError("Discord client failed to connect within timeout")
+        self._start_task.add_done_callback(self._observe_client_exit)
+        ready_task = asyncio.create_task(
+            self._ready.wait(),
+            name="discord-client-ready",
+        )
+        try:
+            done, _pending = await asyncio.wait(
+                (self._start_task, ready_task),
+                timeout=30.0,
+                return_when=asyncio.FIRST_COMPLETED,
+            )
+            if not done:
+                raise RuntimeError("Discord client failed to connect within timeout")
+            if self._start_task in done:
+                await self._start_task
+                raise RuntimeError("Discord client stopped before becoming ready")
+            if self._start_task.done():
+                await self._start_task
+                raise RuntimeError("Discord client stopped unexpectedly")
+        finally:
+            ready_task.cancel()
+            await asyncio.gather(ready_task, return_exceptions=True)
 
         logger.info("Discord platform started")
 
-    async def stop(self) -> None:
-        """Stop Discord SDK resources."""
-        if self._client.is_closed():
-            self._connected = False
+    def _observe_client_exit(self, task: asyncio.Task[None]) -> None:
+        """Observe the long-lived Discord client task and publish lost readiness."""
+        if task.cancelled():
+            exception: BaseException | None = None
+        else:
+            exception = task.exception()
+
+        was_connected = self._connected
+        if not self._accepting_messages:
             return
 
-        await self._client.close()
-        if self._start_task and not self._start_task.done():
-            try:
-                await asyncio.wait_for(self._start_task, timeout=5.0)
-            except TimeoutError, asyncio.CancelledError:
-                self._start_task.cancel()
-                with contextlib.suppress(asyncio.CancelledError):
-                    await self._start_task
-
         self._connected = False
-        logger.info("Discord platform stopped")
+        self._ready.clear()
+        if not was_connected:
+            return
+
+        if exception is None:
+            logger.error("Discord client stopped unexpectedly")
+        elif self._log_api_error_tracebacks:
+            logger.error("Discord client stopped unexpectedly: {}", exception)
+        else:
+            logger.error(
+                "Discord client stopped unexpectedly: exc_type={}",
+                type(exception).__name__,
+            )
+
+    async def quiesce(self) -> None:
+        """Stop Discord ingress and drain active SDK handlers."""
+        self._accepting_messages = False
+        try:
+            if not self._client.is_closed():
+                await self._client.close()
+        finally:
+            try:
+                await self._drain_start_task()
+            finally:
+                try:
+                    await self._drain_inbound_tasks()
+                finally:
+                    self._connected = False
+                    self._ready.clear()
+
+    async def close(self) -> None:
+        """Close Discord delivery resources after ingress is quiescent."""
+        try:
+            await self.outbound.close()
+        finally:
+            await self._limiter.shutdown()
+            logger.info("Discord platform closed")
+
+    async def _drain_start_task(self) -> None:
+        task = self._start_task
+        if task is None:
+            return
+        if not task.done():
+            task.cancel()
+        try:
+            await asyncio.gather(task, return_exceptions=True)
+        finally:
+            if task.done() and self._start_task is task:
+                self._start_task = None
+
+    async def _drain_inbound_tasks(self) -> None:
+        tasks = tuple(self._inbound_tasks)
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
 
     def on_message(self, handler: Callable[[IncomingMessage], Awaitable[None]]) -> None:
         """Register the workflow callback for inbound messages."""

@@ -7,6 +7,7 @@ from typing import Any
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.defaults import COHERE_DEFAULT_BASE
 from free_claude_code.providers.exceptions import InvalidRequestError
+from free_claude_code.providers.rate_limit import ProviderRateLimiter
 from free_claude_code.providers.transports.openai_chat import (
     OpenAIChatRequestPolicy,
     OpenAIChatTransport,
@@ -44,12 +45,13 @@ _REQUEST_POLICY = OpenAIChatRequestPolicy(
 class CohereProvider(OpenAIChatTransport):
     """Cohere Compatibility API at ``https://api.cohere.ai/compatibility/v1``."""
 
-    def __init__(self, config: ProviderConfig):
+    def __init__(self, config: ProviderConfig, *, rate_limiter: ProviderRateLimiter):
         super().__init__(
             config,
             provider_name="COHERE",
             base_url=config.base_url or COHERE_DEFAULT_BASE,
             api_key=config.api_key,
+            rate_limiter=rate_limiter,
         )
 
     def _build_request_body(

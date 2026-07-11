@@ -1,7 +1,6 @@
 """Tests for Cloudflare Workers AI OpenAI-compatible chat provider."""
 
 from collections.abc import AsyncIterator
-from contextlib import asynccontextmanager
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -17,6 +16,7 @@ from free_claude_code.providers.cloudflare import (
     cloudflare_ai_base_url,
 )
 from free_claude_code.providers.exceptions import AuthenticationError
+from tests.providers.support import passthrough_rate_limiter
 
 _ACCOUNT_ID = "account-123"
 _BASE_URL = f"{CLOUDFLARE_AI_REST_ROOT}/accounts/{_ACCOUNT_ID}/ai/v1"
@@ -34,28 +34,13 @@ def cloudflare_config() -> ProviderConfig:
     )
 
 
-@pytest.fixture(autouse=True)
-def mock_rate_limiter():
-    @asynccontextmanager
-    async def _slot():
-        yield
-
-    with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
-    ) as mock:
-        instance = mock.get_scoped_instance.return_value
-
-        async def _passthrough(fn, *args, **kwargs):
-            return await fn(*args, **kwargs)
-
-        instance.execute_with_retry = AsyncMock(side_effect=_passthrough)
-        instance.concurrency_slot.side_effect = _slot
-        yield instance
-
-
 @pytest.fixture
 def cloudflare_provider(cloudflare_config: ProviderConfig) -> CloudflareProvider:
-    return CloudflareProvider(cloudflare_config, account_id=_ACCOUNT_ID)
+    return CloudflareProvider(
+        cloudflare_config,
+        account_id=_ACCOUNT_ID,
+        rate_limiter=passthrough_rate_limiter(),
+    )
 
 
 def _request(model: str = "@cf/moonshotai/kimi-k2.6") -> MessagesRequest:
@@ -88,7 +73,9 @@ def test_missing_account_id_raises_authentication_error(
     cloudflare_config: ProviderConfig,
 ) -> None:
     with pytest.raises(AuthenticationError, match="CLOUDFLARE_ACCOUNT_ID"):
-        CloudflareProvider(cloudflare_config, account_id=" ")
+        CloudflareProvider(
+            cloudflare_config, account_id=" ", rate_limiter=passthrough_rate_limiter()
+        )
 
 
 def test_init_composes_account_scoped_openai_chat_base_url(
@@ -100,7 +87,11 @@ def test_init_composes_account_scoped_openai_chat_base_url(
         ) as mock_openai,
         patch("httpx.AsyncClient") as mock_httpx_client,
     ):
-        provider = CloudflareProvider(cloudflare_config, account_id=_ACCOUNT_ID)
+        provider = CloudflareProvider(
+            cloudflare_config,
+            account_id=_ACCOUNT_ID,
+            rate_limiter=passthrough_rate_limiter(),
+        )
 
     assert provider._api_key == "test-cloudflare-token"
     assert provider._base_url == _BASE_URL

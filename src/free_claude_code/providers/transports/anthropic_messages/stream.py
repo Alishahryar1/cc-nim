@@ -91,16 +91,14 @@ class AnthropicMessagesStreamAdapter:
         ledger = self._new_ledger()
         recovery = RecoveryController(provider_name=tag, request_id=self._request_id)
 
-        async with self._transport._global_rate_limiter.concurrency_slot():
+        async with self._transport._rate_limiter.concurrency_slot():
             while True:
                 stream_opened = False
                 try:
-                    response = (
-                        await self._transport._global_rate_limiter.execute_with_retry(
-                            self._transport._validated_stream_send,
-                            body,
-                            req_tag=req_tag,
-                        )
+                    response = await self._transport._rate_limiter.execute_with_retry(
+                        self._transport._validated_stream_send,
+                        body,
+                        req_tag=req_tag,
                     )
                     stream_opened = True
                     chunk_count = 0
@@ -261,7 +259,7 @@ class AnthropicMessagesStreamAdapter:
                             provider_name=tag,
                             read_timeout_s=self._transport._config.http_read_timeout,
                             request_id=self._request_id,
-                            rate_limiter=self._transport._global_rate_limiter,
+                            rate_limiter=self._transport._rate_limiter,
                         ) from error
                     return
                 finally:

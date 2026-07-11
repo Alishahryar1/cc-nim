@@ -9,6 +9,7 @@ from loguru import logger
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.defaults import NVIDIA_NIM_DEFAULT_BASE
+from free_claude_code.providers.rate_limit import ProviderRateLimiter
 from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
 
 from .request_options import build_nim_request_body
@@ -26,12 +27,19 @@ from .tool_schema import (
 class NvidiaNimProvider(OpenAIChatTransport):
     """NVIDIA NIM provider using official OpenAI client."""
 
-    def __init__(self, config: ProviderConfig, *, nim_settings: NimSettings):
+    def __init__(
+        self,
+        config: ProviderConfig,
+        *,
+        nim_settings: NimSettings,
+        rate_limiter: ProviderRateLimiter,
+    ):
         super().__init__(
             config,
             provider_name="NIM",
             base_url=config.base_url or NVIDIA_NIM_DEFAULT_BASE,
             api_key=config.api_key,
+            rate_limiter=rate_limiter,
         )
         self._nim_settings = nim_settings
 

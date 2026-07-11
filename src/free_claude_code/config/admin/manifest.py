@@ -168,6 +168,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         settings_attr="anthropic_auth_token",
         default="freecc",
         secret=True,
+        restart_required=True,
         description="Protects Claude/API access. It is not admin-page login.",
     ),
     ConfigFieldSpec(
@@ -424,6 +425,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         settings_attr="debug_platform_edits",
         default="false",
         advanced=True,
+        restart_required=True,
     ),
     ConfigFieldSpec(
         "DEBUG_SUBAGENT_STACK",
@@ -433,6 +435,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         settings_attr="debug_subagent_stack",
         default="false",
         advanced=True,
+        restart_required=True,
     ),
     ConfigFieldSpec(
         "LOG_RAW_API_PAYLOADS",
@@ -442,6 +445,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         settings_attr="log_raw_api_payloads",
         default="false",
         advanced=True,
+        restart_required=True,
     ),
     ConfigFieldSpec(
         "LOG_RAW_SSE_EVENTS",
@@ -460,6 +464,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         settings_attr="log_api_error_tracebacks",
         default="false",
         advanced=True,
+        restart_required=True,
     ),
     ConfigFieldSpec(
         "LOG_RAW_MESSAGING_CONTENT",
@@ -469,6 +474,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         settings_attr="log_raw_messaging_content",
         default="false",
         advanced=True,
+        restart_required=True,
     ),
     ConfigFieldSpec(
         "LOG_RAW_CLI_DIAGNOSTICS",
@@ -478,6 +484,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         settings_attr="log_raw_cli_diagnostics",
         default="false",
         advanced=True,
+        restart_required=True,
     ),
     ConfigFieldSpec(
         "LOG_MESSAGING_ERROR_DETAILS",
@@ -487,6 +494,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         settings_attr="log_messaging_error_details",
         default="false",
         advanced=True,
+        restart_required=True,
     ),
     ConfigFieldSpec(
         "FCC_SMOKE_MODEL_NVIDIA_NIM",

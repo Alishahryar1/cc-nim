@@ -16,7 +16,7 @@ from free_claude_code.providers.error_mapping import (
     user_visible_message_for_mapped_provider_error,
 )
 from free_claude_code.providers.model_listing import extract_openai_model_ids
-from free_claude_code.providers.rate_limit import GlobalRateLimiter
+from free_claude_code.providers.rate_limit import ProviderRateLimiter
 
 from .output_cap import clamp_output_tokens, parse_output_token_cap
 from .stream import OpenAIChatStreamAdapter
@@ -33,6 +33,7 @@ class OpenAIChatTransport(BaseProvider):
         provider_name: str,
         base_url: str,
         api_key: str,
+        rate_limiter: ProviderRateLimiter,
         default_headers: Mapping[str, str] | None = None,
     ):
         super().__init__(config)
@@ -42,12 +43,7 @@ class OpenAIChatTransport(BaseProvider):
         # Learned per-model output-token caps from upstream 400 rejections, so
         # later requests clamp proactively instead of paying the 400 each time.
         self._model_output_caps: dict[str, int] = {}
-        self._global_rate_limiter = GlobalRateLimiter.get_scoped_instance(
-            provider_name.lower(),
-            rate_limit=config.rate_limit,
-            rate_window=config.rate_window,
-            max_concurrency=config.max_concurrency,
-        )
+        self._rate_limiter = rate_limiter
         http_client = None
         if config.proxy:
             http_client = httpx.AsyncClient(
@@ -125,7 +121,7 @@ class OpenAIChatTransport(BaseProvider):
         while True:
             try:
                 create_body = self._prepare_create_body(body)
-                stream = await self._global_rate_limiter.execute_with_retry(
+                stream = await self._rate_limiter.execute_with_retry(
                     self._client.chat.completions.create, **create_body, stream=True
                 )
                 return stream, body
@@ -198,7 +194,7 @@ class OpenAIChatTransport(BaseProvider):
     def _map_error_details(
         self, error: Exception, request_id: str | None
     ) -> tuple[Exception, str]:
-        mapped_error = map_error(error, rate_limiter=self._global_rate_limiter)
+        mapped_error = map_error(error, rate_limiter=self._rate_limiter)
         return (
             mapped_error,
             user_visible_message_for_mapped_provider_error(

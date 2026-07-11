@@ -10,13 +10,18 @@ from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.transports.openai_chat.tool_calls import (
     OpenAIToolCallAssembler,
 )
+from tests.providers.support import passthrough_rate_limiter
 
 
 @pytest.mark.asyncio
 async def test_task_tool_interception():
     # Setup provider
     config = ProviderConfig(api_key="test")
-    provider = NvidiaNimProvider(config, nim_settings=NimSettings())
+    provider = NvidiaNimProvider(
+        config,
+        nim_settings=NimSettings(),
+        rate_limiter=passthrough_rate_limiter(),
+    )
 
     # Mock request and stream ledger with real StreamBlockLedger
     request = MagicMock()

@@ -30,6 +30,7 @@ from free_claude_code.providers.transports.openai_chat.tool_calls import (
     iter_heuristic_tool_use_sse,
 )
 from tests.provider_request_mocks import make_openai_compat_stream_request
+from tests.providers.support import passthrough_rate_limiter
 
 
 class AsyncStreamMock:
@@ -68,7 +69,11 @@ def _make_provider():
         rate_limit=10,
         rate_window=60,
     )
-    return NvidiaNimProvider(config, nim_settings=NimSettings())
+    return NvidiaNimProvider(
+        config,
+        nim_settings=NimSettings(),
+        rate_limiter=passthrough_rate_limiter(),
+    )
 
 
 def _make_tool_assembler(provider: NvidiaNimProvider) -> OpenAIToolCallAssembler:
@@ -86,7 +91,11 @@ def _make_provider_with_thinking_enabled(enabled: bool):
         rate_window=60,
         enable_thinking=enabled,
     )
-    return NvidiaNimProvider(config, nim_settings=NimSettings())
+    return NvidiaNimProvider(
+        config,
+        nim_settings=NimSettings(),
+        rate_limiter=passthrough_rate_limiter(),
+    )
 
 
 def _make_request(model="test-model", stream=True):
@@ -193,7 +202,7 @@ class TestStreamingExceptionHandling:
                 side_effect=RuntimeError("API failed"),
             ),
             patch.object(
-                provider._global_rate_limiter,
+                provider._rate_limiter,
                 "wait_if_blocked",
                 new_callable=AsyncMock,
                 return_value=False,
@@ -217,7 +226,7 @@ class TestStreamingExceptionHandling:
                 side_effect=httpx.ReadTimeout(""),
             ),
             patch.object(
-                provider._global_rate_limiter,
+                provider._rate_limiter,
                 "wait_if_blocked",
                 new_callable=AsyncMock,
                 return_value=False,
@@ -250,7 +259,7 @@ class TestStreamingExceptionHandling:
                 return_value=stream_mock,
             ),
             patch.object(
-                provider._global_rate_limiter,
+                provider._rate_limiter,
                 "wait_if_blocked",
                 new_callable=AsyncMock,
                 return_value=False,
@@ -279,7 +288,7 @@ class TestStreamingExceptionHandling:
                 return_value=stream_mock,
             ),
             patch.object(
-                provider._global_rate_limiter,
+                provider._rate_limiter,
                 "wait_if_blocked",
                 new_callable=AsyncMock,
                 return_value=False,
@@ -312,7 +321,7 @@ class TestStreamingExceptionHandling:
                 return_value=stream_mock,
             ),
             patch.object(
-                provider._global_rate_limiter,
+                provider._rate_limiter,
                 "wait_if_blocked",
                 new_callable=AsyncMock,
                 return_value=False,
@@ -348,7 +357,7 @@ class TestStreamingExceptionHandling:
                 return_value=stream_mock,
             ),
             patch.object(
-                provider._global_rate_limiter,
+                provider._rate_limiter,
                 "wait_if_blocked",
                 new_callable=AsyncMock,
                 return_value=False,
@@ -384,7 +393,7 @@ class TestStreamingExceptionHandling:
                 return_value=stream_mock,
             ),
             patch.object(
-                provider._global_rate_limiter,
+                provider._rate_limiter,
                 "wait_if_blocked",
                 new_callable=AsyncMock,
                 return_value=False,
@@ -414,7 +423,7 @@ class TestStreamingExceptionHandling:
                 return_value=stream_mock,
             ),
             patch.object(
-                provider._global_rate_limiter,
+                provider._rate_limiter,
                 "wait_if_blocked",
                 new_callable=AsyncMock,
                 return_value=False,
@@ -446,7 +455,7 @@ class TestStreamingExceptionHandling:
                 return_value=stream_mock,
             ),
             patch.object(
-                provider._global_rate_limiter,
+                provider._rate_limiter,
                 "wait_if_blocked",
                 new_callable=AsyncMock,
                 return_value=False,
@@ -477,7 +486,7 @@ class TestStreamingExceptionHandling:
                 return_value=stream_mock,
             ),
             patch.object(
-                provider._global_rate_limiter,
+                provider._rate_limiter,
                 "wait_if_blocked",
                 new_callable=AsyncMock,
                 return_value=False,
@@ -521,7 +530,7 @@ class TestStreamingExceptionHandling:
                 return_value=stream_mock,
             ),
             patch.object(
-                provider._global_rate_limiter,
+                provider._rate_limiter,
                 "wait_if_blocked",
                 new_callable=AsyncMock,
                 return_value=False,
@@ -1043,7 +1052,7 @@ class TestStreamingExceptionHandling:
                 return await fn(*args, **kwargs)
 
             with patch.object(
-                provider._global_rate_limiter,
+                provider._rate_limiter,
                 "execute_with_retry",
                 new_callable=AsyncMock,
                 side_effect=_passthrough,
@@ -1297,7 +1306,7 @@ class TestStreamChunkEdgeCases:
                 return_value=stream_mock,
             ),
             patch.object(
-                provider._global_rate_limiter,
+                provider._rate_limiter,
                 "wait_if_blocked",
                 new_callable=AsyncMock,
                 return_value=False,
@@ -1333,7 +1342,7 @@ class TestStreamChunkEdgeCases:
                 return_value=stream_mock,
             ),
             patch.object(
-                provider._global_rate_limiter,
+                provider._rate_limiter,
                 "wait_if_blocked",
                 new_callable=AsyncMock,
                 return_value=False,
@@ -1364,7 +1373,7 @@ class TestStreamChunkEdgeCases:
                 return_value=stream_mock,
             ),
             patch.object(
-                provider._global_rate_limiter,
+                provider._rate_limiter,
                 "wait_if_blocked",
                 new_callable=AsyncMock,
                 return_value=False,
@@ -1421,7 +1430,7 @@ async def test_openai_compat_stream_ends_with_contract_when_tool_name_never_arri
             return_value=stream_mock,
         ),
         patch.object(
-            provider._global_rate_limiter,
+            provider._rate_limiter,
             "wait_if_blocked",
             new_callable=AsyncMock,
             return_value=False,

@@ -1,12 +1,12 @@
 """Tests for Groq (OpenAI-compatible) provider."""
 
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.groq import GROQ_DEFAULT_BASE, GroqProvider
+from tests.providers.support import passthrough_rate_limiter
 
 
 class MockMessage:
@@ -42,30 +42,9 @@ def groq_config():
     )
 
 
-@pytest.fixture(autouse=True)
-def mock_rate_limiter():
-    """Mock the global rate limiter to prevent waiting."""
-
-    @asynccontextmanager
-    async def _slot():
-        yield
-
-    with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.GlobalRateLimiter"
-    ) as mock:
-        instance = mock.get_scoped_instance.return_value
-
-        async def _passthrough(fn, *args, **kwargs):
-            return await fn(*args, **kwargs)
-
-        instance.execute_with_retry = AsyncMock(side_effect=_passthrough)
-        instance.concurrency_slot.side_effect = _slot
-        yield instance
-
-
 @pytest.fixture
 def groq_provider(groq_config):
-    return GroqProvider(groq_config)
+    return GroqProvider(groq_config, rate_limiter=passthrough_rate_limiter())
 
 
 def test_init(groq_config):
@@ -73,7 +52,7 @@ def test_init(groq_config):
     with patch(
         "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
     ) as mock_openai:
-        provider = GroqProvider(groq_config)
+        provider = GroqProvider(groq_config, rate_limiter=passthrough_rate_limiter())
         assert provider._api_key == "test_groq_key"
         assert provider._base_url == GROQ_DEFAULT_BASE
         mock_openai.assert_called_once()
@@ -101,7 +80,8 @@ def test_build_request_body_global_disable_blocks_reasoning_mapping():
             rate_limit=10,
             rate_window=60,
             enable_thinking=False,
-        )
+        ),
+        rate_limiter=passthrough_rate_limiter(),
     )
     req = MockRequest()
     body = provider._build_request_body(req)

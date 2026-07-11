@@ -3,13 +3,13 @@
 from collections.abc import Awaitable, Callable
 from typing import Any, cast
 
+from ..limiter import MessagingRateLimiter
 from .outbox import PlatformOutbox
 
 DISCORD_MESSAGE_LIMIT = 2000
 
 ClientGetter = Callable[[], Any]
 DiscordGetter = Callable[[], Any]
-LimiterGetter = Callable[[], Any | None]
 
 
 def truncate_discord_message(text: str, limit: int = DISCORD_MESSAGE_LIMIT) -> str:
@@ -27,12 +27,12 @@ class DiscordMessenger:
         *,
         get_client: ClientGetter,
         get_discord: DiscordGetter,
-        get_limiter: LimiterGetter,
+        limiter: MessagingRateLimiter,
     ) -> None:
         self._get_client = get_client
         self._get_discord = get_discord
         self._outbox = PlatformOutbox(
-            get_limiter=get_limiter,
+            limiter=limiter,
             send=self.send_message,
             edit=self.edit_message,
             delete_many=self.delete_messages,
@@ -161,3 +161,7 @@ class DiscordMessenger:
     def fire_and_forget(self, task: Awaitable[Any]) -> None:
         """Execute a coroutine without awaiting it."""
         self._outbox.fire_and_forget(task)
+
+    async def close(self) -> None:
+        """Cancel outstanding outbound work."""
+        await self._outbox.close()

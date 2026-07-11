@@ -8,17 +8,20 @@ from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from free_claude_code.config.settings import Settings
+from free_claude_code.messaging.transcription import TranscriptionService
 from free_claude_code.providers.exceptions import (
     AuthenticationError,
     ServiceUnavailableError,
 )
+from free_claude_code.providers.nvidia_nim.client import NvidiaNimProvider
+from free_claude_code.providers.nvidia_nim.voice import NvidiaNimTranscriber
 from free_claude_code.runtime.application import (
     ApplicationRuntime,
     startup_failure_message,
     warn_if_process_auth_token,
 )
 from free_claude_code.runtime.asgi import RuntimeASGIApp
-from free_claude_code.runtime.bootstrap import build_asgi_app
+from free_claude_code.runtime.bootstrap import _create_transcriber, build_asgi_app
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
 from tests.api.support import create_test_app
 
@@ -65,7 +68,7 @@ async def test_runtime_startup_logs_admin_url_without_printed_server_banner():
         port=9099,
     )
     manager = ProviderRuntimeManager(settings)
-    runtime = ApplicationRuntime(manager)
+    runtime = ApplicationRuntime(manager, transcriber=None)
     uvicorn_logger = MagicMock()
 
     with (
@@ -166,7 +169,7 @@ def test_general_exception_default_log_excludes_exception_message():
 async def test_model_validation_failure_does_not_block_runtime_startup():
     settings = _settings(messaging_platform="none")
     manager = ProviderRuntimeManager(settings)
-    runtime = ApplicationRuntime(manager)
+    runtime = ApplicationRuntime(manager, transcriber=None)
     validation = AsyncMock(side_effect=ServiceUnavailableError("bad model"))
 
     with (
@@ -290,3 +293,58 @@ def test_bootstrap_honors_process_log_file_override(monkeypatch, tmp_path):
         build_asgi_app(_settings())
 
     assert configure.call_args.args[0] == log_path
+
+
+def test_bootstrap_constructs_fresh_runtime_owned_transcribers() -> None:
+    settings = _settings(voice_note_enabled=True, whisper_device="cpu")
+
+    first = _create_transcriber(settings)
+    second = _create_transcriber(settings)
+
+    assert isinstance(first, TranscriptionService)
+    assert isinstance(second, TranscriptionService)
+    assert first is not second
+
+
+@pytest.mark.asyncio
+async def test_bootstrap_constructs_isolated_runtime_resource_graphs() -> None:
+    settings = _settings(
+        model="nvidia_nim/test-model",
+        voice_note_enabled=True,
+        whisper_device="cpu",
+    )
+
+    with patch("free_claude_code.runtime.bootstrap.configure_logging"):
+        first = build_asgi_app(settings)
+        second = build_asgi_app(settings)
+
+    first_lease = await first.runtime.provider_manager.acquire()
+    second_lease = await second.runtime.provider_manager.acquire()
+    try:
+        first_provider = first_lease.resolve_provider("nvidia_nim")
+        second_provider = second_lease.resolve_provider("nvidia_nim")
+
+        assert isinstance(first_provider, NvidiaNimProvider)
+        assert isinstance(second_provider, NvidiaNimProvider)
+        assert first_provider._rate_limiter is not second_provider._rate_limiter
+        assert first.runtime._transcriber is not second.runtime._transcriber
+    finally:
+        await first_lease.release()
+        await second_lease.release()
+        await first.runtime.close()
+        await second.runtime.close()
+
+
+def test_bootstrap_selects_nvidia_transcriber_without_loading_riva() -> None:
+    settings = _settings(
+        voice_note_enabled=True,
+        whisper_device="nvidia_nim",
+        whisper_model="openai/whisper-large-v3",
+        nvidia_nim_api_key="nvapi-test",
+    )
+
+    assert isinstance(_create_transcriber(settings), NvidiaNimTranscriber)
+
+
+def test_bootstrap_disables_transcription_as_one_owned_resource() -> None:
+    assert _create_transcriber(_settings(voice_note_enabled=False)) is None

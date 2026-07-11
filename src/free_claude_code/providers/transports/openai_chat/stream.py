@@ -104,7 +104,7 @@ class OpenAIChatStreamAdapter:
         tool_argument_aliases: dict[str, dict[str, str]] = {}
         tool_argument_alias_buffers: dict[int, str] = {}
 
-        async with self._transport._global_rate_limiter.concurrency_slot():
+        async with self._transport._rate_limiter.concurrency_slot():
             while True:
                 if not ledger.message_started:
                     for event in hold_event(ledger.message_start()):
@@ -306,7 +306,7 @@ class OpenAIChatStreamAdapter:
                             provider_name=tag,
                             read_timeout_s=self._transport._config.http_read_timeout,
                             request_id=self._request_id,
-                            rate_limiter=self._transport._global_rate_limiter,
+                            rate_limiter=self._transport._rate_limiter,
                         ) from error
                     for event in ledger.terminal_error_tail(
                         error_message,

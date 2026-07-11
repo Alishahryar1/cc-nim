@@ -1,3 +1,4 @@
+import asyncio
 from pathlib import Path
 from unittest.mock import AsyncMock
 
@@ -11,17 +12,33 @@ from free_claude_code.messaging.platforms.voice_flow import (
     audio_suffix_from_metadata,
     is_audio_metadata,
 )
+from free_claude_code.messaging.voice import Transcriber
 
 
-def _flow(*, enabled: bool = True) -> VoiceNoteFlow:
-    return VoiceNoteFlow(
-        voice_note_enabled=enabled,
-        whisper_model="base",
-        whisper_device="cpu",
-        huggingface_api_key="",
-        nvidia_nim_api_key="",
-        log_raw_messaging_content=False,
-        log_api_error_tracebacks=False,
+class MockTranscriber:
+    def __init__(self, result: str = "hello from voice") -> None:
+        self.run = AsyncMock(return_value=result)
+        self.close_run = AsyncMock()
+        self.paths: list[Path] = []
+
+    async def transcribe(self, file_path: Path) -> str:
+        self.paths.append(file_path)
+        return await self.run(file_path)
+
+    async def close(self) -> None:
+        await self.close_run()
+
+
+def _flow(*, enabled: bool = True) -> tuple[VoiceNoteFlow, MockTranscriber]:
+    transcriber = MockTranscriber()
+    configured: Transcriber | None = transcriber if enabled else None
+    return (
+        VoiceNoteFlow(
+            transcriber=configured,
+            log_raw_messaging_content=False,
+            log_api_error_tracebacks=False,
+        ),
+        transcriber,
     )
 
 
@@ -52,10 +69,8 @@ def _request(
 
 
 @pytest.mark.asyncio
-async def test_voice_flow_success_builds_incoming_message(monkeypatch) -> None:
-    flow = _flow()
-    transcribe = AsyncMock(return_value="hello from voice")
-    monkeypatch.setattr(flow._voice_transcription, "transcribe", transcribe)
+async def test_voice_flow_success_builds_incoming_message() -> None:
+    flow, transcriber = _flow()
     handler = AsyncMock()
     queue_send = AsyncMock(return_value="status")
     queue_delete = AsyncMock()
@@ -91,14 +106,14 @@ async def test_voice_flow_success_builds_incoming_message(monkeypatch) -> None:
     assert incoming.reply_to_message_id == "reply"
     assert incoming.message_thread_id == "thread"
     assert incoming.status_message_id == "status"
+    transcriber.run.assert_awaited_once()
+    assert transcriber.paths == downloaded_paths
     assert downloaded_paths and not downloaded_paths[0].exists()
 
 
 @pytest.mark.asyncio
-async def test_voice_flow_disabled_replies_without_transcribing(monkeypatch) -> None:
-    flow = _flow(enabled=False)
-    transcribe = AsyncMock(return_value="should not run")
-    monkeypatch.setattr(flow._voice_transcription, "transcribe", transcribe)
+async def test_voice_flow_disabled_replies_without_transcribing() -> None:
+    flow, transcriber = _flow(enabled=False)
     reply_text = AsyncMock()
 
     handled = await flow.handle(
@@ -110,22 +125,18 @@ async def test_voice_flow_disabled_replies_without_transcribing(monkeypatch) -> 
 
     assert handled is True
     reply_text.assert_awaited_once_with(VOICE_DISABLED_MESSAGE)
-    transcribe.assert_not_awaited()
+    transcriber.run.assert_not_awaited()
 
 
 @pytest.mark.asyncio
-async def test_voice_flow_cancelled_transcription_deletes_status(monkeypatch) -> None:
-    flow = _flow()
+async def test_voice_flow_cancelled_transcription_deletes_status() -> None:
+    flow, transcriber = _flow()
 
-    async def canceling_transcribe(*args, **kwargs) -> str:
+    async def canceling_transcribe(_path: Path) -> str:
         await flow.cancel_pending_voice("chat", "voice")
         return "ignored"
 
-    monkeypatch.setattr(
-        flow._voice_transcription,
-        "transcribe",
-        AsyncMock(side_effect=canceling_transcribe),
-    )
+    transcriber.run.side_effect = canceling_transcribe
     handler = AsyncMock()
     queue_send = AsyncMock(return_value="status")
     queue_delete = AsyncMock()
@@ -143,10 +154,57 @@ async def test_voice_flow_cancelled_transcription_deletes_status(monkeypatch) ->
 
 
 @pytest.mark.asyncio
-async def test_voice_flow_download_failure_cleans_pending_state(monkeypatch) -> None:
-    flow = _flow()
-    transcribe = AsyncMock(return_value="should not run")
-    monkeypatch.setattr(flow._voice_transcription, "transcribe", transcribe)
+async def test_voice_flow_task_cancellation_waits_then_cleans_pending_state() -> None:
+    flow, transcriber = _flow()
+    started = asyncio.Event()
+    cancellation_received = asyncio.Event()
+    release = asyncio.Event()
+    stopped = asyncio.Event()
+
+    async def cancellation_safe_transcribe(_path: Path) -> str:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+            return "unreachable"
+        except asyncio.CancelledError:
+            cancellation_received.set()
+            await release.wait()
+            stopped.set()
+            raise
+
+    transcriber.run.side_effect = cancellation_safe_transcribe
+    handler = AsyncMock()
+    queue_delete = AsyncMock()
+    handle_task = asyncio.create_task(
+        flow.handle(
+            _request(),
+            message_handler=handler,
+            queue_send_message=AsyncMock(return_value="status"),
+            queue_delete_messages=queue_delete,
+        )
+    )
+
+    await started.wait()
+    handle_task.cancel()
+    await cancellation_received.wait()
+
+    assert not handle_task.done()
+    assert await flow.is_voice_still_pending("chat", "voice") is True
+    queue_delete.assert_not_awaited()
+
+    release.set()
+    with pytest.raises(asyncio.CancelledError):
+        await handle_task
+
+    assert stopped.is_set()
+    handler.assert_not_awaited()
+    queue_delete.assert_awaited_once_with("chat", ["status"])
+    assert await flow.cancel_pending_voice("chat", "voice") is None
+
+
+@pytest.mark.asyncio
+async def test_voice_flow_download_failure_cleans_pending_state() -> None:
+    flow, transcriber = _flow()
     reply_text = AsyncMock()
     queue_delete = AsyncMock()
 
@@ -161,22 +219,16 @@ async def test_voice_flow_download_failure_cleans_pending_state(monkeypatch) -> 
     )
 
     assert handled is True
-    transcribe.assert_not_awaited()
+    transcriber.run.assert_not_awaited()
     queue_delete.assert_awaited_once_with("chat", ["status"])
     reply_text.assert_awaited_once_with(VOICE_TRANSCRIPTION_ERROR_MESSAGE)
     assert await flow.cancel_pending_voice("chat", "voice") is None
 
 
 @pytest.mark.asyncio
-async def test_voice_flow_transcription_failure_cleans_pending_state(
-    monkeypatch,
-) -> None:
-    flow = _flow()
-    monkeypatch.setattr(
-        flow._voice_transcription,
-        "transcribe",
-        AsyncMock(side_effect=RuntimeError("transcription failed")),
-    )
+async def test_voice_flow_transcription_failure_cleans_pending_state() -> None:
+    flow, transcriber = _flow()
+    transcriber.run.side_effect = RuntimeError("transcription failed")
     reply_text = AsyncMock()
     queue_delete = AsyncMock()
 
@@ -194,15 +246,10 @@ async def test_voice_flow_transcription_failure_cleans_pending_state(
 
 
 @pytest.mark.asyncio
-async def test_voice_flow_handler_failure_cleans_pending_without_deleting_status(
-    monkeypatch,
-) -> None:
-    flow = _flow()
-    monkeypatch.setattr(
-        flow._voice_transcription,
-        "transcribe",
-        AsyncMock(return_value="hello from voice"),
-    )
+async def test_voice_flow_handler_failure_cleans_pending_without_deleting_status() -> (
+    None
+):
+    flow, _transcriber = _flow()
     reply_text = AsyncMock()
     queue_delete = AsyncMock()
 
@@ -220,6 +267,35 @@ async def test_voice_flow_handler_failure_cleans_pending_without_deleting_status
     queue_delete.assert_not_awaited()
     reply_text.assert_awaited_once_with(VOICE_TRANSCRIPTION_ERROR_MESSAGE)
     assert await flow.cancel_pending_voice("chat", "voice") is None
+
+
+@pytest.mark.asyncio
+async def test_voice_flow_rejects_oversized_audio_before_transcription(
+    monkeypatch,
+) -> None:
+    monkeypatch.setattr(
+        "free_claude_code.messaging.platforms.voice_flow.MAX_AUDIO_SIZE_BYTES",
+        3,
+    )
+    flow, transcriber = _flow()
+    reply_text = AsyncMock()
+    queue_delete = AsyncMock()
+
+    async def download(path: Path) -> None:
+        path.write_bytes(b"four")
+
+    handled = await flow.handle(
+        _request(download_to=download, reply_text=reply_text),
+        message_handler=AsyncMock(),
+        queue_send_message=AsyncMock(return_value="status"),
+        queue_delete_messages=queue_delete,
+    )
+
+    assert handled is True
+    transcriber.run.assert_not_awaited()
+    queue_delete.assert_awaited_once_with("chat", ["status"])
+    assert reply_text.await_args is not None
+    assert "too large" in reply_text.await_args.args[0]
 
 
 def test_audio_metadata_helpers() -> None:

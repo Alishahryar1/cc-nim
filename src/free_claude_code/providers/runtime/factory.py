@@ -9,156 +9,265 @@ from free_claude_code.config.provider_catalog import (
 from free_claude_code.config.settings import Settings
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.exceptions import UnknownProviderTypeError
+from free_claude_code.providers.rate_limit import ProviderRateLimiter
 
 from .config import build_provider_config
 
-ProviderFactory = Callable[[ProviderConfig, Settings], BaseProvider]
+ProviderFactory = Callable[
+    [ProviderConfig, Settings, ProviderRateLimiter], BaseProvider
+]
 
 
-def _create_nvidia_nim(config: ProviderConfig, settings: Settings) -> BaseProvider:
+def _create_nvidia_nim(
+    config: ProviderConfig,
+    settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 
-    return NvidiaNimProvider(config, nim_settings=settings.nim)
+    return NvidiaNimProvider(
+        config,
+        nim_settings=settings.nim,
+        rate_limiter=rate_limiter,
+    )
 
 
-def _create_open_router(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+def _create_open_router(
+    config: ProviderConfig,
+    _settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.open_router import OpenRouterProvider
 
-    return OpenRouterProvider(config)
+    return OpenRouterProvider(config, rate_limiter=rate_limiter)
 
 
-def _create_mistral(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+def _create_mistral(
+    config: ProviderConfig,
+    _settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.mistral import MistralProvider
 
-    return MistralProvider(config)
+    return MistralProvider(config, rate_limiter=rate_limiter)
 
 
 def _create_mistral_codestral(
-    config: ProviderConfig, _settings: Settings
+    config: ProviderConfig,
+    _settings: Settings,
+    rate_limiter: ProviderRateLimiter,
 ) -> BaseProvider:
     from free_claude_code.providers.codestral import CodestralProvider
 
-    return CodestralProvider(config)
+    return CodestralProvider(config, rate_limiter=rate_limiter)
 
 
-def _create_deepseek(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+def _create_deepseek(
+    config: ProviderConfig,
+    _settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.deepseek import DeepSeekProvider
 
-    return DeepSeekProvider(config)
+    return DeepSeekProvider(config, rate_limiter=rate_limiter)
 
 
-def _create_lmstudio(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+def _create_lmstudio(
+    config: ProviderConfig,
+    _settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.lmstudio import LMStudioProvider
 
-    return LMStudioProvider(config)
+    return LMStudioProvider(config, rate_limiter=rate_limiter)
 
 
-def _create_llamacpp(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+def _create_llamacpp(
+    config: ProviderConfig,
+    _settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.llamacpp import LlamaCppProvider
 
-    return LlamaCppProvider(config)
+    return LlamaCppProvider(config, rate_limiter=rate_limiter)
 
 
-def _create_ollama(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+def _create_ollama(
+    config: ProviderConfig,
+    _settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.ollama import OllamaProvider
 
-    return OllamaProvider(config)
+    return OllamaProvider(config, rate_limiter=rate_limiter)
 
 
-def _create_kimi(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+def _create_kimi(
+    config: ProviderConfig,
+    _settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.kimi import KimiProvider
 
-    return KimiProvider(config)
+    return KimiProvider(config, rate_limiter=rate_limiter)
 
 
-def _create_wafer(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+def _create_wafer(
+    config: ProviderConfig,
+    _settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.wafer import WaferProvider
 
-    return WaferProvider(config)
+    return WaferProvider(config, rate_limiter=rate_limiter)
 
 
-def _create_minimax(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+def _create_minimax(
+    config: ProviderConfig,
+    _settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.minimax import MiniMaxProvider
 
-    return MiniMaxProvider(config)
+    return MiniMaxProvider(config, rate_limiter=rate_limiter)
 
 
-def _create_opencode(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+def _create_opencode(
+    config: ProviderConfig,
+    _settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.opencode import OpenCodeProvider
 
-    return OpenCodeProvider(config)
+    return OpenCodeProvider(config, rate_limiter=rate_limiter)
 
 
-def _create_opencode_go(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+def _create_opencode_go(
+    config: ProviderConfig,
+    _settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.opencode import OpenCodeProvider
 
-    return OpenCodeProvider(config, provider_name="OPENCODE_GO")
+    return OpenCodeProvider(
+        config,
+        provider_name="OPENCODE_GO",
+        rate_limiter=rate_limiter,
+    )
 
 
-def _create_vercel(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+def _create_vercel(
+    config: ProviderConfig,
+    _settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.vercel import VercelProvider
 
-    return VercelProvider(config)
+    return VercelProvider(config, rate_limiter=rate_limiter)
 
 
-def _create_huggingface(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+def _create_huggingface(
+    config: ProviderConfig,
+    _settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.huggingface import HuggingFaceProvider
 
-    return HuggingFaceProvider(config)
+    return HuggingFaceProvider(config, rate_limiter=rate_limiter)
 
 
-def _create_cohere(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+def _create_cohere(
+    config: ProviderConfig,
+    _settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.cohere import CohereProvider
 
-    return CohereProvider(config)
+    return CohereProvider(config, rate_limiter=rate_limiter)
 
 
-def _create_github_models(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+def _create_github_models(
+    config: ProviderConfig,
+    _settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.github_models import GitHubModelsProvider
 
-    return GitHubModelsProvider(config)
+    return GitHubModelsProvider(config, rate_limiter=rate_limiter)
 
 
-def _create_zai(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+def _create_zai(
+    config: ProviderConfig,
+    _settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.zai import ZaiProvider
 
-    return ZaiProvider(config)
+    return ZaiProvider(config, rate_limiter=rate_limiter)
 
 
-def _create_fireworks(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+def _create_fireworks(
+    config: ProviderConfig,
+    _settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.fireworks import FireworksProvider
 
-    return FireworksProvider(config)
+    return FireworksProvider(config, rate_limiter=rate_limiter)
 
 
-def _create_cloudflare(config: ProviderConfig, settings: Settings) -> BaseProvider:
+def _create_cloudflare(
+    config: ProviderConfig,
+    settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.cloudflare import CloudflareProvider
 
-    return CloudflareProvider(config, account_id=settings.cloudflare_account_id)
+    return CloudflareProvider(
+        config,
+        account_id=settings.cloudflare_account_id,
+        rate_limiter=rate_limiter,
+    )
 
 
-def _create_gemini(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+def _create_gemini(
+    config: ProviderConfig,
+    _settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.gemini import GeminiProvider
 
-    return GeminiProvider(config)
+    return GeminiProvider(config, rate_limiter=rate_limiter)
 
 
-def _create_groq(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+def _create_groq(
+    config: ProviderConfig,
+    _settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.groq import GroqProvider
 
-    return GroqProvider(config)
+    return GroqProvider(config, rate_limiter=rate_limiter)
 
 
-def _create_sambanova(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+def _create_sambanova(
+    config: ProviderConfig,
+    _settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.sambanova import SambaNovaProvider
 
-    return SambaNovaProvider(config)
+    return SambaNovaProvider(config, rate_limiter=rate_limiter)
 
 
-def _create_cerebras(config: ProviderConfig, _settings: Settings) -> BaseProvider:
+def _create_cerebras(
+    config: ProviderConfig,
+    _settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
     from free_claude_code.providers.cerebras import CerebrasProvider
 
-    return CerebrasProvider(config)
+    return CerebrasProvider(config, rate_limiter=rate_limiter)
 
 
 PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
@@ -210,4 +319,10 @@ def create_provider(provider_id: str, settings: Settings) -> BaseProvider:
     factory = PROVIDER_FACTORIES.get(provider_id)
     if factory is None:
         raise AssertionError(f"Unhandled provider descriptor: {provider_id}")
-    return factory(build_provider_config(descriptor, settings), settings)
+    config = build_provider_config(descriptor, settings)
+    rate_limiter = ProviderRateLimiter(
+        rate_limit=config.rate_limit or 40,
+        rate_window=config.rate_window or 60.0,
+        max_concurrency=config.max_concurrency,
+    )
+    return factory(config, settings, rate_limiter)

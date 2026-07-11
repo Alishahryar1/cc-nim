@@ -16,20 +16,23 @@ from free_claude_code.core.anthropic.streaming import (
 )
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.exceptions import ProviderError
+from free_claude_code.providers.rate_limit import ProviderRateLimiter
 from free_claude_code.providers.transports.anthropic_messages import (
     AnthropicMessagesTransport,
 )
 from free_claude_code.providers.transports.anthropic_messages.recovery import (
     AnthropicMessagesRecovery,
 )
+from tests.providers.support import passthrough_rate_limiter
 
 
 class NativeProvider(AnthropicMessagesTransport):
-    def __init__(self, config: ProviderConfig):
+    def __init__(self, config: ProviderConfig, *, rate_limiter: ProviderRateLimiter):
         super().__init__(
             config,
             provider_name="TEST_NATIVE",
             default_base_url="https://example.test/v1",
+            rate_limiter=rate_limiter,
         )
 
     def _request_headers(self) -> dict[str, str]:
@@ -122,28 +125,28 @@ def provider_config():
     )
 
 
-@pytest.fixture(autouse=True)
+@pytest.fixture
 def mock_rate_limiter():
     @asynccontextmanager
     async def _slot():
         yield
 
-    with patch(
-        "free_claude_code.providers.transports.anthropic_messages.transport.GlobalRateLimiter"
-    ) as mock:
-        instance = mock.get_scoped_instance.return_value
+    instance = MagicMock(spec=ProviderRateLimiter)
 
-        async def _passthrough(fn, *args, **kwargs):
-            return await fn(*args, **kwargs)
+    async def _passthrough(fn, *args, **kwargs):
+        return await fn(*args, **kwargs)
 
-        instance.execute_with_retry = AsyncMock(side_effect=_passthrough)
-        instance.concurrency_slot.side_effect = _slot
-        yield instance
+    instance.execute_with_retry = AsyncMock(side_effect=_passthrough)
+    instance.concurrency_slot.side_effect = _slot
+    yield instance
 
 
 def test_init_configures_httpx_client(provider_config):
     with patch("httpx.AsyncClient") as mock_client:
-        provider = NativeProvider(provider_config)
+        provider = NativeProvider(
+            provider_config,
+            rate_limiter=passthrough_rate_limiter(),
+        )
 
     assert provider._provider_name == "TEST_NATIVE"
     assert provider._api_key == "test-key"
@@ -158,7 +161,10 @@ def test_init_configures_httpx_client(provider_config):
 
 
 def test_default_request_body_strips_internal_fields(provider_config):
-    provider = NativeProvider(provider_config)
+    provider = NativeProvider(
+        provider_config,
+        rate_limiter=passthrough_rate_limiter(),
+    )
 
     body = provider._build_request_body(MockRequest())
 
@@ -169,7 +175,10 @@ def test_default_request_body_strips_internal_fields(provider_config):
 
 
 def test_default_request_body_preserves_thinking_budget(provider_config):
-    provider = NativeProvider(provider_config)
+    provider = NativeProvider(
+        provider_config,
+        rate_limiter=passthrough_rate_limiter(),
+    )
     req = MockRequest(
         body={
             "model": "test-model",
@@ -185,7 +194,10 @@ def test_default_request_body_preserves_thinking_budget(provider_config):
 
 @pytest.mark.asyncio
 async def test_send_stream_request_forces_upstream_streaming(provider_config):
-    provider = NativeProvider(provider_config)
+    provider = NativeProvider(
+        provider_config,
+        rate_limiter=passthrough_rate_limiter(),
+    )
     request_obj = httpx.Request("POST", "https://custom.test/v1/messages")
     response = FakeResponse()
     body = {"model": "test-model", "stream": False}
@@ -212,7 +224,7 @@ async def test_stream_uses_retry_builds_request_and_closes_response(
     provider_config,
     mock_rate_limiter,
 ):
-    provider = NativeProvider(provider_config)
+    provider = NativeProvider(provider_config, rate_limiter=mock_rate_limiter)
     req = MockRequest()
     request_obj = httpx.Request("POST", "https://custom.test/v1/messages")
     response = FakeResponse(
@@ -259,7 +271,7 @@ async def test_late_error_after_native_message_stop_keeps_successful_lifecycle(
     provider_config,
     mock_rate_limiter,
 ):
-    provider = NativeProvider(provider_config)
+    provider = NativeProvider(provider_config, rate_limiter=mock_rate_limiter)
     req = MockRequest()
     lines = [
         "event: message_start",
@@ -301,7 +313,10 @@ async def test_late_error_after_native_message_stop_keeps_successful_lifecycle(
 async def test_stream_maps_pre_start_non_200_to_provider_error_and_closes_response(
     provider_config,
 ):
-    provider = NativeProvider(provider_config)
+    provider = NativeProvider(
+        provider_config,
+        rate_limiter=passthrough_rate_limiter(),
+    )
     req = MockRequest()
     response = FakeResponse(status_code=500, text="Internal Server Error")
 
@@ -328,7 +343,10 @@ async def test_precommit_native_error_raises_without_leaking_open_block(
     provider_config,
 ):
     """A native error before holdback commit raises instead of sending HTTP 200 SSE."""
-    provider = NativeProvider(provider_config)
+    provider = NativeProvider(
+        provider_config,
+        rate_limiter=passthrough_rate_limiter(),
+    )
     req = MockRequest()
     mid = "msg_midstream_err"
     msg_start = format_sse_event(
@@ -380,7 +398,10 @@ async def test_midstream_error_after_native_message_delta_does_not_duplicate_ter
     provider_config,
 ):
     """If native upstream emitted message_delta before cutoff, recovery cannot append content."""
-    provider = NativeProvider(provider_config)
+    provider = NativeProvider(
+        provider_config,
+        rate_limiter=passthrough_rate_limiter(),
+    )
     req = MockRequest()
     msg_start = format_sse_event(
         "message_start",
@@ -519,7 +540,10 @@ async def test_clean_eof_after_complete_native_tool_call_salvages_tool_use(
     provider_config,
 ):
     """Native stream EOF after complete tool args gets a deterministic tool_use tail."""
-    provider = NativeProvider(provider_config)
+    provider = NativeProvider(
+        provider_config,
+        rate_limiter=passthrough_rate_limiter(),
+    )
     req = MockRequest()
     msg_start = format_sse_event(
         "message_start",
@@ -589,7 +613,10 @@ async def test_clean_eof_after_native_text_continues_with_overlap_trim(
     provider_config,
 ):
     """Native text truncation is continued and overlap-trimmed."""
-    provider = NativeProvider(provider_config)
+    provider = NativeProvider(
+        provider_config,
+        rate_limiter=passthrough_rate_limiter(),
+    )
     req = MockRequest()
     msg_start = format_sse_event(
         "message_start",
@@ -664,7 +691,10 @@ async def test_clean_eof_after_native_text_continues_with_overlap_trim(
 @pytest.mark.asyncio
 async def test_native_recovery_collect_text_requires_message_stop(provider_config):
     """Native recovery collectors reject truncated continuation streams."""
-    provider = NativeProvider(provider_config)
+    provider = NativeProvider(
+        provider_config,
+        rate_limiter=passthrough_rate_limiter(),
+    )
     text_delta = format_sse_event(
         "content_block_delta",
         {
@@ -696,7 +726,10 @@ async def test_native_recovery_collect_text_requires_message_stop(provider_confi
 @pytest.mark.asyncio
 async def test_native_recovery_collect_text_accepts_message_stop(provider_config):
     """Native recovery collectors return text only after message_stop."""
-    provider = NativeProvider(provider_config)
+    provider = NativeProvider(
+        provider_config,
+        rate_limiter=passthrough_rate_limiter(),
+    )
     text_delta = format_sse_event(
         "content_block_delta",
         {
@@ -729,7 +762,10 @@ async def test_native_recovery_collect_text_accepts_message_stop(provider_config
 @pytest.mark.asyncio
 async def test_native_recovery_collect_text_reads_eager_start_content(provider_config):
     """Native recovery reads text/thinking carried on content_block_start."""
-    provider = NativeProvider(provider_config)
+    provider = NativeProvider(
+        provider_config,
+        rate_limiter=passthrough_rate_limiter(),
+    )
     text_start = format_sse_event(
         "content_block_start",
         {
@@ -791,7 +827,10 @@ async def test_truncated_native_recovery_stream_falls_back_to_error_tail(
     provider_config,
 ):
     """Partial native recovery bytes are not converted into a success tail."""
-    provider = NativeProvider(provider_config)
+    provider = NativeProvider(
+        provider_config,
+        rate_limiter=passthrough_rate_limiter(),
+    )
     req = MockRequest()
     msg_start = format_sse_event(
         "message_start",
@@ -873,7 +912,10 @@ async def test_precommit_native_holdback_retries_without_leaking_partial(
     provider_config,
 ):
     """A retryable early cutoff before holdback commit is retried invisibly."""
-    provider = NativeProvider(provider_config)
+    provider = NativeProvider(
+        provider_config,
+        rate_limiter=passthrough_rate_limiter(),
+    )
     req = MockRequest()
 
     msg_start = format_sse_event(

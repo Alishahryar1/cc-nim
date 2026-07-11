@@ -55,7 +55,8 @@ class TestMessagingPorts:
         runtime = MagicMock()
         runtime.name = "telegram"
         runtime.start = AsyncMock()
-        runtime.stop = AsyncMock()
+        runtime.quiesce = AsyncMock()
+        runtime.close = AsyncMock()
         runtime.on_message = MagicMock()
         outbound = MagicMock()
         outbound.queue_send_message = AsyncMock()
