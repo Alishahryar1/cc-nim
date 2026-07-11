@@ -280,7 +280,9 @@ class OpenAIChatStreamAdapter:
                         provider_name=tag,
                         read_timeout_s=self._transport._config.http_read_timeout,
                         request_id=self._request_id,
-                        mark_rate_limited=self._transport._rate_limiter.set_blocked,
+                        mark_rate_limited=(
+                            self._transport._rate_limiter.extend_reactive_block
+                        ),
                     )
                     error_trace: dict[str, Any] = {
                         "stage": "provider",

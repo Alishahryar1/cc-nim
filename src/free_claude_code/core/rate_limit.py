@@ -3,6 +3,7 @@
 import asyncio
 import time
 from collections import deque
+from collections.abc import Callable
 
 
 class StrictSlidingWindowLimiter:
@@ -29,6 +30,17 @@ class StrictSlidingWindowLimiter:
         self._lock = asyncio.Lock()
 
     async def acquire(self) -> None:
+        await self._acquire(None)
+
+    async def acquire_if(self, allowed: Callable[[], bool]) -> bool:
+        """Record an acquisition only if ``allowed`` still holds at admission.
+
+        Capacity is awaited first. The synchronous condition and timestamp write
+        then run without yielding, so a rejected admission consumes no quota.
+        """
+        return await self._acquire(allowed)
+
+    async def _acquire(self, allowed: Callable[[], bool] | None) -> bool:
         while True:
             wait_time = 0.0
             async with self._lock:
@@ -39,8 +51,10 @@ class StrictSlidingWindowLimiter:
                     self._times.popleft()
 
                 if len(self._times) < self._rate_limit:
-                    self._times.append(now)
-                    return
+                    if allowed is not None and not allowed():
+                        return False
+                    self._times.append(time.monotonic())
+                    return True
 
                 oldest = self._times[0]
                 wait_time = max(0.0, (oldest + self._rate_window) - now)

@@ -474,7 +474,12 @@ owns provider-ID-to-constructor selection; concrete provider classes own their
 transport inheritance or composition. Each lazy provider receives a fresh
 `ProviderRateLimiter`; there is no process singleton or second limiter registry.
 The provider cache already guarantees one provider and limiter per provider ID
-within a generation. Retired generations
+within a generation. Provider admission combines a strict proactive window with
+one reactive backoff deadline. Positive backoffs can only extend that deadline,
+and admission loops until proactive capacity and the final reactive check are
+simultaneously available. The proactive timestamp is recorded only when that
+check succeeds, so a concurrent 429/5xx cannot be missed, shortened, consume
+unused quota, or release queued requests as an expiry burst. Retired generations
 retain their own synchronization state until request leases drain, while new
 generations and separate server instances never reuse it. Hot replacement
 therefore begins with fresh quota state; an old and new generation enforce

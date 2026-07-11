@@ -71,39 +71,43 @@ class ProviderRateLimiter:
         Returns:
             True if was reactively blocked and waited, False otherwise.
         """
-        # 1. Reactive check: Wait if someone hit a reactive backoff (429/5xx retries)
+        # A reactive deadline can be installed or extended while this task waits
+        # for proactive capacity. Commit the proactive timestamp only if that
+        # deadline is still clear, so retries neither burst nor consume unused quota.
         waited_reactively = False
-        now = time.monotonic()
-        if now < self._blocked_until:
-            wait_time = self._blocked_until - now
+        while True:
+            waited_reactively = (
+                await self._wait_for_reactive_block() or waited_reactively
+            )
+            if await self._proactive_limiter.acquire_if(lambda: not self.is_blocked()):
+                return waited_reactively
+
+    async def _wait_for_reactive_block(self) -> bool:
+        waited = False
+        while (wait_time := self.remaining_wait()) > 0:
             logger.warning(
-                f"Provider rate limit active (reactive), waiting {wait_time:.1f}s..."
+                "Provider rate limit active (reactive), waiting {:.1f}s...",
+                wait_time,
             )
             await asyncio.sleep(wait_time)
-            waited_reactively = True
+            waited = True
+        return waited
 
-        # 2. Proactive check: strict rolling window (no bursts beyond N in last W seconds)
-        await self._acquire_proactive_slot()
-        return waited_reactively
-
-    async def _acquire_proactive_slot(self) -> None:
+    def extend_reactive_block(self, seconds: float) -> None:
         """
-        Acquire a proactive slot enforcing a strict rolling window.
-
-        Guarantees: at most `self._rate_limit` acquisitions in any interval of length
-        `self._rate_window` (seconds).
-        """
-        await self._proactive_limiter.acquire()
-
-    def set_blocked(self, seconds: float = 60) -> None:
-        """
-        Set this provider's block for the specified seconds (reactive).
+        Extend this provider's reactive block by at least ``seconds`` from now.
 
         Args:
-            seconds: How long to block (default 60s)
+            seconds: Positive minimum duration for the resulting block.
         """
-        self._blocked_until = time.monotonic() + seconds
-        logger.warning(f"Provider rate limit set for {seconds:.1f}s (reactive)")
+        if seconds <= 0:
+            raise ValueError("reactive block duration must be > 0")
+        now = time.monotonic()
+        self._blocked_until = max(self._blocked_until, now + seconds)
+        logger.warning(
+            "Provider rate limit set for {:.1f}s (reactive)",
+            max(0.0, self._blocked_until - now),
+        )
 
     def is_blocked(self) -> bool:
         """Check if currently reactively blocked."""
@@ -211,7 +215,7 @@ class ProviderRateLimiter:
                     delay_s=round(delay, 3),
                 )
                 if status is not None:
-                    self.set_blocked(delay)
+                    self.extend_reactive_block(delay)
                 await asyncio.sleep(delay)
 
         assert last_exc is not None
