@@ -6,7 +6,14 @@ from typing import Any
 from free_claude_code.application.model_metadata import (
     ProviderModelInfo as _ProviderModelInfo,
 )
-from free_claude_code.providers.exceptions import ModelListResponseError
+
+
+class ModelListResponseError(ValueError):
+    """A provider model-list response cannot be parsed safely."""
+
+    def __init__(self, message: str) -> None:
+        super().__init__(message)
+        self.message = message
 
 
 def model_infos_from_ids(

@@ -11,6 +11,7 @@ from free_claude_code.api.handlers import (
     ResponsesHandler,
     TokenCountHandler,
 )
+from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic.models import (
     Message,
@@ -18,8 +19,8 @@ from free_claude_code.core.anthropic.models import (
     TokenCountRequest,
 )
 from free_claude_code.core.anthropic.streaming import format_sse_event
+from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
-from free_claude_code.providers.exceptions import InvalidRequestError, RateLimitError
 
 _CLASSIFIER_SYSTEM = (
     "You are a security monitor. Respond with <block>yes</block> or <block>no</block>."
@@ -336,7 +337,12 @@ async def test_messages_handler_stream_false_provider_exception_keeps_status() -
                     "thinking_enabled": thinking_enabled,
                 }
             )
-            raise RateLimitError("upstream is busy")
+            raise ExecutionFailure(
+                kind=FailureKind.RATE_LIMIT,
+                status_code=429,
+                message="upstream is busy",
+                retryable=True,
+            )
             yield "unreachable"
 
     provider = FailingProvider()

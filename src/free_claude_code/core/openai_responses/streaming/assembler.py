@@ -6,10 +6,11 @@ import uuid
 from collections.abc import Mapping
 from typing import Any
 
+from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.core.trace import trace_event
 
 from ..anthropic_sse import AnthropicSseEvent
-from ..errors import ResponsesConversionError
+from ..errors import ResponsesConversionError, openai_error_from_failure
 from ..ids import (
     new_call_id,
     new_message_item_id,
@@ -41,6 +42,7 @@ class ResponsesStreamAssembler:
             on_invalid_function_call=self._fail_invalid_function_call,
         )
         self._started = False
+        self._provisional_error: dict[str, Any] | None = None
         self.terminal = False
         self.final_response: dict[str, Any] | None = None
 
@@ -101,6 +103,9 @@ class ResponsesStreamAssembler:
         chunks = self._flush_active_blocks()
         if self.terminal:
             return chunks
+        if self._provisional_error is not None:
+            chunks.extend(self._finish_failed_response(self._provisional_error))
+            return chunks
         self.final_response = self.response_payload(status="completed")
         chunks.append(events.response_completed(self.final_response))
         self.terminal = True
@@ -111,10 +116,22 @@ class ResponsesStreamAssembler:
         if self.terminal:
             return chunks
         error = openai_error_from_anthropic_error(data)
-        self.final_response = self.response_payload(status="failed", error=error)
-        chunks.append(events.response_failed(self.final_response))
-        self.terminal = True
+        chunks.extend(self._finish_failed_response(error))
         return chunks
+
+    def fail_execution(self, failure: ExecutionFailure) -> list[str]:
+        """Finish the current response with a canonical execution failure."""
+        chunks = self._flush_active_blocks()
+        if self.terminal:
+            return chunks
+        chunks.extend(self._finish_failed_response(openai_error_from_failure(failure)))
+        return chunks
+
+    def _finish_failed_response(self, error: dict[str, Any]) -> list[str]:
+        self._provisional_error = None
+        self.final_response = self.response_payload(status="failed", error=error)
+        self.terminal = True
+        return [events.response_failed(self.final_response)]
 
     def _ensure_started(self) -> list[str]:
         if self._started:
@@ -321,9 +338,9 @@ class ResponsesStreamAssembler:
             error_type=type(exc).__name__,
         )
         error = replay_unsafe_function_call_error()
-        self.final_response = self.response_payload(status="failed", error=error)
-        self.terminal = True
-        return [events.response_failed(self.final_response)]
+        if self._provisional_error is None:
+            self._provisional_error = error
+        return []
 
 
 def _event_index(data: Mapping[str, Any]) -> int | None:

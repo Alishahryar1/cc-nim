@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from free_claude_code.application.errors import UnknownProviderError
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.config.provider_catalog import (
     COHERE_DEFAULT_BASE,
@@ -19,7 +20,6 @@ from free_claude_code.providers.cloudflare import CloudflareProvider
 from free_claude_code.providers.codestral import CodestralProvider
 from free_claude_code.providers.cohere import CohereProvider
 from free_claude_code.providers.deepseek import DeepSeekProvider
-from free_claude_code.providers.exceptions import UnknownProviderTypeError
 from free_claude_code.providers.fireworks import FireworksProvider
 from free_claude_code.providers.gemini import GeminiProvider
 from free_claude_code.providers.github_models import GitHubModelsProvider
@@ -460,7 +460,7 @@ def test_different_providers_in_one_runtime_have_independent_limiters() -> None:
 
 
 def test_unknown_provider_raises_unknown_provider_type_error():
-    with pytest.raises(UnknownProviderTypeError, match="Unknown provider_type"):
+    with pytest.raises(UnknownProviderError, match="Unknown provider_type"):
         create_provider("unknown", _make_settings())
 
 

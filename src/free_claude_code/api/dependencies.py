@@ -5,14 +5,10 @@ import secrets
 from fastapi import Depends, HTTPException, Request
 from loguru import logger
 
+from free_claude_code.application.errors import UnknownProviderError
 from free_claude_code.application.ports import ProviderPort, RequestRuntimeLease
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.settings import Settings
-from free_claude_code.core.anthropic import get_user_facing_error_message
-from free_claude_code.providers.exceptions import (
-    AuthenticationError,
-    UnknownProviderTypeError,
-)
 
 from .ports import ApiServices
 
@@ -36,10 +32,7 @@ def resolve_provider(
     should_log_init = not lease.is_provider_cached(provider_type)
     try:
         provider = lease.resolve_provider(provider_type)
-    except AuthenticationError as exc:
-        detail = str(exc).strip() or get_user_facing_error_message(exc)
-        raise HTTPException(status_code=503, detail=detail) from exc
-    except UnknownProviderTypeError:
+    except UnknownProviderError:
         logger.error(
             "Unknown provider_type: '{}'. Supported: {}",
             provider_type,

@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import httpx
 import pytest
 
+from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.exceptions import InvalidRequestError
 from free_claude_code.providers.lmstudio import LMStudioProvider
 from free_claude_code.providers.lmstudio.client import LMSTUDIO_DEFAULT_BASE
 from tests.providers.request_factory import make_messages_request

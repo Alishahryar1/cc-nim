@@ -13,6 +13,7 @@ from loguru import logger
 import free_claude_code.cli.managed as cli_managed
 import free_claude_code.messaging.session as messaging_session
 import free_claude_code.messaging.workflow as messaging_workflow_module
+from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.ports import StopResult
 from free_claude_code.config.admin.persistence import (
     PreparedAdminUpdate,
@@ -36,7 +37,6 @@ from free_claude_code.messaging.platforms.ports import (
     MessagingRuntime,
 )
 from free_claude_code.messaging.voice import Transcriber
-from free_claude_code.providers.exceptions import ServiceUnavailableError
 
 from .provider_manager import ProviderRuntimeManager
 
@@ -90,7 +90,7 @@ def warn_if_process_auth_token(settings: Settings) -> None:
 
 def startup_failure_message(settings: Settings, exc: Exception) -> str:
     """Return the existing concise ASGI startup failure message."""
-    if isinstance(exc, ServiceUnavailableError):
+    if isinstance(exc, ApplicationUnavailableError):
         return exc.message.strip() or "Server startup failed."
     if settings.log_api_error_tracebacks:
         return f"{type(exc).__name__}: {exc}"
@@ -289,7 +289,7 @@ class ApplicationRuntime:
     async def _validate_configured_models_best_effort(self) -> None:
         try:
             await self.provider_manager.validate_configured_models()
-        except ServiceUnavailableError as exc:
+        except ApplicationUnavailableError as exc:
             logger.warning(
                 "Configured provider model validation failed during startup; "
                 "server will continue and requests will fail at provider resolution "

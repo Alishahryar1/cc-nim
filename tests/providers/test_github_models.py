@@ -10,12 +10,12 @@ import pytest
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.exceptions import ModelListResponseError
 from free_claude_code.providers.github_models import (
     GITHUB_MODELS_DEFAULT_BASE,
     GitHubModelsProvider,
 )
 from free_claude_code.providers.github_models.client import GITHUB_MODELS_CATALOG_URL
+from free_claude_code.providers.model_listing import ModelListResponseError
 from tests.providers.support import passthrough_rate_limiter
 
 

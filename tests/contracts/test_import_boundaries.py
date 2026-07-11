@@ -3,13 +3,6 @@
 import ast
 from pathlib import Path
 
-# `free_claude_code.api` may only import this narrow ``providers`` surface.
-_API_ALLOWED_PROVIDER_MODULES = frozenset(
-    {
-        "free_claude_code.providers.exceptions",
-    }
-)
-
 _PACKAGE_ROOT = Path("src") / "free_claude_code"
 
 
@@ -202,6 +195,43 @@ def test_core_does_not_import_product_packages() -> None:
     assert offenders == []
 
 
+def test_core_does_not_import_provider_transport_sdks() -> None:
+    """Provider SDK and HTTP failure policy belongs under ``providers``."""
+    repo_root = Path(__file__).resolve().parents[2]
+    offenders = _imports_matching(
+        [repo_root / "src" / "free_claude_code" / "core"],
+        forbidden_prefixes=("httpx", "openai"),
+    )
+    assert offenders == []
+
+
+def test_providers_do_not_own_wire_error_type_literals() -> None:
+    """Provider failures carry semantic kinds, never protocol error names."""
+    repo_root = Path(__file__).resolve().parents[2]
+    providers_root = repo_root / "src" / "free_claude_code" / "providers"
+    wire_types = {
+        "api_error",
+        "authentication_error",
+        "billing_error",
+        "invalid_request_error",
+        "not_found_error",
+        "overloaded_error",
+        "permission_error",
+        "rate_limit_error",
+        "request_too_large",
+        "timeout_error",
+    }
+    offenders: list[str] = []
+    for path in providers_root.rglob("*.py"):
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        offenders.extend(
+            f"{path.relative_to(repo_root).as_posix()}:{node.lineno}: {node.value}"
+            for node in ast.walk(tree)
+            if isinstance(node, ast.Constant) and node.value in wire_types
+        )
+    assert offenders == []
+
+
 def test_application_owns_routing_execution_and_consumer_ports() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     package_root = repo_root / "src" / "free_claude_code"
@@ -251,7 +281,10 @@ def test_application_owns_routing_execution_and_consumer_ports() -> None:
                 "free_claude_code.application."
             ):
                 continue
-            if imported == "free_claude_code.application.model_metadata":
+            if imported in {
+                "free_claude_code.application.errors",
+                "free_claude_code.application.model_metadata",
+            }:
                 continue
             unexpected_provider_application_imports.append(
                 f"{path.relative_to(repo_root)}: {imported}"
@@ -447,22 +480,14 @@ def test_neutral_moved_helpers_keep_their_dependency_boundaries() -> None:
     )
 
 
-def test_api_may_only_import_narrow_provider_facade() -> None:
-    """HTTP layer must not depend on per-adapter provider subpackages."""
+def test_api_does_not_import_provider_implementation_packages() -> None:
+    """HTTP adapters depend on application contracts, never provider internals."""
     repo_root = Path(__file__).resolve().parents[2]
-    offenders: list[str] = []
-    for path in (repo_root / "src" / "free_claude_code" / "api").rglob("*.py"):
-        for imported in _imports_from(path, repo_root):
-            if imported is None or not imported.startswith(
-                "free_claude_code.providers"
-            ):
-                continue
-            if imported in _API_ALLOWED_PROVIDER_MODULES:
-                continue
-            if imported.startswith("free_claude_code.providers."):
-                rel = path.relative_to(repo_root)
-                offenders.append(f"{rel}: {imported}")
-    assert sorted(offenders) == []
+    offenders = _imports_matching(
+        [repo_root / "src" / "free_claude_code" / "api"],
+        forbidden_prefixes=("free_claude_code.providers",),
+    )
+    assert offenders == []
 
 
 def test_removed_openrouter_rollback_transport_stays_removed() -> None:
@@ -580,51 +605,41 @@ def test_anthropic_core_has_no_cloud_provider_native_policy() -> None:
     assert occurrences == []
 
 
-def test_anthropic_stream_engine_owns_provider_stream_state() -> None:
+def test_protocol_stream_state_and_provider_recovery_have_separate_owners() -> None:
     repo_root = Path(__file__).resolve().parents[2]
-    anthropic_root = repo_root / "src" / "free_claude_code" / "core" / "anthropic"
-    streaming_root = anthropic_root / "streaming"
+    package_root = repo_root / "src" / "free_claude_code"
+    streaming_root = package_root / "core" / "anthropic" / "streaming"
+    providers_root = package_root / "providers"
+    stream_recovery = providers_root / "stream_recovery.py"
 
-    for removed in {
-        "sse.py",
-        "emitted_sse_tracker.py",
-        "stream_recovery.py",
-        "stream_recovery_session.py",
-    }:
-        assert not (anthropic_root / removed).exists()
-
-    for filename in {
-        "__init__.py",
-        "emitter.py",
-        "ledger.py",
-        "lifecycle.py",
-        "recovery.py",
-    }:
-        assert (streaming_root / filename).exists()
-
-    forbidden = (
-        "SSEBuilder",
-        "ContentBlockManager",
-        "ToolCallState",
-        "EmittedNativeSseTracker",
-        "StreamRecoverySession",
-        "OpenAIChatStreamRunner",
-        "AnthropicMessagesStreamRunner",
-    )
-    offenders: list[str] = []
-    for path in [
-        *anthropic_root.rglob("*.py"),
-        *(repo_root / "src" / "free_claude_code" / "providers" / "transports").rglob(
-            "*.py"
-        ),
-    ]:
-        text = path.read_text(encoding="utf-8")
-        offenders.extend(
-            f"{path.relative_to(repo_root)}: {name}"
-            for name in forbidden
-            if name in text
+    assert (
+        _imports_matching(
+            [streaming_root],
+            forbidden_prefixes=("free_claude_code.providers",),
         )
-    assert sorted(offenders) == []
+        == []
+    )
+    assert "free_claude_code.providers.failure_policy" in set(
+        _imports_from(stream_recovery, repo_root)
+    )
+
+    streaming_exports = (streaming_root / "__init__.py").read_text(encoding="utf-8")
+    for provider_owned_name in {
+        "RecoveryController",
+        "RecoveryFailureAction",
+        "RecoveryHoldbackBuffer",
+        "is_retryable_stream_error",
+    }:
+        assert provider_owned_name not in streaming_exports
+
+    for transport in {"openai_chat", "anthropic_messages"}:
+        imports = set(
+            _imports_from(
+                providers_root / "transports" / transport / "stream.py",
+                repo_root,
+            )
+        )
+        assert "free_claude_code.providers.stream_recovery" in imports
 
 
 def test_openai_responses_uses_adapter_boundary() -> None:
@@ -717,7 +732,9 @@ def test_openai_responses_uses_adapter_boundary() -> None:
         if "free_claude_code.core.openai_responses" in imports:
             responses_importers.append(path.relative_to(repo_root).as_posix())
     assert sorted(responses_importers) == [
+        "src/free_claude_code/api/app.py",
         "src/free_claude_code/api/handlers/responses.py",
+        "src/free_claude_code/api/request_errors.py",
         "src/free_claude_code/api/routes.py",
     ]
 

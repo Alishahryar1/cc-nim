@@ -4,10 +4,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.settings import Settings
 from free_claude_code.providers.base import BaseProvider
-from free_claude_code.providers.exceptions import ServiceUnavailableError
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
@@ -74,7 +74,7 @@ async def test_startup_generation_lease_and_shutdown_close_exactly_once() -> Non
     await manager.close()
 
     assert factory.runtimes[0].cleanup_calls == 1
-    with pytest.raises(ServiceUnavailableError, match="shutting down"):
+    with pytest.raises(ApplicationUnavailableError, match="shutting down"):
         await manager.acquire()
 
 
@@ -473,7 +473,7 @@ async def test_shutdown_waits_for_active_lease_then_rejects_new_work() -> None:
     await asyncio.sleep(0)
 
     assert not close_task.done()
-    with pytest.raises(ServiceUnavailableError, match="shutting down"):
+    with pytest.raises(ApplicationUnavailableError, match="shutting down"):
         await manager.acquire()
     await lease.release()
     await close_task
@@ -495,9 +495,9 @@ async def test_cancelled_shutdown_retains_generation_for_retry() -> None:
     with pytest.raises(asyncio.CancelledError):
         await close_task
 
-    with pytest.raises(ServiceUnavailableError, match="shutting down"):
+    with pytest.raises(ApplicationUnavailableError, match="shutting down"):
         await manager.acquire()
-    with pytest.raises(ServiceUnavailableError, match="shutting down"):
+    with pytest.raises(ApplicationUnavailableError, match="shutting down"):
         await manager.replace(_settings("nvidia_nim/two"), commit=lambda: None)
     assert factory.runtimes[0].cleanup_calls == 0
 

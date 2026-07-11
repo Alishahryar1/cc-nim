@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from loguru import logger
 
+from free_claude_code.application.errors import ApplicationError
 from free_claude_code.application.ports import ProviderResolver, RequestRuntimeLease
 from free_claude_code.config.model_refs import parse_provider_type
 from free_claude_code.config.settings import Settings
@@ -23,6 +24,7 @@ from .dependencies import (
 from .handlers import MessagesHandler, ResponsesHandler, TokenCountHandler
 from .model_catalog import ModelsListResponse, build_models_list_response
 from .ports import ApiServices
+from .request_errors import ordinary_application_error_response
 from .request_ids import get_request_id
 from .response_streams import bind_response_lifetime
 
@@ -39,8 +41,9 @@ async def _create_messages_response(
     *,
     request_id: str,
 ) -> object:
-    lease = await services.requests.acquire()
+    lease: RequestRuntimeLease | None = None
     try:
+        lease = await services.requests.acquire()
         handler = MessagesHandler(
             lease.settings,
             provider_resolver=_provider_resolver(lease),
@@ -48,9 +51,19 @@ async def _create_messages_response(
             generation_id=lease.generation_id,
         )
         response = await handler.create(request_data, request_id=request_id)
+    except ApplicationError as exc:
+        if lease is not None:
+            await lease.release()
+        return ordinary_application_error_response(
+            exc,
+            wire_api="messages",
+            request_id=request_id,
+        )
     except BaseException:
-        await lease.release()
+        if lease is not None:
+            await lease.release()
         raise
+    assert lease is not None
     return await bind_response_lifetime(response, lease.release)
 
 
@@ -60,17 +73,28 @@ async def _create_responses_response(
     *,
     request_id: str,
 ) -> object:
-    lease = await services.requests.acquire()
+    lease: RequestRuntimeLease | None = None
     try:
+        lease = await services.requests.acquire()
         handler = ResponsesHandler(
             lease.settings,
             provider_resolver=_provider_resolver(lease),
             generation_id=lease.generation_id,
         )
         response = await handler.create(request_data, request_id=request_id)
+    except ApplicationError as exc:
+        if lease is not None:
+            await lease.release()
+        return ordinary_application_error_response(
+            exc,
+            wire_api="responses",
+            request_id=request_id,
+        )
     except BaseException:
-        await lease.release()
+        if lease is not None:
+            await lease.release()
         raise
+    assert lease is not None
     return await bind_response_lifetime(response, lease.release)
 
 

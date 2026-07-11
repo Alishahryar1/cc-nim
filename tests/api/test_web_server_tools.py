@@ -21,6 +21,7 @@ from free_claude_code.api.web_tools.outbound import (
 )
 from free_claude_code.api.web_tools.request import is_web_server_tool_request
 from free_claude_code.api.web_tools.streaming import stream_web_server_tool_response
+from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.application.routing import (
     ModelRouter,
     ResolvedModel,
@@ -35,7 +36,6 @@ from free_claude_code.core.anthropic.stream_contracts import (
     text_content,
 )
 from free_claude_code.messaging.event_parser import parse_cli_event
-from free_claude_code.providers.exceptions import InvalidRequestError
 
 _STRICT_EGRESS = WebFetchEgressPolicy(
     allow_private_network_targets=False,

@@ -5,9 +5,9 @@ from collections.abc import Callable
 
 from loguru import logger
 
-from free_claude_code.core.anthropic import (
+from free_claude_code.core.diagnostics import (
     format_user_error_preview,
-    get_user_facing_error_message,
+    safe_exception_message,
 )
 from free_claude_code.core.trace import trace_event
 
@@ -193,7 +193,7 @@ class MessagingNodeRunner:
                     resume_session_arg=parent_session_id,
                 )
             except RuntimeError as e:
-                error_message = get_user_facing_error_message(e)
+                error_message = safe_exception_message(e)
                 transcript.apply({"type": "error", "message": error_message})
                 await update_ui(
                     self._format_status("⏳", "Session limit reached", None),

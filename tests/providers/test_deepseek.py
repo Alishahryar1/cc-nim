@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from free_claude_code.core.anthropic.models import (
     ContentBlockImage,
@@ -19,7 +20,6 @@ from free_claude_code.providers.deepseek import (
     DEEPSEEK_DEFAULT_BASE,
     DeepSeekProvider,
 )
-from free_claude_code.providers.exceptions import InvalidRequestError
 from tests.providers.support import passthrough_rate_limiter
 
 

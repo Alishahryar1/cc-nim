@@ -1,9 +1,9 @@
 """Provider configuration construction from neutral catalog metadata."""
 
+from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.config.provider_catalog import ProviderDescriptor
 from free_claude_code.config.settings import Settings
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.exceptions import AuthenticationError
 
 
 def string_setting(settings: Settings, attr_name: str | None, default: str = "") -> str:
@@ -34,7 +34,7 @@ def require_provider_credential(
     message = f"{descriptor.credential_env} is not set. Add it to your .env file."
     if descriptor.credential_url:
         message = f"{message} Get a key at {descriptor.credential_url}"
-    raise AuthenticationError(message)
+    raise ApplicationUnavailableError(message)
 
 
 def build_provider_config(

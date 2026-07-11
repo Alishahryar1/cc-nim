@@ -10,7 +10,7 @@ os.environ["PTB_TIMEDELTA"] = "1"
 
 from loguru import logger
 
-from free_claude_code.core.anthropic import format_user_error_preview
+from free_claude_code.core.diagnostics import format_user_error_preview
 
 from ..limiter import MessagingRateLimiter
 from ..models import IncomingMessage

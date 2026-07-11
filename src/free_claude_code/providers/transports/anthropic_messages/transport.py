@@ -1,5 +1,6 @@
 """Shared transport for providers with native Anthropic Messages endpoints."""
 
+import sys
 from collections.abc import AsyncIterator
 from typing import Any, Literal
 
@@ -12,17 +13,15 @@ from free_claude_code.core.anthropic.native_sse_block_policy import (
     transform_native_sse_block_event,
 )
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
-from free_claude_code.providers.error_mapping import (
-    extract_provider_error_detail,
-    map_error,
-    user_visible_message_for_mapped_provider_error,
-)
 from free_claude_code.providers.model_listing import (
     extract_openai_model_ids,
     model_infos_from_ids,
 )
 from free_claude_code.providers.rate_limit import ProviderRateLimiter
-from free_claude_code.providers.transports.http import maybe_await_aclose
+from free_claude_code.providers.transports.http import (
+    close_provider_stream,
+    maybe_await_aclose,
+)
 
 from .http import model_list_json, raise_for_status_with_body
 from .request_policy import (
@@ -181,24 +180,12 @@ class AnthropicMessagesTransport(BaseProvider):
             )
         return event
 
-    def _map_error_details(
-        self, error: Exception, request_id: str | None
-    ) -> tuple[Exception, str]:
-        """Map an exception into a user-facing provider error message."""
-        mapped_error = map_error(error, rate_limiter=self._rate_limiter)
-        return (
-            mapped_error,
-            user_visible_message_for_mapped_provider_error(
-                mapped_error,
-                provider_name=self._provider_name,
-                read_timeout_s=self._config.http_read_timeout,
-                detail=extract_provider_error_detail(error),
-                request_id=request_id,
-            ),
-        )
-
     async def _validated_stream_send(
-        self, body: dict, *, req_tag: str
+        self,
+        body: dict,
+        *,
+        req_tag: str,
+        request_id: str | None = None,
     ) -> httpx.Response:
         """Send request and raise mapped HTTP errors before yielding body chunks."""
         send_response = await self._send_stream_request(body)
@@ -207,7 +194,12 @@ class AnthropicMessagesTransport(BaseProvider):
                 await self._raise_for_status(send_response, req_tag=req_tag)
             finally:
                 if not send_response.is_closed:
-                    await maybe_await_aclose(send_response)
+                    await close_provider_stream(
+                        send_response,
+                        active_error=sys.exception(),
+                        provider_name=self._provider_name,
+                        request_id=request_id,
+                    )
         return send_response
 
     async def stream_response(

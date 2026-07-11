@@ -7,12 +7,14 @@ import openai
 import pytest
 from httpx import Request
 
+from free_claude_code.providers.failure_policy import (
+    retryable_upstream_status,
+    retryable_upstream_transport_error,
+)
 from free_claude_code.providers.rate_limit import (
     DEFAULT_UPSTREAM_MAX_RETRIES,
     UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS,
     ProviderRateLimiter,
-    retryable_upstream_status,
-    retryable_upstream_transport_error,
 )
 
 

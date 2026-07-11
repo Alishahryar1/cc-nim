@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
+from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.providers.base import ProviderConfig
@@ -15,7 +16,6 @@ from free_claude_code.providers.cloudflare import (
     CloudflareProvider,
     cloudflare_ai_base_url,
 )
-from free_claude_code.providers.exceptions import AuthenticationError
 from tests.providers.support import passthrough_rate_limiter
 
 _ACCOUNT_ID = "account-123"
@@ -72,7 +72,7 @@ def test_cloudflare_ai_base_url_uses_account_scoped_openai_chat_root() -> None:
 def test_missing_account_id_raises_authentication_error(
     cloudflare_config: ProviderConfig,
 ) -> None:
-    with pytest.raises(AuthenticationError, match="CLOUDFLARE_ACCOUNT_ID"):
+    with pytest.raises(ApplicationUnavailableError, match="CLOUDFLARE_ACCOUNT_ID"):
         CloudflareProvider(
             cloudflare_config, account_id=" ", rate_limiter=passthrough_rate_limiter()
         )

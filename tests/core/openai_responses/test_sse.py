@@ -5,6 +5,7 @@ import pytest
 
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.core.anthropic.streaming import format_sse_event
+from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.openai_responses import (
     OpenAIResponsesAdapter,
     OpenAIResponsesRequest,
@@ -151,6 +152,66 @@ async def test_anthropic_malformed_function_tool_arguments_fail_on_eof() -> None
     events = parse_sse_text(text)
     assert events[-1].event == "response.failed"
     assert events[-1].data["response"]["output"] == []
+
+
+@pytest.mark.asyncio
+async def test_provider_failure_outranks_provisional_incomplete_function_call() -> None:
+    failure = ExecutionFailure(
+        kind=FailureKind.RATE_LIMIT,
+        status_code=429,
+        message="provider is busy\n\nRequest ID: req_failure_precedence",
+        retryable=True,
+    )
+    incomplete_tool = _anthropic_tool_stream(partial_json='{"value":')[:4]
+
+    text = await _collect_sse(
+        _responses_sse(
+            _aiter_then_raise(incomplete_tool, failure),
+            {"model": "nvidia_nim/test-model", "stream": True},
+        )
+    )
+
+    events = parse_sse_text(text)
+    assert [event.event for event in events].count("response.failed") == 1
+    assert events[-1].event == "response.failed"
+    failed = events[-1].data["response"]
+    assert failed["id"] == events[0].data["response"]["id"]
+    assert failed["error"] == {
+        "message": "provider is busy\n\nRequest ID: req_failure_precedence",
+        "type": "rate_limit_error",
+        "param": None,
+        "code": None,
+    }
+
+
+@pytest.mark.asyncio
+async def test_post_start_failure_observer_runs_before_terminal_failure_event() -> None:
+    failure = RuntimeError("socket closed")
+    timeline: list[tuple[str, object]] = []
+
+    def observe_terminal_failure(exc: BaseException) -> None:
+        timeline.append(("observed", exc))
+
+    stream = _ADAPTER.iter_sse_from_anthropic(
+        _aiter_then_raise(_anthropic_text_stream("partial")[:3], failure),
+        OpenAIResponsesRequest.model_validate(
+            {"model": "nvidia_nim/test-model", "stream": True}
+        ),
+        on_post_start_terminal_failure=observe_terminal_failure,
+    )
+    parts: list[str] = []
+    async for chunk in stream:
+        parts.append(chunk)
+        event = parse_sse_text(chunk)
+        assert len(event) == 1
+        timeline.append(("emitted", event[0].event))
+
+    events = parse_sse_text("".join(parts))
+    assert timeline.count(("observed", failure)) == 1
+    assert timeline.index(("observed", failure)) < timeline.index(
+        ("emitted", "response.failed")
+    )
+    assert events[-1].data["response"]["error"]["message"] == "socket closed"
 
 
 @pytest.mark.asyncio
@@ -481,6 +542,14 @@ async def _completed_response_from_sse(
 async def _aiter(chunks: list[str]) -> AsyncIterator[str]:
     for chunk in chunks:
         yield chunk
+
+
+async def _aiter_then_raise(
+    chunks: list[str], failure: BaseException
+) -> AsyncIterator[str]:
+    for chunk in chunks:
+        yield chunk
+    raise failure
 
 
 def _anthropic_text_stream(text: str) -> list[str]:

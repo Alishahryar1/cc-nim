@@ -7,8 +7,8 @@ import pytest
 
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
+from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.exceptions import ProviderError
 from free_claude_code.providers.llamacpp import LlamaCppProvider
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
@@ -214,7 +214,7 @@ async def test_stream_error_status_code(llamacpp_provider):
             return_value=mock_response,
         ),
     ):
-        with pytest.raises(ProviderError) as exc_info:
+        with pytest.raises(ExecutionFailure) as exc_info:
             [
                 e
                 async for e in llamacpp_provider.stream_response(
@@ -242,7 +242,7 @@ async def test_stream_network_error(llamacpp_provider):
             side_effect=httpx.ConnectError("Connection refused"),
         ),
     ):
-        with pytest.raises(ProviderError) as exc_info:
+        with pytest.raises(ExecutionFailure) as exc_info:
             [
                 e
                 async for e in llamacpp_provider.stream_response(
@@ -279,7 +279,7 @@ async def test_stream_error_405_mentions_upstream_provider(llamacpp_provider):
             new_callable=AsyncMock,
             return_value=mock_response,
         ),
-        pytest.raises(ProviderError) as exc_info,
+        pytest.raises(ExecutionFailure) as exc_info,
     ):
         [e async for e in llamacpp_provider.stream_response(req, request_id="REQ405")]
 

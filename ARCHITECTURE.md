@@ -48,7 +48,8 @@ The installable wheel packages are declared in [pyproject.toml](pyproject.toml):
 - [src/free_claude_code/application/](src/free_claude_code/application/) is the dependency-leaf application boundary. It
   owns immutable routing/model-metadata values, model routing, shared provider
   execution, the consumer-facing `ProviderPort`, request-runtime lease ports,
-  and task control. It depends only on configuration and core protocol logic.
+  task control, and deterministic request/readiness errors. It depends only on
+  configuration and core protocol-neutral logic.
 - [src/free_claude_code/api/](src/free_claude_code/api/) is the HTTP adapter. It owns the FastAPI app, routes, API product
   handlers, local optimizations, model-catalog responses, HTTP error mapping,
   response commit timing, and Admin-specific ports. It consumes application and
@@ -59,13 +60,15 @@ The installable wheel packages are declared in [pyproject.toml](pyproject.toml):
   logging setup, constants, and provider ID catalogs.
 - [src/free_claude_code/core/](src/free_claude_code/core/) owns provider-neutral protocol logic: wire request and response
   models, Anthropic conversion, SSE construction, OpenAI Responses conversion,
-  stream recovery, token counting, and structured trace helpers.
+  canonical execution-failure semantics, credential-safe diagnostics, token
+  counting, and structured trace helpers. It never classifies provider SDK or
+  HTTP client exceptions.
 - [src/free_claude_code/messaging/](src/free_claude_code/messaging/) owns optional platform adapters, incoming message
   handling, tree queues, transcript rendering, persistence, commands, and voice
   support.
 - [src/free_claude_code/providers/](src/free_claude_code/providers/) owns provider construction, shared provider base
-  classes, upstream transports, rate limiting, model listing, and concrete
-  provider adapters.
+  classes, upstream transports, SDK/HTTP failure classification, retry and
+  recovery policy, rate limiting, model listing, and concrete provider adapters.
 - [src/free_claude_code/runtime/](src/free_claude_code/runtime/) is the process composition root. It owns application
   startup and shutdown, provider generations, Admin runtime operations, and the
   concrete wiring between API, providers, messaging, and managed CLI sessions.
@@ -318,7 +321,10 @@ discarding incomplete content rather than presenting a partial success.
 
 Ingress authentication, request validation, model routing, and deterministic
 preflight failures remain ordinary HTTP errors and do not receive the terminal
-provider-execution retry header.
+provider-execution retry header. Missing provider configuration and a shutting
+down request runtime are application-readiness errors: Messages serializes them
+as Anthropic JSON, Responses serializes them as OpenAI JSON, and neither is
+misclassified as an already-finalized provider execution failure.
 
 ```mermaid
 sequenceDiagram
@@ -478,8 +484,10 @@ downgrade: if an upstream NIM deployment rejects explicit budget control, FCC
 retries without the budget while preserving thinking enablement.
 
 Shared provider responsibilities include upstream rate limiting, model listing,
-safe error mapping, transport cleanup, thinking/tool handling, retry or recovery
-where supported, and returning Anthropic SSE strings to the service layer.
+SDK/HTTP failure classification, safe diagnostic construction, transport
+cleanup, thinking/tool handling, retry or recovery where supported, and
+returning successful Anthropic SSE strings to the service layer. Final failures
+cross that boundary as `ExecutionFailure`, not as provider-authored wire events.
 Every provider and both transport families receive the same concrete
 `MessagesRequest` owned by the Anthropic protocol package. Known wire fields are
 accessed through that model; `Any` and dynamic attribute lookup are reserved for
@@ -531,34 +539,54 @@ usage quirks such as DeepSeek prompt-cache counters.
 - tool schema and tool-result handling;
 - thinking block handling;
 - stream lifecycle through `src/free_claude_code/core/anthropic/streaming`, including the neutral
-  stream ledger, Anthropic SSE emitter, native event normalization, retry
-  holdback, continuation, and tool repair;
+  stream ledger, Anthropic SSE emitter, native event normalization,
+  continuation-body construction, and tool repair;
 - native Anthropic stream policy;
-- token counting and user-facing error formatting.
+- token counting and Anthropic-owned failure-kind-to-wire mapping.
 
 Shared stream behavior lives under
 [src/free_claude_code/core/anthropic/streaming/](src/free_claude_code/core/anthropic/streaming/). The shared layer owns the
-Anthropic content-block ledger, SSE serialization, early retry classification,
-holdback buffering, retry attempt counting, common flush/discard behavior,
-midstream continuation, tool JSON repair, and final success/error tails. Provider
-transport packages are upstream adapters: OpenAI-chat providers convert chat
-chunks into ledger operations, and native Anthropic providers parse upstream SSE,
-apply native block policy, and re-emit normalized Anthropic SSE from the shared
-ledger. Transport bases stay focused on provider hooks, client setup, request
-construction, rate limiting, and model listing. Status-less upstream transient
-classification also lives in this shared layer so stream recovery, provider
-backoff, and provider error mapping agree on retryable overload/rate-limit
-signals.
+Anthropic content-block ledger, SSE serialization, continuation request
+transformations, and tool JSON repair. It does not import `httpx` or the OpenAI
+SDK and does not decide whether an upstream failure is retryable.
 
-Provider transports raise typed provider errors for final stream failures before
-any downstream-visible SSE chunk has escaped the recovery holdback. Once output
-has committed, transports keep ownership of midstream recovery, continuation,
-tool salvage, and protocol-specific success/error tails.
-The public streaming API boundary owns the final downstream error shape: provider
-errors remain visible to clients, but after FCC exhausts provider retry/recovery
-they are returned as typed HTTP errors with explicit retry suppression when the
-HTTP response is still uncommitted. Only already-committed streams use terminal
-protocol events.
+[core/failures.py](src/free_claude_code/core/failures.py) defines the immutable,
+protocol-neutral `FailureKind` and `ExecutionFailure`. The exception is the
+value propagated through async iterators; its semantic fields are immutable,
+while Python remains free to attach traceback/cause metadata during unwinding.
+[core/diagnostics.py](src/free_claude_code/core/diagnostics.py) owns bounded error
+body/cause extraction, credential redaction, safe traceback formatting, and
+copyable request-ID diagnostics. Anthropic and Responses packages independently
+map the canonical kind and status to their wire error types.
+
+[providers/failure_policy.py](src/free_claude_code/providers/failure_policy.py)
+is the only owner of raw OpenAI SDK and `httpx` exception classification,
+transient status/body inference, stable provider wording, and final diagnostic
+construction for those failures. Native Anthropic wire errors are instead
+mapped to canonical failures by the Anthropic protocol package, then consumed
+by provider retry/recovery policy.
+[providers/stream_recovery.py](src/free_claude_code/providers/stream_recovery.py)
+owns the 0.75-second/65,536-byte holdback, four transparent early retries after
+the first attempt, and five midstream recovery attempts. Provider opening keeps
+its existing five-attempt exponential-backoff budget. `ExecutionFailure.retryable`
+records provider-policy eligibility; it never tells the client to retry after FCC
+has finalized the failure.
+
+Provider transport packages remain upstream adapters: OpenAI-chat providers
+convert chat chunks into ledger operations, and native Anthropic providers parse
+upstream SSE and canonicalize upstream error events. After retry, continuation,
+and tool salvage are exhausted, a transport discards uncommitted output or
+flushes committed output, closes any open content blocks, and raises
+`ExecutionFailure`. It never synthesizes a terminal Anthropic error event.
+
+The public HTTP commit boundary solely decides whether a final failure can use
+non-2xx JSON or must use a terminal protocol event; the protocol packages own
+envelope and event serialization. Before the first public frame the boundary
+returns typed non-2xx JSON with `x-should-retry: false`; after the first frame
+Messages appends one Anthropic `event: error`, while Responses emits
+`response.failed` with the original response ID. Non-streaming Messages catches
+the same failure and discards its partial aggregate. Unexpected failures use the
+same commit-state split but do not acquire provider retry semantics.
 
 [src/free_claude_code/core/openai_responses/](src/free_claude_code/core/openai_responses/) owns OpenAI Responses support:
 
@@ -585,8 +613,9 @@ block-indexed Responses stream assembler. The package separates Anthropic SSE
 dispatch, block state, output ledger ordering, block completion, SSE event
 builders, and error mapping. API code should depend on the adapter, not on
 those internal module owners directly. Responses output payloads stay
-OpenAI-shaped; Anthropic terminal metadata is used internally only when it
-affects streamed behavior.
+OpenAI-shaped. Canonical execution failures enter the assembler directly, so
+Responses does not infer provider failure semantics by parsing an Anthropic
+terminal error.
 Post-start Responses failures are assembler-owned: the active
 `ResponsesStreamAssembler` emits `response.failed` so the terminal event keeps
 the same `response.id`, output ledger, and usage state as the earlier

@@ -4,9 +4,10 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
+from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.core.anthropic.streaming import format_sse_event
-from free_claude_code.providers.exceptions import InvalidRequestError, RateLimitError
+from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from tests.api.support import create_test_app
 
 
@@ -31,7 +32,12 @@ class PreStartFailingProvider(FakeProvider):
     async def stream_response(self, request_data, **_kwargs):
         self.requests.append(request_data)
         self.stream_kwargs.append(_kwargs)
-        raise RateLimitError("upstream is busy")
+        raise ExecutionFailure(
+            kind=FailureKind.RATE_LIMIT,
+            status_code=429,
+            message="upstream is busy",
+            retryable=True,
+        )
         yield "unreachable"
 
 
@@ -147,7 +153,7 @@ def test_create_response_pre_start_provider_error_returns_openai_error() -> None
     app = create_test_app()
     with (
         patch("free_claude_code.api.routes.resolve_provider", return_value=provider),
-        patch("free_claude_code.api.handlers.responses.trace_event") as trace,
+        patch("free_claude_code.api.response_streams.trace_event") as trace,
         TestClient(app) as client,
     ):
         response = client.post(
@@ -177,6 +183,8 @@ def test_create_response_pre_start_provider_error_returns_openai_error() -> None
     assert terminal_trace["status_code"] == 429
     assert terminal_trace["error_type"] == "rate_limit_error"
     assert terminal_trace["client_should_retry"] is False
+    assert terminal_trace["failure_kind"] == "rate_limit"
+    assert terminal_trace["provider_retryable"] is True
 
 
 def test_create_response_post_start_failure_preserves_response_id() -> None:

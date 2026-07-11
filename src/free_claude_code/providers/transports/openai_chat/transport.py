@@ -11,11 +11,6 @@ from openai import AsyncOpenAI
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.streaming import AnthropicStreamLedger
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
-from free_claude_code.providers.error_mapping import (
-    extract_provider_error_detail,
-    map_error,
-    user_visible_message_for_mapped_provider_error,
-)
 from free_claude_code.providers.model_listing import extract_openai_model_ids
 from free_claude_code.providers.rate_limit import ProviderRateLimiter
 
@@ -197,21 +192,6 @@ class OpenAIChatTransport(BaseProvider):
             cap,
         )
         return clamped
-
-    def _map_error_details(
-        self, error: Exception, request_id: str | None
-    ) -> tuple[Exception, str]:
-        mapped_error = map_error(error, rate_limiter=self._rate_limiter)
-        return (
-            mapped_error,
-            user_visible_message_for_mapped_provider_error(
-                mapped_error,
-                provider_name=self._provider_name,
-                read_timeout_s=self._config.http_read_timeout,
-                detail=extract_provider_error_detail(error),
-                request_id=request_id,
-            ),
-        )
 
     async def stream_response(
         self,

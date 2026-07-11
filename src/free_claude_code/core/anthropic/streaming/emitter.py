@@ -5,7 +5,9 @@ from typing import Any
 
 from loguru import logger
 
-from ..errors import anthropic_error_payload
+from free_claude_code.core.failures import ExecutionFailure
+
+from ..errors import anthropic_error_payload, anthropic_failure_payload
 
 ANTHROPIC_SSE_RESPONSE_HEADERS: dict[str, str] = {
     "X-Accel-Buffering": "no",
@@ -40,6 +42,11 @@ def anthropic_terminal_error_frame(
     return format_sse_event(
         "error", anthropic_error_payload(error_type=error_type, message=message)
     )
+
+
+def anthropic_terminal_failure_frame(failure: ExecutionFailure) -> str:
+    """Serialize a canonical execution failure as a terminal SSE event."""
+    return format_sse_event("error", anthropic_failure_payload(failure))
 
 
 class AnthropicSseEmitter:

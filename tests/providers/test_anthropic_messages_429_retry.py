@@ -6,8 +6,8 @@ import httpx
 import pytest
 
 from free_claude_code.core.anthropic.stream_contracts import event_names, parse_sse_text
+from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.exceptions import ProviderError
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import retrying_rate_limiter
 from tests.providers.test_anthropic_messages import (
@@ -204,7 +204,7 @@ async def test_native_stream_5xx_retry_exhausted(provider_config, status_code, s
             return_value=bad,
         ) as mock_send,
         patch("asyncio.sleep", new_callable=AsyncMock),
-        pytest.raises(ProviderError) as exc_info,
+        pytest.raises(ExecutionFailure) as exc_info,
     ):
         [e async for e in provider.stream_response(req)]
 
@@ -236,7 +236,7 @@ async def test_native_stream_connection_error_retry_exhausted(provider_config):
         patch(
             "free_claude_code.providers.transports.anthropic_messages.stream.trace_event"
         ) as trace,
-        pytest.raises(ProviderError) as exc_info,
+        pytest.raises(ExecutionFailure) as exc_info,
     ):
         [e async for e in provider.stream_response(req, request_id="req_native_conn")]
 
@@ -271,7 +271,7 @@ async def test_non_retryable_4xx_http_error_not_retried(provider_config):
             new_callable=AsyncMock,
             return_value=err,
         ) as mock_send,
-        pytest.raises(ProviderError) as exc_info,
+        pytest.raises(ExecutionFailure) as exc_info,
     ):
         [e async for e in provider.stream_response(req)]
 

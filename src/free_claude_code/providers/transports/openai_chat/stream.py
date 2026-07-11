@@ -1,6 +1,7 @@
 """OpenAI-chat upstream adapter."""
 
 import asyncio
+import sys
 import uuid
 from collections.abc import AsyncIterator, Iterator
 from typing import Any
@@ -15,14 +16,16 @@ from free_claude_code.core.anthropic import (
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.streaming import (
     AnthropicStreamLedger,
-    RecoveryController,
-    RecoveryFailureAction,
-    TruncatedProviderStreamError,
     map_stop_reason,
 )
 from free_claude_code.core.trace import provider_chat_body_snapshot, trace_event
-from free_claude_code.providers.error_mapping import map_stream_start_error
-from free_claude_code.providers.transports.http import maybe_await_aclose
+from free_claude_code.providers.failure_policy import classify_provider_failure
+from free_claude_code.providers.stream_recovery import (
+    RecoveryController,
+    RecoveryFailureAction,
+    TruncatedProviderStreamError,
+)
+from free_claude_code.providers.transports.http import close_provider_stream
 
 from .recovery import OpenAIChatRecovery
 from .tool_calls import (
@@ -272,14 +275,12 @@ class OpenAIChatStreamAdapter:
                     self._transport._log_stream_transport_error(
                         tag, req_tag, error, request_id=self._request_id
                     )
-                    mapped_error, error_message = self._transport._map_error_details(
-                        error, self._request_id
-                    )
-                    mapped_error_type = getattr(mapped_error, "error_type", None)
-                    terminal_error_type = (
-                        mapped_error_type
-                        if isinstance(mapped_error_type, str) and mapped_error_type
-                        else "api_error"
+                    failure = classify_provider_failure(
+                        error,
+                        provider_name=tag,
+                        read_timeout_s=self._transport._config.http_read_timeout,
+                        request_id=self._request_id,
+                        mark_rate_limited=self._transport._rate_limiter.set_blocked,
                     )
                     error_trace: dict[str, Any] = {
                         "stage": "provider",
@@ -288,10 +289,12 @@ class OpenAIChatStreamAdapter:
                         "provider": tag,
                         "request_id": self._request_id,
                         "exc_type": type(error).__name__,
-                        "mapped_error_type": type(mapped_error).__name__,
+                        "failure_kind": failure.kind.value,
+                        "status_code": failure.status_code,
+                        "provider_retryable": failure.retryable,
                     }
                     if self._transport._config.log_api_error_tracebacks:
-                        error_trace["error_message"] = error_message
+                        error_trace["error_message"] = failure.message
                     trace_event(**error_trace)
                     if (
                         not decision.committed
@@ -302,22 +305,18 @@ class OpenAIChatStreamAdapter:
                             yield event
                     elif not decision.committed:
                         recovery.discard()
-                        raise map_stream_start_error(
-                            error,
-                            provider_name=tag,
-                            read_timeout_s=self._transport._config.http_read_timeout,
-                            request_id=self._request_id,
-                            rate_limiter=self._transport._rate_limiter,
-                        ) from error
-                    for event in ledger.terminal_error_tail(
-                        error_message,
-                        error_type=terminal_error_type,
-                    ):
+                        raise failure from error
+                    for event in ledger.close_unclosed_blocks():
                         yield event
-                    return
+                    raise failure from error
                 finally:
                     if stream is not None:
-                        await maybe_await_aclose(stream)
+                        await close_provider_stream(
+                            stream,
+                            active_error=sys.exception(),
+                            provider_name=tag,
+                            request_id=self._request_id,
+                        )
 
         remaining = think_parser.flush()
         if remaining:

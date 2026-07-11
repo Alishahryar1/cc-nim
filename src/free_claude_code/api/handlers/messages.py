@@ -20,6 +20,7 @@ from free_claude_code.api.response_streams import (
     EmptyStreamError,
     anthropic_sse_streaming_response,
     terminal_execution_error_response,
+    trace_terminal_execution_error,
 )
 from free_claude_code.api.web_tools.egress import (
     WebFetchEgressPolicy,
@@ -30,6 +31,7 @@ from free_claude_code.api.web_tools.request import (
     openai_chat_upstream_server_tool_error,
 )
 from free_claude_code.api.web_tools.streaming import stream_web_server_tool_response
+from free_claude_code.application.errors import ApplicationError, InvalidRequestError
 from free_claude_code.application.execution import ProviderExecutor, TokenCounter
 from free_claude_code.application.ports import ProviderResolver
 from free_claude_code.application.routing import ModelRouter, RoutedMessagesRequest
@@ -39,12 +41,14 @@ from free_claude_code.core.anthropic import (
     MessagesRequest,
     aggregate_anthropic_sse_to_message,
     anthropic_error_payload,
+    anthropic_error_type_for_failure,
+    anthropic_failure_payload,
     anthropic_status_for_error_type,
     get_token_count,
-    get_user_facing_error_message,
 )
+from free_claude_code.core.diagnostics import safe_exception_message
+from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.core.trace import trace_event
-from free_claude_code.providers.exceptions import InvalidRequestError, ProviderError
 
 _OPENAI_CHAT_UPSTREAM_IDS = frozenset(
     provider_id
@@ -122,8 +126,10 @@ class MessagesHandler:
                 stream=request_data.stream,
                 request_id=request_id,
             )
-        except ProviderError:
+        except ApplicationError:
             raise
+        except ExecutionFailure as exc:
+            return self._execution_failure_response(exc, request_id=request_id)
         except Exception as exc:
             raise unexpected_http_exception(
                 self._settings, exc, context="CREATE_MESSAGE_ERROR"
@@ -148,10 +154,8 @@ class MessagesHandler:
                 raise
             except asyncio.CancelledError:
                 raise
-            except ProviderError as exc:
-                return self._provider_execution_error_response(
-                    exc, request_id=request_id
-                )
+            except ExecutionFailure as exc:
+                return self._execution_failure_response(exc, request_id=request_id)
             except BaseExceptionGroup as exc:
                 return self._unexpected_execution_error_response(
                     exc,
@@ -167,7 +171,8 @@ class MessagesHandler:
             if error is not None:
                 error_type, message_text = _stream_error_fields(error)
                 status_code = anthropic_status_for_error_type(error_type)
-                self._trace_terminal_execution_error(
+                trace_terminal_execution_error(
+                    wire_api="messages",
                     request_id=request_id,
                     status_code=status_code,
                     error_type=error_type,
@@ -186,13 +191,14 @@ class MessagesHandler:
             pre_start_error_response=lambda exc: self._pre_start_error_response(
                 exc, request_id=request_id
             ),
+            request_id=request_id,
         )
 
     def _pre_start_error_response(
         self, exc: BaseException, *, request_id: str
     ) -> Response:
-        if isinstance(exc, ProviderError):
-            return self._provider_execution_error_response(exc, request_id=request_id)
+        if isinstance(exc, ExecutionFailure):
+            return self._execution_failure_response(exc, request_id=request_id)
         context = (
             "CREATE_MESSAGE_EMPTY_STREAM"
             if isinstance(exc, EmptyStreamError)
@@ -204,21 +210,20 @@ class MessagesHandler:
             context=context,
         )
 
-    def _provider_execution_error_response(
-        self, exc: ProviderError, *, request_id: str
+    def _execution_failure_response(
+        self, failure: ExecutionFailure, *, request_id: str
     ) -> JSONResponse:
-        self._trace_terminal_execution_error(
+        error_type = anthropic_error_type_for_failure(failure)
+        trace_terminal_execution_error(
+            wire_api="messages",
             request_id=request_id,
-            status_code=exc.status_code,
-            error_type=exc.error_type,
+            status_code=failure.status_code,
+            error_type=error_type,
+            error=failure,
         )
         return terminal_execution_error_response(
-            status_code=exc.status_code,
-            content=anthropic_error_payload(
-                error_type=exc.error_type,
-                message=exc.message,
-                request_id=request_id,
-            ),
+            status_code=failure.status_code,
+            content=anthropic_failure_payload(failure, request_id=request_id),
         )
 
     def _unexpected_execution_error_response(
@@ -235,42 +240,21 @@ class MessagesHandler:
             request_id=request_id,
         )
         status_code = http_status_for_unexpected_api_exception(exc)
-        self._trace_terminal_execution_error(
+        trace_terminal_execution_error(
+            wire_api="messages",
             request_id=request_id,
             status_code=status_code,
             error_type="api_error",
-            exc_type=type(exc).__name__,
+            error=exc,
         )
         return terminal_execution_error_response(
             status_code=status_code,
             content=anthropic_error_payload(
                 error_type="api_error",
-                message=get_user_facing_error_message(exc),
+                message=safe_exception_message(exc),
                 request_id=request_id,
             ),
         )
-
-    @staticmethod
-    def _trace_terminal_execution_error(
-        *,
-        request_id: str,
-        status_code: int,
-        error_type: str,
-        exc_type: str | None = None,
-    ) -> None:
-        fields: dict[str, object] = {
-            "stage": "egress",
-            "event": "free_claude_code.api.response.terminal_execution_error",
-            "source": "api",
-            "wire_api": "messages",
-            "request_id": request_id,
-            "status_code": status_code,
-            "error_type": error_type,
-            "client_should_retry": False,
-        }
-        if exc_type is not None:
-            fields["exc_type"] = exc_type
-        trace_event(**fields)
 
     def _reject_unsupported_server_tools(self, routed: RoutedMessagesRequest) -> None:
         if routed.resolved.provider_id not in _OPENAI_CHAT_UPSTREAM_IDS:

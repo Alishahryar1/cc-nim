@@ -7,10 +7,10 @@ from typing import Any, Literal
 
 from loguru import logger
 
+from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.core.anthropic import ReasoningReplayMode, build_base_request_body
 from free_claude_code.core.anthropic.conversion import OpenAIConversionError
 from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.providers.exceptions import InvalidRequestError
 
 MaxTokensField = Literal["max_tokens", "max_completion_tokens"]
 OpenAIChatPostprocessor = Callable[[dict[str, Any], MessagesRequest, bool], None]

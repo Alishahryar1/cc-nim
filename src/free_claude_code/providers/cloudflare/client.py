@@ -6,15 +6,13 @@ from urllib.parse import quote
 
 import httpx
 
+from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.defaults import CLOUDFLARE_AI_REST_ROOT
-from free_claude_code.providers.exceptions import (
-    AuthenticationError,
-    ModelListResponseError,
-)
 from free_claude_code.providers.model_listing import (
+    ModelListResponseError,
     extract_openai_model_ids,
     model_infos_from_ids,
 )
@@ -50,7 +48,7 @@ def _cloudflare_account_api_url(api_root: str | None, account_id: str) -> str:
 
     stripped_account = account_id.strip()
     if not stripped_account:
-        raise AuthenticationError(
+        raise ApplicationUnavailableError(
             "CLOUDFLARE_ACCOUNT_ID is not set. Add it to your .env file."
         )
     root = (api_root or CLOUDFLARE_AI_REST_ROOT).rstrip("/")

@@ -7,55 +7,19 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from typing import Any, TypeVar
 
-import httpx
-import openai
 from loguru import logger
 
-from free_claude_code.core.anthropic.streaming import retryable_transient_status
 from free_claude_code.core.rate_limit import StrictSlidingWindowLimiter
 from free_claude_code.core.trace import trace_event
+from free_claude_code.providers.failure_policy import (
+    retryable_upstream_status,
+    retryable_upstream_transport_error,
+)
 
 T = TypeVar("T")
 
 UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS = 5
 DEFAULT_UPSTREAM_MAX_RETRIES = UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS - 1
-
-
-def _upstream_http_retryable(code: int) -> bool:
-    """True for rate limit / upstream server failures that should backoff-retry."""
-    return code == 429 or 500 <= code <= 599
-
-
-def retryable_upstream_status(exc: BaseException) -> int | None:
-    """Return HTTP-like status codes that qualify for reactive backoff retries.
-
-    ``429`` plus any upstream ``5xx`` use the same exponential backoff and scoped
-    limiter blocking semantics as today's rate-limit path.
-    """
-    status = retryable_transient_status(exc)
-    if status is not None and _upstream_http_retryable(status):
-        return status
-    return None
-
-
-def retryable_upstream_transport_error(exc: BaseException) -> bool:
-    """Return whether a pre-response transport failure can be retried."""
-    if isinstance(exc, openai.AuthenticationError | openai.BadRequestError):
-        return False
-    return isinstance(
-        exc,
-        (
-            TimeoutError,
-            httpx.TimeoutException,
-            httpx.ConnectError,
-            httpx.ReadError,
-            httpx.WriteError,
-            httpx.RemoteProtocolError,
-            httpx.NetworkError,
-            openai.APITimeoutError,
-            openai.APIConnectionError,
-        ),
-    )
 
 
 class ProviderRateLimiter:

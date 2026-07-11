@@ -5,13 +5,13 @@ from typing import Any
 
 from loguru import logger
 
+from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from free_claude_code.core.anthropic import serialize_tool_result_content
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.native_messages_request import (
     dump_raw_messages_request,
 )
-from free_claude_code.providers.exceptions import InvalidRequestError
 from free_claude_code.providers.transports.openai_chat import (
     OpenAIChatRequestPolicy,
     build_openai_chat_request_body,

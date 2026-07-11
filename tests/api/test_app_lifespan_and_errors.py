@@ -7,12 +7,12 @@ import pytest
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
+from free_claude_code.application.errors import (
+    ApplicationUnavailableError,
+    InvalidRequestError,
+)
 from free_claude_code.config.settings import Settings
 from free_claude_code.messaging.transcription import TranscriptionService
-from free_claude_code.providers.exceptions import (
-    AuthenticationError,
-    ServiceUnavailableError,
-)
 from free_claude_code.providers.nvidia_nim.client import NvidiaNimProvider
 from free_claude_code.providers.nvidia_nim.voice import NvidiaNimTranscriber
 from free_claude_code.runtime.application import (
@@ -94,40 +94,40 @@ async def test_runtime_startup_logs_admin_url_without_printed_server_banner():
     )
 
 
-def test_create_app_provider_error_handler_returns_anthropic_format():
+def test_create_app_application_error_handler_returns_anthropic_format():
     app = create_test_app(_settings(log_api_error_tracebacks=False))
 
-    @app.get("/raise_provider")
-    async def _raise_provider():
-        raise AuthenticationError("bad key")
+    @app.get("/raise_application")
+    async def _raise_application():
+        raise InvalidRequestError("bad request")
 
-    response = TestClient(app).get("/raise_provider")
+    response = TestClient(app).get("/raise_application")
 
-    assert response.status_code == 401
+    assert response.status_code == 400
     body = response.json()
     assert body["type"] == "error"
-    assert body["error"]["type"] == "authentication_error"
+    assert body["error"]["type"] == "invalid_request_error"
     assert body["request_id"] == response.headers["request-id"]
     assert "x-should-retry" not in response.headers
 
 
-def test_provider_error_default_log_excludes_provider_message():
+def test_application_error_handler_does_not_log_error_message():
     app = create_test_app(_settings(log_api_error_tracebacks=False))
     secret = "provider-upstream-secret-detail"
 
-    @app.get("/raise_provider_secret")
-    async def _raise_provider_secret():
-        raise AuthenticationError(secret)
+    @app.get("/raise_application_secret")
+    async def _raise_application_secret():
+        raise InvalidRequestError(secret)
 
     with patch("free_claude_code.api.app.logger.error") as log_error:
-        response = TestClient(app).get("/raise_provider_secret")
+        response = TestClient(app).get("/raise_application_secret")
 
-    assert response.status_code == 401
+    assert response.status_code == 400
     blob = " ".join(
         str(value) for call in log_error.call_args_list for value in call.args
     )
     assert secret not in blob
-    assert "authentication_error" in blob
+    log_error.assert_not_called()
 
 
 def test_create_app_general_exception_handler_returns_correlated_500():
@@ -170,7 +170,7 @@ async def test_model_validation_failure_does_not_block_runtime_startup():
     settings = _settings(messaging_platform="none")
     manager = ProviderRuntimeManager(settings)
     runtime = ApplicationRuntime(manager, transcriber=None)
-    validation = AsyncMock(side_effect=ServiceUnavailableError("bad model"))
+    validation = AsyncMock(side_effect=ApplicationUnavailableError("bad model"))
 
     with (
         patch.object(manager, "validate_configured_models", new=validation),
@@ -201,7 +201,7 @@ def test_startup_failure_message_preserves_existing_concise_contract():
     assert (
         startup_failure_message(
             quiet,
-            ServiceUnavailableError("configured model is unavailable"),
+            ApplicationUnavailableError("configured model is unavailable"),
         )
         == "configured model is unavailable"
     )

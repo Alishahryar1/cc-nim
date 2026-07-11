@@ -3,8 +3,6 @@ import pytest
 from free_claude_code.core.anthropic import (
     anthropic_error_payload,
     anthropic_status_for_error_type,
-    get_user_facing_error_message,
-    redact_sensitive_error_text,
 )
 
 
@@ -43,23 +41,3 @@ def test_anthropic_error_payload_adds_request_id_and_redacts_credentials() -> No
         },
         "request_id": "req_test",
     }
-
-
-def test_unknown_exception_message_is_detailed_but_redacted() -> None:
-    error = RuntimeError("gateway failed api_key=SECRET details remain")
-
-    assert get_user_facing_error_message(error) == (
-        "gateway failed api_key=<redacted> details remain"
-    )
-
-
-def test_redaction_covers_json_credentials_and_recognizable_key_prefixes() -> None:
-    sanitized = redact_sensitive_error_text(
-        '{"authorization":"Bearer AUTH_TOKEN","api_key":"sk-live-secret-key",'
-        '"client_secret":"CLIENT_SECRET"} raw=nvapi-standalone-secret'
-    )
-
-    assert sanitized == (
-        '{"authorization":"<redacted>","api_key":"<redacted>",'
-        '"client_secret":"<redacted>"} raw=<redacted>'
-    )

@@ -3,14 +3,7 @@ from unittest.mock import MagicMock, patch
 import pytest
 from fastapi.testclient import TestClient
 
-from free_claude_code.providers.exceptions import (
-    APIError,
-    AuthenticationError,
-    InvalidRequestError,
-    OverloadedError,
-    ProviderError,
-    RateLimitError,
-)
+from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from tests.api.support import create_test_app
 
@@ -33,7 +26,12 @@ async def _mock_stream_response(*args, **kwargs):
 async def _mock_pre_start_rate_limit(*args, **kwargs):
     """Provider stream that fails before any downstream-visible SSE chunk."""
     _stream_response_calls.append((args, kwargs))
-    raise RateLimitError("upstream is busy")
+    raise ExecutionFailure(
+        kind=FailureKind.RATE_LIMIT,
+        status_code=429,
+        message="upstream is busy",
+        retryable=True,
+    )
     yield "unreachable"
 
 
@@ -170,7 +168,7 @@ def test_create_message_pre_start_provider_error_returns_terminal_json(
     }
 
     with (
-        patch("free_claude_code.api.handlers.messages.trace_event") as trace,
+        patch("free_claude_code.api.response_streams.trace_event") as trace,
         patch("free_claude_code.application.execution.trace_event") as execution_trace,
     ):
         response = client.post("/v1/messages", json=payload)
@@ -200,6 +198,9 @@ def test_create_message_pre_start_provider_error_returns_terminal_json(
         "status_code": 429,
         "error_type": "rate_limit_error",
         "client_should_retry": False,
+        "exc_type": "ExecutionFailure",
+        "failure_kind": "rate_limit",
+        "provider_retryable": True,
     }
     mock_provider.stream_response = _mock_stream_response
 
@@ -245,23 +246,46 @@ def test_model_mapping(client: TestClient):
 
 
 @pytest.mark.parametrize(
-    ("provider_error", "expected_status", "expected_type"),
+    ("failure", "expected_type"),
     [
-        (AuthenticationError("Invalid Key"), 401, "authentication_error"),
         (
-            InvalidRequestError("Invalid request api_key=SECRET useful detail"),
-            400,
+            ExecutionFailure(
+                FailureKind.AUTHENTICATION, 401, "Invalid Key", retryable=False
+            ),
+            "authentication_error",
+        ),
+        (
+            ExecutionFailure(
+                FailureKind.INVALID_REQUEST,
+                400,
+                "Invalid request api_key=SECRET useful detail",
+                retryable=False,
+            ),
             "invalid_request_error",
         ),
-        (RateLimitError("Too Many Requests"), 429, "rate_limit_error"),
-        (OverloadedError("Server Overloaded"), 529, "overloaded_error"),
-        (APIError("Upstream failed", status_code=503), 503, "api_error"),
+        (
+            ExecutionFailure(
+                FailureKind.RATE_LIMIT, 429, "Too Many Requests", retryable=True
+            ),
+            "rate_limit_error",
+        ),
+        (
+            ExecutionFailure(
+                FailureKind.OVERLOADED, 529, "Server Overloaded", retryable=True
+            ),
+            "overloaded_error",
+        ),
+        (
+            ExecutionFailure(
+                FailureKind.UPSTREAM, 503, "Upstream failed", retryable=True
+            ),
+            "api_error",
+        ),
     ],
 )
 def test_provider_execution_errors_preserve_status_and_type(
     client: TestClient,
-    provider_error: ProviderError,
-    expected_status: int,
+    failure: ExecutionFailure,
     expected_type: str,
 ):
     base_payload = {
@@ -272,12 +296,12 @@ def test_provider_execution_errors_preserve_status_and_type(
     }
 
     def _raise_provider_error(*args, **kwargs):
-        raise provider_error
+        raise failure
 
     try:
         mock_provider.stream_response = _raise_provider_error
         response = client.post("/v1/messages", json=base_payload)
-        error = _terminal_json_error(response, status_code=expected_status)
+        error = _terminal_json_error(response, status_code=failure.status_code)
         assert error["type"] == expected_type
         assert "SECRET" not in error["message"]
         if expected_type == "invalid_request_error":

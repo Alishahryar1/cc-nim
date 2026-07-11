@@ -14,9 +14,12 @@ from free_claude_code.api.response_streams import (
     bind_response_lifetime,
     terminal_execution_error_response,
 )
-from free_claude_code.core.anthropic import anthropic_error_payload
+from free_claude_code.core.anthropic import (
+    anthropic_error_payload,
+    anthropic_failure_payload,
+)
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
-from free_claude_code.providers.exceptions import RateLimitError
+from free_claude_code.core.failures import ExecutionFailure, FailureKind
 
 
 async def _body_chunks(chunks: list[str]) -> AsyncGenerator[str]:
@@ -38,13 +41,10 @@ async def _body_then_raises(
 
 
 def _json_error(exc: BaseException) -> JSONResponse:
-    if isinstance(exc, RateLimitError):
-        return JSONResponse(
+    if isinstance(exc, ExecutionFailure):
+        return terminal_execution_error_response(
             status_code=exc.status_code,
-            content=anthropic_error_payload(
-                error_type=exc.error_type,
-                message=exc.message,
-            ),
+            content=anthropic_failure_payload(exc),
         )
     return JSONResponse(
         status_code=500,
@@ -75,6 +75,7 @@ async def test_anthropic_response_waits_for_first_chunk_before_returning() -> No
         anthropic_sse_streaming_response(
             body(),
             pre_start_error_response=_json_error,
+            request_id="req_test",
         )
     )
 
@@ -90,12 +91,21 @@ async def test_anthropic_response_waits_for_first_chunk_before_returning() -> No
 @pytest.mark.asyncio
 async def test_anthropic_pre_start_provider_error_returns_non_200_json() -> None:
     response = await anthropic_sse_streaming_response(
-        _body_raises(RateLimitError("provider says slow down")),
+        _body_raises(
+            ExecutionFailure(
+                kind=FailureKind.RATE_LIMIT,
+                status_code=429,
+                message="provider says slow down",
+                retryable=True,
+            )
+        ),
         pre_start_error_response=_json_error,
+        request_id="req_test",
     )
 
     assert isinstance(response, JSONResponse)
     assert response.status_code == 429
+    assert response.headers["x-should-retry"] == "false"
     body = json.loads(bytes(response.body))
     assert body["error"]["type"] == "rate_limit_error"
     assert body["error"]["message"] == "provider says slow down"
@@ -129,6 +139,7 @@ async def test_anthropic_post_start_exception_emits_terminal_error_frame() -> No
             RuntimeError("socket cut"),
         ),
         pre_start_error_response=_json_error,
+        request_id="req_test",
     )
 
     assert isinstance(response, StreamingResponse)

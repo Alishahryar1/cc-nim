@@ -16,6 +16,7 @@ import time
 import httpx
 from loguru import logger
 
+from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.core.anthropic import (
     ReasoningReplayMode,
     build_base_request_body,
@@ -25,7 +26,6 @@ from free_claude_code.core.anthropic.conversion import OpenAIConversionError
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.defaults import LMSTUDIO_DEFAULT_BASE
-from free_claude_code.providers.exceptions import InvalidRequestError
 from free_claude_code.providers.rate_limit import ProviderRateLimiter
 from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
 

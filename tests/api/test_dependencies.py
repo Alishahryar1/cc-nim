@@ -10,9 +10,9 @@ from free_claude_code.api.dependencies import (
     resolve_provider,
 )
 from free_claude_code.api.ports import ApiServices
+from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.ports import RequestRuntimeLease
 from free_claude_code.config.settings import Settings
-from free_claude_code.providers.exceptions import AuthenticationError
 from tests.api.support import create_test_app
 
 
@@ -84,19 +84,19 @@ def test_resolve_provider_skips_initialization_log_for_cached_provider() -> None
     log_info.assert_not_called()
 
 
-def test_resolve_provider_missing_key_raises_503() -> None:
+def test_resolve_provider_missing_key_preserves_readiness_error() -> None:
     lease = _lease(
-        error=AuthenticationError(
+        error=ApplicationUnavailableError(
             "OPENROUTER_API_KEY is required. Get one at https://openrouter.ai"
         )
     )
 
-    with pytest.raises(HTTPException) as exc_info:
+    with pytest.raises(ApplicationUnavailableError) as exc_info:
         resolve_provider("open_router", lease=lease)
 
     assert exc_info.value.status_code == 503
-    assert "OPENROUTER_API_KEY" in exc_info.value.detail
-    assert "openrouter.ai" in exc_info.value.detail
+    assert "OPENROUTER_API_KEY" in exc_info.value.message
+    assert "openrouter.ai" in exc_info.value.message
 
 
 def test_resolve_provider_unrelated_error_is_not_reclassified() -> None:

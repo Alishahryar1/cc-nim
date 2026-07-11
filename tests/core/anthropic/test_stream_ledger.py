@@ -635,64 +635,6 @@ class TestAnthropicStreamLedgerStateManagement:
         assert events == []
 
 
-class TestAnthropicStreamLedgerError:
-    """Tests for protocol-native terminal errors."""
-
-    def test_terminal_error_tail_closes_open_block_without_success_stop(self):
-        builder = AnthropicStreamLedger("msg_1", "model")
-        builder.start_text_block()
-
-        events = list(builder.terminal_error_tail("Something went wrong"))
-        parsed = parse_sse_text("".join(events))
-
-        assert [event.event for event in parsed] == [
-            "content_block_stop",
-            "error",
-        ]
-        assert parsed[-1].data["error"]["message"] == "Something went wrong"
-
-    def test_terminal_error_tail_after_message_delta_does_not_fake_message_stop(self):
-        builder = AnthropicStreamLedger("msg_1", "model")
-        builder.ingest_native_event(
-            SSEEvent(
-                "message_delta",
-                {
-                    "type": "message_delta",
-                    "delta": {"stop_reason": "end_turn", "stop_sequence": None},
-                    "usage": {"input_tokens": 1, "output_tokens": 2},
-                },
-                "",
-            )
-        )
-
-        events = list(builder.terminal_error_tail("Something went wrong"))
-        parsed = parse_sse_text("".join(events))
-
-        assert [event.event for event in parsed] == ["error"]
-        assert parsed[0].data["error"]["message"] == "Something went wrong"
-
-    def test_terminal_error_tail_after_message_stop_emits_nothing(self):
-        builder = AnthropicStreamLedger("msg_1", "model")
-        builder.ingest_native_event(
-            SSEEvent(
-                "message_delta",
-                {
-                    "type": "message_delta",
-                    "delta": {"stop_reason": "end_turn", "stop_sequence": None},
-                    "usage": {"input_tokens": 1, "output_tokens": 2},
-                },
-                "",
-            )
-        )
-        builder.ingest_native_event(
-            SSEEvent("message_stop", {"type": "message_stop"}, "")
-        )
-
-        events = list(builder.terminal_error_tail("Something went wrong"))
-
-        assert events == []
-
-
 class TestAnthropicStreamLedgerTokenEstimation:
     """Tests for estimate_output_tokens."""
 

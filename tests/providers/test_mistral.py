@@ -7,8 +7,8 @@ import openai
 import pytest
 from httpx import Request, Response
 
+from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.exceptions import ProviderError
 from free_claude_code.providers.mistral import MISTRAL_DEFAULT_BASE, MistralProvider
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
@@ -702,7 +702,7 @@ async def test_stream_response_unrelated_bad_request_does_not_retry(mistral_prov
     ) as mock_create:
         mock_create.side_effect = error
 
-        with pytest.raises(ProviderError) as exc_info:
+        with pytest.raises(ExecutionFailure) as exc_info:
             [e async for e in mistral_provider.stream_response(req)]
 
     assert mock_create.await_count == 1
@@ -721,7 +721,7 @@ async def test_stream_response_generic_thinking_error_does_not_retry(
     ) as mock_create:
         mock_create.side_effect = error
 
-        with pytest.raises(ProviderError) as exc_info:
+        with pytest.raises(ExecutionFailure) as exc_info:
             [e async for e in mistral_provider.stream_response(req)]
 
     assert mock_create.await_count == 1

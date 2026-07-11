@@ -509,11 +509,13 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     ),
     FeatureCoverage(
         "streaming_error_mapping",
-        "Provider and validation errors map to Anthropic-compatible payloads",
+        "Canonical execution failures map to protocol-correct terminal output",
         "public_surface",
         (
-            "tests/providers/test_streaming_errors.py",
-            "tests/providers/test_error_mapping.py",
+            "tests/api/test_execution_failure_contract.py",
+            "tests/core/test_failure_protocol_mapping.py",
+            "tests/providers/test_execution_failure_boundary.py",
+            "tests/providers/test_failure_policy.py",
         ),
         (),
         (

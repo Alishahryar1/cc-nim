@@ -7,19 +7,16 @@ from collections.abc import Callable
 import httpx
 from loguru import logger
 
+from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.model_refs import (
     ConfiguredChatModelRef,
     configured_chat_model_refs,
 )
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.providers.base import BaseProvider
-from free_claude_code.providers.exceptions import (
-    AuthenticationError,
-    ModelListResponseError,
-    ProviderError,
-    ServiceUnavailableError,
-)
+from free_claude_code.providers.model_listing import ModelListResponseError
 
 from .model_cache import ProviderModelCache
 
@@ -32,9 +29,9 @@ def provider_query_failure_reason(exc: BaseException, settings: Settings) -> str
         return f"malformed model-list response: {exc.message}"
     if isinstance(exc, httpx.HTTPStatusError):
         return f"query failure: HTTP {exc.response.status_code}"
-    if isinstance(exc, AuthenticationError):
+    if isinstance(exc, ApplicationUnavailableError):
         return f"query failure: {exc.message}"
-    if isinstance(exc, ProviderError) and settings.log_api_error_tracebacks:
+    if isinstance(exc, ExecutionFailure) and settings.log_api_error_tracebacks:
         return f"query failure: {exc.message}"
     return f"query failure: {type(exc).__name__}"
 
@@ -96,7 +93,7 @@ class ConfiguredModelValidator:
             message = "Configured model validation failed:\n" + "\n".join(
                 f"- {failure}" for failure in failures
             )
-            raise ServiceUnavailableError(message)
+            raise ApplicationUnavailableError(message)
 
         logger.info(
             "Configured provider models validated: models={} providers={}",

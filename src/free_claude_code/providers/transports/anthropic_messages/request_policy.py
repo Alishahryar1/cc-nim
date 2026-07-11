@@ -6,12 +6,12 @@ from typing import Any, Literal
 
 from loguru import logger
 
+from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.native_messages_request import (
     build_base_native_anthropic_request_body,
 )
-from free_claude_code.providers.exceptions import InvalidRequestError
 
 NativeExtraBodyPolicy = Literal["drop", "reject"]
 NativeMessagesPostprocessor = Callable[[dict[str, Any], MessagesRequest, bool], None]

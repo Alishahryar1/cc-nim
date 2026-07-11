@@ -6,7 +6,7 @@ from collections.abc import Awaitable, Callable
 from loguru import logger
 
 from free_claude_code.config.settings import get_settings
-from free_claude_code.core.anthropic import get_user_facing_error_message
+from free_claude_code.core.diagnostics import safe_exception_message
 
 from ..safe_diagnostics import format_exception_for_log
 from .node import MessageNode, MessageState
@@ -98,7 +98,7 @@ class TreeQueueProcessor:
             await tree.update_state(
                 node.node_id,
                 MessageState.ERROR,
-                error_message=get_user_facing_error_message(e),
+                error_message=safe_exception_message(e),
             )
         finally:
             async with tree.with_lock():

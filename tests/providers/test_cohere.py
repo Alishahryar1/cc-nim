@@ -4,9 +4,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.cohere import COHERE_DEFAULT_BASE, CohereProvider
-from free_claude_code.providers.exceptions import InvalidRequestError
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
 

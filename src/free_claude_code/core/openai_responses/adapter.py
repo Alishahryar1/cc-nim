@@ -7,7 +7,10 @@ from .errors import ResponsesConversionError, openai_error_payload
 from .events import OPENAI_RESPONSES_SSE_HEADERS
 from .input import convert_request_to_anthropic_payload
 from .models import OpenAIResponsesRequest
-from .stream import iter_responses_sse_from_anthropic
+from .stream import (
+    PostStartTerminalFailureObserver,
+    iter_responses_sse_from_anthropic,
+)
 
 
 class OpenAIResponsesAdapter:
@@ -23,8 +26,14 @@ class OpenAIResponsesAdapter:
         self,
         chunks: AsyncIterable[Any],
         request: OpenAIResponsesRequest,
+        *,
+        on_post_start_terminal_failure: PostStartTerminalFailureObserver | None = None,
     ) -> AsyncIterator[str]:
-        return iter_responses_sse_from_anthropic(chunks, request)
+        return iter_responses_sse_from_anthropic(
+            chunks,
+            request,
+            on_post_start_terminal_failure=on_post_start_terminal_failure,
+        )
 
     def error_payload(self, *, message: str, error_type: str) -> dict[str, Any]:
         return openai_error_payload(message=message, error_type=error_type)

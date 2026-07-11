@@ -7,16 +7,14 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
+from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.config.settings import Settings
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.deepseek import DeepSeekProvider
-from free_claude_code.providers.exceptions import (
-    ModelListResponseError,
-    ServiceUnavailableError,
-)
 from free_claude_code.providers.llamacpp import LlamaCppProvider
+from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.ollama import OllamaProvider
 from free_claude_code.providers.open_router import OpenRouterProvider
@@ -406,7 +404,7 @@ async def test_runtime_validation_reports_missing_model_with_sources() -> None:
         {"nvidia_nim": FakeProvider(frozenset({"different-model"}))},
     )
 
-    with pytest.raises(ServiceUnavailableError) as exc_info:
+    with pytest.raises(ApplicationUnavailableError) as exc_info:
         await runtime.validate_configured_models()
 
     message = exc_info.value.message
@@ -429,7 +427,7 @@ async def test_runtime_validation_aggregates_multiple_failures() -> None:
         },
     )
 
-    with pytest.raises(ServiceUnavailableError) as exc_info:
+    with pytest.raises(ApplicationUnavailableError) as exc_info:
         await runtime.validate_configured_models()
 
     message = exc_info.value.message

@@ -5,12 +5,13 @@ from typing import Any
 import httpx
 from loguru import logger
 
-from free_claude_code.config.constants import (
-    NATIVE_MESSAGES_ERROR_BODY_LOG_CAP_BYTES,
-    PROVIDER_ERROR_BODY_DISPLAY_CAP_BYTES,
+from free_claude_code.config.constants import NATIVE_MESSAGES_ERROR_BODY_LOG_CAP_BYTES
+from free_claude_code.core.diagnostics import (
+    ERROR_DETAIL_DISPLAY_CAP_BYTES,
+    attach_upstream_error_body,
+    redact_sensitive_error_text,
 )
-from free_claude_code.providers.error_mapping import attach_provider_error_body
-from free_claude_code.providers.exceptions import ModelListResponseError
+from free_claude_code.providers.model_listing import ModelListResponseError
 
 
 def model_list_json(response: httpx.Response, *, provider_name: str) -> Any:
@@ -62,14 +63,16 @@ async def raise_for_status_with_body(
         response.raise_for_status()
     except httpx.HTTPStatusError as error:
         preview, truncated = await read_error_body_preview(
-            response, PROVIDER_ERROR_BODY_DISPLAY_CAP_BYTES
+            response, ERROR_DETAIL_DISPLAY_CAP_BYTES
         )
-        attach_provider_error_body(error, preview, truncated=truncated)
+        attach_upstream_error_body(error, preview, truncated=truncated)
         if log_api_error_tracebacks:
             log_preview = preview[:NATIVE_MESSAGES_ERROR_BODY_LOG_CAP_BYTES]
             log_truncated = truncated or len(preview) > len(log_preview)
             if log_preview:
-                text = log_preview.decode("utf-8", errors="replace")
+                text = redact_sensitive_error_text(
+                    log_preview.decode("utf-8", errors="replace")
+                )
                 logger.error(
                     "{}_ERROR:{} HTTP {} body_preview_bytes={} truncated={}: {}",
                     provider_name,

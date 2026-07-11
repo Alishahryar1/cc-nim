@@ -10,7 +10,7 @@ from typing import Any
 
 from loguru import logger
 
-from free_claude_code.core.anthropic import format_user_error_preview
+from free_claude_code.core.diagnostics import format_user_error_preview
 
 from ..models import IncomingMessage
 from ..voice import PendingVoiceRegistry, Transcriber

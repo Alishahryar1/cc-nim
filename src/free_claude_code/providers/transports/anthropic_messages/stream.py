@@ -1,25 +1,29 @@
 """Native Anthropic Messages upstream adapter."""
 
+import sys
 from collections.abc import AsyncIterator
 from typing import Any
 
 import httpx
 
+from free_claude_code.core.anthropic import execution_failure_from_anthropic_error
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.core.anthropic.streaming import (
     AnthropicStreamLedger,
-    RecoveryController,
-    RecoveryFailureAction,
-    TruncatedProviderStreamError,
     tool_schemas_by_name,
 )
 from free_claude_code.core.trace import (
     provider_native_messages_body_snapshot,
     trace_event,
 )
-from free_claude_code.providers.error_mapping import map_stream_start_error
-from free_claude_code.providers.transports.http import maybe_await_aclose
+from free_claude_code.providers.failure_policy import classify_provider_failure
+from free_claude_code.providers.stream_recovery import (
+    RecoveryController,
+    RecoveryFailureAction,
+    TruncatedProviderStreamError,
+)
+from free_claude_code.providers.transports.http import close_provider_stream
 
 from .recovery import AnthropicMessagesRecovery
 
@@ -98,6 +102,7 @@ class AnthropicMessagesStreamAdapter:
                         self._transport._validated_stream_send,
                         body,
                         req_tag=req_tag,
+                        request_id=self._request_id,
                     )
                     stream_opened = True
                     chunk_count = 0
@@ -111,6 +116,10 @@ class AnthropicMessagesStreamAdapter:
                         chunk_count += 1
                         chunk_bytes += len(chunk.encode("utf-8", errors="replace"))
                         for parsed in parse_sse_text(chunk):
+                            if parsed.event == "error":
+                                raise execution_failure_from_anthropic_error(
+                                    parsed.data
+                                )
                             emitted = ledger.ingest_native_event(parsed)
                             if emitted is None:
                                 continue
@@ -168,7 +177,12 @@ class AnthropicMessagesStreamAdapter:
                     )
                     if decision.action == RecoveryFailureAction.EARLY_RETRY:
                         if response is not None and not response.is_closed:
-                            await maybe_await_aclose(response)
+                            await close_provider_stream(
+                                response,
+                                active_error=error,
+                                provider_name=tag,
+                                request_id=self._request_id,
+                            )
                         response = None
                         state = self._transport._new_stream_state()
                         ledger = self._new_ledger()
@@ -208,18 +222,13 @@ class AnthropicMessagesStreamAdapter:
                         self._transport._log_stream_transport_error(
                             tag, req_tag, error, request_id=self._request_id
                         )
-                    mapped_error, error_message = self._transport._map_error_details(
-                        error, self._request_id
+                    failure = classify_provider_failure(
+                        error,
+                        provider_name=tag,
+                        read_timeout_s=self._transport._config.http_read_timeout,
+                        request_id=self._request_id,
+                        mark_rate_limited=self._transport._rate_limiter.set_blocked,
                     )
-                    mapped_error_type = getattr(mapped_error, "error_type", None)
-                    terminal_error_type = (
-                        mapped_error_type
-                        if isinstance(mapped_error_type, str) and mapped_error_type
-                        else "api_error"
-                    )
-
-                    if response is not None and not response.is_closed:
-                        await maybe_await_aclose(response)
 
                     error_trace: dict[str, Any] = {
                         "stage": "provider",
@@ -228,40 +237,34 @@ class AnthropicMessagesStreamAdapter:
                         "provider": tag,
                         "request_id": self._request_id,
                         "exc_type": type(error).__name__,
-                        "mapped_error_type": type(mapped_error).__name__,
+                        "failure_kind": failure.kind.value,
+                        "status_code": failure.status_code,
+                        "provider_retryable": failure.retryable,
                         "mid_stream": sent_any_event or decision.committed,
                     }
                     if self._transport._config.log_api_error_tracebacks:
-                        error_trace["error_message"] = error_message
+                        error_trace["error_message"] = failure.message
                     trace_event(**error_trace)
                     if decision.committed:
-                        for event in ledger.terminal_error_tail(
-                            error_message,
-                            error_type=terminal_error_type,
-                        ):
+                        for event in ledger.close_unclosed_blocks():
                             yield event
                     elif decision.has_buffered and complete_tool_salvageable:
                         for event in recovery.flush():
                             sent_any_event = True
                             yield event
-                        for event in ledger.terminal_error_tail(
-                            error_message,
-                            error_type=terminal_error_type,
-                        ):
+                        for event in ledger.close_unclosed_blocks():
                             yield event
                     else:
                         recovery.discard()
-                        raise map_stream_start_error(
-                            error,
-                            provider_name=tag,
-                            read_timeout_s=self._transport._config.http_read_timeout,
-                            request_id=self._request_id,
-                            rate_limiter=self._transport._rate_limiter,
-                        ) from error
-                    return
+                    raise failure from error
                 finally:
                     if response is not None and not response.is_closed:
-                        await maybe_await_aclose(response)
+                        await close_provider_stream(
+                            response,
+                            active_error=sys.exception(),
+                            provider_name=tag,
+                            request_id=self._request_id,
+                        )
 
     async def iter_stream_chunks(
         self,

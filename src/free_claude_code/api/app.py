@@ -1,6 +1,5 @@
 """Pure FastAPI application factory."""
 
-import traceback
 from typing import Any
 
 from fastapi import FastAPI, Request
@@ -9,18 +8,21 @@ from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 from loguru import logger
 
-from free_claude_code.core.anthropic import (
-    anthropic_error_payload,
-    get_user_facing_error_message,
+from free_claude_code.application.errors import ApplicationError
+from free_claude_code.core.anthropic import anthropic_error_payload
+from free_claude_code.core.diagnostics import (
+    redacted_exception_traceback,
+    safe_exception_message,
 )
+from free_claude_code.core.openai_responses import openai_error_payload
 from free_claude_code.core.trace import (
     extract_claude_session_id_from_headers,
     trace_event,
 )
-from free_claude_code.providers.exceptions import ProviderError
 
 from .admin_routes import router as admin_router
 from .ports import ApiServices
+from .request_errors import ordinary_application_error_response
 from .request_ids import (
     attach_request_id_headers,
     get_request_id,
@@ -82,30 +84,15 @@ def create_app(services: ApiServices) -> FastAPI:
         )
         return await request_validation_exception_handler(request, exc)
 
-    @app.exception_handler(ProviderError)
-    async def provider_error_handler(request: Request, exc: ProviderError):
-        """Handle provider-specific errors and return Anthropic format."""
-        settings = services.requests.current_settings()
-        if settings.log_api_error_tracebacks:
-            logger.error(
-                "Provider Error: error_type={} status_code={} message={}",
-                exc.error_type,
-                exc.status_code,
-                exc.message,
-            )
-        else:
-            logger.error(
-                "Provider Error: error_type={} status_code={}",
-                exc.error_type,
-                exc.status_code,
-            )
-        return JSONResponse(
-            status_code=exc.status_code,
-            content=anthropic_error_payload(
-                error_type=exc.error_type,
-                message=exc.message,
-                request_id=get_request_id(request),
+    @app.exception_handler(ApplicationError)
+    async def application_error_handler(request: Request, exc: ApplicationError):
+        """Serialize defensive application failures in the selected wire protocol."""
+        return ordinary_application_error_response(
+            exc,
+            wire_api=(
+                "responses" if request.url.path == "/v1/responses" else "messages"
             ),
+            request_id=get_request_id(request),
         )
 
     @app.exception_handler(Exception)
@@ -121,8 +108,8 @@ def create_app(services: ApiServices) -> FastAPI:
             request_id=request_id,
         ):
             if settings.log_api_error_tracebacks:
-                logger.error("General Error: {}", exc)
-                logger.error(traceback.format_exc())
+                logger.error("General Error: {}", safe_exception_message(exc))
+                logger.error(redacted_exception_traceback(exc))
             else:
                 logger.error(
                     "General Error: path={} method={} exc_type={}",
@@ -130,14 +117,16 @@ def create_app(services: ApiServices) -> FastAPI:
                     request.method,
                     type(exc).__name__,
                 )
-            response = JSONResponse(
-                status_code=500,
-                content=anthropic_error_payload(
+            message = safe_exception_message(exc)
+            if request.url.path == "/v1/responses":
+                content = openai_error_payload(message=message, error_type="api_error")
+            else:
+                content = anthropic_error_payload(
                     error_type="api_error",
-                    message=get_user_facing_error_message(exc),
+                    message=message,
                     request_id=request_id,
-                ),
-            )
+                )
+            response = JSONResponse(status_code=500, content=content)
         attach_request_id_headers(
             response,
             request_id=request_id,

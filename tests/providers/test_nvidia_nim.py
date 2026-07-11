@@ -6,8 +6,8 @@ import pytest
 from httpx import Request, Response
 
 from free_claude_code.config.nim import NimSettings
+from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.providers.defaults import NVIDIA_NIM_DEFAULT_BASE
-from free_claude_code.providers.exceptions import ProviderError
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.nvidia_nim.tool_schema import (
     NIM_TOOL_ARGUMENT_ALIASES_KEY,
@@ -494,7 +494,7 @@ async def test_stream_response_does_not_retry_unrelated_bad_request(provider_con
     ) as mock_create:
         mock_create.side_effect = _make_bad_request_error("unrelated bad request")
 
-        with pytest.raises(ProviderError) as exc_info:
+        with pytest.raises(ExecutionFailure) as exc_info:
             [e async for e in provider.stream_response(req)]
 
     assert mock_create.await_count == 1
@@ -885,7 +885,7 @@ async def test_stream_response_bad_request_without_reasoning_budget_does_not_ret
     ) as mock_create:
         mock_create.side_effect = error
 
-        with pytest.raises(ProviderError) as exc_info:
+        with pytest.raises(ExecutionFailure) as exc_info:
             [e async for e in nim_provider.stream_response(req)]
 
     assert mock_create.await_count == 1
@@ -904,7 +904,7 @@ async def test_stream_response_unrelated_internal_error_does_not_downgrade(
     ) as mock_create:
         mock_create.side_effect = error
 
-        with pytest.raises(ProviderError) as exc_info:
+        with pytest.raises(ExecutionFailure) as exc_info:
             [e async for e in nim_provider.stream_response(req)]
 
     assert mock_create.await_count == 1
@@ -925,7 +925,7 @@ async def test_stream_response_internal_reasoning_content_error_does_not_downgra
     ) as mock_create:
         mock_create.side_effect = error
 
-        with pytest.raises(ProviderError) as exc_info:
+        with pytest.raises(ExecutionFailure) as exc_info:
             [e async for e in nim_provider.stream_response(req)]
 
     assert mock_create.await_count == 1

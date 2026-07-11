@@ -6,11 +6,11 @@ from dataclasses import dataclass, field
 
 from loguru import logger
 
+from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.trace import trace_event
 from free_claude_code.providers.base import BaseProvider
-from free_claude_code.providers.exceptions import ServiceUnavailableError
 from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.providers.runtime.discovery import ProviderModelDiscovery
 from free_claude_code.providers.runtime.model_cache import ProviderModelCache
@@ -106,7 +106,7 @@ class ProviderRuntimeManager:
 
     async def acquire(self) -> ProviderGenerationLease:
         if self._closing or self._closed:
-            raise ServiceUnavailableError("Provider runtime is shutting down.")
+            raise ApplicationUnavailableError("Provider runtime is shutting down.")
         generation = self._current
         generation.active_leases += 1
         generation.drained.clear()
@@ -160,7 +160,7 @@ class ProviderRuntimeManager:
         """Run an explicit full refresh without racing replacement."""
         async with self._replace_lock:
             if self._closing or self._closed:
-                raise ServiceUnavailableError("Provider runtime is shutting down.")
+                raise ApplicationUnavailableError("Provider runtime is shutting down.")
             await self._cancel_refresh()
             await self._refresh_generation(self._current, only_missing=False)
 
@@ -174,7 +174,7 @@ class ProviderRuntimeManager:
         """Prepare, commit, and atomically publish one replacement generation."""
         async with self._replace_lock:
             if self._closing or self._closed:
-                raise ServiceUnavailableError("Provider runtime is shutting down.")
+                raise ApplicationUnavailableError("Provider runtime is shutting down.")
             await self._cancel_refresh()
             await self._retry_unpublished_cleanup()
             candidate_id = self._next_generation_id

@@ -9,22 +9,27 @@ from collections.abc import (
     Callable,
     Mapping,
 )
-from typing import Any, Protocol, runtime_checkable
+from typing import Any, Literal, Protocol, runtime_checkable
 
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 
-from free_claude_code.core.anthropic import get_user_facing_error_message
+from free_claude_code.core.anthropic import anthropic_error_type_for_failure
 from free_claude_code.core.anthropic.streaming import (
     ANTHROPIC_SSE_RESPONSE_HEADERS,
     anthropic_terminal_error_frame,
+    anthropic_terminal_failure_frame,
 )
+from free_claude_code.core.diagnostics import safe_exception_message
+from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.core.trace import trace_event
 
 TERMINAL_EXECUTION_ERROR_HEADERS = {"x-should-retry": "false"}
 
 PreStartErrorResponse = Callable[[BaseException], Response]
 TerminalFrameEmitter = Callable[[BaseException], str]
+TerminalFailureObserver = Callable[[BaseException], None]
 ReleaseResponseResource = Callable[[], Awaitable[None]]
+WireApi = Literal["messages", "responses"]
 
 
 @runtime_checkable
@@ -78,13 +83,31 @@ def terminal_execution_error_response(
     )
 
 
-def _trace_egress_failure(exc: BaseException) -> None:
-    trace_event(
-        stage="egress",
-        event="free_claude_code.api.response.egress_error_frame_emitted",
-        source="api",
-        exc_type=type(exc).__name__,
-    )
+def trace_terminal_execution_error(
+    *,
+    wire_api: WireApi,
+    request_id: str,
+    status_code: int,
+    error_type: str,
+    error: BaseException | None = None,
+) -> None:
+    """Record one correlated terminal-execution decision at the HTTP boundary."""
+    fields: dict[str, object] = {
+        "stage": "egress",
+        "event": "free_claude_code.api.response.terminal_execution_error",
+        "source": "api",
+        "wire_api": wire_api,
+        "request_id": request_id,
+        "status_code": status_code,
+        "error_type": error_type,
+        "client_should_retry": False,
+    }
+    if error is not None:
+        fields["exc_type"] = type(error).__name__
+    if isinstance(error, ExecutionFailure):
+        fields["failure_kind"] = error.kind.value
+        fields["provider_retryable"] = error.retryable
+    trace_event(**fields)
 
 
 async def _first_chunk_streaming_response(
@@ -93,6 +116,7 @@ async def _first_chunk_streaming_response(
     headers: Mapping[str, str],
     pre_start_error_response: PreStartErrorResponse,
     terminal_frame: TerminalFrameEmitter | None,
+    terminal_failure_observer: TerminalFailureObserver | None,
 ) -> Response:
     try:
         first_chunk = await anext(body)
@@ -114,6 +138,7 @@ async def _first_chunk_streaming_response(
             first_chunk,
             body,
             terminal_frame=terminal_frame,
+            terminal_failure_observer=terminal_failure_observer,
         ),
         media_type="text/event-stream",
         headers=dict(headers),
@@ -125,6 +150,7 @@ async def _replay_first_chunk_then_stream(
     body: AsyncIterator[str],
     *,
     terminal_frame: TerminalFrameEmitter | None,
+    terminal_failure_observer: TerminalFailureObserver | None,
 ) -> AsyncGenerator[str]:
     yield first_chunk
     try:
@@ -137,12 +163,14 @@ async def _replay_first_chunk_then_stream(
     except BaseExceptionGroup as exc:
         if terminal_frame is None:
             raise
-        _trace_egress_failure(exc)
+        if terminal_failure_observer is not None:
+            terminal_failure_observer(exc)
         yield terminal_frame(exc)
     except Exception as exc:
         if terminal_frame is None:
             raise
-        _trace_egress_failure(exc)
+        if terminal_failure_observer is not None:
+            terminal_failure_observer(exc)
         yield terminal_frame(exc)
 
 
@@ -150,15 +178,43 @@ async def anthropic_sse_streaming_response(
     body: AsyncIterator[str],
     *,
     pre_start_error_response: PreStartErrorResponse,
+    request_id: str,
 ) -> Response:
     """Return a streaming response for Anthropic-style SSE streams."""
     return await _first_chunk_streaming_response(
         body,
         headers=ANTHROPIC_SSE_RESPONSE_HEADERS,
         pre_start_error_response=pre_start_error_response,
-        terminal_frame=lambda exc: anthropic_terminal_error_frame(
-            get_user_facing_error_message(exc)
+        terminal_frame=_anthropic_terminal_frame,
+        terminal_failure_observer=lambda exc: _trace_anthropic_terminal_failure(
+            exc,
+            request_id=request_id,
         ),
+    )
+
+
+def _anthropic_terminal_frame(exc: BaseException) -> str:
+    if isinstance(exc, ExecutionFailure):
+        return anthropic_terminal_failure_frame(exc)
+    return anthropic_terminal_error_frame(safe_exception_message(exc))
+
+
+def _trace_anthropic_terminal_failure(
+    exc: BaseException,
+    *,
+    request_id: str,
+) -> None:
+    failure = exc if isinstance(exc, ExecutionFailure) else None
+    trace_terminal_execution_error(
+        wire_api="messages",
+        request_id=request_id,
+        status_code=failure.status_code if failure is not None else 500,
+        error_type=(
+            anthropic_error_type_for_failure(failure)
+            if failure is not None
+            else "api_error"
+        ),
+        error=exc,
     )
 
 
@@ -174,4 +230,5 @@ async def openai_responses_sse_streaming_response(
         headers=headers,
         pre_start_error_response=pre_start_error_response,
         terminal_frame=None,
+        terminal_failure_observer=None,
     )

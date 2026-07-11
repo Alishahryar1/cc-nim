@@ -10,7 +10,6 @@ from typing import Any
 
 from loguru import logger
 
-from free_claude_code.core.anthropic.errors import anthropic_error_payload
 from free_claude_code.core.anthropic.stream_contracts import SSEEvent
 
 from .emitter import AnthropicSseEmitter
@@ -389,14 +388,6 @@ class AnthropicStreamLedger:
             if state.started:
                 yield self.stop_tool_block(tool_index)
 
-    def emit_top_level_error(
-        self, error_message: str, *, error_type: str = "api_error"
-    ) -> str:
-        return self._emitter.event(
-            "error",
-            anthropic_error_payload(error_type=error_type, message=error_message),
-        )
-
     def ingest_native_event(self, event: SSEEvent) -> str | None:
         """Record a native Anthropic SSE event and re-emit its normalized shape."""
         if event.event == "message_start":
@@ -497,15 +488,6 @@ class AnthropicStreamLedger:
             )
         if not self.message_stopped:
             yield self.message_stop()
-
-    def terminal_error_tail(
-        self, error_message: str, *, error_type: str = "api_error"
-    ) -> Iterator[str]:
-        """Terminate an incomplete message with an error, never a success stop."""
-        if self.message_stopped:
-            return
-        yield from self.close_unclosed_blocks()
-        yield self.emit_top_level_error(error_message, error_type=error_type)
 
     def can_salvage_tool_use(self, schemas: dict[str, ToolSchema]) -> bool:
         tool_blocks = self.tool_blocks()

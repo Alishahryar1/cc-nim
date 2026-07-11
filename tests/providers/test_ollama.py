@@ -6,8 +6,8 @@ import httpx
 import pytest
 
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
+from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.exceptions import ProviderError
 from free_claude_code.providers.ollama import OLLAMA_DEFAULT_BASE, OllamaProvider
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
@@ -207,7 +207,7 @@ async def test_stream_error_status_code(ollama_provider):
             new_callable=AsyncMock,
             return_value=mock_response,
         ),
-        pytest.raises(ProviderError) as exc_info,
+        pytest.raises(ExecutionFailure) as exc_info,
     ):
         [
             event

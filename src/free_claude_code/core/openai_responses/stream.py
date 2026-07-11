@@ -1,23 +1,26 @@
 """Translate Anthropic SSE streams into OpenAI Responses SSE streams."""
 
 import asyncio
-from collections.abc import AsyncIterable, AsyncIterator
+from collections.abc import AsyncIterable, AsyncIterator, Callable
 from typing import Any
 
-from free_claude_code.core.anthropic import get_user_facing_error_message
-from free_claude_code.core.trace import trace_event
+from free_claude_code.core.diagnostics import safe_exception_message
+from free_claude_code.core.failures import ExecutionFailure
 
 from .anthropic_sse import iter_sse_events
 from .models import OpenAIResponsesRequest
 from .streaming import ResponsesStreamAssembler
 
+PostStartTerminalFailureObserver = Callable[[BaseException], None]
+
 
 async def iter_responses_sse_from_anthropic(
     chunks: AsyncIterable[Any],
     request: OpenAIResponsesRequest,
+    *,
+    on_post_start_terminal_failure: PostStartTerminalFailureObserver | None = None,
 ) -> AsyncIterator[str]:
     """Yield Responses SSE events translated from an Anthropic SSE stream."""
-
     assembler = ResponsesStreamAssembler(request)
     emitted_any_chunk = False
     try:
@@ -34,41 +37,38 @@ async def iter_responses_sse_from_anthropic(
         raise
     except asyncio.CancelledError:
         raise
+    except ExecutionFailure as exc:
+        if not emitted_any_chunk:
+            raise
+        _observe_post_start_terminal_failure(on_post_start_terminal_failure, exc)
+        for chunk in assembler.fail_execution(exc):
+            yield chunk
     except BaseExceptionGroup as exc:
         if not emitted_any_chunk:
             raise
-        trace_event(
-            stage="responses",
-            event="responses.stream.terminal_failure_frame",
-            source="openai_responses",
-            exc_type=type(exc).__name__,
-        )
-        for chunk in assembler.fail_response(
-            {
-                "error": {
-                    "type": "api_error",
-                    "message": get_user_facing_error_message(exc),
-                }
-            }
-        ):
+        _observe_post_start_terminal_failure(on_post_start_terminal_failure, exc)
+        for chunk in assembler.fail_response(_unexpected_error_data(exc)):
             yield chunk
-        return
     except Exception as exc:
         if not emitted_any_chunk:
             raise
-        trace_event(
-            stage="responses",
-            event="responses.stream.terminal_failure_frame",
-            source="openai_responses",
-            exc_type=type(exc).__name__,
-        )
-        for chunk in assembler.fail_response(
-            {
-                "error": {
-                    "type": "api_error",
-                    "message": get_user_facing_error_message(exc),
-                }
-            }
-        ):
+        _observe_post_start_terminal_failure(on_post_start_terminal_failure, exc)
+        for chunk in assembler.fail_response(_unexpected_error_data(exc)):
             yield chunk
-        return
+
+
+def _observe_post_start_terminal_failure(
+    observer: PostStartTerminalFailureObserver | None,
+    exc: BaseException,
+) -> None:
+    if observer is not None:
+        observer(exc)
+
+
+def _unexpected_error_data(exc: BaseException) -> dict[str, dict[str, str]]:
+    return {
+        "error": {
+            "type": "api_error",
+            "message": safe_exception_message(exc),
+        }
+    }

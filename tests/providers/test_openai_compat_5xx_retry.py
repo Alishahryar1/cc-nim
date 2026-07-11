@@ -8,8 +8,8 @@ import pytest
 from httpx import Request, Response
 
 from free_claude_code.config.nim import NimSettings
+from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.exceptions import ProviderError
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import retrying_rate_limiter
@@ -152,7 +152,7 @@ async def test_nim_stream_connection_error_exhausted_emits_cause_chain():
         patch(
             "free_claude_code.providers.transports.openai_chat.stream.trace_event"
         ) as trace,
-        pytest.raises(ProviderError) as exc_info,
+        pytest.raises(ExecutionFailure) as exc_info,
     ):
         [e async for e in provider.stream_response(req, request_id="req_conn")]
 
@@ -207,7 +207,7 @@ async def test_nim_stream_openai_5xx_exhausted_emits_user_message(
         patch("asyncio.sleep", new_callable=AsyncMock),
     ):
         mock_create.side_effect = _internal_5xx(status_code)
-        with pytest.raises(ProviderError) as exc_info:
+        with pytest.raises(ExecutionFailure) as exc_info:
             [e async for e in provider.stream_response(req)]
 
     assert mock_create.await_count == 5
