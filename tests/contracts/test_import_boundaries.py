@@ -526,20 +526,6 @@ def test_provider_transports_live_under_transport_family_packages() -> None:
     assert offenders == []
 
 
-def test_native_anthropic_transport_is_local_provider_only() -> None:
-    from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
-
-    native_ids = {
-        provider_id
-        for provider_id, descriptor in PROVIDER_CATALOG.items()
-        if descriptor.transport_type == "anthropic_messages"
-    }
-
-    assert native_ids == {"llamacpp", "ollama"}
-    for provider_id in native_ids:
-        assert "local" in PROVIDER_CATALOG[provider_id].capabilities
-
-
 def test_cloud_providers_do_not_import_native_anthropic_transport() -> None:
     repo_root = Path(__file__).resolve().parents[2]
 

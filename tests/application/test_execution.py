@@ -7,6 +7,7 @@ import pytest
 
 from free_claude_code.application.execution import ProviderExecutor
 from free_claude_code.application.routing import ResolvedModel, RoutedMessagesRequest
+from free_claude_code.config.provider_catalog import ProviderCapabilities
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
 
 
@@ -65,6 +66,7 @@ def _routed_request() -> RoutedMessagesRequest:
             provider_model="provider-model",
             provider_model_ref="provider/provider-model",
             thinking_enabled=True,
+            capabilities=ProviderCapabilities(),
         ),
     )
 

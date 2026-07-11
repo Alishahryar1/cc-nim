@@ -376,7 +376,9 @@ otherwise they fall back to `MODEL`.
 
 The router also resolves thinking. Gateway model IDs can force thinking on or
 off; otherwise `ModelRouter` applies tier-specific thinking overrides or the
-global setting.
+global setting. `ResolvedModel` carries the selected provider's immutable
+`ProviderCapabilities`, so product policy reads explicit semantic capabilities
+instead of inferring behavior from a provider ID or transport family.
 
 `GET /v1/models` advertises:
 
@@ -386,7 +388,9 @@ global setting.
 - built-in Claude model IDs for compatibility with Claude clients.
 
 Provider model discovery and optional thinking metadata live in the
-application-level catalog owned by `ProviderRuntimeManager`. The catalog is not
+application-level catalog owned by `ProviderRuntimeManager`.
+`ProviderModelInfo.supports_thinking` alone owns discovered per-model thinking
+support; provider-wide capabilities do not model thinking. The catalog is not
 part of an individual provider generation, so a hot replacement does not erase
 the last useful model list. Discovery failures retain prior entries.
 
@@ -400,15 +404,21 @@ passes it as `model_catalog_json`. Codex users open the native picker with
 
 Provider metadata is neutral and centralized in
 [config/provider_catalog.py](src/free_claude_code/config/provider_catalog.py). Each
-`ProviderDescriptor` declares provider ID, transport type, capabilities,
+`ProviderDescriptor` declares provider ID, immutable semantic capabilities,
 credential env var, default base URL, settings attribute names, and proxy support.
+Capabilities describe product behavior such as locality and Anthropic server-tool
+passthrough; they do not select a concrete adapter.
 
 [providers/runtime/](src/free_claude_code/providers/runtime/) owns construction details for one
 closable provider generation: factory wiring, provider configuration, lazy
-provider instances, provider-owned rate limiters, and transport cleanup. Each
-lazy provider receives a fresh `ProviderRateLimiter`; there is no process
-singleton or second limiter registry. The provider cache already guarantees one
-provider and limiter per provider ID within a generation. Retired generations
+provider instances, provider-owned rate limiters, and transport cleanup. The
+explicit factory table in
+[providers/runtime/factory.py](src/free_claude_code/providers/runtime/factory.py)
+owns provider-ID-to-constructor selection; concrete provider classes own their
+transport inheritance or composition. Each lazy provider receives a fresh
+`ProviderRateLimiter`; there is no process singleton or second limiter registry.
+The provider cache already guarantees one provider and limiter per provider ID
+within a generation. Retired generations
 retain their own synchronization state until request leases drain, while new
 generations and separate server instances never reuse it. Hot replacement
 therefore begins with fresh quota state; an old and new generation enforce
@@ -673,14 +683,13 @@ Messages handler can stream local Anthropic server-tool responses without sendin
 request upstream. [api/web_tools/egress.py](src/free_claude_code/api/web_tools/egress.py) enforces URL
 scheme and private-network restrictions for `web_fetch`.
 
-OpenAI-chat upstream providers are identified by
-`ProviderDescriptor.transport_type == "openai_chat"` in
-[config/provider_catalog.py](src/free_claude_code/config/provider_catalog.py). They cannot safely
-represent Anthropic server-tool blocks, so the Messages handler rejects unsupported
-server-tool requests before provider execution instead of performing a lossy
-conversion. Forced `web_search` or `web_fetch` requests are handled locally when
-`ENABLE_WEB_SERVER_TOOLS` is true; otherwise OpenAI-chat upstreams reject them
-and the local native Anthropic Messages transports may receive them.
+The Messages handler reads the routed model's
+`ProviderCapabilities.server_tool_passthrough` value. Providers without this
+capability reject unsupported server-tool requests before execution instead of
+performing a lossy conversion. Forced `web_search` or `web_fetch` requests are
+handled locally when `ENABLE_WEB_SERVER_TOOLS` is true; when local handling is
+disabled, only providers declaring passthrough may receive those blocks. This
+keeps product policy independent of provider IDs and transport implementation.
 
 ## CLI Launchers And Managed Claude
 

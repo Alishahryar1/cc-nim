@@ -1,5 +1,7 @@
 """Deterministic application and readiness errors."""
 
+from collections.abc import Iterable
+
 from free_claude_code.core.failures import FailureKind
 
 
@@ -23,6 +25,13 @@ class InvalidRequestError(ApplicationError):
 
 class UnknownProviderError(InvalidRequestError):
     """The configured provider identifier is not registered."""
+
+    @classmethod
+    def for_provider(
+        cls, provider_id: str, supported_provider_ids: Iterable[str]
+    ) -> UnknownProviderError:
+        supported = "', '".join(supported_provider_ids)
+        return cls(f"Unknown provider_type: '{provider_id}'. Supported: '{supported}'")
 
 
 class ApplicationUnavailableError(ApplicationError):

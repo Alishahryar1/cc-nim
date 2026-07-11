@@ -8,8 +8,8 @@ pytestmark = [pytest.mark.live]
 
 
 @pytest.mark.smoke_target("lmstudio")
-def test_lmstudio_native_messages_e2e(smoke_config: SmokeConfig) -> None:
-    _local_native_messages_e2e(
+def test_lmstudio_messages_e2e(smoke_config: SmokeConfig) -> None:
+    _local_provider_messages_e2e(
         smoke_config,
         provider="lmstudio",
         base_url=smoke_config.settings.lm_studio_base_url,
@@ -18,7 +18,7 @@ def test_lmstudio_native_messages_e2e(smoke_config: SmokeConfig) -> None:
 
 @pytest.mark.smoke_target("llamacpp")
 def test_llamacpp_native_messages_e2e(smoke_config: SmokeConfig) -> None:
-    _local_native_messages_e2e(
+    _local_provider_messages_e2e(
         smoke_config,
         provider="llamacpp",
         base_url=smoke_config.settings.llamacpp_base_url,
@@ -27,14 +27,14 @@ def test_llamacpp_native_messages_e2e(smoke_config: SmokeConfig) -> None:
 
 @pytest.mark.smoke_target("ollama")
 def test_ollama_native_messages_e2e(smoke_config: SmokeConfig) -> None:
-    _local_native_messages_e2e(
+    _local_provider_messages_e2e(
         smoke_config,
         provider="ollama",
         base_url=smoke_config.settings.ollama_base_url,
     )
 
 
-def _local_native_messages_e2e(
+def _local_provider_messages_e2e(
     smoke_config: SmokeConfig,
     *,
     provider: str,
@@ -48,7 +48,7 @@ def _local_native_messages_e2e(
 
     with SmokeServerDriver(
         smoke_config,
-        name=f"product-{provider}-native",
+        name=f"product-{provider}-messages",
         env_overrides={"MODEL": f"{provider}/{model_id}", "MESSAGING_PLATFORM": "none"},
     ).run() as server:
         turn = ConversationDriver(server, smoke_config).ask(

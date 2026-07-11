@@ -363,14 +363,11 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     ),
     FeatureCoverage(
         "lmstudio_endpoint",
-        "LM Studio native messages and local no-key operation work when running",
+        "LM Studio Messages and local no-key operation work when running",
         "public_surface",
-        (
-            "tests/providers/test_lmstudio.py",
-            "tests/providers/test_anthropic_messages.py",
-        ),
+        ("tests/providers/test_lmstudio.py",),
         ("test_lmstudio_models_endpoint_when_available",),
-        ("test_lmstudio_native_messages_e2e",),
+        ("test_lmstudio_messages_e2e",),
         ("lmstudio",),
         ("LM_STUDIO_BASE_URL with running LM Studio server",),
         "skip when local upstream is unavailable",

@@ -137,25 +137,21 @@ def test_provider_catalog_covers_advertised_provider_ids():
     assert set(PROVIDER_CATALOG) == set(SUPPORTED_PROVIDER_IDS)
     for descriptor in PROVIDER_CATALOG.values():
         assert descriptor.provider_id
-        assert descriptor.transport_type in {"openai_chat", "anthropic_messages"}
-        assert descriptor.capabilities
 
 
-def test_ollama_descriptor_uses_native_anthropic_transport():
+def test_ollama_descriptor_uses_local_server_tool_semantics():
     descriptor = PROVIDER_CATALOG["ollama"]
 
-    assert descriptor.transport_type == "anthropic_messages"
     assert descriptor.default_base_url == "http://localhost:11434"
-    assert "native_anthropic" in descriptor.capabilities
+    assert descriptor.capabilities.local is True
+    assert descriptor.capabilities.server_tool_passthrough is True
 
 
 def test_zai_descriptor_uses_fixed_cloud_base_url():
     descriptor = PROVIDER_CATALOG["zai"]
 
-    assert descriptor.transport_type == "openai_chat"
     assert descriptor.default_base_url == ZAI_DEFAULT_BASE
     assert descriptor.base_url_attr is None
-    assert "native_anthropic" not in descriptor.capabilities
 
 
 def test_zai_provider_config_ignores_stale_base_url_setting():
@@ -169,23 +165,18 @@ def test_zai_provider_config_ignores_stale_base_url_setting():
     assert config.base_url == ZAI_DEFAULT_BASE
 
 
-def test_minimax_descriptor_uses_openai_chat_transport():
+def test_minimax_descriptor_uses_expected_endpoint_and_credential():
     descriptor = PROVIDER_CATALOG["minimax"]
 
-    assert descriptor.transport_type == "openai_chat"
     assert descriptor.default_base_url == MINIMAX_DEFAULT_BASE
     assert descriptor.credential_env == "MINIMAX_API_KEY"
-    assert "native_anthropic" not in descriptor.capabilities
 
 
 def test_cloudflare_descriptor_uses_api_root_not_account_url():
     descriptor = PROVIDER_CATALOG["cloudflare"]
 
-    assert descriptor.transport_type == "openai_chat"
     assert descriptor.default_base_url == "https://api.cloudflare.com/client/v4"
     assert descriptor.base_url_attr is None
-    assert "native_anthropic" not in descriptor.capabilities
-    assert "thinking" in descriptor.capabilities
 
 
 def test_create_cloudflare_provider_uses_account_scoped_base_url():
@@ -234,41 +225,33 @@ def test_build_provider_config_opencode_go_uses_opencode_api_key() -> None:
 def test_vercel_descriptor_uses_openai_chat_gateway() -> None:
     descriptor = PROVIDER_CATALOG["vercel"]
 
-    assert descriptor.transport_type == "openai_chat"
     assert descriptor.default_base_url == VERCEL_AI_GATEWAY_DEFAULT_BASE
     assert descriptor.credential_env == "AI_GATEWAY_API_KEY"
     assert descriptor.proxy_attr == "vercel_ai_gateway_proxy"
-    assert "thinking" in descriptor.capabilities
 
 
 def test_huggingface_descriptor_uses_openai_chat_router() -> None:
     descriptor = PROVIDER_CATALOG["huggingface"]
 
-    assert descriptor.transport_type == "openai_chat"
     assert descriptor.default_base_url == HUGGINGFACE_DEFAULT_BASE
     assert descriptor.credential_env == "HUGGINGFACE_API_KEY"
     assert descriptor.proxy_attr == "huggingface_proxy"
-    assert "thinking" in descriptor.capabilities
 
 
 def test_cohere_descriptor_uses_openai_chat_compatibility_api() -> None:
     descriptor = PROVIDER_CATALOG["cohere"]
 
-    assert descriptor.transport_type == "openai_chat"
     assert descriptor.default_base_url == COHERE_DEFAULT_BASE
     assert descriptor.credential_env == "COHERE_API_KEY"
     assert descriptor.proxy_attr == "cohere_proxy"
-    assert "thinking" in descriptor.capabilities
 
 
 def test_github_models_descriptor_uses_openai_chat_inference_api() -> None:
     descriptor = PROVIDER_CATALOG["github_models"]
 
-    assert descriptor.transport_type == "openai_chat"
     assert descriptor.default_base_url == GITHUB_MODELS_DEFAULT_BASE
     assert descriptor.credential_env == "GITHUB_MODELS_TOKEN"
     assert descriptor.proxy_attr == "github_models_proxy"
-    assert "thinking" in descriptor.capabilities
 
 
 def test_build_provider_config_vercel_uses_gateway_key_and_proxy() -> None:

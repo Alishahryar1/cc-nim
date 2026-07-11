@@ -28,14 +28,13 @@ from free_claude_code.api.web_tools.egress import (
 )
 from free_claude_code.api.web_tools.request import (
     is_web_server_tool_request,
-    openai_chat_upstream_server_tool_error,
+    unsupported_server_tool_error,
 )
 from free_claude_code.api.web_tools.streaming import stream_web_server_tool_response
 from free_claude_code.application.errors import ApplicationError, InvalidRequestError
 from free_claude_code.application.execution import ProviderExecutor, TokenCounter
 from free_claude_code.application.ports import ProviderResolver
 from free_claude_code.application.routing import ModelRouter, RoutedMessagesRequest
-from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import (
     MessagesRequest,
@@ -49,12 +48,6 @@ from free_claude_code.core.anthropic import (
 from free_claude_code.core.diagnostics import safe_exception_message
 from free_claude_code.core.failures import ExecutionFailure, find_execution_failure
 from free_claude_code.core.trace import trace_event
-
-_OPENAI_CHAT_UPSTREAM_IDS = frozenset(
-    provider_id
-    for provider_id, descriptor in PROVIDER_CATALOG.items()
-    if descriptor.transport_type == "openai_chat"
-)
 
 
 @dataclass(frozen=True)
@@ -266,9 +259,9 @@ class MessagesHandler:
         )
 
     def _reject_unsupported_server_tools(self, routed: RoutedMessagesRequest) -> None:
-        if routed.resolved.provider_id not in _OPENAI_CHAT_UPSTREAM_IDS:
+        if routed.resolved.capabilities.server_tool_passthrough:
             return
-        tool_err = openai_chat_upstream_server_tool_error(
+        tool_err = unsupported_server_tool_error(
             routed.request,
             web_tools_enabled=self._settings.enable_web_server_tools,
         )

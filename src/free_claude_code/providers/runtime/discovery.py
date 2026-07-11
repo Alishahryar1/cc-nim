@@ -28,7 +28,7 @@ def model_list_provider_ids_for_settings(settings: Settings) -> tuple[str, ...]:
     referenced_ids = referenced_provider_ids(settings)
     provider_ids: list[str] = []
     for provider_id, descriptor in PROVIDER_CATALOG.items():
-        if descriptor.static_credential is not None:
+        if descriptor.capabilities.local:
             if provider_id in referenced_ids:
                 provider_ids.append(provider_id)
             continue

@@ -311,10 +311,7 @@ def create_provider(provider_id: str, settings: Settings) -> BaseProvider:
     """Create a provider instance for a supported provider id."""
     descriptor = PROVIDER_CATALOG.get(provider_id)
     if descriptor is None:
-        supported = "', '".join(PROVIDER_CATALOG)
-        raise UnknownProviderError(
-            f"Unknown provider_type: '{provider_id}'. Supported: '{supported}'"
-        )
+        raise UnknownProviderError.for_provider(provider_id, PROVIDER_CATALOG)
 
     factory = PROVIDER_FACTORIES.get(provider_id)
     if factory is None:

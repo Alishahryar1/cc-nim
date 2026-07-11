@@ -4,7 +4,6 @@ import httpx
 import pytest
 
 from free_claude_code.application.routing import ModelRouter
-from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.core.anthropic.stream_contracts import (
     SSEEvent,
     parse_sse_lines,
@@ -96,8 +95,8 @@ def test_gemini_thought_signature_tool_continuation_e2e(
 def test_provider_reasoning_tool_continuation_e2e(
     smoke_config: SmokeConfig, provider_model: ProviderModel
 ) -> None:
-    if not _provider_smoke_thinking_enabled(smoke_config, provider_model):
-        pytest.skip(f"{provider_model.provider} smoke model does not enable thinking")
+    if not _provider_smoke_thinking_enabled(smoke_config):
+        pytest.skip("the configured Claude route does not enable thinking")
     _run_provider_scenario(
         smoke_config, provider_model, _scenario_reasoning_tool_continuation
     )
@@ -262,13 +261,9 @@ def _tool_use_blocks_or_skip(
     return blocks
 
 
-def _provider_smoke_thinking_enabled(
-    smoke_config: SmokeConfig, provider_model: ProviderModel
-) -> bool:
-    descriptor = PROVIDER_CATALOG[provider_model.provider]
+def _provider_smoke_thinking_enabled(smoke_config: SmokeConfig) -> bool:
     return (
-        "thinking" in descriptor.capabilities
-        and ModelRouter(smoke_config.settings)
+        ModelRouter(smoke_config.settings)
         .resolve("claude-sonnet-4-5-20250929")
         .thinking_enabled
     )

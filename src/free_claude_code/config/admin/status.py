@@ -14,7 +14,7 @@ def provider_config_status(
     """Return provider configuration status without making network calls."""
     statuses: list[dict[str, Any]] = []
     for provider_id, descriptor in PROVIDER_CATALOG.items():
-        if descriptor.credential_env is None:
+        if descriptor.capabilities.local:
             base_url = ""
             if descriptor.base_url_attr is not None:
                 base_url = _value_for_settings_attr(state, descriptor.base_url_attr)

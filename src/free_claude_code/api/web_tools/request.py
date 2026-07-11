@@ -62,10 +62,10 @@ def has_listed_anthropic_server_tools(request: MessagesRequest) -> bool:
     return any(is_anthropic_server_tool_definition(t) for t in (request.tools or []))
 
 
-def openai_chat_upstream_server_tool_error(
+def unsupported_server_tool_error(
     request: MessagesRequest, *, web_tools_enabled: bool
 ) -> str | None:
-    """Return a user-facing error when OpenAI Chat upstream cannot satisfy server-tool semantics."""
+    """Return the user-facing error when the resolved provider cannot run server tools."""
     forced = forced_server_tool_name(request)
     if forced and not web_tools_enabled:
         return (
