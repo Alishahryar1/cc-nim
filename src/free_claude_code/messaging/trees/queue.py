@@ -1,6 +1,5 @@
 """FIFO queue state for one messaging conversation tree."""
 
-import asyncio
 from collections import deque
 
 
@@ -11,15 +10,19 @@ class MessageNodeQueue:
         self._deque: deque[str] = deque()
         self._set: set[str] = set()
         for item in items or []:
-            self.put_nowait(item)
+            self.put(item)
 
-    def put_nowait(self, item: str) -> None:
+    def put(self, item: str) -> bool:
+        """Append a unique item and report whether the queue changed."""
+        if item in self._set:
+            return False
         self._deque.append(item)
         self._set.add(item)
+        return True
 
-    def get_nowait(self) -> str:
+    def pop(self) -> str | None:
         if not self._deque:
-            raise asyncio.QueueEmpty()
+            return None
         item = self._deque.popleft()
         self._set.discard(item)
         return item
@@ -27,18 +30,18 @@ class MessageNodeQueue:
     def qsize(self) -> int:
         return len(self._deque)
 
-    def snapshot(self) -> list[str]:
-        return list(self._deque)
+    def items(self) -> tuple[str, ...]:
+        return tuple(self._deque)
 
-    def remove_if_present(self, item: str) -> bool:
+    def remove(self, item: str) -> bool:
         if item not in self._set:
             return False
         self._set.discard(item)
         self._deque = deque(x for x in self._deque if x != item)
         return True
 
-    def drain(self) -> list[str]:
-        items = list(self._deque)
+    def drain(self) -> tuple[str, ...]:
+        items = tuple(self._deque)
         self._deque.clear()
         self._set.clear()
         return items

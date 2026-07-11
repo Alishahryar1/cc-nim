@@ -379,13 +379,13 @@ class ApplicationRuntime:
             session_store=session_store,
             debug_platform_edits=settings.debug_platform_edits,
             debug_subagent_stack=settings.debug_subagent_stack,
-            log_raw_messaging_content=settings.log_raw_messaging_content,
             log_raw_cli_diagnostics=settings.log_raw_cli_diagnostics,
             log_messaging_error_details=settings.log_messaging_error_details,
         )
         self._messaging_workflow.restore()
         components.runtime.on_message(self._messaging_workflow.handle_message)
         await components.runtime.start()
+        await self._messaging_workflow.repair_restored_statuses()
         logger.info("{} platform started with messaging workflow", components.name)
 
     async def _close_owned_resources(self) -> bool:

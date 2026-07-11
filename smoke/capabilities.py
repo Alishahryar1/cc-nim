@@ -378,6 +378,11 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         (
             "tests/messaging/test_handler.py",
             "tests/messaging/test_handler_integration.py",
+            "tests/messaging/test_tree_ownership_concurrency.py",
+        ),
+        (
+            "test_messaging_commands_stop_clear_stats_e2e",
+            "test_messaging_queued_scoped_cancel_e2e",
         ),
     ),
     CapabilityContract(
@@ -391,6 +396,13 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         (
             "tests/messaging/test_tree_queue.py",
             "tests/messaging/test_tree_concurrency.py",
+            "tests/messaging/test_message_tree_transitions.py",
+            "tests/messaging/test_tree_ownership_concurrency.py",
+        ),
+        (
+            "test_tree_threading_e2e",
+            "test_messaging_queued_scoped_cancel_e2e",
+            "test_same_message_ids_are_isolated_by_chat_e2e",
         ),
     ),
     CapabilityContract(
@@ -399,7 +411,7 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         "restart_restore",
         "free_claude_code.messaging.session.SessionStore",
         "stored tree JSON",
-        "restored node-to-tree mapping",
+        "restored scoped reply lookup",
         "stale pending work marked lost",
         ("tests/messaging/test_restart_reply_restore.py",),
     ),
@@ -408,7 +420,7 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         "session_store",
         "session_persistence",
         "free_claude_code.messaging.session.SessionStore",
-        "tree data, node mapping, and message log",
+        "scoped tree data and message log",
         "JSON persistence compatible with existing files",
         "best-effort flush error logging",
         ("tests/messaging/test_session_store_edge_cases.py",),

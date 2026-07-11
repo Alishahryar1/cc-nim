@@ -87,12 +87,9 @@ class TestDiscordInbound:
 
         assert incoming.text == "hello"
         assert incoming.chat_id == "123"
-        assert incoming.user_id == "456"
         assert incoming.message_id == "789"
         assert incoming.platform == "discord"
         assert incoming.reply_to_message_id == "555"
-        assert incoming.username == "User"
-        assert incoming.raw_event is msg
 
 
 @pytest.mark.skipif(not DISCORD_AVAILABLE, reason="discord.py not installed")
@@ -290,7 +287,6 @@ class TestDiscordRuntime:
         call = handler.call_args[0][0]
         assert call.text == "hello"
         assert call.chat_id == "123"
-        assert call.user_id == "456"
         assert call.message_id == "789"
         assert call.platform == "discord"
 

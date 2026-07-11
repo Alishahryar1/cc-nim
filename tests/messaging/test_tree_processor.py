@@ -1,262 +1,202 @@
+"""Manager-level task and cancellation ownership tests."""
+
 import asyncio
-import contextlib
-from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from free_claude_code.messaging.models import IncomingMessage
-from free_claude_code.messaging.trees import MessageNode, MessageState, MessageTree
-from free_claude_code.messaging.trees.processor import TreeQueueProcessor
+from free_claude_code.messaging.models import IncomingMessage, MessageScope
+from free_claude_code.messaging.trees import (
+    CancellationReason,
+    CancellationUiOwner,
+    FailureResult,
+    MessageState,
+    NodeClaim,
+    QueueEntry,
+    TreeQueueManager,
+)
+from free_claude_code.messaging.trees import manager as manager_module
+
+_SCOPE = MessageScope(platform="telegram", chat_id="chat")
 
 
-@pytest.fixture
-def tree_processor():
-    return TreeQueueProcessor()
-
-
-@pytest.fixture
-def sample_incoming():
+def _incoming(node_id: str, *, reply_to: str | None = None) -> IncomingMessage:
     return IncomingMessage(
-        text="test message",
-        chat_id="chat123",
-        user_id="user456",
-        message_id="msg789",
-        platform="telegram",
+        text=f"prompt {node_id}",
+        chat_id=_SCOPE.chat_id,
+        user_id="user",
+        message_id=node_id,
+        platform=_SCOPE.platform,
+        reply_to_message_id=reply_to,
     )
 
 
-@pytest.fixture
-def sample_node(sample_incoming):
-    return MessageNode(
-        node_id="msg789", incoming=sample_incoming, status_message_id="status123"
+async def _wait_for_no_tasks(manager: TreeQueueManager) -> None:
+    """Yield deterministic ready-queue checkpoints until task cleanup completes."""
+    loop = asyncio.get_running_loop()
+    for _ in range(20):
+        if manager.task_count() == 0:
+            return
+        checkpoint = asyncio.Event()
+        loop.call_soon(checkpoint.set)
+        await checkpoint.wait()
+    assert manager.task_count() == 0
+
+
+@pytest.mark.asyncio
+async def test_active_cancel_returns_runner_owned_effect_and_terminal_snapshot() -> (
+    None
+):
+    started = asyncio.Event()
+
+    async def process(_claim: NodeClaim) -> None:
+        started.set()
+        await asyncio.Event().wait()
+
+    manager = TreeQueueManager(process)
+    await manager.admit(_incoming("root"), "status-root")
+    await started.wait()
+
+    result = await manager.cancel_node(
+        _SCOPE,
+        "root",
+        reason=CancellationReason.STOP,
     )
 
-
-@pytest.fixture
-def sample_tree(sample_node):
-    return MessageTree(sample_node)
-
-
-@pytest.mark.asyncio
-async def test_process_node_success(tree_processor, sample_tree, sample_node):
-    processor = AsyncMock()
-
-    await tree_processor.process_node(sample_tree, sample_node, processor)
-
-    processor.assert_called_once_with(sample_node.node_id, sample_node)
-    assert sample_tree.current_node_id is None
+    assert [(effect.node.node_id, effect.ui_owner) for effect in result.effects] == [
+        ("root", CancellationUiOwner.RUNNER)
+    ]
+    assert len(result.snapshots) == 1
+    assert result.snapshots[0].nodes["root"]["state"] == "error"
+    view = await manager.get_node(_SCOPE, "root")
+    assert view is not None and view.state is MessageState.ERROR
+    assert manager.task_count() == 0
 
 
 @pytest.mark.asyncio
-async def test_process_node_cancelled(tree_processor, sample_tree, sample_node):
-    processor = AsyncMock(side_effect=asyncio.CancelledError)
+async def test_queued_cancel_returns_workflow_effect_and_exact_queue_update() -> None:
+    release_root = asyncio.Event()
+    root_started = asyncio.Event()
+    child_started = asyncio.Event()
+    queue_updates: list[tuple[tuple[str, int], ...]] = []
 
-    with pytest.raises(asyncio.CancelledError):
-        await tree_processor.process_node(sample_tree, sample_node, processor)
+    async def process(claim: NodeClaim) -> None:
+        if claim.node.node_id == "root":
+            root_started.set()
+            await release_root.wait()
+        else:
+            child_started.set()
 
-    assert sample_tree.current_node_id is None
+    async def capture_queue(queue: tuple[QueueEntry, ...]) -> None:
+        queue_updates.append(
+            tuple((entry.node.node_id, entry.position) for entry in queue)
+        )
 
-
-@pytest.mark.asyncio
-async def test_process_node_exception(tree_processor, sample_tree, sample_node):
-    processor = AsyncMock(side_effect=Exception("Test error"))
-
-    # We need to mock update_state to verify it was called
-    sample_tree.update_state = AsyncMock()
-
-    await tree_processor.process_node(sample_tree, sample_node, processor)
-
-    sample_tree.update_state.assert_called_once_with(
-        sample_node.node_id, MessageState.ERROR, error_message="Test error"
+    manager = TreeQueueManager(process, queue_update_callback=capture_queue)
+    await manager.admit(_incoming("root"), "status-root")
+    await root_started.wait()
+    decision = await manager.admit(
+        _incoming("child", reply_to="root"),
+        "status-child",
+        parent_node_id="root",
     )
-    assert sample_tree.current_node_id is None
+    assert decision.position == 1
 
-
-@pytest.mark.asyncio
-async def test_enqueue_and_start_when_free(tree_processor, sample_tree):
-    processor = AsyncMock()
-    node_id = "node1"
-
-    # Mock get_node to return a node
-    node = MagicMock(spec=MessageNode)
-    sample_tree.get_node = MagicMock(return_value=node)
-
-    was_queued = await tree_processor.enqueue_and_start(sample_tree, node_id, processor)
-
-    assert was_queued is False
-    assert sample_tree.is_processing is True
-    assert sample_tree.current_node_id == node_id
-    assert sample_tree.current_task is not None
-
-    # Clean up task
-    sample_tree.current_task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await sample_tree.current_task
-
-
-@pytest.mark.asyncio
-async def test_enqueue_and_start_when_busy(tree_processor, sample_tree):
-    processor = AsyncMock()
-    sample_tree.set_processing_state("busy", True)
-    node_id = "node1"
-
-    was_queued = await tree_processor.enqueue_and_start(sample_tree, node_id, processor)
-
-    assert was_queued is True
-    assert sample_tree._queue.qsize() == 1
-    assert sample_tree._queue.get_nowait() == node_id
-
-
-def test_cancel_current_task(tree_processor, sample_tree):
-    mock_task = MagicMock(spec=asyncio.Task)
-    mock_task.done.return_value = False
-    sample_tree.set_current_task(mock_task)
-
-    cancelled = tree_processor.cancel_current(sample_tree)
-
-    assert cancelled is mock_task
-    mock_task.cancel.assert_called_once()
-
-
-def test_cancel_current_task_already_done(tree_processor, sample_tree):
-    mock_task = MagicMock(spec=asyncio.Task)
-    mock_task.done.return_value = True
-    sample_tree.set_current_task(mock_task)
-
-    cancelled = tree_processor.cancel_current(sample_tree)
-
-    assert cancelled is None
-    mock_task.cancel.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_process_next_queue_empty(tree_processor, sample_tree):
-    processor = AsyncMock()
-    sample_tree.set_processing_state("busy", True)
-
-    await tree_processor._process_next(sample_tree, processor)
-
-    assert sample_tree.is_processing is False
-
-
-@pytest.mark.asyncio
-async def test_process_next_with_item(tree_processor, sample_tree):
-    processor = AsyncMock()
-    sample_tree.put_queue_unlocked("next_node")
-
-    node = MagicMock(spec=MessageNode)
-    sample_tree.get_node = MagicMock(return_value=node)
-
-    await tree_processor._process_next(sample_tree, processor)
-
-    assert sample_tree.current_node_id == "next_node"
-    assert sample_tree.current_task is not None
-
-    # Clean up
-    sample_tree.current_task.cancel()
-    with contextlib.suppress(asyncio.CancelledError):
-        await sample_tree.current_task
-
-
-@pytest.mark.asyncio
-async def test_process_next_skips_stale_id_and_runs_next_valid_node(sample_tree):
-    queue_updated = AsyncMock()
-    node_started = AsyncMock()
-    processor = TreeQueueProcessor(
-        queue_update_callback=queue_updated,
-        node_started_callback=node_started,
+    result = await manager.cancel_node(
+        _SCOPE,
+        "child",
+        reason=CancellationReason.STOP,
     )
+
+    assert [(effect.node.node_id, effect.ui_owner) for effect in result.effects] == [
+        ("child", CancellationUiOwner.WORKFLOW)
+    ]
+    assert queue_updates == [()]
+    assert result.snapshots[0].nodes["child"]["state"] == "error"
+    assert child_started.is_set() is False
+
+    release_root.set()
+    await _wait_for_no_tasks(manager)
+    assert child_started.is_set() is False
+
+
+@pytest.mark.asyncio
+async def test_cancel_cleanup_timeout_is_bounded_and_task_remains_owned(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(manager_module, "CANCEL_TASK_DRAIN_TIMEOUT_S", 0.01)
+    started = asyncio.Event()
+    cancellation_seen = asyncio.Event()
+    release_cleanup = asyncio.Event()
+
+    async def process(_claim: NodeClaim) -> None:
+        started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancellation_seen.set()
+            await release_cleanup.wait()
+            raise
+
+    manager = TreeQueueManager(process)
+    await manager.admit(_incoming("root"), "status-root")
+    await started.wait()
+
+    try:
+        result = await asyncio.wait_for(
+            manager.cancel_node(
+                _SCOPE,
+                "root",
+                reason=CancellationReason.STOP,
+            ),
+            timeout=0.5,
+        )
+        await cancellation_seen.wait()
+        assert result.effects[0].node.node_id == "root"
+        assert manager.task_count() == 1
+    finally:
+        release_cleanup.set()
+
+    await _wait_for_no_tasks(manager)
+
+
+@pytest.mark.asyncio
+async def test_escaped_processor_failure_persists_effects_through_manager_owner() -> (
+    None
+):
+    started = asyncio.Event()
     release = asyncio.Event()
+    failures: list[FailureResult] = []
+    queue_updates: list[tuple[QueueEntry, ...]] = []
 
-    valid_incoming = IncomingMessage(
-        text="valid",
-        chat_id="chat123",
-        user_id="user456",
-        message_id="valid_node",
-        platform="telegram",
-        reply_to_message_id=sample_tree.root_id,
+    async def process(claim: NodeClaim) -> None:
+        if claim.node.node_id == "root":
+            started.set()
+            await release.wait()
+            raise RuntimeError("processor boundary failed")
+
+    async def capture_queue(queue: tuple[QueueEntry, ...]) -> None:
+        queue_updates.append(queue)
+
+    manager = TreeQueueManager(
+        process,
+        queue_update_callback=capture_queue,
+        unexpected_failure_callback=failures.append,
     )
-    await sample_tree.add_node(
-        "valid_node",
-        valid_incoming,
-        "valid_status",
-        sample_tree.root_id,
+    await manager.admit(_incoming("root"), "status-root")
+    await started.wait()
+    await manager.admit(
+        _incoming("child", reply_to="root"),
+        "status-child",
+        parent_node_id="root",
     )
-    sample_tree.put_queue_unlocked("missing_node")
-    sample_tree.put_queue_unlocked("valid_node")
-
-    async def node_processor(node_id, node):
-        await release.wait()
-
-    await processor._process_next(sample_tree, node_processor)
-
-    assert sample_tree.is_processing is True
-    assert sample_tree.current_node_id == "valid_node"
-    node_started.assert_awaited_once_with(sample_tree, "valid_node")
-    queue_updated.assert_awaited_once_with(sample_tree)
 
     release.set()
-    if sample_tree.current_task:
-        await sample_tree.current_task
+    await _wait_for_no_tasks(manager)
 
-
-@pytest.mark.asyncio
-async def test_process_next_drains_all_stale_ids_without_wedging(sample_tree):
-    queue_updated = AsyncMock()
-    node_started = AsyncMock()
-    processor = TreeQueueProcessor(
-        queue_update_callback=queue_updated,
-        node_started_callback=node_started,
-    )
-    sample_tree.set_processing_state("busy", True)
-    sample_tree.put_queue_unlocked("missing_one")
-    sample_tree.put_queue_unlocked("missing_two")
-
-    await processor._process_next(sample_tree, AsyncMock())
-
-    assert sample_tree.is_processing is False
-    assert sample_tree.current_node_id is None
-    assert sample_tree._queue.qsize() == 0
-    node_started.assert_not_awaited()
-    queue_updated.assert_awaited_once_with(sample_tree)
-
-
-@pytest.mark.asyncio
-async def test_process_next_triggers_queue_update(sample_tree):
-    callback = AsyncMock()
-    processor = TreeQueueProcessor(queue_update_callback=callback)
-
-    sample_tree.put_queue_unlocked("next_node")
-    sample_tree.get_node = MagicMock(return_value=None)
-
-    await processor._process_next(sample_tree, AsyncMock())
-
-    callback.assert_awaited_once_with(sample_tree)
-
-
-@pytest.mark.asyncio
-async def test_process_next_triggers_node_started(sample_tree):
-    node_started = AsyncMock()
-    processor = TreeQueueProcessor(node_started_callback=node_started)
-
-    incoming = IncomingMessage(
-        text="next",
-        chat_id="chat123",
-        user_id="user456",
-        message_id="next_node",
-        platform="telegram",
-        reply_to_message_id=sample_tree.root_id,
-    )
-    await sample_tree.add_node(
-        "next_node", incoming, "next_status", sample_tree.root_id
-    )
-    sample_tree.put_queue_unlocked("next_node")
-
-    await processor._process_next(sample_tree, AsyncMock())
-
-    node_started.assert_awaited_once_with(sample_tree, "next_node")
-
-    if sample_tree.current_task:
-        sample_tree.current_task.cancel()
-        with contextlib.suppress(asyncio.CancelledError):
-            await sample_tree.current_task
+    assert len(failures) == 1
+    failure = failures[0]
+    assert failure.snapshot is not None
+    assert {target.node_id for target in failure.affected} == {"root", "child"}
+    assert failure.snapshot.nodes["root"]["state"] == "error"
+    assert failure.snapshot.nodes["child"]["state"] == "error"
+    assert queue_updates == [()]

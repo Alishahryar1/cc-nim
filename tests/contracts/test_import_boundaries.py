@@ -858,6 +858,39 @@ def test_messaging_conversation_state_uses_package_owners() -> None:
     )
     assert offenders == []
 
+
+def test_message_tree_mutability_stays_inside_its_owner_package() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    messaging_root = repo_root / "src" / "free_claude_code" / "messaging"
+    trees_root = messaging_root / "trees"
+    forbidden = (
+        "free_claude_code.messaging.trees.node",
+        "free_claude_code.messaging.trees.processor",
+        "free_claude_code.messaging.trees.repository",
+        "free_claude_code.messaging.trees.runtime",
+    )
+
+    offenders: list[str] = []
+    for path in messaging_root.rglob("*.py"):
+        if trees_root in path.parents:
+            continue
+        offenders.extend(
+            f"{path.relative_to(repo_root)}: {imported}"
+            for imported in _imports_from(path, repo_root)
+            if imported is not None and _is_forbidden(imported, forbidden)
+        )
+
+    assert sorted(offenders) == []
+
+    facade = (trees_root / "__init__.py").read_text(encoding="utf-8")
+    for mutable_owner in {
+        "MessageNode",
+        "MessageTree",
+        "TreeQueueProcessor",
+        "TreeRepository",
+    }:
+        assert f'"{mutable_owner}"' not in facade
+
     runtime_text = (
         repo_root / "src" / "free_claude_code" / "runtime" / "application.py"
     ).read_text(encoding="utf-8")

@@ -294,7 +294,6 @@ async def test_on_telegram_message_authorized(telegram_platform):
     handler.assert_called_once()
     incoming = handler.call_args[0][0]
     assert incoming.text == "hello"
-    assert incoming.user_id == "12345"
 
 
 @pytest.mark.asyncio

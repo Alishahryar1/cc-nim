@@ -1,9 +1,10 @@
+import asyncio
 import json
 
 import pytest
 
-from free_claude_code.messaging.trees import MessageState
-from smoke.lib.e2e import FakePlatformDriver, default_cli_events
+from free_claude_code.messaging.trees import MessageState, TreeIdentity
+from smoke.lib.e2e import FakeCLISession, FakePlatformDriver, default_cli_events
 
 pytestmark = [pytest.mark.live, pytest.mark.smoke_target("messaging")]
 
@@ -15,9 +16,10 @@ async def test_messaging_fake_full_flow_e2e(platform_name: str, tmp_path) -> Non
 
     incoming = await driver.send("Please inspect README.", message_id="root_1")
 
-    tree = driver.workflow.tree_queue.get_tree_for_node(incoming.message_id)
-    assert tree is not None
-    node = tree.get_node(incoming.message_id)
+    node = await driver.workflow.tree_queue.get_node(
+        incoming.scope,
+        incoming.message_id,
+    )
     assert node is not None
     assert node.state == MessageState.COMPLETED
     assert driver.platform.sent
@@ -89,13 +91,114 @@ async def test_tree_threading_e2e(platform_name: str, tmp_path) -> None:
         "branch prompt", message_id="branch_1", reply_to=root.message_id
     )
 
-    tree = driver.workflow.tree_queue.get_tree_for_node(root.message_id)
-    assert tree is not None
-    branch_node = tree.get_node(branch.message_id)
+    branch_node = await driver.workflow.tree_queue.get_node(
+        branch.scope,
+        branch.message_id,
+    )
     assert branch_node is not None
     assert branch_node.parent_id == root.message_id
     assert driver.cli_manager.sessions[1].calls[0]["session_id"] == "sess_root"
     assert driver.cli_manager.sessions[1].calls[0]["fork_session"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("platform_name", ["discord", "telegram"])
+async def test_messaging_queued_scoped_cancel_e2e(
+    platform_name: str,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    driver = FakePlatformDriver(platform_name, tmp_path)
+    root_started = asyncio.Event()
+    release_root = asyncio.Event()
+
+    class GatedRootSession(FakeCLISession):
+        async def start_task(
+            self,
+            prompt: str,
+            session_id: str | None = None,
+            fork_session: bool = False,
+        ):
+            self.calls.append(
+                {
+                    "prompt": prompt,
+                    "session_id": session_id,
+                    "fork_session": fork_session,
+                }
+            )
+            self.is_busy = True
+            root_started.set()
+            try:
+                await release_root.wait()
+                for event in self.events:
+                    await asyncio.sleep(0)
+                    yield event
+            finally:
+                self.is_busy = False
+
+    async def controlled_session(session_id: str | None = None):
+        index = len(driver.cli_manager.sessions)
+        events = default_cli_events(f"sess_{index}")
+        session = GatedRootSession(events) if index == 0 else FakeCLISession(events)
+        driver.cli_manager.sessions.append(session)
+        return session, session_id or f"pending_{index}", session_id is None
+
+    monkeypatch.setattr(
+        driver.cli_manager,
+        "get_or_create_session",
+        controlled_session,
+    )
+
+    root = await driver.emit("root", message_id="root")
+    await root_started.wait()
+    cancelled = await driver.emit(
+        "cancel me",
+        message_id="cancelled",
+        reply_to=root.message_id,
+    )
+    survivor = await driver.emit(
+        "run me",
+        message_id="survivor",
+        reply_to=root.message_id,
+    )
+    await driver.emit(
+        "/stop",
+        message_id="stop-cancelled",
+        reply_to=cancelled.message_id,
+    )
+
+    release_root.set()
+    await driver.wait_for_idle()
+
+    prompts = [
+        call["prompt"]
+        for session in driver.cli_manager.sessions
+        for call in session.calls
+    ]
+    assert prompts == ["root", "run me"]
+    cancelled_view = await driver.workflow.tree_queue.get_node(
+        cancelled.scope,
+        cancelled.message_id,
+    )
+    survivor_view = await driver.workflow.tree_queue.get_node(
+        survivor.scope,
+        survivor.message_id,
+    )
+    assert cancelled_view is not None
+    assert cancelled_view.state is MessageState.ERROR
+    assert survivor_view is not None
+    assert survivor_view.state is MessageState.COMPLETED
+
+    rendered = "\n".join(
+        entry["text"] for entry in driver.platform.sent + driver.platform.edits
+    )
+    assert "position 1" in rendered
+    assert "position 2" in rendered
+    assert "Stopped" in rendered
+    driver.session_store.flush_pending_save()
+    persisted = driver.session_store.load_conversation_snapshot()
+    root_identity = TreeIdentity(scope=root.scope, root_id=root.message_id)
+    assert persisted.trees[root_identity].nodes["survivor"]["state"] == "completed"
 
 
 @pytest.mark.asyncio
@@ -110,9 +213,54 @@ async def test_restart_restore_and_session_persistence_e2e(tmp_path) -> None:
     assert payload["message_log"]
 
     restored = FakePlatformDriver("telegram", tmp_path)
+    restored.platform.continue_message_sequence_after(first.platform)
+    restored.workflow.restore()
     saved = restored.session_store.load_conversation_snapshot()
     assert saved.trees
-    assert root.message_id in saved.derive_node_to_tree()
+    identity = TreeIdentity(scope=root.scope, root_id=root.message_id)
+    assert saved.get_tree(identity) is not None
+
+    reply = await restored.send(
+        "continue from disk",
+        message_id="reply_1",
+        reply_to=root.message_id,
+    )
+    reply_view = await restored.workflow.tree_queue.get_node(
+        reply.scope,
+        reply.message_id,
+    )
+    assert reply_view is not None
+    assert reply_view.parent_id == root.message_id
+    call = restored.cli_manager.sessions[0].calls[0]
+    assert call["session_id"] == "fake_session_1"
+    assert call["fork_session"] is True
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("platform_name", ["discord", "telegram"])
+async def test_same_message_ids_are_isolated_by_chat_e2e(
+    platform_name: str,
+    tmp_path,
+) -> None:
+    driver = FakePlatformDriver(platform_name, tmp_path)
+    first = await driver.send("first chat", chat_id="chat_a", message_id="42")
+    second = await driver.send("second chat", chat_id="chat_b", message_id="42")
+
+    snapshot = await driver.workflow.tree_queue.snapshot()
+    assert set(snapshot.trees) == {
+        TreeIdentity(scope=first.scope, root_id="42"),
+        TreeIdentity(scope=second.scope, root_id="42"),
+    }
+
+    reply = await driver.send(
+        "first chat reply",
+        chat_id="chat_a",
+        message_id="43",
+        reply_to="42",
+    )
+    reply_view = await driver.workflow.tree_queue.get_node(reply.scope, "43")
+    assert reply_view is not None
+    assert reply_view.parent_id == "42"
 
 
 @pytest.mark.asyncio

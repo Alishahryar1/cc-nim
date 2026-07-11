@@ -340,6 +340,10 @@ class FakePlatform:
     def on_message(self, handler: Callable[[IncomingMessage], Awaitable[None]]) -> None:
         self.handler = handler
 
+    def continue_message_sequence_after(self, previous: FakePlatform) -> None:
+        """Model platform-owned message IDs surviving an FCC restart."""
+        self._counter = previous._counter
+
     async def emit(self, incoming: IncomingMessage) -> None:
         assert self.handler is not None
         await self.handler(incoming)
@@ -523,33 +527,51 @@ class FakePlatformDriver:
         self,
         text: str,
         *,
+        chat_id: str = "chat_1",
         message_id: str | None = None,
         reply_to: str | None = None,
     ) -> IncomingMessage:
+        incoming = await self.emit(
+            text,
+            chat_id=chat_id,
+            message_id=message_id,
+            reply_to=reply_to,
+        )
+        await self.wait_for_idle()
+        return incoming
+
+    async def emit(
+        self,
+        text: str,
+        *,
+        chat_id: str = "chat_1",
+        message_id: str | None = None,
+        reply_to: str | None = None,
+    ) -> IncomingMessage:
+        """Deliver a message without waiting for background claims to finish."""
         incoming = IncomingMessage(
             text=text,
-            chat_id="chat_1",
+            chat_id=chat_id,
             user_id="user_1",
             message_id=message_id or f"in_{uuid.uuid4().hex[:8]}",
             platform=self.platform_name,
             reply_to_message_id=reply_to,
         )
         await self.platform.emit(incoming)
-        await self.wait_for_idle()
         return incoming
 
     async def wait_for_idle(self, *, timeout_s: float = 5.0) -> None:
         deadline = time.monotonic() + timeout_s
         while time.monotonic() < deadline:
             pending = [task for task in self.platform._tasks if not task.done()]
-            if not pending and self._all_tree_nodes_terminal():
+            if not pending and await self._all_tree_nodes_terminal():
                 self.session_store.flush_pending_save()
                 return
             await asyncio.sleep(0.02)
         raise AssertionError("fake platform did not become idle")
 
-    def _all_tree_nodes_terminal(self) -> bool:
-        snapshot = self.workflow.tree_queue.snapshot()
+    async def _all_tree_nodes_terminal(self) -> bool:
+        snapshot = await self.workflow.tree_queue.snapshot()
         for tree in snapshot.trees.values():
             for node in tree.nodes.values():
                 if node.get("state") in {"pending", "in_progress"}:

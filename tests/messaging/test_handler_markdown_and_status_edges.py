@@ -3,18 +3,58 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from free_claude_code.messaging.models import IncomingMessage
+from free_claude_code.messaging.models import IncomingMessage, MessageScope
 from free_claude_code.messaging.node_event_pipeline import process_parsed_cli_event
 from free_claude_code.messaging.rendering.telegram_markdown import (
     render_markdown_to_mdv2,
 )
 from free_claude_code.messaging.trees import (
+    CancellationReason,
+    CancellationResult,
     CancellationUiOwner,
-    CancelledNode,
-    MessageNode,
-    MessageState,
+    FailureResult,
+    NodeClaim,
+    NodeUiTarget,
+    QueueDecision,
+    QueueEntry,
+    ReplyTarget,
+    TreeIdentity,
+    TreeSnapshot,
 )
+from free_claude_code.messaging.trees.transitions import CancellationEffect
 from free_claude_code.messaging.workflow import MessagingWorkflow
+
+_SCOPE = MessageScope(platform="telegram", chat_id="c")
+
+
+def _claim() -> NodeClaim:
+    return NodeClaim(
+        identity=TreeIdentity(scope=_SCOPE, root_id="root"),
+        claim_id="claim-1",
+        node=NodeUiTarget(
+            scope=_SCOPE,
+            node_id="n1",
+            status_message_id="s1",
+        ),
+        prompt="hi",
+        parent_session_id=None,
+    )
+
+
+def _snapshot(marker: str) -> TreeSnapshot:
+    return TreeSnapshot(
+        scope=_SCOPE,
+        root_id="root",
+        nodes={"root": {"marker": marker}},
+    )
+
+
+def _decision(*, position: int | None = None) -> QueueDecision:
+    return QueueDecision(
+        claim=_claim() if position is None else None,
+        position=position,
+        snapshot=_snapshot("admitted"),
+    )
 
 
 def test_render_markdown_to_mdv2_empty_returns_empty():
@@ -89,28 +129,23 @@ def test_get_initial_status_branches():
     session_store = MagicMock()
     handler = MessagingWorkflow(platform, cli_manager, session_store)
 
-    with (
-        patch.object(
-            handler.tree_queue, "is_node_tree_busy", MagicMock(return_value=True)
-        ),
-        patch.object(handler.tree_queue, "get_queue_size", MagicMock(return_value=2)),
-    ):
-        s1 = handler.turn_intake._get_initial_status(tree=object(), parent_node_id="p")
+    s1 = handler.turn_intake._get_initial_status(
+        ReplyTarget(node_id="p", queue_position=3)
+    )
     assert "Queued" in s1
     assert "position 3" in s1 or "position 3" in s1.replace("\\", "")
 
-    with patch.object(
-        handler.tree_queue, "is_node_tree_busy", MagicMock(return_value=False)
-    ):
-        s2 = handler.turn_intake._get_initial_status(tree=object(), parent_node_id="p")
+    s2 = handler.turn_intake._get_initial_status(
+        ReplyTarget(node_id="p", queue_position=None)
+    )
     assert "Continuing" in s2
 
-    s3 = handler.turn_intake._get_initial_status(tree=None, parent_node_id=None)
+    s3 = handler.turn_intake._get_initial_status(None)
     assert "Launching" in s3
 
 
 @pytest.mark.asyncio
-async def test_update_queue_positions_handles_snapshot_error_and_skips_non_pending():
+async def test_update_queue_positions_renders_immutable_queue_entries():
     platform = MagicMock()
     platform.queue_edit_message = AsyncMock()
     platform.fire_and_forget = MagicMock(
@@ -121,26 +156,23 @@ async def test_update_queue_positions_handles_snapshot_error_and_skips_non_pendi
     session_store = MagicMock()
     handler = MessagingWorkflow(platform, cli_manager, session_store)
 
-    # Snapshot error is swallowed.
-    tree = MagicMock()
-    tree.get_queue_snapshot = AsyncMock(side_effect=RuntimeError("boom"))
-    await handler.update_queue_positions(tree)
+    await handler.turn_intake.update_queue_positions(())
     platform.fire_and_forget.assert_not_called()
 
-    # Normal path: only PENDING nodes get an update.
-    node_pending = MagicMock()
-    node_pending.state = MessageState.PENDING
-    node_pending.incoming.chat_id = "c"
-    node_pending.status_message_id = "s"
-
-    node_done = MagicMock()
-    node_done.state = MessageState.COMPLETED
-
-    tree.get_queue_snapshot = AsyncMock(return_value=["n1", "n2"])
-    tree.get_node = MagicMock(side_effect=[node_pending, node_done])
-
-    await handler.update_queue_positions(tree)
+    await handler.turn_intake.update_queue_positions(
+        (
+            QueueEntry(
+                node=NodeUiTarget(
+                    scope=_SCOPE,
+                    node_id="n1",
+                    status_message_id="s",
+                ),
+                position=2,
+            ),
+        )
+    )
     assert platform.fire_and_forget.call_count == 1
+    assert "position 2" in platform.queue_edit_message.call_args.args[2]
 
 
 @pytest.mark.asyncio
@@ -158,26 +190,23 @@ async def test_node_runner_process_node_session_limit_marks_error_and_updates_ui
     session_store = MagicMock()
     handler = MessagingWorkflow(platform, cli_manager, session_store)
 
-    fake_tree = MagicMock()
-    fake_tree.root_id = "root"
-    fake_tree.snapshot = MagicMock(return_value={"root": "error"})
-    fake_tree.update_state = AsyncMock()
+    claim = _claim()
+    snapshot = _snapshot("error")
+    fail_claim = AsyncMock(
+        return_value=FailureResult(affected=(), queue_update=None, snapshot=snapshot)
+    )
     with patch.object(
-        handler.tree_queue, "get_tree_for_node", MagicMock(return_value=fake_tree)
+        handler.tree_queue,
+        "fail_claim",
+        fail_claim,
     ):
-        incoming = IncomingMessage(
-            text="hi",
-            chat_id="c",
-            user_id="u",
-            message_id="n1",
-            platform="telegram",
-        )
-        node = MessageNode(node_id="n1", incoming=incoming, status_message_id="s1")
-
-        await handler.node_runner.process_node("n1", node)
+        await handler.node_runner.process_node(claim)
     assert platform.queue_edit_message.await_count >= 1
-    fake_tree.update_state.assert_awaited()
-    session_store.save_tree_snapshot.assert_called_once_with({"root": "error"})
+    fail_claim.assert_awaited_once_with(
+        claim,
+        propagate=False,
+    )
+    session_store.save_tree_snapshot.assert_called_once_with(snapshot)
 
 
 @pytest.mark.asyncio
@@ -204,28 +233,23 @@ async def test_node_runner_cancellation_marks_error_and_saves_tree():
     session_store = MagicMock()
     handler = MessagingWorkflow(platform, cli_manager, session_store)
 
-    fake_tree = MagicMock()
-    fake_tree.root_id = "root"
-    fake_tree.snapshot = MagicMock(return_value={"root": "cancelled"})
-    fake_tree.update_state = AsyncMock()
-    with patch.object(
-        handler.tree_queue, "get_tree_for_node", MagicMock(return_value=fake_tree)
-    ):
-        incoming = IncomingMessage(
-            text="hi",
-            chat_id="c",
-            user_id="u",
-            message_id="n1",
-            platform="telegram",
-        )
-        node = MessageNode(node_id="n1", incoming=incoming, status_message_id="s1")
-
-        await handler.node_runner.process_node("n1", node)
-
-    fake_tree.update_state.assert_any_await(
-        "n1", MessageState.ERROR, error_message="Cancelled by user"
+    claim = _claim()
+    snapshot = _snapshot("cancelled")
+    fail_claim = AsyncMock(
+        return_value=FailureResult(affected=(), queue_update=None, snapshot=snapshot)
     )
-    session_store.save_tree_snapshot.assert_called_once_with({"root": "cancelled"})
+    with patch.object(
+        handler.tree_queue,
+        "fail_claim",
+        fail_claim,
+    ):
+        await handler.node_runner.process_node(claim)
+
+    fail_claim.assert_awaited_once_with(
+        claim,
+        propagate=False,
+    )
+    session_store.save_tree_snapshot.assert_called_once_with(snapshot)
 
 
 @pytest.mark.asyncio
@@ -243,36 +267,31 @@ async def test_stop_all_tasks_saves_tree_for_cancelled_nodes():
     session_store = MagicMock()
     handler = MessagingWorkflow(platform, cli_manager, session_store)
 
-    incoming = IncomingMessage(
-        text="hi",
-        chat_id="c",
-        user_id="u",
-        message_id="n1",
-        platform="telegram",
+    snapshot = _snapshot("ok")
+    result = CancellationResult(
+        effects=(
+            CancellationEffect(
+                node=_claim().node,
+                ui_owner=CancellationUiOwner.RUNNER,
+            ),
+        ),
+        snapshots=(snapshot,),
     )
-    node = MessageNode(node_id="n1", incoming=incoming, status_message_id="s1")
-
-    tree = MagicMock()
-    tree.root_id = "root"
-    tree.snapshot = MagicMock(return_value={"root": "ok"})
-    with (
-        patch.object(
-            handler.tree_queue,
-            "cancel_all",
-            AsyncMock(return_value=[CancelledNode(node, CancellationUiOwner.RUNNER)]),
-        ),
-        patch.object(
-            handler.tree_queue, "get_tree_for_node", MagicMock(return_value=tree)
-        ),
+    cancel_all = AsyncMock(return_value=result)
+    with patch.object(
+        handler.tree_queue,
+        "cancel_all",
+        cancel_all,
     ):
         count = await handler.stop_all_tasks()
     assert count == 1
+    cancel_all.assert_awaited_once_with(reason=CancellationReason.STOP)
     cli_manager.stop_all.assert_awaited_once()
-    session_store.save_tree_snapshot.assert_called_once_with({"root": "ok"})
+    session_store.save_tree_snapshot.assert_called_once_with(snapshot)
 
 
 @pytest.mark.asyncio
-async def test_handle_message_reply_with_tree_but_no_parent_treated_as_new():
+async def test_handle_message_unresolved_reply_is_admitted_as_new():
     platform = MagicMock()
     platform.queue_send_message = AsyncMock(return_value="status_1")
     platform.queue_edit_message = AsyncMock()
@@ -283,18 +302,8 @@ async def test_handle_message_reply_with_tree_but_no_parent_treated_as_new():
     session_store = MagicMock()
     handler = MessagingWorkflow(platform, cli_manager, session_store)
 
-    # Force "tree exists but parent can't be resolved" branch.
-    mock_queue = MagicMock()
-    mock_queue.get_tree_for_node.return_value = object()
-    mock_queue.resolve_parent_node_id.return_value = None
-    mock_queue.create_tree = AsyncMock(
-        return_value=MagicMock(
-            root_id="root", snapshot=MagicMock(return_value={"t": 1})
-        )
-    )
-    mock_queue.register_node = MagicMock()
-    mock_queue.enqueue = AsyncMock(return_value=False)
-    handler.replace_tree_queue(mock_queue)
+    resolve_reply = AsyncMock(return_value=None)
+    admit = AsyncMock(return_value=_decision())
 
     incoming = IncomingMessage(
         text="reply",
@@ -305,8 +314,18 @@ async def test_handle_message_reply_with_tree_but_no_parent_treated_as_new():
         reply_to_message_id="some_reply",
     )
 
-    await handler.handle_message(incoming)
-    mock_queue.create_tree.assert_awaited_once()
+    with (
+        patch.object(handler.tree_queue, "resolve_reply", resolve_reply),
+        patch.object(handler.tree_queue, "admit", admit),
+    ):
+        await handler.handle_message(incoming)
+
+    resolve_reply.assert_awaited_once_with(incoming.scope, "some_reply")
+    admit.assert_awaited_once_with(
+        incoming,
+        "status_1",
+        parent_node_id=None,
+    )
 
 
 @pytest.mark.asyncio
@@ -338,28 +357,25 @@ async def test_update_ui_handles_transcript_render_exception():
     cli_manager.get_stats.return_value = {"active_sessions": 0}
 
     handler = MessagingWorkflow(platform, cli_manager, session_store)
-    mock_queue = MagicMock()
-    mock_queue.get_tree_for_node.return_value = None
-    handler.replace_tree_queue(mock_queue)
+    claim = _claim()
+    snapshot = _snapshot("complete")
 
-    incoming = IncomingMessage(
-        text="hi",
-        chat_id="c",
-        user_id="u",
-        message_id="n1",
-        platform="telegram",
-    )
-    node = MessageNode(node_id="n1", incoming=incoming, status_message_id="s1")
-
-    with patch.object(
-        handler.node_runner, "_create_transcript_and_render_ctx"
-    ) as mock_create:
+    with (
+        patch.object(
+            handler.node_runner, "_create_transcript_and_render_ctx"
+        ) as mock_create,
+        patch.object(
+            handler.tree_queue,
+            "complete_claim",
+            AsyncMock(return_value=snapshot),
+        ),
+    ):
         transcript = MagicMock()
         transcript.render = MagicMock(side_effect=ValueError("render failed"))
         render_ctx = MagicMock()
         mock_create.return_value = (transcript, render_ctx)
 
-        await handler.node_runner.process_node("n1", node)
+        await handler.node_runner.process_node(claim)
 
     assert transcript.render.call_count >= 1
 
@@ -376,17 +392,7 @@ async def test_handle_message_incoming_text_none_safe():
 
     session_store = MagicMock()
     handler = MessagingWorkflow(platform, cli_manager, session_store)
-    mock_queue = MagicMock()
-    mock_queue.get_tree_for_node.return_value = None
-    mock_queue.resolve_parent_node_id.return_value = None
-    mock_queue.create_tree = AsyncMock(
-        return_value=MagicMock(
-            root_id="root", snapshot=MagicMock(return_value={"t": 1})
-        )
-    )
-    mock_queue.register_node = MagicMock()
-    mock_queue.enqueue = AsyncMock(return_value=True)
-    handler.replace_tree_queue(mock_queue)
+    admit = AsyncMock(return_value=_decision())
 
     incoming = MagicMock()
     incoming.text = None
@@ -395,10 +401,17 @@ async def test_handle_message_incoming_text_none_safe():
     incoming.message_id = "m1"
     incoming.platform = "telegram"
     incoming.reply_to_message_id = None
+    incoming.status_message_id = None
+    incoming.message_thread_id = None
     incoming.is_reply = MagicMock(return_value=False)
 
-    await handler.handle_message(incoming)
-    mock_queue.create_tree.assert_awaited_once()
+    with patch.object(handler.tree_queue, "admit", admit):
+        await handler.handle_message(incoming)
+    admit.assert_awaited_once_with(
+        incoming,
+        "status_1",
+        parent_node_id=None,
+    )
 
 
 @pytest.mark.asyncio
@@ -413,6 +426,8 @@ async def test_process_parsed_event_malformed_content_continues():
 
     transcript = MagicMock()
     update_ui = AsyncMock()
+    complete_claim = AsyncMock()
+    fail_claim = AsyncMock()
 
     last_status, had = await process_parsed_cli_event(
         parsed={"type": "unknown_type"},
@@ -420,15 +435,16 @@ async def test_process_parsed_event_malformed_content_continues():
         update_ui=update_ui,
         last_status=None,
         had_transcript_events=False,
-        tree=None,
-        node_id="n1",
+        claim=_claim(),
         captured_session_id=None,
-        session_store=session_store,
         format_status=handler.format_status,
-        propagate_error_to_children=AsyncMock(),
+        complete_claim=complete_claim,
+        fail_claim=fail_claim,
     )
     assert last_status is None
     assert had is False
+    complete_claim.assert_not_awaited()
+    fail_claim.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -443,8 +459,8 @@ async def test_process_parsed_event_failed_complete_does_not_mark_success():
 
     transcript = MagicMock()
     update_ui = AsyncMock()
-    tree = MagicMock()
-    tree.update_state = AsyncMock()
+    complete_claim = AsyncMock()
+    fail_claim = AsyncMock()
 
     last_status, had = await process_parsed_cli_event(
         parsed={"type": "complete", "status": "failed"},
@@ -452,18 +468,18 @@ async def test_process_parsed_event_failed_complete_does_not_mark_success():
         update_ui=update_ui,
         last_status="❌ Error",
         had_transcript_events=True,
-        tree=tree,
-        node_id="n1",
+        claim=_claim(),
         captured_session_id="session_1",
-        session_store=session_store,
         format_status=handler.format_status,
-        propagate_error_to_children=AsyncMock(),
+        complete_claim=complete_claim,
+        fail_claim=fail_claim,
     )
 
     assert last_status == "❌ Error"
     assert had is True
     update_ui.assert_not_awaited()
-    tree.update_state.assert_not_awaited()
+    complete_claim.assert_not_awaited()
+    fail_claim.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -501,19 +517,12 @@ async def test_handler_update_ui_edit_failure_does_not_crash():
 
     session_store = MagicMock()
     handler = MessagingWorkflow(platform, cli_manager, session_store)
-    mock_queue = MagicMock()
-    mock_queue.get_tree_for_node.return_value = None
-    handler.replace_tree_queue(mock_queue)
-
-    incoming = IncomingMessage(
-        text="hi",
-        chat_id="c",
-        user_id="u",
-        message_id="n1",
-        platform="telegram",
-    )
-    node = MessageNode(node_id="n1", incoming=incoming, status_message_id="s1")
-
-    await handler.node_runner.process_node("n1", node)
+    snapshot = _snapshot("complete")
+    with patch.object(
+        handler.tree_queue,
+        "complete_claim",
+        AsyncMock(return_value=snapshot),
+    ):
+        await handler.node_runner.process_node(_claim())
 
     cli_manager.remove_session.assert_awaited_once()

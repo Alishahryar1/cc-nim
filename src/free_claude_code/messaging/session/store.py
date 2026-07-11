@@ -1,10 +1,15 @@
 """Persistent messaging conversation state store."""
 
 import threading
+from copy import deepcopy
 
 from loguru import logger
 
-from free_claude_code.messaging.trees import ConversationSnapshot, TreeSnapshot
+from free_claude_code.messaging.trees import (
+    ConversationSnapshot,
+    TreeIdentity,
+    TreeSnapshot,
+)
 
 from .message_log import MessageLog
 from .persistence import DebouncedJsonPersistence
@@ -81,26 +86,22 @@ class SessionStore:
 
     def load_conversation_snapshot(self) -> ConversationSnapshot:
         with self._lock:
-            return ConversationSnapshot(trees=dict(self._conversation.trees))
+            return deepcopy(self._conversation)
 
     def save_conversation_snapshot(self, snapshot: ConversationSnapshot) -> None:
         with self._lock:
-            self._conversation = snapshot
+            self._conversation = deepcopy(snapshot)
             self._persistence.schedule_save()
 
     def save_tree_snapshot(self, snapshot: TreeSnapshot) -> None:
         with self._lock:
-            self._conversation = self._conversation.with_tree(snapshot)
+            self._conversation = self._conversation.with_tree(deepcopy(snapshot))
             self._persistence.schedule_save()
             logger.debug("Saved tree {}", snapshot.root_id)
 
-    def get_tree_snapshot(self, root_id: str) -> TreeSnapshot | None:
+    def remove_tree_snapshot(self, identity: TreeIdentity) -> None:
         with self._lock:
-            return self._conversation.trees.get(root_id)
-
-    def remove_tree_snapshot(self, root_id: str) -> None:
-        with self._lock:
-            self._conversation = self._conversation.without_tree(root_id)
+            self._conversation = self._conversation.without_tree(identity)
             self._persistence.schedule_save()
 
     def flush_pending_save(self) -> None:
@@ -149,10 +150,14 @@ class SessionStore:
         with self._lock:
             self._conversation = ConversationSnapshot()
             self._message_log.clear()
-            snapshot = self._snapshot_for_persistence()
-            self._set_dirty(False)
-        try:
-            self._persistence.write_data(snapshot)
-        except Exception as e:
-            logger.error("Failed to save sessions: {}", e)
-            self._set_dirty(True)
+            self._write_current_state()
+
+    def clear_conversation_snapshot(self) -> None:
+        """Authoritatively clear trees while preserving newer message logs."""
+        with self._lock:
+            self._conversation = ConversationSnapshot()
+            self._write_current_state()
+
+    def _write_current_state(self) -> None:
+        self._set_dirty(False)
+        self._persistence.write_data(self._snapshot_for_persistence())

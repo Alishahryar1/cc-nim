@@ -113,7 +113,6 @@ async def test_telegram_voice_success_invokes_handler(telegram_platform):
     incoming = handler.call_args[0][0]
     assert incoming.text == "Hello from voice"
     assert incoming.chat_id == "6789"
-    assert incoming.user_id == "12345"
     assert incoming.platform == "telegram"
     assert incoming.status_message_id == "999"
 

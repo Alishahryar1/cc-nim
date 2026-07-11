@@ -439,9 +439,13 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         (
             "tests/messaging/test_handler.py",
             "tests/messaging/test_handler_integration.py",
+            "tests/messaging/test_tree_ownership_concurrency.py",
         ),
         (),
-        ("test_messaging_commands_stop_clear_stats_e2e",),
+        (
+            "test_messaging_commands_stop_clear_stats_e2e",
+            "test_messaging_queued_scoped_cancel_e2e",
+        ),
         ("messaging",),
         (),
         "required fake-platform product flow",
@@ -453,9 +457,15 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         (
             "tests/messaging/test_tree_queue.py",
             "tests/messaging/test_tree_concurrency.py",
+            "tests/messaging/test_message_tree_transitions.py",
+            "tests/messaging/test_tree_ownership_concurrency.py",
         ),
         (),
-        ("test_tree_threading_e2e",),
+        (
+            "test_tree_threading_e2e",
+            "test_messaging_queued_scoped_cancel_e2e",
+            "test_same_message_ids_are_isolated_by_chat_e2e",
+        ),
         ("messaging",),
         (),
         "required fake-platform product flow",
@@ -473,7 +483,7 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     ),
     FeatureCoverage(
         "session_persistence",
-        "Session JSON preserves trees, node mapping, and message logs",
+        "Session JSON preserves scoped trees and message logs",
         "public_surface",
         ("tests/messaging/test_session_store_edge_cases.py",),
         (),

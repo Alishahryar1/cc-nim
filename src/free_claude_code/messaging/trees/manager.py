@@ -1,31 +1,61 @@
-"""Public manager API for tree-based messaging queues."""
+"""Public facade for atomic messaging tree aggregates."""
 
 import asyncio
-from collections.abc import Awaitable, Callable
+from collections.abc import Callable, Coroutine
+from typing import Any
 
 from loguru import logger
 
-from ..models import IncomingMessage
-from .cancellation import (
-    CancellationReason,
-    CancellationUiOwner,
-    CancelledNode,
-    set_cancel_reason,
-)
+from ..models import IncomingMessage, MessageScope
+from .identity import TreeIdentity
 from .node import MessageNode, MessageState
-from .processor import TreeQueueProcessor
+from .processor import (
+    CancelledTask,
+    NodeProcessor,
+    NodeStartedCallback,
+    QueueUpdateCallback,
+    TreeQueueProcessor,
+)
 from .repository import TreeRepository
 from .runtime import MessageTree
-from .snapshot import ConversationSnapshot
+from .snapshot import ConversationSnapshot, TreeSnapshot
+from .transitions import (
+    BranchRemovalResult,
+    CancellationEffect,
+    CancellationReason,
+    CancellationResult,
+    CancellationUiOwner,
+    FailureResult,
+    NodeClaim,
+    NodeUiTarget,
+    NodeView,
+    QueueDecision,
+    ReplyTarget,
+    TreeCancellation,
+)
 
 CANCEL_TASK_DRAIN_TIMEOUT_S = 5.0
 
 
-async def _drain_cancelled_tasks(tasks: list[asyncio.Task]) -> None:
-    """Wait briefly for cancelled node tasks to finish their cleanup."""
+async def _finish_transition[T](awaitable: Coroutine[Any, Any, T]) -> T:
+    """Deliver a transition result even if its caller is cancelled mid-commit."""
+    task = asyncio.create_task(awaitable)
+    current = asyncio.current_task()
+    while True:
+        try:
+            return await asyncio.shield(task)
+        except asyncio.CancelledError:
+            if task.done():
+                return task.result()
+            if current is not None:
+                while current.cancelling():
+                    current.uncancel()
+
+
+async def _drain_cancelled_tasks(tasks: list[asyncio.Task[None]]) -> None:
+    """Wait briefly for cancelled claims to finish aggregate cleanup."""
     if not tasks:
         return
-
     done, pending = await asyncio.wait(
         set(tasks),
         timeout=CANCEL_TASK_DRAIN_TIMEOUT_S,
@@ -35,7 +65,6 @@ async def _drain_cancelled_tasks(tasks: list[asyncio.Task]) -> None:
             "Timed out waiting for {} cancelled messaging task(s) to finish cleanup",
             len(pending),
         )
-
     for task in done:
         if task.cancelled():
             continue
@@ -43,468 +72,475 @@ async def _drain_cancelled_tasks(tasks: list[asyncio.Task]) -> None:
             task.result()
         except Exception as exc:
             logger.debug(
-                "Cancelled messaging task finished with {}",
-                type(exc).__name__,
+                "Cancelled messaging task finished with {}", type(exc).__name__
             )
 
 
 class TreeQueueManager:
-    """
-    Manages multiple message trees: index + async processing.
-
-    Each new conversation creates a new tree.
-    Replies to existing messages add nodes to existing trees.
-    """
+    """Locate aggregates and coordinate tasks without exposing mutable trees."""
 
     def __init__(
         self,
-        queue_update_callback: Callable[[MessageTree], Awaitable[None]] | None = None,
-        node_started_callback: Callable[[MessageTree, str], Awaitable[None]]
-        | None = None,
+        node_processor: NodeProcessor,
+        *,
+        queue_update_callback: QueueUpdateCallback | None = None,
+        node_started_callback: NodeStartedCallback | None = None,
+        unexpected_failure_callback: Callable[[FailureResult], None] | None = None,
         _repository: TreeRepository | None = None,
+        _restored_snapshot: ConversationSnapshot | None = None,
+        _restored_stale_targets: tuple[NodeUiTarget, ...] = (),
     ) -> None:
         self._repository = _repository or TreeRepository()
         self._processor = TreeQueueProcessor(
+            node_processor,
+            claim_failure_callback=self._handle_processor_failure,
             queue_update_callback=queue_update_callback,
             node_started_callback=node_started_callback,
         )
         self._lock = asyncio.Lock()
-
+        self._restored_snapshot = _restored_snapshot
+        self._restored_stale_targets = _restored_stale_targets
+        self._unexpected_failure_callback = unexpected_failure_callback
         logger.info("TreeQueueManager initialized")
 
-    async def create_tree(
+    @property
+    def restored_snapshot(self) -> ConversationSnapshot | None:
+        return self._restored_snapshot
+
+    @property
+    def restored_stale_targets(self) -> tuple[NodeUiTarget, ...]:
+        return self._restored_stale_targets
+
+    async def admit(
         self,
-        node_id: str,
         incoming: IncomingMessage,
         status_message_id: str,
-    ) -> MessageTree:
-        """
-        Create a new tree with a root node.
-
-        Args:
-            node_id: ID for the root node
-            incoming: The incoming message
-            status_message_id: Bot's status message ID
-
-        Returns:
-            The created MessageTree
-        """
+        *,
+        parent_node_id: str | None = None,
+    ) -> QueueDecision:
+        """Publish one admission before its processor can begin."""
+        node_id = str(incoming.message_id)
+        scope = incoming.scope
+        prompt = incoming.text or ""
         async with self._lock:
-            root_node = MessageNode(
-                node_id=node_id,
-                incoming=incoming,
-                status_message_id=status_message_id,
-                state=MessageState.PENDING,
+            duplicate_tree = self._repository.get_tree_for_reference(scope, node_id)
+            if duplicate_tree is None:
+                duplicate_tree = self._repository.get_tree_for_reference(
+                    scope,
+                    status_message_id,
+                )
+            if duplicate_tree is not None:
+                return await duplicate_tree.enqueue_or_claim(node_id)
+
+            tree: MessageTree | None = None
+            resolved_parent: ReplyTarget | None = None
+            if parent_node_id is not None:
+                tree = self._repository.get_tree_for_reference(scope, parent_node_id)
+                if tree is not None:
+                    resolved_parent = await tree.resolve_reply(parent_node_id)
+
+            if tree is not None and resolved_parent is not None:
+                decision = await tree.add_and_enqueue(
+                    node_id,
+                    scope,
+                    prompt,
+                    status_message_id,
+                    resolved_parent.node_id,
+                )
+                self._repository.register_node(
+                    identity=tree.identity,
+                    node_id=node_id,
+                    status_message_id=status_message_id,
+                )
+                logger.info("Added node {} to tree {}", node_id, tree.identity)
+            else:
+                root = MessageNode(
+                    node_id=node_id,
+                    scope=scope,
+                    prompt=prompt,
+                    status_message_id=status_message_id,
+                    state=MessageState.PENDING,
+                )
+                tree = MessageTree(root)
+                decision = await tree.enqueue_or_claim(node_id)
+                self._repository.add_tree(
+                    tree,
+                    node_id=node_id,
+                    status_message_id=status_message_id,
+                )
+                logger.info("Created new tree {}", tree.identity)
+
+        if decision.claim is not None:
+            self._processor.launch(tree, decision.claim)
+        return decision
+
+    async def resolve_reply(
+        self,
+        scope: MessageScope,
+        reference_id: str,
+    ) -> ReplyTarget | None:
+        """Resolve a scoped node or status-message reference."""
+        async with self._lock:
+            tree = self._repository.get_tree_for_reference(scope, reference_id)
+            return await tree.resolve_reply(reference_id) if tree is not None else None
+
+    async def resolve_node_id(
+        self,
+        scope: MessageScope,
+        reference_id: str,
+    ) -> str | None:
+        target = await self.resolve_reply(scope, reference_id)
+        return target.node_id if target is not None else None
+
+    async def get_node(
+        self,
+        scope: MessageScope,
+        reference_id: str,
+    ) -> NodeView | None:
+        """Return an immutable node read model."""
+        async with self._lock:
+            tree = self._repository.get_tree_for_reference(scope, reference_id)
+            if tree is None:
+                return None
+            target = await tree.resolve_reply(reference_id)
+            return await tree.node_view(target.node_id) if target is not None else None
+
+    async def record_session(
+        self,
+        claim: NodeClaim,
+        session_id: str,
+    ) -> TreeSnapshot | None:
+        async with self._lock:
+            tree = self._repository.get_tree(claim.identity)
+            return (
+                await tree.record_session(claim.claim_id, session_id)
+                if tree is not None
+                else None
             )
 
-            tree = MessageTree(root_node)
-            self._repository.add_tree(node_id, tree)
-
-            logger.info(f"Created new tree with root {node_id}")
-            return tree
-
-    async def add_to_tree(
+    async def complete_claim(
         self,
-        parent_node_id: str,
-        node_id: str,
-        incoming: IncomingMessage,
-        status_message_id: str,
-    ) -> tuple[MessageTree, MessageNode]:
-        """
-        Add a reply as a child node to an existing tree.
-
-        Args:
-            parent_node_id: ID of the parent message
-            node_id: ID for the new node
-            incoming: The incoming reply message
-            status_message_id: Bot's status message ID
-
-        Returns:
-            Tuple of (tree, new_node)
-        """
+        claim: NodeClaim,
+        session_id: str | None,
+    ) -> TreeSnapshot | None:
         async with self._lock:
-            if not self._repository.has_node(parent_node_id):
-                raise ValueError(f"Parent node {parent_node_id} not found in any tree")
+            tree = self._repository.get_tree(claim.identity)
+            return (
+                await tree.complete_claim(claim.claim_id, session_id)
+                if tree is not None
+                else None
+            )
 
-            tree = self._repository.get_tree_for_node(parent_node_id)
-            if not tree:
-                raise ValueError(f"Parent node {parent_node_id} not found in any tree")
+    async def fail_claim(
+        self,
+        claim: NodeClaim,
+        *,
+        propagate: bool = True,
+    ) -> FailureResult:
+        return await self._fail_claim(claim, propagate=propagate)
 
-        node = await tree.add_node(
-            node_id=node_id,
-            incoming=incoming,
-            status_message_id=status_message_id,
-            parent_id=parent_node_id,
+    async def _fail_claim(
+        self,
+        claim: NodeClaim,
+        *,
+        propagate: bool,
+    ) -> FailureResult:
+        async with self._lock:
+            tree = self._repository.get_tree(claim.identity)
+            result = (
+                await tree.fail_claim(
+                    claim.claim_id,
+                    propagate=propagate,
+                )
+                if tree is not None
+                else FailureResult(affected=(), queue_update=None, snapshot=None)
+            )
+        if result.queue_update is not None:
+            await self._processor.notify_queue_updated(result.queue_update)
+        return result
+
+    async def _handle_processor_failure(
+        self,
+        claim: NodeClaim,
+    ) -> None:
+        """Route an escaped runner failure through manager-owned effects."""
+        result = await self._fail_claim(claim, propagate=True)
+        if self._unexpected_failure_callback is None:
+            return
+        try:
+            self._unexpected_failure_callback(result)
+        except Exception as exc:
+            logger.warning(
+                "Unexpected messaging failure callback failed: {}",
+                type(exc).__name__,
+            )
+
+    @staticmethod
+    def _external_effects(
+        transition: TreeCancellation,
+        cancelled_task: CancelledTask | None,
+    ) -> tuple[CancellationEffect, ...]:
+        active_node_id = (
+            transition.active_claim.node.node_id
+            if transition.active_claim is not None
+            else None
+        )
+        return tuple(
+            CancellationEffect(
+                node=node,
+                ui_owner=(
+                    CancellationUiOwner.RUNNER
+                    if node.node_id == active_node_id
+                    and cancelled_task is not None
+                    and cancelled_task.runner_started
+                    else CancellationUiOwner.WORKFLOW
+                ),
+            )
+            for node in transition.nodes
         )
 
+    async def _current_snapshot(
+        self,
+        identity: TreeIdentity,
+        expected_tree: MessageTree,
+    ) -> TreeSnapshot | None:
         async with self._lock:
-            self._repository.register_node(node_id, tree.root_id)
-
-        logger.info(f"Added node {node_id} to tree {tree.root_id}")
-        return tree, node
-
-    def get_tree(self, root_id: str) -> MessageTree | None:
-        """Get a tree by its root ID."""
-        return self._repository.get_tree(root_id)
-
-    def get_tree_for_node(self, node_id: str) -> MessageTree | None:
-        """Get the tree containing a given node."""
-        return self._repository.get_tree_for_node(node_id)
-
-    def get_node(self, node_id: str) -> MessageNode | None:
-        """Get a node from any tree."""
-        return self._repository.get_node(node_id)
-
-    def resolve_parent_node_id(self, msg_id: str) -> str | None:
-        """Resolve a message ID to the actual parent node ID."""
-        return self._repository.resolve_parent_node_id(msg_id)
-
-    def is_tree_busy(self, root_id: str) -> bool:
-        """Check if a tree is currently processing."""
-        return self._repository.is_tree_busy(root_id)
-
-    def is_node_tree_busy(self, node_id: str) -> bool:
-        """Check if the tree containing a node is busy."""
-        return self._repository.is_node_tree_busy(node_id)
-
-    async def enqueue(
-        self,
-        node_id: str,
-        processor: Callable[[str, MessageNode], Awaitable[None]],
-    ) -> bool:
-        """
-        Enqueue a node for processing.
-
-        If the tree is not busy, processing starts immediately.
-        If busy, the message is queued.
-
-        Args:
-            node_id: Node to process
-            processor: Async function to process the node
-
-        Returns:
-            True if queued, False if processing immediately
-        """
-        tree = self._repository.get_tree_for_node(node_id)
-        if not tree:
-            logger.error(f"No tree found for node {node_id}")
-            return False
-
-        return await self._processor.enqueue_and_start(tree, node_id, processor)
-
-    def get_queue_size(self, node_id: str) -> int:
-        """Get queue size for the tree containing a node."""
-        return self._repository.get_queue_size(node_id)
-
-    def get_pending_children(self, node_id: str) -> list[MessageNode]:
-        """Get all pending child nodes (recursively) of a given node."""
-        return self._repository.get_pending_children(node_id)
-
-    async def mark_node_error(
-        self,
-        node_id: str,
-        error_message: str,
-        propagate_to_children: bool = True,
-    ) -> list[MessageNode]:
-        """
-        Mark a node as ERROR and optionally propagate to pending children.
-
-        Args:
-            node_id: The node to mark as error
-            error_message: Error description
-            propagate_to_children: If True, also mark pending children as error
-
-        Returns:
-            List of all nodes marked as error (including children)
-        """
-        tree = self._repository.get_tree_for_node(node_id)
-        if not tree:
-            return []
-
-        affected = []
-        node = tree.get_node(node_id)
-        if node:
-            await tree.update_state(
-                node_id, MessageState.ERROR, error_message=error_message
-            )
-            affected.append(node)
-
-        if propagate_to_children:
-            pending_children = self._repository.get_pending_children(node_id)
-            for child in pending_children:
-                await tree.update_state(
-                    child.node_id,
-                    MessageState.ERROR,
-                    error_message=f"Parent failed: {error_message}",
-                )
-                affected.append(child)
-
-        return affected
-
-    async def cancel_tree(
-        self, root_id: str, *, reason: CancellationReason | None = None
-    ) -> list[CancelledNode]:
-        """
-        Cancel all queued and in-progress messages in a tree.
-
-        Updates node states to ERROR and returns list of affected nodes
-        that were actually active or in the current processing queue.
-        """
-        tree = self._repository.get_tree(root_id)
-        if not tree:
-            return []
-
-        cancelled_nodes: list[CancelledNode] = []
-        cancelled_tasks: list[asyncio.Task] = []
-
-        cleanup_count = 0
-        async with tree.with_lock():
-            current_id = tree.current_node_id
-            current_node = tree.get_node(current_id) if current_id else None
-            if current_node is not None:
-                set_cancel_reason(current_node, reason)
-            cancelled_task = tree.cancel_current_task()
-            if cancelled_task:
-                cancelled_tasks.append(cancelled_task)
-                if current_node and current_node.state not in (
-                    MessageState.COMPLETED,
-                    MessageState.ERROR,
-                ):
-                    tree.set_node_error_sync(current_node, "Cancelled by user")
-                    cancelled_nodes.append(
-                        CancelledNode(current_node, CancellationUiOwner.RUNNER)
-                    )
-
-            queue_nodes = tree.drain_queue_and_mark_cancelled()
-            for node in queue_nodes:
-                set_cancel_reason(node, reason)
-            cancelled_nodes.extend(
-                CancelledNode(node, CancellationUiOwner.WORKFLOW)
-                for node in queue_nodes
-            )
-            cancelled_ids = {entry.node.node_id for entry in cancelled_nodes}
-
-            for node in tree.all_nodes():
-                if (
-                    node.state in (MessageState.PENDING, MessageState.IN_PROGRESS)
-                    and node.node_id not in cancelled_ids
-                ):
-                    set_cancel_reason(node, reason)
-                    tree.set_node_error_sync(node, "Stale task cleaned up")
-                    cancelled_nodes.append(
-                        CancelledNode(node, CancellationUiOwner.WORKFLOW)
-                    )
-                    cleanup_count += 1
-
-            tree.reset_processing_state()
-
-        await _drain_cancelled_tasks(cancelled_tasks)
-
-        if cancelled_nodes:
-            logger.info(
-                f"Cancelled {len(cancelled_nodes)} active nodes in tree {root_id}"
-            )
-        if cleanup_count:
-            logger.info(f"Cleaned up {cleanup_count} stale nodes in tree {root_id}")
-
-        return cancelled_nodes
+            tree = self._repository.get_tree(identity)
+            if tree is not expected_tree:
+                return None
+            return await tree.snapshot()
 
     async def cancel_node(
-        self, node_id: str, *, reason: CancellationReason | None = None
-    ) -> list[CancelledNode]:
-        """
-        Cancel a single node (queued or in-progress) without affecting other nodes.
+        self,
+        scope: MessageScope,
+        node_id: str,
+        *,
+        reason: CancellationReason | None = None,
+    ) -> CancellationResult:
+        return await _finish_transition(self._cancel_node(scope, node_id, reason))
 
-        Returns:
-            List containing the cancelled node if it was cancellable, else empty list.
-        """
-        tree = self._repository.get_tree_for_node(node_id)
-        if not tree:
-            return []
+    async def _cancel_node(
+        self,
+        scope: MessageScope,
+        node_id: str,
+        reason: CancellationReason | None,
+    ) -> CancellationResult:
+        async with self._lock:
+            tree = self._repository.get_tree_for_reference(scope, node_id)
+            if tree is None:
+                return CancellationResult()
+            target = await tree.resolve_reply(node_id)
+            if target is None:
+                return CancellationResult()
+            transition = await tree.cancel_node(target.node_id)
+            cancelled_task = (
+                self._processor.cancel(transition.active_claim, reason)
+                if transition.active_claim is not None
+                else None
+            )
 
-        async with tree.with_lock():
-            node = tree.get_node(node_id)
-            if not node:
-                return []
-
-            if node.state in (MessageState.COMPLETED, MessageState.ERROR):
-                return []
-
-            set_cancel_reason(node, reason)
-            cancelled_tasks: list[asyncio.Task] = []
-            ui_owner = CancellationUiOwner.WORKFLOW
-            if tree.is_current_node(node_id):
-                cancelled_task = self._processor.cancel_current(tree)
-                if cancelled_task:
-                    cancelled_tasks.append(cancelled_task)
-                    ui_owner = CancellationUiOwner.RUNNER
-
-            removed_from_queue = False
-            try:
-                removed_from_queue = tree.remove_from_queue(node_id)
-            except Exception:
-                logger.debug(
-                    "Failed to remove node from queue; will rely on state=ERROR"
-                )
-
-            tree.set_node_error_sync(node, "Cancelled by user")
-
-        if removed_from_queue:
-            await self._processor.notify_queue_updated(tree)
-        await _drain_cancelled_tasks(cancelled_tasks)
-
-        return [CancelledNode(node, ui_owner)]
+        if transition.queue_update is not None:
+            await self._processor.notify_queue_updated(transition.queue_update)
+        if cancelled_task is not None:
+            await _drain_cancelled_tasks([cancelled_task.task])
+        snapshot = await self._current_snapshot(tree.identity, tree)
+        return CancellationResult(
+            effects=self._external_effects(transition, cancelled_task),
+            snapshots=(snapshot,) if snapshot is not None else (),
+        )
 
     async def cancel_all(
-        self, *, reason: CancellationReason | None = None
-    ) -> list[CancelledNode]:
-        """Cancel all messages in all trees."""
+        self,
+        *,
+        reason: CancellationReason | None = None,
+    ) -> CancellationResult:
+        return await _finish_transition(self._cancel_all(reason))
+
+    async def _cancel_all(
+        self,
+        reason: CancellationReason | None,
+    ) -> CancellationResult:
+        transitions: list[
+            tuple[MessageTree, TreeCancellation, CancelledTask | None]
+        ] = []
         async with self._lock:
-            root_ids = list(self._repository.tree_ids())
-        all_cancelled: list[CancelledNode] = []
-        for root_id in root_ids:
-            all_cancelled.extend(await self.cancel_tree(root_id, reason=reason))
-        return all_cancelled
+            for tree in self._repository.trees():
+                transition = await tree.cancel_all()
+                cancelled_task = (
+                    self._processor.cancel(transition.active_claim, reason)
+                    if transition.active_claim is not None
+                    else None
+                )
+                transitions.append((tree, transition, cancelled_task))
 
-    def cleanup_stale_nodes(self) -> int:
-        """
-        Mark any PENDING or IN_PROGRESS nodes in all trees as ERROR.
-        Used on startup to reconcile restored state.
-        """
-        count = 0
-        for tree in self._repository.all_trees():
-            for node in tree.all_nodes():
-                if node.state in (MessageState.PENDING, MessageState.IN_PROGRESS):
-                    tree.set_node_error_sync(node, "Lost during server restart")
-                    count += 1
-        if count:
-            logger.info(f"Cleaned up {count} stale nodes during startup")
-        return count
+        for _tree, transition, _task in transitions:
+            if transition.queue_update is not None:
+                await self._processor.notify_queue_updated(transition.queue_update)
+        await _drain_cancelled_tasks(
+            [
+                cancelled.task
+                for _tree, _transition, cancelled in transitions
+                if cancelled is not None
+            ]
+        )
 
-    def get_tree_count(self) -> int:
-        """Get the number of active message trees."""
-        return self._repository.tree_count()
+        effects: list[CancellationEffect] = []
+        snapshots: list[TreeSnapshot] = []
+        for tree, transition, cancelled_task in transitions:
+            effects.extend(self._external_effects(transition, cancelled_task))
+            snapshot = await self._current_snapshot(tree.identity, tree)
+            if snapshot is not None:
+                snapshots.append(snapshot)
+        return CancellationResult(effects=tuple(effects), snapshots=tuple(snapshots))
 
-    def set_queue_update_callback(
+    async def clear_all(
         self,
-        queue_update_callback: Callable[[MessageTree], Awaitable[None]] | None,
-    ) -> None:
-        """Set callback for queue position updates."""
-        self._processor.set_queue_update_callback(queue_update_callback)
+        *,
+        reason: CancellationReason | None = None,
+    ) -> CancellationResult:
+        """Atomically detach all trees, then drain their exact active tasks."""
+        return await _finish_transition(self._clear_all(reason))
 
-    def set_node_started_callback(
+    async def _clear_all(
         self,
-        node_started_callback: Callable[[MessageTree, str], Awaitable[None]] | None,
-    ) -> None:
-        """Set callback for when a queued node starts processing."""
-        self._processor.set_node_started_callback(node_started_callback)
+        reason: CancellationReason | None,
+    ) -> CancellationResult:
+        transitions: list[tuple[TreeCancellation, CancelledTask | None]] = []
+        async with self._lock:
+            for tree in self._repository.trees():
+                transition = await tree.cancel_all()
+                cancelled_task = (
+                    self._processor.cancel(transition.active_claim, reason)
+                    if transition.active_claim is not None
+                    else None
+                )
+                transitions.append((transition, cancelled_task))
+            self._repository = TreeRepository()
 
-    def register_node(self, node_id: str, root_id: str) -> None:
-        """Register a node ID to a tree (for external mapping)."""
-        self._repository.register_node(node_id, root_id)
-
-    async def cancel_branch(
-        self, branch_root_id: str, *, reason: CancellationReason | None = None
-    ) -> list[CancelledNode]:
-        """
-        Cancel all PENDING/IN_PROGRESS nodes in the subtree (branch_root + descendants).
-        """
-        tree = self._repository.get_tree_for_node(branch_root_id)
-        if not tree:
-            return []
-
-        branch_ids = set(tree.get_descendants(branch_root_id))
-        cancelled: list[CancelledNode] = []
-        cancelled_tasks: list[asyncio.Task] = []
-        removed_from_queue = False
-
-        async with tree.with_lock():
-            for nid in branch_ids:
-                node = tree.get_node(nid)
-                if not node or node.state in (
-                    MessageState.COMPLETED,
-                    MessageState.ERROR,
-                ):
-                    continue
-
-                if tree.is_current_node(nid):
-                    set_cancel_reason(node, reason)
-                    cancelled_task = self._processor.cancel_current(tree)
-                    ui_owner = CancellationUiOwner.WORKFLOW
-                    if cancelled_task:
-                        cancelled_tasks.append(cancelled_task)
-                        ui_owner = CancellationUiOwner.RUNNER
-                    tree.set_node_error_sync(node, "Cancelled by user")
-                    cancelled.append(CancelledNode(node, ui_owner))
-                else:
-                    set_cancel_reason(node, reason)
-                    removed_from_queue = (
-                        tree.remove_from_queue(nid) or removed_from_queue
-                    )
-                    tree.set_node_error_sync(node, "Cancelled by user")
-                    cancelled.append(CancelledNode(node, CancellationUiOwner.WORKFLOW))
-
-        if cancelled:
-            logger.info(f"Cancelled {len(cancelled)} nodes in branch {branch_root_id}")
-        if removed_from_queue:
-            await self._processor.notify_queue_updated(tree)
-        await _drain_cancelled_tasks(cancelled_tasks)
-        return cancelled
+        await _drain_cancelled_tasks(
+            [
+                cancelled.task
+                for _transition, cancelled in transitions
+                if cancelled is not None
+            ]
+        )
+        effects: list[CancellationEffect] = []
+        for transition, cancelled_task in transitions:
+            effects.extend(self._external_effects(transition, cancelled_task))
+        return CancellationResult(effects=tuple(effects))
 
     async def remove_branch(
-        self, branch_root_id: str
-    ) -> tuple[list[MessageNode], str, bool]:
-        """
-        Remove a branch (subtree) from the tree.
+        self,
+        scope: MessageScope,
+        branch_root_id: str,
+        *,
+        reason: CancellationReason | None = None,
+    ) -> BranchRemovalResult:
+        """Atomically cancel, detach, and unindex one scoped branch."""
+        return await _finish_transition(
+            self._remove_branch(scope, branch_root_id, reason)
+        )
 
-        If branch_root is the tree root, removes the entire tree.
+    async def _remove_branch(
+        self,
+        scope: MessageScope,
+        branch_root_id: str,
+        reason: CancellationReason | None,
+    ) -> BranchRemovalResult:
+        async with self._lock:
+            tree = self._repository.get_tree_for_reference(scope, branch_root_id)
+            if tree is None:
+                return BranchRemovalResult(
+                    cancellation=CancellationResult(),
+                    removed_tree_identity=None,
+                    message_ids=frozenset(),
+                )
+            target = await tree.resolve_reply(branch_root_id)
+            if target is None:
+                return BranchRemovalResult(
+                    cancellation=CancellationResult(),
+                    removed_tree_identity=None,
+                    message_ids=frozenset(),
+                )
+            identity = tree.identity
+            transition = await tree.remove_branch(target.node_id)
+            lookup_ids = set(transition.message_ids)
+            if transition.removed_entire_tree:
+                self._repository.remove_tree(identity)
+            else:
+                self._repository.unregister_references(identity, lookup_ids)
+            cancelled_task = (
+                self._processor.cancel(transition.cancellation.active_claim, reason)
+                if transition.cancellation.active_claim is not None
+                else None
+            )
 
-        Returns:
-            (removed_nodes, root_id, removed_entire_tree)
-        """
-        tree = self._repository.get_tree_for_node(branch_root_id)
-        if not tree:
-            return ([], "", False)
+        if transition.cancellation.queue_update is not None:
+            await self._processor.notify_queue_updated(
+                transition.cancellation.queue_update
+            )
+        if cancelled_task is not None:
+            await _drain_cancelled_tasks([cancelled_task.task])
+        snapshot = (
+            None
+            if transition.removed_entire_tree
+            else await self._current_snapshot(identity, tree)
+        )
+        cancellation = CancellationResult(
+            effects=self._external_effects(
+                transition.cancellation,
+                cancelled_task,
+            ),
+            snapshots=(snapshot,) if snapshot is not None else (),
+        )
+        return BranchRemovalResult(
+            cancellation=cancellation,
+            removed_tree_identity=(
+                identity if transition.removed_entire_tree else None
+            ),
+            message_ids=transition.message_ids,
+        )
 
-        root_id = tree.root_id
+    def get_tree_count(self) -> int:
+        return self._repository.tree_count()
 
-        if branch_root_id == root_id:
-            cancelled = await self.cancel_tree(root_id)
-            removed_tree = self._repository.remove_tree(root_id)
-            if removed_tree:
-                return (removed_tree.all_nodes(), root_id, True)
-            return ([entry.node for entry in cancelled], root_id, True)
+    def task_count(self) -> int:
+        return self._processor.task_count()
 
-        async with tree.with_lock():
-            removed = tree.remove_branch(branch_root_id)
+    async def get_message_ids_for_chat(self, platform: str, chat_id: str) -> set[str]:
+        async with self._lock:
+            message_ids: set[str] = set()
+            for tree in self._repository.trees():
+                message_ids.update(await tree.message_ids_for_chat(platform, chat_id))
+            return message_ids
 
-        self._repository.unregister_node_lookups(removed)
-        return (removed, root_id, False)
-
-    def get_message_ids_for_chat(self, platform: str, chat_id: str) -> set[str]:
-        """Get all message IDs for a given platform/chat."""
-        return self._repository.get_message_ids_for_chat(platform, chat_id)
-
-    def snapshot(self) -> ConversationSnapshot:
-        """Serialize all trees into a typed conversation snapshot."""
-        return self._repository.snapshot()
+    async def snapshot(self) -> ConversationSnapshot:
+        async with self._lock:
+            trees: dict[TreeIdentity, TreeSnapshot] = {}
+            for tree in self._repository.trees():
+                trees[tree.identity] = await tree.snapshot()
+            return ConversationSnapshot(trees=trees)
 
     @classmethod
     def from_snapshot(
         cls,
         snapshot: ConversationSnapshot,
-        queue_update_callback: Callable[[MessageTree], Awaitable[None]] | None = None,
-        node_started_callback: Callable[[MessageTree, str], Awaitable[None]]
-        | None = None,
+        node_processor: NodeProcessor,
+        *,
+        queue_update_callback: QueueUpdateCallback | None = None,
+        node_started_callback: NodeStartedCallback | None = None,
+        unexpected_failure_callback: Callable[[FailureResult], None] | None = None,
     ) -> TreeQueueManager:
-        """Restore a manager from a typed conversation snapshot."""
+        repository, normalized, stale_targets = TreeRepository.from_snapshot(snapshot)
         return cls(
+            node_processor,
             queue_update_callback=queue_update_callback,
             node_started_callback=node_started_callback,
-            _repository=TreeRepository.from_snapshot(snapshot),
+            unexpected_failure_callback=unexpected_failure_callback,
+            _repository=repository,
+            _restored_snapshot=normalized,
+            _restored_stale_targets=stale_targets,
         )
 
 
-__all__ = [
-    "TreeQueueManager",
-]
+__all__ = ["TreeQueueManager"]

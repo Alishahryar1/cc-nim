@@ -5,6 +5,14 @@ from datetime import UTC, datetime
 from typing import Any
 
 
+@dataclass(frozen=True, slots=True)
+class MessageScope:
+    """Platform chat namespace in which message IDs are unique."""
+
+    platform: str
+    chat_id: str
+
+
 @dataclass
 class IncomingMessage:
     """
@@ -28,9 +36,14 @@ class IncomingMessage:
     status_message_id: str | None = None
     timestamp: datetime = field(default_factory=lambda: datetime.now(UTC))
 
-    # Platform-specific raw event for edge cases
+    # Platform-specific raw event stays at ingress and is never persisted by trees.
     raw_event: Any = None
 
     def is_reply(self) -> bool:
         """Check if this message is a reply to another message."""
         return self.reply_to_message_id is not None
+
+    @property
+    def scope(self) -> MessageScope:
+        """Return the namespace that owns this message's platform IDs."""
+        return MessageScope(platform=str(self.platform), chat_id=str(self.chat_id))

@@ -122,6 +122,11 @@ compatibility shims, endpoints, or helper paths that do not serve one of the
 surfaces above are not product requirements and should be removed rather than
 preserved.
 
+The supported messaging extension surface consists of transport ingress values,
+platform ports, and managed-session protocols. Tree aggregates, processors,
+repositories, transition values, and package-level re-exports of those
+implementation types are internal; they are not a versioned Python SDK surface.
+
 ## Design Pressure And Refactor Targets
 
 The current package boundaries are intentional, but several modules still carry
@@ -795,19 +800,36 @@ restart-required, while the same provider credential remains hot-replaceable
 when voice does not use it.
 
 [messaging/workflow.py](src/free_claude_code/messaging/workflow.py) contains `MessagingWorkflow`, the
-platform-agnostic coordinator. It owns dependencies, callback wiring, stop/clear
-side effects, render settings, and shutdown-visible state.
+platform-agnostic coordinator. It owns dependencies, render settings, the
+state-transaction lock, admission epoch, stop/clear side effects, and
+shutdown-visible state. Each inbound turn snapshots the epoch before external
+status I/O and rechecks it while committing admission; global `/stop` and
+`/clear` advance the epoch so an older provisional turn is discarded instead of
+crossing that boundary. The workflow persists the detached snapshot returned by
+the same transition instead of taking a later mutable-node read. Once a stop or
+clear transition commits, its persistence effects are applied before the later
+interruptible global CLI cleanup. At startup it restores and normalizes
+persisted state before ingress begins, then repairs interrupted platform
+statuses after outbound delivery starts.
 
 [messaging/turn_intake.py](src/free_claude_code/messaging/turn_intake.py) owns inbound message
-recording, slash command dispatch, status-echo filtering, reply resolution, tree
-creation/extension, initial status messages, persistence, and enqueueing.
+recording, slash command dispatch, status-echo filtering, initial status
+messages, and rendering detached frozen admission/queue effects. It asks the workflow
+to resolve and admit turns rather than receiving a mutable tree. Reply lookup is
+always scoped by platform and chat; an unknown or cross-chat reference cannot
+attach to another tree and therefore starts an independent root. If duplicate
+delivery or an epoch change rejects admission after a provisional status was
+sent, intake deletes that status and removes it from the message log.
 
 [messaging/node_runner.py](src/free_claude_code/messaging/node_runner.py) owns managed CLI session
 lifecycle for queued nodes: parent-session fork/resume, session registration,
 CLI event parsing, transcript/status updates, cancellation, error propagation,
-and session cleanup. Runner persistence must be guarded by active tree
-membership so late cancellation cleanup cannot restore state after `/clear`
-removed a tree or reset the queue.
+and session cleanup. It executes an immutable `NodeClaim`; session, completion,
+and failure writes return through `TreeQueueManager` with that claim identity. A
+non-exit CLI error may render an error immediately, but only a terminal failure
+propagates to queued descendants; a later successful exit is authoritative for
+the same live, non-cancelled claim. A stale runner receives no snapshot and
+cannot restore a branch removed by `/clear`.
 
 [messaging/event_parser.py](src/free_claude_code/messaging/event_parser.py) normalizes managed Claude
 JSON events into low-level transcript events.
@@ -820,29 +842,69 @@ models, render context, and truncation. Platform markdown details stay in
 dependency surface for `/stop`, `/clear`, and `/stats`; commands should not
 depend on the concrete workflow object or on platform SDK runtimes.
 
-[messaging/trees/manager.py](src/free_claude_code/messaging/trees/manager.py) preserves
-per-conversation ordering with tree-aware queues. Replies become child nodes, and
-each tree processes one node at a time while separate trees can progress
-independently. Tree cancellation is terminal: cancelling `/stop`, reply
-`/stop`, reply `/clear`, or global `/clear` awaits active task cleanup outside
-tree locks before command state cleanup continues.
+[messaging/trees/runtime.py](src/free_claude_code/messaging/trees/runtime.py) contains the
+`MessageTree` aggregate. Its lock is private, and complete operations own every
+graph/queue/claim invariant: add-and-admit, enqueue-or-claim,
+finish-and-claim-next, semantic state writes, cancellation, and atomic branch
+removal. `TreeIdentity` is `(platform, chat_id, root_message_id)`, because
+platform message IDs are not globally unique. Every execution receives a fresh
+opaque claim ID, so a task from an older runtime generation cannot mutate or
+collide with a re-admitted tree. Active execution ownership is separate from the
+node's UI state: cancellation can still reach a task that already rendered
+complete/error but is cleaning up, while a cancellation tombstone prevents late
+success from reviving a stopped node. Only the matching finish transition may
+select the FIFO successor. Duplicate node/status admission and terminal-node
+re-admission are rejected without changing active state.
+
+[messaging/trees/transitions.py](src/free_claude_code/messaging/trees/transitions.py) owns frozen,
+slotted claims, queue entries, read views, and cancellation/removal effects.
+These values copy the UI and execution facts callers need and never contain a
+mutable `MessageNode`, lock, or `asyncio.Task`.
+
+[messaging/trees/manager.py](src/free_claude_code/messaging/trees/manager.py) is the only external
+tree facade. It keeps one structural lock across aggregate membership changes
+and repository index publication/removal, registers node and status references
+together under `MessageScope`, coordinates cross-tree requests, and returns
+transition-owned snapshots. Cancellation and removal entrypoints finish their
+exact transition despite caller cancellation, so a committed detach cannot lose
+its UI or persistence result. Reply `/clear` is one cancel-and-detach transition
+before platform I/O; global clear atomically detaches every aggregate before
+task draining. Separate trees still progress independently.
 [messaging/trees/repository.py](src/free_claude_code/messaging/trees/repository.py)
-owns the in-memory tree/node index, and
-[messaging/trees/processor.py](src/free_claude_code/messaging/trees/processor.py) owns async queue
-processing. [messaging/trees/node.py](src/free_claude_code/messaging/trees/node.py) owns
-`MessageNode` and `MessageState`,
+is manager-private and owns only aggregate/reference indexes.
+[messaging/trees/processor.py](src/free_claude_code/messaging/trees/processor.py) owns every
+`asyncio.Task`, keyed by globally unique claim ID. It publishes a task slot
+before task creation, which is safe under Python's eager task factory, then
+launches claims returned by the aggregate, cancels the exact matching task,
+drains cleanup outside tree locks, and feeds matching completion back to the
+aggregate. Cancellation before a task body starts has an explicit recovery path;
+the cancellation flag is rechecked after callbacks, and callback failure cannot
+prevent successor launch. If a node processor unexpectedly escapes, the
+processor routes failure through the manager-owned aggregate transition; the
+workflow persists its snapshot and schedules its UI effect as normal queue
+advancement continues. [messaging/trees/node.py](src/free_claude_code/messaging/trees/node.py) owns
+`MessageNode` and `MessageState`; each node keeps only the copied scope and
+prompt needed by the aggregate rather than retaining a mutable ingress value,
 [messaging/trees/graph.py](src/free_claude_code/messaging/trees/graph.py) owns parent/child and
-status-message lookup state, [messaging/trees/runtime.py](src/free_claude_code/messaging/trees/runtime.py)
-owns locks/current-task/processing state, and
+status-message lookup state, and
 [messaging/trees/snapshot.py](src/free_claude_code/messaging/trees/snapshot.py) owns typed persisted
-conversation snapshots.
+conversation snapshots. New snapshots serialize scoped trees as a list, while
+loading derives scope from existing pre-scope `sessions.json` tree roots. Nodes
+persist only their canonical parent relation; runtime child indexes are rebuilt
+on restore, and transport ingress payloads do not leak into aggregate storage.
 
 [messaging/session/](src/free_claude_code/messaging/session/) persists typed conversation snapshots
 and message IDs to a JSON file under the managed agent workspace.
 `SessionStore` reads existing `sessions.json` files but exposes typed snapshot
-APIs to runtime code. Debounced atomic writes live in
-[messaging/session/persistence.py](src/free_claude_code/messaging/session/persistence.py), and
-per-chat message ID tracking for `/clear` lives in
+APIs to runtime code and deep-copies snapshot ingress and egress so no caller
+shares mutable persisted state. Debounced atomic writes live in
+[messaging/session/persistence.py](src/free_claude_code/messaging/session/persistence.py). One writer
+lock serializes physical replaces, and a generation check under that lock
+prevents an older timer snapshot from landing after a newer flush or clear.
+Global `/clear` performs an early authoritative wipe, detaches and drains every
+tree, then writes an authoritative empty conversation snapshot while preserving
+message IDs recorded after the early wipe.
+Per-chat message ID tracking for `/clear` lives in
 [messaging/session/message_log.py](src/free_claude_code/messaging/session/message_log.py). `/clear`
 guarantees FCC state cleanup and tries tracked platform deletes through the
 list-based outbound delete port, but Discord/Telegram can still reject

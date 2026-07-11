@@ -1,11 +1,9 @@
 """Message tree node model."""
 
 from dataclasses import dataclass, field
-from datetime import UTC, datetime
 from enum import Enum
-from typing import Any
 
-from ..models import IncomingMessage
+from ..models import MessageScope
 
 
 class MessageState(Enum):
@@ -22,36 +20,23 @@ class MessageNode:
     """A single user prompt/status node in a messaging conversation tree."""
 
     node_id: str
-    incoming: IncomingMessage
+    scope: MessageScope
+    prompt: str
     status_message_id: str
     state: MessageState = MessageState.PENDING
     parent_id: str | None = None
     session_id: str | None = None
     children_ids: list[str] = field(default_factory=list)
-    created_at: datetime = field(default_factory=lambda: datetime.now(UTC))
-    completed_at: datetime | None = None
-    error_message: str | None = None
-    context: Any = None
-
-    def set_context(self, context: Any) -> None:
-        self.context = context
 
     def update_state(
         self,
         state: MessageState,
         *,
         session_id: str | None = None,
-        error_message: str | None = None,
     ) -> None:
         self.state = state
         if session_id:
             self.session_id = session_id
-        if error_message is not None:
-            self.error_message = error_message
-        elif state == MessageState.COMPLETED:
-            self.error_message = None
-        if state in (MessageState.COMPLETED, MessageState.ERROR):
-            self.completed_at = datetime.now(UTC)
 
-    def mark_error(self, error_message: str) -> None:
-        self.update_state(MessageState.ERROR, error_message=error_message)
+    def mark_error(self) -> None:
+        self.update_state(MessageState.ERROR)

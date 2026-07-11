@@ -1,22 +1,34 @@
 """Serializable messaging conversation snapshots."""
 
 from dataclasses import dataclass, field
-from datetime import datetime
 from typing import Any
 
-from ..models import IncomingMessage
+from ..models import MessageScope
+from .identity import TreeIdentity
 from .node import MessageNode, MessageState
 
 
 @dataclass(frozen=True)
 class TreeSnapshot:
-    """Persisted representation of one conversation tree."""
+    """Detached persisted representation of one conversation tree."""
 
+    scope: MessageScope
     root_id: str
     nodes: dict[str, dict[str, Any]]
 
+    @property
+    def identity(self) -> TreeIdentity:
+        return TreeIdentity(scope=self.scope, root_id=self.root_id)
+
     def to_json(self) -> dict[str, Any]:
-        return {"root_id": self.root_id, "nodes": dict(self.nodes)}
+        return {
+            "scope": {
+                "platform": self.scope.platform,
+                "chat_id": self.scope.chat_id,
+            },
+            "root_id": self.root_id,
+            "nodes": dict(self.nodes),
+        }
 
     @classmethod
     def from_json(cls, data: Any) -> TreeSnapshot | None:
@@ -26,7 +38,19 @@ class TreeSnapshot:
         nodes = data.get("nodes")
         if root_id is None or not isinstance(nodes, dict):
             return None
-        return cls(root_id=str(root_id), nodes=dict(nodes))
+        normalized_root_id = str(root_id)
+        scope_data = data.get("scope")
+        scope: MessageScope | None = None
+        if isinstance(scope_data, dict):
+            platform = scope_data.get("platform")
+            chat_id = scope_data.get("chat_id")
+            if platform is not None and chat_id is not None:
+                scope = MessageScope(platform=str(platform), chat_id=str(chat_id))
+        if scope is None:
+            scope = _legacy_scope(normalized_root_id, nodes)
+        if scope is None:
+            return None
+        return cls(scope=scope, root_id=normalized_root_id, nodes=dict(nodes))
 
     def lookup_ids(self) -> set[str]:
         lookup_ids: set[str] = set()
@@ -45,104 +69,121 @@ class TreeSnapshot:
 
 @dataclass(frozen=True)
 class ConversationSnapshot:
-    """Persisted conversation trees plus derived lookup helpers."""
+    """Detached persisted conversation trees keyed by customer identity."""
 
-    trees: dict[str, TreeSnapshot] = field(default_factory=dict)
+    trees: dict[TreeIdentity, TreeSnapshot] = field(default_factory=dict)
 
     @property
     def is_empty(self) -> bool:
         return not self.trees
 
     def to_json(self) -> dict[str, Any]:
-        return {
-            "trees": {
-                root_id: tree_snapshot.to_json()
-                for root_id, tree_snapshot in self.trees.items()
-            }
-        }
+        return {"trees": [tree.to_json() for tree in self.trees.values()]}
 
     @classmethod
     def from_json(cls, data: Any) -> ConversationSnapshot:
         if not isinstance(data, dict):
             return cls()
-        raw_trees = data.get("trees", {})
-        if not isinstance(raw_trees, dict):
+        raw_trees = data.get("trees", [])
+        if isinstance(raw_trees, dict):
+            candidates = raw_trees.values()
+        elif isinstance(raw_trees, list):
+            candidates = raw_trees
+        else:
             return cls()
 
-        trees: dict[str, TreeSnapshot] = {}
-        for raw_root_id, raw_tree in raw_trees.items():
+        trees: dict[TreeIdentity, TreeSnapshot] = {}
+        for raw_tree in candidates:
             snapshot = TreeSnapshot.from_json(raw_tree)
             if snapshot is None:
                 continue
-            root_id = str(raw_root_id) if raw_root_id is not None else snapshot.root_id
-            trees[root_id] = snapshot
+            trees[snapshot.identity] = snapshot
         return cls(trees=trees)
 
-    def derive_node_to_tree(self) -> dict[str, str]:
-        mapping: dict[str, str] = {}
-        for root_id, tree_snapshot in self.trees.items():
-            for lookup_id in tree_snapshot.lookup_ids():
-                mapping[lookup_id] = root_id
-        return mapping
+    def get_tree(self, identity: TreeIdentity) -> TreeSnapshot | None:
+        return self.trees.get(identity)
 
     def with_tree(self, tree_snapshot: TreeSnapshot) -> ConversationSnapshot:
         trees = dict(self.trees)
-        trees[tree_snapshot.root_id] = tree_snapshot
+        trees[tree_snapshot.identity] = tree_snapshot
         return ConversationSnapshot(trees=trees)
 
-    def without_tree(self, root_id: str) -> ConversationSnapshot:
+    def without_tree(self, identity: TreeIdentity) -> ConversationSnapshot:
         trees = dict(self.trees)
-        trees.pop(root_id, None)
+        trees.pop(identity, None)
         return ConversationSnapshot(trees=trees)
+
+
+def _legacy_scope(
+    root_id: str,
+    nodes: dict[str, Any],
+) -> MessageScope | None:
+    """Derive scope from pre-scope snapshots without retaining a runtime shim."""
+    root = nodes.get(root_id)
+    if not isinstance(root, dict):
+        root = next(
+            (
+                node
+                for node in nodes.values()
+                if isinstance(node, dict) and str(node.get("node_id")) == root_id
+            ),
+            None,
+        )
+    if not isinstance(root, dict):
+        return None
+    return node_scope_from_snapshot(root)
+
+
+def node_scope_from_snapshot(data: dict[str, Any]) -> MessageScope | None:
+    """Read the redundant scope carried by legacy node payloads, if present."""
+    incoming = data.get("incoming")
+    if not isinstance(incoming, dict):
+        return None
+    platform = incoming.get("platform")
+    chat_id = incoming.get("chat_id")
+    if platform is None or chat_id is None:
+        return None
+    return MessageScope(platform=str(platform), chat_id=str(chat_id))
 
 
 def node_to_snapshot(node: MessageNode) -> dict[str, Any]:
     return {
         "node_id": node.node_id,
-        "incoming": {
-            "text": node.incoming.text,
-            "chat_id": node.incoming.chat_id,
-            "user_id": node.incoming.user_id,
-            "message_id": node.incoming.message_id,
-            "platform": node.incoming.platform,
-            "reply_to_message_id": node.incoming.reply_to_message_id,
-            "message_thread_id": node.incoming.message_thread_id,
-            "username": node.incoming.username,
-        },
         "status_message_id": node.status_message_id,
         "state": node.state.value,
         "parent_id": node.parent_id,
         "session_id": node.session_id,
-        "children_ids": list(node.children_ids),
-        "created_at": node.created_at.isoformat(),
-        "completed_at": node.completed_at.isoformat() if node.completed_at else None,
-        "error_message": node.error_message,
     }
 
 
-def node_from_snapshot(data: dict[str, Any]) -> MessageNode:
-    incoming_data = data["incoming"]
-    incoming = IncomingMessage(
-        text=incoming_data["text"],
-        chat_id=incoming_data["chat_id"],
-        user_id=incoming_data["user_id"],
-        message_id=incoming_data["message_id"],
-        platform=incoming_data["platform"],
-        reply_to_message_id=incoming_data.get("reply_to_message_id"),
-        message_thread_id=incoming_data.get("message_thread_id"),
-        username=incoming_data.get("username"),
-    )
+def node_from_snapshot(data: dict[str, Any], scope: MessageScope) -> MessageNode:
     return MessageNode(
-        node_id=data["node_id"],
-        incoming=incoming,
-        status_message_id=data["status_message_id"],
+        node_id=_required_id(data.get("node_id"), "node_id"),
+        scope=scope,
+        prompt="",
+        status_message_id=_required_id(
+            data.get("status_message_id"),
+            "status_message_id",
+        ),
         state=MessageState(data["state"]),
-        parent_id=data.get("parent_id"),
-        session_id=data.get("session_id"),
-        children_ids=list(data.get("children_ids", [])),
-        created_at=datetime.fromisoformat(data["created_at"]),
-        completed_at=datetime.fromisoformat(data["completed_at"])
-        if data.get("completed_at")
-        else None,
-        error_message=data.get("error_message"),
+        parent_id=_optional_id(data.get("parent_id"), "parent_id"),
+        session_id=_optional_id(data.get("session_id"), "session_id"),
     )
+
+
+def _required_id(value: Any, field_name: str) -> str:
+    normalized = _optional_id(value, field_name)
+    if normalized is None:
+        raise ValueError(f"Tree snapshot {field_name} is required")
+    return normalized
+
+
+def _optional_id(value: Any, field_name: str) -> str | None:
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, str | int):
+        raise ValueError(f"Tree snapshot {field_name} must be a string or integer")
+    normalized = str(value)
+    if not normalized:
+        raise ValueError(f"Tree snapshot {field_name} cannot be empty")
+    return normalized

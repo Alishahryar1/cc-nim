@@ -35,6 +35,7 @@ class DebouncedJsonPersistence:
         self._debounce_secs = debounce_secs
         self._save_timer: threading.Timer | None = None
         self._timer_lock = threading.Lock()
+        self._writer_lock = threading.Lock()
         self._save_generation = 0
 
     def load_json(self) -> dict[str, Any]:
@@ -74,12 +75,22 @@ class DebouncedJsonPersistence:
 
     def _write_pending(self, pending: _PendingWrite) -> None:
         try:
-            self.write_data(pending.snapshot)
+            written = self._write_if_current(pending)
         except Exception as e:
             logger.error("Failed to save sessions: {}", e)
             self._on_dirty(True)
             return
-        self._mark_clean_if_current(pending.generation)
+        if written:
+            self._mark_clean_if_current(pending.generation)
+
+    def _write_if_current(self, pending: _PendingWrite) -> bool:
+        """Serialize writers and reject a snapshot superseded before replace."""
+        with self._writer_lock:
+            with self._timer_lock:
+                if pending.generation != self._save_generation:
+                    return False
+            self._write_file(pending.snapshot)
+            return True
 
     def _snapshot_for_write(
         self, *, expected_generation: int | None = None
@@ -110,6 +121,19 @@ class DebouncedJsonPersistence:
             self._on_dirty(False)
 
     def write_data(self, data: dict[str, Any]) -> None:
+        """Write authoritative state after invalidating older pending snapshots."""
+        with self._timer_lock:
+            if self._save_timer is not None:
+                self._save_timer.cancel()
+                self._save_timer = None
+            self._save_generation += 1
+            pending = _PendingWrite(
+                generation=self._save_generation,
+                snapshot=data,
+            )
+        self._write_pending(pending)
+
+    def _write_file(self, data: dict[str, Any]) -> None:
         abs_target = os.path.abspath(self.storage_path)
         dir_name = os.path.dirname(abs_target) or "."
         fd, tmp_path = tempfile.mkstemp(

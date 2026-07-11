@@ -1,6 +1,7 @@
 """Edge case tests for the messaging session store."""
 
 import json
+import threading
 from collections.abc import Callable
 from typing import Any, ClassVar
 from unittest.mock import patch
@@ -8,9 +9,16 @@ from unittest.mock import patch
 import pytest
 
 import free_claude_code.messaging.session.persistence as persistence_module
+from free_claude_code.messaging.models import MessageScope
 from free_claude_code.messaging.session import SessionStore
 from free_claude_code.messaging.session.persistence import DebouncedJsonPersistence
-from free_claude_code.messaging.trees import TreeSnapshot
+from free_claude_code.messaging.trees import TreeIdentity, TreeSnapshot
+
+TELEGRAM_C1 = MessageScope(platform="telegram", chat_id="c1")
+
+
+def _identity(root_id: str, scope: MessageScope = TELEGRAM_C1) -> TreeIdentity:
+    return TreeIdentity(scope=scope, root_id=root_id)
 
 
 @pytest.fixture
@@ -69,7 +77,7 @@ class RecordingPersistence(DebouncedJsonPersistence):
         self.writes: list[dict[str, Any]] = []
         super().__init__(storage_path, snapshot=snapshot, on_dirty=on_dirty)
 
-    def write_data(self, data: dict[str, Any]) -> None:
+    def _write_file(self, data: dict[str, Any]) -> None:
         self.writes.append(data)
 
 
@@ -124,7 +132,20 @@ class TestSessionStoreLoadEdgeCases:
                     "updated_at": "2025-01-01T00:00:00+00:00",
                 }
             },
-            "trees": {"r1": {"root_id": "r1", "nodes": {"r1": {}}}},
+            "trees": {
+                "r1": {
+                    "root_id": "r1",
+                    "nodes": {
+                        "r1": {
+                            "node_id": "r1",
+                            "incoming": {
+                                "platform": TELEGRAM_C1.platform,
+                                "chat_id": TELEGRAM_C1.chat_id,
+                            },
+                        }
+                    },
+                }
+            },
             "node_to_tree": {"r1": "r1"},
             "message_log": {},
         }
@@ -132,7 +153,7 @@ class TestSessionStoreLoadEdgeCases:
             json.dump(data, f)
 
         store = SessionStore(storage_path=path)
-        assert store.get_tree_snapshot("r1") is not None
+        assert store.load_conversation_snapshot().get_tree(_identity("r1")) is not None
 
 
 class TestSessionStoreSaveEdgeCases:
@@ -140,7 +161,9 @@ class TestSessionStoreSaveEdgeCases:
 
     def test_save_io_error_handled(self, tmp_store):
         """Write failure marks pending state dirty without crashing callers."""
-        tmp_store.save_tree_snapshot(TreeSnapshot(root_id="r1", nodes={"r1": {}}))
+        tmp_store.save_tree_snapshot(
+            TreeSnapshot(scope=TELEGRAM_C1, root_id="r1", nodes={"r1": {}})
+        )
         with patch(
             "free_claude_code.messaging.session.persistence.os.replace",
             side_effect=OSError("disk full"),
@@ -181,14 +204,77 @@ class TestSessionStoreSaveEdgeCases:
         assert persistence.writes == [{"snapshot": 1}]
         assert dirty_states[-1] is False
 
+    def test_running_old_write_finishes_before_newer_flush(self, tmp_path, monkeypatch):
+        """A claimed old snapshot cannot land after a newer flushed snapshot."""
+        FakeTimer.instances = []
+        monkeypatch.setattr(persistence_module.threading, "Timer", FakeTimer)
 
-class TestSessionStoreTreeMappings:
-    def test_save_tree_rebuilds_lookup_ids_for_that_root(self, tmp_path):
+        state = {"version": "old"}
+        dirty_states: list[bool] = []
+        old_write_started = threading.Event()
+        release_old_write = threading.Event()
+
+        class BlockingPersistence(RecordingPersistence):
+            def _write_file(self, data: dict[str, Any]) -> None:
+                if data == {"version": "old"}:
+                    old_write_started.set()
+                    release_old_write.wait(timeout=2)
+                super()._write_file(data)
+
+        persistence = BlockingPersistence(
+            str(tmp_path / "sessions.json"),
+            snapshot=lambda: dict(state),
+            on_dirty=dirty_states.append,
+        )
+        persistence.schedule_save()
+        old_writer = threading.Thread(target=FakeTimer.instances[0].fire)
+        old_writer.start()
+        assert old_write_started.wait(timeout=2)
+
+        state["version"] = "new"
+        persistence.schedule_save()
+        new_writer = threading.Thread(target=persistence.flush)
+        new_writer.start()
+        assert new_writer.is_alive()
+
+        release_old_write.set()
+        old_writer.join(timeout=2)
+        new_writer.join(timeout=2)
+
+        assert not old_writer.is_alive()
+        assert not new_writer.is_alive()
+        assert persistence.writes == [{"version": "old"}, {"version": "new"}]
+        assert dirty_states[-1] is False
+
+
+class TestSessionStoreTreeSnapshots:
+    def test_snapshot_ingress_and_egress_are_deeply_detached(self, tmp_path):
+        store = SessionStore(storage_path=str(tmp_path / "sessions.json"))
+        snapshot = TreeSnapshot(
+            scope=TELEGRAM_C1,
+            root_id="root",
+            nodes={"root": {"node_id": "root", "state": "completed"}},
+        )
+        store.save_tree_snapshot(snapshot)
+        snapshot.nodes["root"]["state"] = "mutated-after-save"
+
+        loaded = store.load_conversation_snapshot()
+        loaded_tree = loaded.get_tree(_identity("root"))
+        assert loaded_tree is not None
+        assert loaded_tree.nodes["root"]["state"] == "completed"
+        loaded_tree.nodes["root"]["state"] = "mutated-after-load"
+
+        reloaded = store.load_conversation_snapshot().get_tree(_identity("root"))
+        assert reloaded is not None
+        assert reloaded.nodes["root"]["state"] == "completed"
+
+    def test_save_tree_replaces_snapshot_for_scoped_identity(self, tmp_path):
         path = str(tmp_path / "sessions.json")
         store = SessionStore(storage_path=path)
 
         store.save_tree_snapshot(
             TreeSnapshot(
+                scope=TELEGRAM_C1,
                 root_id="root",
                 nodes={
                     "root": _tree_node("root", "root_status"),
@@ -197,14 +283,18 @@ class TestSessionStoreTreeMappings:
             )
         )
 
-        mapping = store.load_conversation_snapshot().derive_node_to_tree()
-        assert mapping["root"] == "root"
-        assert mapping["root_status"] == "root"
-        assert mapping["child"] == "root"
-        assert mapping["child_status"] == "root"
+        saved = store.load_conversation_snapshot().get_tree(_identity("root"))
+        assert saved is not None
+        assert saved.lookup_ids() == {
+            "root",
+            "root_status",
+            "child",
+            "child_status",
+        }
 
         store.save_tree_snapshot(
             TreeSnapshot(
+                scope=TELEGRAM_C1,
                 root_id="root",
                 nodes={
                     "root": _tree_node("root", "root_status"),
@@ -212,17 +302,16 @@ class TestSessionStoreTreeMappings:
             )
         )
 
-        mapping = store.load_conversation_snapshot().derive_node_to_tree()
-        assert mapping["root"] == "root"
-        assert mapping["root_status"] == "root"
-        assert "child" not in mapping
-        assert "child_status" not in mapping
+        replaced = store.load_conversation_snapshot().get_tree(_identity("root"))
+        assert replaced is not None
+        assert replaced.lookup_ids() == {"root", "root_status"}
 
-    def test_remove_tree_removes_all_lookup_ids_for_that_root(self, tmp_path):
+    def test_remove_tree_removes_only_scoped_identity(self, tmp_path):
         path = str(tmp_path / "sessions.json")
         store = SessionStore(storage_path=path)
         store.save_tree_snapshot(
             TreeSnapshot(
+                scope=TELEGRAM_C1,
                 root_id="root",
                 nodes={
                     "root": _tree_node("root", "root_status"),
@@ -231,13 +320,9 @@ class TestSessionStoreTreeMappings:
             )
         )
 
-        store.remove_tree_snapshot("root")
+        store.remove_tree_snapshot(_identity("root"))
 
-        mapping = store.load_conversation_snapshot().derive_node_to_tree()
-        assert "root" not in mapping
-        assert "root_status" not in mapping
-        assert "child" not in mapping
-        assert "child_status" not in mapping
+        assert store.load_conversation_snapshot().get_tree(_identity("root")) is None
 
 
 class TestSessionStoreAtomicWrites:
@@ -246,12 +331,16 @@ class TestSessionStoreAtomicWrites:
     def test_failed_replace_keeps_prior_bytes_and_marks_dirty(self, tmp_path):
         path = str(tmp_path / "sessions.json")
         store = SessionStore(storage_path=path)
-        store.save_tree_snapshot(TreeSnapshot(root_id="r1", nodes={"r1": {}}))
+        store.save_tree_snapshot(
+            TreeSnapshot(scope=TELEGRAM_C1, root_id="r1", nodes={"r1": {}})
+        )
         store.flush_pending_save()
         with open(path, encoding="utf-8") as f:
             disk_after_first = f.read()
 
-        store.save_tree_snapshot(TreeSnapshot(root_id="r2", nodes={"r2": {}}))
+        store.save_tree_snapshot(
+            TreeSnapshot(scope=TELEGRAM_C1, root_id="r2", nodes={"r2": {}})
+        )
 
         with patch(
             "free_claude_code.messaging.session.persistence.os.replace",
@@ -263,7 +352,7 @@ class TestSessionStoreAtomicWrites:
             disk_after_failed = f.read()
         assert disk_after_failed == disk_after_first
         assert store.dirty is True
-        assert store.get_tree_snapshot("r2") is not None
+        assert store.load_conversation_snapshot().get_tree(_identity("r2")) is not None
 
 
 class TestSessionStoreClearAll:
@@ -273,6 +362,7 @@ class TestSessionStoreClearAll:
 
         store.save_tree_snapshot(
             TreeSnapshot(
+                scope=TELEGRAM_C1,
                 root_id="root1",
                 nodes={
                     "root1": {
@@ -304,7 +394,7 @@ class TestSessionStoreClearAll:
 
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
-        assert data["conversation"]["trees"] == {}
+        assert data["conversation"]["trees"] == []
         assert data["message_log"] == {}
 
         store2 = SessionStore(storage_path=path)

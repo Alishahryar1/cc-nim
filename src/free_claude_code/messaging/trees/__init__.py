@@ -1,31 +1,38 @@
-"""Message tree data structures and queue management."""
+"""Internal messaging tree package facade."""
 
-from .cancellation import (
-    CancellationReason,
-    CancellationUiOwner,
-    CancelledNode,
-    get_cancel_reason,
-    set_cancel_reason,
-)
+from .identity import TreeIdentity
 from .manager import TreeQueueManager
-from .node import MessageNode, MessageState
-from .processor import TreeQueueProcessor
-from .repository import TreeRepository
-from .runtime import MessageTree
+from .node import MessageState
 from .snapshot import ConversationSnapshot, TreeSnapshot
+from .transitions import (
+    BranchRemovalResult,
+    CancellationReason,
+    CancellationResult,
+    CancellationUiOwner,
+    FailureResult,
+    NodeClaim,
+    NodeUiTarget,
+    NodeView,
+    QueueDecision,
+    QueueEntry,
+    ReplyTarget,
+)
 
 __all__ = [
+    "BranchRemovalResult",
     "CancellationReason",
+    "CancellationResult",
     "CancellationUiOwner",
-    "CancelledNode",
     "ConversationSnapshot",
-    "MessageNode",
+    "FailureResult",
     "MessageState",
-    "MessageTree",
+    "NodeClaim",
+    "NodeUiTarget",
+    "NodeView",
+    "QueueDecision",
+    "QueueEntry",
+    "ReplyTarget",
+    "TreeIdentity",
     "TreeQueueManager",
-    "TreeQueueProcessor",
-    "TreeRepository",
     "TreeSnapshot",
-    "get_cancel_reason",
-    "set_cancel_reason",
 ]

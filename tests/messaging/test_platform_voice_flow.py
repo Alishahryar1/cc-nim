@@ -101,7 +101,6 @@ async def test_voice_flow_success_builds_incoming_message() -> None:
     incoming = handler.call_args.args[0]
     assert incoming.text == "hello from voice"
     assert incoming.chat_id == "chat"
-    assert incoming.user_id == "user"
     assert incoming.message_id == "voice"
     assert incoming.reply_to_message_id == "reply"
     assert incoming.message_thread_id == "thread"

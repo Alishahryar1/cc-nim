@@ -16,8 +16,7 @@ async def handle_stop_command(
     # Reply-scoped stop: reply "/stop" to stop only that task.
     if incoming.is_reply() and incoming.reply_to_message_id:
         reply_id = incoming.reply_to_message_id
-        tree = handler.tree_queue.get_tree_for_node(reply_id)
-        node_id = handler.tree_queue.resolve_parent_node_id(reply_id) if tree else None
+        node_id = await handler.resolve_node_id(incoming.scope, reply_id)
 
         if not node_id:
             msg_id = await handler.outbound.queue_send_message(
@@ -33,7 +32,7 @@ async def handle_stop_command(
             )
             return
 
-        count = await handler.stop_task(node_id)
+        count = await handler.stop_task(incoming.scope, node_id)
         noun = "request" if count == 1 else "requests"
         msg_id = await handler.outbound.queue_send_message(
             incoming.chat_id,
@@ -66,7 +65,7 @@ async def handle_stats_command(
 ) -> None:
     """Handle /stats command."""
     stats = handler.cli_manager.get_stats()
-    tree_count = handler.tree_queue.get_tree_count()
+    tree_count = handler.get_tree_count()
     ctx = handler.get_render_ctx()
     msg_id = await handler.outbound.queue_send_message(
         incoming.chat_id,
@@ -135,50 +134,15 @@ async def _handle_clear_branch(
     """
     Clear a branch (replied-to node + all descendants).
 
-    Order: cancel tasks, delete messages, remove branch, update session store.
+    FCC state is removed and persisted before platform deletion begins.
     """
-    tree = handler.tree_queue.get_tree_for_node(branch_root_id)
-    if not tree:
-        return
-
-    # 1) Cancel branch tasks (no stop_all)
-    cancelled = await handler.tree_queue.cancel_branch(branch_root_id)
-    handler.update_cancelled_nodes_ui(cancelled)
-
-    # 2) Collect message IDs from branch nodes only
-    msg_ids: set[str] = set()
-    branch_ids = tree.get_descendants(branch_root_id)
-    for nid in branch_ids:
-        node = tree.get_node(nid)
-        if node:
-            if node.incoming.message_id:
-                msg_ids.add(str(node.incoming.message_id))
-            if node.status_message_id:
-                msg_ids.add(str(node.status_message_id))
+    result = await handler.clear_branch(incoming.scope, branch_root_id)
+    msg_ids = set(result.message_ids)
     if incoming.message_id:
         msg_ids.add(str(incoming.message_id))
 
-    # 3) Delete messages (best-effort)
     await _delete_message_ids(handler, incoming.chat_id, msg_ids)
-
-    # 4) Remove branch from tree
-    _removed, root_id, removed_entire_tree = await handler.tree_queue.remove_branch(
-        branch_root_id
-    )
-
-    # 5) Update session store
-    try:
-        if removed_entire_tree:
-            handler.session_store.remove_tree_snapshot(root_id)
-        else:
-            updated_tree = handler.tree_queue.get_tree(root_id)
-            if updated_tree:
-                handler.session_store.save_tree_snapshot(updated_tree.snapshot())
-        handler.session_store.forget_message_ids(
-            incoming.platform, incoming.chat_id, msg_ids
-        )
-    except Exception as e:
-        logger.warning(f"Failed to update session store after branch clear: {e}")
+    handler.forget_message_ids(incoming.platform, incoming.chat_id, msg_ids)
 
 
 async def handle_clear_command(
@@ -190,14 +154,9 @@ async def handle_clear_command(
     Reply-scoped: reply to a message to clear that branch (node + descendants).
     Standalone: global clear (stop all, delete all chat messages, reset store).
     """
-    from free_claude_code.messaging.trees import TreeQueueManager
-
     if incoming.is_reply() and incoming.reply_to_message_id:
         reply_id = incoming.reply_to_message_id
-        tree = handler.tree_queue.get_tree_for_node(reply_id)
-        branch_root_id = (
-            handler.tree_queue.resolve_parent_node_id(reply_id) if tree else None
-        )
+        branch_root_id = await handler.resolve_node_id(incoming.scope, reply_id)
         if not branch_root_id:
             if handler.voice_cancellation is not None:
                 cancelled = await handler.voice_cancellation.cancel_pending_voice(
@@ -234,47 +193,10 @@ async def handle_clear_command(
         await _handle_clear_branch(handler, incoming, branch_root_id)
         return
 
-    # Global clear
-    # 1) Stop tasks first (ensures no more work is running).
-    await handler.stop_all_tasks()
-
-    # 2) Clear chat: best-effort delete messages we can identify.
-    msg_ids: set[str] = set()
-
-    # Add any recorded message IDs for this chat (commands, command replies, etc).
-    try:
-        for mid in handler.session_store.get_message_ids_for_chat(
-            incoming.platform, incoming.chat_id
-        ):
-            if mid is not None:
-                msg_ids.add(str(mid))
-    except Exception as e:
-        logger.debug(f"Failed to read message log for /clear: {e}")
-
-    try:
-        msg_ids.update(
-            handler.tree_queue.get_message_ids_for_chat(
-                incoming.platform, incoming.chat_id
-            )
-        )
-    except Exception as e:
-        logger.warning(f"Failed to gather messages for /clear: {e}")
+    msg_ids = set(await handler.clear_all_state(incoming.platform, incoming.chat_id))
 
     # Also delete the command message itself.
     if incoming.message_id is not None:
         msg_ids.add(str(incoming.message_id))
 
     await _delete_message_ids(handler, incoming.chat_id, msg_ids)
-
-    # 3) Clear persistent state and reset in-memory queue/tree state.
-    try:
-        handler.session_store.clear_all()
-    except Exception as e:
-        logger.warning(f"Failed to clear session store: {e}")
-
-    handler.replace_tree_queue(
-        TreeQueueManager(
-            queue_update_callback=handler.update_queue_positions,
-            node_started_callback=handler.mark_node_processing,
-        )
-    )

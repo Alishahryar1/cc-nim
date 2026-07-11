@@ -1,180 +1,231 @@
-"""Async processing loop for a single messaging tree queue."""
+"""Task execution for claims returned by messaging tree aggregates."""
 
 import asyncio
+import contextlib
 from collections.abc import Awaitable, Callable
+from dataclasses import dataclass
 
 from loguru import logger
 
 from free_claude_code.config.settings import get_settings
-from free_claude_code.core.diagnostics import safe_exception_message
 
 from ..safe_diagnostics import format_exception_for_log
-from .node import MessageNode, MessageState
 from .runtime import MessageTree
+from .transitions import CancellationReason, NodeClaim, QueueEntry
+
+NodeProcessor = Callable[[NodeClaim], Awaitable[None]]
+QueueUpdateCallback = Callable[[tuple[QueueEntry, ...]], Awaitable[None]]
+NodeStartedCallback = Callable[[NodeClaim], Awaitable[None]]
+ClaimFailureCallback = Callable[[NodeClaim], Awaitable[None]]
+
+
+@dataclass(slots=True)
+class _TaskSlot:
+    tree: MessageTree
+    claim: NodeClaim
+    task: asyncio.Task[None] | None = None
+    runner_started: bool = False
+    transitioned: bool = False
+    recovery_task: asyncio.Task[None] | None = None
+    cancellation_requested: bool = False
+    cancellation_reason: CancellationReason | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class CancelledTask:
+    """Task handle plus whether the node runner owns cancellation UI."""
+
+    task: asyncio.Task[None]
+    runner_started: bool
 
 
 class TreeQueueProcessor:
-    """Per-tree async queue processing owned by TreeQueueManager."""
+    """Own asyncio tasks while MessageTree owns scheduling state."""
 
     def __init__(
         self,
-        queue_update_callback: Callable[[MessageTree], Awaitable[None]] | None = None,
-        node_started_callback: Callable[[MessageTree, str], Awaitable[None]]
-        | None = None,
+        node_processor: NodeProcessor,
+        *,
+        claim_failure_callback: ClaimFailureCallback,
+        queue_update_callback: QueueUpdateCallback | None = None,
+        node_started_callback: NodeStartedCallback | None = None,
     ) -> None:
+        self._node_processor = node_processor
+        self._claim_failure_callback = claim_failure_callback
         self._queue_update_callback = queue_update_callback
         self._node_started_callback = node_started_callback
+        self._tasks: dict[str, _TaskSlot] = {}
 
-    def set_queue_update_callback(
+    @staticmethod
+    def _key(claim: NodeClaim) -> str:
+        return claim.claim_id
+
+    def launch(
         self,
-        queue_update_callback: Callable[[MessageTree], Awaitable[None]] | None,
+        tree: MessageTree,
+        claim: NodeClaim,
+        *,
+        announce_started: bool = False,
+        queue: tuple[QueueEntry, ...] = (),
     ) -> None:
-        """Update the callback used to refresh queue positions."""
-        self._queue_update_callback = queue_update_callback
+        """Attach a task synchronously before another coroutine can cancel it."""
+        key = self._key(claim)
+        if key in self._tasks:
+            raise RuntimeError(f"Claim {key} already has a task")
+        slot = _TaskSlot(tree=tree, claim=claim)
+        self._tasks[key] = slot
+        try:
+            task = asyncio.create_task(
+                self._run_claim(
+                    slot,
+                    announce_started=announce_started,
+                    queue=queue,
+                ),
+                name=(f"messaging-claim-{claim.identity.root_id}-{claim.claim_id[:8]}"),
+                eager_start=False,
+            )
+        except BaseException:
+            self._tasks.pop(key, None)
+            raise
+        slot.task = task
+        task.add_done_callback(lambda _task, claim_key=key: self._task_done(claim_key))
 
-    def set_node_started_callback(
-        self,
-        node_started_callback: Callable[[MessageTree, str], Awaitable[None]] | None,
-    ) -> None:
-        """Update the callback used when a queued node starts processing."""
-        self._node_started_callback = node_started_callback
+    def _task_done(self, key: str) -> None:
+        """Recover a claim if its task was cancelled before entering its body."""
+        slot = self._tasks.get(key)
+        if slot is None or slot.transitioned or slot.recovery_task is not None:
+            return
+        slot.recovery_task = asyncio.create_task(
+            self._recover_unentered_task(slot),
+            name=f"messaging-claim-recovery-{key[:8]}",
+        )
 
-    async def _notify_queue_updated(self, tree: MessageTree) -> None:
-        """Invoke queue update callback if set."""
-        if not self._queue_update_callback:
+    async def _recover_unentered_task(self, slot: _TaskSlot) -> None:
+        task = slot.task
+        if task is not None:
+            with contextlib.suppress(asyncio.CancelledError, Exception):
+                await task
+        if not slot.transitioned:
+            await self._finish_and_continue(slot)
+
+    async def _notify_queue_updated(self, queue: tuple[QueueEntry, ...]) -> None:
+        if self._queue_update_callback is None:
             return
         try:
-            await self._queue_update_callback(tree)
-        except Exception as e:
-            d = get_settings().log_messaging_error_details
+            await self._queue_update_callback(queue)
+        except Exception as exc:
+            details = get_settings().log_messaging_error_details
             logger.warning(
                 "Queue update callback failed: {}",
-                format_exception_for_log(e, log_full_message=d),
+                format_exception_for_log(exc, log_full_message=details),
             )
 
-    async def notify_queue_updated(self, tree: MessageTree) -> None:
-        """Invoke the queue update callback after external queue mutations."""
-        await self._notify_queue_updated(tree)
+    async def notify_queue_updated(self, queue: tuple[QueueEntry, ...]) -> None:
+        """Publish a transition-owned queue snapshot."""
+        await self._notify_queue_updated(queue)
 
-    async def _notify_node_started(self, tree: MessageTree, node_id: str) -> None:
-        """Invoke node started callback if set."""
-        if not self._node_started_callback:
+    async def _notify_node_started(self, claim: NodeClaim) -> None:
+        if self._node_started_callback is None:
             return
         try:
-            await self._node_started_callback(tree, node_id)
-        except Exception as e:
-            d = get_settings().log_messaging_error_details
+            await self._node_started_callback(claim)
+        except Exception as exc:
+            details = get_settings().log_messaging_error_details
             logger.warning(
                 "Node started callback failed: {}",
-                format_exception_for_log(e, log_full_message=d),
+                format_exception_for_log(exc, log_full_message=details),
             )
 
-    async def process_node(
+    async def _run_claim(
         self,
-        tree: MessageTree,
-        node: MessageNode,
-        processor: Callable[[str, MessageNode], Awaitable[None]],
+        slot: _TaskSlot,
+        *,
+        announce_started: bool,
+        queue: tuple[QueueEntry, ...],
     ) -> None:
-        """Process a single node and then check the queue."""
-        if node.state == MessageState.ERROR:
-            logger.info(
-                f"Skipping node {node.node_id} as it is already in state {node.state}"
-            )
-            await self._process_next(tree, processor)
-            return
-
+        claim = slot.claim
         try:
-            await processor(node.node_id, node)
+            if announce_started:
+                await self._notify_node_started(claim)
+                await self._notify_queue_updated(queue)
+            if slot.cancellation_requested:
+                if slot.cancellation_reason is None:
+                    raise asyncio.CancelledError
+                raise asyncio.CancelledError(slot.cancellation_reason)
+            slot.runner_started = True
+            await self._node_processor(claim)
         except asyncio.CancelledError:
-            logger.info(f"Task for node {node.node_id} was cancelled")
+            logger.info("Task for node {} was cancelled", claim.node.node_id)
             raise
-        except Exception as e:
-            d = get_settings().log_messaging_error_details
+        except Exception as exc:
+            details = get_settings().log_messaging_error_details
             logger.error(
                 "Error processing node {}: {}",
-                node.node_id,
-                format_exception_for_log(e, log_full_message=d),
+                claim.node.node_id,
+                format_exception_for_log(exc, log_full_message=details),
             )
-            await tree.update_state(
-                node.node_id,
-                MessageState.ERROR,
-                error_message=safe_exception_message(e),
-            )
+            await self._claim_failure_callback(claim)
         finally:
-            async with tree.with_lock():
-                tree.clear_current_node()
-            await self._process_next(tree, processor)
+            if not slot.transitioned:
+                await self._finish_and_continue(slot)
 
-    async def _process_next(
+    async def _finish_and_continue(self, slot: _TaskSlot) -> None:
+        current = asyncio.current_task()
+        if current is not None:
+            while current.cancelling():
+                current.uncancel()
+        while True:
+            try:
+                completion = await slot.tree.finish_and_claim_next(slot.claim.claim_id)
+                break
+            except asyncio.CancelledError:
+                if current is not None:
+                    while current.cancelling():
+                        current.uncancel()
+                continue
+
+        slot.transitioned = True
+        self._tasks.pop(self._key(slot.claim), None)
+        if completion.next_claim is not None:
+            self.launch(
+                slot.tree,
+                completion.next_claim,
+                announce_started=True,
+                queue=completion.queue,
+            )
+
+    def cancel(
         self,
-        tree: MessageTree,
-        processor: Callable[[str, MessageNode], Awaitable[None]],
-    ) -> None:
-        """Process the next message in queue, if any."""
-        next_node_id = None
-        node: MessageNode | None = None
-        discarded_stale_ids = False
-        async with tree.with_lock():
-            while True:
-                next_node_id = await tree.dequeue()
+        claim: NodeClaim,
+        reason: CancellationReason | None,
+    ) -> CancelledTask | None:
+        """Cancel exactly the task bound to one aggregate claim."""
+        slot = self._tasks.get(self._key(claim))
+        if slot is None:
+            return None
+        slot.cancellation_requested = True
+        slot.cancellation_reason = reason
+        task = slot.task
+        if task is None or task.done():
+            return None
+        if reason is None:
+            task.cancel()
+        else:
+            task.cancel(reason)
 
-                if not next_node_id:
-                    tree.set_processing_state(None, False)
-                    logger.debug(f"Tree {tree.root_id} queue empty, marking as free")
-                    break
+        if slot.runner_started:
+            return CancelledTask(task=task, runner_started=True)
 
-                node = tree.get_node(next_node_id)
-                if node:
-                    tree.set_processing_state(next_node_id, True)
-                    logger.info(f"Processing next queued node {next_node_id}")
-                    tree.set_current_task(
-                        asyncio.create_task(self.process_node(tree, node, processor))
-                    )
-                    break
+        if slot.recovery_task is None:
+            slot.recovery_task = asyncio.create_task(
+                self._recover_unentered_task(slot),
+                name=f"messaging-claim-recovery-{claim.claim_id[:8]}",
+            )
+        return CancelledTask(task=slot.recovery_task, runner_started=False)
 
-                discarded_stale_ids = True
-                logger.debug(
-                    "Skipping stale queued node {} in tree {}",
-                    next_node_id,
-                    tree.root_id,
-                )
-
-        if next_node_id and node:
-            await self._notify_node_started(tree, next_node_id)
-            await self._notify_queue_updated(tree)
-        elif discarded_stale_ids:
-            await self._notify_queue_updated(tree)
-
-    async def enqueue_and_start(
-        self,
-        tree: MessageTree,
-        node_id: str,
-        processor: Callable[[str, MessageNode], Awaitable[None]],
-    ) -> bool:
-        """
-        Enqueue a node or start processing immediately.
-
-        Returns True if queued, False if processing immediately.
-        """
-        async with tree.with_lock():
-            if tree.is_processing:
-                tree.put_queue_unlocked(node_id)
-                queue_size = tree.get_queue_size()
-                logger.info(f"Queued node {node_id}, position {queue_size}")
-                return True
-
-            tree.set_processing_state(node_id, True)
-
-            node = tree.get_node(node_id)
-            if node:
-                tree.set_current_task(
-                    asyncio.create_task(self.process_node(tree, node, processor))
-                )
-            return False
-
-    def cancel_current(self, tree: MessageTree) -> asyncio.Task | None:
-        """Cancel the currently running task in a tree."""
-        return tree.cancel_current_task()
+    def task_count(self) -> int:
+        """Return the number of attached claims for observability."""
+        return len(self._tasks)
 
 
-__all__ = ["TreeQueueProcessor"]
+__all__ = ["CancelledTask", "TreeQueueProcessor"]

@@ -13,11 +13,11 @@ from .command_dispatcher import (
     message_kind_for_command,
     parse_command_base,
 )
-from .models import IncomingMessage
+from .models import IncomingMessage, MessageScope
 from .platforms.ports import OutboundMessenger
 from .safe_diagnostics import format_exception_for_log
 from .session import SessionStore
-from .trees import MessageNode, MessageState, MessageTree, TreeQueueManager
+from .trees import NodeClaim, QueueDecision, QueueEntry, ReplyTarget
 
 
 class MessagingTurnIntake:
@@ -30,8 +30,11 @@ class MessagingTurnIntake:
         outbound: OutboundMessenger,
         session_store: SessionStore,
         command_context: MessagingCommandContext,
-        get_tree_queue: Callable[[], TreeQueueManager],
-        process_node: Callable[[str, MessageNode], Awaitable[None]],
+        resolve_reply: Callable[[MessageScope, str], Awaitable[ReplyTarget | None]],
+        admit_turn: Callable[
+            [IncomingMessage, str, str | None, int],
+            Awaitable[QueueDecision | None],
+        ],
         format_status: Callable[[str, str, str | None], str],
         get_parse_mode: Callable[[], str | None],
         record_outgoing_message: Callable[[str, str, str | None, str], None],
@@ -41,14 +44,19 @@ class MessagingTurnIntake:
         self.outbound = outbound
         self.session_store = session_store
         self._command_context = command_context
-        self._get_tree_queue = get_tree_queue
-        self._process_node = process_node
+        self._resolve_reply = resolve_reply
+        self._admit_turn = admit_turn
         self._format_status = format_status
         self._get_parse_mode = get_parse_mode
         self._record_outgoing_message = record_outgoing_message
         self._log_messaging_error_details = log_messaging_error_details
 
-    async def handle_message(self, incoming: IncomingMessage) -> None:
+    async def handle_message(
+        self,
+        incoming: IncomingMessage,
+        *,
+        admission_epoch: int,
+    ) -> None:
         """
         Handle an inbound platform message and queue it if it is a user prompt.
         """
@@ -78,25 +86,18 @@ class MessagingTurnIntake:
         if any(text.startswith(p) for p in STATUS_MESSAGE_PREFIXES):
             return
 
-        parent_node_id = None
-        tree = None
-        tree_queue = self._get_tree_queue()
+        reply_target: ReplyTarget | None = None
 
         if incoming.is_reply() and incoming.reply_to_message_id:
             reply_id = incoming.reply_to_message_id
-            tree = tree_queue.get_tree_for_node(reply_id)
-            if tree:
-                parent_node_id = tree_queue.resolve_parent_node_id(reply_id)
-                if parent_node_id:
-                    logger.info(f"Found tree for reply, parent node: {parent_node_id}")
-                else:
-                    logger.warning(
-                        f"Reply to {incoming.reply_to_message_id} found tree but no valid parent node"
-                    )
-                    tree = None
+            reply_target = await self._resolve_reply(incoming.scope, reply_id)
+            if reply_target is not None:
+                logger.info(
+                    "Found tree for reply, parent node: {}", reply_target.node_id
+                )
 
         node_id = incoming.message_id
-        status_text = self._get_initial_status(tree, parent_node_id)
+        status_text = self._get_initial_status(reply_target)
         if incoming.status_message_id:
             status_msg_id = incoming.status_message_id
             await self.outbound.queue_edit_message(
@@ -117,34 +118,28 @@ class MessagingTurnIntake:
         self._record_outgoing_message(
             incoming.platform, incoming.chat_id, status_msg_id, "status"
         )
+        if status_msg_id is None:
+            return
 
-        tree_queue = self._get_tree_queue()
-        if parent_node_id and tree and status_msg_id:
-            tree, _node = await tree_queue.add_to_tree(
-                parent_node_id=parent_node_id,
-                node_id=node_id,
-                incoming=incoming,
-                status_message_id=status_msg_id,
-            )
-            tree_queue.register_node(status_msg_id, tree.root_id)
-        elif status_msg_id:
-            tree = await tree_queue.create_tree(
-                node_id=node_id,
-                incoming=incoming,
-                status_message_id=status_msg_id,
-            )
-            tree_queue.register_node(status_msg_id, tree.root_id)
-
-        if tree:
-            self.session_store.save_tree_snapshot(tree.snapshot())
-
-        was_queued = await tree_queue.enqueue(
-            node_id=node_id,
-            processor=self._process_node,
+        decision = await self._admit_turn(
+            incoming,
+            status_msg_id,
+            reply_target.node_id if reply_target is not None else None,
+            admission_epoch,
         )
+        if decision is None:
+            logger.info(
+                "Discarded messaging admission invalidated by global stop/clear for node {}",
+                node_id,
+            )
+            await self._discard_rejected_status(incoming, status_msg_id)
+            return
+        if not decision.accepted:
+            logger.debug("Ignored duplicate messaging admission for node {}", node_id)
+            await self._discard_rejected_status(incoming, status_msg_id)
+            return
 
-        if was_queued and status_msg_id:
-            queue_size = tree_queue.get_queue_size(node_id)
+        if decision.position is not None and status_msg_id:
             trace_event(
                 stage="routing",
                 event="turn.queued",
@@ -152,59 +147,70 @@ class MessagingTurnIntake:
                 chat_id=incoming.chat_id,
                 platform_message_id=node_id,
                 status_message_id=status_msg_id,
-                queue_size=queue_size,
+                queue_size=decision.position,
             )
             await self.outbound.queue_edit_message(
                 incoming.chat_id,
                 status_msg_id,
                 self._format_status(
-                    "📋", "Queued", f"(position {queue_size}) - waiting..."
+                    "📋",
+                    "Queued",
+                    f"(position {decision.position}) - waiting...",
                 ),
                 parse_mode=self._get_parse_mode(),
             )
 
-    async def update_queue_positions(self, tree: MessageTree) -> None:
-        """Refresh queued status messages after a dequeue."""
+    async def _discard_rejected_status(
+        self,
+        incoming: IncomingMessage,
+        status_message_id: str,
+    ) -> None:
+        """Remove the provisional status created for a rejected admission."""
         try:
-            queued_ids = await tree.get_queue_snapshot()
-        except Exception as e:
-            logger.warning(
-                "Failed to read queue snapshot: {}",
-                format_exception_for_log(
-                    e, log_full_message=self._log_messaging_error_details
-                ),
+            await self.outbound.queue_delete_messages(
+                incoming.chat_id,
+                [status_message_id],
+                fire_and_forget=False,
             )
-            return
+        except Exception as exc:
+            logger.debug(
+                "Failed to remove rejected status message: {}",
+                type(exc).__name__,
+            )
+        try:
+            self.session_store.forget_message_ids(
+                incoming.platform,
+                incoming.chat_id,
+                {status_message_id},
+            )
+        except Exception as exc:
+            logger.debug(
+                "Failed to forget rejected status message: {}",
+                type(exc).__name__,
+            )
 
-        if not queued_ids:
-            return
-
-        position = 0
-        for node_id in queued_ids:
-            node = tree.get_node(node_id)
-            if not node or node.state != MessageState.PENDING:
-                continue
-            position += 1
+    async def update_queue_positions(self, queue: tuple[QueueEntry, ...]) -> None:
+        """Refresh queued status messages after a dequeue."""
+        for entry in queue:
             self.outbound.fire_and_forget(
                 self.outbound.queue_edit_message(
-                    node.incoming.chat_id,
-                    node.status_message_id,
+                    entry.node.scope.chat_id,
+                    entry.node.status_message_id,
                     self._format_status(
-                        "📋", "Queued", f"(position {position}) - waiting..."
+                        "📋",
+                        "Queued",
+                        f"(position {entry.position}) - waiting...",
                     ),
                     parse_mode=self._get_parse_mode(),
                 )
             )
 
-    async def mark_node_processing(self, tree: MessageTree, node_id: str) -> None:
+    async def mark_node_processing(self, claim: NodeClaim) -> None:
         """Update the dequeued node's status to processing immediately."""
-        node = tree.get_node(node_id)
-        if not node or node.state == MessageState.ERROR:
-            return
         self.outbound.fire_and_forget(
             self.outbound.queue_edit_message(
-                node.incoming.chat_id,
-                node.status_message_id,
+                claim.node.scope.chat_id,
+                claim.node.status_message_id,
                 self._format_status("🔄", "Processing...", None),
                 parse_mode=self._get_parse_mode(),
             )
@@ -212,16 +218,15 @@ class MessagingTurnIntake:
 
     def _get_initial_status(
         self,
-        tree: object | None,
-        parent_node_id: str | None,
+        reply_target: ReplyTarget | None,
     ) -> str:
         """Get initial status message text."""
-        tree_queue = self._get_tree_queue()
-        if tree and parent_node_id:
-            if tree_queue.is_node_tree_busy(parent_node_id):
-                queue_size = tree_queue.get_queue_size(parent_node_id) + 1
+        if reply_target is not None:
+            if reply_target.queue_position is not None:
                 return self._format_status(
-                    "📋", "Queued", f"(position {queue_size}) - waiting..."
+                    "📋",
+                    "Queued",
+                    f"(position {reply_target.queue_position}) - waiting...",
                 )
             return self._format_status("🔄", "Continuing conversation...", None)
 

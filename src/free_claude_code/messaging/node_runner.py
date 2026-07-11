@@ -18,14 +18,9 @@ from .platforms.ports import OutboundMessenger
 from .safe_diagnostics import format_exception_for_log
 from .session import SessionStore
 from .transcript import RenderCtx, TranscriptBuffer
-from .trees import (
-    CancellationReason,
-    MessageNode,
-    MessageState,
-    MessageTree,
-    TreeQueueManager,
-    get_cancel_reason,
-)
+from .trees.manager import TreeQueueManager
+from .trees.snapshot import TreeSnapshot
+from .trees.transitions import CancellationReason, NodeClaim
 from .ui_updates import ThrottledTranscriptEditor
 
 
@@ -73,68 +68,91 @@ class MessagingNodeRunner:
         )
         return transcript, self._get_render_ctx()
 
-    def _save_tree(self, tree: MessageTree | None, node_id: str) -> None:
-        """Persist tree state after runner-owned mutations."""
-        if not tree:
+    def _save_snapshot(self, snapshot: TreeSnapshot | None) -> None:
+        """Persist a snapshot returned by the active aggregate manager."""
+        if snapshot is None:
             return
-        active_tree = self._get_tree_queue().get_tree_for_node(node_id)
-        if active_tree is not tree:
-            logger.debug(
-                "Skipping stale tree save for node {} after cancellation/clear",
-                node_id,
+        self.session_store.save_tree_snapshot(snapshot)
+
+    async def _record_session(self, claim: NodeClaim, session_id: str) -> None:
+        snapshot = await self._get_tree_queue().record_session(claim, session_id)
+        self._save_snapshot(snapshot)
+
+    async def _complete_claim(
+        self,
+        claim: NodeClaim,
+        session_id: str | None,
+    ) -> None:
+        snapshot = await self._get_tree_queue().complete_claim(claim, session_id)
+        self._save_snapshot(snapshot)
+
+    async def _fail_claim(
+        self,
+        claim: NodeClaim,
+        *,
+        propagate: bool,
+        child_status_text: str | None = None,
+    ) -> None:
+        result = await self._get_tree_queue().fail_claim(
+            claim,
+            propagate=propagate,
+        )
+        self._save_snapshot(result.snapshot)
+        if child_status_text is None:
+            return
+        for child in result.affected:
+            if child.node_id == claim.node.node_id:
+                continue
+            self.outbound.fire_and_forget(
+                self.outbound.queue_edit_message(
+                    child.scope.chat_id,
+                    child.status_message_id,
+                    self._format_status("❌", "Cancelled:", child_status_text),
+                    parse_mode=self._get_parse_mode(),
+                )
             )
-            return
-        self.session_store.save_tree_snapshot(tree.snapshot())
 
     async def process_node(
         self,
-        node_id: str,
-        node: MessageNode,
+        claim: NodeClaim,
     ) -> None:
         """Core task processor for a single CLI interaction."""
-        incoming = node.incoming
-        status_msg_id = node.status_message_id
-        chat_id = incoming.chat_id
+        node_id = claim.node.node_id
+        status_msg_id = claim.node.status_message_id
+        chat_id = claim.node.scope.chat_id
 
         with logger.contextualize(node_id=node_id, chat_id=chat_id):
-            await self._process_node_impl(node_id, node, chat_id, status_msg_id)
+            await self._process_node_impl(claim, chat_id, status_msg_id)
 
     async def _process_node_impl(
         self,
-        node_id: str,
-        node: MessageNode,
+        claim: NodeClaim,
         chat_id: str,
         status_msg_id: str,
     ) -> None:
         """Internal implementation of process_node with context bound."""
-        incoming = node.incoming
-
-        tree_queue = self._get_tree_queue()
-        tree = tree_queue.get_tree_for_node(node_id)
-        if tree:
-            await tree.update_state(node_id, MessageState.IN_PROGRESS)
+        node_id = claim.node.node_id
 
         transcript, render_ctx = self._create_transcript_and_render_ctx()
 
         had_transcript_events = False
-        had_non_exit_error = False
+        non_exit_error: str | None = None
+        terminal_seen = False
         captured_session_id = None
         temp_session_id = None
         last_status: str | None = None
 
-        parent_session_id = None
+        parent_session_id = claim.parent_session_id
         platform_nm = self.platform_name
-        if tree and node.parent_id:
-            parent_session_id = tree.get_parent_session_id(node_id)
-            if parent_session_id:
-                trace_event(
-                    stage="claude_cli",
-                    event="claude_cli.fork.from_parent_session",
-                    source=platform_nm,
-                    chat_id=chat_id,
-                    node_id=node_id,
-                    parent_session_id=parent_session_id,
-                )
+        if parent_session_id:
+            trace_event(
+                stage="claude_cli",
+                event="claude_cli.fork.from_parent_session",
+                source=platform_nm,
+                chat_id=chat_id,
+                node_id=node_id,
+                parent_session_id=parent_session_id,
+            )
 
         editor = ThrottledTranscriptEditor(
             outbound=self.outbound,
@@ -188,7 +206,7 @@ class MessagingNodeRunner:
                     source=platform_nm,
                     chat_id=chat_id,
                     node_id=node_id,
-                    prompt=incoming.text,
+                    prompt=claim.prompt,
                     fork_session_arg=bool(parent_session_id),
                     resume_session_arg=parent_session_id,
                 )
@@ -199,13 +217,10 @@ class MessagingNodeRunner:
                     self._format_status("⏳", "Session limit reached", None),
                     force=True,
                 )
-                if tree:
-                    await tree.update_state(
-                        node_id,
-                        MessageState.ERROR,
-                        error_message=error_message,
-                    )
-                    self._save_tree(tree, node_id)
+                await self._fail_claim(
+                    claim,
+                    propagate=False,
+                )
                 trace_event(
                     stage="claude_cli",
                     event="claude_cli.session.limit_reached",
@@ -216,7 +231,7 @@ class MessagingNodeRunner:
                 return
 
             async for event_data in cli_session.start_task(
-                incoming.text,
+                claim.prompt,
                 session_id=parent_session_id,
                 fork_session=bool(parent_session_id),
             ):
@@ -231,14 +246,12 @@ class MessagingNodeRunner:
                     temp_session_id,
                 ) = await handle_session_info_event(
                     event_data,
-                    tree,
-                    node_id,
+                    claim,
                     captured_session_id,
                     temp_session_id,
                     cli_manager=self.cli_manager,
-                    session_store=self.session_store,
-                    save_tree_snapshot=lambda updated_tree: self._save_tree(
-                        updated_tree, node_id
+                    record_session=lambda session_id: self._record_session(
+                        claim, session_id
                     ),
                 )
                 if event_data.get("type") == "session_info":
@@ -253,9 +266,28 @@ class MessagingNodeRunner:
                     if (
                         ptype == "error"
                         and parsed.get("source") == "exit"
-                        and had_non_exit_error
+                        and non_exit_error is not None
                     ):
+                        await self._fail_claim(
+                            claim,
+                            propagate=True,
+                            child_status_text="Parent task failed",
+                        )
+                        terminal_seen = True
                         continue
+
+                    propagate_failure = parsed.get("source") == "exit"
+
+                    async def fail_parsed_event(
+                        error_message: str,
+                        child_status: str,
+                        propagate: bool = propagate_failure,
+                    ) -> None:
+                        await self._fail_claim(
+                            claim,
+                            propagate=propagate,
+                            child_status_text=child_status,
+                        )
 
                     (
                         last_status,
@@ -266,21 +298,47 @@ class MessagingNodeRunner:
                         update_ui,
                         last_status,
                         had_transcript_events,
-                        tree,
-                        node_id,
+                        claim,
                         captured_session_id,
-                        session_store=self.session_store,
-                        save_tree_snapshot=lambda updated_tree: self._save_tree(
-                            updated_tree, node_id
-                        ),
                         format_status=self._format_status,
-                        propagate_error_to_children=self.propagate_error_to_children,
+                        complete_claim=lambda session_id: self._complete_claim(
+                            claim, session_id
+                        ),
+                        fail_claim=fail_parsed_event,
                         log_messaging_error_details=self._log_messaging_error_details,
                     )
                     if ptype == "error" and parsed.get("source") != "exit":
-                        had_non_exit_error = True
+                        error_message = parsed.get("message", "Unknown error")
+                        non_exit_error = (
+                            error_message
+                            if isinstance(error_message, str)
+                            else str(error_message)
+                        )
+                    if (ptype == "error" and parsed.get("source") == "exit") or (
+                        ptype == "complete" and parsed.get("status") == "success"
+                    ):
+                        terminal_seen = True
 
-        except asyncio.CancelledError:
+            if non_exit_error is not None and not terminal_seen:
+                await self._fail_claim(
+                    claim,
+                    propagate=True,
+                    child_status_text="Parent task failed",
+                )
+            elif not terminal_seen:
+                error_message = "Claude CLI ended without a terminal event"
+                transcript.apply({"type": "error", "message": error_message})
+                await update_ui(
+                    self._format_status("💥", "Task Failed", None),
+                    force=True,
+                )
+                await self._fail_claim(
+                    claim,
+                    propagate=True,
+                    child_status_text="Parent task failed",
+                )
+
+        except asyncio.CancelledError as exc:
             trace_event(
                 stage="claude_cli",
                 event="turn.processor.cancelled",
@@ -289,7 +347,7 @@ class MessagingNodeRunner:
                 node_id=node_id,
             )
             logger.warning(f"HANDLER: Task cancelled for node {node_id}")
-            if get_cancel_reason(node) is CancellationReason.STOP:
+            if exc.args and exc.args[0] is CancellationReason.STOP:
                 await update_ui(self._format_status("⏹", "Stopped.", None), force=True)
             else:
                 transcript.apply({"type": "error", "message": "Task was cancelled"})
@@ -297,11 +355,10 @@ class MessagingNodeRunner:
                     self._format_status("❌", "Cancelled", None), force=True
                 )
 
-            if tree:
-                await tree.update_state(
-                    node_id, MessageState.ERROR, error_message="Cancelled by user"
-                )
-                self._save_tree(tree, node_id)
+            await self._fail_claim(
+                claim,
+                propagate=False,
+            )
         except Exception as e:
             trace_event(
                 stage="claude_cli",
@@ -320,10 +377,11 @@ class MessagingNodeRunner:
             error_msg = format_user_error_preview(e)
             transcript.apply({"type": "error", "message": error_msg})
             await update_ui(self._format_status("💥", "Task Failed", None), force=True)
-            if tree:
-                await self.propagate_error_to_children(
-                    node_id, error_msg, "Parent task failed"
-                )
+            await self._fail_claim(
+                claim,
+                propagate=True,
+                child_status_text="Parent task failed",
+            )
         finally:
             trace_event(
                 stage="routing",
@@ -346,29 +404,6 @@ class MessagingNodeRunner:
                         e, log_full_message=self._log_messaging_error_details
                     ),
                 )
-
-    async def propagate_error_to_children(
-        self,
-        node_id: str,
-        error_msg: str,
-        child_status_text: str,
-    ) -> None:
-        """Mark node as error and propagate to pending children with UI updates."""
-        tree_queue = self._get_tree_queue()
-        affected = await tree_queue.mark_node_error(
-            node_id, error_msg, propagate_to_children=True
-        )
-        if affected:
-            self._save_tree(tree_queue.get_tree_for_node(node_id), node_id)
-        for child in affected[1:]:
-            self.outbound.fire_and_forget(
-                self.outbound.queue_edit_message(
-                    child.incoming.chat_id,
-                    child.status_message_id,
-                    self._format_status("❌", "Cancelled:", child_status_text),
-                    parse_mode=self._get_parse_mode(),
-                )
-            )
 
 
 __all__ = ["MessagingNodeRunner"]
