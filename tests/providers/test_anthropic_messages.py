@@ -12,6 +12,7 @@ from free_claude_code.core.anthropic.streaming import (
     AnthropicStreamLedger,
     format_sse_event,
 )
+from free_claude_code.core.async_iterators import AsyncCloseable
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.rate_limit import ProviderRateLimiter
@@ -61,18 +62,22 @@ class FakeResponse:
         self._raise_error = raise_error or RuntimeError("mid-stream failure")
         self._close_error = close_error
         self.close_calls = 0
+        self.line_iterator_close_calls = 0
         self.is_closed = False
         self.request = httpx.Request("POST", "https://example.test/v1/messages")
         self.headers = httpx.Headers()
 
     async def aiter_lines(self):
-        for i, line in enumerate(self._lines):
-            yield line
-            if (
-                self._raise_after_line_index is not None
-                and i >= self._raise_after_line_index
-            ):
-                raise self._raise_error
+        try:
+            for i, line in enumerate(self._lines):
+                yield line
+                if (
+                    self._raise_after_line_index is not None
+                    and i >= self._raise_after_line_index
+                ):
+                    raise self._raise_error
+        finally:
+            self.line_iterator_close_calls += 1
 
     async def aread(self):
         return self._text.encode()
@@ -254,6 +259,56 @@ async def test_stream_uses_retry_builds_request_and_closes_response(
     assert mock_build.call_args.kwargs["json"]["thinking"] == {"type": "enabled"}
     mock_send.assert_awaited_once_with(request_obj, stream=True)
     mock_rate_limiter.execute_with_retry.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_closing_public_native_stream_closes_response_once(
+    provider_config,
+    mock_rate_limiter,
+):
+    provider = NativeProvider(provider_config, rate_limiter=mock_rate_limiter)
+    request = make_messages_request()
+    response = FakeResponse(
+        lines=_lines_from_events(
+            format_sse_event(
+                "message_start",
+                {"type": "message_start", "message": {}},
+            ),
+            format_sse_event(
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                },
+            ),
+            format_sse_event(
+                "content_block_delta",
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "x" * 65_536},
+                },
+            ),
+        )
+    )
+
+    with (
+        patch.object(provider._client, "build_request", return_value=MagicMock()),
+        patch.object(
+            provider._client,
+            "send",
+            new_callable=AsyncMock,
+            return_value=response,
+        ),
+    ):
+        stream = provider.stream_response(request, request_id="req_native_early_close")
+        await anext(stream)
+        assert isinstance(stream, AsyncCloseable)
+        await stream.aclose()
+
+    assert response.close_calls == 1
+    assert response.line_iterator_close_calls == 1
 
 
 @pytest.mark.asyncio

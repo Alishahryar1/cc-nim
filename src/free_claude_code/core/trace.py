@@ -6,10 +6,13 @@ sanitized credential keys (e.g. ``api_key``, ``authorization``).
 """
 
 import asyncio
+import sys
 from collections.abc import AsyncGenerator, AsyncIterator, Mapping
 from typing import Any
 
 from loguru import logger
+
+from free_claude_code.core.async_iterators import try_close_async_iterator
 
 TRACE_PAYLOAD_BINDING = "trace_payload"
 
@@ -56,6 +59,29 @@ def trace_event(*, stage: str, event: str, source: str, **fields: Any) -> None:
         },
     )
     logger.bind(trace_payload=payload).info("TRACE {}", event)
+
+
+async def close_stream_input(
+    iterator: object,
+    *,
+    owner: str,
+    source: str,
+    preserved_error: BaseException | None,
+) -> None:
+    """Close one transform input and observe cleanup failure without raising it."""
+    close_error = await try_close_async_iterator(iterator)
+    if close_error is None:
+        return
+    trace_event(
+        stage="lifecycle",
+        event="stream.input.close_failed",
+        source=source,
+        owner=owner,
+        close_exc_type=type(close_error).__name__,
+        preserved_exc_type=(
+            type(preserved_error).__name__ if preserved_error is not None else None
+        ),
+    )
 
 
 def extract_claude_session_id_from_headers(headers: Mapping[str, str]) -> str | None:
@@ -143,6 +169,13 @@ async def traced_async_stream(
             **common,
         )
         raise
+    finally:
+        await close_stream_input(
+            agen,
+            owner="traced_async_stream",
+            source=source,
+            preserved_error=sys.exception(),
+        )
 
     if not interrupted:
         trace_event(

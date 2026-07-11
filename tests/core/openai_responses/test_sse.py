@@ -1,17 +1,55 @@
 from collections.abc import AsyncIterator
 from typing import Any
+from unittest.mock import patch
 
 import pytest
 
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.core.anthropic.streaming import format_sse_event
+from free_claude_code.core.async_iterators import AsyncCloseable
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.openai_responses import (
     OpenAIResponsesAdapter,
     OpenAIResponsesRequest,
 )
+from free_claude_code.core.openai_responses.anthropic_sse import (
+    AnthropicSseEvent,
+    iter_sse_events,
+)
 
 _ADAPTER = OpenAIResponsesAdapter()
+
+
+class _CloseTrackingAsyncIterator:
+    def __init__(
+        self,
+        values: list[Any],
+        *,
+        iteration_error: Exception | None = None,
+        close_error: Exception | None = None,
+    ) -> None:
+        self._values = iter(values)
+        self._iteration_error = iteration_error
+        self._close_error = close_error
+        self.close_calls = 0
+
+    def __aiter__(self) -> _CloseTrackingAsyncIterator:
+        return self
+
+    async def __anext__(self) -> Any:
+        try:
+            return next(self._values)
+        except StopIteration:
+            if self._iteration_error is not None:
+                error = self._iteration_error
+                self._iteration_error = None
+                raise error from None
+            raise StopAsyncIteration from None
+
+    async def aclose(self) -> None:
+        self.close_calls += 1
+        if self._close_error is not None:
+            raise self._close_error
 
 
 def _responses_sse(
@@ -21,6 +59,107 @@ def _responses_sse(
         chunks,
         OpenAIResponsesRequest.model_validate(request),
     )
+
+
+@pytest.mark.asyncio
+async def test_anthropic_sse_parser_closes_source_after_normal_completion() -> None:
+    source = _CloseTrackingAsyncIterator(
+        [format_sse_event("message_start", {"type": "message_start"})]
+    )
+
+    events = [event async for event in iter_sse_events(source)]
+
+    assert [event.event for event in events] == ["message_start"]
+    assert source.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_anthropic_sse_parser_closes_source_on_early_close() -> None:
+    source = _CloseTrackingAsyncIterator(
+        [
+            format_sse_event("message_start", {"type": "message_start"}),
+            format_sse_event("message_stop", {"type": "message_stop"}),
+        ]
+    )
+    events = iter_sse_events(source)
+
+    assert (await anext(events)).event == "message_start"
+    assert isinstance(events, AsyncCloseable)
+    await events.aclose()
+
+    assert source.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_anthropic_sse_parser_preserves_source_failure() -> None:
+    source_failure = RuntimeError("source failed")
+    source = _CloseTrackingAsyncIterator(
+        [],
+        iteration_error=source_failure,
+        close_error=RuntimeError("close failed"),
+    )
+
+    with pytest.raises(RuntimeError) as exc_info:
+        [event async for event in iter_sse_events(source)]
+
+    assert exc_info.value is source_failure
+    assert source.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_responses_transform_closes_direct_event_source_on_early_close() -> None:
+    events = _CloseTrackingAsyncIterator(
+        [
+            AnthropicSseEvent(
+                event="message_start",
+                data={"type": "message_start", "message": {}},
+            ),
+            AnthropicSseEvent(
+                event="message_stop",
+                data={"type": "message_stop"},
+            ),
+        ]
+    )
+    with patch(
+        "free_claude_code.core.openai_responses.stream.iter_sse_events",
+        return_value=events,
+    ):
+        stream = _responses_sse(
+            _aiter([]),
+            {"model": "nvidia_nim/test-model", "stream": True},
+        )
+        assert parse_sse_text(await anext(stream))[0].event == "response.created"
+        assert isinstance(stream, AsyncCloseable)
+        await stream.aclose()
+
+    assert events.close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_responses_transform_preserves_direct_source_failure() -> None:
+    source_failure = RuntimeError("event source failed")
+    events = _CloseTrackingAsyncIterator(
+        [],
+        iteration_error=source_failure,
+        close_error=RuntimeError("event close failed"),
+    )
+    with (
+        patch(
+            "free_claude_code.core.openai_responses.stream.iter_sse_events",
+            return_value=events,
+        ),
+        pytest.raises(RuntimeError) as exc_info,
+    ):
+        [
+            chunk
+            async for chunk in _responses_sse(
+                _aiter([]),
+                {"model": "nvidia_nim/test-model", "stream": True},
+            )
+        ]
+
+    assert exc_info.value is source_failure
+    assert events.close_calls == 1
 
 
 @pytest.mark.asyncio

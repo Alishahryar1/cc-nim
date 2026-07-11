@@ -9,12 +9,14 @@ from free_claude_code.application.execution import ProviderExecutor
 from free_claude_code.application.routing import ResolvedModel, RoutedMessagesRequest
 from free_claude_code.config.provider_catalog import ProviderCapabilities
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
+from free_claude_code.core.async_iterators import AsyncCloseable
 
 
 class FakeProvider:
     def __init__(self) -> None:
         self.preflight_calls: list[tuple[MessagesRequest, bool]] = []
         self.stream_calls: list[dict[str, object]] = []
+        self.stream_close_calls = 0
 
     def preflight_stream(
         self,
@@ -40,7 +42,10 @@ class FakeProvider:
                 "thinking_enabled": thinking_enabled,
             }
         )
-        yield "event: message_stop\ndata: {}\n\n"
+        try:
+            yield "event: message_stop\ndata: {}\n\n"
+        finally:
+            self.stream_close_calls += 1
 
 
 class FailingPreflightProvider(FakeProvider):
@@ -51,6 +56,18 @@ class FailingPreflightProvider(FakeProvider):
         thinking_enabled: bool,
     ) -> None:
         raise ValueError("invalid provider request")
+
+
+class FailingStreamConstructionProvider(FakeProvider):
+    def stream_response(
+        self,
+        request: MessagesRequest,
+        input_tokens: int = 0,
+        *,
+        request_id: str | None = None,
+        thinking_enabled: bool | None = None,
+    ) -> AsyncIterator[str]:
+        raise RuntimeError("stream construction failed")
 
 
 def _routed_request() -> RoutedMessagesRequest:
@@ -99,6 +116,50 @@ async def test_executor_uses_structural_provider_port_and_preflights_eagerly() -
             "thinking_enabled": True,
         }
     ]
+    assert provider.stream_close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_closing_executor_stream_closes_provider_stream_once() -> None:
+    provider = FakeProvider()
+    routed = _routed_request()
+    executor = ProviderExecutor(
+        lambda _provider_id: provider,
+        token_counter=lambda _messages, _system, _tools: 17,
+    )
+    stream = executor.stream(
+        routed,
+        wire_api="messages",
+        raw_log_label="FULL_PAYLOAD",
+        raw_log_payload={},
+        request_id="req_early_close",
+    )
+
+    assert await anext(stream) == "event: message_stop\ndata: {}\n\n"
+    assert isinstance(stream, AsyncCloseable)
+    await stream.aclose()
+
+    assert provider.stream_close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_stream_construction_failure_remains_deferred_to_iteration() -> None:
+    provider = FailingStreamConstructionProvider()
+    executor = ProviderExecutor(
+        lambda _provider_id: provider,
+        token_counter=lambda _messages, _system, _tools: 17,
+    )
+
+    stream = executor.stream(
+        _routed_request(),
+        wire_api="messages",
+        raw_log_label="FULL_PAYLOAD",
+        raw_log_payload={},
+        request_id="req_deferred_construction",
+    )
+
+    with pytest.raises(RuntimeError, match="stream construction failed"):
+        await anext(stream)
 
 
 def test_executor_preflight_failure_stays_before_token_count_and_stream() -> None:

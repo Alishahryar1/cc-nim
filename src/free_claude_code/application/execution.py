@@ -1,5 +1,6 @@
 """Provider execution shared by inbound API adapters."""
 
+import sys
 from collections.abc import AsyncIterator, Callable
 from typing import Literal
 
@@ -12,7 +13,11 @@ from free_claude_code.core.anthropic import (
     anthropic_request_snapshot,
     get_token_count,
 )
-from free_claude_code.core.trace import trace_event, traced_async_stream
+from free_claude_code.core.trace import (
+    close_stream_input,
+    trace_event,
+    traced_async_stream,
+)
 
 from .ports import ProviderResolver
 from .routing import RoutedMessagesRequest
@@ -96,13 +101,24 @@ class ProviderExecutor:
         )
 
         async def provider_body() -> AsyncIterator[str]:
-            async for chunk in provider.stream_response(
-                routed.request,
-                input_tokens=input_tokens,
-                request_id=request_id,
-                thinking_enabled=routed.resolved.thinking_enabled,
-            ):
-                yield chunk
+            provider_stream: AsyncIterator[str] | None = None
+            try:
+                provider_stream = provider.stream_response(
+                    routed.request,
+                    input_tokens=input_tokens,
+                    request_id=request_id,
+                    thinking_enabled=routed.resolved.thinking_enabled,
+                )
+                async for chunk in provider_stream:
+                    yield chunk
+            finally:
+                if provider_stream is not None:
+                    await close_stream_input(
+                        provider_stream,
+                        owner="provider_executor",
+                        source="api",
+                        preserved_error=sys.exception(),
+                    )
 
         stream_trace: dict[str, object] = {
             "request_id": request_id,

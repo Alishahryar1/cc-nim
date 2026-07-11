@@ -1,11 +1,13 @@
 """Translate Anthropic SSE streams into OpenAI Responses SSE streams."""
 
 import asyncio
+import sys
 from collections.abc import AsyncIterable, AsyncIterator, Callable
 from typing import Any
 
 from free_claude_code.core.diagnostics import safe_exception_message
 from free_claude_code.core.failures import ExecutionFailure, find_execution_failure
+from free_claude_code.core.trace import close_stream_input
 
 from .anthropic_sse import iter_sse_events
 from .models import OpenAIResponsesRequest
@@ -23,8 +25,9 @@ async def iter_responses_sse_from_anthropic(
     """Yield Responses SSE events translated from an Anthropic SSE stream."""
     assembler = ResponsesStreamAssembler(request)
     emitted_any_chunk = False
+    events = iter_sse_events(chunks)
     try:
-        async for event in iter_sse_events(chunks):
+        async for event in events:
             for chunk in assembler.process_anthropic_event(event):
                 yield chunk
                 emitted_any_chunk = True
@@ -63,6 +66,13 @@ async def iter_responses_sse_from_anthropic(
         _observe_post_start_terminal_failure(on_post_start_terminal_failure, exc)
         for chunk in assembler.fail_response(_unexpected_error_data(exc)):
             yield chunk
+    finally:
+        await close_stream_input(
+            events,
+            owner="openai_responses.stream",
+            source="core",
+            preserved_error=sys.exception(),
+        )
 
 
 def _observe_post_start_terminal_failure(

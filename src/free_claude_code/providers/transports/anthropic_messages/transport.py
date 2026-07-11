@@ -24,6 +24,7 @@ from free_claude_code.core.anthropic.streaming import (
     tool_schemas_by_name,
 )
 from free_claude_code.core.trace import (
+    close_stream_input,
     provider_native_messages_body_snapshot,
     trace_event,
 )
@@ -200,7 +201,7 @@ class AnthropicMessagesTransport(BaseProvider):
                     )
         return send_response
 
-    async def stream_response(
+    def stream_response(
         self,
         request: MessagesRequest,
         input_tokens: int = 0,
@@ -216,22 +217,30 @@ class AnthropicMessagesTransport(BaseProvider):
             request_id=request_id,
             thinking_enabled=thinking_enabled,
         )
-        async for event in runner.run():
-            yield event
+        return runner.run()
 
 
 async def _iter_sse_events(response: httpx.Response) -> AsyncIterator[str]:
     """Group line-delimited upstream data into complete SSE events."""
     event_lines: list[str] = []
-    async for line in response.aiter_lines():
-        if line:
-            event_lines.append(line)
-            continue
+    lines = response.aiter_lines()
+    try:
+        async for line in lines:
+            if line:
+                event_lines.append(line)
+                continue
+            if event_lines:
+                yield "\n".join(event_lines) + "\n\n"
+                event_lines.clear()
         if event_lines:
             yield "\n".join(event_lines) + "\n\n"
-            event_lines.clear()
-    if event_lines:
-        yield "\n".join(event_lines) + "\n\n"
+    finally:
+        await close_stream_input(
+            lines,
+            owner="anthropic_messages.sse_lines",
+            source="provider",
+            preserved_error=sys.exception(),
+        )
 
 
 class _AnthropicMessagesStreamRunner:
@@ -285,6 +294,7 @@ class _AnthropicMessagesStreamRunner:
         async with self._transport._rate_limiter.concurrency_slot():
             while True:
                 stream_opened = False
+                chunks: AsyncIterator[str] | None = None
                 try:
                     response = await self._transport._rate_limiter.execute_with_retry(
                         self._transport._validated_stream_send,
@@ -296,11 +306,12 @@ class _AnthropicMessagesStreamRunner:
                     chunk_count = 0
                     chunk_bytes = 0
 
-                    async for chunk in self._iter_stream_chunks(
+                    chunks = self._iter_stream_chunks(
                         response,
                         state=state,
                         thinking_enabled=thinking_enabled,
-                    ):
+                    )
+                    async for chunk in chunks:
                         chunk_count += 1
                         chunk_bytes += len(chunk.encode("utf-8", errors="replace"))
                         for parsed in parse_sse_text(chunk):
@@ -446,6 +457,13 @@ class _AnthropicMessagesStreamRunner:
                         recovery.discard()
                     raise failure from error
                 finally:
+                    if chunks is not None:
+                        await close_stream_input(
+                            chunks,
+                            owner="anthropic_messages.runner",
+                            source="provider",
+                            preserved_error=sys.exception(),
+                        )
                     if response is not None and not response.is_closed:
                         await close_provider_stream(
                             response,
@@ -462,14 +480,23 @@ class _AnthropicMessagesStreamRunner:
         thinking_enabled: bool,
     ) -> AsyncIterator[str]:
         """Yield normalized grouped SSE events from the provider stream."""
-        async for event in _iter_sse_events(response):
-            output_event = transform_native_sse_block_event(
-                event,
-                state,
-                thinking_enabled=thinking_enabled,
+        events = _iter_sse_events(response)
+        try:
+            async for event in events:
+                output_event = transform_native_sse_block_event(
+                    event,
+                    state,
+                    thinking_enabled=thinking_enabled,
+                )
+                if output_event is not None:
+                    yield output_event
+        finally:
+            await close_stream_input(
+                events,
+                owner="anthropic_messages.block_policy",
+                source="provider",
+                preserved_error=sys.exception(),
             )
-            if output_event is not None:
-                yield output_event
 
     def _new_ledger(self) -> AnthropicStreamLedger:
         return AnthropicStreamLedger(

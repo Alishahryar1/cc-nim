@@ -124,7 +124,7 @@ class BaseProvider(ABC):
         return model_infos_from_ids(await self.list_model_ids())
 
     @abstractmethod
-    async def stream_response(
+    def stream_response(
         self,
         request: MessagesRequest,
         input_tokens: int = 0,
@@ -133,7 +133,3 @@ class BaseProvider(ABC):
         thinking_enabled: bool | None = None,
     ) -> AsyncIterator[str]:
         """Stream response in Anthropic SSE format."""
-        # Typing: abstract async generators need a yield for AsyncIterator[str]
-        # inference; this branch is never executed.
-        if False:
-            yield ""

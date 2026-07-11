@@ -25,10 +25,9 @@ from .admin_routes import router as admin_router
 from .ports import ApiServices
 from .request_errors import ordinary_application_error_response
 from .request_ids import (
+    RequestCorrelationMiddleware,
     attach_request_id_headers,
     get_request_id,
-    new_request_id,
-    set_request_id,
 )
 from .routes import router
 from .validation_log import summarize_request_validation_body
@@ -38,26 +37,7 @@ def create_app(services: ApiServices) -> FastAPI:
     """Create the HTTP adapter around explicitly supplied runtime services."""
     app = FastAPI(title="Claude Code Proxy", version=package_version())
     app.state.services = services
-
-    @app.middleware("http")
-    async def trace_http_correlation(request: Request, call_next):
-        """Attach HTTP identifiers and optional Claude session id to logs."""
-        request_id = new_request_id()
-        set_request_id(request, request_id)
-        claude_sid = extract_claude_session_id_from_headers(request.headers)
-        with logger.contextualize(
-            http_method=request.method,
-            http_path=request.url.path,
-            claude_session_id=claude_sid,
-            request_id=request_id,
-        ):
-            response = await call_next(request)
-            attach_request_id_headers(
-                response,
-                request_id=request_id,
-                path=request.url.path,
-            )
-        return response
+    app.add_middleware(RequestCorrelationMiddleware)
 
     app.include_router(admin_router)
     app.include_router(router)

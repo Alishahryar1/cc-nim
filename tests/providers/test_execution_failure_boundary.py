@@ -8,6 +8,7 @@ import pytest
 
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
+from free_claude_code.core.async_iterators import AsyncCloseable
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
@@ -231,3 +232,33 @@ async def test_completed_stream_close_failure_preserves_success_lifecycle() -> N
         preserved_exc_type=None,
     )
     assert "SECRET" not in repr(trace_event.call_args)
+
+
+@pytest.mark.asyncio
+async def test_closing_public_openai_stream_closes_raw_stream_once() -> None:
+    provider = _provider()
+    request = make_messages_request(
+        "test-model",
+        messages=[],
+        max_tokens=32,
+    )
+    raw_stream = _FailingStream(
+        [
+            _chunk(content="x" * 65_536),
+            _chunk(content="done", finish_reason="stop"),
+        ],
+        None,
+    )
+
+    with patch.object(
+        provider._client.chat.completions,
+        "create",
+        new_callable=AsyncMock,
+        return_value=raw_stream,
+    ):
+        stream = provider.stream_response(request, request_id="req_early_close")
+        await anext(stream)
+        assert isinstance(stream, AsyncCloseable)
+        await stream.aclose()
+
+    assert raw_stream.close_calls == 1

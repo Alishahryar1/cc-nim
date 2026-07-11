@@ -235,7 +235,7 @@ class OpenAIChatTransport(BaseProvider):
         )
         return clamped
 
-    async def stream_response(
+    def stream_response(
         self,
         request: MessagesRequest,
         input_tokens: int = 0,
@@ -251,8 +251,7 @@ class OpenAIChatTransport(BaseProvider):
             request_id=request_id,
             thinking_enabled=thinking_enabled,
         )
-        async for event in runner.run():
-            yield event
+        return runner.run()
 
 
 class _OpenAIChatStreamRunner:

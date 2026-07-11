@@ -2,16 +2,17 @@
 
 import asyncio
 from collections.abc import (
-    AsyncGenerator,
-    AsyncIterable,
     AsyncIterator,
     Awaitable,
     Callable,
     Mapping,
 )
-from typing import Any, Literal, Protocol, runtime_checkable
+from typing import Any, Literal
 
 from fastapi.responses import JSONResponse, Response, StreamingResponse
+from starlette.background import BackgroundTask
+from starlette.responses import ContentStream
+from starlette.types import Receive, Scope, Send
 
 from free_claude_code.core.anthropic import anthropic_error_type_for_failure
 from free_claude_code.core.anthropic.streaming import (
@@ -19,9 +20,10 @@ from free_claude_code.core.anthropic.streaming import (
     anthropic_terminal_error_frame,
     anthropic_terminal_failure_frame,
 )
+from free_claude_code.core.async_iterators import try_close_async_iterator
 from free_claude_code.core.diagnostics import safe_exception_message
 from free_claude_code.core.failures import find_execution_failure
-from free_claude_code.core.trace import trace_event
+from free_claude_code.core.trace import close_stream_input, trace_event
 
 TERMINAL_EXECUTION_ERROR_HEADERS = {"x-should-retry": "false"}
 
@@ -32,13 +34,119 @@ ReleaseResponseResource = Callable[[], Awaitable[None]]
 WireApi = Literal["messages", "responses"]
 
 
-@runtime_checkable
-class _AsyncCloseable(Protocol):
-    async def aclose(self) -> None: ...
-
-
 class EmptyStreamError(RuntimeError):
     """Raised when a public stream ends before emitting any protocol chunk."""
+
+
+class ManagedStreamingResponse(StreamingResponse):
+    """Own body closure and one response-scoped runtime release callback."""
+
+    def __init__(
+        self,
+        content: ContentStream,
+        status_code: int = 200,
+        headers: Mapping[str, str] | None = None,
+        media_type: str | None = None,
+        background: BackgroundTask | None = None,
+    ) -> None:
+        super().__init__(
+            content,
+            status_code=status_code,
+            headers=headers,
+            media_type=media_type,
+            background=background,
+        )
+        self._release: ReleaseResponseResource | None = None
+        self._cleanup_task: asyncio.Task[None] | None = None
+
+    def bind_release(self, release: ReleaseResponseResource) -> None:
+        """Bind the resource retained for this response before ASGI execution."""
+        if self._release is not None:
+            raise RuntimeError("A response resource release is already bound.")
+        if self._cleanup_task is not None:
+            raise RuntimeError("Cannot bind a resource after response cleanup started.")
+        self._release = release
+
+    async def aclose(self) -> None:
+        """Close the body and release its runtime resource exactly once."""
+        await self._close(preserved_error=None)
+
+    async def _close(self, *, preserved_error: BaseException | None) -> None:
+        task = self._cleanup_task
+        if task is None:
+            task = asyncio.create_task(
+                self._cleanup(preserved_error=preserved_error),
+                name="fcc-api-response-cleanup",
+            )
+            self._cleanup_task = task
+        await _wait_for_cleanup(task)
+
+    async def __call__(
+        self,
+        scope: Scope,
+        receive: Receive,
+        send: Send,
+    ) -> None:
+        preserved_error: BaseException | None = None
+        try:
+            await super().__call__(scope, receive, send)
+        except BaseException as exc:
+            preserved_error = exc
+            raise
+        finally:
+            await self._close(preserved_error=preserved_error)
+
+    async def _cleanup(self, *, preserved_error: BaseException | None) -> None:
+        try:
+            await close_stream_input(
+                self.body_iterator,
+                owner="ManagedStreamingResponse",
+                source="api",
+                preserved_error=preserved_error,
+            )
+        except Exception as exc:
+            _trace_response_cleanup_failure("close_body", exc)
+
+        release = self._release
+        if release is None:
+            return
+        try:
+            await release()
+        except Exception as exc:
+            _trace_response_cleanup_failure("release_resource", exc)
+
+
+async def _wait_for_cleanup(task: asyncio.Task[None]) -> None:
+    """Wait through repeated caller cancellation, then restore cancellation."""
+    cancellation: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as exc:
+            cancellation = exc
+
+    # Ordinary defensive failures are trace-only; cancellation remains control flow.
+    try:
+        task.result()
+    except asyncio.CancelledError:
+        if cancellation is not None:
+            raise cancellation from None
+        raise
+    except Exception as exc:
+        _trace_response_cleanup_failure("cleanup_task", exc)
+
+    if cancellation is not None:
+        raise cancellation
+
+
+def _trace_response_cleanup_failure(operation: str, exc: BaseException) -> None:
+    trace_event(
+        stage="egress",
+        event="free_claude_code.api.response.cleanup_failed",
+        source="api",
+        operation=operation,
+        exc_type=type(exc).__name__,
+    )
 
 
 async def bind_response_lifetime(
@@ -46,30 +154,23 @@ async def bind_response_lifetime(
     release: ReleaseResponseResource,
 ) -> object:
     """Retain a runtime resource until a response body is fully consumed."""
-    if isinstance(response, StreamingResponse):
-        response.body_iterator = _release_after_stream(
-            response.body_iterator,
-            release,
-        )
+    if isinstance(response, ManagedStreamingResponse):
+        response.bind_release(release)
         return response
-    await release()
-    return response
-
-
-async def _release_after_stream(
-    body: AsyncIterable[Any],
-    release: ReleaseResponseResource,
-) -> AsyncGenerator[Any]:
-    iterator = body.__aiter__()
-    try:
-        async for chunk in iterator:
-            yield chunk
-    finally:
+    if isinstance(response, StreamingResponse):
+        error = TypeError("Streaming API responses must use ManagedStreamingResponse.")
         try:
-            if isinstance(iterator, _AsyncCloseable):
-                await iterator.aclose()
+            await close_stream_input(
+                response.body_iterator,
+                owner="bind_response_lifetime",
+                source="api",
+                preserved_error=error,
+            )
         finally:
             await release()
+        raise error
+    await release()
+    return response
 
 
 def terminal_execution_error_response(
@@ -122,20 +223,24 @@ async def _first_chunk_streaming_response(
     try:
         first_chunk = await anext(body)
     except StopAsyncIteration:
-        return pre_start_error_response(
-            EmptyStreamError("Stream ended before emitting a response.")
-        )
-    except GeneratorExit:
+        error = EmptyStreamError("Stream ended before emitting a response.")
+        await _close_pre_start_body(body, preserved_error=error)
+        return pre_start_error_response(error)
+    except GeneratorExit as exc:
+        await _close_pre_start_body(body, preserved_error=exc)
         raise
-    except asyncio.CancelledError:
+    except asyncio.CancelledError as exc:
+        await _close_pre_start_body(body, preserved_error=exc)
         raise
     except BaseExceptionGroup as exc:
+        await _close_pre_start_body(body, preserved_error=exc)
         return pre_start_error_response(exc)
     except Exception as exc:
+        await _close_pre_start_body(body, preserved_error=exc)
         return pre_start_error_response(exc)
 
-    return StreamingResponse(
-        _replay_first_chunk_then_stream(
+    return ManagedStreamingResponse(
+        _PrefetchedStream(
             first_chunk,
             body,
             terminal_frame=terminal_frame,
@@ -146,34 +251,78 @@ async def _first_chunk_streaming_response(
     )
 
 
-async def _replay_first_chunk_then_stream(
-    first_chunk: str,
+async def _close_pre_start_body(
     body: AsyncIterator[str],
     *,
-    terminal_frame: TerminalFrameEmitter | None,
-    terminal_failure_observer: TerminalFailureObserver | None,
-) -> AsyncGenerator[str]:
-    yield first_chunk
-    try:
-        async for chunk in body:
-            yield chunk
-    except GeneratorExit:
-        raise
-    except asyncio.CancelledError:
-        raise
-    except BaseExceptionGroup as exc:
-        if terminal_frame is None:
+    preserved_error: BaseException,
+) -> None:
+    task = asyncio.create_task(
+        close_stream_input(
+            body,
+            owner="first_chunk_streaming_response",
+            source="api",
+            preserved_error=preserved_error,
+        ),
+        name="fcc-api-pre-start-stream-cleanup",
+    )
+    await _wait_for_cleanup(task)
+
+
+class _PrefetchedStream(AsyncIterator[str]):
+    """Replay one prefetched frame while retaining ownership of the tail."""
+
+    def __init__(
+        self,
+        first_chunk: str,
+        body: AsyncIterator[str],
+        *,
+        terminal_frame: TerminalFrameEmitter | None,
+        terminal_failure_observer: TerminalFailureObserver | None,
+    ) -> None:
+        self._first_chunk: str | None = first_chunk
+        self._body = body
+        self._terminal_frame = terminal_frame
+        self._terminal_failure_observer = terminal_failure_observer
+        self._done = False
+        self._closed = False
+
+    def __aiter__(self) -> _PrefetchedStream:
+        return self
+
+    async def __anext__(self) -> str:
+        if self._closed or self._done:
+            raise StopAsyncIteration
+        if self._first_chunk is not None:
+            first_chunk = self._first_chunk
+            self._first_chunk = None
+            return first_chunk
+        try:
+            return await anext(self._body)
+        except StopAsyncIteration:
+            self._done = True
             raise
-        terminal_error = find_execution_failure(exc) or exc
-        if terminal_failure_observer is not None:
-            terminal_failure_observer(terminal_error)
-        yield terminal_frame(terminal_error)
-    except Exception as exc:
+        except BaseExceptionGroup as exc:
+            return self._terminal_chunk(find_execution_failure(exc) or exc)
+        except Exception as exc:
+            return self._terminal_chunk(exc)
+
+    async def aclose(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        self._done = True
+        close_error = await try_close_async_iterator(self._body)
+        if close_error is not None:
+            raise close_error
+
+    def _terminal_chunk(self, exc: BaseException) -> str:
+        terminal_frame = self._terminal_frame
         if terminal_frame is None:
-            raise
-        if terminal_failure_observer is not None:
-            terminal_failure_observer(exc)
-        yield terminal_frame(exc)
+            raise exc
+        self._done = True
+        if self._terminal_failure_observer is not None:
+            self._terminal_failure_observer(exc)
+        return terminal_frame(exc)
 
 
 async def anthropic_sse_streaming_response(

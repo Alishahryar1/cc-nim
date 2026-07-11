@@ -236,10 +236,12 @@ configures logging, constructs the runtime owners and the configured voice
   the consumer-owned ports in [application/ports.py](src/free_claude_code/application/ports.py); Admin operations retain
   their inbound-adapter port in [api/ports.py](src/free_claude_code/api/ports.py).
 
-[api/app.py](src/free_claude_code/api/app.py) registers routers, HTTP correlation middleware, and exception handlers around
-an explicit `ApiServices` value. It does not read global settings or construct
-runtime resources. `app.state.services` is the only runtime state published to
-FastAPI.
+[api/app.py](src/free_claude_code/api/app.py) registers routers and exception
+handlers around an explicit `ApiServices` value, then wraps the application in a
+pure ASGI correlation boundary. The boundary surrounds the complete wire send;
+it does not proxy streaming responses through `BaseHTTPMiddleware`. The API does
+not read global settings or construct runtime resources.
+`app.state.services` is the only runtime state published to FastAPI.
 
 [runtime/application.py](src/free_claude_code/runtime/application.py) owns process startup and shutdown, optional messaging,
 the selected transcriber, the managed CLI session manager, Admin pending state,
@@ -261,15 +263,17 @@ the concise startup-failure contract.
 [runtime/provider_manager.py](src/free_claude_code/runtime/provider_manager.py) is the only owner that constructs, publishes,
 retires, and closes provider generations. Each request acquires a generation
 lease before routing. Non-streaming responses release it after aggregation;
-streaming responses release it from the response iterator's `finally` path on
-completion, failure, cancellation, or disconnect. A provider-only Admin Apply
-prepares a candidate and commits configuration before publication. New requests
-then use the candidate while old streams finish on the retired generation; its
-last lease closes it exactly once. Final shutdown rejects new acquisition and
-replacement, waits every lease, and awaits the same manager-owned cleanup task
-even if the initiating request or lease release is cancelled. Failed generation
-or unpublished-candidate cleanup remains owned and retryable; the manager does
-not become terminal or clear its model catalog until every owned runtime closes.
+streaming responses bind it to FCC's response owner, which first closes the
+entire body chain and then releases the lease on completion, failure,
+cancellation, disconnect, or a response-start send failure. A provider-only
+Admin Apply prepares a candidate and commits configuration before publication.
+New requests then use the candidate while old streams finish on the retired
+generation; its last lease closes it exactly once. Final shutdown rejects new
+acquisition and replacement, waits every lease, and awaits the same
+manager-owned cleanup task even if the initiating request or lease release is
+cancelled. Failed generation or unpublished-candidate cleanup remains owned and
+retryable; the manager does not become terminal or clear its model catalog until
+every owned runtime closes.
 
 The manager also owns one application-lifetime provider model catalog and its
 single best-effort discovery task. The catalog survives provider replacement.
@@ -352,11 +356,16 @@ proxy auth is disabled. Otherwise the token may be supplied through `x-api-key`,
 `Authorization: Bearer ...`, or `anthropic-auth-token`. Comparisons use
 constant-time matching.
 
-HTTP request correlation is owned at ingress. Middleware creates one opaque FCC
-request ID before routing, places it in log context and request state, and adds
-`request-id` to every response. OpenAI-compatible Responses and the shared model
-catalog also expose the same value as `x-request-id`. Provider execution and
-trace events receive that existing ID; they do not create a second identifier.
+HTTP request correlation is owned at ingress. A pure ASGI boundary creates one
+opaque FCC request ID before routing, places it in log context and request state,
+and adds `request-id` while forwarding the actual `http.response.start` message.
+OpenAI-compatible Responses and the shared model catalog also expose the same
+value as `x-request-id`. Provider execution and trace events receive that
+existing ID; they do not create a second identifier. Keeping the context around
+the complete inner ASGI call preserves correlation during streaming and leaves
+response lifetime finalization under the concrete response owner. Starlette's
+outer server-error boundary bypasses user middleware for its catch-all 500, so
+that one handler explicitly attaches the same ingress-owned headers.
 
 [api/handlers/](src/free_claude_code/api/handlers/) owns the public API product flows.
 `MessagesHandler` validates non-empty messages, resolves models, applies
@@ -372,15 +381,29 @@ it does not depend on FastAPI, provider implementations, or the full settings
 object.
 [api/response_streams.py](src/free_claude_code/api/response_streams.py) owns public streaming egress
 commit timing. It waits for the first protocol chunk before returning a
-successful `StreamingResponse`. A provider-execution failure before that commit
-boundary remains a real typed non-2xx JSON response. Once FCC has finalized the
-failure, the response includes `x-should-retry: false` so FCC retains ownership
-of upstream retry/recovery without causing a second client retry loop. After the
-first chunk has escaped, HTTP status is committed; Messages emits an Anthropic
-`event: error` and closes without a synthetic `message_stop`; Responses emits
-`response.failed` with the original response ID. Non-streaming Messages
-aggregate internally and return non-2xx JSON for any terminal stream error,
-discarding incomplete content rather than presenting a partial success.
+successful FCC-owned `StreamingResponse`. Its explicit replay iterator owns the
+prefetched stream even before replay begins. The response itself owns one
+idempotent finalization task: close the body transitively, then release the
+provider-generation lease. This finalizer surrounds the real ASGI send and runs
+to completion even when sending headers or the first body frame fails. A provider
+execution failure before that commit boundary remains a real typed non-2xx JSON
+response. Once FCC has finalized the failure, the response includes
+`x-should-retry: false` so FCC retains ownership of upstream retry/recovery
+without causing a second client retry loop. After the first chunk has escaped,
+HTTP status is committed; Messages emits an Anthropic `event: error` and closes
+without a synthetic `message_stop`; Responses emits `response.failed` with the
+original response ID. Non-streaming Messages aggregate internally and return
+non-2xx JSON for any terminal stream error, discarding incomplete content rather
+than presenting a partial success.
+
+The public response chain follows a transitive close-ownership rule. A response
+owns its replay iterator; replay owns the active protocol adapter; each protocol
+adapter owns its direct input; tracing owns the executor body; the executor body
+owns the provider iterator; and the provider runner owns its upstream stream.
+Each of these response-chain owners closes its direct input on normal completion,
+failure, cancellation, and early consumer close. Failures from those explicit
+cleanup calls are trace metadata and cannot replace an established wire outcome;
+a generation lease is released only after the body chain has finished closing.
 
 Ingress authentication, request validation, model routing, and deterministic
 preflight failures remain ordinary HTTP errors and do not receive the terminal
