@@ -972,14 +972,18 @@ before task creation, which is safe under Python's eager task factory, then
 launches claims returned by the aggregate, cancels the exact matching task,
 drains cleanup outside tree locks, and feeds matching completion back to the
 aggregate. Cancellation before a task body starts has an explicit recovery path;
-the cancellation flag is rechecked after callbacks, and callback failure cannot
-prevent successor launch. If a node processor unexpectedly escapes, the
-processor routes failure through the manager-owned aggregate transition; the
-workflow persists its snapshot and schedules its UI effect as normal queue
-advancement continues. The processor's completion event covers the published
-slot from launch through normal completion, successor publication, and pre-run
-recovery, so terminal workflow close cannot release delivery while cleanup is
-still active. [messaging/trees/node.py](src/free_claude_code/messaging/trees/node.py) owns
+the cancellation flag is rechecked after callbacks, and best-effort UI callback
+failure cannot prevent successor launch. If a node processor unexpectedly
+escapes, the processor routes failure through the manager-owned aggregate
+transition; the workflow persists its snapshot and schedules its UI effect as
+normal queue advancement continues. The processor's completion event covers the
+published slot from launch through normal completion, successor publication,
+and pre-run recovery, so terminal workflow close cannot release delivery while
+cleanup is still active. A failed aggregate-completion callback releases its
+finished task slot, records the failure, and hands it to the terminal waiter
+exactly once; a failed close therefore retains the workflow for reconciliation
+instead of hanging on ownership that no longer exists.
+[messaging/trees/node.py](src/free_claude_code/messaging/trees/node.py) owns
 `MessageNode` and `MessageState`; each node keeps only the copied scope and
 prompt needed by the aggregate rather than retaining a mutable ingress value,
 [messaging/trees/graph.py](src/free_claude_code/messaging/trees/graph.py) owns parent/child and

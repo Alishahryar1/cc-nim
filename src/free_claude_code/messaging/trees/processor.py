@@ -58,6 +58,7 @@ class TreeQueueProcessor:
         self._node_started_callback = node_started_callback
         self._log_messaging_error_details = log_messaging_error_details
         self._tasks: dict[str, _TaskSlot] = {}
+        self._completion_failures: list[Exception] = []
         self._idle = asyncio.Event()
         self._idle.set()
 
@@ -191,22 +192,33 @@ class TreeQueueProcessor:
         if current is not None:
             while current.cancelling():
                 current.uncancel()
-        while True:
-            try:
-                await self._claim_finished_callback(slot.tree, slot.claim)
-                break
-            except asyncio.CancelledError:
-                if current is not None:
-                    while current.cancelling():
-                        current.uncancel()
-                continue
-
-        slot.transitioned = True
-        key = self._key(slot.claim)
-        if self._tasks.get(key) is slot:
-            self._tasks.pop(key)
-        if not self._tasks:
-            self._idle.set()
+        try:
+            while True:
+                try:
+                    await self._claim_finished_callback(slot.tree, slot.claim)
+                    slot.transitioned = True
+                    break
+                except asyncio.CancelledError:
+                    if current is not None:
+                        while current.cancelling():
+                            current.uncancel()
+                    continue
+        except Exception as exc:
+            self._completion_failures.append(exc)
+            logger.error(
+                "Claim completion callback failed for node {}: {}",
+                slot.claim.node.node_id,
+                format_exception_for_log(
+                    exc,
+                    log_full_message=self._log_messaging_error_details,
+                ),
+            )
+        finally:
+            key = self._key(slot.claim)
+            if self._tasks.get(key) is slot:
+                self._tasks.pop(key)
+            if not self._tasks:
+                self._idle.set()
 
     def cancel(
         self,
@@ -242,8 +254,15 @@ class TreeQueueProcessor:
         return len(self._tasks)
 
     async def wait_idle(self) -> None:
-        """Wait until every published claim and recovery task has finished."""
+        """Wait for every task and hand completion failures to the caller once."""
         await self._idle.wait()
+        if not self._completion_failures:
+            return
+        failures = self._completion_failures
+        self._completion_failures = []
+        if len(failures) == 1:
+            raise failures[0]
+        raise ExceptionGroup("Messaging claim completion failures", failures)
 
 
 __all__ = ["CancelledTask", "TreeQueueProcessor"]

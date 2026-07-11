@@ -306,6 +306,64 @@ async def test_wait_idle_spans_pre_run_cancellation_recovery() -> None:
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("log_messaging_error_details", "secret_is_logged"),
+    [(False, False), (True, True)],
+)
+async def test_wait_idle_surfaces_finish_failure_without_leaking_task_owner(
+    caplog: pytest.LogCaptureFixture,
+    log_messaging_error_details: bool,
+    secret_is_logged: bool,
+) -> None:
+    secret = "unique-finish-callback-secret"
+    finish_error = RuntimeError(secret)
+    finish_calls = 0
+
+    async def process(_claim: NodeClaim) -> None:
+        return
+
+    async def fail_claim(_claim: NodeClaim) -> None:
+        raise AssertionError("successful processing must not fail the claim")
+
+    async def finish_claim(_tree: MessageTree, _claim: NodeClaim) -> None:
+        nonlocal finish_calls
+        finish_calls += 1
+        raise finish_error
+
+    tree = MessageTree(
+        MessageNode(
+            node_id="root",
+            scope=_SCOPE,
+            prompt="prompt root",
+            status_message_id="status-root",
+        )
+    )
+    decision = await tree.enqueue_or_claim("root")
+    assert decision.claim is not None
+    processor = TreeQueueProcessor(
+        process,
+        claim_failure_callback=fail_claim,
+        claim_finished_callback=finish_claim,
+        log_messaging_error_details=log_messaging_error_details,
+    )
+
+    with caplog.at_level(logging.ERROR):
+        processor.launch(tree, decision.claim)
+        with pytest.raises(RuntimeError) as raised:
+            await asyncio.wait_for(processor.wait_idle(), timeout=1)
+
+    assert raised.value is finish_error
+    assert finish_calls == 1
+    assert processor.task_count() == 0
+    await asyncio.wait_for(processor.wait_idle(), timeout=0.1)
+
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+    assert "Claim completion callback failed for node root" in messages
+    assert "RuntimeError" in messages
+    assert (secret in messages) is secret_is_logged
+
+
+@pytest.mark.asyncio
 async def test_failed_launch_rolls_idle_state_back(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
