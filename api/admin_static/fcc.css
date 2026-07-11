@@ -1172,7 +1172,7 @@ kbd {
 .evo-panel {
   margin: 18px 0 22px;
   padding: 18px 20px;
-  border: 1px solid var(--border);
+  border: 1px solid var(--line);
   border-radius: 12px;
   background: linear-gradient(180deg, rgba(47, 185, 132, 0.06), transparent);
 }
@@ -1214,7 +1214,7 @@ kbd {
 .evo-grid b {
   font-size: 20px;
   font-weight: 700;
-  color: var(--fg);
+  color: var(--text);
 }
 
 .evo-grid span {
@@ -1234,10 +1234,10 @@ kbd {
   display: inline-block;
   padding: 3px 10px;
   border-radius: 999px;
-  background: var(--surface);
-  border: 1px solid var(--border);
+  background: var(--card);
+  border: 1px solid var(--line);
   font-size: 11px;
-  color: var(--fg);
+  color: var(--text);
 }
 
 .pill {
@@ -1249,6 +1249,6 @@ kbd {
 }
 
 .pill-ok    { background: rgba(47, 185, 132, 0.18); color: var(--accent); }
-.pill-muted { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
+.pill-muted { background: var(--card); color: var(--muted); border: 1px solid var(--line); }
 
 .muted { color: var(--muted); font-size: 12px; }
