@@ -29,7 +29,7 @@ from free_claude_code.providers.transports.openai_chat.tool_calls import (
     has_committed_sse_output,
     iter_heuristic_tool_use_sse,
 )
-from tests.provider_request_mocks import make_openai_compat_stream_request
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
 
 
@@ -98,9 +98,21 @@ def _make_provider_with_thinking_enabled(enabled: bool):
     )
 
 
-def _make_request(model="test-model", stream=True):
-    """Create a mock request with all fields build_request_body needs."""
-    return make_openai_compat_stream_request(model=model, stream=stream)
+def _make_request(model: str = "test-model", stream: bool = True, **overrides: object):
+    """Create a concrete request matching the original streaming-test defaults."""
+    request_overrides: dict[str, object] = {
+        "messages": [],
+        "max_tokens": 4096,
+        "temperature": None,
+        "top_p": None,
+        "system": None,
+        "tools": None,
+        "extra_body": None,
+        "thinking": None,
+        "stream": stream,
+    }
+    request_overrides.update(overrides)
+    return make_messages_request(model, **request_overrides)
 
 
 def _make_chunk(
@@ -987,19 +999,20 @@ class TestStreamingExceptionHandling:
     async def test_incomplete_tool_call_repair_appends_schema_valid_suffix(self):
         """A truncated tool JSON prefix is repaired append-only before tool_use tail."""
         provider = _make_provider()
-        request = _make_request()
-        request.tools = [
-            SimpleNamespace(
-                name="echo_smoke",
-                description="Echo",
-                input_schema={
-                    "type": "object",
-                    "properties": {"message": {"type": "string"}},
-                    "required": ["message"],
-                    "additionalProperties": False,
-                },
-            )
-        ]
+        request = _make_request(
+            tools=[
+                {
+                    "name": "echo_smoke",
+                    "description": "Echo",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"message": {"type": "string"}},
+                        "required": ["message"],
+                        "additionalProperties": False,
+                    },
+                }
+            ]
+        )
         tool_chunk = _make_tool_calls_chunk(
             name="echo_smoke", arguments='{"message":', tool_id="call_repair"
         )

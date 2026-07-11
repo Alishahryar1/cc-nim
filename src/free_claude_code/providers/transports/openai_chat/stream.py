@@ -12,6 +12,7 @@ from free_claude_code.core.anthropic import (
     HeuristicToolParser,
     ThinkTagParser,
 )
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.streaming import (
     AnthropicStreamLedger,
     RecoveryController,
@@ -41,7 +42,7 @@ class OpenAIChatStreamAdapter:
         self,
         transport: Any,
         *,
-        request: Any,
+        request: MessagesRequest,
         input_tokens: int,
         request_id: str | None,
         thinking_enabled: bool | None,

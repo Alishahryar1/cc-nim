@@ -12,7 +12,6 @@ heuristic recovery on top.
 """
 
 import time
-from typing import Any
 
 import httpx
 from loguru import logger
@@ -23,6 +22,7 @@ from free_claude_code.core.anthropic import (
     get_token_count,
 )
 from free_claude_code.core.anthropic.conversion import OpenAIConversionError
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.defaults import LMSTUDIO_DEFAULT_BASE
 from free_claude_code.providers.exceptions import InvalidRequestError
@@ -51,7 +51,7 @@ class LMStudioProvider(OpenAIChatTransport):
         self._loaded_context_cache: tuple[float, int | None] = (0.0, None)
 
     def _build_request_body(
-        self, request: Any, thinking_enabled: bool | None = None
+        self, request: MessagesRequest, thinking_enabled: bool | None = None
     ) -> dict:
         """Build an OpenAI chat body from the Anthropic request.
 
@@ -69,19 +69,19 @@ class LMStudioProvider(OpenAIChatTransport):
             raise InvalidRequestError(str(exc)) from exc
 
     def preflight_stream(
-        self, request: Any, *, thinking_enabled: bool | None = None
+        self, request: MessagesRequest, *, thinking_enabled: bool | None = None
     ) -> None:
         super().preflight_stream(request, thinking_enabled=thinking_enabled)
         self._preflight_context_budget(request)
 
-    def _preflight_context_budget(self, request: Any) -> None:
+    def _preflight_context_budget(self, request: MessagesRequest) -> None:
         loaded_context = self._loaded_context_length()
         if loaded_context is None:
             return
         estimate = get_token_count(
-            getattr(request, "messages", []) or [],
-            getattr(request, "system", None),
-            getattr(request, "tools", None),
+            request.messages,
+            request.system,
+            request.tools,
         )
         # The estimate is cl100k-based and undercounts local tokenizers
         # (observed ~8% low vs devstral); a request above 90% of the loaded

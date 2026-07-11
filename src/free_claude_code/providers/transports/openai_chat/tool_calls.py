@@ -5,6 +5,7 @@ import uuid
 from collections.abc import Callable, Iterator
 from typing import Any
 
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.streaming import (
     AnthropicStreamLedger,
     tool_schemas_by_name,
@@ -80,7 +81,9 @@ def started_tool_states(ledger: AnthropicStreamLedger) -> list[tuple[int, Any]]:
     ]
 
 
-def all_emitted_tools_complete(ledger: AnthropicStreamLedger, request: Any) -> bool:
+def all_emitted_tools_complete(
+    ledger: AnthropicStreamLedger, request: MessagesRequest
+) -> bool:
     """Return whether every emitted tool block has schema-valid input."""
     return ledger.can_salvage_tool_use(tool_schemas_by_name(request))
 

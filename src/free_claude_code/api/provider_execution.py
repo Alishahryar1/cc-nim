@@ -6,9 +6,8 @@ from typing import Any
 from loguru import logger
 
 from free_claude_code.config.settings import Settings
-from free_claude_code.core.anthropic import get_token_count
+from free_claude_code.core.anthropic import anthropic_request_snapshot, get_token_count
 from free_claude_code.core.trace import (
-    api_messages_request_snapshot,
     trace_event,
     traced_async_stream,
 )
@@ -77,7 +76,7 @@ class ProviderExecutionService:
             ),
             source="api",
             message_count=len(routed.request.messages),
-            snapshot=api_messages_request_snapshot(routed.request),
+            snapshot=anthropic_request_snapshot(routed.request),
             request_id=request_id,
         )
 

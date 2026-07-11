@@ -7,6 +7,7 @@ import openai
 from loguru import logger
 
 from free_claude_code.config.nim import NimSettings
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.defaults import NVIDIA_NIM_DEFAULT_BASE
 from free_claude_code.providers.rate_limit import ProviderRateLimiter
@@ -44,7 +45,7 @@ class NvidiaNimProvider(OpenAIChatTransport):
         self._nim_settings = nim_settings
 
     def _build_request_body(
-        self, request: Any, thinking_enabled: bool | None = None
+        self, request: MessagesRequest, thinking_enabled: bool | None = None
     ) -> dict:
         """Internal helper for tests and shared building."""
         return build_nim_request_body(

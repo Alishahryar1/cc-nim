@@ -8,9 +8,9 @@ from fastapi.responses import JSONResponse
 
 from free_claude_code.api import provider_execution, request_errors
 from free_claude_code.api.handlers import MessagesHandler, TokenCountHandler
-from free_claude_code.api.models.anthropic import Message, MessagesRequest
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import AnthropicStreamLedger
+from free_claude_code.core.anthropic.models import Message, MessagesRequest
 
 
 @pytest.mark.asyncio
@@ -197,7 +197,7 @@ def test_count_tokens_unexpected_error_default_logs_exclude_exception_text():
         settings,
         token_counter=boom,
     )
-    from free_claude_code.api.models.anthropic import TokenCountRequest
+    from free_claude_code.core.anthropic.models import TokenCountRequest
 
     req = TokenCountRequest(
         model="claude-3-haiku-20240307",

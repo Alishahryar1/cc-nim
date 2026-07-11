@@ -7,9 +7,8 @@ from loguru import logger
 from free_claude_code.config.model_refs import parse_model_name, parse_provider_type
 from free_claude_code.config.provider_ids import SUPPORTED_PROVIDER_IDS
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.anthropic import MessagesRequest, TokenCountRequest
 from free_claude_code.core.gateway_model_ids import decode_gateway_model_id
-
-from .models.anthropic import MessagesRequest, TokenCountRequest
 
 
 @dataclass(frozen=True, slots=True)

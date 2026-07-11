@@ -4,9 +4,7 @@ Detects quota checks, title generation, prefix detection, safety classifier,
 suggestion mode, and filepath extraction requests to enable targeted handling.
 """
 
-from free_claude_code.core.anthropic import extract_text_from_content
-
-from .models.anthropic import MessagesRequest
+from free_claude_code.core.anthropic import MessagesRequest, extract_text_from_content
 
 
 def is_quota_check_request(request_data: MessagesRequest) -> bool:

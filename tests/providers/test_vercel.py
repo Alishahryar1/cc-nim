@@ -9,29 +9,12 @@ from free_claude_code.providers.vercel import (
     VERCEL_AI_GATEWAY_DEFAULT_BASE,
     VercelProvider,
 )
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
 
 
-class MockMessage:
-    def __init__(self, role, content):
-        self.role = role
-        self.content = content
-
-
-class MockRequest:
-    def __init__(self, **kwargs):
-        self.model = "openai/gpt-5.5"
-        self.messages = [MockMessage("user", "Hello")]
-        self.max_tokens = 100
-        self.temperature = 0.5
-        self.top_p = 0.9
-        self.system = "System prompt"
-        self.stop_sequences = None
-        self.tools = []
-        self.thinking = MagicMock()
-        self.thinking.enabled = True
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+def make_request(**overrides):
+    return make_messages_request("openai/gpt-5.5", **overrides)
 
 
 @pytest.fixture
@@ -97,7 +80,7 @@ def test_build_request_body_keeps_max_tokens(vercel_provider):
             "max_tokens": 42,
         }
 
-        body = vercel_provider._build_request_body(MockRequest())
+        body = vercel_provider._build_request_body(make_request())
 
     assert body["messages"][0].get("name") == "alice"
     assert body["max_tokens"] == 42
@@ -105,7 +88,7 @@ def test_build_request_body_keeps_max_tokens(vercel_provider):
 
 
 def test_build_request_body_preserves_caller_extra_body(vercel_provider):
-    req = MockRequest(extra_body={"providerOptions": {"openai": {"reasoning": "low"}}})
+    req = make_request(extra_body={"providerOptions": {"openai": {"reasoning": "low"}}})
 
     body = vercel_provider._build_request_body(req)
 
@@ -136,7 +119,7 @@ async def test_stream_response_text(vercel_provider):
         mock_create.return_value = mock_stream()
 
         events = [
-            event async for event in vercel_provider.stream_response(MockRequest())
+            event async for event in vercel_provider.stream_response(make_request())
         ]
 
     assert any(
@@ -168,7 +151,7 @@ async def test_stream_response_reasoning_content(vercel_provider):
         mock_create.return_value = mock_stream()
 
         events = [
-            event async for event in vercel_provider.stream_response(MockRequest())
+            event async for event in vercel_provider.stream_response(make_request())
         ]
 
     assert any(

@@ -272,7 +272,7 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         "VS Code protocol-shaped requests work against the proxy",
         "readme",
         (
-            "tests/api/test_models_validators.py::test_messages_request_accepts_adaptive_thinking_type",
+            "tests/core/anthropic/test_models.py::test_messages_request_accepts_adaptive_thinking_type",
         ),
         ("test_vscode_and_jetbrains_shaped_requests",),
         ("test_vscode_protocol_e2e",),
@@ -285,7 +285,7 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         "JetBrains/ACP protocol-shaped requests work against the proxy",
         "readme",
         (
-            "tests/api/test_models_validators.py::test_messages_request_accepts_adaptive_thinking_type",
+            "tests/core/anthropic/test_models.py::test_messages_request_accepts_adaptive_thinking_type",
         ),
         ("test_vscode_and_jetbrains_shaped_requests",),
         ("test_jetbrains_protocol_e2e",),

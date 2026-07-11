@@ -4,6 +4,7 @@ from typing import Any
 
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.core.anthropic import set_if_not_none
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.transports.openai_chat import (
     OpenAIChatRequestPolicy,
     build_openai_chat_request_body,
@@ -15,7 +16,7 @@ _REQUEST_POLICY = OpenAIChatRequestPolicy(provider_name="NIM")
 
 
 def build_nim_request_body(
-    request_data: Any, nim: NimSettings, *, thinking_enabled: bool
+    request_data: MessagesRequest, nim: NimSettings, *, thinking_enabled: bool
 ) -> dict[str, Any]:
     """Build OpenAI-format request body from Anthropic request plus NIM settings."""
     return build_openai_chat_request_body(
@@ -35,7 +36,7 @@ def build_nim_request_body(
 
 def apply_nim_request_options(
     body: dict[str, Any],
-    request_data: Any,
+    request_data: MessagesRequest,
     thinking_enabled: bool,
     *,
     nim: NimSettings,
@@ -43,7 +44,7 @@ def apply_nim_request_options(
     """Apply NIM schema repairs and configured request defaults."""
     sanitize_nim_tool_schemas(body)
 
-    max_tokens = body.get("max_tokens") or getattr(request_data, "max_tokens", None)
+    max_tokens = body.get("max_tokens") or request_data.max_tokens
     if max_tokens is None:
         max_tokens = nim.max_tokens
     elif nim.max_tokens:
@@ -68,7 +69,7 @@ def apply_nim_request_options(
     body["parallel_tool_calls"] = nim.parallel_tool_calls
 
     extra_body: dict[str, Any] = {}
-    request_extra = getattr(request_data, "extra_body", None)
+    request_extra = request_data.extra_body
     if request_extra:
         extra_body.update(request_extra)
 
@@ -79,7 +80,7 @@ def apply_nim_request_options(
         if isinstance(chat_template_kwargs, dict):
             chat_template_kwargs.setdefault("reasoning_budget", max_tokens)
 
-    req_top_k = getattr(request_data, "top_k", None)
+    req_top_k = request_data.top_k
     top_k = req_top_k if req_top_k is not None else nim.top_k
     _set_extra(extra_body, "top_k", top_k, ignore_value=-1)
     _set_extra(extra_body, "min_p", nim.min_p, ignore_value=0.0)

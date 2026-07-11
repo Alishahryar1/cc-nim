@@ -1,12 +1,12 @@
 """Detect forced Anthropic web server tool requests."""
 
-from free_claude_code.api.models.anthropic import MessagesRequest, Tool
+from free_claude_code.core.anthropic import MessagesRequest, Tool
+
+from .parsers import content_text
 
 
 def request_text(request: MessagesRequest) -> str:
     """Join all user/assistant message content into one string for tool input parsing."""
-    from .parsers import content_text
-
     return "\n".join(content_text(message.content) for message in request.messages)
 
 
@@ -14,8 +14,6 @@ def forced_tool_turn_text(request: MessagesRequest) -> str:
     """Text for parsing forced server-tool inputs: latest user turn only (avoids stale history)."""
     if not request.messages:
         return ""
-
-    from .parsers import content_text
 
     for message in reversed(request.messages):
         if message.role == "user":

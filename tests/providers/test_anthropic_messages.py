@@ -23,6 +23,7 @@ from free_claude_code.providers.transports.anthropic_messages import (
 from free_claude_code.providers.transports.anthropic_messages.recovery import (
     AnthropicMessagesRecovery,
 )
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
 
 
@@ -37,23 +38,6 @@ class NativeProvider(AnthropicMessagesTransport):
 
     def _request_headers(self) -> dict[str, str]:
         return {"Content-Type": "application/json", "X-Test": "1"}
-
-
-class MockRequest:
-    model = "test-model"
-
-    def __init__(self, *, thinking_enabled: bool = True, body: dict | None = None):
-        self.thinking = MagicMock()
-        self.thinking.enabled = thinking_enabled
-        self._body = body or {
-            "model": self.model,
-            "messages": [{"role": "user", "content": "Hello"}],
-            "extra_body": {"ignored": True},
-            "thinking": {"enabled": thinking_enabled},
-        }
-
-    def model_dump(self, exclude_none=True):
-        return dict(self._body)
 
 
 class FakeResponse:
@@ -166,7 +150,7 @@ def test_default_request_body_strips_internal_fields(provider_config):
         rate_limiter=passthrough_rate_limiter(),
     )
 
-    body = provider._build_request_body(MockRequest())
+    body = provider._build_request_body(make_messages_request(max_tokens=None))
 
     assert body["model"] == "test-model"
     assert body["thinking"] == {"type": "enabled"}
@@ -179,12 +163,9 @@ def test_default_request_body_preserves_thinking_budget(provider_config):
         provider_config,
         rate_limiter=passthrough_rate_limiter(),
     )
-    req = MockRequest(
-        body={
-            "model": "test-model",
-            "messages": [{"role": "user", "content": "Hello"}],
-            "thinking": {"type": "enabled", "budget_tokens": 4096},
-        }
+    req = make_messages_request(
+        max_tokens=None,
+        thinking={"type": "enabled", "budget_tokens": 4096},
     )
 
     body = provider._build_request_body(req)
@@ -225,7 +206,7 @@ async def test_stream_uses_retry_builds_request_and_closes_response(
     mock_rate_limiter,
 ):
     provider = NativeProvider(provider_config, rate_limiter=mock_rate_limiter)
-    req = MockRequest()
+    req = make_messages_request()
     request_obj = httpx.Request("POST", "https://custom.test/v1/messages")
     response = FakeResponse(
         lines=[
@@ -272,7 +253,7 @@ async def test_late_error_after_native_message_stop_keeps_successful_lifecycle(
     mock_rate_limiter,
 ):
     provider = NativeProvider(provider_config, rate_limiter=mock_rate_limiter)
-    req = MockRequest()
+    req = make_messages_request()
     lines = [
         "event: message_start",
         'data: {"type":"message_start"}',
@@ -317,7 +298,7 @@ async def test_stream_maps_pre_start_non_200_to_provider_error_and_closes_respon
         provider_config,
         rate_limiter=passthrough_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_messages_request()
     response = FakeResponse(status_code=500, text="Internal Server Error")
 
     with (
@@ -347,7 +328,7 @@ async def test_precommit_native_error_raises_without_leaking_open_block(
         provider_config,
         rate_limiter=passthrough_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_messages_request()
     mid = "msg_midstream_err"
     msg_start = format_sse_event(
         "message_start",
@@ -402,7 +383,7 @@ async def test_midstream_error_after_native_message_delta_does_not_duplicate_ter
         provider_config,
         rate_limiter=passthrough_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_messages_request()
     msg_start = format_sse_event(
         "message_start",
         {
@@ -506,7 +487,7 @@ async def test_native_text_recovery_closes_thinking_before_text_suffix():
     ) as mock_collect:
         events = await recovery.events(
             body={"messages": []},
-            request=MockRequest(),
+            request=make_messages_request(),
             ledger=ledger,
             error=TimeoutError("cutoff"),
             request_id="req_native_recovery",
@@ -544,7 +525,7 @@ async def test_clean_eof_after_complete_native_tool_call_salvages_tool_use(
         provider_config,
         rate_limiter=passthrough_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_messages_request()
     msg_start = format_sse_event(
         "message_start",
         {
@@ -617,7 +598,7 @@ async def test_clean_eof_after_native_text_continues_with_overlap_trim(
         provider_config,
         rate_limiter=passthrough_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_messages_request()
     msg_start = format_sse_event(
         "message_start",
         {
@@ -831,7 +812,7 @@ async def test_truncated_native_recovery_stream_falls_back_to_error_tail(
         provider_config,
         rate_limiter=passthrough_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_messages_request()
     msg_start = format_sse_event(
         "message_start",
         {
@@ -916,7 +897,7 @@ async def test_precommit_native_holdback_retries_without_leaking_partial(
         provider_config,
         rate_limiter=passthrough_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_messages_request()
 
     msg_start = format_sse_event(
         "message_start",

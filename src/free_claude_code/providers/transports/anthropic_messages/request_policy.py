@@ -7,13 +7,14 @@ from typing import Any, Literal
 from loguru import logger
 
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.native_messages_request import (
     build_base_native_anthropic_request_body,
 )
 from free_claude_code.providers.exceptions import InvalidRequestError
 
 NativeExtraBodyPolicy = Literal["drop", "reject"]
-NativeMessagesPostprocessor = Callable[[dict[str, Any], Any, bool], None]
+NativeMessagesPostprocessor = Callable[[dict[str, Any], MessagesRequest, bool], None]
 
 
 @dataclass(frozen=True, slots=True)
@@ -28,7 +29,7 @@ class NativeMessagesRequestPolicy:
 
 
 def build_native_messages_request_body(
-    request_data: Any,
+    request_data: MessagesRequest,
     *,
     thinking_enabled: bool,
     policy: NativeMessagesRequestPolicy,
@@ -38,8 +39,8 @@ def build_native_messages_request_body(
     logger.debug(
         "{}_REQUEST: native build model={} msgs={}",
         policy.provider_name,
-        getattr(request_data, "model", "?"),
-        len(getattr(request_data, "messages", [])),
+        request_data.model,
+        len(request_data.messages),
     )
 
     body = build_base_native_anthropic_request_body(
@@ -66,10 +67,10 @@ def build_native_messages_request_body(
 
 def _apply_extra_body_policy(
     body: dict[str, Any],
-    request_data: Any,
+    request_data: MessagesRequest,
     policy: NativeMessagesRequestPolicy,
 ) -> None:
-    extra = getattr(request_data, "extra_body", None)
+    extra = request_data.extra_body
     if not extra:
         return
 

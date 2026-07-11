@@ -1,5 +1,9 @@
 """Model-list response construction for Claude-compatible clients."""
 
+from typing import Literal
+
+from pydantic import BaseModel
+
 from free_claude_code.config.model_refs import configured_chat_model_refs
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.gateway_model_ids import (
@@ -7,10 +11,27 @@ from free_claude_code.core.gateway_model_ids import (
     no_thinking_gateway_model_id,
 )
 
-from .models.responses import ModelResponse, ModelsListResponse
 from .ports import RequestRuntimePort
 
 DISCOVERED_MODEL_CREATED_AT = "1970-01-01T00:00:00Z"
+
+
+class ModelResponse(BaseModel):
+    object: Literal["model"] = "model"
+    created: int = 0
+    owned_by: str = "free-claude-code"
+    created_at: str
+    display_name: str
+    id: str
+    type: Literal["model"] = "model"
+
+
+class ModelsListResponse(BaseModel):
+    object: Literal["list"] = "list"
+    data: list[ModelResponse]
+    first_id: str | None
+    has_more: bool
+    last_id: str | None
 
 
 SUPPORTED_CLAUDE_MODELS = [

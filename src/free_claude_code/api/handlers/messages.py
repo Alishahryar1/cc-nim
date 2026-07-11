@@ -9,7 +9,6 @@ from loguru import logger
 
 from free_claude_code.api.detection import is_safety_classifier_request
 from free_claude_code.api.model_router import ModelRouter, RoutedMessagesRequest
-from free_claude_code.api.models.anthropic import MessagesRequest
 from free_claude_code.api.optimization_handlers import try_optimizations
 from free_claude_code.api.provider_execution import (
     ProviderExecutionService,
@@ -39,6 +38,7 @@ from free_claude_code.api.web_tools.streaming import stream_web_server_tool_resp
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import (
+    MessagesRequest,
     aggregate_anthropic_sse_to_message,
     anthropic_error_payload,
     anthropic_status_for_error_type,

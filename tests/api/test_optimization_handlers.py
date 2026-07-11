@@ -2,11 +2,6 @@
 
 from unittest.mock import patch
 
-from free_claude_code.api.models.anthropic import (
-    ContentBlockText,
-    Message,
-    MessagesRequest,
-)
 from free_claude_code.api.optimization_handlers import (
     try_filepath_mock,
     try_optimizations,
@@ -16,6 +11,11 @@ from free_claude_code.api.optimization_handlers import (
     try_title_skip,
 )
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.anthropic.models import (
+    ContentBlockText,
+    Message,
+    MessagesRequest,
+)
 
 
 def _make_request(

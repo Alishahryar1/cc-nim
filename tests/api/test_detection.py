@@ -7,7 +7,7 @@ from free_claude_code.api.detection import (
     is_prefix_detection_request,
     is_safety_classifier_request,
 )
-from free_claude_code.api.models.anthropic import Message, MessagesRequest
+from free_claude_code.core.anthropic.models import Message, MessagesRequest
 
 
 def _make_request(content: str, **kwargs) -> MessagesRequest:

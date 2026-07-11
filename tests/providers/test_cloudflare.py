@@ -7,7 +7,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
-from free_claude_code.api.models.anthropic import Message, MessagesRequest
+from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.cloudflare import (

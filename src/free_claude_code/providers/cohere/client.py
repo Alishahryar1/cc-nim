@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.defaults import COHERE_DEFAULT_BASE
 from free_claude_code.providers.exceptions import InvalidRequestError
@@ -55,7 +56,7 @@ class CohereProvider(OpenAIChatTransport):
         )
 
     def _build_request_body(
-        self, request: Any, thinking_enabled: bool | None = None
+        self, request: MessagesRequest, thinking_enabled: bool | None = None
     ) -> dict:
         return build_openai_chat_request_body(
             request,
@@ -66,9 +67,9 @@ class CohereProvider(OpenAIChatTransport):
 
 
 def _apply_cohere_request_quirks(
-    body: dict[str, Any], request_data: Any, thinking_enabled: bool
+    body: dict[str, Any], request_data: MessagesRequest, thinking_enabled: bool
 ) -> None:
-    _merge_allowed_extra_body(body, getattr(request_data, "extra_body", None))
+    _merge_allowed_extra_body(body, request_data.extra_body)
     body["reasoning_effort"] = "high" if thinking_enabled else "none"
 
 

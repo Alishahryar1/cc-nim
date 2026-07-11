@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.defaults import GITHUB_MODELS_DEFAULT_BASE
 from free_claude_code.providers.exceptions import ModelListResponseError
@@ -82,7 +83,7 @@ class GitHubModelsProvider(OpenAIChatTransport):
             await maybe_await_aclose(response)
 
     def _build_request_body(
-        self, request: Any, thinking_enabled: bool | None = None
+        self, request: MessagesRequest, thinking_enabled: bool | None = None
     ) -> dict:
         return build_openai_chat_request_body(
             request,

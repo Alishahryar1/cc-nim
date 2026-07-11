@@ -99,6 +99,24 @@ def test_create_response_stream_routes_through_provider(
     assert provider.stream_kwargs[0]["request_id"] == response.headers["request-id"]
 
 
+def test_create_response_accepts_unknown_top_level_extensions(
+    responses_client: tuple[TestClient, FakeProvider],
+) -> None:
+    client, provider = responses_client
+
+    response = client.post(
+        "/v1/responses",
+        json={
+            "model": "nvidia_nim/test-model",
+            "input": "Hello",
+            "provider_extension": {"enabled": True},
+        },
+    )
+
+    assert response.status_code == 200
+    assert provider.requests[0].messages[0].content == "Hello"
+
+
 def test_create_response_pre_start_provider_error_returns_openai_error() -> None:
     provider = PreStartFailingProvider()
     app = create_test_app()

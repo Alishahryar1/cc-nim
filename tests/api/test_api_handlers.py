@@ -11,14 +11,14 @@ from free_claude_code.api.handlers import (
     ResponsesHandler,
     TokenCountHandler,
 )
-from free_claude_code.api.models.anthropic import (
+from free_claude_code.config.settings import Settings
+from free_claude_code.core.anthropic.models import (
     Message,
     MessagesRequest,
     TokenCountRequest,
 )
-from free_claude_code.api.models.openai_responses import OpenAIResponsesRequest
-from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic.streaming import format_sse_event
+from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.exceptions import InvalidRequestError, RateLimitError
 

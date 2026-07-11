@@ -10,48 +10,12 @@ from httpx import Request, Response
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.exceptions import ProviderError
 from free_claude_code.providers.mistral import MISTRAL_DEFAULT_BASE, MistralProvider
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
 
 
-class MockMessage:
-    def __init__(self, role, content, reasoning_content=None):
-        self.role = role
-        self.content = content
-        self.reasoning_content = reasoning_content
-
-
-class MockBlock:
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
-
-class MockTool:
-    def __init__(self):
-        self.name = "echo"
-        self.description = "Echo a value"
-        self.input_schema = {
-            "type": "object",
-            "properties": {"value": {"type": "string"}},
-            "required": ["value"],
-        }
-
-
-class MockRequest:
-    def __init__(self, **kwargs):
-        self.model = "devstral-small-latest"
-        self.messages = [MockMessage("user", "Hello")]
-        self.max_tokens = 100
-        self.temperature = 0.5
-        self.top_p = 0.9
-        self.system = "System prompt"
-        self.stop_sequences = None
-        self.tools = []
-        self.tool_choice = None
-        self.thinking = MagicMock()
-        self.thinking.enabled = True
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+def make_request(**overrides):
+    return make_messages_request("devstral-small-latest", **overrides)
 
 
 @pytest.fixture
@@ -89,7 +53,7 @@ def test_default_base_url():
 
 def test_build_request_body_basic(mistral_provider):
     """Basic request body conversion works for Mistral."""
-    req = MockRequest()
+    req = make_request()
     body = mistral_provider._build_request_body(req)
 
     assert body["model"] == "devstral-small-latest"
@@ -100,32 +64,32 @@ def test_build_request_body_basic(mistral_provider):
 def test_build_request_body_replays_prior_thinking_as_mistral_chunks(
     mistral_provider,
 ):
-    req = MockRequest(
+    req = make_request(
         system=None,
         messages=[
-            MockMessage(
-                "assistant",
-                [
-                    MockBlock(type="thinking", thinking="Need the tool."),
-                    MockBlock(type="text", text="Calling the tool."),
-                    MockBlock(
-                        type="tool_use",
-                        id="toolu_1",
-                        name="echo",
-                        input={"value": "x"},
-                    ),
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "Need the tool."},
+                    {"type": "text", "text": "Calling the tool."},
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_1",
+                        "name": "echo",
+                        "input": {"value": "x"},
+                    },
                 ],
-            ),
-            MockMessage(
-                "user",
-                [
-                    MockBlock(
-                        type="tool_result",
-                        tool_use_id="toolu_1",
-                        content="result",
-                    )
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_1",
+                        "content": "result",
+                    }
                 ],
-            ),
+            },
         ],
     )
 
@@ -144,8 +108,18 @@ def test_build_request_body_replays_prior_thinking_as_mistral_chunks(
 
 
 def test_build_request_body_preserves_tools_tool_choice_and_params(mistral_provider):
-    req = MockRequest(
-        tools=[MockTool()],
+    req = make_request(
+        tools=[
+            {
+                "name": "echo",
+                "description": "Echo a value",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {"value": {"type": "string"}},
+                    "required": ["value"],
+                },
+            }
+        ],
         tool_choice={"type": "tool", "name": "echo"},
         stop_sequences=["STOP"],
     )
@@ -172,7 +146,7 @@ def test_build_request_body_global_disable_blocks_reasoning_mapping():
         ),
         rate_limiter=passthrough_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_request()
     body = provider._build_request_body(req)
 
     assert "reasoning_effort" not in body
@@ -190,16 +164,16 @@ def test_build_request_body_thinking_disabled_strips_prior_mistral_thinking():
         ),
         rate_limiter=passthrough_rate_limiter(),
     )
-    req = MockRequest(
+    req = make_request(
         system=None,
         messages=[
-            MockMessage(
-                "assistant",
-                [
-                    MockBlock(type="thinking", thinking="Hidden."),
-                    MockBlock(type="text", text="Visible."),
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "Hidden."},
+                    {"type": "text", "text": "Visible."},
                 ],
-            ),
+            },
         ],
     )
 
@@ -212,7 +186,7 @@ def test_build_request_body_thinking_disabled_strips_prior_mistral_thinking():
 @pytest.mark.asyncio
 async def test_stream_response_text(mistral_provider):
     """Text content deltas are emitted as text blocks."""
-    req = MockRequest()
+    req = make_request()
 
     mock_chunk = MagicMock()
     mock_chunk.choices = [
@@ -245,7 +219,7 @@ async def test_stream_response_text(mistral_provider):
 @pytest.mark.asyncio
 async def test_stream_response_reasoning_content(mistral_provider):
     """reasoning_content deltas are emitted as thinking blocks."""
-    req = MockRequest()
+    req = make_request()
 
     mock_chunk = MagicMock()
     mock_chunk.choices = [
@@ -277,7 +251,7 @@ async def test_stream_response_reasoning_content(mistral_provider):
 
 @pytest.mark.asyncio
 async def test_stream_response_native_mistral_thinking_chunk(mistral_provider):
-    req = MockRequest()
+    req = make_request()
 
     mock_chunk = MagicMock()
     mock_chunk.choices = [
@@ -314,7 +288,7 @@ async def test_stream_response_native_mistral_thinking_chunk(mistral_provider):
 
 @pytest.mark.asyncio
 async def test_stream_response_native_mistral_text_chunk(mistral_provider):
-    req = MockRequest()
+    req = make_request()
 
     mock_chunk = MagicMock()
     mock_chunk.choices = [
@@ -346,7 +320,7 @@ async def test_stream_response_native_mistral_text_chunk(mistral_provider):
 async def test_stream_response_preserves_native_thinking_and_string_text(
     mistral_provider,
 ):
-    req = MockRequest()
+    req = make_request()
 
     mock_chunk = SimpleNamespace(
         choices=[
@@ -384,7 +358,7 @@ async def test_stream_response_preserves_native_thinking_and_string_text(
 async def test_stream_response_preserves_native_reasoning_and_string_text(
     mistral_provider,
 ):
-    req = MockRequest()
+    req = make_request()
 
     mock_chunk = SimpleNamespace(
         choices=[
@@ -420,7 +394,7 @@ async def test_stream_response_preserves_native_reasoning_and_string_text(
 async def test_stream_response_preserves_mixed_native_content_array(
     mistral_provider,
 ):
-    req = MockRequest()
+    req = make_request()
 
     mock_chunk = MagicMock()
     mock_chunk.choices = [
@@ -460,7 +434,7 @@ async def test_stream_response_preserves_mixed_native_content_array(
 async def test_stream_response_suppresses_native_mistral_thinking_when_disabled(
     mistral_provider,
 ):
-    req = MockRequest()
+    req = make_request()
 
     mock_chunk = MagicMock()
     mock_chunk.choices = [
@@ -505,31 +479,31 @@ async def test_stream_response_suppresses_native_mistral_thinking_when_disabled(
 async def test_stream_response_retries_without_mistral_reasoning_on_rejection(
     mistral_provider,
 ):
-    req = MockRequest(
+    req = make_request(
         system=None,
         messages=[
-            MockMessage(
-                "assistant",
-                [
-                    MockBlock(type="thinking", thinking="Need the tool."),
-                    MockBlock(
-                        type="tool_use",
-                        id="toolu_reasoning",
-                        name="echo",
-                        input={"value": "FCC_TOOL"},
-                    ),
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "Need the tool."},
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_reasoning",
+                        "name": "echo",
+                        "input": {"value": "FCC_TOOL"},
+                    },
                 ],
-            ),
-            MockMessage(
-                "user",
-                [
-                    MockBlock(
-                        type="tool_result",
-                        tool_use_id="toolu_reasoning",
-                        content="result",
-                    )
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_reasoning",
+                        "content": "result",
+                    }
                 ],
-            ),
+            },
         ],
     )
 
@@ -572,32 +546,32 @@ async def test_stream_response_retries_without_mistral_reasoning_on_rejection(
 async def test_stream_response_reasoning_retry_preserves_visible_text_and_tools(
     mistral_provider,
 ):
-    req = MockRequest(
+    req = make_request(
         system=None,
         messages=[
-            MockMessage(
-                "assistant",
-                [
-                    MockBlock(type="thinking", thinking="Need the tool."),
-                    MockBlock(type="text", text="Visible history."),
-                    MockBlock(
-                        type="tool_use",
-                        id="toolu_reasoning",
-                        name="echo",
-                        input={"value": "FCC_TOOL"},
-                    ),
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "Need the tool."},
+                    {"type": "text", "text": "Visible history."},
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_reasoning",
+                        "name": "echo",
+                        "input": {"value": "FCC_TOOL"},
+                    },
                 ],
-            ),
-            MockMessage(
-                "user",
-                [
-                    MockBlock(
-                        type="tool_result",
-                        tool_use_id="toolu_reasoning",
-                        content="result",
-                    )
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_reasoning",
+                        "content": "result",
+                    }
                 ],
-            ),
+            },
         ],
     )
 
@@ -632,7 +606,7 @@ async def test_stream_response_reasoning_retry_preserves_visible_text_and_tools(
 async def test_stream_response_retries_on_mistral_422_reasoning_rejection(
     mistral_provider,
 ):
-    req = MockRequest()
+    req = make_request()
 
     mock_chunk = MagicMock()
     mock_chunk.choices = [
@@ -668,16 +642,16 @@ async def test_stream_response_retries_on_mistral_422_reasoning_rejection(
 async def test_stream_response_retries_when_model_disables_reasoning_input(
     mistral_provider,
 ):
-    req = MockRequest(
+    req = make_request(
         system=None,
         messages=[
-            MockMessage(
-                "assistant",
-                [
-                    MockBlock(type="thinking", thinking="Need context."),
-                    MockBlock(type="text", text="Visible history."),
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "Need context."},
+                    {"type": "text", "text": "Visible history."},
                 ],
-            )
+            }
         ],
     )
 
@@ -720,7 +694,7 @@ async def test_stream_response_retries_when_model_disables_reasoning_input(
 
 @pytest.mark.asyncio
 async def test_stream_response_unrelated_bad_request_does_not_retry(mistral_provider):
-    req = MockRequest()
+    req = make_request()
     error = _make_bad_request_error("Unsupported field: top_k")
 
     with patch.object(
@@ -739,7 +713,7 @@ async def test_stream_response_unrelated_bad_request_does_not_retry(mistral_prov
 async def test_stream_response_generic_thinking_error_does_not_retry(
     mistral_provider,
 ):
-    req = MockRequest()
+    req = make_request()
     error = _make_bad_request_error("The model was thinking, but top_k is unsupported")
 
     with patch.object(

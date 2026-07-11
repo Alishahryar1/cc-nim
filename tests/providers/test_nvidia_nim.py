@@ -12,44 +12,26 @@ from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.nvidia_nim.tool_schema import (
     NIM_TOOL_ARGUMENT_ALIASES_KEY,
 )
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
 
 
-# Mock data classes
-class MockMessage:
-    def __init__(self, role, content):
-        self.role = role
-        self.content = content
+def message(role, content):
+    return {"role": role, "content": content}
 
 
-class MockTool:
-    def __init__(self, name, description, input_schema):
-        self.name = name
-        self.description = description
-        self.input_schema = input_schema
+def tool(name, description, input_schema):
+    return {"name": name, "description": description, "input_schema": input_schema}
 
 
-class MockBlock:
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+def block(**fields):
+    return fields
 
 
-class MockRequest:
-    def __init__(self, **kwargs):
-        self.model = "test-model"
-        self.messages = [MockMessage("user", "Hello")]
-        self.max_tokens = 100
-        self.temperature = 0.5
-        self.top_p = 0.9
-        self.system = "System prompt"
-        self.stop_sequences = ["STOP"]
-        self.tools = []
-        self.extra_body = {}
-        self.thinking = MagicMock()
-        self.thinking.enabled = True
-        for k, v in kwargs.items():
-            setattr(self, k, v)
+def make_request(**overrides):
+    model = overrides.pop("model", "test-model")
+    overrides.setdefault("stop_sequences", ["STOP"])
+    return make_messages_request(model, **overrides)
 
 
 def _input_json_deltas(events):
@@ -165,7 +147,7 @@ async def test_build_request_body(provider_config):
         nim_settings=NimSettings(),
         rate_limiter=passthrough_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_request()
     body = provider._build_request_body(req)
 
     assert body["model"] == "test-model"
@@ -191,7 +173,7 @@ async def test_build_request_body_omits_reasoning_when_globally_disabled(
         nim_settings=NimSettings(),
         rate_limiter=passthrough_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_request()
     body = provider._build_request_body(req)
 
     extra = body.get("extra_body", {})
@@ -208,7 +190,7 @@ async def test_build_request_body_omits_reasoning_when_request_disables_thinking
         nim_settings=NimSettings(),
         rate_limiter=passthrough_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_request()
     req.thinking.enabled = False
     body = provider._build_request_body(req)
 
@@ -220,31 +202,29 @@ async def test_build_request_body_omits_reasoning_when_request_disables_thinking
 def test_preflight_and_build_request_issue_206_post_tool_text(nim_provider):
     """Regression: assistant message with tool_use then text plus tool results (GitHub #206)."""
     tool_id = "toolu_issue_206"
-    req = MockRequest(
+    req = make_request(
         messages=[
-            MockMessage("user", "Use echo once."),
-            MockMessage(
+            message("user", "Use echo once."),
+            message(
                 "assistant",
                 [
-                    MockBlock(
+                    block(
                         type="tool_use",
                         id=tool_id,
                         name="echo_smoke",
                         input={"value": "FCC_206"},
                     ),
-                    MockBlock(
+                    block(
                         type="text",
                         text="Commentary after the tool row.",
                     ),
                 ],
             ),
-            MockMessage(
+            message(
                 "user",
                 [
-                    MockBlock(
-                        type="tool_result", tool_use_id=tool_id, content="FCC_206"
-                    ),
-                    MockBlock(type="text", text="What was echoed?"),
+                    block(type="tool_result", tool_use_id=tool_id, content="FCC_206"),
+                    block(type="text", text="What was echoed?"),
                 ],
             ),
         ],
@@ -258,7 +238,7 @@ def test_preflight_and_build_request_issue_206_post_tool_text(nim_provider):
 @pytest.mark.asyncio
 async def test_stream_response_text(nim_provider):
     """Test streaming text response."""
-    req = MockRequest()
+    req = make_request()
 
     # Create mock chunks
     mock_chunk1 = MagicMock()
@@ -307,7 +287,7 @@ async def test_stream_response_text(nim_provider):
 @pytest.mark.asyncio
 async def test_stream_response_thinking_reasoning_content(nim_provider):
     """Test streaming with native reasoning_content."""
-    req = MockRequest()
+    req = make_request()
 
     mock_chunk = MagicMock()
     mock_chunk.choices = [
@@ -356,7 +336,7 @@ async def test_stream_response_suppresses_thinking_when_disabled(provider_config
         nim_settings=NimSettings(),
         rate_limiter=passthrough_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_request()
 
     mock_chunk = MagicMock()
     mock_chunk.choices = [
@@ -399,7 +379,7 @@ async def test_stream_response_retries_without_chat_template(provider_config):
         nim_settings=NimSettings(chat_template="custom_template"),
         rate_limiter=passthrough_rate_limiter(),
     )
-    req = MockRequest(model="mistralai/mixtral-8x7b-instruct-v0.1")
+    req = make_request(model="mistralai/mixtral-8x7b-instruct-v0.1")
 
     mock_chunk = MagicMock()
     mock_chunk.choices = [
@@ -455,7 +435,7 @@ async def test_stream_response_retries_without_chat_template_kwargs_issue_993(
         nim_settings=NimSettings(),
         rate_limiter=passthrough_rate_limiter(),
     )
-    req = MockRequest(model="mistralai/mistral-small-4-119b-2603")
+    req = make_request(model="mistralai/mistral-small-4-119b-2603")
 
     mock_chunk = MagicMock()
     mock_chunk.choices = [
@@ -507,7 +487,7 @@ async def test_stream_response_does_not_retry_unrelated_bad_request(provider_con
         nim_settings=NimSettings(chat_template="custom_template"),
         rate_limiter=passthrough_rate_limiter(),
     )
-    req = MockRequest(model="mistralai/mixtral-8x7b-instruct-v0.1")
+    req = make_request(model="mistralai/mixtral-8x7b-instruct-v0.1")
 
     with patch.object(
         provider._client.chat.completions, "create", new_callable=AsyncMock
@@ -524,7 +504,7 @@ async def test_stream_response_does_not_retry_unrelated_bad_request(provider_con
 @pytest.mark.asyncio
 async def test_tool_call_stream(nim_provider):
     """Test streaming tool calls."""
-    req = MockRequest()
+    req = make_request()
 
     # Mock tool call delta
     mock_tc = MagicMock()
@@ -562,9 +542,9 @@ async def test_tool_call_stream(nim_provider):
 @pytest.mark.asyncio
 async def test_stream_response_restores_aliased_tool_arguments(nim_provider):
     """NIM-safe argument aliases are restored before Anthropic SSE emission."""
-    req = MockRequest(
+    req = make_request(
         tools=[
-            MockTool(
+            tool(
                 "Grep",
                 "Search file contents",
                 {
@@ -613,9 +593,9 @@ async def test_stream_response_restores_aliased_tool_arguments(nim_provider):
 @pytest.mark.asyncio
 async def test_stream_response_buffers_chunked_aliased_tool_arguments(nim_provider):
     """Chunked aliased args are emitted once as restored Claude Code args."""
-    req = MockRequest(
+    req = make_request(
         tools=[
-            MockTool(
+            tool(
                 "Grep",
                 "Search file contents",
                 {
@@ -658,9 +638,9 @@ async def test_stream_response_buffers_chunked_aliased_tool_arguments(nim_provid
 
 @pytest.mark.asyncio
 async def test_stream_response_restores_nested_aliased_tool_arguments(nim_provider):
-    req = MockRequest(
+    req = make_request(
         tools=[
-            MockTool(
+            tool(
                 "NotionLike",
                 "Nested type schema",
                 {
@@ -704,9 +684,9 @@ async def test_stream_response_restores_nested_aliased_tool_arguments(nim_provid
 
 @pytest.mark.asyncio
 async def test_stream_response_task_tool_still_forces_background_false(nim_provider):
-    req = MockRequest(
+    req = make_request(
         tools=[
-            MockTool(
+            tool(
                 "Task",
                 "Run a subagent",
                 {
@@ -750,7 +730,7 @@ async def test_stream_response_task_tool_still_forces_background_false(nim_provi
 
 @pytest.mark.asyncio
 async def test_stream_response_retries_without_reasoning_budget(nim_provider):
-    req = MockRequest()
+    req = make_request()
 
     mock_chunk = MagicMock()
     mock_chunk.choices = [
@@ -791,7 +771,7 @@ async def test_stream_response_retries_without_reasoning_budget(nim_provider):
 async def test_stream_response_retries_without_budget_for_thinking_token_error(
     nim_provider,
 ):
-    req = MockRequest(model="meta/llama-3.3-70b-instruct")
+    req = make_request(model="meta/llama-3.3-70b-instruct")
 
     mock_chunk = MagicMock()
     mock_chunk.choices = [
@@ -834,14 +814,14 @@ async def test_stream_response_retries_without_budget_for_thinking_token_error(
 
 @pytest.mark.asyncio
 async def test_stream_response_retries_without_reasoning_content(nim_provider):
-    req = MockRequest(
+    req = make_request(
         system=None,
         messages=[
-            MockMessage(
+            message(
                 "assistant",
                 [
-                    MockBlock(type="thinking", thinking="Need the tool."),
-                    MockBlock(
+                    block(type="thinking", thinking="Need the tool."),
+                    block(
                         type="tool_use",
                         id="toolu_reasoning",
                         name="echo_smoke",
@@ -849,10 +829,10 @@ async def test_stream_response_retries_without_reasoning_content(nim_provider):
                     ),
                 ],
             ),
-            MockMessage(
+            message(
                 "user",
                 [
-                    MockBlock(
+                    block(
                         type="tool_result",
                         tool_use_id="toolu_reasoning",
                         content="result",
@@ -897,7 +877,7 @@ async def test_stream_response_retries_without_reasoning_content(nim_provider):
 async def test_stream_response_bad_request_without_reasoning_budget_does_not_retry(
     nim_provider,
 ):
-    req = MockRequest()
+    req = make_request()
     error = _make_bad_request_error("Unsupported field: top_k")
 
     with patch.object(
@@ -916,7 +896,7 @@ async def test_stream_response_bad_request_without_reasoning_budget_does_not_ret
 async def test_stream_response_unrelated_internal_error_does_not_downgrade(
     nim_provider,
 ):
-    req = MockRequest()
+    req = make_request()
     error = _make_internal_server_error("unrelated internal provider failure")
 
     with patch.object(
@@ -935,7 +915,7 @@ async def test_stream_response_unrelated_internal_error_does_not_downgrade(
 async def test_stream_response_internal_reasoning_content_error_does_not_downgrade(
     nim_provider,
 ):
-    req = MockRequest()
+    req = make_request()
     error = _make_internal_server_error(
         "reasoning_content could not be processed by the upstream model"
     )

@@ -1,9 +1,8 @@
 """Native Anthropic Messages request body construction (JSON-ready dicts)."""
 
-from collections.abc import Sequence
 from typing import Any
 
-from pydantic import BaseModel
+from .models import MessagesRequest
 
 _REQUEST_FIELDS = (
     "model",
@@ -26,58 +25,17 @@ _REQUEST_FIELDS = (
 )
 
 
-def _serialize_value(value: Any) -> Any:
-    """Convert Pydantic models and lightweight objects into JSON-ready values."""
-    if isinstance(value, BaseModel):
-        return value.model_dump(exclude_none=True)
-    if isinstance(value, dict):
-        return {
-            key: _serialize_value(item)
-            for key, item in value.items()
-            if item is not None
-        }
-    if isinstance(value, Sequence) and not isinstance(value, str | bytes | bytearray):
-        return [_serialize_value(item) for item in value]
-    if value is None or isinstance(value, str | int | float | bool):
-        return value
-    if hasattr(value, "__dict__"):
-        return {
-            key: _serialize_value(item)
-            for key, item in vars(value).items()
-            if not key.startswith("_") and item is not None
-        }
-    return value
-
-
-def _dump_request_fields(request_data: Any) -> dict[str, Any]:
+def _dump_request_fields(request_data: MessagesRequest) -> dict[str, Any]:
     """Extract the public Anthropic request fields."""
-    if isinstance(request_data, BaseModel):
-        raw = request_data.model_dump(exclude_none=True)
-        return {
-            field: raw[field]
-            for field in _REQUEST_FIELDS
-            if field in raw and raw[field] is not None
-        }
-
-    dump = getattr(request_data, "model_dump", None)
-    if callable(dump):
-        raw = dump(exclude_none=True)
-        if isinstance(raw, dict):
-            return {
-                field: raw[field]
-                for field in _REQUEST_FIELDS
-                if field in raw and raw[field] is not None
-            }
-
-    dumped: dict[str, Any] = {}
-    for field in _REQUEST_FIELDS:
-        value = getattr(request_data, field, None)
-        if value is not None:
-            dumped[field] = _serialize_value(value)
-    return dumped
+    raw = request_data.model_dump(exclude_none=True)
+    return {
+        field: raw[field]
+        for field in _REQUEST_FIELDS
+        if field in raw and raw[field] is not None
+    }
 
 
-def dump_raw_messages_request(request_data: Any) -> dict[str, Any]:
+def dump_raw_messages_request(request_data: MessagesRequest) -> dict[str, Any]:
     """Public JSON-ready dict of Anthropic public request fields (for native adapters)."""
     return _dump_request_fields(request_data)
 
@@ -139,7 +97,7 @@ def sanitize_native_messages_thinking_policy(
 
 
 def build_base_native_anthropic_request_body(
-    request: Any,
+    request: MessagesRequest,
     *,
     default_max_tokens: int,
     thinking_enabled: bool,

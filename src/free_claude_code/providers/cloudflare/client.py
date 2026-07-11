@@ -6,6 +6,7 @@ from urllib.parse import quote
 
 import httpx
 
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.defaults import CLOUDFLARE_AI_REST_ROOT
 from free_claude_code.providers.exceptions import (
@@ -119,7 +120,7 @@ class CloudflareProvider(OpenAIChatTransport):
             await maybe_await_aclose(response)
 
     def _build_request_body(
-        self, request: Any, thinking_enabled: bool | None = None
+        self, request: MessagesRequest, thinking_enabled: bool | None = None
     ) -> dict:
         return build_openai_chat_request_body(
             request,
@@ -143,7 +144,7 @@ class CloudflareProvider(OpenAIChatTransport):
 
 
 def _apply_cloudflare_request_quirks(
-    body: dict[str, Any], _request: Any, thinking_enabled: bool
+    body: dict[str, Any], _request: MessagesRequest, thinking_enabled: bool
 ) -> None:
     """Attach Cloudflare Workers AI chat-template thinking control."""
     extra_body = body.setdefault("extra_body", {})

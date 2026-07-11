@@ -6,6 +6,7 @@ from typing import Any
 from free_claude_code.core.trace import trace_event
 
 from .errors import ResponsesConversionError
+from .models import OpenAIResponsesRequest
 from .reasoning import (
     combine_reasoning,
     reasoning_text_from_item,
@@ -24,18 +25,18 @@ from .tools import (
 
 
 def convert_request_to_anthropic_payload(
-    request: Mapping[str, Any],
+    request: OpenAIResponsesRequest,
 ) -> dict[str, Any]:
     """Convert an OpenAI Responses request into an Anthropic Messages payload."""
 
     system_parts: list[str] = []
-    if instructions := optional_str(request.get("instructions")):
+    if instructions := request.instructions:
         system_parts.append(instructions)
 
     messages: list[dict[str, Any]] = []
     pending_reasoning: str | None = None
     quarantined_function_call_ids: set[str] = set()
-    for item in _iter_input_items(request.get("input")):
+    for item in _iter_input_items(request.input):
         pending_reasoning = _append_input_item(
             item,
             messages=messages,
@@ -49,24 +50,26 @@ def convert_request_to_anthropic_payload(
         raise ResponsesConversionError("Responses request input must contain a message")
 
     payload: dict[str, Any] = {
-        "model": required_str(request.get("model"), "model"),
+        "model": required_str(request.model, "model"),
         "messages": messages,
         "stream": True,
     }
     if system_parts:
         payload["system"] = "\n\n".join(system_parts)
-    _copy_if_present(request, payload, "temperature")
-    _copy_if_present(request, payload, "top_p")
-    if request.get("max_output_tokens") is not None:
-        payload["max_tokens"] = request["max_output_tokens"]
-    if isinstance(request.get("metadata"), dict):
-        payload["metadata"] = request["metadata"]
+    if request.temperature is not None:
+        payload["temperature"] = request.temperature
+    if request.top_p is not None:
+        payload["top_p"] = request.top_p
+    if request.max_output_tokens is not None:
+        payload["max_tokens"] = request.max_output_tokens
+    if request.metadata is not None:
+        payload["metadata"] = request.metadata
 
-    if thinking := responses_reasoning_to_thinking(request.get("reasoning")):
+    if thinking := responses_reasoning_to_thinking(request.reasoning):
         payload["thinking"] = thinking
 
-    raw_tool_choice = request.get("tool_choice")
-    tools = convert_tools(request.get("tools"))
+    raw_tool_choice = request.tool_choice
+    tools = convert_tools(request.tools)
     if tools and raw_tool_choice != "none":
         payload["tools"] = tools
     tool_choice = convert_tool_choice(raw_tool_choice)
@@ -352,10 +355,3 @@ def _text_from_part(part: Mapping[str, Any]) -> str:
     if text := optional_str(part.get("output_text")):
         return text
     return ""
-
-
-def _copy_if_present(
-    source: Mapping[str, Any], target: dict[str, Any], field_name: str
-) -> None:
-    if source.get(field_name) is not None:
-        target[field_name] = source[field_name]

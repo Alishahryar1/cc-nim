@@ -3,6 +3,7 @@
 from copy import deepcopy
 from typing import Any
 
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.defaults import GEMINI_DEFAULT_BASE
 from free_claude_code.providers.rate_limit import ProviderRateLimiter
@@ -45,7 +46,7 @@ class GeminiProvider(OpenAIChatTransport):
         self._tool_call_extra_content_by_id[tool_call_id] = deepcopy(extra_content)
 
     def _build_request_body(
-        self, request: Any, thinking_enabled: bool | None = None
+        self, request: MessagesRequest, thinking_enabled: bool | None = None
     ) -> dict:
         return build_openai_chat_request_body(
             request,

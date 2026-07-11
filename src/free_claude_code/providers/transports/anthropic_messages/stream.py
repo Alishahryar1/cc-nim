@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.core.anthropic.streaming import (
     AnthropicStreamLedger,
@@ -44,7 +45,7 @@ class AnthropicMessagesStreamAdapter:
         self,
         transport: Any,
         *,
-        request: Any,
+        request: MessagesRequest,
         input_tokens: int,
         request_id: str | None,
         thinking_enabled: bool | None,
@@ -85,9 +86,7 @@ class AnthropicMessagesStreamAdapter:
 
         response: httpx.Response | None = None
         sent_any_event = False
-        state = self._transport._new_stream_state(
-            self._request, thinking_enabled=thinking_enabled
-        )
+        state = self._transport._new_stream_state()
         ledger = self._new_ledger()
         recovery = RecoveryController(provider_name=tag, request_id=self._request_id)
 
@@ -171,9 +170,7 @@ class AnthropicMessagesStreamAdapter:
                         if response is not None and not response.is_closed:
                             await maybe_await_aclose(response)
                         response = None
-                        state = self._transport._new_stream_state(
-                            self._request, thinking_enabled=thinking_enabled
-                        )
+                        state = self._transport._new_stream_state()
                         ledger = self._new_ledger()
                         sent_any_event = False
                         continue

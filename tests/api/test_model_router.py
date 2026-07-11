@@ -3,12 +3,12 @@ from unittest.mock import patch
 import pytest
 
 from free_claude_code.api.model_router import ModelRouter
-from free_claude_code.api.models.anthropic import (
+from free_claude_code.config.settings import Settings
+from free_claude_code.core.anthropic.models import (
     Message,
     MessagesRequest,
     TokenCountRequest,
 )
-from free_claude_code.config.settings import Settings
 
 
 @pytest.fixture

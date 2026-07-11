@@ -10,40 +10,10 @@ from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.exceptions import ProviderError
 from free_claude_code.providers.llamacpp import LlamaCppProvider
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
 
-
-class MockMessage:
-    def __init__(self, role, content):
-        self.role = role
-        self.content = content
-
-
-class MockRequest:
-    def __init__(self, **kwargs):
-        self.model = "llamacpp-community/qwen2.5-7b-instruct"
-        self.messages = [MockMessage("user", "Hello")]
-        self.max_tokens = 100
-        self.temperature = 0.5
-        self.top_p = 0.9
-        self.system = "System prompt"
-        self.stop_sequences = None
-        self.tools = []
-        self.extra_body = {}
-        self.thinking = MagicMock()
-        self.thinking.enabled = True
-        for k, v in kwargs.items():
-            setattr(self, k, v)
-
-    def model_dump(self, exclude_none=True):
-        return {
-            "model": self.model,
-            "messages": [{"role": m.role, "content": m.content} for m in self.messages],
-            "max_tokens": self.max_tokens,
-            "temperature": self.temperature,
-            "extra_body": self.extra_body,
-            "thinking": {"enabled": self.thinking.enabled} if self.thinking else None,
-        }
+LLAMACPP_MODEL = "llamacpp-community/qwen2.5-7b-instruct"
 
 
 async def _minimal_native_lines():
@@ -117,7 +87,7 @@ async def test_stream_response_omits_thinking_when_globally_disabled(llamacpp_co
         llamacpp_config.model_copy(update={"enable_thinking": False}),
         rate_limiter=passthrough_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_messages_request(LLAMACPP_MODEL)
 
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -142,7 +112,7 @@ async def test_stream_response_omits_thinking_when_globally_disabled(llamacpp_co
 @pytest.mark.asyncio
 async def test_stream_response(llamacpp_provider):
     """Test streaming native Anthropic response."""
-    req = MockRequest()
+    req = make_messages_request(LLAMACPP_MODEL)
 
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -197,14 +167,13 @@ async def test_stream_response(llamacpp_provider):
 @pytest.mark.asyncio
 async def test_stream_response_adds_max_tokens_if_missing(llamacpp_provider):
     """Fallback max_tokens to 81920 if not present."""
-    req = MockRequest()
+    req = make_messages_request(LLAMACPP_MODEL, max_tokens=None)
     mock_response = MagicMock()
     mock_response.status_code = 200
 
     mock_response.aiter_lines = _minimal_native_lines
 
     with (
-        patch.object(req, "model_dump", return_value={"model": "test"}),
         patch.object(llamacpp_provider._client, "build_request") as mock_build,
         patch.object(
             llamacpp_provider._client,
@@ -223,7 +192,7 @@ async def test_stream_response_adds_max_tokens_if_missing(llamacpp_provider):
 @pytest.mark.asyncio
 async def test_stream_error_status_code(llamacpp_provider):
     """Pre-start non-200 status code raises for API-level non-200 handling."""
-    req = MockRequest()
+    req = make_messages_request(LLAMACPP_MODEL)
 
     mock_response = MagicMock()
     mock_response.status_code = 500
@@ -260,7 +229,7 @@ async def test_stream_error_status_code(llamacpp_provider):
 @pytest.mark.asyncio
 async def test_stream_network_error(llamacpp_provider):
     """Pre-start network errors raise for API-level non-200 handling."""
-    req = MockRequest()
+    req = make_messages_request(LLAMACPP_MODEL)
 
     with (
         patch.object(
@@ -289,7 +258,7 @@ async def test_stream_network_error(llamacpp_provider):
 
 @pytest.mark.asyncio
 async def test_stream_error_405_mentions_upstream_provider(llamacpp_provider):
-    req = MockRequest()
+    req = make_messages_request(LLAMACPP_MODEL)
 
     mock_response = MagicMock()
     mock_response.status_code = 405
@@ -327,19 +296,19 @@ def test_build_request_body_disabled_thinking_strips_native_thinking_history(
     """With thinking disabled, prior assistant thinking/redacted blocks are omitted."""
     config = llamacpp_config.model_copy(update={"enable_thinking": False})
     provider = LlamaCppProvider(config, rate_limiter=passthrough_rate_limiter())
-    messages = [
-        MockMessage("user", "Hi"),
-        MockMessage(
-            "assistant",
-            [
-                {"type": "thinking", "thinking": "p"},
-                {"type": "redacted_thinking", "data": "ZGF0YQ=="},
-            ],
-        ),
-    ]
-    req = MockRequest(
+    req = make_messages_request(
+        LLAMACPP_MODEL,
         system=None,
-        messages=messages,
+        messages=[
+            {"role": "user", "content": "Hi"},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "p"},
+                    {"type": "redacted_thinking", "data": "ZGF0YQ=="},
+                ],
+            },
+        ],
     )
     body = provider._build_request_body(req, thinking_enabled=False)
     asst = body["messages"][1]

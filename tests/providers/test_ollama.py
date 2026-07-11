@@ -9,47 +9,10 @@ from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.exceptions import ProviderError
 from free_claude_code.providers.ollama import OLLAMA_DEFAULT_BASE, OllamaProvider
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
 
-
-class MockMessage:
-    def __init__(self, role, content):
-        self.role = role
-        self.content = content
-
-
-class MockRequest:
-    def __init__(self, **kwargs):
-        self.model = "llama3.1:8b"
-        self.messages = [MockMessage("user", "Hello")]
-        self.max_tokens = 100
-        self.temperature = 0.5
-        self.top_p = 0.9
-        self.system = "System prompt"
-        self.stop_sequences = None
-        self.stream = True
-        self.tools = []
-        self.tool_choice = None
-        self.extra_body = {}
-        self.thinking = MagicMock()
-        self.thinking.enabled = True
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
-    def model_dump(self, exclude_none=True):
-        return {
-            "model": self.model,
-            "messages": [{"role": m.role, "content": m.content} for m in self.messages],
-            "max_tokens": self.max_tokens,
-            "temperature": self.temperature,
-            "top_p": self.top_p,
-            "system": self.system,
-            "stream": self.stream,
-            "tools": self.tools,
-            "tool_choice": self.tool_choice,
-            "extra_body": self.extra_body,
-            "thinking": {"enabled": self.thinking.enabled} if self.thinking else None,
-        }
+OLLAMA_MODEL = "llama3.1:8b"
 
 
 @pytest.fixture
@@ -133,7 +96,7 @@ def test_init_uses_default_api_key():
 @pytest.mark.asyncio
 async def test_stream_response(ollama_provider):
     """Test streaming native Anthropic response."""
-    req = MockRequest()
+    req = make_messages_request(OLLAMA_MODEL)
 
     mock_response = MagicMock()
     mock_response.status_code = 200
@@ -187,7 +150,7 @@ async def test_build_request_body_omits_thinking_when_disabled(ollama_config):
         ollama_config.model_copy(update={"enable_thinking": False}),
         rate_limiter=passthrough_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_messages_request(OLLAMA_MODEL)
 
     body = provider._build_request_body(req)
 
@@ -203,17 +166,18 @@ def test_build_request_body_disabled_thinking_strips_assistant_thinking_blocks(
         ollama_config.model_copy(update={"enable_thinking": False}),
         rate_limiter=passthrough_rate_limiter(),
     )
-    req = MockRequest(
+    req = make_messages_request(
+        OLLAMA_MODEL,
         system=None,
         messages=[
-            MockMessage("user", "hi"),
-            MockMessage(
-                "assistant",
-                [
+            {"role": "user", "content": "hi"},
+            {
+                "role": "assistant",
+                "content": [
                     {"type": "thinking", "thinking": "t"},
                     {"type": "redacted_thinking", "data": "opaque"},
                 ],
-            ),
+            },
         ],
     )
     body = provider._build_request_body(req, thinking_enabled=False)
@@ -223,7 +187,7 @@ def test_build_request_body_disabled_thinking_strips_assistant_thinking_blocks(
 @pytest.mark.asyncio
 async def test_stream_error_status_code(ollama_provider):
     """Pre-start non-200 status code raises for API-level non-200 handling."""
-    req = MockRequest()
+    req = make_messages_request(OLLAMA_MODEL)
     mock_response = MagicMock()
     mock_response.status_code = 500
     mock_response.aread = AsyncMock(return_value=b"Internal Server Error")

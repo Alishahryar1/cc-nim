@@ -1,10 +1,10 @@
 """Hugging Face Inference Providers implementation."""
 
 from copy import deepcopy
-from typing import Any
 
 from free_claude_code.core.anthropic import ReasoningReplayMode, build_base_request_body
 from free_claude_code.core.anthropic.conversion import OpenAIConversionError
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.defaults import HUGGINGFACE_DEFAULT_BASE
 from free_claude_code.providers.exceptions import InvalidRequestError
@@ -25,7 +25,7 @@ class HuggingFaceProvider(OpenAIChatTransport):
         )
 
     def _build_request_body(
-        self, request: Any, thinking_enabled: bool | None = None
+        self, request: MessagesRequest, thinking_enabled: bool | None = None
     ) -> dict:
         """Build a Hugging Face Chat Completions body.
 
@@ -42,7 +42,7 @@ class HuggingFaceProvider(OpenAIChatTransport):
         except OpenAIConversionError as exc:
             raise InvalidRequestError(str(exc)) from exc
 
-        request_extra = getattr(request, "extra_body", None)
+        request_extra = request.extra_body
         if isinstance(request_extra, dict) and request_extra:
             body["extra_body"] = deepcopy(request_extra)
 

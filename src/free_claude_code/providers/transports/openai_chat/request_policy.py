@@ -9,10 +9,11 @@ from loguru import logger
 
 from free_claude_code.core.anthropic import ReasoningReplayMode, build_base_request_body
 from free_claude_code.core.anthropic.conversion import OpenAIConversionError
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.exceptions import InvalidRequestError
 
 MaxTokensField = Literal["max_tokens", "max_completion_tokens"]
-OpenAIChatPostprocessor = Callable[[dict[str, Any], Any, bool], None]
+OpenAIChatPostprocessor = Callable[[dict[str, Any], MessagesRequest, bool], None]
 ExtraBodyValidator = Callable[[dict[str, Any]], None]
 
 
@@ -32,7 +33,7 @@ class OpenAIChatRequestPolicy:
 
 
 def build_openai_chat_request_body(
-    request_data: Any,
+    request_data: MessagesRequest,
     *,
     thinking_enabled: bool,
     policy: OpenAIChatRequestPolicy,
@@ -42,8 +43,8 @@ def build_openai_chat_request_body(
     logger.debug(
         "{}_REQUEST: conversion start model={} msgs={}",
         policy.provider_name,
-        getattr(request_data, "model", "?"),
-        len(getattr(request_data, "messages", [])),
+        request_data.model,
+        len(request_data.messages),
     )
     try:
         body = build_base_request_body(
@@ -56,7 +57,7 @@ def build_openai_chat_request_body(
     except OpenAIConversionError as exc:
         raise InvalidRequestError(str(exc)) from exc
 
-    request_extra = getattr(request_data, "extra_body", None)
+    request_extra = request_data.extra_body
     if isinstance(request_extra, dict) and request_extra:
         if policy.reject_extra_body_message:
             raise InvalidRequestError(policy.reject_extra_body_message)

@@ -16,6 +16,7 @@ from ..ids import (
     new_reasoning_item_id,
     new_response_id,
 )
+from ..models import OpenAIResponsesRequest
 from ..tools import responses_tool_identity_from_anthropic_name
 from . import event_builders as events
 from .blocks import ReasoningBlockState, TextBlockState, ToolBlockState
@@ -30,7 +31,7 @@ from .ledger import ResponsesOutputLedger
 class ResponsesStreamAssembler:
     """Assemble Responses SSE events from indexed Anthropic content blocks."""
 
-    def __init__(self, request: Mapping[str, Any]) -> None:
+    def __init__(self, request: OpenAIResponsesRequest) -> None:
         self._request = request
         self._response_id = new_response_id()
         self._created_at = int(time.time())
@@ -77,13 +78,21 @@ class ResponsesStreamAssembler:
             "object": "response",
             "created_at": self._created_at,
             "status": status,
-            "model": str(self._request.get("model", "")),
+            "model": self._request.model,
             "output": self._ledger.output(),
-            "parallel_tool_calls": bool(self._request.get("parallel_tool_calls", True)),
-            "tool_choice": self._request.get("tool_choice", "auto"),
-            "temperature": self._request.get("temperature"),
-            "top_p": self._request.get("top_p"),
-            "max_output_tokens": self._request.get("max_output_tokens"),
+            "parallel_tool_calls": (
+                True
+                if self._request.parallel_tool_calls is None
+                else self._request.parallel_tool_calls
+            ),
+            "tool_choice": (
+                "auto"
+                if self._request.tool_choice is None
+                else self._request.tool_choice
+            ),
+            "temperature": self._request.temperature,
+            "top_p": self._request.top_p,
+            "max_output_tokens": self._request.max_output_tokens,
             "usage": self._ledger.usage(),
             "error": error,
         }
@@ -248,7 +257,7 @@ class ResponsesStreamAssembler:
         if self.terminal:
             return chunks
         identity = responses_tool_identity_from_anthropic_name(
-            self._request, _string_value(block.get("name"))
+            self._request.tools, _string_value(block.get("name"))
         )
         state = ToolBlockState(
             index=index,

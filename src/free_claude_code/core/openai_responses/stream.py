@@ -1,19 +1,20 @@
 """Translate Anthropic SSE streams into OpenAI Responses SSE streams."""
 
 import asyncio
-from collections.abc import AsyncIterable, AsyncIterator, Mapping
+from collections.abc import AsyncIterable, AsyncIterator
 from typing import Any
 
 from free_claude_code.core.anthropic import get_user_facing_error_message
 from free_claude_code.core.trace import trace_event
 
 from .anthropic_sse import iter_sse_events
+from .models import OpenAIResponsesRequest
 from .streaming import ResponsesStreamAssembler
 
 
 async def iter_responses_sse_from_anthropic(
     chunks: AsyncIterable[Any],
-    request: Mapping[str, Any],
+    request: OpenAIResponsesRequest,
 ) -> AsyncIterator[str]:
     """Yield Responses SSE events translated from an Anthropic SSE stream."""
 

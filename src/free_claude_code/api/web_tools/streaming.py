@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from datetime import UTC, datetime
 from typing import Any
 
-from free_claude_code.api.models.anthropic import MessagesRequest
+from free_claude_code.core.anthropic import MessagesRequest
 from free_claude_code.core.anthropic.server_tool_sse import (
     SERVER_TOOL_USE,
     WEB_FETCH_TOOL_ERROR,

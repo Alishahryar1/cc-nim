@@ -1,4 +1,12 @@
-from free_claude_code.api.models.anthropic import (
+import pytest
+
+from free_claude_code.core.anthropic.conversion import (
+    OpenAIConversionError,
+    build_base_request_body,
+)
+from free_claude_code.core.anthropic.models import (
+    ContentBlockDocument,
+    ContentBlockWebFetchToolResult,
     Message,
     MessagesRequest,
     TokenCountRequest,
@@ -218,3 +226,106 @@ def test_messages_request_accepts_redacted_thinking_blocks():
         "type": "redacted_thinking",
         "data": "opaque",
     }
+
+
+def test_document_and_web_fetch_blocks_preserve_protocol_extensions() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "model",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "document",
+                            "source": {"type": "base64", "data": "encoded"},
+                            "cache_control": {"type": "ephemeral"},
+                        },
+                        {
+                            "type": "web_fetch_tool_result",
+                            "tool_use_id": "srvtoolu_1",
+                            "content": {"url": "https://example.com"},
+                            "provider_extension": True,
+                        },
+                    ],
+                }
+            ],
+        }
+    )
+
+    content = request.messages[0].content
+    assert isinstance(content, list)
+    assert isinstance(content[0], ContentBlockDocument)
+    assert content[0].model_dump()["cache_control"] == {"type": "ephemeral"}
+    assert isinstance(content[1], ContentBlockWebFetchToolResult)
+    assert content[1].model_dump()["provider_extension"] is True
+
+
+def test_content_block_descriptions_remain_in_the_public_schema() -> None:
+    definitions = MessagesRequest.model_json_schema()["$defs"]
+
+    assert definitions["ContentBlockDocument"]["description"] == (
+        "Anthropic document block (e.g. PDF files via the Files API)."
+    )
+    assert definitions["ContentBlockServerToolUse"]["description"] == (
+        "Anthropic server-side tool invocation (e.g. ``web_search``, ``web_fetch``)."
+    )
+
+
+def test_messages_request_dump_preserves_public_defaults_and_excludes_internal_fields() -> (
+    None
+):
+    request = MessagesRequest.model_validate(
+        {
+            "model": "model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "adaptive"},
+            "original_model": "original",
+            "resolved_provider_model": "provider/model",
+            "betas": ["feature-beta"],
+            "client_extension": {"enabled": True},
+        }
+    )
+
+    dumped = request.model_dump(exclude_none=True)
+
+    assert dumped == {
+        "model": "model",
+        "messages": [{"role": "user", "content": "hello"}],
+        "stream": True,
+        "thinking": {"enabled": True, "type": "adaptive"},
+        "client_extension": {"enabled": True},
+    }
+
+
+def test_token_count_request_accepts_extras_but_excludes_internal_fields() -> None:
+    request = TokenCountRequest.model_validate(
+        {
+            "model": "model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "original_model": "original",
+            "resolved_provider_model": "provider/model",
+            "betas": ["feature-beta"],
+            "client_extension": "accepted",
+        }
+    )
+
+    assert request.model_extra == {"client_extension": "accepted"}
+    assert request.model_dump(exclude_none=True) == {
+        "model": "model",
+        "messages": [{"role": "user", "content": "hello"}],
+        "client_extension": "accepted",
+    }
+
+
+def test_openai_conversion_rejects_unknown_top_level_anthropic_extensions() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "client_extension": True,
+        }
+    )
+
+    with pytest.raises(OpenAIConversionError, match="client_extension"):
+        build_base_request_body(request)

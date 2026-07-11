@@ -2,11 +2,11 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
-from typing import Any
 
 from pydantic import BaseModel
 
 from free_claude_code.config.constants import HTTP_CONNECT_TIMEOUT_DEFAULT
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.model_listing import (
     ProviderModelInfo,
     model_infos_from_ids,
@@ -41,10 +41,10 @@ class BaseProvider(ABC):
         self._config = config
 
     def _is_thinking_enabled(
-        self, request: Any, thinking_enabled: bool | None = None
+        self, request: MessagesRequest, thinking_enabled: bool | None = None
     ) -> bool:
         """Return whether thinking should be enabled for this request."""
-        thinking = getattr(request, "thinking", None)
+        thinking = request.thinking
         config_enabled = (
             self._config.enable_thinking
             if thinking_enabled is None
@@ -52,30 +52,14 @@ class BaseProvider(ABC):
         )
         request_enabled = True
         if thinking is not None:
-            thinking_type = (
-                thinking.get("type")
-                if isinstance(thinking, dict)
-                else getattr(thinking, "type", None)
-            )
-            if isinstance(thinking, dict):
-                enabled = thinking.get("enabled")
-                enabled_supplied = "enabled" in thinking
-            else:
-                enabled = getattr(thinking, "enabled", None)
-                fields_set = getattr(thinking, "model_fields_set", None)
-                enabled_supplied = (
-                    "enabled" in fields_set
-                    if isinstance(fields_set, set | frozenset)
-                    else enabled is not None
-                )
-            if enabled_supplied and enabled is not None:
-                request_enabled = bool(enabled)
-            if thinking_type == "disabled":
+            if "enabled" in thinking.model_fields_set and thinking.enabled is not None:
+                request_enabled = thinking.enabled
+            if thinking.type == "disabled":
                 request_enabled = False
         return config_enabled and request_enabled
 
     def preflight_stream(
-        self, request: Any, *, thinking_enabled: bool | None = None
+        self, request: MessagesRequest, *, thinking_enabled: bool | None = None
     ) -> None:
         """Eagerly validate/build the upstream request before opening an SSE stream.
 
@@ -146,7 +130,7 @@ class BaseProvider(ABC):
     @abstractmethod
     async def stream_response(
         self,
-        request: Any,
+        request: MessagesRequest,
         input_tokens: int = 0,
         *,
         request_id: str | None = None,

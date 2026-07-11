@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 import httpx
 
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.native_sse_block_policy import (
     NativeSseBlockPolicyState,
     transform_native_sse_block_event,
@@ -110,7 +111,7 @@ class AnthropicMessagesTransport(BaseProvider):
         return {"Content-Type": "application/json"}
 
     def _build_request_body(
-        self, request: Any, thinking_enabled: bool | None = None
+        self, request: MessagesRequest, thinking_enabled: bool | None = None
     ) -> dict:
         """Build a native Anthropic request body."""
         thinking_enabled = self._is_thinking_enabled(request, thinking_enabled)
@@ -120,7 +121,7 @@ class AnthropicMessagesTransport(BaseProvider):
         )
 
     def _build_request_body_with_resolved_thinking(
-        self, request: Any, *, thinking_enabled: bool
+        self, request: MessagesRequest, *, thinking_enabled: bool
     ) -> dict:
         """Build a native Anthropic request body after thinking is resolved."""
         return build_native_messages_request_body(
@@ -154,7 +155,7 @@ class AnthropicMessagesTransport(BaseProvider):
             log_api_error_tracebacks=self._config.log_api_error_tracebacks,
         )
 
-    def _new_stream_state(self, request: Any, *, thinking_enabled: bool) -> Any:
+    def _new_stream_state(self) -> NativeSseBlockPolicyState | None:
         """Return per-stream provider state for event transformation."""
         if self.stream_chunk_mode == "line":
             return NativeSseBlockPolicyState()
@@ -205,7 +206,7 @@ class AnthropicMessagesTransport(BaseProvider):
 
     async def stream_response(
         self,
-        request: Any,
+        request: MessagesRequest,
         input_tokens: int = 0,
         *,
         request_id: str | None = None,

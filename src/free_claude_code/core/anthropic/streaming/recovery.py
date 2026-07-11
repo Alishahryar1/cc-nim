@@ -15,6 +15,7 @@ from loguru import logger
 
 from free_claude_code.core.trace import trace_event
 
+from ..models import MessagesRequest
 from .transient_errors import retryable_transient_status
 
 EARLY_TRANSPARENT_TOTAL_ATTEMPTS = 5
@@ -248,19 +249,19 @@ def is_retryable_stream_error(exc: BaseException) -> bool:
     )
 
 
-def tool_schemas_by_name(request: Any) -> dict[str, ToolSchema]:
+def tool_schemas_by_name(request: MessagesRequest) -> dict[str, ToolSchema]:
     """Return Anthropic tool input schemas keyed by tool name."""
     schemas: dict[str, ToolSchema] = {}
-    tools = getattr(request, "tools", None)
+    tools = request.tools
     if not tools:
         return schemas
 
     for tool in tools:
-        name = _tool_attr(tool, "name")
-        if not isinstance(name, str) or not name:
+        name = tool.name
+        if not name:
             continue
-        schema = _tool_attr(tool, "input_schema")
-        if not isinstance(schema, dict):
+        schema = tool.input_schema
+        if schema is None:
             schema = {"type": "object"}
         schemas[name] = ToolSchema(name=name, input_schema=deepcopy(schema))
     return schemas
@@ -377,12 +378,6 @@ def make_tool_repair_body(
     )
     recovery["messages"] = messages
     return recovery
-
-
-def _tool_attr(tool: Any, attr: str) -> Any:
-    if isinstance(tool, dict):
-        return tool.get(attr)
-    return getattr(tool, attr, None)
 
 
 def _copied_messages(body: dict[str, Any]) -> list[Any]:

@@ -11,8 +11,8 @@ from free_claude_code.config.nim import NimSettings
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.exceptions import ProviderError
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import retrying_rate_limiter
-from tests.providers.test_nvidia_nim import MockRequest
 
 
 def _internal_5xx(code: int) -> openai.InternalServerError:
@@ -48,7 +48,7 @@ async def test_nim_stream_retries_on_openai_5xx_then_streams(status_code):
         nim_settings=NimSettings(),
         rate_limiter=retrying_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_messages_request()
 
     mock_chunk = MagicMock()
     mock_chunk.choices = [
@@ -93,7 +93,7 @@ async def test_nim_stream_retries_on_pre_stream_connection_error_then_streams():
         nim_settings=NimSettings(),
         rate_limiter=retrying_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_messages_request()
 
     mock_chunk = MagicMock()
     mock_chunk.choices = [
@@ -138,7 +138,7 @@ async def test_nim_stream_connection_error_exhausted_emits_cause_chain():
         nim_settings=NimSettings(),
         rate_limiter=retrying_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_messages_request()
     error = _connection_error("upstream disconnected")
 
     with (
@@ -196,7 +196,7 @@ async def test_nim_stream_openai_5xx_exhausted_emits_user_message(
         nim_settings=NimSettings(),
         rate_limiter=retrying_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_messages_request()
 
     with (
         patch.object(

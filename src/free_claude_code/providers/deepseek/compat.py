@@ -1,13 +1,13 @@
 """DeepSeek Anthropic-to-OpenAI chat request policy."""
 
 from collections.abc import Mapping
-from types import SimpleNamespace
 from typing import Any
 
 from loguru import logger
 
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from free_claude_code.core.anthropic import serialize_tool_result_content
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.native_messages_request import (
     dump_raw_messages_request,
 )
@@ -38,12 +38,14 @@ _OMITTED_ATTACHMENT_TEXT = (
 _OMITTED_ATTACHMENT_BLOCK = {"type": "text", "text": _OMITTED_ATTACHMENT_TEXT}
 
 
-def build_deepseek_request_body(request_data: Any, *, thinking_enabled: bool) -> dict:
+def build_deepseek_request_body(
+    request_data: MessagesRequest, *, thinking_enabled: bool
+) -> dict:
     """Build a DeepSeek Chat Completions body from an Anthropic request."""
     logger.debug(
         "DEEPSEEK_REQUEST: chat build model={} msgs={}",
-        getattr(request_data, "model", "?"),
-        len(getattr(request_data, "messages", [])),
+        request_data.model,
+        len(request_data.messages),
     )
 
     data = dump_raw_messages_request(request_data)
@@ -91,7 +93,7 @@ def build_deepseek_request_body(request_data: Any, *, thinking_enabled: bool) ->
             )
         )
 
-    sanitized_request = _request_from_dict(request_data, data)
+    sanitized_request = MessagesRequest.model_validate(data)
     body = build_openai_chat_request_body(
         sanitized_request,
         thinking_enabled=effective_thinking_enabled,
@@ -420,15 +422,8 @@ def _downgrade_forced_tool_choice(data: dict[str, Any]) -> None:
     data["tool_choice"] = {"type": "auto"}
 
 
-def _request_from_dict(request_data: Any, data: dict[str, Any]) -> Any:
-    validator = getattr(type(request_data), "model_validate", None)
-    if callable(validator):
-        return validator(data)
-    return SimpleNamespace(**data)
-
-
 def _apply_deepseek_chat_extras(
-    body: dict[str, Any], _request_data: Any, thinking_enabled: bool
+    body: dict[str, Any], _request_data: MessagesRequest, thinking_enabled: bool
 ) -> None:
     if not thinking_enabled or body.get("model") == "deepseek-reasoner":
         return

@@ -9,29 +9,12 @@ from free_claude_code.providers.codestral import (
     CODESTRAL_DEFAULT_BASE,
     CodestralProvider,
 )
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
 
 
-class MockMessage:
-    def __init__(self, role, content):
-        self.role = role
-        self.content = content
-
-
-class MockRequest:
-    def __init__(self, **kwargs):
-        self.model = "devstral-small-latest"
-        self.messages = [MockMessage("user", "Hello")]
-        self.max_tokens = 100
-        self.temperature = 0.5
-        self.top_p = 0.9
-        self.system = "System prompt"
-        self.stop_sequences = None
-        self.tools = []
-        self.thinking = MagicMock()
-        self.thinking.enabled = True
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+def make_request(**overrides):
+    return make_messages_request("devstral-small-latest", **overrides)
 
 
 @pytest.fixture
@@ -69,7 +52,7 @@ def test_default_base_url():
 
 def test_build_request_body_basic(codestral_provider):
     """Basic request body conversion works for Codestral."""
-    req = MockRequest()
+    req = make_request()
     body = codestral_provider._build_request_body(req)
 
     assert body["model"] == "devstral-small-latest"
@@ -88,7 +71,7 @@ def test_build_request_body_global_disable_blocks_reasoning_mapping():
         ),
         rate_limiter=passthrough_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_request()
     body = provider._build_request_body(req)
 
     roles = [m.get("role") for m in body.get("messages", [])]
@@ -98,7 +81,7 @@ def test_build_request_body_global_disable_blocks_reasoning_mapping():
 @pytest.mark.asyncio
 async def test_stream_response_text(codestral_provider):
     """Text content deltas are emitted as text blocks."""
-    req = MockRequest()
+    req = make_request()
 
     mock_chunk = MagicMock()
     mock_chunk.choices = [
@@ -131,7 +114,7 @@ async def test_stream_response_text(codestral_provider):
 @pytest.mark.asyncio
 async def test_stream_response_reasoning_content(codestral_provider):
     """reasoning_content deltas are emitted as thinking blocks."""
-    req = MockRequest()
+    req = make_request()
 
     mock_chunk = MagicMock()
     mock_chunk.choices = [

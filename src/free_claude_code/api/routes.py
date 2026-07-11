@@ -5,7 +5,12 @@ from loguru import logger
 
 from free_claude_code.config.model_refs import parse_provider_type
 from free_claude_code.config.settings import Settings
-from free_claude_code.core.anthropic import get_token_count
+from free_claude_code.core.anthropic import (
+    MessagesRequest,
+    TokenCountRequest,
+    get_token_count,
+)
+from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.trace import trace_event
 
 from .dependencies import (
@@ -15,10 +20,7 @@ from .dependencies import (
     resolve_provider,
 )
 from .handlers import MessagesHandler, ResponsesHandler, TokenCountHandler
-from .model_catalog import build_models_list_response
-from .models.anthropic import MessagesRequest, TokenCountRequest
-from .models.openai_responses import OpenAIResponsesRequest
-from .models.responses import ModelsListResponse
+from .model_catalog import ModelsListResponse, build_models_list_response
 from .ports import ApiServices, RequestRuntimeLease
 from .request_ids import get_request_id
 from .response_streams import bind_response_lifetime

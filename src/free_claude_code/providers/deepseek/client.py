@@ -2,6 +2,7 @@
 
 from typing import Any
 
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.defaults import DEEPSEEK_DEFAULT_BASE
 from free_claude_code.providers.rate_limit import ProviderRateLimiter
@@ -24,7 +25,7 @@ class DeepSeekProvider(OpenAIChatTransport):
         )
 
     def _build_request_body(
-        self, request: Any, thinking_enabled: bool | None = None
+        self, request: MessagesRequest, thinking_enabled: bool | None = None
     ) -> dict:
         return build_deepseek_request_body(
             request,

@@ -3,6 +3,7 @@
 from collections.abc import Awaitable, Callable
 from typing import Any
 
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.streaming import (
     MIDSTREAM_RECOVERY_ATTEMPTS,
     AnthropicStreamLedger,
@@ -86,7 +87,7 @@ class OpenAIChatRecovery:
         *,
         body: dict[str, Any],
         ledger: AnthropicStreamLedger,
-        request: Any,
+        request: MessagesRequest,
         request_id: str | None,
         error: Exception,
         tool_argument_alias_buffers: dict[int, str],
@@ -166,7 +167,7 @@ class OpenAIChatRecovery:
         *,
         body: dict[str, Any],
         ledger: AnthropicStreamLedger,
-        request: Any,
+        request: MessagesRequest,
         tool_argument_alias_buffers: dict[int, str],
     ) -> list[str] | None:
         schemas = tool_schemas_by_name(request)

@@ -13,7 +13,6 @@ from free_claude_code.api.model_router import (
     ResolvedModel,
     RoutedMessagesRequest,
 )
-from free_claude_code.api.models.anthropic import Message, MessagesRequest, Tool
 from free_claude_code.api.web_tools import egress as web_egress
 from free_claude_code.api.web_tools.egress import (
     WebFetchEgressPolicy,
@@ -29,6 +28,7 @@ from free_claude_code.api.web_tools.request import is_web_server_tool_request
 from free_claude_code.api.web_tools.streaming import stream_web_server_tool_response
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.anthropic.models import Message, MessagesRequest, Tool
 from free_claude_code.core.anthropic.stream_contracts import (
     assert_anthropic_stream_contract,
     parse_sse_text,

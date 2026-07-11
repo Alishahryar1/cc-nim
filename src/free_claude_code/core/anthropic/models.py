@@ -1,4 +1,4 @@
-"""Pydantic models for Anthropic-compatible requests."""
+"""Pydantic models for the Anthropic Messages protocol."""
 
 from enum import StrEnum
 from typing import Any, Literal
@@ -6,9 +6,6 @@ from typing import Any, Literal
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 
-# =============================================================================
-# Content Block Types
-# =============================================================================
 class Role(StrEnum):
     user = "user"
     assistant = "assistant"
@@ -16,7 +13,7 @@ class Role(StrEnum):
 
 
 class _AnthropicBlockBase(BaseModel):
-    """Pass through provider fields (e.g. ``cache_control``) for native transports."""
+    """Pass through protocol extensions such as ``cache_control``."""
 
     model_config = ConfigDict(extra="allow")
 
@@ -138,9 +135,6 @@ def _normalize_system_role_messages(data: Any) -> Any:
     return normalized
 
 
-# =============================================================================
-# Message Types
-# =============================================================================
 class Message(BaseModel):
     role: Literal["user", "assistant"]
     content: (
@@ -163,8 +157,6 @@ class Message(BaseModel):
 
 class Tool(_AnthropicBlockBase):
     name: str
-    # Anthropic server tools (e.g. web_search beta tools) include a ``type`` and
-    # may omit ``input_schema`` because the provider owns the schema.
     type: str | None = None
     description: str | None = None
     input_schema: dict[str, Any] | None = None
@@ -176,9 +168,6 @@ class ThinkingConfig(BaseModel):
     budget_tokens: int | None = None
 
 
-# =============================================================================
-# Request Models
-# =============================================================================
 class MessagesRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
@@ -188,7 +177,6 @@ class MessagesRequest(BaseModel):
         return _normalize_system_role_messages(data)
 
     model: str
-    # Internal routing / debug: accepted on parse but not serialized to providers.
     original_model: str | None = Field(default=None, exclude=True)
     resolved_provider_model: str | None = Field(default=None, exclude=True)
     max_tokens: int | None = None
@@ -203,12 +191,10 @@ class MessagesRequest(BaseModel):
     tools: list[Tool] | None = None
     tool_choice: dict[str, Any] | None = None
     thinking: ThinkingConfig | None = None
-    # Native Anthropic / SDK client hints: ignored (not forwarded) for OpenAI Chat conversion.
     context_management: dict[str, Any] | None = None
     output_config: dict[str, Any] | None = None
     mcp_servers: list[dict[str, Any]] | None = None
     extra_body: dict[str, Any] | None = None
-    # Beta feature flags sent by Claude Code as a body field; accepted but never forwarded.
     betas: list[str] | None = Field(default=None, exclude=True)
 
 
@@ -232,3 +218,33 @@ class TokenCountRequest(BaseModel):
     output_config: dict[str, Any] | None = None
     mcp_servers: list[dict[str, Any]] | None = None
     betas: list[str] | None = Field(default=None, exclude=True)
+
+
+class TokenCountResponse(BaseModel):
+    input_tokens: int
+
+
+class Usage(BaseModel):
+    input_tokens: int
+    output_tokens: int
+    cache_creation_input_tokens: int = 0
+    cache_read_input_tokens: int = 0
+
+
+class MessagesResponse(BaseModel):
+    id: str
+    model: str
+    role: Literal["assistant"] = "assistant"
+    content: list[
+        ContentBlockText
+        | ContentBlockToolUse
+        | ContentBlockThinking
+        | ContentBlockRedactedThinking
+        | dict[str, Any]
+    ]
+    type: Literal["message"] = "message"
+    stop_reason: (
+        Literal["end_turn", "max_tokens", "stop_sequence", "tool_use"] | None
+    ) = None
+    stop_sequence: str | None = None
+    usage: Usage

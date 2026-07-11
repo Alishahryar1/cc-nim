@@ -38,9 +38,9 @@ def test_trace_payload_merged_into_json_line(tmp_path) -> None:
 
 def test_sanitize_masks_nested_api_key_strings() -> None:
     """Credential-shaped keys redact without touching normal message text."""
-    from free_claude_code.core.trace import _sanitize_trace_value
+    from free_claude_code.core.trace import sanitize_trace_value
 
-    out = _sanitize_trace_value(
+    out = sanitize_trace_value(
         {"outer": {"api_key": "secret", "text": "visible"}},
     )
     assert out["outer"]["api_key"] == "<redacted>"

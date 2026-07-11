@@ -123,6 +123,69 @@ def test_provider_adapters_do_not_import_runtime_layers() -> None:
     assert offenders == []
 
 
+def test_anthropic_request_boundaries_use_the_protocol_model() -> None:
+    """Known Messages fields must not cross core/provider boundaries by duck typing."""
+    repo_root = Path(__file__).resolve().parents[2]
+    roots = [
+        repo_root / "src" / "free_claude_code" / "core" / "anthropic",
+        repo_root / "src" / "free_claude_code" / "providers",
+    ]
+    request_names = {"request", "request_data"}
+    protocol_fields = {
+        "extra_body",
+        "max_tokens",
+        "messages",
+        "model",
+        "stop_sequences",
+        "system",
+        "temperature",
+        "thinking",
+        "tool_choice",
+        "tools",
+        "top_k",
+        "top_p",
+    }
+    offenders: list[str] = []
+
+    for root in roots:
+        for path in root.rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            relative = path.relative_to(repo_root).as_posix()
+            for node in ast.walk(tree):
+                if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
+                    arguments = [
+                        *node.args.posonlyargs,
+                        *node.args.args,
+                        *node.args.kwonlyargs,
+                    ]
+                    for argument in arguments:
+                        if argument.arg.lstrip("_") not in request_names:
+                            continue
+                        if isinstance(argument.annotation, ast.Name) and (
+                            argument.annotation.id == "Any"
+                        ):
+                            offenders.append(
+                                f"{relative}:{argument.lineno}: "
+                                f"{node.name}({argument.arg}: Any)"
+                            )
+                if not isinstance(node, ast.Call) or not (
+                    isinstance(node.func, ast.Name)
+                    and node.func.id == "getattr"
+                    and len(node.args) >= 2
+                    and isinstance(node.args[0], ast.Name)
+                    and node.args[0].id.lstrip("_") in request_names
+                    and isinstance(node.args[1], ast.Constant)
+                    and node.args[1].value in protocol_fields
+                ):
+                    continue
+                offenders.append(
+                    f"{relative}:{node.lineno}: "
+                    f"getattr({node.args[0].id}, {node.args[1].value!r})"
+                )
+
+    assert sorted(offenders) == []
+
+
 def test_core_does_not_import_product_packages() -> None:
     """Neutral ``core`` must stay independent of API, workers, and providers."""
     repo_root = Path(__file__).resolve().parents[2]
@@ -527,6 +590,7 @@ def test_openai_responses_uses_adapter_boundary() -> None:
         "ids.py",
         "input.py",
         "items.py",
+        "models.py",
         "reasoning.py",
         "stream.py",
         "tools.py",
@@ -548,10 +612,19 @@ def test_openai_responses_uses_adapter_boundary() -> None:
 
     responses_handler = handlers_root / "responses.py"
     responses_handler_text = responses_handler.read_text(encoding="utf-8")
-    assert (
-        "from free_claude_code.core.openai_responses import OpenAIResponsesAdapter"
-        in responses_handler_text
+    assert "free_claude_code.core.openai_responses" in set(
+        _imports_from(responses_handler, repo_root)
     )
+    assert "OpenAIResponsesAdapter" in responses_handler_text
+    assert "OpenAIResponsesRequest" in responses_handler_text
+    assert not (
+        repo_root
+        / "src"
+        / "free_claude_code"
+        / "api"
+        / "models"
+        / "openai_responses.py"
+    ).exists()
     routes_text = (
         repo_root / "src" / "free_claude_code" / "api" / "routes.py"
     ).read_text(encoding="utf-8")
@@ -578,13 +651,14 @@ def test_openai_responses_uses_adapter_boundary() -> None:
                 offenders.append(f"{rel}: {imported}")
     assert sorted(offenders) == []
 
-    adapter_importers: list[str] = []
+    responses_importers: list[str] = []
     for path in (repo_root / "src" / "free_claude_code" / "api").rglob("*.py"):
         imports = set(_imports_from(path, repo_root))
         if "free_claude_code.core.openai_responses" in imports:
-            adapter_importers.append(path.relative_to(repo_root).as_posix())
-    assert sorted(adapter_importers) == [
-        "src/free_claude_code/api/handlers/responses.py"
+            responses_importers.append(path.relative_to(repo_root).as_posix())
+    assert sorted(responses_importers) == [
+        "src/free_claude_code/api/handlers/responses.py",
+        "src/free_claude_code/api/routes.py",
     ]
 
     response_handler_imports = set(_imports_from(responses_handler, repo_root))

@@ -10,36 +10,12 @@ from free_claude_code.providers.huggingface import (
     HUGGINGFACE_DEFAULT_BASE,
     HuggingFaceProvider,
 )
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
 
 
-class MockMessage:
-    def __init__(self, role, content, reasoning_content=None):
-        self.role = role
-        self.content = content
-        self.reasoning_content = reasoning_content
-
-
-class MockBlock:
-    def __init__(self, **kwargs):
-        for key, value in kwargs.items():
-            setattr(self, key, value)
-
-
-class MockRequest:
-    def __init__(self, **kwargs):
-        self.model = "openai/gpt-oss-120b:fastest"
-        self.messages = [MockMessage("user", "Hello")]
-        self.max_tokens = 100
-        self.temperature = 0.5
-        self.top_p = 0.9
-        self.system = "System prompt"
-        self.stop_sequences = None
-        self.tools = []
-        self.thinking = MagicMock()
-        self.thinking.enabled = True
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+def make_request(**overrides):
+    return make_messages_request("openai/gpt-oss-120b:fastest", **overrides)
 
 
 @pytest.fixture
@@ -100,7 +76,7 @@ def test_build_request_body_keeps_max_tokens(huggingface_provider):
             "max_tokens": 42,
         }
 
-        body = huggingface_provider._build_request_body(MockRequest())
+        body = huggingface_provider._build_request_body(make_request())
 
     mock_convert.assert_called_once()
     assert (
@@ -114,7 +90,7 @@ def test_build_request_body_keeps_max_tokens(huggingface_provider):
 
 def test_build_request_body_preserves_caller_extra_body(huggingface_provider):
     extra_body = {"provider": "auto", "routing": {"bill_to": "my-org"}}
-    req = MockRequest(extra_body=extra_body)
+    req = make_request(extra_body=extra_body)
 
     body = huggingface_provider._build_request_body(req)
 
@@ -126,16 +102,16 @@ def test_build_request_body_preserves_caller_extra_body(huggingface_provider):
 def test_build_request_body_does_not_replay_prior_thinking_blocks(
     huggingface_provider,
 ):
-    req = MockRequest(
+    req = make_request(
         system=None,
         messages=[
-            MockMessage(
-                "assistant",
-                [
-                    MockBlock(type="thinking", thinking="hidden prior thought"),
-                    MockBlock(type="text", text="visible answer"),
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "hidden prior thought"},
+                    {"type": "text", "text": "visible answer"},
                 ],
-            )
+            }
         ],
     )
 
@@ -149,14 +125,14 @@ def test_build_request_body_does_not_replay_prior_thinking_blocks(
 def test_build_request_body_does_not_replay_top_level_reasoning_content(
     huggingface_provider,
 ):
-    req = MockRequest(
+    req = make_request(
         system=None,
         messages=[
-            MockMessage(
-                "assistant",
-                "visible answer",
-                reasoning_content="hidden prior reasoning",
-            )
+            {
+                "role": "assistant",
+                "content": "visible answer",
+                "reasoning_content": "hidden prior reasoning",
+            }
         ],
     )
 
@@ -190,7 +166,8 @@ async def test_stream_response_text(huggingface_provider):
         mock_create.return_value = mock_stream()
 
         events = [
-            event async for event in huggingface_provider.stream_response(MockRequest())
+            event
+            async for event in huggingface_provider.stream_response(make_request())
         ]
 
     assert any(
@@ -223,7 +200,8 @@ async def test_stream_response_reasoning_content(huggingface_provider):
         mock_create.return_value = mock_stream()
 
         events = [
-            event async for event in huggingface_provider.stream_response(MockRequest())
+            event
+            async for event in huggingface_provider.stream_response(make_request())
         ]
 
     assert any(

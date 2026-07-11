@@ -9,29 +9,12 @@ from free_claude_code.providers.sambanova import (
     SAMBANOVA_DEFAULT_BASE,
     SambaNovaProvider,
 )
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
 
 
-class MockMessage:
-    def __init__(self, role, content):
-        self.role = role
-        self.content = content
-
-
-class MockRequest:
-    def __init__(self, **kwargs):
-        self.model = "Meta-Llama-3.3-70B-Instruct"
-        self.messages = [MockMessage("user", "Hello")]
-        self.max_tokens = 100
-        self.temperature = 0.5
-        self.top_p = 0.9
-        self.system = "System prompt"
-        self.stop_sequences = None
-        self.tools = []
-        self.thinking = MagicMock()
-        self.thinking.enabled = True
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+def make_request(**overrides):
+    return make_messages_request("Meta-Llama-3.3-70B-Instruct", **overrides)
 
 
 @pytest.fixture
@@ -82,7 +65,7 @@ def test_init_strips_trailing_slash(sambanova_config):
 
 def test_build_request_body_basic(sambanova_provider):
     """Basic request body conversion attaches system message and keeps max_tokens."""
-    body = sambanova_provider._build_request_body(MockRequest())
+    body = sambanova_provider._build_request_body(make_request())
 
     assert body["model"] == "Meta-Llama-3.3-70B-Instruct"
     assert body["messages"][0]["role"] == "system"
@@ -91,7 +74,7 @@ def test_build_request_body_basic(sambanova_provider):
 
 
 def test_build_request_body_preserves_caller_extra_body(sambanova_provider):
-    req = MockRequest(extra_body={"metadata": {"user": "u1"}})
+    req = make_request(extra_body={"metadata": {"user": "u1"}})
 
     body = sambanova_provider._build_request_body(req)
 
@@ -125,7 +108,7 @@ async def test_stream_response_text(sambanova_provider):
         mock_create.return_value = mock_stream()
 
         events = [
-            event async for event in sambanova_provider.stream_response(MockRequest())
+            event async for event in sambanova_provider.stream_response(make_request())
         ]
 
     assert any(
@@ -160,7 +143,7 @@ async def test_stream_response_tool_call(sambanova_provider):
         mock_create.return_value = mock_stream()
 
         events = [
-            event async for event in sambanova_provider.stream_response(MockRequest())
+            event async for event in sambanova_provider.stream_response(make_request())
         ]
 
     assert any(
@@ -196,7 +179,7 @@ async def test_stream_response_reasoning_content(sambanova_provider):
         mock_create.return_value = mock_stream()
 
         events = [
-            event async for event in sambanova_provider.stream_response(MockRequest())
+            event async for event in sambanova_provider.stream_response(make_request())
         ]
 
     assert any(

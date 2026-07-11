@@ -8,10 +8,10 @@ import pytest
 from free_claude_code.core.anthropic.stream_contracts import event_names, parse_sse_text
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.exceptions import ProviderError
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import retrying_rate_limiter
 from tests.providers.test_anthropic_messages import (
     FakeResponse,
-    MockRequest,
     NativeProvider,
 )
 
@@ -40,7 +40,7 @@ def provider_config():
 async def test_native_stream_retries_on_http_429_then_streams(provider_config):
     """First response 429 (closed), second 200 streams; send is called twice."""
     provider = NativeProvider(provider_config, rate_limiter=retrying_rate_limiter())
-    req = MockRequest()
+    req = make_messages_request()
     request_obj = httpx.Request("POST", "https://custom.test/v1/messages")
     ok_lines = [
         "event: message_start",
@@ -89,7 +89,7 @@ async def test_native_stream_retries_on_http_5xx_then_streams(
 ):
     """First response is retryable 5xx (closed); second 200 streams; send twice."""
     provider = NativeProvider(provider_config, rate_limiter=retrying_rate_limiter())
-    req = MockRequest()
+    req = make_messages_request()
     request_obj = httpx.Request("POST", "https://custom.test/v1/messages")
     ok_lines = [
         "event: message_start",
@@ -137,7 +137,7 @@ async def test_native_stream_retries_on_pre_send_connection_error_then_streams(
 ):
     """Pre-response HTTPX transport errors retry through execute_with_retry."""
     provider = NativeProvider(provider_config, rate_limiter=retrying_rate_limiter())
-    req = MockRequest()
+    req = make_messages_request()
     request_obj = httpx.Request("POST", "https://custom.test/v1/messages")
     ok_lines = [
         "event: message_start",
@@ -191,7 +191,7 @@ async def test_native_stream_5xx_retry_exhausted(provider_config, status_code, s
         provider_config,
         rate_limiter=retrying_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_messages_request()
 
     bad = FakeResponse(status_code=status_code, text="upstream error")
 
@@ -221,7 +221,7 @@ async def test_native_stream_connection_error_retry_exhausted(provider_config):
         provider_config,
         rate_limiter=retrying_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_messages_request()
     request_obj = httpx.Request("POST", "https://custom.test/v1/messages")
 
     with (
@@ -260,7 +260,7 @@ async def test_non_retryable_4xx_http_error_not_retried(provider_config):
         provider_config,
         rate_limiter=retrying_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_messages_request()
     err = FakeResponse(status_code=400, text="Bad Request")
 
     with (

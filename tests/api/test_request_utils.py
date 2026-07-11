@@ -10,8 +10,8 @@ from free_claude_code.api.detection import (
     is_quota_check_request,
     is_title_generation_request,
 )
-from free_claude_code.api.models.anthropic import Message, MessagesRequest
 from free_claude_code.core.anthropic import get_token_count
+from free_claude_code.core.anthropic.models import Message, MessagesRequest
 
 
 class TestQuotaCheckRequest:

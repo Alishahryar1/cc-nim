@@ -9,29 +9,12 @@ from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.exceptions import InvalidRequestError
 from free_claude_code.providers.lmstudio import LMStudioProvider
 from free_claude_code.providers.lmstudio.client import LMSTUDIO_DEFAULT_BASE
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
 
 
-class MockMessage:
-    def __init__(self, role, content):
-        self.role = role
-        self.content = content
-
-
-class MockRequest:
-    def __init__(self, **kwargs):
-        self.model = "lmstudio-community/qwen2.5-7b-instruct"
-        self.messages = [MockMessage("user", "Hello")]
-        self.max_tokens = 100
-        self.temperature = 0.5
-        self.top_p = 0.9
-        self.system = "System prompt"
-        self.stop_sequences = None
-        self.tools = []
-        self.thinking = MagicMock()
-        self.thinking.enabled = True
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+def make_request(**overrides):
+    return make_messages_request("lmstudio-community/qwen2.5-7b-instruct", **overrides)
 
 
 @pytest.fixture
@@ -68,7 +51,7 @@ def test_default_base_url_constant():
 
 
 def test_build_request_body_basic(lmstudio_provider):
-    req = MockRequest()
+    req = make_request()
     body = lmstudio_provider._build_request_body(req)
 
     assert body["model"] == "lmstudio-community/qwen2.5-7b-instruct"
@@ -78,13 +61,19 @@ def test_build_request_body_basic(lmstudio_provider):
 def test_build_request_body_never_replays_prior_thinking(lmstudio_provider):
     """Mistral-family templates have no assistant reasoning field; prior-turn
     thinking must never be replayed regardless of the enable_thinking setting."""
-    req = MockRequest(
+    req = make_request(
         messages=[
-            MockMessage("user", "hi"),
-            MockMessage(
-                "assistant",
-                [{"type": "thinking", "thinking": "prior reasoning", "signature": "s"}],
-            ),
+            {"role": "user", "content": "hi"},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "thinking",
+                        "thinking": "prior reasoning",
+                        "signature": "s",
+                    }
+                ],
+            },
         ]
     )
     body = lmstudio_provider._build_request_body(req)
@@ -97,7 +86,7 @@ def test_build_request_body_never_replays_prior_thinking(lmstudio_provider):
 @pytest.mark.asyncio
 async def test_stream_response_text(lmstudio_provider):
     """Text content deltas are emitted as text blocks (via the OpenAI chat transport)."""
-    req = MockRequest()
+    req = make_request()
 
     mock_chunk = MagicMock()
     mock_chunk.choices = [
@@ -138,14 +127,16 @@ async def test_cleanup(lmstudio_provider):
 def test_preflight_context_budget_noop_when_context_length_unknown(lmstudio_provider):
     """No LM Studio /api/v0/models data available -> preflight is a no-op (fail open)."""
     with patch.object(lmstudio_provider, "_loaded_context_length", return_value=None):
-        lmstudio_provider._preflight_context_budget(MockRequest())  # must not raise
+        lmstudio_provider._preflight_context_budget(make_request())  # must not raise
 
 
 def test_preflight_context_budget_allows_request_under_budget(lmstudio_provider):
     with patch.object(
         lmstudio_provider, "_loaded_context_length", return_value=100_000
     ):
-        req = MockRequest(messages=[MockMessage("user", "hi")], system=None, tools=[])
+        req = make_request(
+            messages=[{"role": "user", "content": "hi"}], system=None, tools=[]
+        )
         lmstudio_provider._preflight_context_budget(req)  # must not raise
 
 
@@ -158,7 +149,7 @@ def test_preflight_context_budget_rejects_request_over_90_percent(lmstudio_provi
         ),
         pytest.raises(InvalidRequestError, match="prompt is too long"),
     ):
-        lmstudio_provider._preflight_context_budget(MockRequest())
+        lmstudio_provider._preflight_context_budget(make_request())
 
 
 def test_loaded_context_length_reads_max_across_loaded_models(lmstudio_provider):

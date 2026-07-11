@@ -1,14 +1,13 @@
 """Tests for NVIDIA NIM request policy helpers."""
 
 from copy import deepcopy
-from types import SimpleNamespace
 from typing import Any
-from unittest.mock import MagicMock
 
 import pytest
 
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.core.anthropic import set_if_not_none
+from free_claude_code.core.anthropic.models import MessagesRequest, Tool
 from free_claude_code.providers.nvidia_nim.request_options import (
     _set_extra,
 )
@@ -24,6 +23,7 @@ from free_claude_code.providers.nvidia_nim.tool_schema import (
     body_without_nim_tool_argument_aliases,
     nim_tool_argument_aliases_from_body,
 )
+from tests.providers.request_factory import make_messages_request
 
 GREP_SCHEMA_FROM_SERVER_LOG: dict[str, Any] = {
     "type": "object",
@@ -48,20 +48,20 @@ GREP_SCHEMA_FROM_SERVER_LOG: dict[str, Any] = {
 
 
 @pytest.fixture
-def req():
-    r = MagicMock()
-    r.model = "test"
-    r.messages = [MagicMock(role="user", content="hi")]
-    r.max_tokens = 100
-    r.system = None
-    r.temperature = None
-    r.top_p = None
-    r.stop_sequences = None
-    r.tools = None
-    r.tool_choice = None
-    r.extra_body = None
-    r.top_k = None
-    return r
+def req() -> MessagesRequest:
+    return make_messages_request(
+        model="test",
+        messages=[{"role": "user", "content": "hi"}],
+        max_tokens=100,
+        system=None,
+        temperature=None,
+        top_p=None,
+        stop_sequences=None,
+        tools=None,
+        extra_body=None,
+        top_k=None,
+        thinking=None,
+    )
 
 
 class TestSetIfNotNone:
@@ -134,7 +134,7 @@ class TestBuildRequestBody:
             "required": ["query"],
         }
         req.tools = [
-            SimpleNamespace(
+            Tool(
                 name="search",
                 description="search",
                 input_schema=tool_schema,
@@ -162,7 +162,7 @@ class TestBuildRequestBody:
         tool_schema["required"] = ["pattern", "-A", "_fcc_arg_type"]
         original_schema = deepcopy(tool_schema)
         req.tools = [
-            SimpleNamespace(
+            Tool(
                 name="Grep",
                 description="Search file contents",
                 input_schema=tool_schema,
@@ -208,7 +208,7 @@ class TestBuildRequestBody:
             "required": ["pattern"],
         }
         req.tools = [
-            SimpleNamespace(
+            Tool(
                 name="Glob",
                 description="Find files",
                 input_schema=tool_schema,
@@ -241,7 +241,7 @@ class TestBuildRequestBody:
         }
         original_schema = deepcopy(tool_schema)
         req.tools = [
-            SimpleNamespace(
+            Tool(
                 name="NotionLike",
                 description="Nested type schema",
                 input_schema=tool_schema,
@@ -277,18 +277,20 @@ class TestBuildRequestBody:
         }
 
     def test_reasoning_params_in_extra_body(self):
-        req = MagicMock()
-        req.model = "test"
-        req.messages = [MagicMock(role="user", content="hi")]
-        req.max_tokens = 100
-        req.system = None
-        req.temperature = None
-        req.top_p = None
-        req.stop_sequences = None
-        req.tools = None
-        req.tool_choice = None
-        req.extra_body = None
-        req.top_k = None
+        req = make_messages_request(
+            model="test",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=100,
+            system=None,
+            temperature=None,
+            top_p=None,
+            stop_sequences=None,
+            tools=None,
+            tool_choice=None,
+            extra_body=None,
+            top_k=None,
+            thinking=None,
+        )
 
         nim = NimSettings()
         body = build_request_body(req, nim, thinking_enabled=True)
@@ -353,18 +355,20 @@ class TestBuildRequestBody:
         assert clone_body_without_chat_template(body) is None
 
     def test_no_chat_template_kwargs_when_thinking_disabled(self):
-        req = MagicMock()
-        req.model = "test"
-        req.messages = [MagicMock(role="user", content="hi")]
-        req.max_tokens = 100
-        req.system = None
-        req.temperature = None
-        req.top_p = None
-        req.stop_sequences = None
-        req.tools = None
-        req.tool_choice = None
-        req.extra_body = None
-        req.top_k = None
+        req = make_messages_request(
+            model="test",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=100,
+            system=None,
+            temperature=None,
+            top_p=None,
+            stop_sequences=None,
+            tools=None,
+            tool_choice=None,
+            extra_body=None,
+            top_k=None,
+            thinking=None,
+        )
 
         nim = NimSettings()
         body = build_request_body(req, nim, thinking_enabled=False)
@@ -373,20 +377,25 @@ class TestBuildRequestBody:
         assert "reasoning_budget" not in extra
 
     def test_reasoning_budget_respects_existing_chat_template_kwargs(self):
-        req = MagicMock()
-        req.model = "test"
-        req.messages = [MagicMock(role="user", content="hi")]
-        req.max_tokens = 100
-        req.system = None
-        req.temperature = None
-        req.top_p = None
-        req.stop_sequences = None
-        req.tools = None
-        req.tool_choice = None
-        req.top_k = None
-        req.extra_body = {
-            "chat_template_kwargs": {"enable_thinking": False, "custom": "value"}
-        }
+        req = make_messages_request(
+            model="test",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=100,
+            system=None,
+            temperature=None,
+            top_p=None,
+            stop_sequences=None,
+            tools=None,
+            tool_choice=None,
+            top_k=None,
+            extra_body={
+                "chat_template_kwargs": {
+                    "enable_thinking": False,
+                    "custom": "value",
+                }
+            },
+            thinking=None,
+        )
 
         body = build_request_body(req, NimSettings(), thinking_enabled=True)
         assert body["extra_body"]["chat_template_kwargs"] == {
@@ -396,18 +405,20 @@ class TestBuildRequestBody:
         }
 
     def test_chat_template_fields_present_for_mistral_model(self):
-        req = MagicMock()
-        req.model = "mistralai/mixtral-8x7b-instruct-v0.1"
-        req.messages = [MagicMock(role="user", content="hi")]
-        req.max_tokens = 100
-        req.system = None
-        req.temperature = None
-        req.top_p = None
-        req.stop_sequences = None
-        req.tools = None
-        req.tool_choice = None
-        req.extra_body = None
-        req.top_k = None
+        req = make_messages_request(
+            model="mistralai/mixtral-8x7b-instruct-v0.1",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=100,
+            system=None,
+            temperature=None,
+            top_p=None,
+            stop_sequences=None,
+            tools=None,
+            tool_choice=None,
+            extra_body=None,
+            top_k=None,
+            thinking=None,
+        )
 
         nim = NimSettings(chat_template="custom_template")
         body = build_request_body(req, nim, thinking_enabled=True)
@@ -420,18 +431,20 @@ class TestBuildRequestBody:
         assert extra["chat_template"] == "custom_template"
 
     def test_no_reasoning_params_in_extra_body(self):
-        req = MagicMock()
-        req.model = "test"
-        req.messages = [MagicMock(role="user", content="hi")]
-        req.max_tokens = 100
-        req.system = None
-        req.temperature = None
-        req.top_p = None
-        req.stop_sequences = None
-        req.tools = None
-        req.tool_choice = None
-        req.extra_body = None
-        req.top_k = None
+        req = make_messages_request(
+            model="test",
+            messages=[{"role": "user", "content": "hi"}],
+            max_tokens=100,
+            system=None,
+            temperature=None,
+            top_p=None,
+            stop_sequences=None,
+            tools=None,
+            tool_choice=None,
+            extra_body=None,
+            top_k=None,
+            thinking=None,
+        )
 
         nim = NimSettings()
         body = build_request_body(req, nim, thinking_enabled=False)
@@ -446,53 +459,56 @@ class TestBuildRequestBody:
             assert param not in extra
 
     def test_assistant_thinking_blocks_removed_when_disabled(self):
-        req = MagicMock()
-        req.model = "test"
-        req.messages = [
-            MagicMock(
-                role="assistant",
-                content=[
-                    MagicMock(type="thinking", thinking="secret"),
-                    MagicMock(type="text", text="answer"),
-                ],
-            )
-        ]
-        req.max_tokens = 100
-        req.system = None
-        req.temperature = None
-        req.top_p = None
-        req.stop_sequences = None
-        req.tools = None
-        req.tool_choice = None
-        req.extra_body = None
-        req.top_k = None
+        req = make_messages_request(
+            model="test",
+            messages=[
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "thinking", "thinking": "secret"},
+                        {"type": "text", "text": "answer"},
+                    ],
+                }
+            ],
+            max_tokens=100,
+            system=None,
+            temperature=None,
+            top_p=None,
+            stop_sequences=None,
+            tools=None,
+            tool_choice=None,
+            extra_body=None,
+            top_k=None,
+            thinking=None,
+        )
 
         body = build_request_body(req, NimSettings(), thinking_enabled=False)
         assert "<think>" not in body["messages"][0]["content"]
         assert "answer" in body["messages"][0]["content"]
 
     def test_assistant_thinking_replayed_as_reasoning_content_when_enabled(self):
-        req = MagicMock()
-        req.model = "test"
-        req.messages = [
-            MagicMock(
-                role="assistant",
-                content=[
-                    MagicMock(type="thinking", thinking="secret"),
-                    MagicMock(type="text", text="answer"),
-                ],
-                reasoning_content=None,
-            )
-        ]
-        req.max_tokens = 100
-        req.system = None
-        req.temperature = None
-        req.top_p = None
-        req.stop_sequences = None
-        req.tools = None
-        req.tool_choice = None
-        req.extra_body = None
-        req.top_k = None
+        req = make_messages_request(
+            model="test",
+            messages=[
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "thinking", "thinking": "secret"},
+                        {"type": "text", "text": "answer"},
+                    ],
+                }
+            ],
+            max_tokens=100,
+            system=None,
+            temperature=None,
+            top_p=None,
+            stop_sequences=None,
+            tools=None,
+            tool_choice=None,
+            extra_body=None,
+            top_k=None,
+            thinking=None,
+        )
 
         body = build_request_body(req, NimSettings(), thinking_enabled=True)
         assistant = body["messages"][0]

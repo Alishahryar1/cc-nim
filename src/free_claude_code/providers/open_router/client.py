@@ -5,6 +5,7 @@ from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from free_claude_code.core.anthropic.models import MessagesRequest, ThinkingConfig
 from free_claude_code.core.anthropic.streaming import AnthropicStreamLedger
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.defaults import OPENROUTER_DEFAULT_BASE
@@ -44,7 +45,7 @@ class OpenRouterProvider(OpenAIChatTransport):
         )
 
     def _build_request_body(
-        self, request: Any, thinking_enabled: bool | None = None
+        self, request: MessagesRequest, thinking_enabled: bool | None = None
     ) -> dict:
         effective_thinking_enabled = self._is_thinking_enabled(
             request, thinking_enabled
@@ -83,7 +84,7 @@ class OpenRouterProvider(OpenAIChatTransport):
 
 
 def _apply_openrouter_reasoning_policy(
-    body: dict[str, Any], request: Any, thinking_enabled: bool
+    body: dict[str, Any], request: MessagesRequest, thinking_enabled: bool
 ) -> None:
     if not thinking_enabled:
         return
@@ -94,17 +95,17 @@ def _apply_openrouter_reasoning_policy(
     if not isinstance(reasoning, dict):
         return
     reasoning.setdefault("enabled", True)
-    budget_tokens = _thinking_budget_tokens(getattr(request, "thinking", None))
+    budget_tokens = _thinking_budget_tokens(request.thinking)
     if isinstance(budget_tokens, int):
         reasoning.setdefault("max_tokens", budget_tokens)
 
 
 def _apply_openrouter_reasoning_details_replay(
-    body: dict[str, Any], request: Any, thinking_enabled: bool
+    body: dict[str, Any], request: MessagesRequest, thinking_enabled: bool
 ) -> None:
     if not thinking_enabled:
         return
-    assistant_details = _assistant_reasoning_details(getattr(request, "messages", []))
+    assistant_details = _assistant_reasoning_details(request.messages)
     if not assistant_details:
         return
     messages = body.get("messages")
@@ -159,11 +160,8 @@ def _redacted_reasoning_details(content: Any) -> list[dict[str, Any]]:
     return details
 
 
-def _thinking_budget_tokens(thinking: Any) -> int | None:
-    if isinstance(thinking, Mapping):
-        value = thinking.get("budget_tokens")
-    else:
-        value = getattr(thinking, "budget_tokens", None)
+def _thinking_budget_tokens(thinking: ThinkingConfig | None) -> int | None:
+    value = thinking.budget_tokens if thinking is not None else None
     return value if isinstance(value, int) and not isinstance(value, bool) else None
 
 

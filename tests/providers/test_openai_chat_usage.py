@@ -8,6 +8,7 @@ import openai
 import pytest
 from httpx import Request, Response
 
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
@@ -17,6 +18,7 @@ from free_claude_code.providers.transports.openai_chat.usage import (
     request_stream_usage,
     usage_int,
 )
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
 
 
@@ -36,7 +38,7 @@ class _UsageTestProvider(OpenAIChatTransport):
         )
 
     def _build_request_body(
-        self, request: Any, thinking_enabled: bool | None = None
+        self, request: MessagesRequest, thinking_enabled: bool | None = None
     ) -> dict:
         return {"model": request.model, "messages": [{"role": "user", "content": "x"}]}
 
@@ -150,7 +152,7 @@ def test_stream_usage_rejection_does_not_match_unrelated_400():
 @pytest.mark.asyncio
 async def test_openai_chat_stream_requests_usage_and_uses_provider_prompt_tokens():
     provider = _UsageTestProvider()
-    request = SimpleNamespace(model="m")
+    request = make_messages_request(model="m")
     usage = SimpleNamespace(prompt_tokens=22, completion_tokens=4)
     create = AsyncMock(
         return_value=_stream(

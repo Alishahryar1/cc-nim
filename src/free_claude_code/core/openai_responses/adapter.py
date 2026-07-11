@@ -1,11 +1,12 @@
 """Facade for OpenAI Responses protocol adaptation."""
 
-from collections.abc import AsyncIterable, AsyncIterator, Mapping
+from collections.abc import AsyncIterable, AsyncIterator
 from typing import Any, ClassVar
 
 from .errors import ResponsesConversionError, openai_error_payload
 from .events import OPENAI_RESPONSES_SSE_HEADERS
 from .input import convert_request_to_anthropic_payload
+from .models import OpenAIResponsesRequest
 from .stream import iter_responses_sse_from_anthropic
 
 
@@ -15,13 +16,13 @@ class OpenAIResponsesAdapter:
     ConversionError: ClassVar[type[ResponsesConversionError]] = ResponsesConversionError
     sse_headers: ClassVar[dict[str, str]] = OPENAI_RESPONSES_SSE_HEADERS
 
-    def to_anthropic_payload(self, request: Mapping[str, Any]) -> dict[str, Any]:
+    def to_anthropic_payload(self, request: OpenAIResponsesRequest) -> dict[str, Any]:
         return convert_request_to_anthropic_payload(request)
 
     def iter_sse_from_anthropic(
         self,
         chunks: AsyncIterable[Any],
-        request: Mapping[str, Any],
+        request: OpenAIResponsesRequest,
     ) -> AsyncIterator[str]:
         return iter_responses_sse_from_anthropic(chunks, request)
 

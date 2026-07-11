@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.core.anthropic.streaming import (
     MIDSTREAM_RECOVERY_ATTEMPTS,
@@ -51,9 +52,7 @@ class AnthropicMessagesRecovery:
                 response = await self._transport._rate_limiter.execute_with_retry(
                     self._transport._validated_stream_send, body, req_tag=req_tag
                 )
-                state = self._transport._new_stream_state(
-                    None, thinking_enabled=thinking_enabled
-                )
+                state = self._transport._new_stream_state()
                 chunks = [
                     chunk
                     async for chunk in self._iter_stream_chunks(
@@ -115,7 +114,7 @@ class AnthropicMessagesRecovery:
         self,
         *,
         body: dict[str, Any],
-        request: Any,
+        request: MessagesRequest,
         ledger: AnthropicStreamLedger,
         error: Exception,
         request_id: str | None,

@@ -122,12 +122,11 @@ def responses_tool_name_to_anthropic_name(
 
 
 def responses_tool_identity_from_anthropic_name(
-    request: Mapping[str, Any], anthropic_name: str
+    tools: list[dict[str, Any]] | None, anthropic_name: str
 ) -> ResponsesToolIdentity:
     """Return the Responses namespace/name represented by an Anthropic tool name."""
 
-    tools = request.get("tools")
-    if not isinstance(tools, list):
+    if tools is None:
         return ResponsesToolIdentity(kind="function", name=anthropic_name)
     for tool in tools:
         if not isinstance(tool, dict):

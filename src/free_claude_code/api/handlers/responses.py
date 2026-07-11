@@ -5,8 +5,6 @@ from collections.abc import Callable
 from fastapi.responses import JSONResponse
 
 from free_claude_code.api.model_router import ModelRouter
-from free_claude_code.api.models.anthropic import MessagesRequest
-from free_claude_code.api.models.openai_responses import OpenAIResponsesRequest
 from free_claude_code.api.provider_execution import ProviderExecutionService
 from free_claude_code.api.request_errors import (
     http_status_for_unexpected_api_exception,
@@ -19,8 +17,14 @@ from free_claude_code.api.response_streams import (
     terminal_execution_error_response,
 )
 from free_claude_code.config.settings import Settings
-from free_claude_code.core.anthropic import get_user_facing_error_message
-from free_claude_code.core.openai_responses import OpenAIResponsesAdapter
+from free_claude_code.core.anthropic import (
+    MessagesRequest,
+    get_user_facing_error_message,
+)
+from free_claude_code.core.openai_responses import (
+    OpenAIResponsesAdapter,
+    OpenAIResponsesRequest,
+)
 from free_claude_code.core.trace import trace_event
 from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.exceptions import InvalidRequestError, ProviderError
@@ -70,7 +74,7 @@ class ResponsesHandler:
 
         try:
             anthropic_payload = self._responses_adapter.to_anthropic_payload(
-                request_payload
+                request_data
             )
             response_request = MessagesRequest(**anthropic_payload)
             require_non_empty_messages(response_request.messages)
@@ -86,7 +90,7 @@ class ResponsesHandler:
             return await openai_responses_sse_streaming_response(
                 self._responses_adapter.iter_sse_from_anthropic(
                     streamed,
-                    request_payload,
+                    request_data,
                 ),
                 headers=self._responses_adapter.sse_headers,
                 pre_start_error_response=lambda exc: self._pre_start_error_response(

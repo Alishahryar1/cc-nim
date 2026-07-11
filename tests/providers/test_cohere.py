@@ -7,29 +7,12 @@ import pytest
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.cohere import COHERE_DEFAULT_BASE, CohereProvider
 from free_claude_code.providers.exceptions import InvalidRequestError
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
 
 
-class MockMessage:
-    def __init__(self, role, content):
-        self.role = role
-        self.content = content
-
-
-class MockRequest:
-    def __init__(self, **kwargs):
-        self.model = "command-a-plus-05-2026"
-        self.messages = [MockMessage("user", "Hello")]
-        self.max_tokens = 100
-        self.temperature = 0.5
-        self.top_p = 0.9
-        self.system = "System prompt"
-        self.stop_sequences = None
-        self.tools = []
-        self.thinking = MagicMock()
-        self.thinking.enabled = True
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+def make_request(**overrides):
+    return make_messages_request("command-a-plus-05-2026", **overrides)
 
 
 @pytest.fixture
@@ -96,7 +79,7 @@ def test_build_request_body_sanitizes_documented_unsupported_fields(cohere_provi
             "parallel_tool_calls": True,
         }
 
-        body = cohere_provider._build_request_body(MockRequest())
+        body = cohere_provider._build_request_body(make_request())
 
     assert body["messages"][0].get("name") is None
     assert body["max_tokens"] == 42
@@ -117,7 +100,7 @@ def test_build_request_body_sanitizes_documented_unsupported_fields(cohere_provi
 
 
 def test_build_request_body_maps_thinking_enabled_to_reasoning_high(cohere_provider):
-    body = cohere_provider._build_request_body(MockRequest())
+    body = cohere_provider._build_request_body(make_request())
 
     assert body["reasoning_effort"] == "high"
 
@@ -137,7 +120,7 @@ def test_build_request_body_preserves_replayed_reasoning_content(cohere_provider
             ],
         }
 
-        body = cohere_provider._build_request_body(MockRequest())
+        body = cohere_provider._build_request_body(make_request())
 
     assert body["messages"] == [
         {
@@ -161,13 +144,13 @@ def test_build_request_body_maps_thinking_disabled_to_reasoning_none():
         rate_limiter=passthrough_rate_limiter(),
     )
 
-    body = provider._build_request_body(MockRequest())
+    body = provider._build_request_body(make_request())
 
     assert body["reasoning_effort"] == "none"
 
 
 def test_build_request_body_promotes_allowed_extra_body(cohere_provider):
-    req = MockRequest(
+    req = make_request(
         extra_body={
             "frequency_penalty": 0.1,
             "presence_penalty": 0.2,
@@ -186,7 +169,7 @@ def test_build_request_body_promotes_allowed_extra_body(cohere_provider):
 
 
 def test_build_request_body_rejects_unsupported_extra_body(cohere_provider):
-    req = MockRequest(extra_body={"documents": [{"text": "x"}]})
+    req = make_request(extra_body={"documents": [{"text": "x"}]})
 
     with pytest.raises(InvalidRequestError, match="Unsupported"):
         cohere_provider._build_request_body(req)
@@ -216,7 +199,7 @@ async def test_stream_response_text(cohere_provider):
         mock_create.return_value = mock_stream()
 
         events = [
-            event async for event in cohere_provider.stream_response(MockRequest())
+            event async for event in cohere_provider.stream_response(make_request())
         ]
 
     assert any(
@@ -251,7 +234,7 @@ async def test_stream_response_tool_call(cohere_provider):
         mock_create.return_value = mock_stream()
 
         events = [
-            event async for event in cohere_provider.stream_response(MockRequest())
+            event async for event in cohere_provider.stream_response(make_request())
         ]
 
     assert any(
@@ -286,7 +269,7 @@ async def test_stream_response_reasoning_content(cohere_provider):
         mock_create.return_value = mock_stream()
 
         events = [
-            event async for event in cohere_provider.stream_response(MockRequest())
+            event async for event in cohere_provider.stream_response(make_request())
         ]
 
     assert any(

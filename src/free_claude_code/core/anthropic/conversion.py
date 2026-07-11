@@ -6,9 +6,8 @@ from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
 
-from pydantic import BaseModel
-
 from .content import get_block_attr, get_block_type
+from .models import MessagesRequest
 from .request_serialization import serialize_tool_result_content
 from .utils import set_if_not_none
 
@@ -25,16 +24,16 @@ class ReasoningReplayMode(StrEnum):
     REASONING_CONTENT = "reasoning_content"
 
 
-def _openai_reject_native_only_top_level_fields(request_data: Any) -> None:
+def _openai_reject_native_only_top_level_fields(
+    request_data: MessagesRequest,
+) -> None:
     """OpenAI chat providers may only convert known top-level request fields.
 
     First-class model fields (e.g. ``context_management``) are not forwarded to
     the OpenAI API but are allowed so clients do not hit spurious 400s.
     Unknown extra keys (``__pydantic_extra__``) are still rejected.
     """
-    if not isinstance(request_data, BaseModel):
-        return
-    extra = getattr(request_data, "__pydantic_extra__", None)
+    extra = request_data.model_extra
     if not extra:
         return
     raise OpenAIConversionError(
@@ -569,7 +568,7 @@ class AnthropicToOpenAIConverter:
 
 
 def build_base_request_body(
-    request_data: Any,
+    request_data: MessagesRequest,
     *,
     default_max_tokens: int | None = None,
     reasoning_replay: ReasoningReplayMode = ReasoningReplayMode.THINK_TAGS,
@@ -581,7 +580,7 @@ def build_base_request_body(
         reasoning_replay=reasoning_replay,
     )
 
-    system = getattr(request_data, "system", None)
+    system = request_data.system
     if system:
         system_msg = AnthropicToOpenAIConverter.convert_system_prompt(system)
         if system_msg:
@@ -589,19 +588,19 @@ def build_base_request_body(
 
     body: dict[str, Any] = {"model": request_data.model, "messages": messages}
 
-    max_tokens = getattr(request_data, "max_tokens", None)
+    max_tokens = request_data.max_tokens
     set_if_not_none(body, "max_tokens", max_tokens or default_max_tokens)
-    set_if_not_none(body, "temperature", getattr(request_data, "temperature", None))
-    set_if_not_none(body, "top_p", getattr(request_data, "top_p", None))
+    set_if_not_none(body, "temperature", request_data.temperature)
+    set_if_not_none(body, "top_p", request_data.top_p)
 
-    stop_sequences = getattr(request_data, "stop_sequences", None)
+    stop_sequences = request_data.stop_sequences
     if stop_sequences:
         body["stop"] = stop_sequences
 
-    tools = getattr(request_data, "tools", None)
+    tools = request_data.tools
     if tools:
         body["tools"] = AnthropicToOpenAIConverter.convert_tools(tools)
-    tool_choice = getattr(request_data, "tool_choice", None)
+    tool_choice = request_data.tool_choice
     if tool_choice:
         body["tool_choice"] = AnthropicToOpenAIConverter.convert_tool_choice(
             tool_choice

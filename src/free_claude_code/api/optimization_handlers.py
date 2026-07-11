@@ -9,6 +9,11 @@ import uuid
 from loguru import logger
 
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.anthropic import (
+    MessagesRequest,
+    MessagesResponse,
+    Usage,
+)
 
 from .command_utils import extract_command_prefix, extract_filepaths_from_command
 from .detection import (
@@ -18,8 +23,6 @@ from .detection import (
     is_suggestion_mode_request,
     is_title_generation_request,
 )
-from .models.anthropic import MessagesRequest
-from .models.responses import MessagesResponse, Usage
 
 
 def _text_response(

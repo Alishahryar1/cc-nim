@@ -46,15 +46,16 @@ flowchart LR
 The installable wheel packages are declared in [pyproject.toml](pyproject.toml):
 
 - [src/free_claude_code/api/](src/free_claude_code/api/) is the HTTP adapter. It owns the FastAPI app, routes, API product
-  handlers, protocol serialization, local optimizations, and narrow
-  consumer-owned runtime ports.
+  handlers, local optimizations, model-catalog responses, and narrow
+  consumer-owned runtime ports. It consumes protocol types instead of defining
+  them.
 - [src/free_claude_code/cli/](src/free_claude_code/cli/) owns console entrypoints, client CLI launchers, process/session
   management, and client adapter contracts.
 - [src/free_claude_code/config/](src/free_claude_code/config/) owns settings, provider metadata, filesystem paths,
   logging setup, constants, and provider ID catalogs.
-- [src/free_claude_code/core/](src/free_claude_code/core/) owns provider-neutral protocol logic: Anthropic conversion,
-  SSE construction, OpenAI Responses conversion, stream recovery, token counting,
-  and structured trace helpers.
+- [src/free_claude_code/core/](src/free_claude_code/core/) owns provider-neutral protocol logic: wire request and response
+  models, Anthropic conversion, SSE construction, OpenAI Responses conversion,
+  stream recovery, token counting, and structured trace helpers.
 - [src/free_claude_code/messaging/](src/free_claude_code/messaging/) owns optional platform adapters, incoming message
   handling, tree queues, transcript rendering, persistence, commands, and voice
   support.
@@ -69,9 +70,16 @@ The installable wheel packages are declared in [pyproject.toml](pyproject.toml):
 [smoke/](smoke/) contains local and live product smoke tests that can launch
 subprocesses or touch real services.
 
-The main ownership rule is that shared Anthropic and Responses protocol behavior
-belongs in [src/free_claude_code/core/](src/free_claude_code/core/). Provider modules should use neutral helpers rather
-than importing behavior from another provider-specific module.
+The main ownership rule is that Anthropic and Responses protocol schemas and
+shared behavior belong in [src/free_claude_code/core/](src/free_claude_code/core/). Routes use those schemas directly for
+wire validation, and provider modules use the same concrete request types and
+neutral helpers instead of importing the API adapter or another provider.
+Protocol consumers use the public `core.anthropic` and
+`core.openai_responses` facades. Low-level core and provider modules may import
+the dependency-leaf `models.py` modules directly so their type dependency is
+explicit; package initialization and those leaves must remain import-order safe.
+The model-list schema stays beside its API-owned construction policy in
+`api/model_catalog.py`; there is no generic API model package.
 
 ## Customer-Facing Contract
 
@@ -444,6 +452,10 @@ retries without the budget while preserving thinking enablement.
 Shared provider responsibilities include upstream rate limiting, model listing,
 safe error mapping, transport cleanup, thinking/tool handling, retry or recovery
 where supported, and returning Anthropic SSE strings to the service layer.
+Every provider and both transport families receive the same concrete
+`MessagesRequest` owned by the Anthropic protocol package. Known wire fields are
+accessed through that model; `Any` and dynamic attribute lookup are reserved for
+SDK response objects and genuinely open-ended nested extension payloads.
 Provider-specific inputs that do not apply to other upstreams, such as
 Cloudflare's account ID, stay in that provider's factory/client instead of being
 added to shared `ProviderConfig`.
@@ -482,6 +494,10 @@ usage quirks such as DeepSeek prompt-cache counters.
 
 [src/free_claude_code/core/anthropic/](src/free_claude_code/core/anthropic/) owns Anthropic-side protocol behavior:
 
+- `models.py` defines the permissive Messages and token-count wire requests,
+  content/tool/thinking blocks, and Anthropic response envelopes;
+- trace-safe request snapshots stay beside those models so the generic trace
+  module remains protocol-independent and import-order safe;
 - content and message conversion for OpenAI-compatible upstreams;
 - request serialization primitives shared by provider request policies;
 - tool schema and tool-result handling;
@@ -518,6 +534,8 @@ protocol events.
 
 [src/free_claude_code/core/openai_responses/](src/free_claude_code/core/openai_responses/) owns OpenAI Responses support:
 
+- the permissive `OpenAIResponsesRequest` ingress model used directly by the
+  FastAPI route and the protocol adapter;
 - the `OpenAIResponsesAdapter` facade used by the API layer;
 - streaming-only `/v1/responses` support for Codex/FCC workflows;
 - Responses request conversion into Anthropic Messages payloads;
@@ -530,7 +548,10 @@ an OpenAI-shaped client error because installed FCC/Codex workflows only need
 streaming. Request conversion, stream transformation, Anthropic SSE parsing,
 Responses SSE event formatting, output item construction, tool identity mapping,
 reasoning mapping, ID generation, and error envelope construction each live
-behind the adapter boundary. `stream.py` is the public streaming entrypoint;
+behind the adapter boundary. The concrete request object crosses that boundary
+unchanged; nested Responses input and tool data stays permissive and is
+interpreted by the conversion functions. `stream.py` is the public streaming
+entrypoint;
 [src/free_claude_code/core/openai_responses/streaming/](src/free_claude_code/core/openai_responses/streaming/) owns the
 block-indexed Responses stream assembler. The package separates Anthropic SSE
 dispatch, block state, output ledger ordering, block completion, SSE event

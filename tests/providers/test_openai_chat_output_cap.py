@@ -5,7 +5,7 @@ Covers the pure parse/clamp helpers and the transport behavior that clamps
 and learns the cap so later requests clamp proactively.
 """
 
-from unittest.mock import AsyncMock, MagicMock, patch
+from unittest.mock import AsyncMock, patch
 
 import pytest
 
@@ -15,6 +15,7 @@ from free_claude_code.providers.transports.openai_chat.output_cap import (
     clamp_output_tokens,
     parse_output_token_cap,
 )
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
 
 
@@ -109,26 +110,6 @@ def test_clamp_ignores_bool_values():
 # --------------------------------------------------------------------------- #
 
 
-class MockMessage:
-    def __init__(self, role, content):
-        self.role = role
-        self.content = content
-
-
-class MockRequest:
-    def __init__(self, max_tokens=64000):
-        self.model = "llama-3.3-70b-versatile"
-        self.messages = [MockMessage("user", "Hello")]
-        self.max_tokens = max_tokens
-        self.temperature = 0.5
-        self.top_p = 0.9
-        self.system = "System prompt"
-        self.stop_sequences = None
-        self.tools = []
-        self.thinking = MagicMock()
-        self.thinking.enabled = False
-
-
 @pytest.fixture
 def groq_provider():
     return GroqProvider(
@@ -145,7 +126,13 @@ def groq_provider():
 
 @pytest.mark.asyncio
 async def test_create_stream_clamps_and_learns_on_cap_rejection(groq_provider):
-    body = groq_provider._build_request_body(MockRequest(max_tokens=64000))
+    body = groq_provider._build_request_body(
+        make_messages_request(
+            "llama-3.3-70b-versatile",
+            max_tokens=64000,
+            thinking={"enabled": False},
+        )
+    )
     assert body["max_completion_tokens"] == 64000
     model = body["model"]
 
@@ -163,7 +150,13 @@ async def test_create_stream_clamps_and_learns_on_cap_rejection(groq_provider):
 
 @pytest.mark.asyncio
 async def test_learned_cap_clamps_next_request_without_a_400(groq_provider):
-    body = groq_provider._build_request_body(MockRequest(max_tokens=64000))
+    body = groq_provider._build_request_body(
+        make_messages_request(
+            "llama-3.3-70b-versatile",
+            max_tokens=64000,
+            thinking={"enabled": False},
+        )
+    )
     model = body["model"]
     groq_provider._model_output_caps[model] = 40960
 
@@ -178,7 +171,13 @@ async def test_learned_cap_clamps_next_request_without_a_400(groq_provider):
 
 @pytest.mark.asyncio
 async def test_unrelated_400_is_not_clamped_and_propagates(groq_provider):
-    body = groq_provider._build_request_body(MockRequest(max_tokens=100))
+    body = groq_provider._build_request_body(
+        make_messages_request(
+            "llama-3.3-70b-versatile",
+            max_tokens=100,
+            thinking={"enabled": False},
+        )
+    )
     create = AsyncMock(side_effect=_BadRequest("messages: invalid role 'wizard'"))
 
     with (

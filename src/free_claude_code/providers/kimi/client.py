@@ -3,6 +3,7 @@
 from typing import Any
 
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.defaults import KIMI_DEFAULT_BASE
 from free_claude_code.providers.rate_limit import ProviderRateLimiter
@@ -34,7 +35,7 @@ class KimiProvider(OpenAIChatTransport):
         )
 
     def _build_request_body(
-        self, request: Any, thinking_enabled: bool | None = None
+        self, request: MessagesRequest, thinking_enabled: bool | None = None
     ) -> dict:
         effective_thinking_enabled = self._is_thinking_enabled(
             request, thinking_enabled
@@ -48,7 +49,7 @@ class KimiProvider(OpenAIChatTransport):
 
 
 def _apply_kimi_thinking_policy(
-    body: dict[str, Any], _request: Any, thinking_enabled: bool
+    body: dict[str, Any], _request: MessagesRequest, thinking_enabled: bool
 ) -> None:
     if thinking_enabled:
         return

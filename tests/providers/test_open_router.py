@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from free_claude_code.api.models.anthropic import MessagesRequest
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import (
     parse_sse_text,
     text_content,
@@ -15,6 +15,7 @@ from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.exceptions import InvalidRequestError
 from free_claude_code.providers.open_router import OpenRouterProvider
 from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
 
 
@@ -34,28 +35,8 @@ class AsyncStream:
         self.closed = True
 
 
-class MockMessage:
-    def __init__(self, role, content):
-        self.role = role
-        self.content = content
-
-
-class MockRequest:
-    def __init__(self, **kwargs):
-        self.model = "moonshotai/kimi-k2.6:free"
-        self.messages = [MockMessage("user", "Hello")]
-        self.max_tokens = 100
-        self.temperature = 0.5
-        self.top_p = 0.9
-        self.system = "System prompt"
-        self.stop_sequences = None
-        self.tools = []
-        self.tool_choice = None
-        self.metadata = None
-        self.extra_body = {}
-        self.thinking = {"type": "enabled"}
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+def make_request(**overrides):
+    return make_messages_request("moonshotai/kimi-k2.6:free", **overrides)
 
 
 @pytest.fixture
@@ -96,7 +77,7 @@ def test_init_uses_openai_chat_transport(open_router_provider):
 
 
 def test_build_request_body_uses_openai_chat_shape(open_router_provider):
-    body = open_router_provider._build_request_body(MockRequest())
+    body = open_router_provider._build_request_body(make_request())
 
     assert body["model"] == "moonshotai/kimi-k2.6:free"
     assert body["temperature"] == 0.5
@@ -109,7 +90,7 @@ def test_build_request_body_uses_openai_chat_shape(open_router_provider):
 
 
 def test_build_request_body_default_max_tokens(open_router_provider):
-    body = open_router_provider._build_request_body(MockRequest(max_tokens=None))
+    body = open_router_provider._build_request_body(make_request(max_tokens=None))
 
     assert body["max_tokens"] == ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 
@@ -119,13 +100,13 @@ def test_openrouter_extra_body_rejects_overriding_reserved_fields(
 ):
     with pytest.raises(InvalidRequestError, match="model"):
         open_router_provider._build_request_body(
-            MockRequest(extra_body={"model": "hijack"})
+            make_request(extra_body={"model": "hijack"})
         )
 
 
 def test_openrouter_extra_body_allows_provider_keys(open_router_provider):
     body = open_router_provider._build_request_body(
-        MockRequest(extra_body={"transforms": ["no-web"], "plugins": []}),
+        make_request(extra_body={"transforms": ["no-web"], "plugins": []}),
         thinking_enabled=False,
     )
 
@@ -136,7 +117,7 @@ def test_build_request_body_omits_reasoning_when_thinking_disabled(
     open_router_provider,
 ):
     body = open_router_provider._build_request_body(
-        MockRequest(thinking={"type": "disabled"})
+        make_request(thinking={"type": "disabled"})
     )
 
     assert "extra_body" not in body
@@ -146,7 +127,7 @@ def test_build_request_body_maps_thinking_budget_to_reasoning_max_tokens(
     open_router_provider,
 ):
     body = open_router_provider._build_request_body(
-        MockRequest(thinking={"type": "enabled", "budget_tokens": 4096})
+        make_request(thinking={"type": "enabled", "budget_tokens": 4096})
     )
 
     assert body["extra_body"]["reasoning"] == {"enabled": True, "max_tokens": 4096}
@@ -198,7 +179,8 @@ async def test_stream_maps_reasoning_content_and_details(open_router_provider):
         return_value=stream,
     ):
         events = [
-            event async for event in open_router_provider.stream_response(MockRequest())
+            event
+            async for event in open_router_provider.stream_response(make_request())
         ]
 
     event_text = "".join(events)

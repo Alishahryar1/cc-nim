@@ -3,19 +3,21 @@
 from copy import deepcopy
 from typing import Any, cast
 
+from free_claude_code.core.anthropic.models import MessagesRequest
+
 GEMINI_SKIP_THOUGHT_SIGNATURE_VALIDATOR = "skip_thought_signature_validator"
 
 
 def apply_gemini_request_quirks(
     body: dict[str, Any],
-    request_data: Any,
+    request_data: MessagesRequest,
     thinking_enabled: bool,
     *,
     tool_call_extra_content_by_id: dict[str, dict[str, Any]] | None = None,
 ) -> None:
     """Apply Google-specific request extensions after common OpenAI conversion."""
     extra_body: dict[str, Any] = {}
-    request_extra = getattr(request_data, "extra_body", None)
+    request_extra = request_data.extra_body
     if isinstance(request_extra, dict):
         extra_body.update(deepcopy(request_extra))
 

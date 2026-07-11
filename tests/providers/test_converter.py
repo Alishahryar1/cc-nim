@@ -2,13 +2,13 @@ import json
 
 import pytest
 
-from free_claude_code.api.models.anthropic import MessagesRequest
 from free_claude_code.core.anthropic import (
     AnthropicToOpenAIConverter,
     OpenAIConversionError,
     ReasoningReplayMode,
     build_base_request_body,
 )
+from free_claude_code.core.anthropic.models import MessagesRequest
 
 # --- Mock Classes ---
 

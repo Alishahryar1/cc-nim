@@ -4,8 +4,8 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
-from free_claude_code.api.models.anthropic import Message, MessagesRequest
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.defaults import ZAI_DEFAULT_BASE
 from free_claude_code.providers.exceptions import InvalidRequestError

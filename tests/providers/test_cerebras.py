@@ -6,29 +6,12 @@ import pytest
 
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.cerebras import CEREBRAS_DEFAULT_BASE, CerebrasProvider
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
 
 
-class MockMessage:
-    def __init__(self, role, content):
-        self.role = role
-        self.content = content
-
-
-class MockRequest:
-    def __init__(self, **kwargs):
-        self.model = "llama3.1-8b"
-        self.messages = [MockMessage("user", "Hello")]
-        self.max_tokens = 100
-        self.temperature = 0.5
-        self.top_p = 0.9
-        self.system = "System prompt"
-        self.stop_sequences = None
-        self.tools = []
-        self.thinking = MagicMock()
-        self.thinking.enabled = True
-        for key, value in kwargs.items():
-            setattr(self, key, value)
+def make_request(**overrides):
+    return make_messages_request("llama3.1-8b", **overrides)
 
 
 @pytest.fixture
@@ -66,7 +49,7 @@ def test_default_base_url_constant():
 
 def test_build_request_body_basic(cerebras_provider):
     """Basic request body conversion attaches system message from Claude request."""
-    req = MockRequest()
+    req = make_request()
     body = cerebras_provider._build_request_body(req)
 
     assert body["model"] == "llama3.1-8b"
@@ -85,7 +68,7 @@ def test_build_request_body_global_disable_blocks_reasoning_mapping():
         ),
         rate_limiter=passthrough_rate_limiter(),
     )
-    req = MockRequest()
+    req = make_request()
     body = provider._build_request_body(req)
 
     roles = [m.get("role") for m in body.get("messages", [])]
@@ -102,7 +85,7 @@ def test_build_request_body_remaps_max_tokens_preserves_message_name(cerebras_pr
             "messages": [{"role": "user", "name": "alice", "content": "hi"}],
             "max_tokens": 42,
         }
-        req = MockRequest()
+        req = make_request()
         body = cerebras_provider._build_request_body(req)
 
     assert body["messages"][0].get("name") == "alice"
@@ -120,14 +103,14 @@ def test_build_request_body_prefers_existing_max_completion_tokens(cerebras_prov
             "max_completion_tokens": 77,
             "max_tokens": 999,
         }
-        body = cerebras_provider._build_request_body(MockRequest())
+        body = cerebras_provider._build_request_body(make_request())
 
     assert body["max_completion_tokens"] == 77
     assert "max_tokens" not in body
 
 
 def test_build_request_body_preserves_caller_extra_body(cerebras_provider):
-    req = MockRequest(extra_body={"clear_thinking": False})
+    req = make_request(extra_body={"clear_thinking": False})
 
     body = cerebras_provider._build_request_body(req)
 
@@ -139,7 +122,7 @@ def test_build_request_body_preserves_caller_extra_body(cerebras_provider):
 @pytest.mark.asyncio
 async def test_stream_response_text(cerebras_provider):
     """Text content deltas are emitted as text blocks."""
-    req = MockRequest()
+    req = make_request()
 
     mock_chunk = MagicMock()
     mock_chunk.choices = [
@@ -172,7 +155,7 @@ async def test_stream_response_text(cerebras_provider):
 @pytest.mark.asyncio
 async def test_stream_response_reasoning_content(cerebras_provider):
     """reasoning_content deltas are emitted as thinking blocks."""
-    req = MockRequest()
+    req = make_request()
 
     mock_chunk = MagicMock()
     mock_chunk.choices = [

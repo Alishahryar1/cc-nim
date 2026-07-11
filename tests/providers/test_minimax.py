@@ -5,8 +5,8 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from free_claude_code.api.models.anthropic import Message, MessagesRequest, Tool
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from free_claude_code.core.anthropic.models import Message, MessagesRequest, Tool
 from free_claude_code.core.anthropic.stream_contracts import (
     parse_sse_text,
     text_content,

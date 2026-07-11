@@ -1,11 +1,9 @@
-"""Tests for api/models/responses.py Pydantic response models."""
+"""Tests for Anthropic protocol response models."""
 
-from free_claude_code.api.models.anthropic import (
+from free_claude_code.core.anthropic.models import (
     ContentBlockText,
     ContentBlockThinking,
     ContentBlockToolUse,
-)
-from free_claude_code.api.models.responses import (
     MessagesResponse,
     TokenCountResponse,
     Usage,

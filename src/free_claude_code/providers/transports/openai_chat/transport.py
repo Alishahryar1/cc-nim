@@ -8,6 +8,7 @@ import httpx
 from loguru import logger
 from openai import AsyncOpenAI
 
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.streaming import AnthropicStreamLedger
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.error_mapping import (
@@ -82,7 +83,7 @@ class OpenAIChatTransport(BaseProvider):
 
     @abstractmethod
     def _build_request_body(
-        self, request: Any, thinking_enabled: bool | None = None
+        self, request: MessagesRequest, thinking_enabled: bool | None = None
     ) -> dict:
         """Build request body. Must be implemented by subclasses."""
 
@@ -208,7 +209,7 @@ class OpenAIChatTransport(BaseProvider):
 
     async def stream_response(
         self,
-        request: Any,
+        request: MessagesRequest,
         input_tokens: int = 0,
         *,
         request_id: str | None = None,
