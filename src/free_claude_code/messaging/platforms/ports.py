@@ -64,11 +64,15 @@ class OutboundMessenger(Protocol):
 
 @runtime_checkable
 class VoiceCancellation(Protocol):
-    """Optional voice-note cancellation port used by /clear replies."""
+    """Optional voice-note cancellation boundary used by stop/clear flows."""
 
     async def cancel_pending_voice(
         self, scope: MessageScope, reply_id: str
     ) -> VoiceCancellationResult | None: ...
+
+    async def cancel_all_pending_voices(
+        self,
+    ) -> tuple[VoiceCancellationResult, ...]: ...
 
 
 @dataclass(frozen=True, slots=True)

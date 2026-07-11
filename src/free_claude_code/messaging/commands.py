@@ -15,10 +15,12 @@ async def handle_stop_command(
     """Handle /stop command from messaging platform."""
     # Reply-scoped stop: reply "/stop" to stop only that task.
     if incoming.is_reply() and incoming.reply_to_message_id:
-        reply_id = incoming.reply_to_message_id
-        node_id = await handler.resolve_node_id(incoming.scope, reply_id)
+        count = await handler.stop_reply(
+            incoming.scope,
+            incoming.reply_to_message_id,
+        )
 
-        if not node_id:
+        if count is None:
             msg_id = await handler.outbound.queue_send_message(
                 incoming.chat_id,
                 handler.format_status(
@@ -32,7 +34,6 @@ async def handle_stop_command(
             )
             return
 
-        count = await handler.stop_task(incoming.scope, node_id)
         noun = "request" if count == 1 else "requests"
         msg_id = await handler.outbound.queue_send_message(
             incoming.chat_id,
@@ -126,25 +127,6 @@ async def _delete_message_ids(
         )
 
 
-async def _handle_clear_branch(
-    handler: MessagingCommandContext,
-    incoming: IncomingMessage,
-    branch_root_id: str,
-) -> None:
-    """
-    Clear a branch (replied-to node + all descendants).
-
-    FCC state is removed and persisted before platform deletion begins.
-    """
-    result = await handler.clear_branch(incoming.scope, branch_root_id)
-    msg_ids = set(result.message_ids)
-    if incoming.message_id:
-        msg_ids.add(str(incoming.message_id))
-
-    await _delete_message_ids(handler, incoming.chat_id, msg_ids)
-    handler.forget_message_ids(incoming.platform, incoming.chat_id, msg_ids)
-
-
 async def handle_clear_command(
     handler: MessagingCommandContext, incoming: IncomingMessage
 ) -> None:
@@ -152,33 +134,14 @@ async def handle_clear_command(
     Handle /clear command.
 
     Reply-scoped: reply to a message to clear that branch (node + descendants).
-    Standalone: global clear (stop all, delete all chat messages, reset store).
+    Standalone: global clear (stop all, reset state, delete invoking-chat history).
     """
     if incoming.is_reply() and incoming.reply_to_message_id:
-        reply_id = incoming.reply_to_message_id
-        branch_root_id = await handler.resolve_node_id(incoming.scope, reply_id)
-        if not branch_root_id:
-            if handler.voice_cancellation is not None:
-                cancelled = await handler.voice_cancellation.cancel_pending_voice(
-                    incoming.scope, reply_id
-                )
-                if cancelled is not None:
-                    msg_ids_to_del = {cancelled.voice_message_id}
-                    if cancelled.status_message_id is not None:
-                        msg_ids_to_del.add(cancelled.status_message_id)
-                    if incoming.message_id is not None:
-                        msg_ids_to_del.add(str(incoming.message_id))
-                    await _delete_message_ids(handler, incoming.chat_id, msg_ids_to_del)
-                    msg_id = await handler.outbound.queue_send_message(
-                        incoming.chat_id,
-                        handler.format_status("🗑", "Cleared.", "Voice note cancelled."),
-                        fire_and_forget=False,
-                        message_thread_id=incoming.message_thread_id,
-                    )
-                    handler.record_outgoing_message(
-                        incoming.platform, incoming.chat_id, msg_id, "command"
-                    )
-                    return
+        result = await handler.clear_reply(
+            incoming.scope,
+            incoming.reply_to_message_id,
+        )
+        if result is None:
             msg_id = await handler.outbound.queue_send_message(
                 incoming.chat_id,
                 handler.format_status(
@@ -191,7 +154,29 @@ async def handle_clear_command(
                 incoming.platform, incoming.chat_id, msg_id, "command"
             )
             return
-        await _handle_clear_branch(handler, incoming, branch_root_id)
+
+        message_ids = set(result.message_ids)
+        if incoming.message_id is not None:
+            message_ids.add(str(incoming.message_id))
+        await _delete_message_ids(handler, incoming.chat_id, message_ids)
+        handler.forget_message_ids(
+            incoming.platform,
+            incoming.chat_id,
+            message_ids,
+        )
+        if not result.tree_cleared:
+            msg_id = await handler.outbound.queue_send_message(
+                incoming.chat_id,
+                handler.format_status("🗑", "Cleared.", "Voice note cancelled."),
+                fire_and_forget=False,
+                message_thread_id=incoming.message_thread_id,
+            )
+            handler.record_outgoing_message(
+                incoming.platform,
+                incoming.chat_id,
+                msg_id,
+                "command",
+            )
         return
 
     msg_ids = set(await handler.clear_all_state(incoming.platform, incoming.chat_id))

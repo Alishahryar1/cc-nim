@@ -1,19 +1,26 @@
 """Typed dependency surface for messaging slash commands."""
 
+from dataclasses import dataclass
 from typing import Protocol
 
 from .managed_protocols import ManagedClaudeSessionManagerProtocol
 from .models import MessageScope
-from .platforms.ports import OutboundMessenger, VoiceCancellation
+from .platforms.ports import OutboundMessenger
 from .transcript import RenderCtx
-from .trees import BranchRemovalResult
+
+
+@dataclass(frozen=True, slots=True)
+class ReplyClearResult:
+    """Customer-facing result of clearing one replied-to owner."""
+
+    message_ids: frozenset[str]
+    tree_cleared: bool
 
 
 class MessagingCommandContext(Protocol):
     """Operations commands need from the messaging workflow."""
 
     outbound: OutboundMessenger
-    voice_cancellation: VoiceCancellation | None
     cli_manager: ManagedClaudeSessionManagerProtocol
 
     def format_status(self, emoji: str, label: str, suffix: str | None = None) -> str:
@@ -28,32 +35,28 @@ class MessagingCommandContext(Protocol):
         """Stop every pending or active messaging task."""
         ...
 
-    async def stop_task(self, scope: MessageScope, node_id: str) -> int:
-        """Stop one pending or active node."""
-        ...
-
-    async def resolve_node_id(
+    async def stop_reply(
         self,
         scope: MessageScope,
-        reference_id: str,
-    ) -> str | None:
-        """Resolve a node or status-message reference."""
+        reply_id: str,
+    ) -> int | None:
+        """Stop the exact voice/tree owner of a replied-to message."""
         ...
 
     def get_tree_count(self) -> int:
         """Return the number of conversation trees."""
         ...
 
-    async def clear_branch(
+    async def clear_reply(
         self,
         scope: MessageScope,
-        node_id: str,
-    ) -> BranchRemovalResult:
-        """Atomically cancel, remove, and persist a conversation branch."""
+        reply_id: str,
+    ) -> ReplyClearResult | None:
+        """Clear the exact voice/tree owner of a replied-to message."""
         ...
 
     async def clear_all_state(self, platform: str, chat_id: str) -> frozenset[str]:
-        """Clear all FCC messaging state and return platform message IDs."""
+        """Globally clear FCC state and return invoking-chat platform IDs."""
         ...
 
     def forget_message_ids(
@@ -76,4 +79,4 @@ class MessagingCommandContext(Protocol):
         ...
 
 
-__all__ = ["MessagingCommandContext"]
+__all__ = ["MessagingCommandContext", "ReplyClearResult"]

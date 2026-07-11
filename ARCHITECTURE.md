@@ -854,8 +854,8 @@ The platform factory returns a `MessagingPlatformComponents` bundle from
 [messaging/platforms/ports.py](src/free_claude_code/messaging/platforms/ports.py): a
 `MessagingRuntime` with separate `quiesce()` and `close()` phases, an `OutboundMessenger`
 for queued sends/edits/deletes, and an optional `VoiceCancellation` port for
-reply-scoped `/clear` during voice transcription. Workflow code depends on
-these ports, not on Telegram or Discord SDK objects.
+scoped and bulk voice cancellation during `/stop` and `/clear`. Workflow code
+depends on these ports, not on Telegram or Discord SDK objects.
 
 Runtime adapters in
 [messaging/platforms/telegram.py](src/free_claude_code/messaging/platforms/telegram.py) and
@@ -889,12 +889,20 @@ file-size validation, temp-file cleanup, transcription, error replies, and the
 handoff to `IncomingMessage`. Before status delivery it reserves an opaque claim
 in the `PendingVoiceRegistry` owned by [messaging/voice.py](src/free_claude_code/messaging/voice.py).
 That registry atomically owns optional status binding, cancellation by either
-message ID, and the exclusive handoff claim; only a flow that wins the handoff
-transition may invoke the message workflow. Cancellation can therefore win while
-status delivery is still pending, and a stale flow cannot bind or remove a newer
-generation reusing the same ID. Once cancellation wins, late status or
-transcription completion is cleanup-only and cannot hand off work or emit a
-second error reply. Pending voice identities use the same
+message ID, and one child task that retains the exclusive handoff lease through
+the complete workflow callback. An explicit stop or clear atomically removes
+the exact claim and assumes ownership under the registry lock, then cancels and
+joins its published child without holding that lock. Caller cancellation instead
+keeps both aliases published while it cancels and drains the child, then removes
+only that exact generation. Repeated cancellation cannot abandon either join or
+pre-handoff cleanup, and fatal callback failures release the aliases before they
+propagate. A cancellation that wins turns late status, transcription, callback
+completion, or ordinary callback failure into cleanup-only work. Bulk
+cancellation deduplicates the voice/status aliases and excludes the exact
+current handoff child plus claims participating in a nested cancellation, so a
+voice-transcribed `/stop` or `/clear` cannot cancel itself or form a recursive
+join cycle. A stale flow cannot bind or remove a newer generation reusing the
+same ID. Pending voice identities use the same
 `(platform, chat_id)` `MessageScope` as tree references, so raw IDs from different
 transports cannot share cancellation ownership. The flow depends only on the
 consumer-owned `Transcriber` protocol. Bootstrap selects either the
@@ -914,10 +922,17 @@ state-transaction lock, admission epoch, stop/clear side effects, and
 shutdown-visible state. Each inbound turn snapshots the epoch before external
 status I/O and rechecks it while committing admission; global `/stop` and
 `/clear` advance the epoch so an older provisional turn is discarded instead of
-crossing that boundary. The workflow persists the detached snapshot returned by
-the same transition instead of taking a later mutable-node read. Once a stop or
-clear transition commits, its persistence effects are applied before the later
-interruptible global CLI cleanup. At startup it restores and normalizes
+crossing that boundary. Before taking the workflow lock, those global commands
+cancel and join every older voice handoff; they then cancel any tree that won
+admission during the join. Reply-scoped commands first join the matching voice
+claim and then resolve its authoritative tree, so either the voice cancellation
+or the admitted-tree transition wins and the same scoped request is never
+double-counted. Epoch validation, tree admission, processor publication, and
+persistence of the detached snapshot complete as one workflow-owned operation;
+caller cancellation is restored only after that transaction finishes. Stop and
+clear use the same completion-driven boundary, so caller cancellation cannot
+leave a committed state transition without its remaining persistence or CLI
+cleanup. At startup it restores and normalizes
 persisted state before ingress begins, then repairs interrupted platform
 statuses after outbound delivery starts. Diagnostic detail policy is captured
 at construction and passed into the processor; messaging does not read global

@@ -127,6 +127,7 @@ def mock_platform():
     platform.queue_edit_message = AsyncMock()
     platform.queue_delete_messages = AsyncMock()
     platform.cancel_pending_voice = AsyncMock(return_value=None)
+    platform.cancel_all_pending_voices = AsyncMock(return_value=())
 
     def _fire_and_forget(task):
         if asyncio.iscoroutine(task):

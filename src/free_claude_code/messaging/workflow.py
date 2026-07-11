@@ -1,11 +1,14 @@
 """Messaging workflow coordinator for Discord and Telegram prompts."""
 
 import asyncio
+from collections.abc import Coroutine
+from typing import Any
 
 from loguru import logger
 
 from free_claude_code.core.trace import trace_event
 
+from .command_context import ReplyClearResult
 from .managed_protocols import ManagedClaudeSessionManagerProtocol
 from .models import IncomingMessage, MessageScope
 from .node_runner import MessagingNodeRunner
@@ -15,7 +18,6 @@ from .safe_diagnostics import format_exception_for_log
 from .session import SessionStore
 from .transcript import RenderCtx
 from .trees import (
-    BranchRemovalResult,
     CancellationReason,
     CancellationResult,
     CancellationUiOwner,
@@ -27,6 +29,33 @@ from .trees import (
     TreeQueueManager,
 )
 from .turn_intake import MessagingTurnIntake
+from .voice import VoiceCancellationResult
+
+
+async def _finish_owned_operation[T](
+    operation: Coroutine[Any, Any, T],
+    *,
+    name: str,
+) -> T:
+    """Finish owned work, preserving its failures before caller cancellation."""
+    task = asyncio.create_task(operation, name=name)
+    current = asyncio.current_task()
+    cancellation: asyncio.CancelledError | None = None
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError as exc:
+            if current is not None and current.cancelling():
+                cancellation = cancellation or exc
+        except Exception:
+            break
+
+    # Task.result() raises the owned operation's failure. Caller cancellation
+    # is restored only after successful completion.
+    result = task.result()
+    if cancellation is not None:
+        raise cancellation
+    return result
 
 
 class MessagingWorkflow:
@@ -202,43 +231,129 @@ class MessagingWorkflow:
         parent_node_id: str | None,
         admission_epoch: int,
     ) -> QueueDecision | None:
-        async with self._state_lock:
-            if admission_epoch != self._admission_epoch:
-                return None
-            return await self._admit_locked(
+        return await _finish_owned_operation(
+            self._admit_if_current(
                 incoming,
                 status_message_id,
                 parent_node_id,
-            )
+                admission_epoch,
+            ),
+            name=f"messaging-admit-{incoming.message_id}",
+        )
 
-    async def _admit_locked(
+    async def _admit_if_current(
         self,
         incoming: IncomingMessage,
         status_message_id: str,
         parent_node_id: str | None,
-    ) -> QueueDecision:
-        """Admit while the workflow caller owns the state transaction lock."""
-        decision = await self._tree_queue.admit(
-            incoming,
-            status_message_id,
-            parent_node_id=parent_node_id,
-        )
-        if decision.snapshot is not None:
-            self.session_store.save_tree_snapshot(decision.snapshot)
-        return decision
-
-    async def resolve_node_id(
-        self,
-        scope: MessageScope,
-        reference_id: str,
-    ) -> str | None:
-        return await self._tree_queue.resolve_node_id(scope, reference_id)
+        admission_epoch: int,
+    ) -> QueueDecision | None:
+        """Commit admission and its exact snapshot as one owned transaction."""
+        async with self._state_lock:
+            if admission_epoch != self._admission_epoch:
+                return None
+            decision = await self._tree_queue.admit(
+                incoming,
+                status_message_id,
+                parent_node_id=parent_node_id,
+            )
+            if decision.snapshot is not None:
+                self.session_store.save_tree_snapshot(decision.snapshot)
+            return decision
 
     def get_tree_count(self) -> int:
         return self._tree_queue.get_tree_count()
 
+    async def stop_reply(
+        self,
+        scope: MessageScope,
+        reply_id: str,
+    ) -> int | None:
+        """Stop the exact voice/tree owner of one replied-to message."""
+        return await _finish_owned_operation(
+            self._stop_reply(scope, reply_id),
+            name=f"messaging-stop-reply-{reply_id}",
+        )
+
+    async def _stop_reply(
+        self,
+        scope: MessageScope,
+        reply_id: str,
+    ) -> int | None:
+        voice_result = await self._cancel_pending_voice(scope, reply_id)
+        if voice_result is not None:
+            self.render_voice_stopped(voice_result)
+
+        async with self._state_lock:
+            node_id = await self._tree_queue.resolve_node_id(scope, reply_id)
+            if node_id is None:
+                return 1 if voice_result is not None else None
+            result = await self._tree_queue.cancel_node(
+                scope,
+                node_id,
+                reason=CancellationReason.STOP,
+            )
+            self._apply_cancellation_result(result)
+
+        owners = {(effect.node.scope, effect.node.node_id) for effect in result.effects}
+        if voice_result is not None:
+            owners.add((voice_result.scope, voice_result.voice_message_id))
+        return len(owners)
+
+    async def clear_reply(
+        self,
+        scope: MessageScope,
+        reply_id: str,
+    ) -> ReplyClearResult | None:
+        """Clear the exact voice/tree owner of one replied-to message."""
+        return await _finish_owned_operation(
+            self._clear_reply(scope, reply_id),
+            name=f"messaging-clear-reply-{reply_id}",
+        )
+
+    async def _clear_reply(
+        self,
+        scope: MessageScope,
+        reply_id: str,
+    ) -> ReplyClearResult | None:
+        voice_result = await self._cancel_pending_voice(scope, reply_id)
+        if voice_result is not None:
+            self.render_voice_stopped(voice_result)
+
+        async with self._state_lock:
+            node_id = await self._tree_queue.resolve_node_id(scope, reply_id)
+            if node_id is None:
+                if voice_result is None:
+                    return None
+                return ReplyClearResult(
+                    message_ids=voice_result.message_ids,
+                    tree_cleared=False,
+                )
+
+            branch = await self._tree_queue.remove_branch(scope, node_id)
+            self._apply_cancellation_result(branch.cancellation)
+            if branch.removed_tree_identity is not None:
+                self.session_store.remove_tree_snapshot(branch.removed_tree_identity)
+
+        message_ids = set(branch.message_ids)
+        if voice_result is not None:
+            message_ids.update(voice_result.message_ids)
+        return ReplyClearResult(
+            message_ids=frozenset(message_ids),
+            tree_cleared=True,
+        )
+
     async def stop_all_tasks(self) -> int:
         """Stop every pending and active messaging task."""
+        return await _finish_owned_operation(
+            self._stop_all_tasks(),
+            name="messaging-stop-all",
+        )
+
+    async def _stop_all_tasks(self) -> int:
+        voice_results = await self._cancel_all_pending_voices()
+        for voice in voice_results:
+            self.render_voice_stopped(voice)
         async with self._state_lock:
             self._admission_epoch += 1
             logger.info("Cancelling tree queue tasks...")
@@ -247,36 +362,36 @@ class MessagingWorkflow:
             self._apply_cancellation_result(result)
             logger.info("Stopping all CLI sessions...")
             await self.cli_manager.stop_all()
-            return len(result.effects)
-
-    async def stop_task(self, scope: MessageScope, node_id: str) -> int:
-        """Stop one queued or active task."""
-        async with self._state_lock:
-            result = await self._tree_queue.cancel_node(
-                scope,
-                node_id,
-                reason=CancellationReason.STOP,
-            )
-            self._apply_cancellation_result(result)
-            return len(result.effects)
-
-    async def clear_branch(
-        self,
-        scope: MessageScope,
-        node_id: str,
-    ) -> BranchRemovalResult:
-        """Cancel, detach, and persist a branch before platform deletion."""
-        async with self._state_lock:
-            result = await self._tree_queue.remove_branch(scope, node_id)
-            self._apply_cancellation_result(result.cancellation)
-            if result.removed_tree_identity is not None:
-                self.session_store.remove_tree_snapshot(result.removed_tree_identity)
-            return result
+            tree_keys = {
+                (effect.node.scope, effect.node.node_id) for effect in result.effects
+            }
+            voice_keys = {
+                (voice.scope, voice.voice_message_id) for voice in voice_results
+            }
+            return len(tree_keys | voice_keys)
 
     async def clear_all_state(self, platform: str, chat_id: str) -> frozenset[str]:
         """Clear FCC state atomically with respect to later turn admission."""
+        return await _finish_owned_operation(
+            self._clear_all_state(platform, chat_id),
+            name="messaging-clear-all",
+        )
+
+    async def _clear_all_state(
+        self,
+        platform: str,
+        chat_id: str,
+    ) -> frozenset[str]:
+        """Globally reset FCC state; return deletion IDs for the invoking chat."""
+        voice_results = await self._cancel_all_pending_voices()
+        for voice in voice_results:
+            self.render_voice_stopped(voice)
         async with self._state_lock:
             message_ids: set[str] = set()
+            clear_scope = MessageScope(platform=platform, chat_id=chat_id)
+            for voice in voice_results:
+                if voice.scope == clear_scope:
+                    message_ids.update(voice.message_ids)
             try:
                 message_ids.update(
                     str(message_id)
@@ -335,6 +450,37 @@ class MessagingWorkflow:
             if failures:
                 raise ExceptionGroup("Global clear failed", failures)
             return frozenset(message_ids)
+
+    async def _cancel_all_pending_voices(
+        self,
+    ) -> tuple[VoiceCancellationResult, ...]:
+        cancellation = self.voice_cancellation
+        if cancellation is None:
+            return ()
+        return await cancellation.cancel_all_pending_voices()
+
+    async def _cancel_pending_voice(
+        self,
+        scope: MessageScope,
+        reply_id: str,
+    ) -> VoiceCancellationResult | None:
+        cancellation = self.voice_cancellation
+        if cancellation is None:
+            return None
+        return await cancellation.cancel_pending_voice(scope, reply_id)
+
+    def render_voice_stopped(self, result: VoiceCancellationResult) -> None:
+        """Publish terminal UI for a voice cancelled before tree ownership."""
+        if result.status_message_id is None:
+            return
+        self.outbound.fire_and_forget(
+            self.outbound.queue_edit_message(
+                result.scope.chat_id,
+                result.status_message_id,
+                self.format_status("⏹", "Stopped."),
+                parse_mode=self._parse_mode(),
+            )
+        )
 
     def forget_message_ids(
         self,

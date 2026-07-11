@@ -319,7 +319,9 @@ class FakePlatform:
         self.deletes: list[dict[str, Any]] = []
         self._counter = 0
         self._tasks: list[asyncio.Future[Any]] = []
-        self._pending_voice: dict[tuple[MessageScope, str], tuple[str, str]] = {}
+        self._pending_voice: dict[
+            tuple[MessageScope, str], VoiceCancellationResult
+        ] = {}
 
     async def start(self) -> None:
         return None
@@ -434,21 +436,43 @@ class FakePlatform:
         self, chat_id: str, voice_message_id: str, status_message_id: str
     ) -> None:
         scope = MessageScope(platform=self.name, chat_id=chat_id)
-        self._pending_voice[(scope, voice_message_id)] = (
-            voice_message_id,
-            status_message_id,
+        result = VoiceCancellationResult(
+            scope=scope,
+            voice_message_id=voice_message_id,
+            status_message_id=status_message_id,
         )
+        self._pending_voice[(scope, voice_message_id)] = result
+        self._pending_voice[(scope, status_message_id)] = result
 
     async def cancel_pending_voice(
         self, scope: MessageScope, reply_id: str
     ) -> VoiceCancellationResult | None:
-        pending = self._pending_voice.pop((scope, reply_id), None)
-        if pending is None:
+        result = self._pending_voice.get((scope, reply_id))
+        if result is None:
             return None
-        voice_message_id, status_message_id = pending
-        return VoiceCancellationResult(
-            voice_message_id=voice_message_id,
-            status_message_id=status_message_id,
+        for message_id in result.message_ids:
+            self._pending_voice.pop((scope, message_id), None)
+        return result
+
+    async def cancel_all_pending_voices(
+        self,
+    ) -> tuple[VoiceCancellationResult, ...]:
+        results = tuple(
+            {
+                (result.scope, result.voice_message_id): result
+                for result in self._pending_voice.values()
+            }.values()
+        )
+        self._pending_voice.clear()
+        return results
+
+    @property
+    def pending_voice_count(self) -> int:
+        return len(
+            {
+                (result.scope, result.voice_message_id)
+                for result in self._pending_voice.values()
+            }
         )
 
 

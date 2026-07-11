@@ -117,6 +117,16 @@ async def test_telegram_voice_success_invokes_handler(telegram_platform):
     assert incoming.status_message_id == "999"
 
 
+@pytest.mark.asyncio
+async def test_telegram_bulk_voice_cancellation_delegates(telegram_platform) -> None:
+    platform, _transcriber = telegram_platform
+    platform._voice_flow.cancel_all_pending_voices = AsyncMock(return_value=())
+
+    assert await platform.cancel_all_pending_voices() == ()
+
+    platform._voice_flow.cancel_all_pending_voices.assert_awaited_once()
+
+
 @pytest.mark.skipif(not DISCORD_AVAILABLE, reason="discord.py not installed")
 class TestDiscordGetAudioAttachment:
     """Tests for _get_audio_attachment helper."""
@@ -177,3 +187,19 @@ async def test_discord_voice_disabled_sends_reply():
     await platform._on_discord_message(mock_message)
 
     mock_message.reply.assert_called_once_with("Voice notes are disabled.")
+
+
+@pytest.mark.skipif(not DISCORD_AVAILABLE, reason="discord.py not installed")
+@pytest.mark.asyncio
+async def test_discord_bulk_voice_cancellation_delegates() -> None:
+    platform = DiscordRuntime(
+        bot_token="token",
+        allowed_channel_ids="123",
+        limiter=MagicMock(),
+        transcriber=None,
+    )
+    platform._voice_flow.cancel_all_pending_voices = AsyncMock(return_value=())
+
+    assert await platform.cancel_all_pending_voices() == ()
+
+    platform._voice_flow.cancel_all_pending_voices.assert_awaited_once()

@@ -271,7 +271,12 @@ async def test_voice_platform_fake_e2e(platform_name: str, tmp_path) -> None:
 
     await driver.send("/clear", message_id="clear_voice", reply_to="voice_msg_1")
 
+    driver.platform.seed_pending_voice("chat_1", "voice_msg_2", "voice_status_2")
+    await driver.send("/stop", message_id="stop_voice")
+
     deleted = {entry["message_id"] for entry in driver.platform.deletes}
     assert {"voice_msg_1", "voice_status_1", "clear_voice"} <= deleted
+    assert driver.platform.pending_voice_count == 0
     sent_text = "\n".join(sent["text"] for sent in driver.platform.sent)
     assert "Voice note cancelled" in sent_text
+    assert "Cancelled 1 pending or active requests" in sent_text

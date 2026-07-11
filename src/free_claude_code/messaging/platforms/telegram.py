@@ -89,6 +89,12 @@ class TelegramRuntime:
         """Cancel a pending voice transcription."""
         return await self._voice_flow.cancel_pending_voice(scope, reply_id)
 
+    async def cancel_all_pending_voices(
+        self,
+    ) -> tuple[VoiceCancellationResult, ...]:
+        """Cancel every pending voice transcription and handoff."""
+        return await self._voice_flow.cancel_all_pending_voices()
+
     async def start(self) -> None:
         """Initialize and connect to Telegram."""
         if not self.bot_token:

@@ -187,7 +187,7 @@ async def test_save_tree_snapshot_restores_status_lookup_without_manual_index(
     )
     workflow.restore()
 
-    assert await workflow.resolve_node_id(TELEGRAM_CHAT_1, "status_A") == "A"
+    assert await workflow.tree_queue.resolve_node_id(TELEGRAM_CHAT_1, "status_A") == "A"
 
 
 @pytest.mark.asyncio

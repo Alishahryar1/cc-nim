@@ -3,9 +3,11 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
+from free_claude_code.messaging.command_context import ReplyClearResult
 from free_claude_code.messaging.models import MessageScope
 from free_claude_code.messaging.session import SessionStore
 from free_claude_code.messaging.trees import (
+    BranchRemovalResult,
     CancellationReason,
     CancellationResult,
     CancellationUiOwner,
@@ -160,8 +162,7 @@ async def test_failed_global_stop_never_reports_success(
 async def test_reply_stop_resolves_and_stops_only_target(
     handler, mock_platform, mock_cli_manager, incoming_message_factory
 ):
-    handler.resolve_node_id = AsyncMock(return_value="root_msg")
-    handler.stop_task = AsyncMock(return_value=1)
+    handler.stop_reply = AsyncMock(return_value=1)
     handler.stop_all_tasks = AsyncMock(return_value=999)
     incoming = incoming_message_factory(
         text="/stop",
@@ -171,8 +172,7 @@ async def test_reply_stop_resolves_and_stops_only_target(
 
     await handler.handle_message(incoming)
 
-    handler.resolve_node_id.assert_awaited_once_with(incoming.scope, "status_root")
-    handler.stop_task.assert_awaited_once_with(incoming.scope, "root_msg")
+    handler.stop_reply.assert_awaited_once_with(incoming.scope, "status_root")
     handler.stop_all_tasks.assert_not_awaited()
     mock_cli_manager.stop_all.assert_not_awaited()
     assert "Cancelled 1 request" in mock_platform.queue_send_message.call_args.args[1]
@@ -182,7 +182,7 @@ async def test_reply_stop_resolves_and_stops_only_target(
 async def test_reply_stop_unknown_does_not_stop_all(
     handler, mock_platform, mock_cli_manager, incoming_message_factory
 ):
-    handler.resolve_node_id = AsyncMock(return_value=None)
+    handler.stop_reply = AsyncMock(return_value=None)
     handler.stop_all_tasks = AsyncMock(return_value=5)
     incoming = incoming_message_factory(
         text="/stop",
@@ -192,12 +192,224 @@ async def test_reply_stop_unknown_does_not_stop_all(
 
     await handler.handle_message(incoming)
 
+    handler.stop_reply.assert_awaited_once_with(incoming.scope, "unknown_msg")
     handler.stop_all_tasks.assert_not_awaited()
     mock_cli_manager.stop_all.assert_not_awaited()
     assert (
         "Nothing to stop for that message"
         in mock_platform.queue_send_message.call_args.args[1]
     )
+
+
+@pytest.mark.asyncio
+async def test_reply_stop_cancels_voice_when_no_tree_was_admitted(
+    handler,
+    mock_platform,
+    incoming_message_factory,
+) -> None:
+    mock_platform.cancel_pending_voice.return_value = VoiceCancellationResult(
+        scope=_SCOPE,
+        voice_message_id="voice",
+        status_message_id="voice_status",
+    )
+    incoming = incoming_message_factory(
+        text="/stop",
+        message_id="stop_msg",
+        reply_to_message_id="voice",
+    )
+
+    await handler.handle_message(incoming)
+    await asyncio.sleep(0)
+
+    assert "Cancelled 1 request" in mock_platform.queue_send_message.call_args.args[1]
+    assert mock_platform.queue_edit_message.call_args.args[1] == "voice_status"
+    assert "Stopped" in mock_platform.queue_edit_message.call_args.args[2]
+
+
+@pytest.mark.asyncio
+async def test_reply_stop_resolves_tree_after_joining_voice_handoff(
+    handler,
+    mock_platform,
+    incoming_message_factory,
+) -> None:
+    events: list[str] = []
+
+    async def cancel_voice(*_args) -> VoiceCancellationResult:
+        events.append("voice")
+        return VoiceCancellationResult(
+            scope=_SCOPE,
+            voice_message_id="voice",
+            status_message_id="voice_status",
+        )
+
+    async def resolve_tree(*_args) -> str:
+        events.append("tree")
+        return "voice"
+
+    mock_platform.cancel_pending_voice.side_effect = cancel_voice
+    cancellation = CancellationResult(
+        effects=(
+            CancellationEffect(
+                node=NodeUiTarget(
+                    scope=_SCOPE,
+                    node_id="voice",
+                    status_message_id="voice_status",
+                ),
+                ui_owner=CancellationUiOwner.WORKFLOW,
+            ),
+        )
+    )
+    incoming = incoming_message_factory(
+        text="/stop",
+        message_id="stop_msg",
+        reply_to_message_id="voice",
+    )
+
+    with (
+        patch.object(
+            handler.tree_queue,
+            "resolve_node_id",
+            side_effect=resolve_tree,
+        ),
+        patch.object(
+            handler.tree_queue,
+            "cancel_node",
+            new_callable=AsyncMock,
+            return_value=cancellation,
+        ) as cancel_node,
+    ):
+        await handler.handle_message(incoming)
+
+    cancel_node.assert_awaited_once_with(
+        incoming.scope,
+        "voice",
+        reason=CancellationReason.STOP,
+    )
+    assert events == ["voice", "tree"]
+    assert "Nothing to stop" not in mock_platform.queue_send_message.call_args.args[1]
+    assert "Cancelled 1 request" in mock_platform.queue_send_message.call_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_reply_stop_port_failure_prevents_tree_transition(
+    handler,
+    mock_platform,
+) -> None:
+    mock_platform.cancel_pending_voice.side_effect = RuntimeError("voice port failed")
+    with (
+        patch.object(
+            handler.tree_queue,
+            "resolve_node_id",
+            new_callable=AsyncMock,
+        ) as resolve,
+        pytest.raises(RuntimeError, match="voice port failed"),
+    ):
+        await handler.stop_reply(_SCOPE, "voice")
+
+    resolve.assert_not_awaited()
+    mock_platform.queue_edit_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reply_stop_renders_voice_before_resolve_failure(
+    handler,
+    mock_platform,
+) -> None:
+    mock_platform.cancel_pending_voice.return_value = VoiceCancellationResult(
+        scope=_SCOPE,
+        voice_message_id="voice",
+        status_message_id="voice_status",
+    )
+    with (
+        patch.object(
+            handler.tree_queue,
+            "resolve_node_id",
+            AsyncMock(side_effect=RuntimeError("resolve failed")),
+        ),
+        pytest.raises(RuntimeError, match="resolve failed"),
+    ):
+        await handler.stop_reply(_SCOPE, "voice")
+    await asyncio.sleep(0)
+
+    mock_platform.queue_edit_message.assert_awaited_once()
+    assert mock_platform.queue_edit_message.call_args.args[1] == "voice_status"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_reply_stop_finishes_after_voice_join_and_lock_wait(
+    handler,
+    mock_platform,
+) -> None:
+    voice_returned = asyncio.Event()
+
+    async def cancel_voice(*_args) -> VoiceCancellationResult:
+        voice_returned.set()
+        return VoiceCancellationResult(
+            scope=_SCOPE,
+            voice_message_id="voice",
+            status_message_id="voice_status",
+        )
+
+    mock_platform.cancel_pending_voice.side_effect = cancel_voice
+    resolve = AsyncMock(return_value=None)
+    await handler._state_lock.acquire()
+    try:
+        with patch.object(handler.tree_queue, "resolve_node_id", resolve):
+            stop_task = asyncio.create_task(handler.stop_reply(_SCOPE, "voice"))
+            await voice_returned.wait()
+            await asyncio.sleep(0)
+            stop_task.cancel()
+            stop_task.cancel()
+            await asyncio.sleep(0)
+
+            assert not stop_task.done()
+            handler._state_lock.release()
+            with pytest.raises(asyncio.CancelledError):
+                await stop_task
+    finally:
+        if handler._state_lock.locked():
+            handler._state_lock.release()
+    await asyncio.sleep(0)
+
+    assert stop_task.cancelling() == 2
+    resolve.assert_awaited_once_with(_SCOPE, "voice")
+    mock_platform.queue_edit_message.assert_awaited_once()
+    assert mock_platform.queue_edit_message.call_args.args[1] == "voice_status"
+
+
+@pytest.mark.asyncio
+async def test_cancelled_reply_stop_preserves_later_operation_failure(
+    handler,
+    mock_platform,
+) -> None:
+    voice_returned = asyncio.Event()
+    failure = RuntimeError("resolve failed after cancellation")
+
+    async def cancel_voice(*_args) -> None:
+        voice_returned.set()
+
+    mock_platform.cancel_pending_voice.side_effect = cancel_voice
+    resolve = AsyncMock(side_effect=failure)
+    await handler._state_lock.acquire()
+    try:
+        with patch.object(handler.tree_queue, "resolve_node_id", resolve):
+            stop_task = asyncio.create_task(handler.stop_reply(_SCOPE, "voice"))
+            await voice_returned.wait()
+            await asyncio.sleep(0)
+            stop_task.cancel()
+            await asyncio.sleep(0)
+
+            assert not stop_task.done()
+            handler._state_lock.release()
+            with pytest.raises(RuntimeError) as raised:
+                await stop_task
+    finally:
+        if handler._state_lock.locked():
+            handler._state_lock.release()
+
+    assert raised.value is failure
+    assert stop_task.cancelling() == 1
+    resolve.assert_awaited_once_with(_SCOPE, "voice")
 
 
 @pytest.mark.asyncio
@@ -415,18 +627,89 @@ async def test_stop_all_applies_immutable_ui_ownership_and_snapshots(
 
 
 @pytest.mark.asyncio
+async def test_stop_all_joins_voices_before_tree_transaction_and_deduplicates(
+    handler,
+    mock_cli_manager,
+    mock_platform,
+) -> None:
+    events: list[str] = []
+    voice = VoiceCancellationResult(
+        scope=_SCOPE,
+        voice_message_id="voice",
+        status_message_id="voice_status",
+    )
+    tree_result = CancellationResult(
+        effects=(
+            CancellationEffect(
+                node=NodeUiTarget(
+                    scope=_SCOPE,
+                    node_id="voice",
+                    status_message_id="voice_status",
+                ),
+                ui_owner=CancellationUiOwner.RUNNER,
+            ),
+        )
+    )
+
+    async def cancel_voices() -> tuple[VoiceCancellationResult, ...]:
+        assert not handler._state_lock.locked()
+        events.append("voices")
+        return (voice,)
+
+    async def cancel_trees(*, reason: CancellationReason) -> CancellationResult:
+        assert reason is CancellationReason.STOP
+        assert handler._state_lock.locked()
+        events.append("trees")
+        return tree_result
+
+    mock_platform.cancel_all_pending_voices.side_effect = cancel_voices
+    with patch.object(handler.tree_queue, "cancel_all", side_effect=cancel_trees):
+        count = await handler.stop_all_tasks()
+    await asyncio.sleep(0)
+
+    assert count == 1
+    assert events == ["voices", "trees"]
+    mock_cli_manager.stop_all.assert_awaited_once()
+    mock_platform.queue_edit_message.assert_awaited_once()
+    assert mock_platform.queue_edit_message.call_args.args[1] == "voice_status"
+
+
+@pytest.mark.asyncio
+async def test_stop_all_voice_join_failure_prevents_false_transition(
+    handler,
+    mock_cli_manager,
+    mock_platform,
+) -> None:
+    mock_platform.cancel_all_pending_voices.side_effect = RuntimeError(
+        "voice handoff cleanup failed"
+    )
+
+    with (
+        patch.object(
+            handler.tree_queue, "cancel_all", new_callable=AsyncMock
+        ) as cancel,
+        pytest.raises(RuntimeError, match="voice handoff cleanup failed"),
+    ):
+        await handler.stop_all_tasks()
+
+    cancel.assert_not_awaited()
+    mock_cli_manager.stop_all.assert_not_awaited()
+
+
+@pytest.mark.asyncio
 async def test_stop_all_persists_committed_transition_before_cli_shutdown(
     handler,
     mock_cli_manager,
     mock_session_store,
 ):
     shutdown_started = asyncio.Event()
+    release_shutdown = asyncio.Event()
     snapshot = _snapshot()
     result = CancellationResult(snapshots=(snapshot,))
 
     async def block_shutdown() -> None:
         shutdown_started.set()
-        await asyncio.Event().wait()
+        await release_shutdown.wait()
 
     mock_cli_manager.stop_all.side_effect = block_shutdown
     with patch.object(
@@ -439,8 +722,13 @@ async def test_stop_all_persists_committed_transition_before_cli_shutdown(
 
         mock_session_store.save_tree_snapshot.assert_called_once_with(snapshot)
         stop_task.cancel()
+        stop_task.cancel()
+        await asyncio.sleep(0)
+        assert not stop_task.done()
+        release_shutdown.set()
         with pytest.raises(asyncio.CancelledError):
             await stop_task
+        assert stop_task.cancelling() == 2
 
 
 @pytest.mark.asyncio
@@ -949,6 +1237,53 @@ async def test_clear_all_state_is_chat_scoped_for_deletes_and_global_for_fcc_sta
 
 
 @pytest.mark.asyncio
+async def test_clear_all_joins_voices_before_lock_and_returns_only_current_chat_ids(
+    handler,
+    mock_platform,
+    mock_session_store,
+) -> None:
+    events: list[str] = []
+    current = VoiceCancellationResult(
+        scope=_SCOPE,
+        voice_message_id="voice",
+        status_message_id="voice_status",
+    )
+    other = VoiceCancellationResult(
+        scope=MessageScope(platform="telegram", chat_id="other"),
+        voice_message_id="other_voice",
+        status_message_id="other_status",
+    )
+
+    async def cancel_voices() -> tuple[VoiceCancellationResult, ...]:
+        assert not handler._state_lock.locked()
+        events.append("voices")
+        return (current, other)
+
+    async def clear_trees(*, reason: CancellationReason) -> CancellationResult:
+        assert reason is CancellationReason.STOP
+        assert handler._state_lock.locked()
+        events.append("trees")
+        return CancellationResult()
+
+    mock_platform.cancel_all_pending_voices.side_effect = cancel_voices
+    mock_session_store.get_message_ids_for_chat.return_value = ["stored"]
+    with patch.object(handler.tree_queue, "clear_all", side_effect=clear_trees):
+        message_ids = await handler.clear_all_state("telegram", "chat_1")
+    await asyncio.sleep(0)
+
+    assert events == ["voices", "trees"]
+    assert message_ids == frozenset({"stored", "voice", "voice_status"})
+    assert "other_voice" not in message_ids
+    assert "other_status" not in message_ids
+    assert {
+        call.args[1] for call in mock_platform.queue_edit_message.call_args_list
+    } == {
+        "voice_status",
+        "other_status",
+    }
+
+
+@pytest.mark.asyncio
 async def test_global_clear_retries_transient_early_persistence_failure_at_final_write(
     handler,
     mock_cli_manager,
@@ -1120,7 +1455,7 @@ async def test_committed_global_clear_attempts_remaining_steps_after_tree_failur
 
 
 @pytest.mark.asyncio
-async def test_cancelled_global_clear_before_commit_preserves_tree_and_store(
+async def test_cancelled_global_clear_finishes_owned_transaction_before_propagating(
     handler,
     mock_cli_manager,
     mock_session_store,
@@ -1129,13 +1464,13 @@ async def test_cancelled_global_clear_before_commit_preserves_tree_and_store(
     root = incoming_message_factory(text="work", message_id="100")
     await handler.tree_queue.admit(root, "101")
     await _wait_for_idle(handler)
-    initial_epoch = handler._admission_epoch
     id_read_started = asyncio.Event()
+    release_id_read = asyncio.Event()
 
     async def block_id_read(platform: str, chat_id: str) -> set[str]:
         id_read_started.set()
-        await asyncio.Future()
-        raise AssertionError("unreachable")
+        await release_id_read.wait()
+        return {"100", "101"}
 
     mock_session_store.reset_mock()
     with patch.object(
@@ -1148,14 +1483,17 @@ async def test_cancelled_global_clear_before_commit_preserves_tree_and_store(
         )
         await id_read_started.wait()
         clear_task.cancel()
+        await asyncio.sleep(0)
+        assert not clear_task.done()
+        release_id_read.set()
         with pytest.raises(asyncio.CancelledError):
             await clear_task
 
-    assert handler._admission_epoch == initial_epoch
-    assert handler.get_tree_count() == 1
-    mock_session_store.clear_all.assert_not_called()
-    mock_session_store.clear_conversation_snapshot.assert_not_called()
-    mock_cli_manager.stop_all.assert_not_awaited()
+    assert handler._admission_epoch == 1
+    assert handler.get_tree_count() == 0
+    mock_session_store.clear_all.assert_called_once()
+    mock_session_store.clear_conversation_snapshot.assert_called_once()
+    mock_cli_manager.stop_all.assert_awaited_once()
 
 
 @pytest.mark.asyncio
@@ -1456,9 +1794,14 @@ async def test_reply_clear_pending_voice_cancels_and_reports(
     status_message_id,
     expected_deleted_ids,
 ) -> None:
-    mock_platform.cancel_pending_voice.return_value = VoiceCancellationResult(
-        voice_message_id="100",
-        status_message_id=status_message_id,
+    message_ids = {"100"}
+    if status_message_id is not None:
+        message_ids.add(status_message_id)
+    handler.clear_reply = AsyncMock(
+        return_value=ReplyClearResult(
+            message_ids=frozenset(message_ids),
+            tree_cleared=False,
+        )
     )
     deleted_ids: list[str] = []
 
@@ -1474,6 +1817,132 @@ async def test_reply_clear_pending_voice_cancels_and_reports(
 
     await handler.handle_message(incoming)
 
-    mock_platform.cancel_pending_voice.assert_awaited_once_with(incoming.scope, "100")
+    handler.clear_reply.assert_awaited_once_with(incoming.scope, "100")
     assert set(deleted_ids) == expected_deleted_ids
     assert "Voice note cancelled" in mock_platform.queue_send_message.call_args.args[1]
+
+
+@pytest.mark.asyncio
+async def test_reply_clear_deletes_owned_result_ids(
+    handler,
+    mock_platform,
+    incoming_message_factory,
+) -> None:
+    handler.clear_reply = AsyncMock(
+        return_value=ReplyClearResult(
+            message_ids=frozenset({"voice", "tree_status"}),
+            tree_cleared=True,
+        )
+    )
+    deleted_ids: list[str] = []
+
+    async def capture_delete(_chat_id, message_ids, fire_and_forget=True):
+        deleted_ids.extend(message_ids)
+
+    mock_platform.queue_delete_messages.side_effect = capture_delete
+    incoming = incoming_message_factory(
+        text="/clear",
+        message_id="clear",
+        reply_to_message_id="voice",
+    )
+
+    await handler.handle_message(incoming)
+
+    handler.clear_reply.assert_awaited_once_with(incoming.scope, "voice")
+    assert set(deleted_ids) == {
+        "voice",
+        "tree_status",
+        "clear",
+    }
+    mock_platform.queue_send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_reply_clear_joins_voice_then_unions_authoritative_branch_ids(
+    handler,
+    mock_platform,
+) -> None:
+    events: list[str] = []
+
+    async def cancel_voice(*_args) -> VoiceCancellationResult:
+        events.append("voice")
+        return VoiceCancellationResult(
+            scope=_SCOPE,
+            voice_message_id="voice",
+            status_message_id="voice_status",
+        )
+
+    async def resolve_tree(*_args) -> str:
+        events.append("resolve")
+        return "voice"
+
+    branch = BranchRemovalResult(
+        cancellation=CancellationResult(),
+        removed_tree_identity=None,
+        message_ids=frozenset({"voice", "tree_status"}),
+    )
+    mock_platform.cancel_pending_voice.side_effect = cancel_voice
+    with (
+        patch.object(
+            handler.tree_queue,
+            "resolve_node_id",
+            side_effect=resolve_tree,
+        ) as resolve,
+        patch.object(
+            handler.tree_queue,
+            "remove_branch",
+            new_callable=AsyncMock,
+            return_value=branch,
+        ) as remove_branch,
+    ):
+        result = await handler.clear_reply(_SCOPE, "voice")
+    await asyncio.sleep(0)
+
+    assert result == ReplyClearResult(
+        message_ids=frozenset({"voice", "voice_status", "tree_status"}),
+        tree_cleared=True,
+    )
+    assert events == ["voice", "resolve"]
+    resolve.assert_awaited_once_with(_SCOPE, "voice")
+    remove_branch.assert_awaited_once_with(_SCOPE, "voice")
+    mock_platform.queue_edit_message.assert_awaited_once()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_reply_clear_finishes_voice_only_owner_after_lock_wait(
+    handler,
+    mock_platform,
+) -> None:
+    voice_returned = asyncio.Event()
+
+    async def cancel_voice(*_args) -> VoiceCancellationResult:
+        voice_returned.set()
+        return VoiceCancellationResult(
+            scope=_SCOPE,
+            voice_message_id="voice",
+            status_message_id="voice_status",
+        )
+
+    mock_platform.cancel_pending_voice.side_effect = cancel_voice
+    resolve = AsyncMock(return_value=None)
+    await handler._state_lock.acquire()
+    try:
+        with patch.object(handler.tree_queue, "resolve_node_id", resolve):
+            clear_task = asyncio.create_task(handler.clear_reply(_SCOPE, "voice"))
+            await voice_returned.wait()
+            await asyncio.sleep(0)
+            clear_task.cancel()
+            await asyncio.sleep(0)
+
+            assert not clear_task.done()
+            handler._state_lock.release()
+            with pytest.raises(asyncio.CancelledError):
+                await clear_task
+    finally:
+        if handler._state_lock.locked():
+            handler._state_lock.release()
+    await asyncio.sleep(0)
+
+    resolve.assert_awaited_once_with(_SCOPE, "voice")
+    mock_platform.queue_edit_message.assert_awaited_once()
+    assert mock_platform.queue_edit_message.call_args.args[1] == "voice_status"
