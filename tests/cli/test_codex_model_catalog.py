@@ -1,4 +1,5 @@
 import json
+import os
 import shutil
 import subprocess
 from collections.abc import Mapping
@@ -150,6 +151,17 @@ def test_generated_catalog_schema_is_accepted_by_installed_codex(
         catalog_path,
         build_codex_model_catalog(_models_payload("anthropic/nvidia_nim/test-model")),
     )
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    codex_env = os.environ.copy()
+    for key in (
+        "CODEX_THREAD_ID",
+        "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+        "CODEX_SHELL",
+        "CODEX_PERMISSION_PROFILE",
+    ):
+        codex_env.pop(key, None)
+    codex_env["CODEX_HOME"] = str(codex_home)
 
     result = subprocess.run(
         [
@@ -161,6 +173,9 @@ def test_generated_catalog_schema_is_accepted_by_installed_codex(
         ],
         capture_output=True,
         check=False,
+        encoding="utf-8",
+        env=codex_env,
+        errors="replace",
         text=True,
         timeout=10,
     )
