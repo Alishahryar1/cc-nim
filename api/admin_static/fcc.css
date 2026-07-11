@@ -1166,3 +1166,89 @@ kbd {
   padding: 48px 24px;
   font-size: 13px;
 }
+
+/* ── EvoMetaClaw trajectory panel ──────────────────────────── */
+
+.evo-panel {
+  margin: 18px 0 22px;
+  padding: 18px 20px;
+  border: 1px solid var(--border);
+  border-radius: 12px;
+  background: linear-gradient(180deg, rgba(47, 185, 132, 0.06), transparent);
+}
+
+.evo-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.evo-head h3 {
+  margin: 0;
+  font-size: 14px;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.evo-head h3 small {
+  font-weight: 500;
+  color: var(--muted);
+  margin-left: 6px;
+}
+
+.evo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.evo-grid > div {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.evo-grid b {
+  font-size: 20px;
+  font-weight: 700;
+  color: var(--fg);
+}
+
+.evo-grid span {
+  font-size: 11px;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+
+.chip-row {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.chip {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  font-size: 11px;
+  color: var(--fg);
+}
+
+.pill {
+  display: inline-block;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px;
+  font-weight: 600;
+}
+
+.pill-ok    { background: rgba(47, 185, 132, 0.18); color: var(--accent); }
+.pill-muted { background: var(--surface); color: var(--muted); border: 1px solid var(--border); }
+
+.muted { color: var(--muted); font-size: 12px; }

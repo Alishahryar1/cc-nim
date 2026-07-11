@@ -962,8 +962,11 @@ async function loadMetrics() {
   if (!container) return;
   container.innerHTML = '<p class="metrics-empty">Loading…</p>';
   try {
-    const data = await api("/admin/api/metrics");
-    renderMetrics(container, data);
+    const [metricsData, trajData] = await Promise.all([
+      api("/admin/api/metrics"),
+      api("/admin/api/trajectory").catch(() => null),
+    ]);
+    renderMetrics(container, metricsData, trajData);
   } catch (err) {
     container.innerHTML = `<p class="metrics-empty">${escapeHtml(err.message)}</p>`;
   }
@@ -973,7 +976,38 @@ function fmtLatency(ms) {
   return ms >= 1000 ? `${(ms / 1000).toFixed(2)}s` : `${ms}ms`;
 }
 
-function renderMetrics(container, data) {
+function fmtUsd(v) {
+  if (!v) return "$0.00";
+  if (v < 0.01) return `$${v.toFixed(4)}`;
+  return `$${v.toFixed(2)}`;
+}
+
+function renderEvoMetaClaw(traj) {
+  if (!traj) return "";
+  const status = traj.enabled
+    ? '<span class="pill pill-ok">Recording</span>'
+    : '<span class="pill pill-muted">Disabled — set TRAJECTORY_LOG_ENABLED=1</span>';
+  const skills = Object.entries(traj.per_skill || {})
+    .sort((a, b) => b[1] - a[1])
+    .slice(0, 6)
+    .map(([k, v]) => `<span class="chip">${escapeHtml(k)} · ${v}</span>`)
+    .join(" ");
+  return `
+    <section class="evo-panel" aria-label="EvoMetaClaw trajectory">
+      <div class="evo-head">
+        <h3>EvoMetaClaw <small>self-evolving skills</small></h3>
+        ${status}
+      </div>
+      <div class="evo-grid">
+        <div><b>${traj.total}</b><span>trajectories captured</span></div>
+        <div><b>${fmtUsd(traj.cost_usd)}</b><span>corpus cost so far</span></div>
+        <div><b>${(traj.tokens_in + traj.tokens_out).toLocaleString()}</b><span>tokens observed</span></div>
+      </div>
+      <div class="chip-row">${skills || '<span class="muted">No skills tagged yet.</span>'}</div>
+    </section>`;
+}
+
+function renderMetrics(container, data, trajData) {
   const { requests, summary } = data;
 
   const summaryHtml = `
@@ -994,10 +1028,16 @@ function renderMetrics(container, data) {
         <div class="metric-value">${(summary.total_input_tokens + summary.total_output_tokens).toLocaleString()}</div>
         <div class="metric-label">Total tokens</div>
       </div>
+      <div class="metric-card">
+        <div class="metric-value">${fmtUsd(summary.total_cost_usd || 0)}</div>
+        <div class="metric-label">Est. cost</div>
+      </div>
     </div>`;
 
+  const evoHtml = renderEvoMetaClaw(trajData);
+
   if (requests.length === 0) {
-    container.innerHTML = summaryHtml +
+    container.innerHTML = summaryHtml + evoHtml +
       '<p class="metrics-empty">No requests yet — run a query through the proxy to see latency and token data here.</p>';
     return;
   }
@@ -1041,7 +1081,7 @@ function renderMetrics(container, data) {
     </tr>`;
   }).join("");
 
-  container.innerHTML = summaryHtml + sparkHtml + `
+  container.innerHTML = summaryHtml + evoHtml + sparkHtml + `
     <div class="metrics-table-wrap">
       <table class="metrics-table" aria-label="Recent requests">
         <thead>

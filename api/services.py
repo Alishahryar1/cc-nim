@@ -20,7 +20,7 @@ from core.trace import api_messages_request_snapshot, trace_event, traced_async_
 from providers.base import BaseProvider
 from providers.exceptions import InvalidRequestError, ProviderError
 
-from . import metrics
+from . import metrics, pricing, trajectory
 from .model_router import ModelRouter
 from .models.anthropic import MessagesRequest, TokenCountRequest
 from .models.responses import TokenCountResponse
@@ -58,6 +58,8 @@ async def _metered_stream(
     provider_id: str,
     model: str,
     input_tokens: int,
+    skill: str = "chat",
+    thinking_enabled: bool = False,
 ) -> AsyncIterator[str]:
     """Wrap a provider SSE stream to record latency + token usage metrics."""
     start = time.perf_counter()
@@ -81,15 +83,31 @@ async def _metered_stream(
         status = "error"
         raise
     finally:
+        latency_ms = (time.perf_counter() - start) * 1000
         metrics.record(
             request_id=request_id,
             provider_id=provider_id,
             model=model,
             input_tokens=input_tokens,
             output_tokens=output_tokens,
-            latency_ms=(time.perf_counter() - start) * 1000,
+            latency_ms=latency_ms,
             status=status,
         )
+        if trajectory.is_enabled():
+            trajectory.record(
+                request_id=request_id,
+                provider_id=provider_id,
+                model=model,
+                skill=skill,
+                thinking_enabled=thinking_enabled,
+                input_tokens=input_tokens,
+                output_tokens=output_tokens,
+                latency_ms=latency_ms,
+                cost_usd=pricing.estimate_cost_usd(
+                    provider_id, model, input_tokens, output_tokens
+                ),
+                status=status,
+            )
 
 
 def _http_status_for_unexpected_service_exception(_exc: BaseException) -> int:
@@ -249,12 +267,19 @@ class ClaudeProxyService:
                         "gateway_model": routed.request.model,
                     },
                 )
+                skill = trajectory.infer_skill(
+                    routed.request.messages,
+                    routed.request.tools,
+                    input_tokens,
+                )
                 metered = _metered_stream(
                     streamed,
                     request_id=request_id,
                     provider_id=routed.resolved.provider_id,
                     model=routed.request.model,
                     input_tokens=input_tokens,
+                    skill=skill,
+                    thinking_enabled=routed.resolved.thinking_enabled,
                 )
                 return anthropic_sse_streaming_response(metered)
 

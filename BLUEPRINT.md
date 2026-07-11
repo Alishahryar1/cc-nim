@@ -1,5 +1,5 @@
 # Free Claude Code — Project Blueprint
-**Version:** 2.0.0 · **Updated:** 2026-06-15 · **Python:** 3.14.0
+**Version:** 2.1.0 · **Updated:** 2026-07-11 · **Python:** 3.14.0
 **Live:** https://free-claude-code-main-ebon.vercel.app · **Repo:** https://github.com/dnzengou/free-claude-code
 
 ---
@@ -108,6 +108,29 @@ Local-only (loopback guard), served at `/admin`.
 - Dark/light theme toggle — `localStorage` persistence, sun/moon icons, full CSS variable override
 - Metrics tab — summary cards, latency sparkline, per-request table with inline bars; `GET /admin/api/metrics`
 - One-click API key validation — "Validate key" button per non-local provider card; `POST /admin/api/providers/{id}/validate`; 3-state result: key valid / auth OK (completion failed) / key invalid
+- **EvoMetaClaw panel** — cost + skill mix + trajectory count on the Metrics tab; opt-in via `TRAJECTORY_LOG_ENABLED=1`
+- **Est. cost card** — per-provider USD estimate from `pricing.py` catalog
+
+---
+
+## EvoMetaClaw (the moat)
+
+Trajectory-based fine-tuning corpus + skill-aware routing. What OpenClaw can copy in a day: the provider registry, the admin UI, the deploy pipeline. What they can't copy: **months of real usage trajectories** and the SkillOpt-derived per-skill routing that comes from training on them.
+
+| Component | File | Role |
+|---|---|---|
+| Trajectory logger | `api/trajectory.py` | Opt-in JSONL append with byte-cap rotation. Records `{request_id, provider, model, skill, thinking, tokens, latency, cost, status}` for every proxied request. Serverless-safe: read-only FS → auto-disable. |
+| Skill inference | `api/trajectory.py::infer_skill` | Heuristic classifier over messages + tools: `probe`, `edit`, `plan`, `question`, `chat`. Cheap, deterministic, adequate for SkillOpt bucketing. |
+| Pricing catalog | `api/pricing.py` | Vendor rate cards (USD / 1M tokens). Prefixed lookup wins over bare model id. Zero-cost default for unknown models — never overstates spend. |
+| Admin surface | `GET /admin/api/trajectory` | Loopback-only rollup: total, per-skill mix, per-provider mix, tokens, cost, log path. |
+| UI callout | `admin_static/admin.js::renderEvoMetaClaw` | "Recording / Disabled" pill + skill chips on the Metrics tab. |
+
+Enable in production:
+```
+TRAJECTORY_LOG_ENABLED=1
+TRAJECTORY_LOG_MAX_BYTES=5000000    # optional, default 5 MB
+FCC_CACHE_DIR=/var/lib/fcc          # optional, default ~/.fcc-cache
+```
 
 ---
 
@@ -167,11 +190,20 @@ All enforced in `.github/workflows/tests.yml` on push/PR to `main`/`master`:
 - [x] **One-click API key validation** — `POST /admin/api/providers/{id}/validate`; `validate_credentials()` on BaseProvider; OpenAI-compat override adds 1-token completion check; "Validate key" button per non-local provider card
 
 ### Planned 🔲
-- [ ] *(roadmap clear — open an issue to propose the next feature)*
+- [ ] Provider fallback chain — `MODEL_FALLBACK_CHAIN=a,b,c` for auto-retry when primary provider fails (removes single-provider SPOF)
+- [ ] SkillOpt fine-tuning pipeline — offline consumer of `trajectories.jsonl` that produces per-skill routing rules
 
 ---
 
 ## Changelog
+
+### v2.1.0 — 2026-07-11 (EvoMetaClaw + cost)
+- **EvoMetaClaw trajectory logger** (`api/trajectory.py`): opt-in JSONL append with byte-cap rotation, in-memory summary, skill inference. `TRAJECTORY_LOG_ENABLED=1` to enable; serverless-safe (read-only FS → auto-disable, same pattern as `configure_logging` / `health_history`).
+- **Pricing catalog** (`api/pricing.py`): USD/1M-token rate cards for OpenAI, DeepSeek, Groq, Cerebras, Gemini, Mistral, Kimi, Fireworks. Prefixed lookup wins over bare model id. Local providers always cost 0. Zero-cost default for unknown models.
+- **`GET /admin/api/trajectory`** (loopback-only): returns `{enabled, total, per_skill, per_provider, tokens_in, tokens_out, cost_usd, log_path}` for the EvoMetaClaw UI panel.
+- **Metrics enrichment**: `/admin/api/metrics` summary now includes `total_cost_usd` and `per_provider_cost_usd`; Metrics tab gets a 5th summary card and an EvoMetaClaw panel with recording/disabled pill + skill chips.
+- **Service integration**: `_metered_stream` now emits one trajectory row per completed request (or error), pre-tagged with the inferred skill and priced against the pricing catalog. `create_message` computes the skill tag before wrapping the stream so both the metric and the trajectory carry the same label.
+- **Tests**: 11 new tests — pricing lookups & summarize (6), trajectory disable/enable/rotation/skill inference (7 sub-cases), admin `/trajectory` endpoint + loopback guard (2), metrics cost fields (1).
 
 ### v2.0.0 — 2026-06-15 (audit + ty)
 - **`ty` regression fix**: removed redundant `health_history = importlib.reload(health_history)` reassignments in `tests/api/test_admin.py` (3 sites). `importlib.reload()` mutates the module in place, so the rebinding only confused ty's narrowed-import type with the generic `ModuleType` return — no `# type: ignore` added (CLAUDE.md hard rule).
