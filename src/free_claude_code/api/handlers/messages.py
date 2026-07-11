@@ -8,12 +8,7 @@ from fastapi.responses import JSONResponse, Response
 from loguru import logger
 
 from free_claude_code.api.detection import is_safety_classifier_request
-from free_claude_code.api.model_router import ModelRouter, RoutedMessagesRequest
 from free_claude_code.api.optimization_handlers import try_optimizations
-from free_claude_code.api.provider_execution import (
-    ProviderExecutionService,
-    TokenCounter,
-)
 from free_claude_code.api.request_errors import (
     http_status_for_unexpected_api_exception,
     log_unexpected_api_exception,
@@ -35,6 +30,9 @@ from free_claude_code.api.web_tools.request import (
     openai_chat_upstream_server_tool_error,
 )
 from free_claude_code.api.web_tools.streaming import stream_web_server_tool_response
+from free_claude_code.application.execution import ProviderExecutor, TokenCounter
+from free_claude_code.application.ports import ProviderResolver
+from free_claude_code.application.routing import ModelRouter, RoutedMessagesRequest
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import (
@@ -46,7 +44,6 @@ from free_claude_code.core.anthropic import (
     get_user_facing_error_message,
 )
 from free_claude_code.core.trace import trace_event
-from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.exceptions import InvalidRequestError, ProviderError
 
 _OPENAI_CHAT_UPSTREAM_IDS = frozenset(
@@ -66,7 +63,6 @@ class _MessagesCompleteResult:
     response: object
 
 
-ProviderGetter = Callable[[str], BaseProvider]
 _MessagesResult = _MessagesStreamResult | _MessagesCompleteResult
 MessageIntercept = Callable[[RoutedMessagesRequest], _MessagesResult | None]
 
@@ -77,21 +73,21 @@ class MessagesHandler:
     def __init__(
         self,
         settings: Settings,
-        provider_getter: ProviderGetter,
+        provider_resolver: ProviderResolver,
         *,
         model_router: ModelRouter | None = None,
         token_counter: TokenCounter = get_token_count,
-        provider_execution: ProviderExecutionService | None = None,
+        provider_executor: ProviderExecutor | None = None,
         generation_id: int | None = None,
     ) -> None:
         self._settings = settings
         self._model_router = model_router or ModelRouter(settings)
         self._token_counter = token_counter
-        self._provider_execution = provider_execution or ProviderExecutionService(
-            settings,
-            provider_getter,
+        self._provider_executor = provider_executor or ProviderExecutor(
+            provider_resolver,
             token_counter=token_counter,
             generation_id=generation_id,
+            log_raw_payloads=settings.log_raw_api_payloads,
         )
         self._message_intercepts: tuple[MessageIntercept, ...] = (
             self._intercept_web_server_tool,
@@ -113,7 +109,7 @@ class MessagesHandler:
             if result is None:
                 logger.debug("No optimization matched, routing to provider")
                 result = _MessagesStreamResult(
-                    self._provider_execution.stream(
+                    self._provider_executor.stream(
                         routed,
                         wire_api="messages",
                         raw_log_label="FULL_PAYLOAD",

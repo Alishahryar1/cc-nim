@@ -7,6 +7,7 @@ from collections.abc import Callable
 import httpx
 from loguru import logger
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.model_refs import (
     ConfiguredChatModelRef,
     configured_chat_model_refs,
@@ -19,7 +20,6 @@ from free_claude_code.providers.exceptions import (
     ProviderError,
     ServiceUnavailableError,
 )
-from free_claude_code.providers.model_listing import ProviderModelInfo
 
 from .model_cache import ProviderModelCache
 

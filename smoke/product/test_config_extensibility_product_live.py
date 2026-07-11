@@ -76,7 +76,7 @@ def test_per_model_thinking_config_e2e(smoke_config: SmokeConfig, tmp_path) -> N
     env = os.environ.copy()
     env["FCC_ENV_FILE"] = str(env_file)
     script = (
-        "from free_claude_code.api.model_router import ModelRouter; "
+        "from free_claude_code.application.routing import ModelRouter; "
         "from free_claude_code.config.settings import Settings; "
         "s=Settings(); "
         "r=ModelRouter(s); "

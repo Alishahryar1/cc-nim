@@ -5,12 +5,10 @@ from collections.abc import AsyncIterator
 
 from pydantic import BaseModel
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.constants import HTTP_CONNECT_TIMEOUT_DEFAULT
 from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.providers.model_listing import (
-    ProviderModelInfo,
-    model_infos_from_ids,
-)
+from free_claude_code.providers.model_listing import model_infos_from_ids
 
 
 class ProviderConfig(BaseModel):
@@ -58,18 +56,11 @@ class BaseProvider(ABC):
                 request_enabled = False
         return config_enabled and request_enabled
 
+    @abstractmethod
     def preflight_stream(
         self, request: MessagesRequest, *, thinking_enabled: bool | None = None
     ) -> None:
-        """Eagerly validate/build the upstream request before opening an SSE stream.
-
-        Subclasses with ``_build_request_body`` (OpenAI and native) raise
-        :class:`providers.exceptions.InvalidRequestError` on conversion failures.
-        """
-        build = getattr(self, "_build_request_body", None)
-        if build is None:
-            return
-        build(request, thinking_enabled=thinking_enabled)
+        """Validate the upstream request before opening an SSE stream."""
 
     def _log_stream_transport_error(
         self,

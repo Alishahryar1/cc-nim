@@ -3,14 +3,14 @@
 from fastapi import HTTPException
 from loguru import logger
 
-from free_claude_code.api.model_router import ModelRouter
-from free_claude_code.api.provider_execution import TokenCounter
 from free_claude_code.api.request_errors import (
     http_status_for_unexpected_api_exception,
     log_unexpected_api_exception,
     require_non_empty_messages,
 )
 from free_claude_code.api.request_ids import new_request_id
+from free_claude_code.application.execution import TokenCounter
+from free_claude_code.application.routing import ModelRouter
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import (
     TokenCountRequest,

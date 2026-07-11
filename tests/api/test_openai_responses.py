@@ -6,7 +6,7 @@ from fastapi.testclient import TestClient
 
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.core.anthropic.streaming import format_sse_event
-from free_claude_code.providers.exceptions import RateLimitError
+from free_claude_code.providers.exceptions import InvalidRequestError, RateLimitError
 from tests.api.support import create_test_app
 
 
@@ -97,6 +97,31 @@ def test_create_response_stream_routes_through_provider(
     assert routed.messages[0].content == "Hello"
     assert routed.max_tokens == 32
     assert provider.stream_kwargs[0]["request_id"] == response.headers["request-id"]
+
+
+def test_create_response_preflight_rejection_stays_an_ordinary_http_error() -> None:
+    provider = FakeProvider(_anthropic_text_stream("unused"))
+    provider.preflight_stream.side_effect = InvalidRequestError("bad tool shape")
+    app = create_test_app()
+
+    with (
+        patch("free_claude_code.api.routes.resolve_provider", return_value=provider),
+        TestClient(app) as client,
+    ):
+        response = client.post(
+            "/v1/responses",
+            json={"model": "nvidia_nim/test-model", "input": "Hello"},
+        )
+
+    assert response.status_code == 400
+    assert response.json()["error"] == {
+        "message": "bad tool shape",
+        "type": "invalid_request_error",
+        "param": None,
+        "code": None,
+    }
+    assert "x-should-retry" not in response.headers
+    assert provider.requests == []
 
 
 def test_create_response_accepts_unknown_top_level_extensions(

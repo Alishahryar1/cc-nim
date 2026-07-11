@@ -87,6 +87,12 @@ class OpenAIChatTransport(BaseProvider):
     ) -> dict:
         """Build request body. Must be implemented by subclasses."""
 
+    def preflight_stream(
+        self, request: MessagesRequest, *, thinking_enabled: bool | None = None
+    ) -> None:
+        """Validate OpenAI-chat request conversion before streaming."""
+        self._build_request_body(request, thinking_enabled=thinking_enabled)
+
     def _handle_extra_reasoning(
         self, delta: Any, ledger: AnthropicStreamLedger, *, thinking_enabled: bool
     ) -> Iterator[str]:

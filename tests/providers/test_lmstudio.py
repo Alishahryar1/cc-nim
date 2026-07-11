@@ -83,6 +83,52 @@ def test_build_request_body_never_replays_prior_thinking(lmstudio_provider):
     assert "prior reasoning" not in str(body)
 
 
+def test_preflight_builds_before_context_budget_and_preserves_false(
+    lmstudio_provider,
+):
+    request = make_request()
+    calls: list[tuple[str, object]] = []
+
+    def build(request_arg, thinking_enabled=None):
+        assert request_arg is request
+        calls.append(("build", thinking_enabled))
+        return {}
+
+    def check_context(request_arg):
+        assert request_arg is request
+        calls.append(("context", request_arg))
+
+    with (
+        patch.object(lmstudio_provider, "_build_request_body", side_effect=build),
+        patch.object(
+            lmstudio_provider,
+            "_preflight_context_budget",
+            side_effect=check_context,
+        ),
+    ):
+        lmstudio_provider.preflight_stream(request, thinking_enabled=False)
+
+    assert calls == [("build", False), ("context", request)]
+
+
+def test_preflight_conversion_failure_skips_context_budget(lmstudio_provider):
+    request = make_request()
+    conversion_error = InvalidRequestError("invalid request conversion")
+
+    with (
+        patch.object(
+            lmstudio_provider,
+            "_build_request_body",
+            side_effect=conversion_error,
+        ),
+        patch.object(lmstudio_provider, "_preflight_context_budget") as context,
+        pytest.raises(InvalidRequestError, match="invalid request conversion"),
+    ):
+        lmstudio_provider.preflight_stream(request, thinking_enabled=True)
+
+    context.assert_not_called()
+
+
 @pytest.mark.asyncio
 async def test_stream_response_text(lmstudio_provider):
     """Text content deltas are emitted as text blocks (via the OpenAI chat transport)."""

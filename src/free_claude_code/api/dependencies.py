@@ -5,16 +5,16 @@ import secrets
 from fastapi import Depends, HTTPException, Request
 from loguru import logger
 
+from free_claude_code.application.ports import ProviderPort, RequestRuntimeLease
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import get_user_facing_error_message
-from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.exceptions import (
     AuthenticationError,
     UnknownProviderTypeError,
 )
 
-from .ports import ApiServices, RequestRuntimeLease
+from .ports import ApiServices
 
 
 def get_services(request: Request) -> ApiServices:
@@ -31,7 +31,7 @@ def resolve_provider(
     provider_type: str,
     *,
     lease: RequestRuntimeLease,
-) -> BaseProvider:
+) -> ProviderPort:
     """Resolve a provider through one retained generation."""
     should_log_init = not lease.is_provider_cached(provider_type)
     try:

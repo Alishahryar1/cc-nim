@@ -5,6 +5,7 @@ from typing import Any, Literal
 
 import httpx
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.native_sse_block_policy import (
     NativeSseBlockPolicyState,
@@ -17,7 +18,6 @@ from free_claude_code.providers.error_mapping import (
     user_visible_message_for_mapped_provider_error,
 )
 from free_claude_code.providers.model_listing import (
-    ProviderModelInfo,
     extract_openai_model_ids,
     model_infos_from_ids,
 )
@@ -119,6 +119,12 @@ class AnthropicMessagesTransport(BaseProvider):
             request,
             thinking_enabled=thinking_enabled,
         )
+
+    def preflight_stream(
+        self, request: MessagesRequest, *, thinking_enabled: bool | None = None
+    ) -> None:
+        """Validate native Messages request construction before streaming."""
+        self._build_request_body(request, thinking_enabled=thinking_enabled)
 
     def _build_request_body_with_resolved_thinking(
         self, request: MessagesRequest, *, thinking_enabled: bool

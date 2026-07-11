@@ -1,26 +1,20 @@
 """Provider model-list response parsing helpers."""
 
 from collections.abc import Iterable, Mapping, Sequence
-from dataclasses import dataclass
 from typing import Any
 
+from free_claude_code.application.model_metadata import (
+    ProviderModelInfo as _ProviderModelInfo,
+)
 from free_claude_code.providers.exceptions import ModelListResponseError
-
-
-@dataclass(frozen=True, slots=True)
-class ProviderModelInfo:
-    """Internal provider model metadata used for gateway model-list shaping."""
-
-    model_id: str
-    supports_thinking: bool | None = None
 
 
 def model_infos_from_ids(
     model_ids: Iterable[str], *, supports_thinking: bool | None = None
-) -> frozenset[ProviderModelInfo]:
+) -> frozenset[_ProviderModelInfo]:
     """Build unknown-capability model metadata from plain provider model ids."""
     return frozenset(
-        ProviderModelInfo(model_id=model_id, supports_thinking=supports_thinking)
+        _ProviderModelInfo(model_id=model_id, supports_thinking=supports_thinking)
         for model_id in model_ids
         if model_id.strip()
     )
@@ -58,13 +52,13 @@ def extract_openrouter_tool_model_ids(
 
 def extract_openrouter_tool_model_infos(
     payload: Any, *, provider_name: str
-) -> frozenset[ProviderModelInfo]:
+) -> frozenset[_ProviderModelInfo]:
     """Extract OpenRouter tool-capable model ids with thinking capability metadata."""
     data = _field(payload, "data")
     if not _is_sequence(data):
         raise _malformed(provider_name, "expected top-level data array")
 
-    model_infos: set[ProviderModelInfo] = set()
+    model_infos: set[_ProviderModelInfo] = set()
     for item in data:
         model_id = _field(item, "id")
         if not isinstance(model_id, str) or not model_id.strip():
@@ -79,7 +73,7 @@ def extract_openrouter_tool_model_infos(
         if supported_parameter_names.isdisjoint({"tools", "tool_choice"}):
             continue
         model_infos.add(
-            ProviderModelInfo(
+            _ProviderModelInfo(
                 model_id=model_id,
                 supports_thinking="reasoning" in supported_parameter_names,
             )

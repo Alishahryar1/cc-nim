@@ -1,11 +1,7 @@
 """OpenAI Responses API product flow for Codex clients."""
 
-from collections.abc import Callable
-
 from fastapi.responses import JSONResponse
 
-from free_claude_code.api.model_router import ModelRouter
-from free_claude_code.api.provider_execution import ProviderExecutionService
 from free_claude_code.api.request_errors import (
     http_status_for_unexpected_api_exception,
     log_unexpected_api_exception,
@@ -16,6 +12,9 @@ from free_claude_code.api.response_streams import (
     openai_responses_sse_streaming_response,
     terminal_execution_error_response,
 )
+from free_claude_code.application.execution import ProviderExecutor
+from free_claude_code.application.ports import ProviderResolver
+from free_claude_code.application.routing import ModelRouter
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import (
     MessagesRequest,
@@ -26,10 +25,7 @@ from free_claude_code.core.openai_responses import (
     OpenAIResponsesRequest,
 )
 from free_claude_code.core.trace import trace_event
-from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.exceptions import InvalidRequestError, ProviderError
-
-ProviderGetter = Callable[[str], BaseProvider]
 
 
 class ResponsesHandler:
@@ -38,20 +34,20 @@ class ResponsesHandler:
     def __init__(
         self,
         settings: Settings,
-        provider_getter: ProviderGetter,
+        provider_resolver: ProviderResolver,
         *,
         model_router: ModelRouter | None = None,
         responses_adapter: OpenAIResponsesAdapter | None = None,
-        provider_execution: ProviderExecutionService | None = None,
+        provider_executor: ProviderExecutor | None = None,
         generation_id: int | None = None,
     ) -> None:
         self._settings = settings
         self._model_router = model_router or ModelRouter(settings)
         self._responses_adapter = responses_adapter or OpenAIResponsesAdapter()
-        self._provider_execution = provider_execution or ProviderExecutionService(
-            settings,
-            provider_getter,
+        self._provider_executor = provider_executor or ProviderExecutor(
+            provider_resolver,
             generation_id=generation_id,
+            log_raw_payloads=settings.log_raw_api_payloads,
         )
 
     async def create(
@@ -80,7 +76,7 @@ class ResponsesHandler:
             require_non_empty_messages(response_request.messages)
             routed = self._model_router.resolve_messages_request(response_request)
 
-            streamed = self._provider_execution.stream(
+            streamed = self._provider_executor.stream(
                 routed,
                 wire_api="responses",
                 raw_log_label="FULL_RESPONSES_PAYLOAD",

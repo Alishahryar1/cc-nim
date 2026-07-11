@@ -171,7 +171,7 @@ def test_create_message_pre_start_provider_error_returns_terminal_json(
 
     with (
         patch("free_claude_code.api.handlers.messages.trace_event") as trace,
-        patch("free_claude_code.api.provider_execution.trace_event") as execution_trace,
+        patch("free_claude_code.application.execution.trace_event") as execution_trace,
     ):
         response = client.post("/v1/messages", json=payload)
 

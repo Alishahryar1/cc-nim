@@ -33,7 +33,7 @@ def build_asgi_app(
     services = ApiServices(
         requests=provider_manager,
         admin=runtime,
-        sessions=runtime,
+        tasks=runtime,
     )
     return RuntimeASGIApp(create_app(services), runtime)
 

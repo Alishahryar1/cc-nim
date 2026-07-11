@@ -6,11 +6,7 @@ from pathlib import Path
 # `free_claude_code.api` may only import this narrow ``providers`` surface.
 _API_ALLOWED_PROVIDER_MODULES = frozenset(
     {
-        "free_claude_code.providers",
-        "free_claude_code.providers.base",
         "free_claude_code.providers.exceptions",
-        "free_claude_code.providers.model_listing",
-        "free_claude_code.providers.runtime",
     }
 )
 
@@ -54,6 +50,7 @@ def test_runtime_packages_live_only_under_src_namespace() -> None:
 
     assert (package_root / "__init__.py").exists()
     for package_name in {
+        "application",
         "api",
         "cli",
         "config",
@@ -69,6 +66,7 @@ def test_runtime_packages_live_only_under_src_namespace() -> None:
 def test_no_old_top_level_first_party_imports_remain() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     forbidden = {
+        "application",
         "api",
         "cli",
         "config",
@@ -192,6 +190,7 @@ def test_core_does_not_import_product_packages() -> None:
     offenders = _imports_matching(
         [repo_root / "src" / "free_claude_code" / "core"],
         forbidden_prefixes=(
+            "free_claude_code.application.",
             "free_claude_code.api.",
             "free_claude_code.messaging.",
             "free_claude_code.cli.",
@@ -201,6 +200,63 @@ def test_core_does_not_import_product_packages() -> None:
         ),
     )
     assert offenders == []
+
+
+def test_application_owns_routing_execution_and_consumer_ports() -> None:
+    repo_root = Path(__file__).resolve().parents[2]
+    package_root = repo_root / "src" / "free_claude_code"
+    application_root = package_root / "application"
+    api_root = package_root / "api"
+
+    for filename in {
+        "__init__.py",
+        "execution.py",
+        "model_metadata.py",
+        "ports.py",
+        "routing.py",
+    }:
+        assert (application_root / filename).exists()
+
+    assert not (api_root / "model_router.py").exists()
+    assert not (api_root / "provider_execution.py").exists()
+    assert (
+        _imports_matching(
+            [application_root],
+            forbidden_prefixes=(
+                "free_claude_code.api.",
+                "free_claude_code.cli.",
+                "free_claude_code.messaging.",
+                "free_claude_code.providers.",
+                "free_claude_code.runtime.",
+            ),
+        )
+        == []
+    )
+
+    provider_imports = _imports_matching(
+        [api_root],
+        forbidden_prefixes=(
+            "free_claude_code.providers.base",
+            "free_claude_code.providers.model_listing",
+            "free_claude_code.providers.runtime",
+        ),
+    )
+    assert provider_imports == []
+
+    unexpected_provider_application_imports: list[str] = []
+    providers_root = package_root / "providers"
+    for path in providers_root.rglob("*.py"):
+        for imported in _imports_from(path, repo_root):
+            if imported is None or not imported.startswith(
+                "free_claude_code.application."
+            ):
+                continue
+            if imported == "free_claude_code.application.model_metadata":
+                continue
+            unexpected_provider_application_imports.append(
+                f"{path.relative_to(repo_root)}: {imported}"
+            )
+    assert unexpected_provider_application_imports == []
 
 
 def test_provider_catalog_is_single_source_for_supported_ids() -> None:
@@ -359,7 +415,11 @@ def test_single_owner_runtime_dependency_direction() -> None:
         assert removed_state not in api_text
     assert "app.state.services" in api_text
 
-    for marker in {api_root / "__init__.py", runtime_root / "__init__.py"}:
+    for marker in {
+        package_root / "application" / "__init__.py",
+        api_root / "__init__.py",
+        runtime_root / "__init__.py",
+    }:
         marker_text = marker.read_text(encoding="utf-8")
         assert "from " not in marker_text
         assert "import " not in marker_text
@@ -669,9 +729,9 @@ def test_openai_responses_uses_adapter_boundary() -> None:
     }:
         assert forbidden not in response_handler_imports
 
-    provider_execution_text = (api_root / "provider_execution.py").read_text(
-        encoding="utf-8"
-    )
+    provider_execution_text = (
+        repo_root / "src" / "free_claude_code" / "application" / "execution.py"
+    ).read_text(encoding="utf-8")
     assert "StreamingResponse" not in provider_execution_text
     assert "OpenAIResponsesAdapter" not in provider_execution_text
 

@@ -3,7 +3,7 @@ from typing import Any
 import httpx
 import pytest
 
-from free_claude_code.api.model_router import ModelRouter
+from free_claude_code.application.routing import ModelRouter
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.core.anthropic.stream_contracts import (
     SSEEvent,

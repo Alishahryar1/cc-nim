@@ -5,11 +5,11 @@ from collections.abc import Callable
 
 from loguru import logger
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.model_refs import configured_chat_model_refs
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.settings import Settings
 from free_claude_code.providers.base import BaseProvider
-from free_claude_code.providers.model_listing import ProviderModelInfo
 
 from .config import provider_credential
 from .model_cache import ProviderModelCache

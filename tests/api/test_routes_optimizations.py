@@ -4,7 +4,8 @@ import pytest
 from fastapi.testclient import TestClient
 
 from free_claude_code.api.dependencies import get_settings
-from free_claude_code.api.ports import ApiServices, StopResult
+from free_claude_code.api.ports import ApiServices
+from free_claude_code.application.ports import StopResult
 from free_claude_code.config.settings import Settings
 from tests.api.support import create_test_app
 
@@ -158,7 +159,7 @@ def test_stop_cli_with_messaging_workflow(client):
     app.state.services = ApiServices(
         requests=services.requests,
         admin=services.admin,
-        sessions=session_control,
+        tasks=session_control,
     )
 
     response = client.post("/stop")
@@ -175,7 +176,7 @@ def test_stop_cli_fallback_to_manager(client):
     app.state.services = ApiServices(
         requests=services.requests,
         admin=services.admin,
-        sessions=session_control,
+        tasks=session_control,
     )
 
     response = client.post("/stop")

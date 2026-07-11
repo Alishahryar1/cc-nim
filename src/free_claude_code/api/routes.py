@@ -3,6 +3,7 @@
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from loguru import logger
 
+from free_claude_code.application.ports import ProviderResolver, RequestRuntimeLease
 from free_claude_code.config.model_refs import parse_provider_type
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import (
@@ -21,14 +22,14 @@ from .dependencies import (
 )
 from .handlers import MessagesHandler, ResponsesHandler, TokenCountHandler
 from .model_catalog import ModelsListResponse, build_models_list_response
-from .ports import ApiServices, RequestRuntimeLease
+from .ports import ApiServices
 from .request_ids import get_request_id
 from .response_streams import bind_response_lifetime
 
 router = APIRouter()
 
 
-def _provider_getter(lease: RequestRuntimeLease):
+def _provider_resolver(lease: RequestRuntimeLease) -> ProviderResolver:
     return lambda provider_type: resolve_provider(provider_type, lease=lease)
 
 
@@ -42,7 +43,7 @@ async def _create_messages_response(
     try:
         handler = MessagesHandler(
             lease.settings,
-            provider_getter=_provider_getter(lease),
+            provider_resolver=_provider_resolver(lease),
             token_counter=get_token_count,
             generation_id=lease.generation_id,
         )
@@ -63,7 +64,7 @@ async def _create_responses_response(
     try:
         handler = ResponsesHandler(
             lease.settings,
-            provider_getter=_provider_getter(lease),
+            provider_resolver=_provider_resolver(lease),
             generation_id=lease.generation_id,
         )
         response = await handler.create(request_data, request_id=request_id)
@@ -178,7 +179,7 @@ async def stop_cli(
     _auth=Depends(require_api_key),
 ):
     """Stop all CLI sessions and pending tasks."""
-    result = await services.sessions.stop_all()
+    result = await services.tasks.stop_all()
     if result is None:
         raise HTTPException(status_code=503, detail="Messaging system not initialized")
     if result.source is not None:

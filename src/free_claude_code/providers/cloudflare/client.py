@@ -6,6 +6,7 @@ from urllib.parse import quote
 
 import httpx
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.defaults import CLOUDFLARE_AI_REST_ROOT
@@ -14,7 +15,6 @@ from free_claude_code.providers.exceptions import (
     ModelListResponseError,
 )
 from free_claude_code.providers.model_listing import (
-    ProviderModelInfo,
     extract_openai_model_ids,
     model_infos_from_ids,
 )

@@ -11,7 +11,11 @@ from free_claude_code.api.detection import (
     is_title_generation_request,
 )
 from free_claude_code.core.anthropic import get_token_count
-from free_claude_code.core.anthropic.models import Message, MessagesRequest
+from free_claude_code.core.anthropic.models import (
+    Message,
+    MessagesRequest,
+    SystemContent,
+)
 
 
 class TestQuotaCheckRequest:
@@ -466,14 +470,16 @@ class TestGetTokenCount:
         count_with_sys = get_token_count([msg], system="You are helpful")
         assert count_with_sys >= count_no_sys + 4
 
-    def test_system_as_list_of_dicts(self):
-        """System blocks as dicts (not objects) are counted."""
+    def test_system_as_typed_content_blocks(self):
+        """Typed system content blocks are counted."""
         msg = MagicMock()
         msg.content = "Hi"
         count_no_sys = get_token_count([msg])
-        system_dicts = [{"type": "text", "text": "System prompt from dict"}]
-        count_with_dict_sys = get_token_count([msg], system=system_dicts)
-        assert count_with_dict_sys > count_no_sys
+        system_blocks = [
+            SystemContent(type="text", text="System prompt from typed block")
+        ]
+        count_with_system = get_token_count([msg], system=system_blocks)
+        assert count_with_system > count_no_sys
 
     def test_tool_use_includes_id(self):
         """Tool use blocks count id field."""

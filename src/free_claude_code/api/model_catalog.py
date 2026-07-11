@@ -4,14 +4,13 @@ from typing import Literal
 
 from pydantic import BaseModel
 
+from free_claude_code.application.ports import RequestRuntimePort
 from free_claude_code.config.model_refs import configured_chat_model_refs
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.gateway_model_ids import (
     gateway_model_id,
     no_thinking_gateway_model_id,
 )
-
-from .ports import RequestRuntimePort
 
 DISCOVERED_MODEL_CREATED_AT = "1970-01-01T00:00:00Z"
 

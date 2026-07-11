@@ -6,6 +6,7 @@ import tiktoken
 from loguru import logger
 
 from .content import get_block_attr
+from .models import Message, SystemContent, Tool
 
 ENCODER = tiktoken.get_encoding("cl100k_base")
 
@@ -17,9 +18,9 @@ def _count_text_tokens(text: str) -> int:
 
 
 def get_token_count(
-    messages: list,
-    system: str | list | None = None,
-    tools: list | None = None,
+    messages: list[Message],
+    system: str | list[SystemContent] | None = None,
+    tools: list[Tool] | None = None,
 ) -> int:
     """Estimate token count for a request."""
     total_tokens = 0

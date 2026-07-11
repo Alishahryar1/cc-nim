@@ -7,6 +7,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.config.settings import Settings
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
@@ -16,7 +17,6 @@ from free_claude_code.providers.exceptions import (
     ServiceUnavailableError,
 )
 from free_claude_code.providers.llamacpp import LlamaCppProvider
-from free_claude_code.providers.model_listing import ProviderModelInfo
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.ollama import OllamaProvider
 from free_claude_code.providers.open_router import OpenRouterProvider
@@ -338,6 +338,11 @@ class FakeProvider(BaseProvider):
         self._started = started
         self._peer_started = peer_started
         self.cleaned = False
+
+    def preflight_stream(
+        self, request: Any, *, thinking_enabled: bool | None = None
+    ) -> None:
+        return None
 
     async def cleanup(self) -> None:
         self.cleaned = True

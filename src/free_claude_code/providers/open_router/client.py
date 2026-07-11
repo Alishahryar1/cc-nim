@@ -4,13 +4,13 @@ import json
 from collections.abc import Iterator, Mapping, Sequence
 from typing import Any
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from free_claude_code.core.anthropic.models import MessagesRequest, ThinkingConfig
 from free_claude_code.core.anthropic.streaming import AnthropicStreamLedger
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.defaults import OPENROUTER_DEFAULT_BASE
 from free_claude_code.providers.model_listing import (
-    ProviderModelInfo,
     extract_openrouter_tool_model_ids,
     extract_openrouter_tool_model_infos,
 )

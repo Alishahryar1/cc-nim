@@ -9,7 +9,8 @@ from free_claude_code.api.dependencies import (
     require_api_key,
     resolve_provider,
 )
-from free_claude_code.api.ports import ApiServices, RequestRuntimeLease
+from free_claude_code.api.ports import ApiServices
+from free_claude_code.application.ports import RequestRuntimeLease
 from free_claude_code.config.settings import Settings
 from free_claude_code.providers.exceptions import AuthenticationError
 from tests.api.support import create_test_app

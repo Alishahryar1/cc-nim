@@ -2,11 +2,9 @@
 
 from collections.abc import Iterable
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_catalog import SUPPORTED_PROVIDER_IDS
-from free_claude_code.providers.model_listing import (
-    ProviderModelInfo,
-    model_infos_from_ids,
-)
+from free_claude_code.providers.model_listing import model_infos_from_ids
 
 
 class ProviderModelCache:

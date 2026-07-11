@@ -33,8 +33,8 @@ flowchart LR
     Messaging --> ClientCLI[Managed Client CLI Sessions]
     ClientCLI --> ProxyAPI
     ProxyAPI --> Handlers[API Product Handlers]
-    Handlers --> Router[ModelRouter]
-    Handlers --> Executor[ProviderExecutionService]
+    Handlers --> Router[application ModelRouter]
+    Handlers --> Executor[application ProviderExecutor]
     Executor --> Lease[Provider Generation Lease]
     Lease --> Providers[ProviderRuntime]
     Providers --> OpenAIChat[OpenAI Chat Providers]
@@ -45,10 +45,14 @@ flowchart LR
 
 The installable wheel packages are declared in [pyproject.toml](pyproject.toml):
 
+- [src/free_claude_code/application/](src/free_claude_code/application/) is the dependency-leaf application boundary. It
+  owns immutable routing/model-metadata values, model routing, shared provider
+  execution, the consumer-facing `ProviderPort`, request-runtime lease ports,
+  and task control. It depends only on configuration and core protocol logic.
 - [src/free_claude_code/api/](src/free_claude_code/api/) is the HTTP adapter. It owns the FastAPI app, routes, API product
-  handlers, local optimizations, model-catalog responses, and narrow
-  consumer-owned runtime ports. It consumes protocol types instead of defining
-  them.
+  handlers, local optimizations, model-catalog responses, HTTP error mapping,
+  response commit timing, and Admin-specific ports. It consumes application and
+  protocol types instead of defining use cases or wire schemas.
 - [src/free_claude_code/cli/](src/free_claude_code/cli/) owns console entrypoints, client CLI launchers, process/session
   management, and client adapter contracts.
 - [src/free_claude_code/config/](src/free_claude_code/config/) owns settings, provider metadata, filesystem paths,
@@ -71,9 +75,11 @@ The installable wheel packages are declared in [pyproject.toml](pyproject.toml):
 subprocesses or touch real services.
 
 The main ownership rule is that Anthropic and Responses protocol schemas and
-shared behavior belong in [src/free_claude_code/core/](src/free_claude_code/core/). Routes use those schemas directly for
-wire validation, and provider modules use the same concrete request types and
-neutral helpers instead of importing the API adapter or another provider.
+shared protocol behavior belong in [src/free_claude_code/core/](src/free_claude_code/core/), while request routing and
+provider execution belong in [src/free_claude_code/application/](src/free_claude_code/application/). Routes use core schemas
+directly for wire validation and call application use cases. Provider modules use
+the same concrete request types and neutral helpers instead of importing the API
+adapter or another provider.
 Protocol consumers use the public `core.anthropic` and
 `core.openai_responses` facades. Low-level core and provider modules may import
 the dependency-leaf `models.py` modules directly so their type dependency is
@@ -122,7 +128,7 @@ new places to add unrelated behavior:
 - [api/handlers/](src/free_claude_code/api/handlers/) owns customer-facing API product flows:
   Claude Messages, OpenAI Responses, and token counting. Keep route handlers
   thin, keep Claude-only behavior in the Messages handler, and use
-  [api/provider_execution.py](src/free_claude_code/api/provider_execution.py) only for shared
+  [application/execution.py](src/free_claude_code/application/execution.py) only for shared
   provider resolution, preflight, tracing, token counting, and streaming.
 - [providers/transports/](src/free_claude_code/providers/transports/) owns provider transport
   families. The OpenAI-chat and native Anthropic transport packages split thin
@@ -162,8 +168,10 @@ On final shutdown it best-effort kills registered child processes.
 [runtime/bootstrap.py](src/free_claude_code/runtime/bootstrap.py) is the single production composition function. The CLI
 supervisor supplies one settings snapshot and its restart callback; bootstrap
 configures logging, constructs the runtime owners and the configured voice
-transcriber, supplies
-[api/ports.py](src/free_claude_code/api/ports.py) to the pure API factory, and returns the ASGI application.
+  transcriber, constructs the explicit `ApiServices` composition value, and
+  returns the ASGI application. Provider request leases and task control satisfy
+  the consumer-owned ports in [application/ports.py](src/free_claude_code/application/ports.py); Admin operations retain
+  their inbound-adapter port in [api/ports.py](src/free_claude_code/api/ports.py).
 
 [api/app.py](src/free_claude_code/api/app.py) registers routers, HTTP correlation middleware, and exception handlers around
 an explicit `ApiServices` value. It does not read global settings or construct
@@ -290,9 +298,12 @@ Claude-only safety-classifier and local optimization policy, handles local web
 server tools, then streams Anthropic SSE. `ResponsesHandler` owns streaming-only
 OpenAI Responses validation and conversion for Codex clients. `TokenCountHandler`
 owns Anthropic token counting. Shared provider execution lives in
-[api/provider_execution.py](src/free_claude_code/api/provider_execution.py), which resolves a
-provider, preflights the upstream request, emits trace events, counts input
-tokens, and returns an Anthropic SSE iterator.
+[application/execution.py](src/free_claude_code/application/execution.py). `ProviderExecutor` resolves the narrow
+consumer-owned `ProviderPort`, synchronously preflights the upstream request,
+emits trace events, counts input tokens, and returns an Anthropic SSE iterator.
+It receives only a provider resolver and the few scalar collaborators it needs;
+it does not depend on FastAPI, provider implementations, or the full settings
+object.
 [api/response_streams.py](src/free_claude_code/api/response_streams.py) owns public streaming egress
 commit timing. It waits for the first protocol chunk before returning a
 successful `StreamingResponse`. A provider-execution failure before that commit
@@ -315,7 +326,7 @@ sequenceDiagram
     participant Route as FastAPIRoute
     participant Handler as ProductHandler
     participant Router as ModelRouter
-    participant Exec as ProviderExecution
+    participant Exec as ProviderExecutor
     participant Manager as ProviderRuntimeManager
     participant Lease as ProviderGenerationLease
     participant Runtime as ProviderRuntimeGeneration
@@ -347,7 +358,7 @@ provider execution, then converts Anthropic SSE back to Responses SSE.
 
 ## Model Routing
 
-[api/model_router.py](src/free_claude_code/api/model_router.py) resolves incoming client model names.
+[application/routing.py](src/free_claude_code/application/routing.py) resolves incoming client model names.
 It supports two forms:
 
 - Direct provider model refs such as `nvidia_nim/nvidia/model-name`.
@@ -401,12 +412,23 @@ configured-model validation belong to `ProviderRuntimeManager` in the runtime
 package. This separates a single generation's resources from process-lifetime
 state.
 
-[providers/base.py](src/free_claude_code/providers/base.py) defines:
+[application/model_metadata.py](src/free_claude_code/application/model_metadata.py) owns the immutable
+`ProviderModelInfo` value consumed by the application catalog. Provider-specific
+model-list modules retain response parsing and construct that value directly;
+there is no provider-layer alias for the former owner.
+
+[application/ports.py](src/free_claude_code/application/ports.py) defines the two provider operations consumed by request
+execution: synchronous `preflight_stream()` and lazy `stream_response()`. API
+handlers and application execution depend on that structural port, never on a
+provider base class. Provider adapters implement it without registration or a
+compatibility layer.
+
+[providers/base.py](src/free_claude_code/providers/base.py) defines provider-internal construction and lifecycle contracts:
 
 - `ProviderConfig`: shared provider settings such as API key, base URL, rate
   limits, timeouts, proxy, thinking, and logging flags.
-- `BaseProvider`: the provider interface for cleanup, model listing, preflight,
-  and `stream_response()`.
+- `BaseProvider`: the abstract implementation base for cleanup, model listing,
+  explicit preflight, and `stream_response()`.
 
 There are two transport families under [providers/transports/](src/free_claude_code/providers/transports/):
 
@@ -421,6 +443,12 @@ There are two transport families under [providers/transports/](src/free_claude_c
   local-only for llama.cpp and Ollama. The package owns the thin transport base,
   native request policy, native stream runner, HTTP response helpers, and native
   recovery event construction.
+
+Both transport families explicitly implement preflight by constructing the same
+upstream request body they will later stream. `BaseProvider` makes that operation
+abstract, so a new provider cannot silently omit the commit-boundary validation.
+LM Studio composes the OpenAI-chat conversion first and its context-budget probe
+second; conversion failure therefore cannot open a stream or run the probe.
 
 Provider request construction mirrors the transport family split. OpenAI-chat
 providers call the OpenAI request policy for Anthropic-to-OpenAI conversion,
@@ -675,9 +703,9 @@ the messaging bridge is skipped.
 
 `ApplicationRuntime` privately owns the selected platform runtime, the
 `MessagingWorkflow`, configured `Transcriber`, and managed CLI session manager.
-The workflow owns
-conversation snapshot restoration and final persistence flush. The API sees only
-the `SessionControlPort` used to preserve `/stop` behavior.
+The workflow owns conversation snapshot restoration and final persistence flush.
+The API sees only the application-owned `TaskController` used to preserve
+`/stop` behavior.
 
 The platform factory returns a `MessagingPlatformComponents` bundle from
 [messaging/platforms/ports.py](src/free_claude_code/messaging/platforms/ports.py): a

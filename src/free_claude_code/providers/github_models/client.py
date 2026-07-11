@@ -5,14 +5,12 @@ from typing import Any
 
 import httpx
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.defaults import GITHUB_MODELS_DEFAULT_BASE
 from free_claude_code.providers.exceptions import ModelListResponseError
-from free_claude_code.providers.model_listing import (
-    ProviderModelInfo,
-    model_infos_from_ids,
-)
+from free_claude_code.providers.model_listing import model_infos_from_ids
 from free_claude_code.providers.rate_limit import ProviderRateLimiter
 from free_claude_code.providers.transports.http import maybe_await_aclose
 from free_claude_code.providers.transports.openai_chat import (

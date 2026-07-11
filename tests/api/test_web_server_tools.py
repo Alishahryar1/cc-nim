@@ -8,11 +8,6 @@ from fastapi.responses import JSONResponse, StreamingResponse
 
 import free_claude_code.api.web_tools.constants as web_tool_constants
 from free_claude_code.api.handlers import MessagesHandler
-from free_claude_code.api.model_router import (
-    ModelRouter,
-    ResolvedModel,
-    RoutedMessagesRequest,
-)
 from free_claude_code.api.web_tools import egress as web_egress
 from free_claude_code.api.web_tools.egress import (
     WebFetchEgressPolicy,
@@ -26,6 +21,11 @@ from free_claude_code.api.web_tools.outbound import (
 )
 from free_claude_code.api.web_tools.request import is_web_server_tool_request
 from free_claude_code.api.web_tools.streaming import stream_web_server_tool_response
+from free_claude_code.application.routing import (
+    ModelRouter,
+    ResolvedModel,
+    RoutedMessagesRequest,
+)
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic.models import Message, MessagesRequest, Tool
@@ -121,7 +121,7 @@ async def test_service_rejects_forced_server_tool_on_openai_when_disabled(
     assert settings.enable_web_server_tools is False
     service = MessagesHandler(
         settings,
-        provider_getter=lambda _: MagicMock(),
+        provider_resolver=lambda _: MagicMock(),
         model_router=FixedProviderModelRouter(settings, provider_id),
     )
     request = MessagesRequest(
@@ -417,10 +417,10 @@ async def test_service_streams_forced_web_search_by_default(monkeypatch):
         "free_claude_code.api.web_tools.outbound._run_web_search", fake_search
     )
     settings = Settings.model_validate({"ENABLE_WEB_SERVER_TOOLS": True})
-    provider_getter = MagicMock()
+    provider_resolver = MagicMock()
     service = MessagesHandler(
         settings,
-        provider_getter=provider_getter,
+        provider_resolver=provider_resolver,
         model_router=FixedProviderModelRouter(settings, _OPENAI_CHAT_PROVIDER_IDS[0]),
     )
     request = MessagesRequest(
@@ -438,7 +438,7 @@ async def test_service_streams_forced_web_search_by_default(monkeypatch):
     raw = await _streaming_body_text(response)
     assert "event: message_start" in raw
     assert "DeepSeek V4 Released" in raw
-    provider_getter.assert_not_called()
+    provider_resolver.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -450,10 +450,10 @@ async def test_service_aggregates_forced_web_search_when_stream_false(monkeypatc
         "free_claude_code.api.web_tools.outbound._run_web_search", fake_search
     )
     settings = Settings.model_validate({"ENABLE_WEB_SERVER_TOOLS": True})
-    provider_getter = MagicMock()
+    provider_resolver = MagicMock()
     service = MessagesHandler(
         settings,
-        provider_getter=provider_getter,
+        provider_resolver=provider_resolver,
         model_router=FixedProviderModelRouter(settings, _OPENAI_CHAT_PROVIDER_IDS[0]),
     )
     request = MessagesRequest(
@@ -478,7 +478,7 @@ async def test_service_aggregates_forced_web_search_when_stream_false(monkeypatc
     assert body["content"][1]["content"][0]["url"] == "https://example.com/v4"
     assert "DeepSeek V4 Released" in body["content"][2]["text"]
     assert body["usage"]["server_tool_use"] == {"web_search_requests": 1}
-    provider_getter.assert_not_called()
+    provider_resolver.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -541,10 +541,10 @@ async def test_service_aggregates_forced_web_fetch_when_stream_false(monkeypatch
         "free_claude_code.api.web_tools.outbound._run_web_fetch", fake_fetch
     )
     settings = Settings.model_validate({"ENABLE_WEB_SERVER_TOOLS": True})
-    provider_getter = MagicMock()
+    provider_resolver = MagicMock()
     service = MessagesHandler(
         settings,
-        provider_getter=provider_getter,
+        provider_resolver=provider_resolver,
         model_router=FixedProviderModelRouter(settings, _OPENAI_CHAT_PROVIDER_IDS[0]),
     )
     request = MessagesRequest(
@@ -569,7 +569,7 @@ async def test_service_aggregates_forced_web_fetch_when_stream_false(monkeypatch
     assert body["content"][1]["content"]["content"]["title"] == "Example Article"
     assert body["content"][2]["text"] == "Article body"
     assert body["usage"]["server_tool_use"] == {"web_fetch_requests": 1}
-    provider_getter.assert_not_called()
+    provider_resolver.assert_not_called()
 
 
 @pytest.mark.asyncio
@@ -759,7 +759,7 @@ async def test_service_rejects_listed_server_tools_on_openai_chat(
     settings = Settings()
     service = MessagesHandler(
         settings,
-        provider_getter=lambda _: MagicMock(),
+        provider_resolver=lambda _: MagicMock(),
         model_router=FixedProviderModelRouter(settings, provider_id),
     )
     request = MessagesRequest(
@@ -788,7 +788,7 @@ async def test_listed_server_tools_routed_on_anthropic_messages_providers(
     mock_provider.stream_response = fake_stream
     service = MessagesHandler(
         settings,
-        provider_getter=lambda _: mock_provider,
+        provider_resolver=lambda _: mock_provider,
         model_router=FixedProviderModelRouter(settings, provider_id),
     )
     request = MessagesRequest(
@@ -817,7 +817,7 @@ async def test_forced_server_tools_routed_on_anthropic_messages_providers_when_l
     mock_provider.stream_response = fake_stream
     service = MessagesHandler(
         settings,
-        provider_getter=lambda _: mock_provider,
+        provider_resolver=lambda _: mock_provider,
         model_router=FixedProviderModelRouter(settings, provider_id),
     )
     request = MessagesRequest(

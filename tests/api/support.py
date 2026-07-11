@@ -40,7 +40,7 @@ def create_test_app(
         ApiServices(
             requests=manager,
             admin=runtime,
-            sessions=runtime,
+            tasks=runtime,
         )
     )
 

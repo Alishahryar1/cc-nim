@@ -6,8 +6,9 @@ import pytest
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
 
-from free_claude_code.api import provider_execution, request_errors
+from free_claude_code.api import request_errors
 from free_claude_code.api.handlers import MessagesHandler, TokenCountHandler
+from free_claude_code.application import execution
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import AnthropicStreamLedger
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
@@ -23,7 +24,7 @@ async def test_create_message_skips_full_payload_debug_log_by_default():
         yield "event: ping\ndata: {}\n\n"
 
     mock_provider.stream_response = fake_stream
-    service = MessagesHandler(settings, provider_getter=lambda _: mock_provider)
+    service = MessagesHandler(settings, provider_resolver=lambda _: mock_provider)
 
     request = MessagesRequest(
         model="claude-3-haiku-20240307",
@@ -31,7 +32,7 @@ async def test_create_message_skips_full_payload_debug_log_by_default():
         messages=[Message(role="user", content="secret-user-text")],
     )
 
-    with patch.object(provider_execution.logger, "debug") as mock_debug:
+    with patch.object(execution.logger, "debug") as mock_debug:
         await service.create(request)
 
     full_payload_calls = [
@@ -52,14 +53,14 @@ async def test_create_message_logs_full_payload_when_opt_in():
         yield "event: ping\ndata: {}\n\n"
 
     mock_provider.stream_response = fake_stream
-    service = MessagesHandler(settings, provider_getter=lambda _: mock_provider)
+    service = MessagesHandler(settings, provider_resolver=lambda _: mock_provider)
     request = MessagesRequest(
         model="claude-3-haiku-20240307",
         max_tokens=10,
         messages=[Message(role="user", content="visible")],
     )
 
-    with patch.object(provider_execution.logger, "debug") as mock_debug:
+    with patch.object(execution.logger, "debug") as mock_debug:
         await service.create(request)
 
     keys = [c.args[0] for c in mock_debug.call_args_list if c.args]
@@ -109,7 +110,7 @@ async def test_create_message_unexpected_error_default_logs_exclude_exception_te
         raise RuntimeError(secret)
 
     mock_provider.stream_response = stream_boom
-    service = MessagesHandler(settings, provider_getter=lambda _: mock_provider)
+    service = MessagesHandler(settings, provider_resolver=lambda _: mock_provider)
     request = MessagesRequest(
         model="claude-3-haiku-20240307",
         max_tokens=10,
@@ -142,7 +143,7 @@ async def test_create_message_unexpected_error_terminal_json_ignores_status_code
         raise WeirdError("no")
 
     mock_provider.stream_response = stream_boom
-    service = MessagesHandler(settings, provider_getter=lambda _: mock_provider)
+    service = MessagesHandler(settings, provider_resolver=lambda _: mock_provider)
     request = MessagesRequest(
         model="claude-3-haiku-20240307",
         max_tokens=10,

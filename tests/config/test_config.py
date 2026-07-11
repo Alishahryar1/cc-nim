@@ -384,7 +384,7 @@ class TestSettings:
 
     def test_empty_per_model_thinking_inherits_model_default(self, monkeypatch):
         """Blank per-model thinking env vars are treated as unset."""
-        from free_claude_code.api.model_router import ModelRouter
+        from free_claude_code.application.routing import ModelRouter
         from free_claude_code.config.settings import Settings
 
         monkeypatch.setenv("ENABLE_MODEL_THINKING", "false")
@@ -398,7 +398,7 @@ class TestSettings:
 
     def test_resolve_thinking_uses_model_tiers(self, monkeypatch):
         """ModelRouter applies tier thinking override then fallback."""
-        from free_claude_code.api.model_router import ModelRouter
+        from free_claude_code.application.routing import ModelRouter
         from free_claude_code.config.settings import Settings
 
         monkeypatch.setenv("ENABLE_MODEL_THINKING", "false")
@@ -726,7 +726,7 @@ class TestPerModelMapping:
     @pytest.mark.parametrize("env_var", ["MODEL_OPUS", "MODEL_SONNET", "MODEL_HAIKU"])
     def test_empty_model_override_env_is_unset(self, monkeypatch, env_var):
         """Empty per-model override env vars are treated as unset."""
-        from free_claude_code.api.model_router import ModelRouter
+        from free_claude_code.application.routing import ModelRouter
         from free_claude_code.config.settings import Settings
 
         monkeypatch.setenv(env_var, "")
@@ -832,7 +832,7 @@ class TestPerModelMapping:
 
     def test_resolve_model_opus_override(self):
         """ModelRouter returns model_opus for opus model names."""
-        from free_claude_code.api.model_router import ModelRouter
+        from free_claude_code.application.routing import ModelRouter
         from free_claude_code.config.settings import Settings
 
         s = Settings()
@@ -853,7 +853,7 @@ class TestPerModelMapping:
 
     def test_resolve_model_sonnet_override(self):
         """ModelRouter returns model_sonnet for sonnet model names."""
-        from free_claude_code.api.model_router import ModelRouter
+        from free_claude_code.application.routing import ModelRouter
         from free_claude_code.config.settings import Settings
 
         s = Settings()
@@ -870,7 +870,7 @@ class TestPerModelMapping:
 
     def test_resolve_model_haiku_override(self):
         """ModelRouter returns model_haiku for haiku model names."""
-        from free_claude_code.api.model_router import ModelRouter
+        from free_claude_code.application.routing import ModelRouter
         from free_claude_code.config.settings import Settings
 
         s = Settings()
@@ -891,7 +891,7 @@ class TestPerModelMapping:
 
     def test_resolve_model_fallback_when_override_not_set(self):
         """ModelRouter falls back to MODEL when model override is None."""
-        from free_claude_code.api.model_router import ModelRouter
+        from free_claude_code.application.routing import ModelRouter
         from free_claude_code.config.settings import Settings
 
         s = Settings()
@@ -912,7 +912,7 @@ class TestPerModelMapping:
 
     def test_resolve_model_unknown_model_falls_back(self):
         """ModelRouter falls back to MODEL for unrecognized model names."""
-        from free_claude_code.api.model_router import ModelRouter
+        from free_claude_code.application.routing import ModelRouter
         from free_claude_code.config.settings import Settings
 
         s = Settings()
@@ -928,7 +928,7 @@ class TestPerModelMapping:
 
     def test_resolve_model_case_insensitive(self):
         """Model classification is case-insensitive."""
-        from free_claude_code.api.model_router import ModelRouter
+        from free_claude_code.application.routing import ModelRouter
         from free_claude_code.config.settings import Settings
 
         s = Settings()

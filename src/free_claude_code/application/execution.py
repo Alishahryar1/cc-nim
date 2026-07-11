@@ -1,56 +1,62 @@
-"""Shared provider execution primitive for API product handlers."""
+"""Provider execution shared by inbound API adapters."""
 
 from collections.abc import AsyncIterator, Callable
-from typing import Any
+from typing import Literal
 
 from loguru import logger
 
-from free_claude_code.config.settings import Settings
-from free_claude_code.core.anthropic import anthropic_request_snapshot, get_token_count
-from free_claude_code.core.trace import (
-    trace_event,
-    traced_async_stream,
+from free_claude_code.core.anthropic import (
+    Message,
+    SystemContent,
+    Tool,
+    anthropic_request_snapshot,
+    get_token_count,
 )
-from free_claude_code.providers.base import BaseProvider
+from free_claude_code.core.trace import trace_event, traced_async_stream
 
-from .model_router import RoutedMessagesRequest
+from .ports import ProviderResolver
+from .routing import RoutedMessagesRequest
 
-TokenCounter = Callable[[list[Any], str | list[Any] | None, list[Any] | None], int]
-ProviderGetter = Callable[[str], BaseProvider]
+TokenCounter = Callable[
+    [list[Message], str | list[SystemContent] | None, list[Tool] | None],
+    int,
+]
+WireApi = Literal["messages", "responses"]
 
 
-class ProviderExecutionService:
+class ProviderExecutor:
     """Resolve a provider and execute one routed Anthropic Messages stream."""
 
     def __init__(
         self,
-        settings: Settings,
-        provider_getter: ProviderGetter,
+        provider_resolver: ProviderResolver,
         *,
         token_counter: TokenCounter = get_token_count,
         generation_id: int | None = None,
+        log_raw_payloads: bool = False,
     ) -> None:
-        self._settings = settings
-        self._provider_getter = provider_getter
+        self._provider_resolver = provider_resolver
         self._token_counter = token_counter
         self._generation_id = generation_id
+        self._log_raw_payloads = log_raw_payloads
 
     def stream(
         self,
         routed: RoutedMessagesRequest,
         *,
-        wire_api: str,
+        wire_api: WireApi,
         raw_log_label: str,
-        raw_log_payload: Any,
+        raw_log_payload: object,
         request_id: str,
     ) -> AsyncIterator[str]:
-        provider = self._provider_getter(routed.resolved.provider_id)
+        """Preflight synchronously, then return the traced provider stream."""
+        provider = self._provider_resolver(routed.resolved.provider_id)
         provider.preflight_stream(
             routed.request,
             thinking_enabled=routed.resolved.thinking_enabled,
         )
 
-        route_trace: dict[str, Any] = {
+        route_trace: dict[str, object] = {
             "stage": "routing",
             "event": "free_claude_code.api.route.resolved",
             "source": "api",
@@ -80,7 +86,7 @@ class ProviderExecutionService:
             request_id=request_id,
         )
 
-        if self._settings.log_raw_api_payloads:
+        if self._log_raw_payloads:
             logger.debug(f"{raw_log_label} [{{}}]: {{}}", request_id, raw_log_payload)
 
         input_tokens = self._token_counter(
@@ -98,7 +104,7 @@ class ProviderExecutionService:
             ):
                 yield chunk
 
-        stream_trace: dict[str, Any] = {
+        stream_trace: dict[str, object] = {
             "request_id": request_id,
             "provider_id": routed.resolved.provider_id,
             "gateway_model": routed.request.model,

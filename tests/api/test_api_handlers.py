@@ -19,7 +19,6 @@ from free_claude_code.core.anthropic.models import (
 )
 from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
-from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.exceptions import InvalidRequestError, RateLimitError
 
 _CLASSIFIER_SYSTEM = (
@@ -31,11 +30,10 @@ _CLASSIFIER_USER = (
 )
 
 
-class FakeProvider(BaseProvider):
+class FakeProvider:
     def __init__(self, events: list[str] | None = None) -> None:
-        super().__init__(ProviderConfig(api_key="test"))
-        self.preflight_calls: list[tuple[Any, bool | None]] = []
-        self.requests: list[Any] = []
+        self.preflight_calls: list[tuple[MessagesRequest, bool | None]] = []
+        self.requests: list[MessagesRequest] = []
         self.stream_kwargs: list[dict[str, Any]] = []
         self.events = events or [
             'event: message_start\ndata: {"type":"message_start"}\n\n',
@@ -43,7 +41,7 @@ class FakeProvider(BaseProvider):
         ]
 
     def preflight_stream(
-        self, request: Any, *, thinking_enabled: bool | None = None
+        self, request: MessagesRequest, *, thinking_enabled: bool | None = None
     ) -> None:
         self.preflight_calls.append((request, thinking_enabled))
 
@@ -55,7 +53,7 @@ class FakeProvider(BaseProvider):
 
     async def stream_response(
         self,
-        request: Any,
+        request: MessagesRequest,
         input_tokens: int = 0,
         *,
         request_id: str | None = None,
@@ -100,7 +98,7 @@ def _trace_events(trace_mock: MagicMock, event: str) -> list[dict[str, Any]]:
 @pytest.mark.asyncio
 async def test_messages_handler_passes_routed_request_and_stream_metadata() -> None:
     provider = FakeProvider()
-    handler = MessagesHandler(Settings(), provider_getter=lambda _: provider)
+    handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
     request = MessagesRequest(
         model="nvidia_nim/test-model",
         max_tokens=100,
@@ -120,19 +118,26 @@ async def test_messages_handler_passes_routed_request_and_stream_metadata() -> N
 
 
 @pytest.mark.asyncio
-async def test_messages_handler_preflight_invalid_request_stays_http_error() -> None:
+@pytest.mark.parametrize("stream", [True, False])
+async def test_messages_handler_preflight_invalid_request_stays_http_error(
+    stream: bool,
+) -> None:
     class RejectPreflightProvider(FakeProvider):
         def preflight_stream(
-            self, request: Any, *, thinking_enabled: bool | None = None
+            self,
+            request: MessagesRequest,
+            *,
+            thinking_enabled: bool | None = None,
         ) -> None:
             raise InvalidRequestError("bad tool shape")
 
     provider = RejectPreflightProvider()
-    handler = MessagesHandler(Settings(), provider_getter=lambda _: provider)
+    handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
     request = MessagesRequest(
         model="nvidia_nim/test-model",
         max_tokens=100,
         messages=[Message(role="user", content="hi")],
+        stream=stream,
     )
 
     with pytest.raises(InvalidRequestError):
@@ -189,7 +194,7 @@ async def test_messages_handler_aggregates_provider_stream_when_stream_false() -
             format_sse_event("message_stop", {"type": "message_stop"}),
         ]
     )
-    handler = MessagesHandler(Settings(), provider_getter=lambda _: provider)
+    handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
     request = MessagesRequest(
         model="nvidia_nim/test-model",
         max_tokens=100,
@@ -224,7 +229,7 @@ async def test_messages_handler_returns_error_json_for_stream_false_sse_error() 
             )
         ]
     )
-    handler = MessagesHandler(Settings(), provider_getter=lambda _: provider)
+    handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
     request = MessagesRequest(
         model="nvidia_nim/test-model",
         max_tokens=100,
@@ -291,7 +296,7 @@ async def test_messages_handler_discards_partial_stream_false_output_on_error() 
             ),
         ]
     )
-    handler = MessagesHandler(Settings(), provider_getter=lambda _: provider)
+    handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
     request = MessagesRequest(
         model="nvidia_nim/test-model",
         max_tokens=100,
@@ -335,7 +340,7 @@ async def test_messages_handler_stream_false_provider_exception_keeps_status() -
             yield "unreachable"
 
     provider = FailingProvider()
-    handler = MessagesHandler(Settings(), provider_getter=lambda _: provider)
+    handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
     request = MessagesRequest(
         model="nvidia_nim/test-model",
         max_tokens=100,
@@ -358,7 +363,7 @@ async def test_messages_handler_stream_false_provider_exception_keeps_status() -
 @pytest.mark.asyncio
 async def test_messages_handler_forces_no_thinking_for_safety_classifier() -> None:
     provider = FakeProvider()
-    handler = MessagesHandler(Settings(), provider_getter=lambda _: provider)
+    handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
     request = MessagesRequest(
         model="nvidia_nim/test-model",
         max_tokens=100,
@@ -391,7 +396,7 @@ async def test_messages_handler_forces_no_thinking_for_safety_classifier() -> No
 @pytest.mark.asyncio
 async def test_messages_handler_preserves_thinking_for_non_classifier() -> None:
     provider = FakeProvider()
-    handler = MessagesHandler(Settings(), provider_getter=lambda _: provider)
+    handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
     request = MessagesRequest(
         model="nvidia_nim/test-model",
         max_tokens=100,
@@ -426,7 +431,7 @@ async def test_messages_handler_preserves_thinking_for_non_classifier() -> None:
 @pytest.mark.asyncio
 async def test_messages_handler_keeps_existing_no_thinking_for_classifier() -> None:
     provider = FakeProvider()
-    handler = MessagesHandler(Settings(), provider_getter=lambda _: provider)
+    handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
     request = MessagesRequest(
         model="claude-3-freecc-no-thinking/nvidia_nim/test-model",
         max_tokens=100,
@@ -458,8 +463,8 @@ async def test_messages_handler_keeps_existing_no_thinking_for_classifier() -> N
 async def test_messages_handler_optimization_intercepts_before_provider_execution() -> (
     None
 ):
-    provider_getter = MagicMock()
-    handler = MessagesHandler(Settings(), provider_getter=provider_getter)
+    provider_resolver = MagicMock()
+    handler = MessagesHandler(Settings(), provider_resolver=provider_resolver)
     request = MessagesRequest(
         model="nvidia_nim/test-model",
         max_tokens=100,
@@ -473,13 +478,13 @@ async def test_messages_handler_optimization_intercepts_before_provider_executio
     ):
         assert await handler.create(request) is optimized
 
-    provider_getter.assert_not_called()
+    provider_resolver.assert_not_called()
 
 
 @pytest.mark.asyncio
 async def test_responses_handler_bypasses_message_only_optimizations() -> None:
     provider = FakeProvider()
-    handler = ResponsesHandler(Settings(), provider_getter=lambda _: provider)
+    handler = ResponsesHandler(Settings(), provider_resolver=lambda _: provider)
 
     with patch(
         "free_claude_code.api.handlers.messages.try_optimizations",
@@ -501,7 +506,7 @@ async def test_responses_handler_bypasses_message_only_optimizations() -> None:
 @pytest.mark.asyncio
 async def test_responses_handler_does_not_apply_safety_classifier_policy() -> None:
     provider = FakeProvider()
-    handler = ResponsesHandler(Settings(), provider_getter=lambda _: provider)
+    handler = ResponsesHandler(Settings(), provider_resolver=lambda _: provider)
 
     with patch("free_claude_code.api.handlers.messages.trace_event") as trace_mock:
         response = await handler.create(
