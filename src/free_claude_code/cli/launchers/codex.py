@@ -30,6 +30,10 @@ _STRIPPED_CODEX_ENV_KEYS = frozenset(
         "OPENAI_ORG_ID",
         "OPENAI_ORGANIZATION",
         "CODEX_API_KEY",
+        "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+        "CODEX_PERMISSION_PROFILE",
+        "CODEX_SHELL",
+        "CODEX_THREAD_ID",
         _CODEX_AUTH_ENV_KEY,
     }
 )

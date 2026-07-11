@@ -767,6 +767,8 @@ keeps product policy independent of provider IDs and transport implementation.
 `fcc-codex` launcher:
 
 - `fcc-codex` strips official OpenAI and Codex credential variables.
+- It strips parent-only Codex thread, shell, permission, and origin context so
+  each launched client owns an independent runtime identity.
 - It creates an ephemeral `fcc` model provider with `wire_api = "responses"` and
   a base URL pointing at the local proxy `/v1` path.
 - After proxy health succeeds, it fetches `/v1/models`, writes a generated Codex

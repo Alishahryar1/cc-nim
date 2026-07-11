@@ -493,6 +493,10 @@ def test_launch_codex_passes_responses_config_and_child_env(
     monkeypatch.setenv("OPENAI_API_KEY", "official-key")
     monkeypatch.setenv("OPENAI_BASE_URL", "https://api.openai.com/v1")
     monkeypatch.setenv("CODEX_HOME", "keep-home")
+    monkeypatch.setenv("CODEX_INTERNAL_ORIGINATOR_OVERRIDE", "Codex Desktop")
+    monkeypatch.setenv("CODEX_PERMISSION_PROFILE", "danger-full-access")
+    monkeypatch.setenv("CODEX_SHELL", "1")
+    monkeypatch.setenv("CODEX_THREAD_ID", "parent-thread")
     settings = _launcher_settings(port=9191, token="proxy-token")
     catalog_path = tmp_path / "codex-model-catalog.json"
     requests: list[Request] = []
@@ -565,6 +569,10 @@ def test_launch_codex_passes_responses_config_and_child_env(
     child_env = popen.call_args.kwargs["env"]
     assert child_env["FCC_CODEX_API_KEY"] == "proxy-token"
     assert child_env["CODEX_HOME"] == "keep-home"
+    assert "CODEX_INTERNAL_ORIGINATOR_OVERRIDE" not in child_env
+    assert "CODEX_PERMISSION_PROFILE" not in child_env
+    assert "CODEX_SHELL" not in child_env
+    assert "CODEX_THREAD_ID" not in child_env
     assert "OPENAI_API_KEY" not in child_env
     assert "OPENAI_BASE_URL" not in child_env
     register_pid.assert_called_once_with(12345)
