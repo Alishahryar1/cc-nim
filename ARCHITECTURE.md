@@ -77,6 +77,48 @@ The installable wheel packages are declared in [pyproject.toml](pyproject.toml):
 [smoke/](smoke/) contains local and live product smoke tests that can launch
 subprocesses or touch real services.
 
+Production package imports follow one least-privilege dependency policy. Every
+listed edge is exercised by the current code; removing the last use of an edge
+also removes that permission:
+
+| Package | Exact allowed direct dependencies |
+| --- | --- |
+| `config` | none |
+| `core` | none |
+| `application` | `config`, `core` |
+| `messaging` | `config`, `core` |
+| `providers` | `application`, `config`, `core` |
+| `api` | `application`, `config`, `core` |
+| `cli` | `config`, `core` |
+| `runtime` | `api`, `application`, `cli`, `config`, `core`, `messaging`, `providers` |
+
+There is one exact exception:
+`free_claude_code.cli.entrypoints` imports
+`free_claude_code.runtime.bootstrap` because the installed server executable
+delegates construction to the process composition root. The exception does not
+permit any broader dependency from `cli` to `runtime`. Every new top-level
+package or cross-package edge must be added to the policy deliberately.
+
+Internal modules do not import an ancestor package facade; package initializers
+may import dependency leaves to publish supported exports. Code outside
+`core.openai_responses` and `messaging.trees` consumes those owners through their
+package facades. The supported top-level messaging extension surface is
+`IncomingMessage`, `MessageScope`, `ManagedClaudeSessionProtocol`,
+`ManagedClaudeSessionManagerProtocol`, and `OutboundMessenger`; workflow,
+persistence, parsing, and mutable tree implementations remain internal.
+
+Optional voice dependencies also have exact lazy owners:
+
+| Dependency | Owner |
+| --- | --- |
+| `torch`, `transformers`, `librosa` | `messaging.transcription` |
+| `riva.client` | `providers.nvidia_nim.voice` |
+
+They must be imported below a function boundary so importing the application or
+server does not require an optional extra. Static AST enforcement cannot observe
+dynamic imports. Deliberate provider factory loading is instead protected by the
+provider catalog, supported-ID, and factory synchronization contract.
+
 The main ownership rule is that Anthropic and Responses protocol schemas and
 shared protocol behavior belong in [src/free_claude_code/core/](src/free_claude_code/core/), while request routing and
 provider execution belong in [src/free_claude_code/application/](src/free_claude_code/application/). Routes use core schemas
@@ -84,9 +126,10 @@ directly for wire validation and call application use cases. Provider modules us
 the same concrete request types and neutral helpers instead of importing the API
 adapter or another provider.
 Protocol consumers use the public `core.anthropic` and
-`core.openai_responses` facades. Low-level core and provider modules may import
-the dependency-leaf `models.py` modules directly so their type dependency is
-explicit; package initialization and those leaves must remain import-order safe.
+`core.openai_responses` facades. Low-level Anthropic core and provider modules
+may import the dependency-leaf Anthropic `models.py` module directly so their
+type dependency is explicit; Responses consumers outside its owner remain
+facade-only. Package initialization and those leaves must remain import-order safe.
 The model-list schema stays beside its API-owned construction policy in
 `api/model_catalog.py`; there is no generic API model package.
 
@@ -981,6 +1024,11 @@ Important safety boundaries:
 Deterministic tests live under [tests/](tests/). They cover API routes, config,
 provider conversion, provider transports, streaming contracts, messaging, CLI
 adapters, import boundaries, provider catalog contracts, and other invariants.
+The import-boundary contract derives every static production edge with one AST
+scanner and checks the package matrix, exact exceptions, facade ownership, and
+lazy optional imports. The resulting first-party module graph must remain
+acyclic. These tests protect current architectural properties rather than
+preserving deleted modules or an exact internal file layout.
 
 Live and local product tests live under [smoke/](smoke/). See
 [smoke/README.md](smoke/README.md) for target taxonomy, environment variables,

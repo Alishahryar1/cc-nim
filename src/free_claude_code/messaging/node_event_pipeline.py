@@ -11,7 +11,7 @@ from .cli_event_constants import TRANSCRIPT_EVENT_TYPES, get_status_for_event
 from .managed_protocols import ManagedClaudeSessionManagerProtocol
 from .safe_diagnostics import text_len_hint
 from .transcript import TranscriptBuffer
-from .trees.transitions import NodeClaim
+from .trees import NodeClaim
 
 RecordSession = Callable[[str], Awaitable[None]]
 CompleteClaim = Callable[[str | None], Awaitable[None]]

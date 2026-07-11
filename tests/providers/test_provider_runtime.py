@@ -39,6 +39,7 @@ from free_claude_code.providers.open_router import OpenRouterProvider
 from free_claude_code.providers.opencode import OpenCodeProvider
 from free_claude_code.providers.rate_limit import ProviderRateLimiter
 from free_claude_code.providers.runtime import (
+    PROVIDER_FACTORIES,
     ProviderRuntime,
     build_provider_config,
     create_provider,
@@ -134,7 +135,9 @@ def test_importing_runtime_does_not_eager_load_other_adapters() -> None:
 
 
 def test_provider_catalog_covers_advertised_provider_ids():
-    assert set(PROVIDER_CATALOG) == set(SUPPORTED_PROVIDER_IDS)
+    assert (
+        set(PROVIDER_CATALOG) == set(SUPPORTED_PROVIDER_IDS) == set(PROVIDER_FACTORIES)
+    )
     for descriptor in PROVIDER_CATALOG.values():
         assert descriptor.provider_id
 

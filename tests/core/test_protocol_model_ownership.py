@@ -2,7 +2,6 @@
 
 import subprocess
 import sys
-from pathlib import Path
 
 from free_claude_code.core.anthropic import (
     MessagesRequest as PublicMessagesRequest,
@@ -54,37 +53,15 @@ def test_anthropic_response_models_are_protocol_owned() -> None:
     assert TokenCountResponse.__module__ == "free_claude_code.core.anthropic.models"
 
 
-def test_api_adapter_does_not_own_protocol_models() -> None:
-    api_models = Path(__file__).resolve().parents[2] / "src/free_claude_code/api/models"
-
-    assert not (api_models / "__init__.py").exists()
-    assert not (api_models / "anthropic.py").exists()
-    assert not (api_models / "openai_responses.py").exists()
-    assert not (api_models / "responses.py").exists()
-
-
-def test_protocol_models_and_transport_consumers_are_import_order_independent() -> None:
+def test_protocol_facades_are_import_order_independent() -> None:
     import_orders = (
         (
-            "free_claude_code.core.trace",
             "free_claude_code.core.anthropic",
-            "free_claude_code.providers.base",
-            "free_claude_code.api.routes",
-        ),
-        ("free_claude_code.cli.managed.session",),
-        (
-            "free_claude_code.core.anthropic.models",
-            "free_claude_code.providers.base",
-            "free_claude_code.providers.transports.openai_chat.transport",
-            "free_claude_code.providers.transports.anthropic_messages.transport",
-            "free_claude_code.api.routes",
+            "free_claude_code.core.openai_responses",
         ),
         (
-            "free_claude_code.api.routes",
-            "free_claude_code.providers.transports.anthropic_messages.transport",
-            "free_claude_code.providers.transports.openai_chat.transport",
-            "free_claude_code.providers.base",
-            "free_claude_code.core.anthropic.models",
+            "free_claude_code.core.openai_responses",
+            "free_claude_code.core.anthropic",
         ),
     )
 

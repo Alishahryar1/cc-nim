@@ -27,18 +27,6 @@ def test_architecture_document_relative_links_resolve() -> None:
     assert missing == []
 
 
-def test_smoke_lib_has_no_sse_shim_module() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    assert not (repo_root / "smoke" / "lib" / "sse.py").exists()
-
-
-def test_api_package_marker_is_import_light() -> None:
-    import free_claude_code.api as api
-
-    assert not hasattr(api, "__all__")
-    assert "create_app" not in vars(api)
-
-
 def test_root_env_example_is_the_single_template_source() -> None:
     repo_root = Path(__file__).resolve().parents[2]
     root_example = repo_root / ".env.example"

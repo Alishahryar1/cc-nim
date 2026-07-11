@@ -1,125 +1,340 @@
-"""Package import contract tests (static AST; dynamic ``importlib`` loads are not scanned)."""
+"""Declarative static import contracts; dynamic imports are deliberately unscanned."""
 
 import ast
+import subprocess
+import sys
+from dataclasses import dataclass
 from pathlib import Path
 
-_PACKAGE_ROOT = Path("src") / "free_claude_code"
+_REPO_ROOT = Path(__file__).resolve().parents[2]
+_PACKAGE_ROOT = _REPO_ROOT / "src" / "free_claude_code"
+_PACKAGE_NAME = "free_claude_code"
+
+ALLOWED_PACKAGE_DEPENDENCIES: dict[str, set[str]] = {
+    "config": set(),
+    "core": set(),
+    "application": {"config", "core"},
+    "messaging": {"config", "core"},
+    "providers": {"application", "config", "core"},
+    "api": {"application", "config", "core"},
+    "cli": {"config", "core"},
+    "runtime": {
+        "api",
+        "application",
+        "cli",
+        "config",
+        "core",
+        "messaging",
+        "providers",
+    },
+}
+
+IMPORT_EXCEPTIONS: dict[tuple[str, str], str] = {
+    (
+        "free_claude_code.cli.entrypoints",
+        "free_claude_code.runtime.bootstrap",
+    ): (
+        "Owner: installed server entrypoint. "
+        "Reason: the executable delegates construction to the process composition root."
+    ),
+}
+
+FACADE_ONLY_BOUNDARIES = {
+    "free_claude_code.core.openai_responses",
+    "free_claude_code.messaging.trees",
+}
+
+OPTIONAL_IMPORT_OWNERS = {
+    "librosa": "free_claude_code.messaging.transcription",
+    "torch": "free_claude_code.messaging.transcription",
+    "transformers": "free_claude_code.messaging.transcription",
+    "riva": "free_claude_code.providers.nvidia_nim.voice",
+}
 
 
-def test_python314_native_annotations_do_not_use_legacy_future_import() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    offenders: list[str] = []
-    for path in repo_root.rglob("*.py"):
-        if ".git" in path.parts or ".venv" in path.parts:
-            continue
-        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-        for node in ast.walk(tree):
-            if not isinstance(node, ast.ImportFrom):
-                continue
-            if node.module != "__future__":
-                continue
-            if any(alias.name == "annotations" for alias in node.names):
-                offenders.append(path.relative_to(repo_root).as_posix())
+@dataclass(frozen=True, slots=True)
+class ImportRecord:
+    importer: str
+    imported: str
+    path: str
+    line: int
+    inside_function: bool
 
-    assert sorted(offenders) == []
+    def describe(self) -> str:
+        return f"{self.path}:{self.line}: {self.importer} -> {self.imported}"
 
 
-def test_server_startup_is_owned_by_cli_entrypoint() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
+class _ImportVisitor(ast.NodeVisitor):
+    def __init__(
+        self,
+        *,
+        importer: str,
+        importer_is_package: bool,
+        modules: set[str],
+        path: str,
+    ) -> None:
+        self._importer = importer
+        self._importer_is_package = importer_is_package
+        self._modules = modules
+        self._path = path
+        self._function_depth = 0
+        self.records: list[ImportRecord] = []
 
-    assert not (repo_root / "server.py").exists()
-    assert _text_occurrences(repo_root, "server" + ":app") == []
+    def visit_Import(self, node: ast.Import) -> None:
+        for alias in node.names:
+            self._record(alias.name, node.lineno)
 
-    pyproject_text = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
-    assert 'fcc-server = "free_claude_code.cli.entrypoints:serve"' in pyproject_text
-    assert (
-        'free-claude-code = "free_claude_code.cli.entrypoints:serve"' in pyproject_text
+    def visit_ImportFrom(self, node: ast.ImportFrom) -> None:
+        base = _resolve_import_from_base(
+            importer=self._importer,
+            importer_is_package=self._importer_is_package,
+            level=node.level,
+            module=node.module,
+        )
+        if base is None:
+            return
+        for alias in node.names:
+            candidate = f"{base}.{alias.name}"
+            imported = candidate if candidate in self._modules else base
+            self._record(imported, node.lineno)
+
+    def visit_FunctionDef(self, node: ast.FunctionDef) -> None:
+        self._visit_function(node)
+
+    def visit_AsyncFunctionDef(self, node: ast.AsyncFunctionDef) -> None:
+        self._visit_function(node)
+
+    def _visit_function(self, node: ast.FunctionDef | ast.AsyncFunctionDef) -> None:
+        self._function_depth += 1
+        self.generic_visit(node)
+        self._function_depth -= 1
+
+    def _record(self, imported: str, line: int) -> None:
+        self.records.append(
+            ImportRecord(
+                importer=self._importer,
+                imported=imported,
+                path=self._path,
+                line=line,
+                inside_function=self._function_depth > 0,
+            )
+        )
+
+
+def test_package_dependencies_follow_declarative_policy() -> None:
+    modules = _module_paths(_PACKAGE_ROOT)
+    records = _scan_imports(_PACKAGE_ROOT)
+    actual_packages = _ownership_roots(set(modules), _PACKAGE_NAME)
+
+    assert set(ALLOWED_PACKAGE_DEPENDENCIES) == actual_packages
+    assert all(
+        (_PACKAGE_ROOT / package / "__init__.py").is_file()
+        for package in actual_packages
+    )
+    assert all(
+        dependency in actual_packages and dependency != package
+        for package, dependencies in ALLOWED_PACKAGE_DEPENDENCIES.items()
+        for dependency in dependencies
     )
 
-
-def test_runtime_packages_live_only_under_src_namespace() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    package_root = repo_root / "src" / "free_claude_code"
-
-    assert (package_root / "__init__.py").exists()
-    for package_name in {
-        "application",
-        "api",
-        "cli",
-        "config",
-        "core",
-        "messaging",
-        "providers",
-        "runtime",
-    }:
-        assert (package_root / package_name).is_dir()
-        assert not (repo_root / package_name).exists()
-
-
-def test_no_old_top_level_first_party_imports_remain() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    forbidden = {
-        "application",
-        "api",
-        "cli",
-        "config",
-        "core",
-        "messaging",
-        "providers",
-        "runtime",
-    }
+    observed_dependencies: set[tuple[str, str]] = set()
+    observed_exceptions: set[tuple[str, str]] = set()
     offenders: list[str] = []
-
-    for path in repo_root.rglob("*.py"):
-        if ".git" in path.parts or ".venv" in path.parts:
+    for record in records:
+        source_package = _top_level_package(record.importer)
+        target_package = _top_level_package(record.imported)
+        if source_package is None or target_package is None:
             continue
-        for imported in _imports_from(path, repo_root):
-            if imported is None:
-                continue
-            root = imported.split(".", 1)[0]
-            if root in forbidden:
-                offenders.append(f"{path.relative_to(repo_root)}: {imported}")
+        if source_package == target_package:
+            continue
+        exact_edge = (record.importer, record.imported)
+        if exact_edge in IMPORT_EXCEPTIONS:
+            observed_exceptions.add(exact_edge)
+            continue
+        if target_package in ALLOWED_PACKAGE_DEPENDENCIES[source_package]:
+            observed_dependencies.add((source_package, target_package))
+            continue
+        offenders.append(record.describe())
 
+    declared_dependencies = {
+        (package, dependency)
+        for package, dependencies in ALLOWED_PACKAGE_DEPENDENCIES.items()
+        for dependency in dependencies
+    }
     assert sorted(offenders) == []
+    assert declared_dependencies - observed_dependencies == set()
+    assert set(IMPORT_EXCEPTIONS) - observed_exceptions == set()
+    assert all(
+        "Owner:" in reason and "Reason:" in reason
+        for reason in IMPORT_EXCEPTIONS.values()
+    )
+    for source, target in IMPORT_EXCEPTIONS:
+        source_package = _top_level_package(source)
+        target_package = _top_level_package(target)
+        assert source_package is not None
+        assert target_package is not None
+        assert target_package not in ALLOWED_PACKAGE_DEPENDENCIES[source_package]
+    expected_package_modules = {
+        _PACKAGE_NAME,
+        *(f"{_PACKAGE_NAME}.{package}" for package in actual_packages),
+    }
+    assert set(modules) >= expected_package_modules
 
 
-def test_api_and_messaging_do_not_import_provider_common() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    assert not (
-        repo_root / "src" / "free_claude_code" / "providers" / "common"
-    ).exists()
-    offenders = _imports_matching(
-        [
-            repo_root / "src" / "free_claude_code" / "api",
-            repo_root / "src" / "free_claude_code" / "messaging",
-        ],
-        forbidden_prefixes=("free_claude_code.providers.common",),
+def test_first_party_imports_use_the_installable_namespace() -> None:
+    offenders = _legacy_first_party_import_offenders(
+        _scan_imports(_PACKAGE_ROOT),
+        set(ALLOWED_PACKAGE_DEPENDENCIES),
     )
 
     assert offenders == []
 
 
-def test_provider_adapters_do_not_import_runtime_layers() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    offenders = _imports_matching(
-        [repo_root / "src" / "free_claude_code" / "providers"],
-        forbidden_prefixes=(
-            "free_claude_code.api.",
-            "free_claude_code.messaging.",
-            "free_claude_code.cli.",
-            "free_claude_code.runtime.",
+def test_legacy_first_party_import_detector_rejects_bare_owner_names() -> None:
+    record = ImportRecord(
+        importer="free_claude_code.api.routes",
+        imported="core.anthropic",
+        path="free_claude_code/api/routes.py",
+        line=7,
+        inside_function=False,
+    )
+
+    assert _legacy_first_party_import_offenders([record], {"api", "core"}) == [
+        "free_claude_code/api/routes.py:7: "
+        "free_claude_code.api.routes -> core.anthropic"
+    ]
+
+
+def test_ownership_root_discovery_includes_modules_and_namespace_directories(
+    tmp_path: Path,
+) -> None:
+    package_root = tmp_path / "sample"
+    _write_module(package_root / "__init__.py")
+    _write_module(package_root / "declared" / "__init__.py")
+    _write_module(package_root / "namespace" / "module.py")
+    _write_module(package_root / "root_module.py")
+
+    roots = _ownership_roots(set(_module_paths(package_root)), "sample")
+
+    assert roots == {"declared", "namespace", "root_module"}
+
+
+def test_descendants_do_not_import_ancestor_package_facades() -> None:
+    modules = _module_paths(_PACKAGE_ROOT)
+    packages = {
+        module for module, path in modules.items() if path.name == "__init__.py"
+    }
+    offenders = _ancestor_facade_offenders(_scan_imports(_PACKAGE_ROOT), packages)
+
+    assert offenders == []
+
+
+def test_static_first_party_import_graph_is_acyclic() -> None:
+    modules = set(_module_paths(_PACKAGE_ROOT))
+    graph = {module: set() for module in modules}
+    for record in _scan_imports(_PACKAGE_ROOT):
+        if record.imported in modules:
+            graph[record.importer].add(record.imported)
+
+    assert _cyclic_components(graph) == []
+
+
+def test_cycle_detector_reports_exact_strongly_connected_components() -> None:
+    graph = {
+        "package.a": {"package.b"},
+        "package.b": {"package.a"},
+        "package.c": set(),
+        "package.self": {"package.self"},
+    }
+
+    assert _cyclic_components(graph) == [
+        ("package.a", "package.b"),
+        ("package.self",),
+    ]
+
+
+def test_external_consumers_use_owned_package_facades() -> None:
+    offenders: list[str] = []
+    for record in _scan_imports(_PACKAGE_ROOT):
+        for facade in FACADE_ONLY_BOUNDARIES:
+            if record.importer == facade or record.importer.startswith(f"{facade}."):
+                continue
+            if record.imported.startswith(f"{facade}."):
+                offenders.append(record.describe())
+
+    assert sorted(offenders) == []
+
+
+def test_import_scanner_resolves_absolute_relative_and_lazy_imports(
+    tmp_path: Path,
+) -> None:
+    package_root = tmp_path / "sample"
+    _write_module(package_root / "__init__.py")
+    _write_module(package_root / "alpha" / "__init__.py", "PUBLIC = object()\n")
+    _write_module(package_root / "alpha" / "sibling.py")
+    _write_module(package_root / "beta" / "__init__.py")
+    _write_module(package_root / "beta" / "absolute.py")
+    _write_module(package_root / "beta" / "relative.py")
+    _write_module(package_root / "beta" / "lazy.py")
+    _write_module(
+        package_root / "alpha" / "consumer.py",
+        "\n".join(
+            (
+                "import sample.beta.absolute",
+                "from ..beta import relative",
+                "from . import sibling",
+                "from . import PUBLIC",
+                "def load():",
+                "    import sample.beta.lazy",
+                "",
+            )
         ),
     )
 
-    assert offenders == []
+    records = _scan_imports(package_root)
+    resolved = {
+        (record.imported, record.inside_function)
+        for record in records
+        if record.importer == "sample.alpha.consumer"
+    }
+
+    assert resolved == {
+        ("sample.alpha", False),
+        ("sample.alpha.sibling", False),
+        ("sample.beta.absolute", False),
+        ("sample.beta.relative", False),
+        ("sample.beta.lazy", True),
+    }
+
+
+def test_import_scanner_distinguishes_facade_symbols_from_sibling_modules(
+    tmp_path: Path,
+) -> None:
+    package_root = tmp_path / "sample"
+    _write_module(package_root / "__init__.py")
+    _write_module(package_root / "owner" / "__init__.py", "PUBLIC = object()\n")
+    _write_module(package_root / "owner" / "sibling.py")
+    _write_module(
+        package_root / "owner" / "consumer.py",
+        "from . import PUBLIC, sibling\n",
+    )
+    modules = _module_paths(package_root)
+    packages = {
+        module for module, path in modules.items() if path.name == "__init__.py"
+    }
+
+    offenders = _ancestor_facade_offenders(_scan_imports(package_root), packages)
+
+    assert offenders == [
+        "sample/owner/consumer.py:1: sample.owner.consumer -> sample.owner"
+    ]
 
 
 def test_anthropic_request_boundaries_use_the_protocol_model() -> None:
     """Known Messages fields must not cross core/provider boundaries by duck typing."""
-    repo_root = Path(__file__).resolve().parents[2]
     roots = [
-        repo_root / "src" / "free_claude_code" / "core" / "anthropic",
-        repo_root / "src" / "free_claude_code" / "providers",
+        _PACKAGE_ROOT / "core" / "anthropic",
+        _PACKAGE_ROOT / "providers",
     ]
     request_names = {"request", "request_data"}
     protocol_fields = {
@@ -141,7 +356,7 @@ def test_anthropic_request_boundaries_use_the_protocol_model() -> None:
     for root in roots:
         for path in root.rglob("*.py"):
             tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-            relative = path.relative_to(repo_root).as_posix()
+            relative = path.relative_to(_REPO_ROOT).as_posix()
             for node in ast.walk(tree):
                 if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
                     arguments = [
@@ -152,12 +367,22 @@ def test_anthropic_request_boundaries_use_the_protocol_model() -> None:
                     for argument in arguments:
                         if argument.arg.lstrip("_") not in request_names:
                             continue
-                        if isinstance(argument.annotation, ast.Name) and (
-                            argument.annotation.id == "Any"
-                        ):
+                        annotation_names = (
+                            {
+                                child.id
+                                for child in ast.walk(argument.annotation)
+                                if isinstance(child, ast.Name)
+                            }
+                            if argument.annotation is not None
+                            else set()
+                        )
+                        if argument.annotation is None or annotation_names & {
+                            "Any",
+                            "Mapping",
+                        }:
                             offenders.append(
                                 f"{relative}:{argument.lineno}: "
-                                f"{node.name}({argument.arg}: Any)"
+                                f"{node.name}({argument.arg}) is not concrete"
                             )
                 if not isinstance(node, ast.Call) or not (
                     isinstance(node.func, ast.Name)
@@ -177,38 +402,22 @@ def test_anthropic_request_boundaries_use_the_protocol_model() -> None:
     assert sorted(offenders) == []
 
 
-def test_core_does_not_import_product_packages() -> None:
-    """Neutral ``core`` must stay independent of API, workers, and providers."""
-    repo_root = Path(__file__).resolve().parents[2]
-    offenders = _imports_matching(
-        [repo_root / "src" / "free_claude_code" / "core"],
-        forbidden_prefixes=(
-            "free_claude_code.application.",
-            "free_claude_code.api.",
-            "free_claude_code.messaging.",
-            "free_claude_code.cli.",
-            "smoke.",
-            "free_claude_code.providers.",
-            "free_claude_code.config.",
-        ),
-    )
-    assert offenders == []
-
-
 def test_core_does_not_import_provider_transport_sdks() -> None:
-    """Provider SDK and HTTP failure policy belongs under ``providers``."""
-    repo_root = Path(__file__).resolve().parents[2]
-    offenders = _imports_matching(
-        [repo_root / "src" / "free_claude_code" / "core"],
-        forbidden_prefixes=("httpx", "openai"),
-    )
-    assert offenders == []
+    forbidden_roots = {"aiohttp", "httpx", "openai"}
+    offenders = [
+        record.describe()
+        for record in _scan_imports(_PACKAGE_ROOT)
+        if (
+            record.importer == "free_claude_code.core"
+            or record.importer.startswith("free_claude_code.core.")
+        )
+        and record.imported.split(".", 1)[0] in forbidden_roots
+    ]
+
+    assert sorted(offenders) == []
 
 
 def test_providers_do_not_own_wire_error_type_literals() -> None:
-    """Provider failures carry semantic kinds, never protocol error names."""
-    repo_root = Path(__file__).resolve().parents[2]
-    providers_root = repo_root / "src" / "free_claude_code" / "providers"
     wire_types = {
         "api_error",
         "authentication_error",
@@ -222,949 +431,231 @@ def test_providers_do_not_own_wire_error_type_literals() -> None:
         "timeout_error",
     }
     offenders: list[str] = []
-    for path in providers_root.rglob("*.py"):
+    for path in (_PACKAGE_ROOT / "providers").rglob("*.py"):
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         offenders.extend(
-            f"{path.relative_to(repo_root).as_posix()}:{node.lineno}: {node.value}"
+            f"{path.relative_to(_REPO_ROOT).as_posix()}:{node.lineno}: {node.value}"
             for node in ast.walk(tree)
             if isinstance(node, ast.Constant) and node.value in wire_types
         )
-    assert offenders == []
-
-
-def test_application_owns_routing_execution_and_consumer_ports() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    package_root = repo_root / "src" / "free_claude_code"
-    application_root = package_root / "application"
-    api_root = package_root / "api"
-
-    for filename in {
-        "__init__.py",
-        "execution.py",
-        "model_metadata.py",
-        "ports.py",
-        "routing.py",
-    }:
-        assert (application_root / filename).exists()
-
-    assert not (api_root / "model_router.py").exists()
-    assert not (api_root / "provider_execution.py").exists()
-    assert (
-        _imports_matching(
-            [application_root],
-            forbidden_prefixes=(
-                "free_claude_code.api.",
-                "free_claude_code.cli.",
-                "free_claude_code.messaging.",
-                "free_claude_code.providers.",
-                "free_claude_code.runtime.",
-            ),
-        )
-        == []
-    )
-
-    provider_imports = _imports_matching(
-        [api_root],
-        forbidden_prefixes=(
-            "free_claude_code.providers.base",
-            "free_claude_code.providers.model_listing",
-            "free_claude_code.providers.runtime",
-        ),
-    )
-    assert provider_imports == []
-
-    unexpected_provider_application_imports: list[str] = []
-    providers_root = package_root / "providers"
-    for path in providers_root.rglob("*.py"):
-        for imported in _imports_from(path, repo_root):
-            if imported is None or not imported.startswith(
-                "free_claude_code.application."
-            ):
-                continue
-            if imported in {
-                "free_claude_code.application.errors",
-                "free_claude_code.application.model_metadata",
-            }:
-                continue
-            unexpected_provider_application_imports.append(
-                f"{path.relative_to(repo_root)}: {imported}"
-            )
-    assert unexpected_provider_application_imports == []
-
-
-def test_provider_catalog_is_single_source_for_supported_ids() -> None:
-    from free_claude_code.config.provider_catalog import (
-        PROVIDER_CATALOG,
-        SUPPORTED_PROVIDER_IDS,
-    )
-    from free_claude_code.providers.runtime import PROVIDER_FACTORIES
-
-    assert tuple(PROVIDER_CATALOG.keys()) == SUPPORTED_PROVIDER_IDS
-    assert set(SUPPORTED_PROVIDER_IDS) == set(PROVIDER_FACTORIES)
-
-
-def test_provider_runtime_replaces_old_registry_module() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-
-    assert not (
-        repo_root / "src" / "free_claude_code" / "providers" / "registry.py"
-    ).exists()
-    assert (
-        repo_root / "src" / "free_claude_code" / "providers" / "runtime" / "runtime.py"
-    ).exists()
-    assert (
-        repo_root / "src" / "free_claude_code" / "providers" / "runtime" / "factory.py"
-    ).exists()
-    assert (
-        repo_root
-        / "src"
-        / "free_claude_code"
-        / "providers"
-        / "runtime"
-        / "discovery.py"
-    ).exists()
-
-    offenders = _imports_matching(
-        [
-            repo_root / "src" / "free_claude_code" / "api",
-            repo_root / "tests",
-            repo_root / "smoke",
-        ],
-        forbidden_prefixes=("free_claude_code.providers.registry",),
-    )
-    assert offenders == []
-
-
-def test_config_does_not_import_non_config_packages() -> None:
-    """Settings and env handling must not depend on transport or protocol layers."""
-    repo_root = Path(__file__).resolve().parents[2]
-    offenders = _imports_matching(
-        [repo_root / "src" / "free_claude_code" / "config"],
-        forbidden_prefixes=(
-            "free_claude_code.api.",
-            "free_claude_code.messaging.",
-            "free_claude_code.cli.",
-            "smoke.",
-            "free_claude_code.providers.",
-            "free_claude_code.core.",
-        ),
-    )
-    assert offenders == []
-
-
-def test_settings_stays_schema_only() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    config_root = repo_root / "src" / "free_claude_code" / "config"
-
-    assert (config_root / "env_files.py").exists()
-    assert (config_root / "model_refs.py").exists()
-
-    settings_text = (config_root / "settings.py").read_text(encoding="utf-8")
-    for removed_api in {
-        "def resolve_model",
-        "def resolve_thinking",
-        "def configured_chat_model_refs",
-        "def web_fetch_allowed_scheme_set",
-        "def parse_provider_type",
-        "def parse_model_name",
-        "def uses_process_anthropic_auth_token",
-        "def claude_workspace",
-        "def claude_cli_bin",
-        "def codex_cli_bin",
-        "def provider_type",
-        "def model_name",
-    }:
-        assert removed_api not in settings_text
-
-
-def test_messaging_does_not_import_disallowed_modules() -> None:
-    """Runtime composition keeps messaging independent of concrete products."""
-    repo_root = Path(__file__).resolve().parents[2]
-    offenders: list[str] = []
-    for path in (repo_root / "src" / "free_claude_code" / "messaging").rglob("*.py"):
-        for imported in _imports_from(path, repo_root):
-            if imported is None:
-                continue
-            if (
-                imported == "free_claude_code.api"
-                or imported.startswith("free_claude_code.api.")
-                or imported == "free_claude_code.cli"
-                or imported.startswith("free_claude_code.cli.")
-                or imported == "smoke"
-                or imported.startswith("smoke.")
-            ) or imported.startswith("free_claude_code.providers."):
-                rel = path.relative_to(repo_root)
-                offenders.append(f"{rel}: {imported}")
 
     assert sorted(offenders) == []
 
 
-def test_single_owner_runtime_dependency_direction() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    package_root = repo_root / "src" / "free_claude_code"
-    api_root = package_root / "api"
-    cli_root = package_root / "cli"
-    runtime_root = package_root / "runtime"
-
-    assert runtime_root.is_dir()
-    for removed in {
-        api_root / "runtime.py",
-        api_root / "admin_urls.py",
-        api_root / "gateway_model_ids.py",
-        api_root / "admin_config",
-    }:
-        assert not removed.exists()
-
-    assert (
-        _imports_matching(
-            [api_root],
-            forbidden_prefixes=(
-                "free_claude_code.cli",
-                "free_claude_code.messaging",
-                "free_claude_code.runtime",
-            ),
-        )
-        == []
-    )
-    assert (
-        _imports_matching(
-            [cli_root],
-            forbidden_prefixes=("free_claude_code.api",),
-        )
-        == []
-    )
-
-    api_text = "\n".join(
-        path.read_text(encoding="utf-8") for path in api_root.rglob("*.py")
-    )
-    for removed_state in {
-        "app.state.provider_runtime",
-        "app.state.messaging_runtime",
-        "app.state.messaging_workflow",
-        "app.state.cli_manager",
-        "app.state.admin_restart_callback",
-        "app.state.admin_pending_fields",
-    }:
-        assert removed_state not in api_text
-    assert "app.state.services" in api_text
-
-    for marker in {
-        package_root / "application" / "__init__.py",
-        api_root / "__init__.py",
-        runtime_root / "__init__.py",
-    }:
-        marker_text = marker.read_text(encoding="utf-8")
-        assert "from " not in marker_text
-        assert "import " not in marker_text
-        assert "__all__" not in marker_text
-
-
-def test_neutral_moved_helpers_keep_their_dependency_boundaries() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    package_root = repo_root / "src" / "free_claude_code"
-    admin_root = package_root / "config" / "admin"
-    gateway_ids = package_root / "core" / "gateway_model_ids.py"
-
-    admin_offenders: list[str] = []
-    for path in admin_root.rglob("*.py"):
-        for imported in _imports_from(path, repo_root):
-            if imported is None or not imported.startswith("free_claude_code."):
-                continue
-            if not imported.startswith("free_claude_code.config"):
-                admin_offenders.append(f"{path.relative_to(repo_root)}: {imported}")
-    assert admin_offenders == []
-
-    assert all(
-        not imported.startswith("free_claude_code.")
-        for imported in _imports_from(gateway_ids, repo_root)
-    )
-
-
-def test_api_does_not_import_provider_implementation_packages() -> None:
-    """HTTP adapters depend on application contracts, never provider internals."""
-    repo_root = Path(__file__).resolve().parents[2]
-    offenders = _imports_matching(
-        [repo_root / "src" / "free_claude_code" / "api"],
-        forbidden_prefixes=("free_claude_code.providers",),
-    )
-    assert offenders == []
-
-
-def test_removed_openrouter_rollback_transport_stays_removed() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-
-    assert not (
-        repo_root
-        / "src"
-        / "free_claude_code"
-        / "providers"
-        / "open_router"
-        / "chat_request.py"
-    ).exists()
-    assert _text_occurrences(repo_root, "OpenRouter" + "ChatProvider") == []
-    assert _text_occurrences(repo_root, "OPENROUTER" + "_TRANSPORT") == []
-
-
-def test_provider_transports_live_under_transport_family_packages() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    providers_root = repo_root / "src" / "free_claude_code" / "providers"
-
-    assert not (providers_root / "openai_compat.py").exists()
-    assert not (providers_root / "anthropic_messages.py").exists()
-    assert (providers_root / "transports" / "openai_chat" / "transport.py").exists()
-    assert (
-        providers_root / "transports" / "anthropic_messages" / "transport.py"
-    ).exists()
-
-    offenders = _imports_matching(
-        [providers_root, repo_root / "tests"],
-        forbidden_prefixes=(
-            "free_claude_code.providers.openai_compat",
-            "free_claude_code.providers.anthropic_messages",
-        ),
-    )
-    assert offenders == []
-
-
-def test_cloud_providers_do_not_import_native_anthropic_transport() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-
-    for provider_dir in ("open_router", "wafer", "kimi", "minimax", "fireworks", "zai"):
-        provider_root = (
-            repo_root / "src" / "free_claude_code" / "providers" / provider_dir
-        )
-        occurrences = [
-            path.relative_to(repo_root).as_posix()
-            for path in provider_root.rglob("*.py")
-            if "free_claude_code.providers.transports.anthropic_messages"
-            in path.read_text(encoding="utf-8")
-        ]
-        assert occurrences == []
-
-
-def test_provider_request_policy_lives_with_transport_families() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    providers_root = repo_root / "src" / "free_claude_code" / "providers"
-
-    deleted_request_modules = (
-        "free_claude_code.providers.cerebras.request",
-        "free_claude_code.providers.deepseek.request",
-        "free_claude_code.providers.fireworks.request",
-        "free_claude_code.providers.gemini.request",
-        "free_claude_code.providers.groq.request",
-        "free_claude_code.providers.kimi.request",
-        "free_claude_code.providers.mistral.request",
-        "free_claude_code.providers.nvidia_nim.request",
-        "free_claude_code.providers.opencode.request",
-        "free_claude_code.providers.open_router.request",
-        "free_claude_code.providers.zai.request",
-    )
-
-    assert (
-        providers_root / "transports" / "openai_chat" / "request_policy.py"
-    ).exists()
-    assert (
-        providers_root / "transports" / "anthropic_messages" / "request_policy.py"
-    ).exists()
-    assert not sorted(
-        path.relative_to(repo_root).as_posix()
-        for path in providers_root.glob("*/request.py")
-    )
-
-    offenders = _imports_matching(
-        [providers_root, repo_root / "tests"],
-        forbidden_prefixes=deleted_request_modules,
-    )
-    assert offenders == []
-
-
-def test_anthropic_core_has_no_cloud_provider_native_policy() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    anthropic_core = repo_root / "src" / "free_claude_code" / "core" / "anthropic"
-
-    occurrences: list[str] = []
-    for path in anthropic_core.rglob("*.py"):
-        text = path.read_text(encoding="utf-8")
-        if "OpenRouter" in text or "openrouter" in text:
-            occurrences.append(path.relative_to(repo_root).as_posix())
-
-    assert occurrences == []
-
-
-def test_protocol_stream_state_and_provider_recovery_have_separate_owners() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    package_root = repo_root / "src" / "free_claude_code"
-    streaming_root = package_root / "core" / "anthropic" / "streaming"
-    providers_root = package_root / "providers"
-    stream_recovery = providers_root / "stream_recovery.py"
-
-    assert (
-        _imports_matching(
-            [streaming_root],
-            forbidden_prefixes=("free_claude_code.providers",),
-        )
-        == []
-    )
-    assert "free_claude_code.providers.failure_policy" in set(
-        _imports_from(stream_recovery, repo_root)
-    )
-
-    streaming_exports = (streaming_root / "__init__.py").read_text(encoding="utf-8")
-    for provider_owned_name in {
-        "RecoveryController",
-        "RecoveryFailureAction",
-        "RecoveryHoldbackBuffer",
-        "is_retryable_stream_error",
-    }:
-        assert provider_owned_name not in streaming_exports
-
-    for transport in {"openai_chat", "anthropic_messages"}:
-        imports = set(
-            _imports_from(
-                providers_root / "transports" / transport / "stream.py",
-                repo_root,
-            )
-        )
-        assert "free_claude_code.providers.stream_recovery" in imports
-
-
-def test_openai_responses_uses_adapter_boundary() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    responses_root = (
-        repo_root / "src" / "free_claude_code" / "core" / "openai_responses"
-    )
-    responses_streaming_root = responses_root / "streaming"
-    api_root = repo_root / "src" / "free_claude_code" / "api"
-    handlers_root = api_root / "handlers"
-
-    assert not (repo_root / "src" / "free_claude_code" / "api" / "services.py").exists()
-    assert not (api_root / "request_pipeline.py").exists()
-    assert not (responses_root / "conversion.py").exists()
-    assert not (responses_root / "sse.py").exists()
-    assert not (responses_root / "output.py").exists()
-    assert not (responses_root / "stream_state.py").exists()
-    for filename in {
-        "adapter.py",
-        "anthropic_sse.py",
-        "errors.py",
-        "events.py",
-        "ids.py",
-        "input.py",
-        "items.py",
-        "models.py",
-        "reasoning.py",
-        "stream.py",
-        "tools.py",
-    }:
-        assert (responses_root / filename).exists()
-    for filename in {
-        "__init__.py",
-        "assembler.py",
-        "blocks.py",
-        "completion.py",
-        "error_mapping.py",
-        "event_builders.py",
-        "ledger.py",
-    }:
-        assert (responses_streaming_root / filename).exists()
-
-    stream_text = (responses_root / "stream.py").read_text(encoding="utf-8")
-    assert "from .streaming import ResponsesStreamAssembler" in stream_text
-
-    responses_handler = handlers_root / "responses.py"
-    responses_handler_text = responses_handler.read_text(encoding="utf-8")
-    assert "free_claude_code.core.openai_responses" in set(
-        _imports_from(responses_handler, repo_root)
-    )
-    assert "OpenAIResponsesAdapter" in responses_handler_text
-    assert "OpenAIResponsesRequest" in responses_handler_text
-    assert not (
-        repo_root
-        / "src"
-        / "free_claude_code"
-        / "api"
-        / "models"
-        / "openai_responses.py"
-    ).exists()
-    routes_text = (
-        repo_root / "src" / "free_claude_code" / "api" / "routes.py"
-    ).read_text(encoding="utf-8")
-    assert "ApiRequestPipeline" not in routes_text
-    assert "request_pipeline" not in routes_text
-    assert "from .handlers import" in routes_text
-    assert "free_claude_code.api.services" not in routes_text
-    for old_helper in {
-        "responses_request_to_anthropic_payload",
-        "anthropic_message_response_to_openai_response",
-        "iter_anthropic_sse_as_openai_responses",
-        "collect_openai_response_from_anthropic_sse",
-        "iter_message_response_as_openai_responses",
-    }:
-        assert old_helper not in responses_handler_text
-
+def test_optional_dependencies_have_one_lazy_owner() -> None:
+    seen: set[str] = set()
     offenders: list[str] = []
-    for path in (repo_root / "src" / "free_claude_code" / "api").rglob("*.py"):
-        for imported in _imports_from(path, repo_root):
-            if imported is not None and imported.startswith(
-                "free_claude_code.core.openai_responses."
-            ):
-                rel = path.relative_to(repo_root)
-                offenders.append(f"{rel}: {imported}")
-    assert sorted(offenders) == []
-
-    responses_importers: list[str] = []
-    for path in (repo_root / "src" / "free_claude_code" / "api").rglob("*.py"):
-        imports = set(_imports_from(path, repo_root))
-        if "free_claude_code.core.openai_responses" in imports:
-            responses_importers.append(path.relative_to(repo_root).as_posix())
-    assert sorted(responses_importers) == [
-        "src/free_claude_code/api/app.py",
-        "src/free_claude_code/api/handlers/responses.py",
-        "src/free_claude_code/api/request_errors.py",
-        "src/free_claude_code/api/routes.py",
-    ]
-
-    response_handler_imports = set(_imports_from(responses_handler, repo_root))
-    for forbidden in {
-        "free_claude_code.api.optimization_handlers",
-        "free_claude_code.api.detection",
-        "free_claude_code.api.web_tools",
-    }:
-        assert forbidden not in response_handler_imports
-
-    provider_execution_text = (
-        repo_root / "src" / "free_claude_code" / "application" / "execution.py"
-    ).read_text(encoding="utf-8")
-    assert "StreamingResponse" not in provider_execution_text
-    assert "OpenAIResponsesAdapter" not in provider_execution_text
-
-    adapter_text = (responses_root / "adapter.py").read_text(encoding="utf-8")
-    for deleted_api in {
-        "from_anthropic_message",
-        "collect_from_anthropic_sse",
-        "iter_sse_from_anthropic_message",
-    }:
-        assert deleted_api not in adapter_text
-
-
-def test_admin_config_uses_package_owners_and_catalog_manifest() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    api_root = repo_root / "src" / "free_claude_code" / "api"
-    config_root = repo_root / "src" / "free_claude_code" / "config"
-    admin_config_root = config_root / "admin"
-
-    assert not (api_root / "admin_config.py").exists()
-    assert not (api_root / "admin_config").exists()
-    for filename in {
-        "__init__.py",
-        "manifest.py",
-        "provider_manifest.py",
-        "sources.py",
-        "values.py",
-        "validation.py",
-        "persistence.py",
-        "status.py",
-    }:
-        assert (admin_config_root / filename).exists()
-
-    init_text = (admin_config_root / "__init__.py").read_text(encoding="utf-8")
-    assert "from " not in init_text
-    assert "__all__" not in init_text
-
-    routes_imports = set(_imports_from(api_root / "admin_routes.py", repo_root))
-    assert "free_claude_code.api.admin_config" not in routes_imports
-    for expected in {
-        "free_claude_code.config.admin.manifest",
-        "free_claude_code.config.admin.persistence",
-        "free_claude_code.config.admin.values",
-    }:
-        assert expected in routes_imports
-
-    provider_manifest_text = (admin_config_root / "provider_manifest.py").read_text(
-        encoding="utf-8"
-    )
-    assert "PROVIDER_CATALOG" in provider_manifest_text
-    admin_js = (api_root / "admin_static" / "admin.js").read_text(encoding="utf-8")
-    assert "function providerName" not in admin_js
-    assert "display_name || provider.provider_id" in admin_js
-
-    entrypoints_imports = set(
-        _imports_from(
-            repo_root / "src" / "free_claude_code" / "cli" / "entrypoints.py", repo_root
-        )
-    )
-    assert "free_claude_code.config.env_template" in entrypoints_imports
-    assert "_load_env_template" not in (
-        repo_root / "src" / "free_claude_code" / "cli" / "entrypoints.py"
-    ).read_text(encoding="utf-8")
-
-
-def test_messaging_transcript_uses_package_owners() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    messaging_root = repo_root / "src" / "free_claude_code" / "messaging"
-    transcript_root = messaging_root / "transcript"
-
-    assert not (messaging_root / "transcript.py").exists()
-    for filename in {
-        "__init__.py",
-        "buffer.py",
-        "context.py",
-        "renderer.py",
-        "segments.py",
-        "subagents.py",
-    }:
-        assert (transcript_root / filename).exists()
-
-    init_text = (transcript_root / "__init__.py").read_text(encoding="utf-8")
-    assert "TranscriptBuffer" in init_text
-    assert "RenderCtx" in init_text
-
-
-def test_messaging_conversation_state_uses_package_owners() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    messaging_root = repo_root / "src" / "free_claude_code" / "messaging"
-    trees_root = messaging_root / "trees"
-    session_root = messaging_root / "session"
-
-    assert not (messaging_root / "session.py").exists()
-    assert not (trees_root / "data.py").exists()
-    for filename in {
-        "__init__.py",
-        "graph.py",
-        "manager.py",
-        "node.py",
-        "processor.py",
-        "queue.py",
-        "repository.py",
-        "runtime.py",
-        "snapshot.py",
-    }:
-        assert (trees_root / filename).exists()
-    for filename in {
-        "__init__.py",
-        "message_log.py",
-        "persistence.py",
-        "store.py",
-    }:
-        assert (session_root / filename).exists()
-
-    offenders = _imports_matching(
-        [
-            messaging_root,
-            repo_root / "src" / "free_claude_code" / "api",
-            repo_root / "tests",
-        ],
-        forbidden_prefixes=("free_claude_code.messaging.trees.data",),
-    )
-    assert offenders == []
-
-
-def test_message_tree_mutability_stays_inside_its_owner_package() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    messaging_root = repo_root / "src" / "free_claude_code" / "messaging"
-    trees_root = messaging_root / "trees"
-    forbidden = (
-        "free_claude_code.messaging.trees.node",
-        "free_claude_code.messaging.trees.processor",
-        "free_claude_code.messaging.trees.repository",
-        "free_claude_code.messaging.trees.runtime",
-    )
-
-    offenders: list[str] = []
-    for path in messaging_root.rglob("*.py"):
-        if trees_root in path.parents:
+    for record in _scan_imports(_PACKAGE_ROOT):
+        dependency = record.imported.split(".", 1)[0]
+        owner = OPTIONAL_IMPORT_OWNERS.get(dependency)
+        if owner is None:
             continue
-        offenders.extend(
-            f"{path.relative_to(repo_root)}: {imported}"
-            for imported in _imports_from(path, repo_root)
-            if imported is not None and _is_forbidden(imported, forbidden)
-        )
+        seen.add(dependency)
+        if record.importer != owner or not record.inside_function:
+            offenders.append(record.describe())
 
+    assert seen == set(OPTIONAL_IMPORT_OWNERS)
     assert sorted(offenders) == []
 
-    facade = (trees_root / "__init__.py").read_text(encoding="utf-8")
-    for mutable_owner in {
+
+def test_runtime_imports_without_optional_voice_dependencies() -> None:
+    blocked = sorted(OPTIONAL_IMPORT_OWNERS)
+    script = "\n".join(
+        (
+            "import importlib.abc",
+            "import sys",
+            f"BLOCKED = {blocked!r}",
+            "class Blocker(importlib.abc.MetaPathFinder):",
+            "    def find_spec(self, fullname, path=None, target=None):",
+            "        if fullname.split('.', 1)[0] in BLOCKED:",
+            "            raise ModuleNotFoundError(fullname)",
+            "        return None",
+            "sys.meta_path.insert(0, Blocker())",
+            "import free_claude_code.runtime.bootstrap",
+            "import free_claude_code.api.app",
+        )
+    )
+
+    completed = subprocess.run(
+        [sys.executable, "-c", script],
+        capture_output=True,
+        check=False,
+        text=True,
+    )
+
+    assert completed.returncode == 0, completed.stderr or completed.stdout
+
+
+def test_supported_messaging_facade_is_explicit() -> None:
+    import free_claude_code.messaging as facade
+    from free_claude_code.messaging.managed_protocols import (
+        ManagedClaudeSessionManagerProtocol,
+        ManagedClaudeSessionProtocol,
+    )
+    from free_claude_code.messaging.models import IncomingMessage, MessageScope
+    from free_claude_code.messaging.platforms.ports import OutboundMessenger
+
+    expected = {
+        "IncomingMessage": IncomingMessage,
+        "ManagedClaudeSessionManagerProtocol": ManagedClaudeSessionManagerProtocol,
+        "ManagedClaudeSessionProtocol": ManagedClaudeSessionProtocol,
+        "MessageScope": MessageScope,
+        "OutboundMessenger": OutboundMessenger,
+    }
+
+    assert set(facade.__all__) == set(expected)
+    assert all(getattr(facade, name) is value for name, value in expected.items())
+
+
+def test_message_tree_mutability_stays_behind_its_facade() -> None:
+    import free_claude_code.messaging.trees as facade
+
+    for internal_owner in {
         "MessageNode",
         "MessageTree",
         "TreeQueueProcessor",
         "TreeRepository",
     }:
-        assert f'"{mutable_owner}"' not in facade
-
-    runtime_text = (
-        repo_root / "src" / "free_claude_code" / "runtime" / "application.py"
-    ).read_text(encoding="utf-8")
-    workflow_text = (messaging_root / "workflow.py").read_text(encoding="utf-8")
-    for removed_api in {
-        "get_all_trees",
-        "get_node_mapping",
-        "sync_from_tree_data",
-        "TreeQueueManager.from_dict",
-    }:
-        assert removed_api not in runtime_text
-        assert removed_api not in workflow_text
+        assert internal_owner not in facade.__all__
+        assert not hasattr(facade, internal_owner)
 
 
-def test_messaging_workflow_uses_split_runtime_owners() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    messaging_root = repo_root / "src" / "free_claude_code" / "messaging"
-    trees_root = messaging_root / "trees"
+def _module_paths(package_root: Path) -> dict[str, Path]:
+    return {
+        _module_name(package_root, path): path for path in package_root.rglob("*.py")
+    }
 
-    assert not (messaging_root / "handler.py").exists()
-    assert not (trees_root / "queue_manager.py").exists()
 
-    for path in {
-        messaging_root / "workflow.py",
-        messaging_root / "turn_intake.py",
-        messaging_root / "node_runner.py",
-        messaging_root / "command_context.py",
-        trees_root / "manager.py",
-        trees_root / "processor.py",
-        trees_root / "repository.py",
-    }:
-        assert path.exists()
-
-    offenders = _imports_matching(
-        [
-            messaging_root,
-            repo_root / "src" / "free_claude_code" / "api",
-            repo_root / "smoke",
-            repo_root / "tests",
-        ],
-        forbidden_prefixes=(
-            "free_claude_code.messaging.handler",
-            "free_claude_code.messaging.trees.queue_manager",
-        ),
+def _module_name(package_root: Path, path: Path) -> str:
+    relative = path.relative_to(package_root)
+    module_parts = (
+        relative.parent.parts
+        if path.name == "__init__.py"
+        else relative.with_suffix("").parts
     )
-    assert offenders == []
+    return ".".join((package_root.name, *module_parts))
 
 
-def test_messaging_platforms_use_shared_outbox_and_voice_flow() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    platforms_root = repo_root / "src" / "free_claude_code" / "messaging" / "platforms"
-
-    assert not (platforms_root / "base.py").exists()
-    assert (platforms_root / "ports.py").exists()
-    assert (platforms_root / "outbox.py").exists()
-    assert (platforms_root / "voice_flow.py").exists()
-    assert "def queue_delete_message(" not in (platforms_root / "ports.py").read_text(
-        encoding="utf-8"
-    )
-    assert "def queue_delete_message(" not in (platforms_root / "outbox.py").read_text(
-        encoding="utf-8"
-    )
-
-    for runtime in {
-        platforms_root / "telegram.py",
-        platforms_root / "discord.py",
-    }:
-        text = runtime.read_text(encoding="utf-8")
-        assert "PlatformOutbox" not in text
-        assert "VoiceNoteFlow" in text
-        assert "PendingVoiceRegistry" not in text
-        assert "NamedTemporaryFile" not in text
-
-    for messenger in {
-        platforms_root / "telegram_io.py",
-        platforms_root / "discord_io.py",
-    }:
-        text = messenger.read_text(encoding="utf-8")
-        assert "PlatformOutbox" in text
-        assert "def queue_delete_message(" not in text
+def _scan_imports(package_root: Path) -> list[ImportRecord]:
+    module_paths = _module_paths(package_root)
+    modules = set(module_paths)
+    records: list[ImportRecord] = []
+    for importer, path in sorted(module_paths.items()):
+        visitor = _ImportVisitor(
+            importer=importer,
+            importer_is_package=path.name == "__init__.py",
+            modules=modules,
+            path=path.relative_to(package_root.parent).as_posix(),
+        )
+        visitor.visit(ast.parse(path.read_text(encoding="utf-8"), filename=str(path)))
+        records.extend(visitor.records)
+    return records
 
 
-def test_cli_surfaces_are_explicit_launchers_and_managed_claude() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    cli_root = repo_root / "src" / "free_claude_code" / "cli"
-
-    assert not (cli_root / "adapters" / "__init__.py").exists()
-    assert not any((cli_root / "adapters").glob("*.py"))
-    assert not (cli_root / "session.py").exists()
-    assert not (cli_root / "manager.py").exists()
-    assert not (cli_root / "codex_model_catalog.py").exists()
-
-    for path in {
-        cli_root / "claude_env.py",
-        cli_root / "launchers" / "claude.py",
-        cli_root / "launchers" / "codex.py",
-        cli_root / "launchers" / "codex_model_catalog.py",
-        cli_root / "managed" / "claude.py",
-        cli_root / "managed" / "session.py",
-        cli_root / "managed" / "manager.py",
-    }:
-        assert path.exists()
-
-    entrypoints_text = (cli_root / "entrypoints.py").read_text(encoding="utf-8")
-    assert "launch_claude" not in entrypoints_text
-    assert "launch_codex" not in entrypoints_text
-    assert "codex_model_catalog" not in entrypoints_text
-    assert "_preflight" + "_proxy" not in entrypoints_text
-    assert _text_occurrences(repo_root, "_preflight" + "_proxy") == []
-
-    claude_env_text = (cli_root / "claude_env.py").read_text(encoding="utf-8")
-    assert 'CLAUDE_CODE_AUTO_COMPACT_WINDOW = "190000"' in claude_env_text
-    assert 'CLAUDE_NO_AUTH_SENTINEL = "fcc-no-auth"' in claude_env_text
-    managed_claude_text = (cli_root / "managed" / "claude.py").read_text(
-        encoding="utf-8"
-    )
-    assert 'MANAGED_CLAUDE_MODEL_TIER = "opus"' in managed_claude_text
-    assert '"managed_model_tier": MANAGED_CLAUDE_MODEL_TIER' in managed_claude_text
-    for path in {
-        cli_root / "launchers" / "claude.py",
-        cli_root / "managed" / "claude.py",
-    }:
-        text = path.read_text(encoding="utf-8")
-        assert '"190000"' not in text
-        assert '"fcc-no-auth"' not in text
-
-    messaging_protocols_text = (
-        repo_root / "src" / "free_claude_code" / "messaging" / "managed_protocols.py"
-    ).read_text(encoding="utf-8")
-    assert "class ManagedClaudeSessionProtocol(Protocol)" in messaging_protocols_text
-    assert "class ManagedClaudeSession(Protocol)" not in messaging_protocols_text
-    assert (
-        "class ManagedClaudeSessionManagerProtocol(Protocol)"
-        in messaging_protocols_text
-    )
-    assert "class SessionManagerInterface(Protocol)" not in messaging_protocols_text
-    for path in {
-        repo_root / "src" / "free_claude_code" / "messaging" / "__init__.py",
-        repo_root
-        / "src"
-        / "free_claude_code"
-        / "messaging"
-        / "platforms"
-        / "__init__.py",
-    }:
-        text = path.read_text(encoding="utf-8")
-        assert '"ManagedClaudeSession"' not in text
-        assert "SessionManagerInterface" not in text
-
-    pyproject_text = (repo_root / "pyproject.toml").read_text(encoding="utf-8")
-    assert (
-        'fcc-claude = "free_claude_code.cli.launchers.claude:launch"' in pyproject_text
-    )
-    assert 'fcc-codex = "free_claude_code.cli.launchers.codex:launch"' in pyproject_text
+def _resolve_import_from_base(
+    *,
+    importer: str,
+    importer_is_package: bool,
+    level: int,
+    module: str | None,
+) -> str | None:
+    if level == 0:
+        return module
+    package_parts = importer.split(".")
+    if not importer_is_package:
+        package_parts.pop()
+    parents_to_remove = level - 1
+    if parents_to_remove > len(package_parts):
+        return None
+    if parents_to_remove:
+        del package_parts[-parents_to_remove:]
+    if module is not None:
+        package_parts.extend(module.split("."))
+    return ".".join(package_parts) or None
 
 
-def _imports_matching(
-    roots: list[Path], *, forbidden_prefixes: tuple[str, ...]
+def _top_level_package(module: str) -> str | None:
+    parts = module.split(".")
+    if len(parts) < 2 or parts[0] != _PACKAGE_NAME:
+        return None
+    return parts[1]
+
+
+def _ownership_roots(modules: set[str], package_name: str) -> set[str]:
+    roots: set[str] = set()
+    for module in modules:
+        parts = module.split(".")
+        if len(parts) >= 2 and parts[0] == package_name:
+            roots.add(parts[1])
+    return roots
+
+
+def _legacy_first_party_import_offenders(
+    records: list[ImportRecord],
+    owner_names: set[str],
 ) -> list[str]:
-    offenders: list[str] = []
-    repo_root = Path(__file__).resolve().parents[2]
-    for root in roots:
-        for path in root.rglob("*.py"):
-            rel = path.relative_to(repo_root)
-            offenders.extend(
-                f"{rel}: {imported}"
-                for imported in _imports_from(path, repo_root)
-                if imported is not None and _is_forbidden(imported, forbidden_prefixes)
-            )
+    offenders = [
+        record.describe()
+        for record in records
+        if record.imported.split(".", 1)[0] in owner_names
+    ]
     return sorted(offenders)
 
 
-def _is_forbidden(name: str, forbidden: tuple[str, ...]) -> bool:
-    """Match root modules (``import api``) and submodules (``import free_claude_code.api.x``)."""
-    for token in forbidden:
-        if not token:
-            continue
-        root = token.rstrip(".")
-        if name == root or name.startswith(f"{root}."):
-            return True
-    return False
-
-
-def _module_fqn_from_path(repo_root: Path, path: Path) -> str:
-    rel = path.relative_to(repo_root)
-    if rel.parts[:2] == _PACKAGE_ROOT.parts:
-        rel = Path("free_claude_code", *rel.parts[2:])
-    if rel.name == "__init__.py":
-        return ".".join(rel.parent.parts) if rel.parent != Path() else rel.parent.name
-    return ".".join(rel.with_suffix("").parts)
-
-
-def _importing_package_parts(repo_root: Path, path: Path) -> list[str]:
-    """Package in which this file's module lives (for relative imports)."""
-    rel = path.relative_to(repo_root)
-    if rel.name == "__init__.py":
-        return list(rel.parent.parts)
-    fqn = _module_fqn_from_path(repo_root, path)
-    parts = fqn.split(".")
-    if len(parts) <= 1:
-        return []
-    return parts[:-1]
-
-
-def _resolve_relative_import(
-    repo_root: Path, path: Path, node: ast.ImportFrom
-) -> str | None:
-    """Best-effort absolute name for ``from .x`` / ``from ..y`` (level >= 1)."""
-    if node.level == 0 and node.module:
-        return node.module
-    base = _importing_package_parts(repo_root, path)
-    for _ in range(node.level - 1):
-        if not base:
-            return None
-        base.pop()
-    if not node.module:
-        return ".".join(base) if base else None
-    return ".".join(base + node.module.split("."))
-
-
-def _imports_from(path: Path, repo_root: Path) -> list[str]:
-    tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
-    imports: list[str] = []
-    for node in ast.walk(tree):
-        if isinstance(node, ast.Import):
-            imports.extend(alias.name for alias in node.names)
-        elif isinstance(node, ast.ImportFrom):
-            if node.level == 0:
-                if node.module:
-                    imports.append(node.module)
-                continue
-            if node.module is not None:
-                resolved = _resolve_relative_import(repo_root, path, node)
-                if resolved:
-                    imports.append(resolved)
-            else:
-                base = _importing_package_parts(repo_root, path).copy()
-                for _ in range(node.level - 1):
-                    if base:
-                        base.pop()
-                for alias in node.names:
-                    if base:
-                        imports.append(".".join([*base, alias.name]))
-                    else:
-                        imports.append(alias.name)
-    return imports
-
-
-def _text_occurrences(repo_root: Path, needle: str) -> list[str]:
-    searchable_paths = [
-        repo_root / "src" / "free_claude_code" / "api",
-        repo_root / "src" / "free_claude_code" / "cli",
-        repo_root / "src" / "free_claude_code" / "config",
-        repo_root / "src" / "free_claude_code" / "core",
-        repo_root / "src" / "free_claude_code" / "messaging",
-        repo_root / "src" / "free_claude_code" / "providers",
-        repo_root / "src" / "free_claude_code" / "runtime",
-        repo_root / "smoke",
-        repo_root / "tests",
-        repo_root / ".env.example",
-        repo_root / "AGENTS.md",
-        repo_root / "README.md",
-        repo_root / "pyproject.toml",
+def _ancestor_facade_offenders(
+    records: list[ImportRecord],
+    packages: set[str],
+) -> list[str]:
+    offenders = [
+        record.describe()
+        for record in records
+        if record.imported in packages
+        and record.importer.startswith(f"{record.imported}.")
     ]
-    occurrences: list[str] = []
-    for root in searchable_paths:
-        paths = root.rglob("*") if root.is_dir() else (root,)
-        for path in paths:
-            if not path.is_file():
-                continue
-            try:
-                text = path.read_text(encoding="utf-8")
-            except UnicodeDecodeError:
-                continue
-            if needle in text:
-                occurrences.append(str(path.relative_to(repo_root)))
-    return sorted(occurrences)
+    return sorted(offenders)
+
+
+def _cyclic_components(graph: dict[str, set[str]]) -> list[tuple[str, ...]]:
+    index = 0
+    indices: dict[str, int] = {}
+    lowlinks: dict[str, int] = {}
+    stack: list[str] = []
+    on_stack: set[str] = set()
+    components: list[tuple[str, ...]] = []
+
+    def visit(node: str) -> None:
+        nonlocal index
+        indices[node] = index
+        lowlinks[node] = index
+        index += 1
+        stack.append(node)
+        on_stack.add(node)
+
+        for successor in sorted(graph[node]):
+            if successor not in indices:
+                visit(successor)
+                lowlinks[node] = min(lowlinks[node], lowlinks[successor])
+            elif successor in on_stack:
+                lowlinks[node] = min(lowlinks[node], indices[successor])
+
+        if lowlinks[node] != indices[node]:
+            return
+        component: list[str] = []
+        while True:
+            member = stack.pop()
+            on_stack.remove(member)
+            component.append(member)
+            if member == node:
+                break
+        if len(component) > 1 or node in graph[node]:
+            components.append(tuple(sorted(component)))
+
+    for node in sorted(graph):
+        if node not in indices:
+            visit(node)
+    return sorted(components)
+
+
+def _write_module(path: Path, text: str = "") -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text(text, encoding="utf-8")

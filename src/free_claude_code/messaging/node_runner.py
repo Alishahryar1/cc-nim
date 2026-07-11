@@ -18,9 +18,7 @@ from .platforms.ports import OutboundMessenger
 from .safe_diagnostics import format_exception_for_log
 from .session import SessionStore
 from .transcript import RenderCtx, TranscriptBuffer
-from .trees.manager import TreeQueueManager
-from .trees.snapshot import TreeSnapshot
-from .trees.transitions import CancellationReason, NodeClaim
+from .trees import CancellationReason, NodeClaim, TreeQueueManager, TreeSnapshot
 from .ui_updates import ThrottledTranscriptEditor
 
 
