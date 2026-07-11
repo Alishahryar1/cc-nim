@@ -75,9 +75,78 @@ async def test_messaging_commands_stop_clear_stats_e2e(
 
     sent_text = "\n".join(sent["text"] for sent in driver.platform.sent)
     assert "Stats" in sent_text
-    assert "Stopped" in sent_text
+    assert "Nothing to stop for that message" in sent_text
     assert driver.platform.deletes
     assert driver.session_store.load_conversation_snapshot().trees == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("platform_name", ["discord", "telegram"])
+async def test_messaging_active_stop_uses_status_only_e2e(
+    platform_name: str,
+    tmp_path,
+    monkeypatch,
+) -> None:
+    driver = FakePlatformDriver(platform_name, tmp_path)
+    started = asyncio.Event()
+
+    class GatedActiveSession(FakeCLISession):
+        async def start_task(
+            self,
+            prompt: str,
+            session_id: str | None = None,
+            fork_session: bool = False,
+        ):
+            self.calls.append(
+                {
+                    "prompt": prompt,
+                    "session_id": session_id,
+                    "fork_session": fork_session,
+                }
+            )
+            self.is_busy = True
+            try:
+                yield {
+                    "type": "assistant",
+                    "message": {
+                        "content": [{"type": "text", "text": "partial answer"}]
+                    },
+                }
+                started.set()
+                await asyncio.Event().wait()
+            finally:
+                self.is_busy = False
+
+    async def controlled_session(session_id: str | None = None):
+        session = GatedActiveSession([])
+        driver.cli_manager.sessions.append(session)
+        return session, session_id or "pending_0", session_id is None
+
+    monkeypatch.setattr(
+        driver.cli_manager,
+        "get_or_create_session",
+        controlled_session,
+    )
+    root = await driver.emit("active work", message_id="root_active")
+    await started.wait()
+    status_id = driver.platform.sent[-1]["message_id"]
+    sent_before_stop = len(driver.platform.sent)
+
+    await driver.emit(
+        "/stop",
+        message_id="stop_active",
+        reply_to=root.message_id,
+    )
+    await driver.wait_for_idle()
+
+    assert len(driver.platform.sent) == sent_before_stop
+    stopped_edits = [
+        edit
+        for edit in driver.platform.edits
+        if edit["message_id"] == status_id and "Stopped" in edit["text"]
+    ]
+    assert stopped_edits
+    assert "partial answer" in stopped_edits[-1]["text"]
 
 
 @pytest.mark.asyncio
@@ -156,16 +225,19 @@ async def test_messaging_queued_scoped_cancel_e2e(
         message_id="cancelled",
         reply_to=root.message_id,
     )
+    cancelled_status_id = driver.platform.sent[-1]["message_id"]
     survivor = await driver.emit(
         "run me",
         message_id="survivor",
         reply_to=root.message_id,
     )
+    sent_before_stop = len(driver.platform.sent)
     await driver.emit(
         "/stop",
         message_id="stop-cancelled",
         reply_to=cancelled.message_id,
     )
+    assert len(driver.platform.sent) == sent_before_stop
 
     release_root.set()
     await driver.wait_for_idle()
@@ -195,6 +267,10 @@ async def test_messaging_queued_scoped_cancel_e2e(
     assert "position 1" in rendered
     assert "position 2" in rendered
     assert "Stopped" in rendered
+    assert any(
+        edit["message_id"] == cancelled_status_id and "Stopped" in edit["text"]
+        for edit in driver.platform.edits
+    )
     driver.session_store.flush_pending_save()
     persisted = driver.session_store.load_conversation_snapshot()
     root_identity = TreeIdentity(scope=root.scope, root_id=root.message_id)
@@ -272,6 +348,7 @@ async def test_voice_platform_fake_e2e(platform_name: str, tmp_path) -> None:
     await driver.send("/clear", message_id="clear_voice", reply_to="voice_msg_1")
 
     driver.platform.seed_pending_voice("chat_1", "voice_msg_2", "voice_status_2")
+    sent_before_stop = len(driver.platform.sent)
     await driver.send("/stop", message_id="stop_voice")
 
     deleted = {entry["message_id"] for entry in driver.platform.deletes}
@@ -279,4 +356,8 @@ async def test_voice_platform_fake_e2e(platform_name: str, tmp_path) -> None:
     assert driver.platform.pending_voice_count == 0
     sent_text = "\n".join(sent["text"] for sent in driver.platform.sent)
     assert "Voice note cancelled" in sent_text
-    assert "Cancelled 1 pending or active requests" in sent_text
+    assert len(driver.platform.sent) == sent_before_stop
+    assert any(
+        edit["message_id"] == "voice_status_2" and "Stopped" in edit["text"]
+        for edit in driver.platform.edits
+    )

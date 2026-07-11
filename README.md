@@ -312,7 +312,9 @@ Configure integrations from **Admin UI → Messaging**, then click **Validate** 
 Bot commands: standalone `/stop` cancels all work, standalone `/clear` resets all
 sessions, and `/stats` shows session state. Reply with `/stop` to cancel only
 that request while other queued requests continue. Reply with `/clear` to
-remove that conversation branch.
+remove that conversation branch. A successful stop updates the affected task
+status instead of posting a second confirmation message. A no-op, or a global
+stop whose affected statuses are in another chat, still replies explicitly.
 
 <details>
 <summary><strong>Voice notes</strong></summary>

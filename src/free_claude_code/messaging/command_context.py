@@ -17,6 +17,23 @@ class ReplyClearResult:
     tree_cleared: bool
 
 
+@dataclass(frozen=True, slots=True)
+class StopOutcome:
+    """Customer-facing stop result after terminal status ownership is assigned."""
+
+    cancelled_count: int
+    status_feedback_scopes: frozenset[MessageScope]
+    fallback_required: bool
+
+    def requires_confirmation(self, scope: MessageScope) -> bool:
+        """Return whether this scope lacks complete terminal status feedback."""
+        return (
+            self.cancelled_count == 0
+            or self.fallback_required
+            or self.status_feedback_scopes != frozenset({scope})
+        )
+
+
 class MessagingCommandContext(Protocol):
     """Operations commands need from the messaging workflow."""
 
@@ -31,7 +48,7 @@ class MessagingCommandContext(Protocol):
         """Return the render context for command output."""
         ...
 
-    async def stop_all_tasks(self) -> int:
+    async def stop_all_tasks(self) -> StopOutcome:
         """Stop every pending or active messaging task."""
         ...
 
@@ -39,7 +56,7 @@ class MessagingCommandContext(Protocol):
         self,
         scope: MessageScope,
         reply_id: str,
-    ) -> int | None:
+    ) -> StopOutcome:
         """Stop the exact voice/tree owner of a replied-to message."""
         ...
 
@@ -79,4 +96,4 @@ class MessagingCommandContext(Protocol):
         ...
 
 
-__all__ = ["MessagingCommandContext", "ReplyClearResult"]
+__all__ = ["MessagingCommandContext", "ReplyClearResult", "StopOutcome"]

@@ -9,56 +9,62 @@ from .command_context import MessagingCommandContext
 from .models import IncomingMessage
 
 
-async def handle_stop_command(
-    handler: MessagingCommandContext, incoming: IncomingMessage
+async def _send_stop_feedback(
+    handler: MessagingCommandContext,
+    incoming: IncomingMessage,
+    suffix: str,
 ) -> None:
-    """Handle /stop command from messaging platform."""
-    # Reply-scoped stop: reply "/stop" to stop only that task.
-    if incoming.is_reply() and incoming.reply_to_message_id:
-        count = await handler.stop_reply(
-            incoming.scope,
-            incoming.reply_to_message_id,
-        )
-
-        if count is None:
-            msg_id = await handler.outbound.queue_send_message(
-                incoming.chat_id,
-                handler.format_status(
-                    "⏹", "Stopped.", "Nothing to stop for that message."
-                ),
-                fire_and_forget=False,
-                message_thread_id=incoming.message_thread_id,
-            )
-            handler.record_outgoing_message(
-                incoming.platform, incoming.chat_id, msg_id, "command"
-            )
-            return
-
-        noun = "request" if count == 1 else "requests"
-        msg_id = await handler.outbound.queue_send_message(
-            incoming.chat_id,
-            handler.format_status("⏹", "Stopped.", f"Cancelled {count} {noun}."),
-            fire_and_forget=False,
-            message_thread_id=incoming.message_thread_id,
-        )
-        handler.record_outgoing_message(
-            incoming.platform, incoming.chat_id, msg_id, "command"
-        )
-        return
-
-    # Global stop: legacy behavior (stop everything)
-    count = await handler.stop_all_tasks()
+    """Send stop feedback only when no existing status can represent the result."""
     msg_id = await handler.outbound.queue_send_message(
         incoming.chat_id,
-        handler.format_status(
-            "⏹", "Stopped.", f"Cancelled {count} pending or active requests."
-        ),
+        handler.format_status("⏹", "Stopped.", suffix),
         fire_and_forget=False,
         message_thread_id=incoming.message_thread_id,
     )
     handler.record_outgoing_message(
         incoming.platform, incoming.chat_id, msg_id, "command"
     )
+
+
+async def handle_stop_command(
+    handler: MessagingCommandContext, incoming: IncomingMessage
+) -> None:
+    """Handle /stop command from messaging platform."""
+    # Reply-scoped stop: reply "/stop" to stop only that task.
+    if incoming.is_reply() and incoming.reply_to_message_id:
+        outcome = await handler.stop_reply(
+            incoming.scope,
+            incoming.reply_to_message_id,
+        )
+
+        if outcome.cancelled_count == 0:
+            await _send_stop_feedback(
+                handler,
+                incoming,
+                "Nothing to stop for that message.",
+            )
+            return
+
+        if outcome.requires_confirmation(incoming.scope):
+            noun = "request" if outcome.cancelled_count == 1 else "requests"
+            await _send_stop_feedback(
+                handler,
+                incoming,
+                f"Cancelled {outcome.cancelled_count} {noun}.",
+            )
+        return
+
+    # Global stop: legacy behavior (stop everything)
+    outcome = await handler.stop_all_tasks()
+    if outcome.cancelled_count == 0:
+        await _send_stop_feedback(handler, incoming, "Nothing to stop.")
+    elif outcome.requires_confirmation(incoming.scope):
+        noun = "request" if outcome.cancelled_count == 1 else "requests"
+        await _send_stop_feedback(
+            handler,
+            incoming,
+            f"Cancelled {outcome.cancelled_count} pending or active {noun}.",
+        )
 
 
 async def handle_stats_command(

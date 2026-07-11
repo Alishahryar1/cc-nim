@@ -3,7 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, call, patch
 
 import pytest
 
-from free_claude_code.messaging.command_context import ReplyClearResult
+from free_claude_code.messaging.command_context import ReplyClearResult, StopOutcome
 from free_claude_code.messaging.models import MessageScope
 from free_claude_code.messaging.session import SessionStore
 from free_claude_code.messaging.trees import (
@@ -26,6 +26,16 @@ from free_claude_code.messaging.voice import VoiceCancellationResult
 from free_claude_code.messaging.workflow import MessagingWorkflow
 
 _SCOPE = MessageScope(platform="telegram", chat_id="chat_1")
+_OTHER_SCOPE = MessageScope(platform="telegram", chat_id="other_chat")
+
+
+def _stop_outcome(
+    cancelled_count: int,
+    *,
+    scopes: frozenset[MessageScope] = frozenset({_SCOPE}),
+    fallback_required: bool = False,
+) -> StopOutcome:
+    return StopOutcome(cancelled_count, scopes, fallback_required)
 
 
 async def _event_stream(events):
@@ -126,20 +136,83 @@ def test_initial_status_uses_immutable_reply_advice(handler, target, expected):
 
 
 @pytest.mark.asyncio
-async def test_handle_message_stop_command(
+async def test_global_stop_success_uses_existing_status_without_confirmation(
     handler, mock_platform, incoming_message_factory
 ):
     incoming = incoming_message_factory(text="/stop")
-    handler.stop_all_tasks = AsyncMock(return_value=5)
+    handler.stop_all_tasks = AsyncMock(return_value=_stop_outcome(5))
 
     await handler.handle_message(incoming)
 
     handler.stop_all_tasks.assert_awaited_once()
+    mock_platform.queue_send_message.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "status_feedback_scopes",
+    (
+        frozenset({_OTHER_SCOPE}),
+        frozenset({_SCOPE, _OTHER_SCOPE}),
+    ),
+    ids=("remote-only", "mixed-local-and-remote"),
+)
+async def test_global_stop_reports_cross_chat_work(
+    handler,
+    mock_platform,
+    incoming_message_factory,
+    status_feedback_scopes: frozenset[MessageScope],
+) -> None:
+    incoming = incoming_message_factory(text="/stop")
+    handler.stop_all_tasks = AsyncMock(
+        return_value=_stop_outcome(2, scopes=status_feedback_scopes)
+    )
+
+    await handler.handle_message(incoming)
+
+    assert (
+        "Cancelled 2 pending or active requests"
+        in mock_platform.queue_send_message.call_args.args[1]
+    )
+
+
+@pytest.mark.asyncio
+async def test_global_stop_noop_reports_nothing_to_stop(
+    handler, mock_platform, incoming_message_factory
+) -> None:
+    incoming = incoming_message_factory(text="/stop")
+    handler.stop_all_tasks = AsyncMock(
+        return_value=_stop_outcome(0, scopes=frozenset())
+    )
+
+    await handler.handle_message(incoming)
+
     mock_platform.queue_send_message.assert_awaited_once_with(
         incoming.chat_id,
-        "⏹ *Stopped\\.* Cancelled 5 pending or active requests\\.",
+        "⏹ *Stopped\\.* Nothing to stop\\.",
         fire_and_forget=False,
         message_thread_id=None,
+    )
+
+
+@pytest.mark.asyncio
+async def test_global_stop_without_status_target_sends_fallback_confirmation(
+    handler, mock_platform, incoming_message_factory
+) -> None:
+    incoming = incoming_message_factory(text="/stop")
+    handler.stop_all_tasks = AsyncMock(
+        return_value=_stop_outcome(
+            1,
+            scopes=frozenset(),
+            fallback_required=True,
+        )
+    )
+
+    await handler.handle_message(incoming)
+
+    assert (
+        "Cancelled 1 pending or active request"
+        in mock_platform.queue_send_message.call_args.args[1]
     )
 
 
@@ -162,8 +235,8 @@ async def test_failed_global_stop_never_reports_success(
 async def test_reply_stop_resolves_and_stops_only_target(
     handler, mock_platform, mock_cli_manager, incoming_message_factory
 ):
-    handler.stop_reply = AsyncMock(return_value=1)
-    handler.stop_all_tasks = AsyncMock(return_value=999)
+    handler.stop_reply = AsyncMock(return_value=_stop_outcome(1))
+    handler.stop_all_tasks = AsyncMock(return_value=_stop_outcome(999))
     incoming = incoming_message_factory(
         text="/stop",
         message_id="stop_msg",
@@ -175,15 +248,15 @@ async def test_reply_stop_resolves_and_stops_only_target(
     handler.stop_reply.assert_awaited_once_with(incoming.scope, "status_root")
     handler.stop_all_tasks.assert_not_awaited()
     mock_cli_manager.stop_all.assert_not_awaited()
-    assert "Cancelled 1 request" in mock_platform.queue_send_message.call_args.args[1]
+    mock_platform.queue_send_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio
 async def test_reply_stop_unknown_does_not_stop_all(
     handler, mock_platform, mock_cli_manager, incoming_message_factory
 ):
-    handler.stop_reply = AsyncMock(return_value=None)
-    handler.stop_all_tasks = AsyncMock(return_value=5)
+    handler.stop_reply = AsyncMock(return_value=_stop_outcome(0, scopes=frozenset()))
+    handler.stop_all_tasks = AsyncMock(return_value=_stop_outcome(5))
     incoming = incoming_message_factory(
         text="/stop",
         message_id="stop_msg",
@@ -221,9 +294,32 @@ async def test_reply_stop_cancels_voice_when_no_tree_was_admitted(
     await handler.handle_message(incoming)
     await asyncio.sleep(0)
 
-    assert "Cancelled 1 request" in mock_platform.queue_send_message.call_args.args[1]
+    mock_platform.queue_send_message.assert_not_awaited()
     assert mock_platform.queue_edit_message.call_args.args[1] == "voice_status"
     assert "Stopped" in mock_platform.queue_edit_message.call_args.args[2]
+
+
+@pytest.mark.asyncio
+async def test_reply_stop_without_voice_status_sends_fallback_confirmation(
+    handler,
+    mock_platform,
+    incoming_message_factory,
+) -> None:
+    mock_platform.cancel_pending_voice.return_value = VoiceCancellationResult(
+        scope=_SCOPE,
+        voice_message_id="voice",
+        status_message_id=None,
+    )
+    incoming = incoming_message_factory(
+        text="/stop",
+        message_id="stop_msg",
+        reply_to_message_id="voice",
+    )
+
+    await handler.handle_message(incoming)
+
+    assert "Cancelled 1 request" in mock_platform.queue_send_message.call_args.args[1]
+    mock_platform.queue_edit_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -286,8 +382,7 @@ async def test_reply_stop_resolves_tree_after_joining_voice_handoff(
         reason=CancellationReason.STOP,
     )
     assert events == ["voice", "tree"]
-    assert "Nothing to stop" not in mock_platform.queue_send_message.call_args.args[1]
-    assert "Cancelled 1 request" in mock_platform.queue_send_message.call_args.args[1]
+    mock_platform.queue_send_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -615,10 +710,10 @@ async def test_stop_all_applies_immutable_ui_ownership_and_snapshots(
         "cancel_all",
         AsyncMock(return_value=result),
     ) as cancel_all:
-        count = await handler.stop_all_tasks()
+        outcome = await handler.stop_all_tasks()
     await asyncio.sleep(0)
 
-    assert count == 2
+    assert outcome == _stop_outcome(2)
     cancel_all.assert_awaited_once_with(reason=CancellationReason.STOP)
     mock_cli_manager.stop_all.assert_awaited_once()
     assert mock_platform.fire_and_forget.call_count == 1
@@ -636,7 +731,7 @@ async def test_stop_all_joins_voices_before_tree_transaction_and_deduplicates(
     voice = VoiceCancellationResult(
         scope=_SCOPE,
         voice_message_id="voice",
-        status_message_id="voice_status",
+        status_message_id=None,
     )
     tree_result = CancellationResult(
         effects=(
@@ -646,7 +741,7 @@ async def test_stop_all_joins_voices_before_tree_transaction_and_deduplicates(
                     node_id="voice",
                     status_message_id="voice_status",
                 ),
-                ui_owner=CancellationUiOwner.RUNNER,
+                ui_owner=CancellationUiOwner.WORKFLOW,
             ),
         )
     )
@@ -664,10 +759,10 @@ async def test_stop_all_joins_voices_before_tree_transaction_and_deduplicates(
 
     mock_platform.cancel_all_pending_voices.side_effect = cancel_voices
     with patch.object(handler.tree_queue, "cancel_all", side_effect=cancel_trees):
-        count = await handler.stop_all_tasks()
+        outcome = await handler.stop_all_tasks()
     await asyncio.sleep(0)
 
-    assert count == 1
+    assert outcome == _stop_outcome(1)
     assert events == ["voices", "trees"]
     mock_cli_manager.stop_all.assert_awaited_once()
     mock_platform.queue_edit_message.assert_awaited_once()

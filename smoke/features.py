@@ -441,7 +441,7 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     ),
     FeatureCoverage(
         "messaging_commands",
-        "Messaging /stop, /clear, and /stats operate on product state",
+        "Messaging commands mutate state with task-status-owned stop feedback",
         "public_surface",
         (
             "tests/messaging/test_handler.py",
@@ -451,6 +451,7 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         (),
         (
             "test_messaging_commands_stop_clear_stats_e2e",
+            "test_messaging_active_stop_uses_status_only_e2e",
             "test_messaging_queued_scoped_cancel_e2e",
         ),
         ("messaging",),

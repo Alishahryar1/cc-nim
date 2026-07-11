@@ -263,8 +263,8 @@ class ApplicationRuntime:
 
     async def stop_all(self) -> StopResult | None:
         if self._messaging_workflow is not None:
-            count = await self._messaging_workflow.stop_all_tasks()
-            return StopResult(cancelled_count=count)
+            outcome = await self._messaging_workflow.stop_all_tasks()
+            return StopResult(cancelled_count=outcome.cancelled_count)
         if self._cli_manager is not None:
             await self._cli_manager.stop_all()
             return StopResult(source="cli_manager")

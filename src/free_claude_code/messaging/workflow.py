@@ -8,7 +8,7 @@ from loguru import logger
 
 from free_claude_code.core.trace import trace_event
 
-from .command_context import ReplyClearResult
+from .command_context import ReplyClearResult, StopOutcome
 from .managed_protocols import ManagedClaudeSessionManagerProtocol
 from .models import IncomingMessage, MessageScope
 from .node_runner import MessagingNodeRunner
@@ -56,6 +56,28 @@ async def _finish_owned_operation[T](
     if cancellation is not None:
         raise cancellation
     return result
+
+
+def _stop_outcome(
+    voices: tuple[VoiceCancellationResult, ...],
+    cancellation: CancellationResult,
+) -> StopOutcome:
+    """Summarize distinct stopped owners and whether existing status UI covers them."""
+    status_coverage: dict[tuple[MessageScope, str], bool] = {}
+    for voice in voices:
+        key = (voice.scope, voice.voice_message_id)
+        status_coverage[key] = (
+            status_coverage.get(key, False) or voice.status_message_id is not None
+        )
+    for effect in cancellation.effects:
+        status_coverage[(effect.node.scope, effect.node.node_id)] = True
+    return StopOutcome(
+        cancelled_count=len(status_coverage),
+        status_feedback_scopes=frozenset(
+            scope for (scope, _owner_id), covered in status_coverage.items() if covered
+        ),
+        fallback_required=any(not covered for covered in status_coverage.values()),
+    )
 
 
 class MessagingWorkflow:
@@ -268,7 +290,7 @@ class MessagingWorkflow:
         self,
         scope: MessageScope,
         reply_id: str,
-    ) -> int | None:
+    ) -> StopOutcome:
         """Stop the exact voice/tree owner of one replied-to message."""
         return await _finish_owned_operation(
             self._stop_reply(scope, reply_id),
@@ -279,7 +301,7 @@ class MessagingWorkflow:
         self,
         scope: MessageScope,
         reply_id: str,
-    ) -> int | None:
+    ) -> StopOutcome:
         voice_result = await self._cancel_pending_voice(scope, reply_id)
         if voice_result is not None:
             self.render_voice_stopped(voice_result)
@@ -287,7 +309,8 @@ class MessagingWorkflow:
         async with self._state_lock:
             node_id = await self._tree_queue.resolve_node_id(scope, reply_id)
             if node_id is None:
-                return 1 if voice_result is not None else None
+                voices = (voice_result,) if voice_result is not None else ()
+                return _stop_outcome(voices, CancellationResult())
             result = await self._tree_queue.cancel_node(
                 scope,
                 node_id,
@@ -295,10 +318,8 @@ class MessagingWorkflow:
             )
             self._apply_cancellation_result(result)
 
-        owners = {(effect.node.scope, effect.node.node_id) for effect in result.effects}
-        if voice_result is not None:
-            owners.add((voice_result.scope, voice_result.voice_message_id))
-        return len(owners)
+        voices = (voice_result,) if voice_result is not None else ()
+        return _stop_outcome(voices, result)
 
     async def clear_reply(
         self,
@@ -343,14 +364,14 @@ class MessagingWorkflow:
             tree_cleared=True,
         )
 
-    async def stop_all_tasks(self) -> int:
+    async def stop_all_tasks(self) -> StopOutcome:
         """Stop every pending and active messaging task."""
         return await _finish_owned_operation(
             self._stop_all_tasks(),
             name="messaging-stop-all",
         )
 
-    async def _stop_all_tasks(self) -> int:
+    async def _stop_all_tasks(self) -> StopOutcome:
         voice_results = await self._cancel_all_pending_voices()
         for voice in voice_results:
             self.render_voice_stopped(voice)
@@ -362,13 +383,7 @@ class MessagingWorkflow:
             self._apply_cancellation_result(result)
             logger.info("Stopping all CLI sessions...")
             await self.cli_manager.stop_all()
-            tree_keys = {
-                (effect.node.scope, effect.node.node_id) for effect in result.effects
-            }
-            voice_keys = {
-                (voice.scope, voice.voice_message_id) for voice in voice_results
-            }
-            return len(tree_keys | voice_keys)
+            return _stop_outcome(voice_results, result)
 
     async def clear_all_state(self, platform: str, chat_id: str) -> frozenset[str]:
         """Clear FCC state atomically with respect to later turn admission."""

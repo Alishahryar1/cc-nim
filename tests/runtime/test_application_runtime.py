@@ -7,6 +7,7 @@ import pytest
 import free_claude_code.messaging.session.persistence as persistence_module
 from free_claude_code.config.admin.persistence import PreparedAdminUpdate
 from free_claude_code.config.settings import Settings
+from free_claude_code.messaging.command_context import StopOutcome
 from free_claude_code.messaging.platforms.ports import (
     InboundMessageHandler,
     MessagingPlatformComponents,
@@ -152,6 +153,28 @@ def _applied_response(pending_fields: tuple[str, ...] = ()) -> dict[str, object]
         "path": ".env",
         "pending_fields": list(pending_fields),
     }
+
+
+@pytest.mark.asyncio
+async def test_stop_all_maps_messaging_outcome_to_application_count() -> None:
+    manager = ProviderRuntimeManager(_settings("nvidia_nim/model"))
+    runtime = ApplicationRuntime(manager, transcriber=None)
+    workflow = MagicMock()
+    workflow.stop_all_tasks = AsyncMock(
+        return_value=StopOutcome(
+            cancelled_count=3,
+            status_feedback_scopes=frozenset(),
+            fallback_required=False,
+        )
+    )
+    runtime._messaging_workflow = workflow
+
+    result = await runtime.stop_all()
+
+    assert result is not None
+    assert result.cancelled_count == 3
+    workflow.stop_all_tasks.assert_awaited_once()
+    await manager.close()
 
 
 @pytest.mark.asyncio

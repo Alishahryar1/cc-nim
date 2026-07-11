@@ -3,6 +3,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from free_claude_code.messaging.command_context import StopOutcome
 from free_claude_code.messaging.models import IncomingMessage, MessageScope
 from free_claude_code.messaging.node_event_pipeline import process_parsed_cli_event
 from free_claude_code.messaging.rendering.telegram_markdown import (
@@ -283,8 +284,12 @@ async def test_stop_all_tasks_saves_tree_for_cancelled_nodes():
         "cancel_all",
         cancel_all,
     ):
-        count = await handler.stop_all_tasks()
-    assert count == 1
+        outcome = await handler.stop_all_tasks()
+    assert outcome == StopOutcome(
+        cancelled_count=1,
+        status_feedback_scopes=frozenset({_SCOPE}),
+        fallback_required=False,
+    )
     cancel_all.assert_awaited_once_with(reason=CancellationReason.STOP)
     cli_manager.stop_all.assert_awaited_once()
     session_store.save_tree_snapshot.assert_called_once_with(snapshot)
