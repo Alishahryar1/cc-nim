@@ -134,6 +134,100 @@ async def test_cancelled_runner_exception_cannot_fail_or_skip_queued_claim() -> 
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "operation",
+    ["global_stop", "global_clear", "branch_clear"],
+)
+async def test_terminal_operation_serializes_with_successor_task_publication(
+    monkeypatch: pytest.MonkeyPatch,
+    operation: str,
+) -> None:
+    root_started = asyncio.Event()
+    release_root = asyncio.Event()
+    successor_selected = asyncio.Event()
+    release_successor_publication = asyncio.Event()
+    child_started = asyncio.Event()
+    child_exited = asyncio.Event()
+    release_child = asyncio.Event()
+
+    async def process(claim: NodeClaim) -> None:
+        if claim.node.node_id == "root":
+            root_started.set()
+            await release_root.wait()
+            return
+        child_started.set()
+        try:
+            await release_child.wait()
+        finally:
+            child_exited.set()
+
+    manager = TreeQueueManager(process)
+    root = await manager.admit(_incoming("root"), "status-root")
+    assert root.claim is not None
+    await root_started.wait()
+    await manager.admit(
+        _incoming("child", reply_to="root"),
+        "status-child",
+        parent_node_id="root",
+    )
+    tree = manager._repository.get_tree(root.claim.identity)
+    assert tree is not None
+    original_finish = tree.finish_and_claim_next
+
+    async def pause_after_successor_selection(claim_id: str):
+        completion = await original_finish(claim_id)
+        if completion.next_claim is not None:
+            successor_selected.set()
+            await release_successor_publication.wait()
+        return completion
+
+    monkeypatch.setattr(
+        tree,
+        "finish_and_claim_next",
+        pause_after_successor_selection,
+    )
+    operation_task: asyncio.Task | None = None
+    try:
+        release_root.set()
+        await successor_selected.wait()
+        if operation == "global_stop":
+            operation_task = asyncio.create_task(
+                manager.cancel_all(reason=CancellationReason.STOP)
+            )
+        elif operation == "global_clear":
+            operation_task = asyncio.create_task(
+                manager.clear_all(reason=CancellationReason.STOP)
+            )
+        else:
+            operation_task = asyncio.create_task(
+                manager.remove_branch(
+                    _SCOPE,
+                    "root",
+                    reason=CancellationReason.STOP,
+                )
+            )
+        for _ in range(5):
+            await asyncio.sleep(0)
+            if operation_task.done():
+                break
+
+        assert not operation_task.done()
+    finally:
+        release_successor_publication.set()
+        try:
+            if operation_task is not None:
+                await operation_task
+        finally:
+            release_child.set()
+            await _wait_for_no_tasks(manager)
+
+    assert manager.get_tree_count() == (1 if operation == "global_stop" else 0)
+    assert manager.task_count() == 0
+    if child_started.is_set():
+        assert child_exited.is_set()
+
+
+@pytest.mark.asyncio
 async def test_duplicate_admission_is_rejected_and_processed_once() -> None:
     started = asyncio.Event()
     release = asyncio.Event()

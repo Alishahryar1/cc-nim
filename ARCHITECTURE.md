@@ -867,10 +867,13 @@ mutable `MessageNode`, lock, or `asyncio.Task`.
 tree facade. It keeps one structural lock across aggregate membership changes
 and repository index publication/removal, registers node and status references
 together under `MessageScope`, coordinates cross-tree requests, and returns
-transition-owned snapshots. Cancellation and removal entrypoints finish their
-exact transition despite caller cancellation, so a committed detach cannot lose
-its UI or persistence result. Reply `/clear` is one cancel-and-detach transition
-before platform I/O; global clear atomically detaches every aggregate before
+transition-owned snapshots. Claim completion re-enters that same lock: the
+manager verifies the exact aggregate is still published and publishes any
+successor task slot before a competing detach can commit. Cancellation and
+removal entrypoints finish their exact transition despite caller cancellation,
+so a committed detach cannot lose its UI or persistence result. Reply `/clear`
+is one cancel-and-detach transition before platform I/O; global clear atomically
+detaches every aggregate before
 task draining. Reply `/stop` cancels exactly one request; its matching finisher
 releases execution ownership and advances the next eligible queued request.
 Global `/stop` drains every queue instead, and reply `/clear` removes the whole

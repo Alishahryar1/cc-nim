@@ -17,6 +17,7 @@ NodeProcessor = Callable[[NodeClaim], Awaitable[None]]
 QueueUpdateCallback = Callable[[tuple[QueueEntry, ...]], Awaitable[None]]
 NodeStartedCallback = Callable[[NodeClaim], Awaitable[None]]
 ClaimFailureCallback = Callable[[NodeClaim], Awaitable[None]]
+ClaimFinishedCallback = Callable[[MessageTree, NodeClaim], Awaitable[None]]
 
 
 @dataclass(slots=True)
@@ -47,11 +48,13 @@ class TreeQueueProcessor:
         node_processor: NodeProcessor,
         *,
         claim_failure_callback: ClaimFailureCallback,
+        claim_finished_callback: ClaimFinishedCallback,
         queue_update_callback: QueueUpdateCallback | None = None,
         node_started_callback: NodeStartedCallback | None = None,
     ) -> None:
         self._node_processor = node_processor
         self._claim_failure_callback = claim_failure_callback
+        self._claim_finished_callback = claim_finished_callback
         self._queue_update_callback = queue_update_callback
         self._node_started_callback = node_started_callback
         self._tasks: dict[str, _TaskSlot] = {}
@@ -176,7 +179,7 @@ class TreeQueueProcessor:
                 current.uncancel()
         while True:
             try:
-                completion = await slot.tree.finish_and_claim_next(slot.claim.claim_id)
+                await self._claim_finished_callback(slot.tree, slot.claim)
                 break
             except asyncio.CancelledError:
                 if current is not None:
@@ -186,13 +189,6 @@ class TreeQueueProcessor:
 
         slot.transitioned = True
         self._tasks.pop(self._key(slot.claim), None)
-        if completion.next_claim is not None:
-            self.launch(
-                slot.tree,
-                completion.next_claim,
-                announce_started=True,
-                queue=completion.queue,
-            )
 
     def cancel(
         self,

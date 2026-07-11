@@ -91,13 +91,14 @@ class TreeQueueManager:
         _restored_stale_targets: tuple[NodeUiTarget, ...] = (),
     ) -> None:
         self._repository = _repository or TreeRepository()
+        self._lock = asyncio.Lock()
         self._processor = TreeQueueProcessor(
             node_processor,
             claim_failure_callback=self._handle_processor_failure,
+            claim_finished_callback=self._finish_claim,
             queue_update_callback=queue_update_callback,
             node_started_callback=node_started_callback,
         )
-        self._lock = asyncio.Lock()
         self._restored_snapshot = _restored_snapshot
         self._restored_stale_targets = _restored_stale_targets
         self._unexpected_failure_callback = unexpected_failure_callback
@@ -274,6 +275,19 @@ class TreeQueueManager:
                 "Unexpected messaging failure callback failed: {}",
                 type(exc).__name__,
             )
+
+    async def _finish_claim(self, tree: MessageTree, claim: NodeClaim) -> None:
+        """Serialize successor task publication with aggregate detachment."""
+        async with self._lock:
+            tree_is_published = self._repository.get_tree(claim.identity) is tree
+            completion = await tree.finish_and_claim_next(claim.claim_id)
+            if tree_is_published and completion.next_claim is not None:
+                self._processor.launch(
+                    tree,
+                    completion.next_claim,
+                    announce_started=True,
+                    queue=completion.queue,
+                )
 
     @staticmethod
     def _external_effects(
