@@ -12,7 +12,11 @@ from .command_context import ReplyClearResult, StopOutcome
 from .managed_protocols import ManagedClaudeSessionManagerProtocol
 from .models import IncomingMessage, MessageScope
 from .node_runner import MessagingNodeRunner
-from .platforms.ports import OutboundMessenger, VoiceCancellation
+from .platforms.ports import (
+    MessagingStartupNotice,
+    OutboundMessenger,
+    VoiceCancellation,
+)
 from .rendering.profiles import build_rendering_profile
 from .safe_diagnostics import format_exception_for_log
 from .session import SessionStore
@@ -105,6 +109,7 @@ class MessagingWorkflow:
         self._rendering_profile = build_rendering_profile(self.platform_name)
         self._state_lock = asyncio.Lock()
         self._admission_epoch = 0
+        self._clear_generation = 0
         self._pending_restored_status_targets: tuple[NodeUiTarget, ...] = ()
 
         self._tree_queue: TreeQueueManager
@@ -209,6 +214,109 @@ class MessagingWorkflow:
                     target.node_id,
                     type(exc).__name__,
                 )
+
+    async def publish_startup_notice(self, notice: MessagingStartupNotice) -> None:
+        """Publish one notice, then transfer its receipt to clear ownership."""
+        async with self._state_lock:
+            clear_generation = self._clear_generation
+
+        try:
+            message_id = await self.outbound.queue_send_message(
+                notice.chat_id,
+                self.format_status(
+                    "🚀",
+                    "Claude Code Proxy is online!",
+                    f"({notice.transport_label})",
+                ),
+                parse_mode=self._parse_mode(),
+                fire_and_forget=False,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Could not publish messaging startup notice: {}",
+                format_exception_for_log(
+                    exc,
+                    log_full_message=self._log_messaging_error_details,
+                ),
+            )
+            return
+
+        if not message_id:
+            return
+
+        publisher_task = asyncio.current_task()
+        await _finish_owned_operation(
+            self._finalize_startup_notice(
+                notice,
+                message_id,
+                clear_generation,
+                publisher_task,
+            ),
+            name="messaging-finalize-startup-notice",
+        )
+
+    async def _finalize_startup_notice(
+        self,
+        notice: MessagingStartupNotice,
+        message_id: str,
+        clear_generation: int,
+        publisher_task: asyncio.Task[Any] | None,
+    ) -> None:
+        """Commit one delivery receipt or compensate it outside the state lock."""
+        async with self._state_lock:
+            must_discard = (
+                publisher_task is not None and publisher_task.cancelling() > 0
+            ) or clear_generation != self._clear_generation
+            if not must_discard:
+                must_discard = not self.record_outgoing_message(
+                    self.platform_name,
+                    notice.chat_id,
+                    message_id,
+                    "startup",
+                )
+
+        if must_discard:
+            await self._discard_startup_notice(notice.chat_id, message_id)
+
+    async def _discard_startup_notice(
+        self,
+        chat_id: str,
+        message_id: str,
+    ) -> None:
+        """Delete an uncommitted notice or retain its ID for a later clear."""
+        try:
+            await self.outbound.queue_delete_messages(
+                chat_id,
+                [message_id],
+                fire_and_forget=False,
+            )
+        except Exception as exc:
+            logger.warning(
+                "Could not discard messaging startup notice: {}",
+                format_exception_for_log(
+                    exc,
+                    log_full_message=self._log_messaging_error_details,
+                ),
+            )
+            async with self._state_lock:
+                tracked = self.record_outgoing_message(
+                    self.platform_name,
+                    chat_id,
+                    message_id,
+                    "startup",
+                )
+            if not tracked:
+                logger.warning(
+                    "Messaging startup notice could neither be deleted nor tracked"
+                )
+            return
+
+        async with self._state_lock:
+            self.forget_message_ids(
+                self.platform_name,
+                chat_id,
+                {message_id},
+            )
 
     async def close(self) -> None:
         """Finish every owned task and durable write before releasing delivery."""
@@ -428,6 +536,7 @@ class MessagingWorkflow:
             # the epoch advances, the following synchronous wipe and the
             # manager's cancellation-safe detach complete as one-way work.
             self._admission_epoch += 1
+            self._clear_generation += 1
             try:
                 self.session_store.clear_all()
             except Exception as exc:
@@ -517,10 +626,10 @@ class MessagingWorkflow:
         chat_id: str,
         msg_id: str | None,
         kind: str,
-    ) -> None:
-        """Record an outgoing message ID for /clear, best effort."""
+    ) -> bool:
+        """Record an outgoing message ID for /clear and report ownership."""
         if not msg_id:
-            return
+            return False
         try:
             self.session_store.record_message_id(
                 platform,
@@ -537,6 +646,8 @@ class MessagingWorkflow:
                     log_full_message=self._log_messaging_error_details,
                 ),
             )
+            return False
+        return True
 
     def _apply_cancellation_result(self, result: CancellationResult) -> None:
         """Apply detached UI and persistence effects from one transition."""

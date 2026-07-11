@@ -150,23 +150,6 @@ class TelegramRuntime:
             )
         self._connected = True
 
-        try:
-            target = self.allowed_user_id
-            if target:
-                startup_text = (
-                    f"🚀 *{escape_md_v2('Claude Code Proxy is online!')}* "
-                    f"{escape_md_v2('(Bot API)')}"
-                )
-                await self.outbound.send_message(target, startup_text)
-        except Exception as e:
-            if self._log_api_error_tracebacks:
-                logger.warning("Could not send startup message: {}", e)
-            else:
-                logger.warning(
-                    "Could not send startup message: exc_type={}",
-                    type(e).__name__,
-                )
-
         logger.info("Telegram platform started (Bot API)")
 
     async def _retry_connection_step(

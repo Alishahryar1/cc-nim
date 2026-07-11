@@ -863,10 +863,11 @@ The API sees only the application-owned `TaskController` used to preserve
 
 The platform factory returns a `MessagingPlatformComponents` bundle from
 [messaging/platforms/ports.py](src/free_claude_code/messaging/platforms/ports.py): a
-`MessagingRuntime` with separate `quiesce()` and `close()` phases, an `OutboundMessenger`
-for queued sends/edits/deletes, and an optional `VoiceCancellation` port for
-scoped and bulk voice cancellation during `/stop` and `/clear`. Workflow code
-depends on these ports, not on Telegram or Discord SDK objects.
+`MessagingRuntime` with separate `quiesce()` and `close()` phases, an
+`OutboundMessenger` for queued sends/edits/deletes, an optional
+`VoiceCancellation` port for scoped and bulk voice cancellation during `/stop`
+and `/clear`, and an optional immutable startup-notice intent. Workflow code
+depends on these ports and values, not on Telegram or Discord SDK objects.
 
 Runtime adapters in
 [messaging/platforms/telegram.py](src/free_claude_code/messaging/platforms/telegram.py) and
@@ -954,6 +955,19 @@ persisted state before ingress begins, then repairs interrupted platform
 statuses after outbound delivery starts. Diagnostic detail policy is captured
 at construction and passed into the processor; messaging does not read global
 settings while executing callbacks or failures.
+
+Clearable lifecycle notices are workflow-owned rather than SDK-runtime side
+effects. After transport readiness and restored-status repair,
+`ApplicationRuntime` hands the platform's semantic startup-notice intent to the
+workflow. The workflow owns platform rendering and snapshots a dedicated clear
+generation before sending outside its state lock. Once delivery returns a
+message ID, a cancellation-safe finalizer briefly reacquires the lock: it records
+the ID only if no global clear or startup cancellation crossed the reservation;
+otherwise it releases the lock and deletes the notice. Failed compensation
+attempts to restore the ID to the current message log so a later `/clear` can
+retry. No platform I/O runs under the workflow lock. Ordinary notice-send
+failure is privacy-safe and nonfatal, while cancellation before a delivery
+receipt remains immediate and cannot create a phantom message ID.
 
 [messaging/turn_intake.py](src/free_claude_code/messaging/turn_intake.py) owns inbound message
 recording, slash command dispatch, status-echo filtering, initial status
@@ -1071,9 +1085,15 @@ message IDs recorded after the early wipe. Once clear commits, ordinary failures
 from final persistence, cancellation effects, and CLI cleanup are all attempted
 and preserved rather than producing a false successful clear.
 Per-chat message ID tracking for `/clear` lives in
-[messaging/session/message_log.py](src/free_claude_code/messaging/session/message_log.py). `/clear`
-guarantees FCC state cleanup and tries tracked platform deletes through the
-list-based outbound delete port, but Discord/Telegram can still reject
+[messaging/session/message_log.py](src/free_claude_code/messaging/session/message_log.py). Startup
+notices use the same bounded log as other clearable output. An incoming
+standalone `/clear` defers log insertion because the command handler owns its ID
+on success; this prevents the command from evicting an older deletion target at
+the cap. Failed or cancelled clear attempts record the command before propagating
+so it remains discoverable by a later clear.
+
+`/clear` guarantees FCC state cleanup and tries tracked platform deletes through
+the list-based outbound delete port, but Discord/Telegram can still reject
 individual message deletions for platform reasons such as permissions, age, or
 missing messages.
 

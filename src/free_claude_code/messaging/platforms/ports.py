@@ -62,6 +62,14 @@ class OutboundMessenger(Protocol):
     def fire_and_forget(self, task: Awaitable[Any]) -> None: ...
 
 
+@dataclass(frozen=True, slots=True)
+class MessagingStartupNotice:
+    """One clearable customer notice declared by a platform composition."""
+
+    chat_id: str
+    transport_label: str
+
+
 @runtime_checkable
 class VoiceCancellation(Protocol):
     """Optional voice-note cancellation boundary used by stop/clear flows."""
@@ -83,3 +91,4 @@ class MessagingPlatformComponents:
     runtime: MessagingRuntime
     outbound: OutboundMessenger
     voice_cancellation: VoiceCancellation | None = None
+    startup_notice: MessagingStartupNotice | None = None

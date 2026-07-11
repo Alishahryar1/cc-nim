@@ -385,6 +385,7 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         ),
         (
             "test_messaging_commands_stop_clear_stats_e2e",
+            "test_messaging_startup_notice_is_clearable_e2e",
             "test_messaging_active_stop_uses_status_only_e2e",
             "test_messaging_queued_scoped_cancel_e2e",
         ),

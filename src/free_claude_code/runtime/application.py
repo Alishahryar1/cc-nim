@@ -380,7 +380,7 @@ class ApplicationRuntime:
             storage_path=os.path.join(data_path, "sessions.json"),
             message_log_cap=settings.max_message_log_entries_per_chat,
         )
-        self._messaging_workflow = messaging_workflow_module.MessagingWorkflow(
+        workflow = messaging_workflow_module.MessagingWorkflow(
             platform_name=components.name,
             outbound=components.outbound,
             voice_cancellation=components.voice_cancellation,
@@ -391,10 +391,13 @@ class ApplicationRuntime:
             log_raw_cli_diagnostics=settings.log_raw_cli_diagnostics,
             log_messaging_error_details=settings.log_messaging_error_details,
         )
-        self._messaging_workflow.restore()
-        components.runtime.on_message(self._messaging_workflow.handle_message)
+        self._messaging_workflow = workflow
+        workflow.restore()
+        components.runtime.on_message(workflow.handle_message)
         await components.runtime.start()
-        await self._messaging_workflow.repair_restored_statuses()
+        await workflow.repair_restored_statuses()
+        if components.startup_notice is not None:
+            await workflow.publish_startup_notice(components.startup_notice)
         logger.info("{} platform started with messaging workflow", components.name)
 
     async def _close_owned_resources(self) -> bool:

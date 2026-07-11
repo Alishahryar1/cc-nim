@@ -91,8 +91,8 @@ class MessagingCommandContext(Protocol):
         chat_id: str,
         msg_id: str | None,
         kind: str,
-    ) -> None:
-        """Persist an outgoing platform message ID."""
+    ) -> bool:
+        """Record an outgoing platform message ID and report clear-log ownership."""
         ...
 
 

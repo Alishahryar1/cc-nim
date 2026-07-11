@@ -37,7 +37,7 @@ class MessagingTurnIntake:
         ],
         format_status: Callable[[str, str, str | None], str],
         get_parse_mode: Callable[[], str | None],
-        record_outgoing_message: Callable[[str, str, str | None, str], None],
+        record_outgoing_message: Callable[[str, str, str | None, str], bool],
         log_messaging_error_details: bool = False,
     ) -> None:
         self.platform_name = platform_name
@@ -51,6 +51,30 @@ class MessagingTurnIntake:
         self._record_outgoing_message = record_outgoing_message
         self._log_messaging_error_details = log_messaging_error_details
 
+    def _record_incoming_message(
+        self,
+        incoming: IncomingMessage,
+        command_base: str,
+    ) -> None:
+        if incoming.message_id is None:
+            return
+        try:
+            self.session_store.record_message_id(
+                incoming.platform,
+                incoming.chat_id,
+                str(incoming.message_id),
+                direction="in",
+                kind=message_kind_for_command(command_base),
+            )
+        except Exception as exc:
+            logger.debug(
+                "Failed to record incoming message_id: {}",
+                format_exception_for_log(
+                    exc,
+                    log_full_message=self._log_messaging_error_details,
+                ),
+            )
+
     async def handle_message(
         self,
         incoming: IncomingMessage,
@@ -62,25 +86,20 @@ class MessagingTurnIntake:
         """
         cmd_base = parse_command_base(incoming.text)
 
-        try:
-            if incoming.message_id is not None:
-                self.session_store.record_message_id(
-                    incoming.platform,
-                    incoming.chat_id,
-                    str(incoming.message_id),
-                    direction="in",
-                    kind=message_kind_for_command(cmd_base),
-                )
-        except Exception as e:
-            logger.debug(
-                "Failed to record incoming message_id: {}",
-                format_exception_for_log(
-                    e, log_full_message=self._log_messaging_error_details
-                ),
-            )
+        # Standalone clear owns and deletes its command ID. Defer recording so the
+        # command cannot evict an older deletion target from a bounded log; if the
+        # clear fails or is cancelled, retain the command for a later clear.
+        is_global_clear = cmd_base == "/clear" and not incoming.is_reply()
+        if not is_global_clear:
+            self._record_incoming_message(incoming, cmd_base)
 
-        if await dispatch_command(self._command_context, incoming, cmd_base):
-            return
+        try:
+            if await dispatch_command(self._command_context, incoming, cmd_base):
+                return
+        except BaseException:
+            if is_global_clear:
+                self._record_incoming_message(incoming, cmd_base)
+            raise
 
         text = incoming.text or ""
         if any(text.startswith(p) for p in STATUS_MESSAGE_PREFIXES):

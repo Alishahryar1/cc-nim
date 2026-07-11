@@ -6,6 +6,7 @@ from free_claude_code.messaging.platforms.factory import (
     MessagingPlatformOptions,
     create_messaging_components,
 )
+from free_claude_code.messaging.platforms.ports import MessagingStartupNotice
 
 
 class TestCreateMessagingComponents:
@@ -47,6 +48,10 @@ class TestCreateMessagingComponents:
         assert result.runtime is mock_runtime
         assert result.outbound is mock_runtime.outbound
         assert result.voice_cancellation is mock_runtime
+        assert result.startup_notice == MessagingStartupNotice(
+            chat_id="12345",
+            transport_label="Bot API",
+        )
         limiter_cls.assert_called_once_with(
             rate_limit=7,
             rate_window=2.5,
@@ -109,6 +114,7 @@ class TestCreateMessagingComponents:
         assert result.runtime is mock_runtime
         assert result.outbound is mock_runtime.outbound
         assert result.voice_cancellation is mock_runtime
+        assert result.startup_notice is None
         limiter_cls.assert_called_once_with(
             rate_limit=3,
             rate_window=4.5,
@@ -176,6 +182,8 @@ class TestCreateMessagingComponents:
 
         assert first is not None
         assert second is not None
+        assert first.startup_notice is None
+        assert second.startup_notice is None
         first_limiter = runtime_cls.call_args_list[0].kwargs["limiter"]
         second_limiter = runtime_cls.call_args_list[1].kwargs["limiter"]
         assert first_limiter is not second_limiter

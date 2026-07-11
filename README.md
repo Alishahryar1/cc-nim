@@ -310,8 +310,9 @@ Configure integrations from **Admin UI → Messaging**, then click **Validate** 
 </details>
 
 Bot commands: standalone `/stop` cancels all work, standalone `/clear` resets all
-sessions, and `/stats` shows session state. Reply with `/stop` to cancel only
-that request while other queued requests continue. Reply with `/clear` to
+sessions and removes tracked bot messages in that chat—including Telegram's
+online notice—and `/stats` shows session state. Reply with `/stop` to cancel
+only that request while other queued requests continue. Reply with `/clear` to
 remove that conversation branch. A successful stop updates the affected task
 status instead of posting a second confirmation message. A no-op, or a global
 stop whose affected statuses are in another chat, still replies explicitly.

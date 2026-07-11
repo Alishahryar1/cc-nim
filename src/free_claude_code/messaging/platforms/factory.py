@@ -6,7 +6,7 @@ from loguru import logger
 
 from ..limiter import MessagingRateLimiter
 from ..voice import Transcriber
-from .ports import MessagingPlatformComponents
+from .ports import MessagingPlatformComponents, MessagingStartupNotice
 
 
 @dataclass(frozen=True, slots=True)
@@ -58,11 +58,20 @@ def create_messaging_components(
             log_raw_messaging_content=opts.log_raw_messaging_content,
             log_api_error_tracebacks=opts.log_api_error_tracebacks,
         )
+        startup_notice = (
+            MessagingStartupNotice(
+                chat_id=opts.allowed_telegram_user_id,
+                transport_label="Bot API",
+            )
+            if opts.allowed_telegram_user_id
+            else None
+        )
         return MessagingPlatformComponents(
             name=runtime.name,
             runtime=runtime,
             outbound=runtime.outbound,
             voice_cancellation=runtime,
+            startup_notice=startup_notice,
         )
 
     if platform_type == "discord":

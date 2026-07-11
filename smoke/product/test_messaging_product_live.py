@@ -3,6 +3,8 @@ import json
 
 import pytest
 
+from free_claude_code.messaging.models import MessageScope
+from free_claude_code.messaging.platforms.ports import MessagingStartupNotice
 from free_claude_code.messaging.trees import MessageState, TreeIdentity
 from smoke.lib.e2e import FakeCLISession, FakePlatformDriver, default_cli_events
 
@@ -78,6 +80,48 @@ async def test_messaging_commands_stop_clear_stats_e2e(
     assert "Nothing to stop for that message" in sent_text
     assert driver.platform.deletes
     assert driver.session_store.load_conversation_snapshot().trees == {}
+
+
+@pytest.mark.asyncio
+async def test_messaging_startup_notice_is_clearable_e2e(tmp_path) -> None:
+    first_driver = FakePlatformDriver("telegram", tmp_path)
+    scope = MessageScope(platform="telegram", chat_id="chat_1")
+
+    await first_driver.workflow.publish_startup_notice(
+        MessagingStartupNotice(
+            chat_id=scope.chat_id,
+            transport_label="Bot API",
+        )
+    )
+    first_startup_id = first_driver.platform.sent[-1]["message_id"]
+    first_driver.session_store.flush_pending_save()
+
+    driver = FakePlatformDriver("telegram", tmp_path)
+    await driver.platform.send_message("untracked", "advance fake message ID")
+    await driver.workflow.publish_startup_notice(
+        MessagingStartupNotice(
+            chat_id=scope.chat_id,
+            transport_label="Bot API",
+        )
+    )
+    second_startup = driver.platform.sent[-1]
+    second_startup_id = second_startup["message_id"]
+    assert second_startup["text"] == (
+        "🚀 *Claude Code Proxy is online\\!* \\(Bot API\\)"
+    )
+    assert second_startup["parse_mode"] == "MarkdownV2"
+    assert driver.session_store.get_message_ids_for_chat(
+        scope.platform, scope.chat_id
+    ) == [first_startup_id, second_startup_id]
+
+    await driver.send("/clear", message_id="clear_startup")
+
+    deleted = {entry["message_id"] for entry in driver.platform.deletes}
+    assert {first_startup_id, second_startup_id, "clear_startup"} <= deleted
+    assert (
+        driver.session_store.get_message_ids_for_chat(scope.platform, scope.chat_id)
+        == []
+    )
 
 
 @pytest.mark.asyncio

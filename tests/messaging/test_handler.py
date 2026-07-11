@@ -5,6 +5,7 @@ import pytest
 
 from free_claude_code.messaging.command_context import ReplyClearResult, StopOutcome
 from free_claude_code.messaging.models import MessageScope
+from free_claude_code.messaging.platforms.ports import MessagingStartupNotice
 from free_claude_code.messaging.session import SessionStore
 from free_claude_code.messaging.trees import (
     BranchRemovalResult,
@@ -36,6 +37,10 @@ def _stop_outcome(
     fallback_required: bool = False,
 ) -> StopOutcome:
     return StopOutcome(cancelled_count, scopes, fallback_required)
+
+
+def _startup_notice(chat_id: str = _SCOPE.chat_id) -> MessagingStartupNotice:
+    return MessagingStartupNotice(chat_id=chat_id, transport_label="Bot API")
 
 
 async def _event_stream(events):
@@ -1302,6 +1307,414 @@ async def test_global_clear_command_deletes_returned_ids(
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "failure",
+    (RuntimeError("clear failed"), asyncio.CancelledError()),
+    ids=("failure", "cancellation"),
+)
+async def test_interrupted_global_clear_records_its_deferred_command_id(
+    handler,
+    mock_platform,
+    mock_session_store,
+    incoming_message_factory,
+    failure: BaseException,
+) -> None:
+    handler.clear_all_state = AsyncMock(side_effect=failure)
+    incoming = incoming_message_factory(
+        text="/clear",
+        chat_id="chat_1",
+        message_id="150",
+    )
+
+    with pytest.raises(type(failure)):
+        await handler.handle_message(incoming)
+
+    mock_session_store.record_message_id.assert_called_once_with(
+        incoming.platform,
+        incoming.chat_id,
+        incoming.message_id,
+        direction="in",
+        kind="command",
+    )
+    mock_platform.queue_delete_messages.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_startup_notice_is_published_and_recorded_for_clear(
+    handler,
+    mock_platform,
+    mock_session_store,
+) -> None:
+    mock_platform.queue_send_message.return_value = "startup_1"
+
+    await handler.publish_startup_notice(_startup_notice())
+
+    mock_platform.queue_send_message.assert_awaited_once_with(
+        _SCOPE.chat_id,
+        "🚀 *Claude Code Proxy is online\\!* \\(Bot API\\)",
+        parse_mode="MarkdownV2",
+        fire_and_forget=False,
+    )
+    mock_session_store.record_message_id.assert_called_once_with(
+        _SCOPE.platform,
+        _SCOPE.chat_id,
+        "startup_1",
+        direction="out",
+        kind="startup",
+    )
+    mock_platform.queue_delete_messages.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_startup_notice_failure_is_nonfatal_and_records_nothing(
+    handler,
+    mock_platform,
+    mock_session_store,
+) -> None:
+    mock_platform.queue_send_message.side_effect = RuntimeError("unavailable")
+
+    await handler.publish_startup_notice(_startup_notice())
+
+    mock_session_store.record_message_id.assert_not_called()
+    mock_platform.queue_delete_messages.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_startup_notice_without_delivery_receipt_records_nothing(
+    handler,
+    mock_platform,
+    mock_session_store,
+) -> None:
+    mock_platform.queue_send_message.return_value = None
+
+    await handler.publish_startup_notice(_startup_notice())
+
+    mock_session_store.record_message_id.assert_not_called()
+    mock_platform.queue_delete_messages.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_startup_notice_record_failure_is_compensated_outside_state_lock(
+    handler,
+    mock_platform,
+    mock_session_store,
+) -> None:
+    mock_platform.queue_send_message.return_value = "startup_1"
+    mock_session_store.record_message_id.side_effect = OSError("store unavailable")
+
+    async def delete_notice(*args, **kwargs) -> None:
+        assert not handler._state_lock.locked()
+
+    mock_platform.queue_delete_messages.side_effect = delete_notice
+
+    await handler.publish_startup_notice(_startup_notice())
+
+    mock_session_store.record_message_id.assert_called_once_with(
+        _SCOPE.platform,
+        _SCOPE.chat_id,
+        "startup_1",
+        direction="out",
+        kind="startup",
+    )
+    mock_platform.queue_delete_messages.assert_awaited_once_with(
+        _SCOPE.chat_id,
+        ["startup_1"],
+        fire_and_forget=False,
+    )
+    mock_session_store.forget_message_ids.assert_called_once_with(
+        _SCOPE.platform,
+        _SCOPE.chat_id,
+        {"startup_1"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_failed_startup_notice_compensation_restores_clear_ownership(
+    handler,
+    mock_platform,
+    mock_session_store,
+) -> None:
+    mock_platform.queue_send_message.return_value = "startup_1"
+    mock_session_store.record_message_id.side_effect = (
+        OSError("store unavailable"),
+        None,
+    )
+    mock_platform.queue_delete_messages.side_effect = RuntimeError("delete unavailable")
+
+    await handler.publish_startup_notice(_startup_notice())
+
+    assert mock_session_store.record_message_id.call_count == 2
+    assert mock_session_store.record_message_id.call_args_list == [
+        call(
+            _SCOPE.platform,
+            _SCOPE.chat_id,
+            "startup_1",
+            direction="out",
+            kind="startup",
+        ),
+        call(
+            _SCOPE.platform,
+            _SCOPE.chat_id,
+            "startup_1",
+            direction="out",
+            kind="startup",
+        ),
+    ]
+    mock_session_store.forget_message_ids.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_startup_notice_publication_propagates_cancellation(
+    handler,
+    mock_platform,
+    mock_session_store,
+) -> None:
+    send_started = asyncio.Event()
+    send_cancelled = asyncio.Event()
+
+    async def send_notice(*args, **kwargs) -> None:
+        send_started.set()
+        try:
+            await asyncio.Event().wait()
+        finally:
+            send_cancelled.set()
+
+    mock_platform.queue_send_message.side_effect = send_notice
+    task = asyncio.create_task(handler.publish_startup_notice(_startup_notice()))
+    await send_started.wait()
+
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    await send_cancelled.wait()
+    mock_session_store.record_message_id.assert_not_called()
+    mock_platform.queue_delete_messages.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_startup_notice_cancellation_after_receipt_finishes_compensation(
+    handler,
+    mock_platform,
+    mock_session_store,
+) -> None:
+    send_started = asyncio.Event()
+    release_send = asyncio.Event()
+    finalizer_started = asyncio.Event()
+
+    async def send_notice(*args, **kwargs) -> str:
+        send_started.set()
+        await release_send.wait()
+        return "startup_1"
+
+    original_finalize = handler._finalize_startup_notice
+
+    async def finalize_notice(*args, **kwargs) -> None:
+        finalizer_started.set()
+        await original_finalize(*args, **kwargs)
+
+    mock_platform.queue_send_message.side_effect = send_notice
+    with patch.object(
+        handler,
+        "_finalize_startup_notice",
+        side_effect=finalize_notice,
+    ):
+        task = asyncio.create_task(handler.publish_startup_notice(_startup_notice()))
+        await send_started.wait()
+        await handler._state_lock.acquire()
+        try:
+            release_send.set()
+            await finalizer_started.wait()
+        finally:
+            handler._state_lock.release()
+        task.cancel()
+
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    mock_session_store.record_message_id.assert_not_called()
+    mock_platform.queue_delete_messages.assert_awaited_once_with(
+        _SCOPE.chat_id,
+        ["startup_1"],
+        fire_and_forget=False,
+    )
+    mock_session_store.forget_message_ids.assert_called_once_with(
+        _SCOPE.platform,
+        _SCOPE.chat_id,
+        {"startup_1"},
+    )
+
+
+@pytest.mark.asyncio
+async def test_concurrent_global_clear_does_not_wait_for_startup_delivery(
+    mock_platform,
+    mock_cli_manager,
+    tmp_path,
+) -> None:
+    store = SessionStore(storage_path=str(tmp_path / "sessions.json"))
+    workflow = MessagingWorkflow(
+        mock_platform,
+        mock_cli_manager,
+        store,
+        platform_name="telegram",
+        voice_cancellation=mock_platform,
+    )
+    send_started = asyncio.Event()
+    release_send = asyncio.Event()
+
+    async def send_notice(*args, **kwargs) -> str:
+        send_started.set()
+        await release_send.wait()
+        return "startup_1"
+
+    mock_platform.queue_send_message.side_effect = send_notice
+    publish_task = asyncio.create_task(
+        workflow.publish_startup_notice(_startup_notice())
+    )
+    await send_started.wait()
+    clear_task = asyncio.create_task(
+        workflow.clear_all_state(_SCOPE.platform, _SCOPE.chat_id)
+    )
+    try:
+        done, _pending = await asyncio.wait({clear_task}, timeout=1)
+        assert clear_task in done
+        assert clear_task.result() == frozenset()
+    finally:
+        release_send.set()
+        await asyncio.gather(publish_task, clear_task, return_exceptions=True)
+
+    assert store.get_message_ids_for_chat(_SCOPE.platform, _SCOPE.chat_id) == []
+    mock_platform.queue_delete_messages.assert_awaited_once_with(
+        _SCOPE.chat_id,
+        ["startup_1"],
+        fire_and_forget=False,
+    )
+
+
+@pytest.mark.asyncio
+async def test_global_stop_does_not_wait_for_or_invalidate_startup_delivery(
+    handler,
+    mock_platform,
+    mock_session_store,
+) -> None:
+    send_started = asyncio.Event()
+    release_send = asyncio.Event()
+
+    async def send_notice(*args, **kwargs) -> str:
+        send_started.set()
+        await release_send.wait()
+        return "startup_1"
+
+    mock_platform.queue_send_message.side_effect = send_notice
+    publish_task = asyncio.create_task(
+        handler.publish_startup_notice(_startup_notice())
+    )
+    await send_started.wait()
+    stop_task = asyncio.create_task(handler.stop_all_tasks())
+    try:
+        done, _pending = await asyncio.wait({stop_task}, timeout=1)
+        assert stop_task in done
+        stop_task.result()
+    finally:
+        release_send.set()
+        await asyncio.gather(publish_task, stop_task, return_exceptions=True)
+
+    mock_session_store.record_message_id.assert_called_once_with(
+        _SCOPE.platform,
+        _SCOPE.chat_id,
+        "startup_1",
+        direction="out",
+        kind="startup",
+    )
+    mock_platform.queue_delete_messages.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_global_clear_precedes_concurrent_startup_notice_publication(
+    mock_platform,
+    mock_cli_manager,
+    tmp_path,
+) -> None:
+    store = SessionStore(storage_path=str(tmp_path / "sessions.json"))
+    workflow = MessagingWorkflow(
+        mock_platform,
+        mock_cli_manager,
+        store,
+        platform_name="telegram",
+        voice_cancellation=mock_platform,
+    )
+    clear_started = asyncio.Event()
+    release_clear = asyncio.Event()
+
+    async def clear_trees(*, reason: CancellationReason) -> CancellationResult:
+        assert reason is CancellationReason.STOP
+        clear_started.set()
+        await release_clear.wait()
+        return CancellationResult()
+
+    with patch.object(workflow.tree_queue, "clear_all", side_effect=clear_trees):
+        clear_task = asyncio.create_task(
+            workflow.clear_all_state(_SCOPE.platform, _SCOPE.chat_id)
+        )
+        await clear_started.wait()
+        publish_task = asyncio.create_task(
+            workflow.publish_startup_notice(_startup_notice())
+        )
+        await asyncio.sleep(0)
+        mock_platform.queue_send_message.assert_not_awaited()
+
+        release_clear.set()
+
+        assert await clear_task == frozenset()
+        await publish_task
+
+    assert store.get_message_ids_for_chat(_SCOPE.platform, _SCOPE.chat_id) == [
+        "msg_123"
+    ]
+    mock_platform.queue_delete_messages.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_clear_command_cannot_evict_startup_notice_at_message_log_cap(
+    mock_platform,
+    mock_cli_manager,
+    incoming_message_factory,
+    tmp_path,
+) -> None:
+    store = SessionStore(
+        storage_path=str(tmp_path / "sessions.json"),
+        message_log_cap=1,
+    )
+    workflow = MessagingWorkflow(
+        mock_platform,
+        mock_cli_manager,
+        store,
+        platform_name="telegram",
+        voice_cancellation=mock_platform,
+    )
+    store.record_message_id(
+        _SCOPE.platform,
+        _SCOPE.chat_id,
+        "100",
+        direction="out",
+        kind="startup",
+    )
+    incoming = incoming_message_factory(
+        text="/clear",
+        chat_id=_SCOPE.chat_id,
+        message_id="101",
+    )
+
+    await workflow.handle_message(incoming)
+
+    mock_platform.queue_delete_messages.assert_awaited_once_with(
+        _SCOPE.chat_id,
+        ["101", "100"],
+        fire_and_forget=False,
+    )
+
+
+@pytest.mark.asyncio
 async def test_clear_all_state_is_chat_scoped_for_deletes_and_global_for_fcc_state(
     handler, mock_cli_manager, mock_session_store, incoming_message_factory
 ):
@@ -1687,6 +2100,13 @@ async def test_reply_clear_unknown_reports_nothing_to_clear(
     await handler.handle_message(incoming)
 
     assert "Nothing to clear" in mock_platform.queue_send_message.call_args.args[1]
+    mock_session_store.record_message_id.assert_any_call(
+        incoming.platform,
+        incoming.chat_id,
+        incoming.message_id,
+        direction="in",
+        kind="command",
+    )
     mock_session_store.clear_all.assert_not_called()
 
 

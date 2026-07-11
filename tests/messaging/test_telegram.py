@@ -41,6 +41,7 @@ def test_telegram_platform_init_no_token():
 
 @pytest.mark.asyncio
 async def test_telegram_platform_start_success(telegram_platform):
+    telegram_platform.outbound.send_message = AsyncMock()
     with patch("telegram.ext.Application.builder") as mock_builder:
         mock_app = MagicMock()
         mock_app.initialize = AsyncMock()
@@ -55,6 +56,7 @@ async def test_telegram_platform_start_success(telegram_platform):
         mock_app.initialize.assert_called_once()
         mock_app.start.assert_called_once()
         telegram_platform._limiter.start.assert_called_once_with()
+        telegram_platform.outbound.send_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio

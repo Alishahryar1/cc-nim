@@ -11,6 +11,7 @@ from free_claude_code.messaging.command_context import StopOutcome
 from free_claude_code.messaging.platforms.ports import (
     InboundMessageHandler,
     MessagingPlatformComponents,
+    MessagingStartupNotice,
 )
 from free_claude_code.messaging.session import SessionStore
 from free_claude_code.messaging.workflow import MessagingWorkflow
@@ -875,3 +876,55 @@ async def test_composition_records_runtime_before_workspace_setup() -> None:
 
     assert events == ["messaging.quiesce", "messaging.close"]
     assert runtime._closed is True
+
+
+@pytest.mark.asyncio
+async def test_composition_publishes_startup_notice_after_runtime_and_repair() -> None:
+    events: list[str] = []
+    manager = ProviderRuntimeManager(_settings("nvidia_nim/model"))
+    runtime = ApplicationRuntime(manager, transcriber=None)
+    messaging = TrackingMessagingRuntime(events)
+    notice = MessagingStartupNotice(
+        chat_id="chat",
+        transport_label="test transport",
+    )
+    components = MessagingPlatformComponents(
+        name="tracking",
+        runtime=messaging,
+        outbound=MagicMock(),
+        startup_notice=notice,
+    )
+    workflow = MagicMock()
+    workflow.handle_message = AsyncMock()
+    workflow.restore.side_effect = lambda: events.append("workflow.restore")
+    workflow.repair_restored_statuses = AsyncMock(
+        side_effect=lambda: events.append("workflow.repair")
+    )
+    workflow.publish_startup_notice = AsyncMock(
+        side_effect=lambda published: events.append("workflow.notice")
+    )
+    workflow.close = AsyncMock()
+    cli_manager = MagicMock()
+
+    with (
+        patch(
+            "free_claude_code.runtime.application.cli_managed.ManagedClaudeSessionManager",
+            return_value=cli_manager,
+        ),
+        patch("free_claude_code.runtime.application.messaging_session.SessionStore"),
+        patch(
+            "free_claude_code.runtime.application.messaging_workflow_module.MessagingWorkflow",
+            return_value=workflow,
+        ),
+    ):
+        await runtime._start_messaging_workflow(components)
+
+    assert events == [
+        "workflow.restore",
+        "messaging.start",
+        "workflow.repair",
+        "workflow.notice",
+    ]
+    workflow.publish_startup_notice.assert_awaited_once_with(notice)
+
+    assert await runtime.close() is True
