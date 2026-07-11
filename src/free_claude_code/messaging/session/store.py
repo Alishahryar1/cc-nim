@@ -159,5 +159,5 @@ class SessionStore:
             self._write_current_state()
 
     def _write_current_state(self) -> None:
-        self._set_dirty(False)
+        self._set_dirty(True)
         self._persistence.write_data(self._snapshot_for_persistence())

@@ -35,7 +35,12 @@ async def handle_session_info_event(
     if not real_session_id or not temp_session_id:
         return captured_session_id, temp_session_id
 
-    await cli_manager.register_real_session_id(temp_session_id, real_session_id)
+    registered = await cli_manager.register_real_session_id(
+        temp_session_id,
+        real_session_id,
+    )
+    if not registered:
+        raise RuntimeError("Managed Claude session registration failed.")
     trace_event(
         stage="claude_cli",
         event="claude_cli.session.registered",

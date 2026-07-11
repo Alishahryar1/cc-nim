@@ -86,6 +86,7 @@ class TreeQueueManager:
         queue_update_callback: QueueUpdateCallback | None = None,
         node_started_callback: NodeStartedCallback | None = None,
         unexpected_failure_callback: Callable[[FailureResult], None] | None = None,
+        log_messaging_error_details: bool = False,
         _repository: TreeRepository | None = None,
         _restored_snapshot: ConversationSnapshot | None = None,
         _restored_stale_targets: tuple[NodeUiTarget, ...] = (),
@@ -98,6 +99,7 @@ class TreeQueueManager:
             claim_finished_callback=self._finish_claim,
             queue_update_callback=queue_update_callback,
             node_started_callback=node_started_callback,
+            log_messaging_error_details=log_messaging_error_details,
         )
         self._restored_snapshot = _restored_snapshot
         self._restored_stale_targets = _restored_stale_targets
@@ -521,6 +523,10 @@ class TreeQueueManager:
     def task_count(self) -> int:
         return self._processor.task_count()
 
+    async def wait_idle(self) -> None:
+        """Wait until every processor-owned claim has finished cleanup."""
+        await self._processor.wait_idle()
+
     async def get_message_ids_for_chat(self, platform: str, chat_id: str) -> set[str]:
         async with self._lock:
             message_ids: set[str] = set()
@@ -544,6 +550,7 @@ class TreeQueueManager:
         queue_update_callback: QueueUpdateCallback | None = None,
         node_started_callback: NodeStartedCallback | None = None,
         unexpected_failure_callback: Callable[[FailureResult], None] | None = None,
+        log_messaging_error_details: bool = False,
     ) -> TreeQueueManager:
         repository, normalized, stale_targets = TreeRepository.from_snapshot(snapshot)
         return cls(
@@ -551,6 +558,7 @@ class TreeQueueManager:
             queue_update_callback=queue_update_callback,
             node_started_callback=node_started_callback,
             unexpected_failure_callback=unexpected_failure_callback,
+            log_messaging_error_details=log_messaging_error_details,
             _repository=repository,
             _restored_snapshot=normalized,
             _restored_stale_targets=stale_targets,

@@ -52,7 +52,35 @@ class ManagedClaudeSessionManager:
         self._pending_sessions: dict[str, ManagedClaudeSession] = {}
         self._temp_to_real: dict[str, str] = {}
         self._real_to_temp: dict[str, str] = {}
+        self._closing_sessions: set[ManagedClaudeSession] = set()
         self._lock = asyncio.Lock()
+
+    def _session_for_id(self, session_id: str) -> ManagedClaudeSession | None:
+        lookup_id = self._temp_to_real.get(session_id, session_id)
+        session = self._sessions.get(lookup_id)
+        if session is not None:
+            return session
+        return self._pending_sessions.get(lookup_id)
+
+    def _forget_session(self, session: ManagedClaudeSession) -> None:
+        pending_ids = [
+            session_id
+            for session_id, owned in self._pending_sessions.items()
+            if owned is session
+        ]
+        real_ids = [
+            session_id
+            for session_id, owned in self._sessions.items()
+            if owned is session
+        ]
+        for session_id in pending_ids:
+            self._pending_sessions.pop(session_id, None)
+        for real_id in real_ids:
+            self._sessions.pop(real_id, None)
+            temp_id = self._real_to_temp.pop(real_id, None)
+            if temp_id is not None:
+                self._temp_to_real.pop(temp_id, None)
+        self._closing_sessions.discard(session)
 
     async def get_or_create_session(
         self, session_id: str | None = None
@@ -68,9 +96,15 @@ class ManagedClaudeSessionManager:
                 lookup_id = self._temp_to_real.get(session_id, session_id)
 
                 if lookup_id in self._sessions:
-                    return self._sessions[lookup_id], lookup_id, False
+                    session = self._sessions[lookup_id]
+                    if session in self._closing_sessions:
+                        raise RuntimeError("Managed Claude session is closing.")
+                    return session, lookup_id, False
                 if lookup_id in self._pending_sessions:
-                    return self._pending_sessions[lookup_id], lookup_id, False
+                    session = self._pending_sessions[lookup_id]
+                    if session in self._closing_sessions:
+                        raise RuntimeError("Managed Claude session is closing.")
+                    return session, lookup_id, False
 
             temp_id = session_id if session_id else f"pending_{uuid.uuid4().hex[:8]}"
 
@@ -92,11 +126,21 @@ class ManagedClaudeSessionManager:
     ) -> bool:
         """Register the real session ID from CLI output."""
         async with self._lock:
-            if temp_id not in self._pending_sessions:
+            session = self._pending_sessions.get(temp_id)
+            if session is None:
                 logger.warning(f"Temp session {temp_id} not found")
                 return False
+            if session in self._closing_sessions:
+                logger.warning("Cannot register a closing managed Claude session")
+                return False
+            existing = self._session_for_id(real_session_id)
+            if existing is not None and existing is not session:
+                logger.warning(
+                    "Cannot register managed Claude session: real ID is already owned"
+                )
+                return False
 
-            session = self._pending_sessions.pop(temp_id)
+            self._pending_sessions.pop(temp_id)
             self._sessions[real_session_id] = session
             self._temp_to_real[temp_id] = real_session_id
             self._real_to_temp[real_session_id] = temp_id
@@ -107,31 +151,35 @@ class ManagedClaudeSessionManager:
     async def remove_session(self, session_id: str) -> bool:
         """Remove a session from the manager."""
         async with self._lock:
-            if session_id in self._pending_sessions:
-                session = self._pending_sessions.pop(session_id)
-                await session.stop()
-                return True
+            session = self._session_for_id(session_id)
+            if session is None:
+                return False
+            self._closing_sessions.add(session)
+            stopped = await session.stop()
+            if not stopped:
+                return False
+            self._forget_session(session)
+            return True
 
-            if session_id in self._sessions:
-                session = self._sessions.pop(session_id)
-                await session.stop()
-                temp_id = self._real_to_temp.pop(session_id, None)
-                if temp_id is not None:
-                    self._temp_to_real.pop(temp_id, None)
-                return True
-
-            return False
-
-    async def stop_all(self):
+    async def stop_all(self) -> None:
         """Stop all sessions."""
         async with self._lock:
-            all_sessions = list(self._sessions.values()) + list(
-                self._pending_sessions.values()
+            all_sessions = list(
+                dict.fromkeys(
+                    [
+                        *self._sessions.values(),
+                        *self._pending_sessions.values(),
+                        *self._closing_sessions,
+                    ]
+                )
             )
+            self._closing_sessions.update(all_sessions)
+            failures = 0
             for session in all_sessions:
                 try:
-                    await session.stop()
+                    stopped = await session.stop()
                 except Exception as e:
+                    stopped = False
                     if self._log_messaging_error_details:
                         logger.error(
                             "Error stopping session: {}: {}",
@@ -143,11 +191,15 @@ class ManagedClaudeSessionManager:
                             "Error stopping session: exc_type={}",
                             type(e).__name__,
                         )
+                if stopped:
+                    self._forget_session(session)
+                else:
+                    failures += 1
 
-            self._sessions.clear()
-            self._pending_sessions.clear()
-            self._temp_to_real.clear()
-            self._real_to_temp.clear()
+            if failures:
+                raise RuntimeError(
+                    f"Managed Claude session shutdown failures: {failures}."
+                )
             logger.info("All sessions stopped")
 
     def get_stats(self) -> dict:

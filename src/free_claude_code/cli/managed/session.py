@@ -59,6 +59,8 @@ class ManagedClaudeSession:
         self.current_session_id: str | None = None
         self._is_busy = False
         self._cli_lock = asyncio.Lock()
+        self._lifecycle_lock = asyncio.Lock()
+        self._closed = False
 
     @staticmethod
     async def _drain_stderr_bounded(
@@ -107,36 +109,42 @@ class ManagedClaudeSession:
             Event dictionaries from the CLI
         """
         async with self._cli_lock:
-            self._is_busy = True
-            invocation = build_managed_claude_invocation(
-                config=self.config,
-                request=ManagedClaudeTaskRequest(
-                    prompt=prompt,
-                    session_id=session_id,
-                    fork_session=fork_session,
-                ),
-                base_env=os.environ,
-            )
-
-            trace_event(
-                stage="claude_cli",
-                event="claude_cli.process.launch",
-                source="claude_cli",
-                **invocation.trace_metadata,
-            )
-
+            process: asyncio.subprocess.Process | None = None
+            termination_confirmed = False
             try:
-                self.process = await asyncio.create_subprocess_exec(
-                    *invocation.argv,
-                    stdout=asyncio.subprocess.PIPE,
-                    stderr=asyncio.subprocess.PIPE,
-                    cwd=invocation.cwd,
-                    env=invocation.env,
-                )
-                if self.process and self.process.pid:
-                    register_pid(self.process.pid)
+                async with self._lifecycle_lock:
+                    if self._closed:
+                        raise RuntimeError("Managed Claude session is closed.")
+                    self._is_busy = True
+                    invocation = build_managed_claude_invocation(
+                        config=self.config,
+                        request=ManagedClaudeTaskRequest(
+                            prompt=prompt,
+                            session_id=session_id,
+                            fork_session=fork_session,
+                        ),
+                        base_env=os.environ,
+                    )
 
-                if not self.process or not self.process.stdout:
+                    trace_event(
+                        stage="claude_cli",
+                        event="claude_cli.process.launch",
+                        source="claude_cli",
+                        **invocation.trace_metadata,
+                    )
+
+                    process = await asyncio.create_subprocess_exec(
+                        *invocation.argv,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.PIPE,
+                        cwd=invocation.cwd,
+                        env=invocation.env,
+                    )
+                    self.process = process
+                    if process.pid:
+                        register_pid(process.pid)
+
+                if not process.stdout:
                     yield {"type": "exit", "code": 1}
                     return
 
@@ -145,14 +153,14 @@ class ManagedClaudeSession:
                 )
                 buffer = bytearray()
                 stderr_task: asyncio.Task[bytes] | None = None
-                if self.process.stderr:
+                if process.stderr:
                     stderr_task = asyncio.create_task(
-                        self._drain_stderr_bounded(self.process)
+                        self._drain_stderr_bounded(process)
                     )
 
                 try:
                     while True:
-                        chunk = await self.process.stdout.read(65536)
+                        chunk = await process.stdout.read(65536)
                         if not chunk:
                             if buffer:
                                 line_str = buffer.decode(
@@ -216,7 +224,8 @@ class ManagedClaudeSession:
                         logger.info("CLI_SESSION: Yielding error event from stderr")
                         yield {"type": "error", "error": {"message": stderr_text}}
 
-                return_code = await self.process.wait()
+                return_code = await process.wait()
+                termination_confirmed = True
                 logger.info(
                     f"Claude CLI exited with code {return_code}, stderr_present={bool(stderr_text)}"
                 )
@@ -231,8 +240,12 @@ class ManagedClaudeSession:
                 }
             finally:
                 self._is_busy = False
-                if self.process and self.process.pid:
-                    unregister_pid(self.process.pid)
+                if (
+                    process
+                    and process.pid
+                    and (termination_confirmed or process.returncode is not None)
+                ):
+                    unregister_pid(process.pid)
 
     async def _handle_line_gen(
         self, line_str: str, parse_state: ManagedClaudeParseState
@@ -245,19 +258,28 @@ class ManagedClaudeSession:
                     self.current_session_id = session_id
             yield event
 
-    async def stop(self):
-        """Stop the CLI process."""
-        if self.process and self.process.returncode is None:
+    async def stop(self) -> bool:
+        """Stop the CLI process, retaining PID ownership until exit is confirmed."""
+        async with self._lifecycle_lock:
+            self._closed = True
+            process = self.process
+            if process is None:
+                return True
+            if process.returncode is not None:
+                if process.pid:
+                    unregister_pid(process.pid)
+                return True
+
             try:
-                logger.info(f"Stopping Claude CLI process {self.process.pid}")
-                kill_pid_tree_best_effort(self.process.pid)
+                logger.info(f"Stopping Claude CLI process {process.pid}")
+                kill_pid_tree_best_effort(process.pid)
                 try:
-                    await asyncio.wait_for(self.process.wait(), timeout=5.0)
+                    await asyncio.wait_for(process.wait(), timeout=5.0)
                 except TimeoutError:
-                    self.process.kill()
-                    await self.process.wait()
-                if self.process and self.process.pid:
-                    unregister_pid(self.process.pid)
+                    process.kill()
+                    await process.wait()
+                if process.pid:
+                    unregister_pid(process.pid)
                 return True
             except Exception as e:
                 if self._log_raw_cli_diagnostics:
@@ -272,4 +294,3 @@ class ManagedClaudeSession:
                         type(e).__name__,
                     )
                 return False
-        return False

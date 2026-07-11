@@ -275,13 +275,38 @@ async def test_restore_repairs_interrupted_status_after_delivery_starts(
     )
 
 
-def test_workflow_close_flushes_owned_session_store(
+@pytest.mark.asyncio
+async def test_workflow_close_waits_for_claim_cleanup_before_flushing(
     mock_platform,
     mock_cli_manager,
     mock_session_store,
 ) -> None:
     workflow = MessagingWorkflow(mock_platform, mock_cli_manager, mock_session_store)
+    cleanup_release = asyncio.Event()
+    wait_started = asyncio.Event()
+    events: list[str] = []
 
-    workflow.close()
+    async def stop_all() -> int:
+        events.append("stop")
+        return 1
 
+    async def wait_idle() -> None:
+        events.append("wait")
+        wait_started.set()
+        await cleanup_release.wait()
+
+    workflow.stop_all_tasks = AsyncMock(side_effect=stop_all)
+    workflow.tree_queue.wait_idle = AsyncMock(side_effect=wait_idle)
+    mock_session_store.flush_pending_save.side_effect = lambda: events.append("flush")
+
+    close_task = asyncio.create_task(workflow.close())
+    await wait_started.wait()
+
+    assert events == ["stop", "wait"]
+    mock_session_store.flush_pending_save.assert_not_called()
+
+    cleanup_release.set()
+    await close_task
+
+    assert events == ["stop", "wait", "flush"]
     mock_session_store.flush_pending_save.assert_called_once()

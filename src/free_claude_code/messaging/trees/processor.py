@@ -7,8 +7,6 @@ from dataclasses import dataclass
 
 from loguru import logger
 
-from free_claude_code.config.settings import get_settings
-
 from ..safe_diagnostics import format_exception_for_log
 from .runtime import MessageTree
 from .transitions import CancellationReason, NodeClaim, QueueEntry
@@ -51,13 +49,17 @@ class TreeQueueProcessor:
         claim_finished_callback: ClaimFinishedCallback,
         queue_update_callback: QueueUpdateCallback | None = None,
         node_started_callback: NodeStartedCallback | None = None,
+        log_messaging_error_details: bool = False,
     ) -> None:
         self._node_processor = node_processor
         self._claim_failure_callback = claim_failure_callback
         self._claim_finished_callback = claim_finished_callback
         self._queue_update_callback = queue_update_callback
         self._node_started_callback = node_started_callback
+        self._log_messaging_error_details = log_messaging_error_details
         self._tasks: dict[str, _TaskSlot] = {}
+        self._idle = asyncio.Event()
+        self._idle.set()
 
     @staticmethod
     def _key(claim: NodeClaim) -> str:
@@ -77,18 +79,24 @@ class TreeQueueProcessor:
             raise RuntimeError(f"Claim {key} already has a task")
         slot = _TaskSlot(tree=tree, claim=claim)
         self._tasks[key] = slot
+        self._idle.clear()
+        claim_runner = self._run_claim(
+            slot,
+            announce_started=announce_started,
+            queue=queue,
+        )
         try:
             task = asyncio.create_task(
-                self._run_claim(
-                    slot,
-                    announce_started=announce_started,
-                    queue=queue,
-                ),
+                claim_runner,
                 name=(f"messaging-claim-{claim.identity.root_id}-{claim.claim_id[:8]}"),
                 eager_start=False,
             )
         except BaseException:
-            self._tasks.pop(key, None)
+            claim_runner.close()
+            if self._tasks.get(key) is slot:
+                self._tasks.pop(key)
+            if not self._tasks:
+                self._idle.set()
             raise
         slot.task = task
         task.add_done_callback(lambda _task, claim_key=key: self._task_done(claim_key))
@@ -117,10 +125,12 @@ class TreeQueueProcessor:
         try:
             await self._queue_update_callback(queue)
         except Exception as exc:
-            details = get_settings().log_messaging_error_details
             logger.warning(
                 "Queue update callback failed: {}",
-                format_exception_for_log(exc, log_full_message=details),
+                format_exception_for_log(
+                    exc,
+                    log_full_message=self._log_messaging_error_details,
+                ),
             )
 
     async def notify_queue_updated(self, queue: tuple[QueueEntry, ...]) -> None:
@@ -133,10 +143,12 @@ class TreeQueueProcessor:
         try:
             await self._node_started_callback(claim)
         except Exception as exc:
-            details = get_settings().log_messaging_error_details
             logger.warning(
                 "Node started callback failed: {}",
-                format_exception_for_log(exc, log_full_message=details),
+                format_exception_for_log(
+                    exc,
+                    log_full_message=self._log_messaging_error_details,
+                ),
             )
 
     async def _run_claim(
@@ -161,11 +173,13 @@ class TreeQueueProcessor:
             logger.info("Task for node {} was cancelled", claim.node.node_id)
             raise
         except Exception as exc:
-            details = get_settings().log_messaging_error_details
             logger.error(
                 "Error processing node {}: {}",
                 claim.node.node_id,
-                format_exception_for_log(exc, log_full_message=details),
+                format_exception_for_log(
+                    exc,
+                    log_full_message=self._log_messaging_error_details,
+                ),
             )
             await self._claim_failure_callback(claim)
         finally:
@@ -188,7 +202,11 @@ class TreeQueueProcessor:
                 continue
 
         slot.transitioned = True
-        self._tasks.pop(self._key(slot.claim), None)
+        key = self._key(slot.claim)
+        if self._tasks.get(key) is slot:
+            self._tasks.pop(key)
+        if not self._tasks:
+            self._idle.set()
 
     def cancel(
         self,
@@ -222,6 +240,10 @@ class TreeQueueProcessor:
     def task_count(self) -> int:
         """Return the number of attached claims for observability."""
         return len(self._tasks)
+
+    async def wait_idle(self) -> None:
+        """Wait until every published claim and recovery task has finished."""
+        await self._idle.wait()
 
 
 __all__ = ["CancelledTask", "TreeQueueProcessor"]

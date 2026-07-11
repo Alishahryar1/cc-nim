@@ -86,7 +86,7 @@ def _schedule_open_admin_browser(settings: Settings) -> None:
 
 
 def _run_supervised_server(settings: Settings, *, open_admin_browser: bool) -> bool:
-    """Run one uvicorn server instance; return whether admin requested restart."""
+    """Run once; restart only after the old ownership graph fully closes."""
 
     restart_requested = False
     server_holder: dict[str, uvicorn.Server] = {}
@@ -110,7 +110,7 @@ def _run_supervised_server(settings: Settings, *, open_admin_browser: bool) -> b
     if open_admin_browser:
         _schedule_open_admin_browser(settings)
     server.run()
-    return restart_requested
+    return restart_requested and asgi_app.runtime.is_closed
 
 
 def init(argv: Sequence[str] | None = None) -> None:

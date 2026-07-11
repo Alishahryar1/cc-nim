@@ -93,7 +93,7 @@ async def test_remove_session_active_removes_temp_mapping():
 
 
 @pytest.mark.asyncio
-async def test_stop_all_handles_stop_exceptions():
+async def test_stop_all_reports_and_retains_stop_exceptions():
     from free_claude_code.cli.managed.manager import ManagedClaudeSessionManager
 
     manager = ManagedClaudeSessionManager(workspace_path="/tmp", api_url="http://x/v1")
@@ -109,8 +109,12 @@ async def test_stop_all_handles_stop_exceptions():
     manager._sessions["a"] = s1
     manager._pending_sessions["b"] = s2
 
-    await manager.stop_all()
+    with pytest.raises(
+        RuntimeError,
+        match=r"^Managed Claude session shutdown failures: 1\.$",
+    ):
+        await manager.stop_all()
     s1.stop.assert_awaited_once()
     s2.stop.assert_awaited_once()
-    assert manager.get_stats()["active_sessions"] == 0
+    assert manager.get_stats()["active_sessions"] == 1
     assert manager.get_stats()["pending_sessions"] == 0

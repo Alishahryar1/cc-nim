@@ -16,6 +16,7 @@ from free_claude_code.messaging.trees import (
     QueueEntry,
     ReplyTarget,
     TreeIdentity,
+    TreeQueueManager,
     TreeSnapshot,
 )
 from free_claude_code.messaging.trees.transitions import CancellationEffect
@@ -138,6 +139,21 @@ async def test_handle_message_stop_command(
         fire_and_forget=False,
         message_thread_id=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_failed_global_stop_never_reports_success(
+    handler, mock_platform, incoming_message_factory
+) -> None:
+    incoming = incoming_message_factory(text="/stop")
+    handler.stop_all_tasks = AsyncMock(
+        side_effect=RuntimeError("Failed to stop 1 managed Claude session.")
+    )
+
+    with pytest.raises(RuntimeError, match="Failed to stop"):
+        await handler.handle_message(incoming)
+
+    mock_platform.queue_send_message.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -428,6 +444,70 @@ async def test_stop_all_persists_committed_transition_before_cli_shutdown(
 
 
 @pytest.mark.asyncio
+async def test_terminal_close_waits_past_interactive_drain_timeout(
+    monkeypatch,
+    mock_platform,
+    mock_cli_manager,
+    mock_session_store,
+    incoming_message_factory,
+) -> None:
+    monkeypatch.setattr(
+        "free_claude_code.messaging.trees.manager.CANCEL_TASK_DRAIN_TIMEOUT_S",
+        0.01,
+    )
+    runner_started = asyncio.Event()
+    cancellation_seen = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    cli_stop_seen = asyncio.Event()
+
+    async def cancellation_delayed_runner(_claim: NodeClaim) -> None:
+        runner_started.set()
+        try:
+            await asyncio.Event().wait()
+        except asyncio.CancelledError:
+            cancellation_seen.set()
+            await release_cleanup.wait()
+            raise
+
+    async def stop_cli() -> None:
+        cli_stop_seen.set()
+
+    mock_platform.queue_send_message.return_value = "status_1"
+    mock_cli_manager.stop_all.side_effect = stop_cli
+    workflow = MessagingWorkflow(
+        mock_platform,
+        mock_cli_manager,
+        mock_session_store,
+        platform_name="telegram",
+    )
+    workflow._tree_queue = TreeQueueManager(cancellation_delayed_runner)
+    await workflow.handle_message(
+        incoming_message_factory(text="work", message_id="work_1")
+    )
+    await runner_started.wait()
+
+    close_task = asyncio.create_task(workflow.close())
+    try:
+        await asyncio.wait_for(cancellation_seen.wait(), timeout=1)
+        await asyncio.wait_for(cli_stop_seen.wait(), timeout=1)
+
+        mock_cli_manager.stop_all.assert_awaited_once()
+        assert close_task.done() is False
+        assert workflow.tree_queue.task_count() == 1
+        mock_session_store.flush_pending_save.assert_not_called()
+
+        release_cleanup.set()
+        await asyncio.wait_for(close_task, timeout=1)
+
+        assert workflow.tree_queue.task_count() == 0
+        mock_session_store.flush_pending_save.assert_called_once()
+    finally:
+        release_cleanup.set()
+        if not close_task.done():
+            await asyncio.wait_for(close_task, timeout=1)
+
+
+@pytest.mark.asyncio
 async def test_node_runner_success_uses_claim_and_semantic_completion(
     handler, mock_cli_manager, mock_platform, mock_session_store
 ):
@@ -536,6 +616,37 @@ async def test_session_info_records_real_session_through_manager(
         ((record_snapshot,), {}),
         ((complete_snapshot,), {}),
     ]
+
+
+@pytest.mark.asyncio
+async def test_session_info_rejects_unregistered_real_session_without_recording_it(
+    handler,
+    mock_cli_manager,
+) -> None:
+    from free_claude_code.messaging.node_event_pipeline import (
+        handle_session_info_event,
+    )
+
+    claim = _claim()
+    record_session = AsyncMock()
+    mock_cli_manager.register_real_session_id.return_value = False
+
+    with pytest.raises(
+        RuntimeError,
+        match=r"^Managed Claude session registration failed\.$",
+    ) as raised:
+        await handle_session_info_event(
+            {"type": "session_info", "session_id": "real_session"},
+            claim,
+            None,
+            "temporary_session",
+            cli_manager=mock_cli_manager,
+            record_session=record_session,
+        )
+
+    assert "real_session" not in str(raised.value)
+    assert "temporary_session" not in str(raised.value)
+    record_session.assert_not_awaited()
 
 
 @pytest.mark.asyncio
@@ -838,6 +949,177 @@ async def test_clear_all_state_is_chat_scoped_for_deletes_and_global_for_fcc_sta
 
 
 @pytest.mark.asyncio
+async def test_global_clear_retries_transient_early_persistence_failure_at_final_write(
+    handler,
+    mock_cli_manager,
+    mock_session_store,
+) -> None:
+    events: list[str] = []
+
+    def fail_early_clear() -> None:
+        events.append("store.clear_all")
+        raise OSError("transient early clear failure")
+
+    async def clear_trees(*, reason: CancellationReason) -> CancellationResult:
+        assert reason is CancellationReason.STOP
+        events.append("trees.clear_all")
+        return CancellationResult()
+
+    def finish_persistence() -> None:
+        events.append("store.clear_conversation_snapshot")
+
+    async def stop_cli() -> None:
+        events.append("cli.stop_all")
+
+    mock_session_store.clear_all.side_effect = fail_early_clear
+    mock_session_store.clear_conversation_snapshot.side_effect = finish_persistence
+    mock_cli_manager.stop_all.side_effect = stop_cli
+
+    with patch.object(handler.tree_queue, "clear_all", side_effect=clear_trees):
+        result = await handler.clear_all_state("telegram", "chat_1")
+
+    assert result == frozenset()
+    assert events == [
+        "store.clear_all",
+        "trees.clear_all",
+        "store.clear_conversation_snapshot",
+        "cli.stop_all",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_global_clear_finishes_cleanup_before_final_persistence_error_escapes(
+    handler,
+    mock_cli_manager,
+    mock_session_store,
+) -> None:
+    events: list[str] = []
+
+    def early_clear() -> None:
+        events.append("store.clear_all")
+
+    async def clear_trees(*, reason: CancellationReason) -> CancellationResult:
+        assert reason is CancellationReason.STOP
+        events.append("trees.clear_all")
+        return CancellationResult()
+
+    def fail_final_clear() -> None:
+        events.append("store.clear_conversation_snapshot")
+        raise OSError("final clear failure")
+
+    async def stop_cli() -> None:
+        events.append("cli.stop_all")
+
+    mock_session_store.clear_all.side_effect = early_clear
+    mock_session_store.clear_conversation_snapshot.side_effect = fail_final_clear
+    mock_cli_manager.stop_all.side_effect = stop_cli
+
+    with (
+        patch.object(handler.tree_queue, "clear_all", side_effect=clear_trees),
+        patch.object(
+            handler,
+            "_apply_cancellation_result",
+            side_effect=lambda _result: events.append("apply_cancellation"),
+        ),
+        pytest.raises(OSError, match="final clear failure"),
+    ):
+        await handler.clear_all_state("telegram", "chat_1")
+
+    assert events == [
+        "store.clear_all",
+        "trees.clear_all",
+        "store.clear_conversation_snapshot",
+        "apply_cancellation",
+        "cli.stop_all",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_global_clear_preserves_final_persistence_and_cli_stop_failures(
+    handler,
+    mock_cli_manager,
+    mock_session_store,
+) -> None:
+    events: list[str] = []
+    persistence_error = OSError("final clear failure")
+    cli_error = RuntimeError("CLI stop failure")
+
+    async def clear_trees(*, reason: CancellationReason) -> CancellationResult:
+        assert reason is CancellationReason.STOP
+        events.append("trees.clear_all")
+        return CancellationResult()
+
+    def fail_final_clear() -> None:
+        events.append("store.clear_conversation_snapshot")
+        raise persistence_error
+
+    async def fail_cli_stop() -> None:
+        events.append("cli.stop_all")
+        raise cli_error
+
+    mock_session_store.clear_conversation_snapshot.side_effect = fail_final_clear
+    mock_cli_manager.stop_all.side_effect = fail_cli_stop
+
+    with (
+        patch.object(handler.tree_queue, "clear_all", side_effect=clear_trees),
+        patch.object(
+            handler,
+            "_apply_cancellation_result",
+            side_effect=lambda _result: events.append("apply_cancellation"),
+        ),
+        pytest.raises(ExceptionGroup) as raised,
+    ):
+        await handler.clear_all_state("telegram", "chat_1")
+
+    assert raised.value.exceptions == (persistence_error, cli_error)
+    assert events == [
+        "trees.clear_all",
+        "store.clear_conversation_snapshot",
+        "apply_cancellation",
+        "cli.stop_all",
+    ]
+
+
+@pytest.mark.asyncio
+async def test_committed_global_clear_attempts_remaining_steps_after_tree_failure(
+    handler,
+    mock_cli_manager,
+    mock_session_store,
+) -> None:
+    events: list[str] = []
+    tree_error = RuntimeError("tree clear failure")
+
+    async def fail_tree_clear(*, reason: CancellationReason) -> CancellationResult:
+        assert reason is CancellationReason.STOP
+        events.append("trees.clear_all")
+        raise tree_error
+
+    mock_session_store.clear_conversation_snapshot.side_effect = lambda: events.append(
+        "store.clear_conversation_snapshot"
+    )
+    mock_cli_manager.stop_all.side_effect = lambda: events.append("cli.stop_all")
+
+    with (
+        patch.object(handler.tree_queue, "clear_all", side_effect=fail_tree_clear),
+        patch.object(
+            handler,
+            "_apply_cancellation_result",
+            side_effect=lambda _result: events.append("apply_cancellation"),
+        ),
+        pytest.raises(RuntimeError, match="tree clear failure") as raised,
+    ):
+        await handler.clear_all_state("telegram", "chat_1")
+
+    assert raised.value is tree_error
+    assert events == [
+        "trees.clear_all",
+        "store.clear_conversation_snapshot",
+        "apply_cancellation",
+        "cli.stop_all",
+    ]
+
+
+@pytest.mark.asyncio
 async def test_cancelled_global_clear_before_commit_preserves_tree_and_store(
     handler,
     mock_cli_manager,
@@ -1115,7 +1397,7 @@ async def test_global_clear_removes_snapshot_saved_during_detach_window(
     finally:
         release_runner.set()
         release_id_read.set()
-        workflow.close()
+        await workflow.close()
 
 
 @pytest.mark.asyncio

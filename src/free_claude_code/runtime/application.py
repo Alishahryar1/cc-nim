@@ -126,6 +126,11 @@ class ApplicationRuntime:
     def settings(self) -> Settings:
         return self.provider_manager.current_settings()
 
+    @property
+    def is_closed(self) -> bool:
+        """Whether this runtime released its complete ownership graph."""
+        return self._closed
+
     async def start(self) -> None:
         if self._started:
             return
@@ -306,7 +311,7 @@ class ApplicationRuntime:
             if components is not None:
                 await self._start_messaging_workflow(components)
         except ImportError as exc:
-            await self._cleanup_messaging()
+            cleaned = await self._cleanup_messaging()
             if self.settings.log_api_error_tracebacks:
                 logger.warning("Messaging module import error: {}", exc)
             else:
@@ -314,8 +319,10 @@ class ApplicationRuntime:
                     "Messaging module import error: exc_type={}",
                     type(exc).__name__,
                 )
+            if not cleaned:
+                raise RuntimeError("Messaging startup cleanup incomplete") from exc
         except Exception as exc:
-            await self._cleanup_messaging()
+            cleaned = await self._cleanup_messaging()
             if self.settings.log_api_error_tracebacks:
                 logger.error("Failed to start messaging platform: {}", exc)
                 logger.error(traceback.format_exc())
@@ -324,6 +331,8 @@ class ApplicationRuntime:
                     "Failed to start messaging platform: exc_type={}",
                     type(exc).__name__,
                 )
+            if not cleaned:
+                raise RuntimeError("Messaging startup cleanup incomplete") from exc
 
     def _messaging_options(self) -> MessagingPlatformOptions:
         settings = self.settings
@@ -421,25 +430,14 @@ class ApplicationRuntime:
                 return False
 
         if workflow is not None:
-            drained = await best_effort(
-                "messaging_workflow.stop_all_tasks",
-                workflow.stop_all_tasks(),
+            closed = await best_effort(
+                "messaging_workflow.close",
+                workflow.close(),
                 log_verbose_errors=verbose,
             )
-            if not drained:
+            if not closed:
                 # Active workflow tasks may still need delivery, transcription,
                 # CLI sessions, and providers while a later close retries drain.
-                return False
-            try:
-                workflow.close()
-            except Exception as exc:
-                if verbose:
-                    logger.warning("Session store flush on shutdown: {}", exc)
-                else:
-                    logger.warning(
-                        "Session store flush on shutdown: exc_type={}",
-                        type(exc).__name__,
-                    )
                 return False
             if self._messaging_workflow is workflow:
                 self._messaging_workflow = None

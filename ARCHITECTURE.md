@@ -86,7 +86,7 @@ also removes that permission:
 | `config` | none |
 | `core` | none |
 | `application` | `config`, `core` |
-| `messaging` | `config`, `core` |
+| `messaging` | `core` |
 | `providers` | `application`, `config`, `core` |
 | `api` | `application`, `config`, `core` |
 | `cli` | `config`, `core` |
@@ -222,7 +222,11 @@ for local pre-push verification.
 [cli/entrypoints.py](src/free_claude_code/cli/entrypoints.py) starts the FastAPI server with Uvicorn.
 `serve()` migrates legacy env files when needed, loads cached settings, runs a
 supervised server instance, and can restart the server after admin config changes.
-On final shutdown it best-effort kills registered child processes.
+An Admin restart constructs the next instance only when the prior
+`ApplicationRuntime` reports that its complete ownership graph closed. An
+incomplete ASGI shutdown therefore exits the supervisor instead of overlapping
+old and replacement graphs. On final shutdown it best-effort kills registered
+child processes.
 
 [runtime/bootstrap.py](src/free_claude_code/runtime/bootstrap.py) is the single production composition function. The CLI
 supervisor supplies one settings snapshot and its restart callback; bootstrap
@@ -247,7 +251,10 @@ incomplete graph retryable. Teardown stops at a failed dependency gate rather
 than closing resources that still-live upstream work may need, and the ASGI
 adapter reports that incomplete graph as lifespan shutdown failure. Cleanup is
 completion-driven: generic timeouts do not cancel half-closed external resources;
-the process supervisor owns any force-termination deadline.
+the process supervisor owns any force-termination deadline. Optional messaging
+startup remains nonfatal only when every partially constructed messaging owner
+was successfully cleaned; incomplete startup cleanup fails the application
+startup and retains the graph for the next close attempt.
 [runtime/asgi.py](src/free_claude_code/runtime/asgi.py) drives that owner from ASGI lifespan messages and preserves
 the concise startup-failure contract.
 
@@ -788,7 +795,15 @@ state. The managed session parser extracts persistent Claude session IDs and
 yields Claude stream-json events to the messaging event parser. Managed Claude
 also owns subprocess stderr diagnostic classification so known benign Claude
 Code notices do not become messaging task errors, while unknown stderr remains
-fatal.
+fatal. Before subprocess stop, the manager marks the session closing so new
+lookups and aliases cannot borrow it; the session also marks itself terminal so
+an already-issued reference cannot launch again. One lifecycle lock linearizes
+that terminal transition with subprocess publication. Aliases plus PID
+registration remain owned until exit is confirmed. Aggregate shutdown attempts
+every distinct mapped or closing session, removes only confirmed successes,
+reports a count-only failure, and leaves failures available for the next cleanup
+attempt. Real-session registration is collision-safe and becomes durable tree
+state only after the manager accepts it.
 
 Codex is supported through `fcc-codex` and Codex extensions. FCC does not keep an
 internal managed-Codex session runner because no user-facing messaging setting
@@ -804,7 +819,10 @@ the messaging bridge is skipped.
 
 `ApplicationRuntime` privately owns the selected platform runtime, the
 `MessagingWorkflow`, configured `Transcriber`, and managed CLI session manager.
-The workflow owns conversation snapshot restoration and final persistence flush.
+The workflow owns conversation snapshot restoration and terminal close: cancel
+work, stop managed CLI sessions, await every processor-owned claim and recovery
+task, then flush persistence. Interactive `/stop` keeps its bounded task-drain
+behavior; only terminal close waits for full completion.
 The API sees only the application-owned `TaskController` used to preserve
 `/stop` behavior.
 
@@ -877,7 +895,9 @@ the same transition instead of taking a later mutable-node read. Once a stop or
 clear transition commits, its persistence effects are applied before the later
 interruptible global CLI cleanup. At startup it restores and normalizes
 persisted state before ingress begins, then repairs interrupted platform
-statuses after outbound delivery starts.
+statuses after outbound delivery starts. Diagnostic detail policy is captured
+at construction and passed into the processor; messaging does not read global
+settings while executing callbacks or failures.
 
 [messaging/turn_intake.py](src/free_claude_code/messaging/turn_intake.py) owns inbound message
 recording, slash command dispatch, status-echo filtering, initial status
@@ -956,7 +976,10 @@ the cancellation flag is rechecked after callbacks, and callback failure cannot
 prevent successor launch. If a node processor unexpectedly escapes, the
 processor routes failure through the manager-owned aggregate transition; the
 workflow persists its snapshot and schedules its UI effect as normal queue
-advancement continues. [messaging/trees/node.py](src/free_claude_code/messaging/trees/node.py) owns
+advancement continues. The processor's completion event covers the published
+slot from launch through normal completion, successor publication, and pre-run
+recovery, so terminal workflow close cannot release delivery while cleanup is
+still active. [messaging/trees/node.py](src/free_claude_code/messaging/trees/node.py) owns
 `MessageNode` and `MessageState`; each node keeps only the copied scope and
 prompt needed by the aggregate rather than retaining a mutable ingress value,
 [messaging/trees/graph.py](src/free_claude_code/messaging/trees/graph.py) owns parent/child and
@@ -978,9 +1001,15 @@ shares mutable persisted state. Debounced atomic writes live in
 [messaging/session/persistence.py](src/free_claude_code/messaging/session/persistence.py). One writer
 lock serializes physical replaces, and a generation check under that lock
 prevents an older timer snapshot from landing after a newer flush or clear.
+Timer-triggered saves are best effort and leave the store dirty on failure;
+explicit flushes and authoritative writes propagate failure while preserving
+that dirty state for retry. Successful retry writes the current in-memory
+snapshot and is the only operation that marks it clean.
 Global `/clear` performs an early authoritative wipe, detaches and drains every
 tree, then writes an authoritative empty conversation snapshot while preserving
-message IDs recorded after the early wipe.
+message IDs recorded after the early wipe. Once clear commits, ordinary failures
+from final persistence, cancellation effects, and CLI cleanup are all attempted
+and preserved rather than producing a false successful clear.
 Per-chat message ID tracking for `/clear` lives in
 [messaging/session/message_log.py](src/free_claude_code/messaging/session/message_log.py). `/clear`
 guarantees FCC state cleanup and tries tracked platform deletes through the

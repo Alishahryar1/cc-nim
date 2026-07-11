@@ -1,6 +1,7 @@
 """Manager-level task and cancellation ownership tests."""
 
 import asyncio
+import logging
 
 import pytest
 
@@ -15,6 +16,10 @@ from free_claude_code.messaging.trees import (
     TreeQueueManager,
 )
 from free_claude_code.messaging.trees import manager as manager_module
+from free_claude_code.messaging.trees import processor as processor_module
+from free_claude_code.messaging.trees.node import MessageNode
+from free_claude_code.messaging.trees.processor import TreeQueueProcessor
+from free_claude_code.messaging.trees.runtime import MessageTree
 
 _SCOPE = MessageScope(platform="telegram", chat_id="chat")
 
@@ -200,3 +205,176 @@ async def test_escaped_processor_failure_persists_effects_through_manager_owner(
     assert failure.snapshot.nodes["root"]["state"] == "error"
     assert failure.snapshot.nodes["child"]["state"] == "error"
     assert queue_updates == [()]
+
+
+@pytest.mark.asyncio
+async def test_wait_idle_spans_successor_publication_and_completion() -> None:
+    root_started = asyncio.Event()
+    release_root = asyncio.Event()
+    child_started = asyncio.Event()
+    release_child = asyncio.Event()
+
+    async def process(claim: NodeClaim) -> None:
+        if claim.node.node_id == "root":
+            root_started.set()
+            await release_root.wait()
+            return
+        child_started.set()
+        await release_child.wait()
+
+    manager = TreeQueueManager(process)
+    await asyncio.wait_for(manager.wait_idle(), timeout=0.1)
+    await manager.admit(_incoming("root"), "status-root")
+    await asyncio.wait_for(root_started.wait(), timeout=1)
+    await manager.admit(
+        _incoming("child", reply_to="root"),
+        "status-child",
+        parent_node_id="root",
+    )
+    idle_task = asyncio.create_task(manager.wait_idle())
+
+    try:
+        await asyncio.sleep(0)
+        assert not idle_task.done()
+
+        release_root.set()
+        await asyncio.wait_for(child_started.wait(), timeout=1)
+        assert not idle_task.done()
+
+        release_child.set()
+        await asyncio.wait_for(idle_task, timeout=1)
+        assert manager.task_count() == 0
+    finally:
+        release_root.set()
+        release_child.set()
+        if not idle_task.done():
+            idle_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await idle_task
+
+
+@pytest.mark.asyncio
+async def test_wait_idle_spans_pre_run_cancellation_recovery() -> None:
+    finish_started = asyncio.Event()
+    release_finish = asyncio.Event()
+
+    async def process(_claim: NodeClaim) -> None:
+        raise AssertionError("pre-run cancellation must not enter the processor")
+
+    async def fail_claim(_claim: NodeClaim) -> None:
+        raise AssertionError("cancellation must not fail the claim")
+
+    async def finish_claim(_tree: MessageTree, _claim: NodeClaim) -> None:
+        finish_started.set()
+        await release_finish.wait()
+
+    tree = MessageTree(
+        MessageNode(
+            node_id="root",
+            scope=_SCOPE,
+            prompt="prompt root",
+            status_message_id="status-root",
+        )
+    )
+    decision = await tree.enqueue_or_claim("root")
+    assert decision.claim is not None
+    processor = TreeQueueProcessor(
+        process,
+        claim_failure_callback=fail_claim,
+        claim_finished_callback=finish_claim,
+    )
+    processor.launch(tree, decision.claim)
+    cancelled = processor.cancel(decision.claim, CancellationReason.STOP)
+    assert cancelled is not None
+    assert cancelled.runner_started is False
+    idle_task = asyncio.create_task(processor.wait_idle())
+
+    try:
+        await asyncio.wait_for(finish_started.wait(), timeout=1)
+        assert not idle_task.done()
+
+        release_finish.set()
+        await asyncio.wait_for(cancelled.task, timeout=1)
+        await asyncio.wait_for(idle_task, timeout=1)
+        assert processor.task_count() == 0
+    finally:
+        release_finish.set()
+        if not idle_task.done():
+            idle_task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await idle_task
+
+
+@pytest.mark.asyncio
+async def test_failed_launch_rolls_idle_state_back(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    async def process(_claim: NodeClaim) -> None:
+        return
+
+    async def fail_claim(_claim: NodeClaim) -> None:
+        return
+
+    async def finish_claim(_tree: MessageTree, _claim: NodeClaim) -> None:
+        return
+
+    tree = MessageTree(
+        MessageNode(
+            node_id="root",
+            scope=_SCOPE,
+            prompt="prompt root",
+            status_message_id="status-root",
+        )
+    )
+    decision = await tree.enqueue_or_claim("root")
+    assert decision.claim is not None
+    processor = TreeQueueProcessor(
+        process,
+        claim_failure_callback=fail_claim,
+        claim_finished_callback=finish_claim,
+    )
+
+    def fail_create_task(*_args: object, **_kwargs: object) -> None:
+        raise RuntimeError("launch failed")
+
+    monkeypatch.setattr(
+        processor_module.asyncio,
+        "create_task",
+        fail_create_task,
+    )
+
+    with pytest.raises(RuntimeError, match="launch failed"):
+        processor.launch(tree, decision.claim)
+
+    assert processor.task_count() == 0
+    await asyncio.wait_for(processor.wait_idle(), timeout=0.1)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("log_messaging_error_details", "secret_is_logged"),
+    [(False, False), (True, True)],
+)
+async def test_processor_failure_logging_respects_diagnostic_policy(
+    caplog: pytest.LogCaptureFixture,
+    log_messaging_error_details: bool,
+    secret_is_logged: bool,
+) -> None:
+    secret = "unique-processor-exception-secret"
+
+    async def process(_claim: NodeClaim) -> None:
+        raise RuntimeError(secret)
+
+    manager = TreeQueueManager(
+        process,
+        log_messaging_error_details=log_messaging_error_details,
+    )
+    with caplog.at_level(logging.ERROR):
+        await manager.admit(_incoming("root"), "status-root")
+        await asyncio.wait_for(manager.wait_idle(), timeout=1)
+
+    messages = "\n".join(record.getMessage() for record in caplog.records)
+
+    assert "Error processing node root" in messages
+    assert "RuntimeError" in messages
+    assert (secret in messages) is secret_is_logged

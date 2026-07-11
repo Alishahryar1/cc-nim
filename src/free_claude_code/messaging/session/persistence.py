@@ -62,24 +62,31 @@ class DebouncedJsonPersistence:
         timer.start()
 
     def flush(self) -> None:
+        self._on_dirty(True)
         pending = self._snapshot_for_write()
         if pending is None:
             return
         self._write_pending(pending)
 
     def _save_from_timer(self, generation: int) -> None:
-        pending = self._snapshot_for_write(expected_generation=generation)
-        if pending is None:
-            return
-        self._write_pending(pending)
+        try:
+            pending = self._snapshot_for_write(expected_generation=generation)
+            if pending is None:
+                return
+            self._write_pending(pending)
+        except Exception as e:
+            self._on_dirty(True)
+            logger.error(
+                "Failed to save sessions: exc_type={}",
+                type(e).__name__,
+            )
 
     def _write_pending(self, pending: _PendingWrite) -> None:
         try:
             written = self._write_if_current(pending)
-        except Exception as e:
-            logger.error("Failed to save sessions: {}", e)
+        except Exception:
             self._on_dirty(True)
-            return
+            raise
         if written:
             self._mark_clean_if_current(pending.generation)
 
@@ -122,6 +129,7 @@ class DebouncedJsonPersistence:
 
     def write_data(self, data: dict[str, Any]) -> None:
         """Write authoritative state after invalidating older pending snapshots."""
+        self._on_dirty(True)
         with self._timer_lock:
             if self._save_timer is not None:
                 self._save_timer.cancel()

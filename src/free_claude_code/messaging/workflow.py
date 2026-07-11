@@ -95,6 +95,7 @@ class MessagingWorkflow:
                 queue_update_callback=self.turn_intake.update_queue_positions,
                 node_started_callback=self.turn_intake.mark_node_processing,
                 unexpected_failure_callback=self._apply_unexpected_failure,
+                log_messaging_error_details=self._log_messaging_error_details,
             )
         return TreeQueueManager.from_snapshot(
             snapshot,
@@ -102,6 +103,7 @@ class MessagingWorkflow:
             queue_update_callback=self.turn_intake.update_queue_positions,
             node_started_callback=self.turn_intake.mark_node_processing,
             unexpected_failure_callback=self._apply_unexpected_failure,
+            log_messaging_error_details=self._log_messaging_error_details,
         )
 
     def format_status(self, emoji: str, label: str, suffix: str | None = None) -> str:
@@ -157,8 +159,10 @@ class MessagingWorkflow:
                     type(exc).__name__,
                 )
 
-    def close(self) -> None:
-        """Flush pending session persistence before runtime shutdown."""
+    async def close(self) -> None:
+        """Finish every owned task and durable write before releasing delivery."""
+        await self.stop_all_tasks()
+        await self._tree_queue.wait_idle()
         self.session_store.flush_pending_save()
 
     async def handle_message(self, incoming: IncomingMessage) -> None:
@@ -299,13 +303,37 @@ class MessagingWorkflow:
             except Exception as exc:
                 logger.warning("Failed to clear session store: {}", type(exc).__name__)
 
-            result = await self._tree_queue.clear_all(reason=CancellationReason.STOP)
+            failures: list[Exception] = []
+            result = CancellationResult()
+            try:
+                result = await self._tree_queue.clear_all(
+                    reason=CancellationReason.STOP
+                )
+            except Exception as exc:
+                failures.append(exc)
             # A runner may terminalize during task draining after the early
             # store clear. The detached manager now rejects later writes; clear
             # this final pre-detach snapshot without erasing newer message logs.
-            self.session_store.clear_conversation_snapshot()
-            self._apply_cancellation_result(result)
-            await self.cli_manager.stop_all()
+            try:
+                self.session_store.clear_conversation_snapshot()
+            except Exception as exc:
+                failures.append(exc)
+                logger.warning(
+                    "Failed to persist final cleared session state: {}",
+                    type(exc).__name__,
+                )
+            try:
+                self._apply_cancellation_result(result)
+            except Exception as exc:
+                failures.append(exc)
+            try:
+                await self.cli_manager.stop_all()
+            except Exception as exc:
+                failures.append(exc)
+            if len(failures) == 1:
+                raise failures[0]
+            if failures:
+                raise ExceptionGroup("Global clear failed", failures)
             return frozenset(message_ids)
 
     def forget_message_ids(

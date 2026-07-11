@@ -175,9 +175,12 @@ class TestSessionStore:
         snapshot = TreeSnapshot(scope=scope, root_id="r1", nodes={"r1": {}})
         store.save_tree_snapshot(snapshot)
 
-        with patch(
-            "free_claude_code.messaging.session.persistence.os.replace",
-            side_effect=OSError("Disk full"),
+        with (
+            patch(
+                "free_claude_code.messaging.session.persistence.os.replace",
+                side_effect=OSError("Disk full"),
+            ),
+            pytest.raises(OSError, match="Disk full"),
         ):
             store.flush_pending_save()
 

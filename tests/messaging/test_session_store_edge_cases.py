@@ -159,17 +159,108 @@ class TestSessionStoreLoadEdgeCases:
 class TestSessionStoreSaveEdgeCases:
     """Tests for save failure handling."""
 
-    def test_save_io_error_handled(self, tmp_store):
-        """Write failure marks pending state dirty without crashing callers."""
+    def test_explicit_flush_reports_io_error_and_keeps_store_dirty(self, tmp_store):
+        """A durability request must not hide that the snapshot was not saved."""
         tmp_store.save_tree_snapshot(
             TreeSnapshot(scope=TELEGRAM_C1, root_id="r1", nodes={"r1": {}})
         )
-        with patch(
-            "free_claude_code.messaging.session.persistence.os.replace",
-            side_effect=OSError("disk full"),
+        with (
+            patch(
+                "free_claude_code.messaging.session.persistence.os.replace",
+                side_effect=OSError("disk full"),
+            ),
+            pytest.raises(OSError, match="disk full"),
         ):
             tmp_store.flush_pending_save()
         assert tmp_store.dirty is True
+
+    def test_explicit_flush_snapshot_failure_is_dirty_and_retryable(
+        self,
+        tmp_path,
+    ) -> None:
+        dirty_states: list[bool] = []
+        should_fail = True
+
+        def snapshot() -> dict[str, Any]:
+            if should_fail:
+                raise RuntimeError("snapshot failed")
+            return {"saved": True}
+
+        persistence = DebouncedJsonPersistence(
+            str(tmp_path / "sessions.json"),
+            snapshot=snapshot,
+            on_dirty=dirty_states.append,
+        )
+
+        with pytest.raises(RuntimeError, match="snapshot failed"):
+            persistence.flush()
+
+        assert dirty_states[-1] is True
+
+        should_fail = False
+        persistence.flush()
+
+        assert dirty_states[-1] is False
+
+    def test_timer_save_io_error_is_best_effort_and_keeps_store_dirty(
+        self,
+        tmp_path,
+        monkeypatch,
+    ) -> None:
+        """A background timer may report failure without crashing its thread."""
+        FakeTimer.instances = []
+        monkeypatch.setattr(persistence_module.threading, "Timer", FakeTimer)
+        store = SessionStore(storage_path=str(tmp_path / "sessions.json"))
+        store.save_tree_snapshot(
+            TreeSnapshot(scope=TELEGRAM_C1, root_id="r1", nodes={"r1": {}})
+        )
+
+        with patch(
+            "free_claude_code.messaging.session.persistence.os.replace",
+            side_effect=OSError("timer disk full"),
+        ):
+            FakeTimer.instances[-1].fire()
+
+        assert store.dirty is True
+
+        store.flush_pending_save()
+
+        assert store.dirty is False
+        assert (
+            SessionStore(storage_path=store.storage_path)
+            .load_conversation_snapshot()
+            .get_tree(_identity("r1"))
+            is not None
+        )
+
+    def test_timer_snapshot_failure_is_best_effort_type_only_and_stays_dirty(
+        self,
+        tmp_path,
+        monkeypatch,
+    ) -> None:
+        FakeTimer.instances = []
+        monkeypatch.setattr(persistence_module.threading, "Timer", FakeTimer)
+        dirty_states: list[bool] = []
+
+        def fail_snapshot() -> dict[str, Any]:
+            raise RuntimeError("SECRET_SNAPSHOT_DETAIL")
+
+        persistence = DebouncedJsonPersistence(
+            str(tmp_path / "sessions.json"),
+            snapshot=fail_snapshot,
+            on_dirty=dirty_states.append,
+        )
+        persistence.schedule_save()
+
+        with patch.object(persistence_module.logger, "error") as error:
+            FakeTimer.instances[-1].fire()
+
+        assert dirty_states[-1] is True
+        error.assert_called_once_with(
+            "Failed to save sessions: exc_type={}",
+            "RuntimeError",
+        )
+        assert "SECRET_SNAPSHOT_DETAIL" not in str(error.call_args)
 
     def test_stale_timer_callback_cannot_clear_newer_timer(self, tmp_path, monkeypatch):
         """An already-running old timer cannot consume the newest save."""
@@ -379,9 +470,12 @@ class TestSessionStoreAtomicWrites:
             TreeSnapshot(scope=TELEGRAM_C1, root_id="r2", nodes={"r2": {}})
         )
 
-        with patch(
-            "free_claude_code.messaging.session.persistence.os.replace",
-            side_effect=OSError("replace failed"),
+        with (
+            patch(
+                "free_claude_code.messaging.session.persistence.os.replace",
+                side_effect=OSError("replace failed"),
+            ),
+            pytest.raises(OSError, match="replace failed"),
         ):
             store.flush_pending_save()
 
@@ -390,6 +484,54 @@ class TestSessionStoreAtomicWrites:
         assert disk_after_failed == disk_after_first
         assert store.dirty is True
         assert store.load_conversation_snapshot().get_tree(_identity("r2")) is not None
+
+    def test_failed_authoritative_clear_is_visible_and_retryable(self, tmp_path):
+        path = str(tmp_path / "sessions.json")
+        store = SessionStore(storage_path=path)
+        store.save_tree_snapshot(
+            TreeSnapshot(scope=TELEGRAM_C1, root_id="r1", nodes={"r1": {}})
+        )
+        store.flush_pending_save()
+
+        with (
+            patch(
+                "free_claude_code.messaging.session.persistence.os.replace",
+                side_effect=OSError("clear replace failed"),
+            ),
+            pytest.raises(OSError, match="clear replace failed"),
+        ):
+            store.clear_all()
+
+        assert store.load_conversation_snapshot().is_empty
+        assert store.dirty is True
+        assert not SessionStore(storage_path=path).load_conversation_snapshot().is_empty
+
+        store.flush_pending_save()
+
+        assert store.dirty is False
+        assert SessionStore(storage_path=path).load_conversation_snapshot().is_empty
+
+    def test_authoritative_snapshot_failure_marks_store_dirty_before_retry(
+        self,
+        tmp_path,
+    ) -> None:
+        store = SessionStore(storage_path=str(tmp_path / "sessions.json"))
+
+        with (
+            patch.object(
+                store,
+                "_snapshot_for_persistence",
+                side_effect=RuntimeError("authoritative snapshot failed"),
+            ),
+            pytest.raises(RuntimeError, match="authoritative snapshot failed"),
+        ):
+            store.clear_all()
+
+        assert store.dirty is True
+
+        store.clear_all()
+
+        assert store.dirty is False
 
 
 class TestSessionStoreClearAll:
