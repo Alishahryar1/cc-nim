@@ -49,7 +49,13 @@ async def best_effort(
     *,
     log_verbose_errors: bool = False,
 ) -> bool:
-    """Run one cleanup step and report whether it completed."""
+    """Run one cleanup step and report whether it completed.
+
+    The lifecycle owner intentionally applies no generic timeout here. Cancelling
+    an arbitrary cleanup at a deadline can abandon a half-closed SDK, thread, or
+    provider resource; resource-specific cleanup or the process supervisor owns
+    any force-termination deadline.
+    """
     try:
         await awaitable
     except Exception as exc:
@@ -145,10 +151,10 @@ class ApplicationRuntime:
             await self.close()
             raise
 
-    async def close(self) -> None:
+    async def close(self) -> bool:
         async with self._close_lock:
             if self._closed:
-                return
+                return True
             logger.info("Shutdown requested, cleaning up...")
             self._closed = await self._close_owned_resources()
             if self._closed:
@@ -158,6 +164,7 @@ class ApplicationRuntime:
                 logger.warning(
                     "Server shutdown incomplete; owned resources remain for retry"
                 )
+            return self._closed
 
     async def apply_admin_config(
         self,
@@ -409,6 +416,8 @@ class ApplicationRuntime:
                 log_verbose_errors=verbose,
             )
             if not quiesced:
+                # Delivery must remain available until ingress is known stopped.
+                # Retaining the graph lets the next close retry this exact gate.
                 return False
 
         if workflow is not None:
@@ -418,6 +427,8 @@ class ApplicationRuntime:
                 log_verbose_errors=verbose,
             )
             if not drained:
+                # Active workflow tasks may still need delivery, transcription,
+                # CLI sessions, and providers while a later close retries drain.
                 return False
             try:
                 workflow.close()

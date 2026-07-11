@@ -49,12 +49,15 @@ class RuntimeASGIApp:
             if message["type"] == "lifespan.shutdown":
                 if started:
                     try:
-                        await self.runtime.close()
+                        closed = await self.runtime.close()
                     except Exception as exc:
                         logger.error(
                             "Shutdown failed: exc_type={}",
                             type(exc).__name__,
                         )
+                        await send({"type": "lifespan.shutdown.failed", "message": ""})
+                        return
+                    if not closed:
                         await send({"type": "lifespan.shutdown.failed", "message": ""})
                         return
                 await send({"type": "lifespan.shutdown.complete"})

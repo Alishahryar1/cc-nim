@@ -168,7 +168,11 @@ and the injected restart callback. Shutdown is serialized and ordered: quiesce
 messaging ingress, cancel and drain workflow/CLI work, flush persistence, close
 delivery, close transcription, then close providers. An owner reference is
 released only after its cleanup succeeds; cancellation or failure leaves the
-incomplete graph retryable.
+incomplete graph retryable. Teardown stops at a failed dependency gate rather
+than closing resources that still-live upstream work may need, and the ASGI
+adapter reports that incomplete graph as lifespan shutdown failure. Cleanup is
+completion-driven: generic timeouts do not cancel half-closed external resources;
+the process supervisor owns any force-termination deadline.
 [runtime/asgi.py](src/free_claude_code/runtime/asgi.py) drives that owner from ASGI lifespan messages and preserves
 the concise startup-failure contract.
 

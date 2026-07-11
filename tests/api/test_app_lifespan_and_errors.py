@@ -212,7 +212,7 @@ async def test_runtime_asgi_app_starts_and_closes_owner_once():
     runtime = MagicMock(spec=ApplicationRuntime)
     runtime.settings = _settings()
     runtime.start = AsyncMock()
-    runtime.close = AsyncMock()
+    runtime.close = AsyncMock(return_value=True)
     app = RuntimeASGIApp(AsyncMock(), runtime)
     received = iter(
         [
@@ -235,6 +235,35 @@ async def test_runtime_asgi_app_starts_and_closes_owner_once():
     assert sent == [
         {"type": "lifespan.startup.complete"},
         {"type": "lifespan.shutdown.complete"},
+    ]
+
+
+@pytest.mark.asyncio
+async def test_runtime_asgi_app_reports_incomplete_owned_shutdown() -> None:
+    runtime = MagicMock(spec=ApplicationRuntime)
+    runtime.settings = _settings()
+    runtime.start = AsyncMock()
+    runtime.close = AsyncMock(return_value=False)
+    app = RuntimeASGIApp(AsyncMock(), runtime)
+    received = iter(
+        [
+            {"type": "lifespan.startup"},
+            {"type": "lifespan.shutdown"},
+        ]
+    )
+    sent: list[dict[str, str]] = []
+
+    async def receive():
+        return next(received)
+
+    async def send(message):
+        sent.append(message)
+
+    await app({"type": "lifespan"}, receive, send)
+
+    assert sent == [
+        {"type": "lifespan.startup.complete"},
+        {"type": "lifespan.shutdown.failed", "message": ""},
     ]
 
 

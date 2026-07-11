@@ -301,8 +301,8 @@ async def test_close_drains_messaging_before_transcriber_and_is_idempotent() -> 
     runtime._messaging_workflow = workflow
     runtime._cli_manager = MagicMock()
 
-    await runtime.close()
-    await runtime.close()
+    assert await runtime.close() is True
+    assert await runtime.close() is True
 
     assert events == [
         "messaging.quiesce",
@@ -325,7 +325,7 @@ async def test_close_retains_transcriber_ownership_when_close_fails() -> None:
     runtime = ApplicationRuntime(manager, transcriber=transcriber)
     runtime._messaging_runtime = TrackingMessagingRuntime(events)
 
-    await runtime.close()
+    assert await runtime.close() is False
 
     assert events == [
         "messaging.quiesce",
@@ -347,14 +347,14 @@ async def test_close_retries_runtime_before_closing_later_resources() -> None:
     messaging = TrackingMessagingRuntime(events, fail_close_once=True)
     runtime._messaging_runtime = messaging
 
-    await runtime.close()
+    assert await runtime.close() is False
 
     assert events == ["messaging.quiesce", "messaging.close"]
     assert runtime._messaging_runtime is messaging
     assert runtime._transcriber is transcriber
     assert runtime._closed is False
 
-    await runtime.close()
+    assert await runtime.close() is True
 
     assert events == [
         "messaging.quiesce",
@@ -365,6 +365,36 @@ async def test_close_retries_runtime_before_closing_later_resources() -> None:
     ]
     assert runtime._messaging_runtime is None
     assert runtime._transcriber is None
+    assert runtime._closed is True
+
+
+@pytest.mark.asyncio
+async def test_close_retries_workflow_drain_before_closing_delivery() -> None:
+    events: list[str] = []
+    manager = ProviderRuntimeManager(_settings("nvidia_nim/model"))
+    runtime = ApplicationRuntime(manager, transcriber=None)
+    messaging = TrackingMessagingRuntime(events)
+    workflow = MagicMock()
+    workflow.stop_all_tasks = AsyncMock(side_effect=[RuntimeError("drain failed"), 0])
+    workflow.close.side_effect = lambda: events.append("workflow.close")
+    runtime._messaging_runtime = messaging
+    runtime._messaging_workflow = workflow
+
+    assert await runtime.close() is False
+
+    assert events == ["messaging.quiesce"]
+    assert runtime._messaging_runtime is messaging
+    assert runtime._messaging_workflow is workflow
+    assert runtime._closed is False
+
+    assert await runtime.close() is True
+
+    assert events == [
+        "messaging.quiesce",
+        "messaging.quiesce",
+        "workflow.close",
+        "messaging.close",
+    ]
     assert runtime._closed is True
 
 
@@ -382,13 +412,13 @@ async def test_close_does_not_drain_workflow_until_ingress_is_quiescent() -> Non
     runtime._messaging_runtime = messaging
     runtime._messaging_workflow = workflow
 
-    await runtime.close()
+    assert await runtime.close() is False
 
     workflow.stop_all_tasks.assert_not_awaited()
     assert runtime._messaging_runtime is messaging
     assert runtime._messaging_workflow is workflow
 
-    await runtime.close()
+    assert await runtime.close() is True
 
     assert events == [
         "messaging.quiesce",
