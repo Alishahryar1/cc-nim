@@ -306,7 +306,10 @@ Configure integrations from **Admin UI → Messaging**, then click **Validate** 
 
 </details>
 
-Bot commands: `/stop` cancels work, `/clear` resets sessions, and `/stats` shows session state. Reply to a task message to target only that conversation branch.
+Bot commands: standalone `/stop` cancels all work, standalone `/clear` resets all
+sessions, and `/stats` shows session state. Reply with `/stop` to cancel only
+that request while other queued requests continue. Reply with `/clear` to
+remove that conversation branch.
 
 <details>
 <summary><strong>Voice notes</strong></summary>

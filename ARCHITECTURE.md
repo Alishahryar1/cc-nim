@@ -871,7 +871,11 @@ transition-owned snapshots. Cancellation and removal entrypoints finish their
 exact transition despite caller cancellation, so a committed detach cannot lose
 its UI or persistence result. Reply `/clear` is one cancel-and-detach transition
 before platform I/O; global clear atomically detaches every aggregate before
-task draining. Separate trees still progress independently.
+task draining. Reply `/stop` cancels exactly one request; its matching finisher
+releases execution ownership and advances the next eligible queued request.
+Global `/stop` drains every queue instead, and reply `/clear` removes the whole
+selected branch before any survivor can advance. Separate trees still progress
+independently.
 [messaging/trees/repository.py](src/free_claude_code/messaging/trees/repository.py)
 is manager-private and owns only aggregate/reference indexes.
 [messaging/trees/processor.py](src/free_claude_code/messaging/trees/processor.py) owns every
