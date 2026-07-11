@@ -1,5 +1,7 @@
 """Limits and defaults for outbound web server tool HTTP."""
 
+from free_claude_code.core.version import package_version
+
 _REQUEST_TIMEOUT_S = 20.0
 _MAX_SEARCH_RESULTS = 10
 _MAX_FETCH_CHARS = 24_000
@@ -11,5 +13,5 @@ _MAX_WEB_FETCH_REDIRECTS = 10
 _WEB_FETCH_REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 
 _WEB_TOOL_HTTP_HEADERS = {
-    "User-Agent": "Mozilla/5.0 compatible; free-claude-code/2.0",
+    "User-Agent": f"Mozilla/5.0 compatible; free-claude-code/{package_version()}",
 }

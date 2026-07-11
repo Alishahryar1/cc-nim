@@ -119,6 +119,14 @@ server does not require an optional extra. Static AST enforcement cannot observe
 dynamic imports. Deliberate provider factory loading is instead protected by the
 provider catalog, supported-ID, and factory synchronization contract.
 
+[core/version.py](src/free_claude_code/core/version.py) is the sole runtime owner
+of the FCC release version. It reads installed distribution metadata for
+FastAPI/OpenAPI, FCC-owned CLI `--version` output, and the outbound web-tools
+user agent. A source-only checkout without installed metadata reports the
+explicit `0+unknown` fallback; runtime code never parses `pyproject.toml` or
+duplicates a release literal. Claude and Codex launcher arguments remain
+transparent to their wrapped clients.
+
 The main ownership rule is that Anthropic and Responses protocol schemas and
 shared protocol behavior belong in [src/free_claude_code/core/](src/free_claude_code/core/), while request routing and
 provider execution belong in [src/free_claude_code/application/](src/free_claude_code/application/). Routes use core schemas

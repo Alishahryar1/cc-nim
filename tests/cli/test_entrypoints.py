@@ -179,6 +179,47 @@ def test_cli_scripts_are_registered() -> None:
     assert scripts["fcc-codex"] == "free_claude_code.cli.launchers.codex:launch"
 
 
+@pytest.mark.parametrize("entrypoint_name", ["serve", "init"])
+@pytest.mark.parametrize(
+    "argv",
+    [("--version",), ("--version", "--help"), ("--help", "--version")],
+)
+def test_fcc_owned_entrypoints_report_version_without_side_effects(
+    entrypoint_name: str,
+    argv: tuple[str, ...],
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from free_claude_code.cli import entrypoints
+
+    with (
+        patch.object(entrypoints, "package_version", return_value="9.8.7"),
+        patch.object(entrypoints, "_migrate_legacy_env_if_missing") as migrate_legacy,
+        patch.object(entrypoints, "_migrate_config_env_keys") as migrate_keys,
+        patch.object(entrypoints, "get_settings") as get_settings,
+        patch.object(
+            entrypoints, "_run_supervised_server", return_value=False
+        ) as run_server,
+        patch.object(entrypoints, "kill_all_best_effort") as kill_all,
+        patch.object(entrypoints, "config_dir_path") as config_dir,
+        patch.object(entrypoints, "managed_env_path") as managed_env,
+        patch.object(entrypoints, "load_env_template") as load_template,
+    ):
+        getattr(entrypoints, entrypoint_name)(argv)
+
+    assert capsys.readouterr() == ("free-claude-code 9.8.7\n", "")
+    for side_effect in {
+        migrate_legacy,
+        migrate_keys,
+        get_settings,
+        run_server,
+        kill_all,
+        config_dir,
+        managed_env,
+        load_template,
+    }:
+        side_effect.assert_not_called()
+
+
 def test_schedule_open_admin_browser_opens_when_health_ready(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:

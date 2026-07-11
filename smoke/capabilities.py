@@ -447,12 +447,13 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         "package_cli_entrypoints",
         "free_claude_code.cli.entrypoints",
         "installed console scripts",
-        "config scaffold or uvicorn server startup",
+        "config scaffold, package version, or uvicorn server startup",
         "process cleanup in finally",
-        ("tests/cli/test_entrypoints.py",),
+        ("tests/cli/test_entrypoints.py", "tests/core/test_version.py"),
         (
             "test_fcc_init_scaffolds_user_config",
             "test_free_claude_code_entrypoint_starts_server",
+            "test_entrypoint_version_e2e",
         ),
     ),
     CapabilityContract(

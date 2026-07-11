@@ -19,6 +19,7 @@ from free_claude_code.core.trace import (
     extract_claude_session_id_from_headers,
     trace_event,
 )
+from free_claude_code.core.version import package_version
 
 from .admin_routes import router as admin_router
 from .ports import ApiServices
@@ -35,7 +36,7 @@ from .validation_log import summarize_request_validation_body
 
 def create_app(services: ApiServices) -> FastAPI:
     """Create the HTTP adapter around explicitly supplied runtime services."""
-    app = FastAPI(title="Claude Code Proxy", version="2.1.0")
+    app = FastAPI(title="Claude Code Proxy", version=package_version())
     app.state.services = services
 
     @app.middleware("http")

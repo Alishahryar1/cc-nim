@@ -399,14 +399,18 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     ),
     FeatureCoverage(
         "package_cli_entrypoints",
-        "Installed package scripts scaffold config and start the server",
+        "Installed package scripts scaffold config, report version, and start the server",
         "public_surface",
-        ("tests/cli/test_entrypoints.py",),
+        ("tests/cli/test_entrypoints.py", "tests/core/test_version.py"),
         (
             "test_fcc_init_scaffolds_user_config",
             "test_free_claude_code_entrypoint_starts_server",
         ),
-        ("test_entrypoint_init_e2e", "test_entrypoint_server_e2e"),
+        (
+            "test_entrypoint_init_e2e",
+            "test_entrypoint_server_e2e",
+            "test_entrypoint_version_e2e",
+        ),
         ("cli",),
         (),
         "always runnable once uv project dependencies are available",

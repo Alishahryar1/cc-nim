@@ -38,6 +38,7 @@ from free_claude_code.core.anthropic.stream_contracts import (
     parse_sse_text,
     text_content,
 )
+from free_claude_code.core.version import package_version
 from free_claude_code.messaging.event_parser import parse_cli_event
 
 _STRICT_EGRESS = WebFetchEgressPolicy(
@@ -54,6 +55,12 @@ _SERVER_TOOL_PASSTHROUGH_PROVIDER_IDS = tuple(
     for provider_id, descriptor in PROVIDER_CATALOG.items()
     if descriptor.capabilities.server_tool_passthrough
 )
+
+
+def test_web_tool_user_agent_reports_installed_package_version() -> None:
+    assert {
+        "User-Agent": (f"Mozilla/5.0 compatible; free-claude-code/{package_version()}")
+    } == web_tool_constants._WEB_TOOL_HTTP_HEADERS
 
 
 class FixedProviderModelRouter(ModelRouter):

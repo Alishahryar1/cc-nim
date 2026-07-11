@@ -91,6 +91,9 @@ Re-run the same command whenever you want to update. You can review the installe
 fcc-server
 ```
 
+To print the installed Free Claude Code version without starting the server,
+run `fcc-server --version`.
+
 Keep this process running. The startup log shows the Admin UI address:
 
 ```text

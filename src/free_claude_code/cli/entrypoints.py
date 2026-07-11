@@ -6,6 +6,7 @@ import sys
 import threading
 import time
 import webbrowser
+from collections.abc import Sequence
 from pathlib import Path
 
 import uvicorn
@@ -26,13 +27,16 @@ from free_claude_code.config.paths import (
 )
 from free_claude_code.config.server_urls import local_admin_url, local_proxy_root_url
 from free_claude_code.config.settings import Settings, get_settings
+from free_claude_code.core.version import package_version
 from free_claude_code.runtime.bootstrap import build_asgi_app
 
 SERVER_GRACEFUL_SHUTDOWN_SECONDS = 5
 
 
-def serve() -> None:
+def serve(argv: Sequence[str] | None = None) -> None:
     """Start the FastAPI server (registered as `fcc-server` script)."""
+    if _print_version_if_requested(argv):
+        return
     opened_admin_browser = False
     try:
         try:
@@ -109,8 +113,10 @@ def _run_supervised_server(settings: Settings, *, open_admin_browser: bool) -> b
     return restart_requested
 
 
-def init() -> None:
+def init(argv: Sequence[str] | None = None) -> None:
     """Scaffold config at ~/.fcc/.env (registered as `fcc-init`)."""
+    if _print_version_if_requested(argv):
+        return
     config_dir = config_dir_path()
     env_file = managed_env_path()
 
@@ -133,6 +139,14 @@ def init() -> None:
     env_file.write_text(template, encoding="utf-8")
     print(f"Config created at {env_file}")
     print("Edit it to set your API keys and model preferences, then run: fcc-server")
+
+
+def _print_version_if_requested(argv: Sequence[str] | None) -> bool:
+    args = sys.argv[1:] if argv is None else argv
+    if "--version" not in args:
+        return False
+    print(f"free-claude-code {package_version()}")
+    return True
 
 
 def _migrate_legacy_env_if_missing() -> Path | None:
