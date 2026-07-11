@@ -22,6 +22,7 @@ _CODEX_AUTH_ENV_KEY = "FCC_CODEX_API_KEY"
 _DISPLAY_NAME = "Codex CLI"
 _DEFAULT_BINARY = "codex"
 _INSTALL_HINT = "Install Codex with: npm install -g @openai/codex"
+# Preserve CODEX_HOME: it owns durable user configuration, not parent-task identity.
 _STRIPPED_CODEX_ENV_KEYS = frozenset(
     {
         "OPENAI_API_KEY",
