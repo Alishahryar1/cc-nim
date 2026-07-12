@@ -7,16 +7,17 @@ import pytest
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.llamacpp import LlamaCppProvider
+from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter
+from tests.providers.support import passthrough_rate_limiter, profiled_provider
 
 LLAMACPP_MODEL = "llamacpp-community/qwen2.5-7b-instruct"
 
 
 @pytest.fixture
-def provider() -> LlamaCppProvider:
-    return LlamaCppProvider(
+def provider() -> OpenAIChatProvider:
+    return profiled_provider(
+        "llamacpp",
         ProviderConfig(api_key="llamacpp", base_url="http://localhost:8080/v1"),
         rate_limiter=passthrough_rate_limiter(),
     )
@@ -25,19 +26,19 @@ def provider() -> LlamaCppProvider:
 @pytest.mark.parametrize(
     ("configured", "expected"),
     [
-        (None, "http://localhost:8080/v1"),
         ("http://localhost:8080", "http://localhost:8080/v1"),
         ("http://localhost:8080/", "http://localhost:8080/v1"),
         ("http://localhost:8080/v1", "http://localhost:8080/v1"),
         ("http://localhost:8080/v1/", "http://localhost:8080/v1"),
     ],
 )
-def test_init_normalizes_openai_base_url(configured: str | None, expected: str) -> None:
+def test_init_normalizes_openai_base_url(configured: str, expected: str) -> None:
     with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+        "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as openai_client:
-        provider = LlamaCppProvider(
-            ProviderConfig(api_key="", base_url=configured),
+        provider = profiled_provider(
+            "llamacpp",
+            ProviderConfig(api_key="llamacpp", base_url=configured),
             rate_limiter=passthrough_rate_limiter(),
         )
 
@@ -47,16 +48,18 @@ def test_init_normalizes_openai_base_url(configured: str | None, expected: str) 
 
 def test_init_uses_openai_chat_client() -> None:
     config = ProviderConfig(
-        api_key="",
+        api_key="llamacpp",
         base_url="http://localhost:8080/v1/",
         http_read_timeout=600.0,
         http_write_timeout=15.0,
         http_connect_timeout=5.0,
     )
     with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+        "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as openai_client:
-        provider = LlamaCppProvider(config, rate_limiter=passthrough_rate_limiter())
+        provider = profiled_provider(
+            "llamacpp", config, rate_limiter=passthrough_rate_limiter()
+        )
 
     assert provider._provider_name == "LLAMACPP"
     assert provider._base_url == "http://localhost:8080/v1"
@@ -65,7 +68,9 @@ def test_init_uses_openai_chat_client() -> None:
     assert (timeout.read, timeout.write, timeout.connect) == (600.0, 15.0, 5.0)
 
 
-def test_build_request_body_uses_openai_chat_shape(provider: LlamaCppProvider) -> None:
+def test_build_request_body_uses_openai_chat_shape(
+    provider: OpenAIChatProvider,
+) -> None:
     request = make_messages_request(LLAMACPP_MODEL, max_tokens=None)
 
     body = provider._build_request_body(request)
@@ -77,7 +82,7 @@ def test_build_request_body_uses_openai_chat_shape(provider: LlamaCppProvider) -
 
 
 def test_disabled_thinking_does_not_replay_assistant_reasoning(
-    provider: LlamaCppProvider,
+    provider: OpenAIChatProvider,
 ) -> None:
     request = make_messages_request(
         LLAMACPP_MODEL,
@@ -101,8 +106,8 @@ def test_disabled_thinking_does_not_replay_assistant_reasoning(
 
 
 @pytest.mark.asyncio
-async def test_stream_response_uses_shared_openai_chat_transport(
-    provider: LlamaCppProvider,
+async def test_stream_response_uses_shared_openai_chat_provider(
+    provider: OpenAIChatProvider,
 ) -> None:
     chunk = MagicMock()
     chunk.choices = [

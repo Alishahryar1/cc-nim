@@ -8,18 +8,18 @@ import httpx
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.defaults import GITHUB_MODELS_DEFAULT_BASE
+from free_claude_code.providers.http import maybe_await_aclose
 from free_claude_code.providers.model_listing import (
     ModelListResponseError,
     model_infos_from_ids,
 )
-from free_claude_code.providers.rate_limit import ProviderRateLimiter
-from free_claude_code.providers.transports.http import maybe_await_aclose
-from free_claude_code.providers.transports.openai_chat import (
+from free_claude_code.providers.openai_chat import (
+    OpenAIChatProfile,
+    OpenAIChatProvider,
     OpenAIChatRequestPolicy,
-    OpenAIChatTransport,
     build_openai_chat_request_body,
 )
+from free_claude_code.providers.rate_limit import ProviderRateLimiter
 
 GITHUB_MODELS_CATALOG_URL = "https://models.github.ai/catalog/models"
 GITHUB_MODELS_API_VERSION = "2026-03-10"
@@ -27,10 +27,11 @@ GITHUB_MODELS_API_VERSION = "2026-03-10"
 _REQUEST_POLICY = OpenAIChatRequestPolicy(
     provider_name="GITHUB_MODELS",
 )
+_PROFILE = OpenAIChatProfile(_REQUEST_POLICY)
 _REQUIRED_MODEL_CAPABILITIES = frozenset({"streaming", "tool-calling"})
 
 
-class GitHubModelsProvider(OpenAIChatTransport):
+class GitHubModelsProvider(OpenAIChatProvider):
     """GitHub Models OpenAI-compatible inference provider."""
 
     def __init__(self, config: ProviderConfig, *, rate_limiter: ProviderRateLimiter):
@@ -46,9 +47,7 @@ class GitHubModelsProvider(OpenAIChatTransport):
         )
         super().__init__(
             config,
-            provider_name="GITHUB_MODELS",
-            base_url=config.base_url or GITHUB_MODELS_DEFAULT_BASE,
-            api_key=config.api_key,
+            profile=_PROFILE,
             rate_limiter=rate_limiter,
             default_headers=_github_models_default_headers(),
         )

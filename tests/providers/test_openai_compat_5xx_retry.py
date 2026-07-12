@@ -1,4 +1,4 @@
-"""OpenAI-compat transports: upstream 5xx uses the same execute_with_retry path as 429."""
+"""OpenAI-chat providers route upstream 5xx and 429 through the same retry path."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -149,9 +149,7 @@ async def test_nim_stream_connection_error_exhausted_emits_cause_chain():
             side_effect=error,
         ) as mock_create,
         patch("asyncio.sleep", new_callable=AsyncMock),
-        patch(
-            "free_claude_code.providers.transports.openai_chat.transport.trace_event"
-        ) as trace,
+        patch("free_claude_code.providers.openai_chat.provider.trace_event") as trace,
         pytest.raises(ExecutionFailure) as exc_info,
     ):
         [e async for e in provider.stream_response(req, request_id="req_conn")]

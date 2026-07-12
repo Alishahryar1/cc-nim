@@ -8,7 +8,7 @@ from typing import Any
 
 import openai
 
-from free_claude_code.providers.transports.http import maybe_await_aclose
+from free_claude_code.providers.http import maybe_await_aclose
 
 MISTRAL_REASONING_EFFORT = "high"
 

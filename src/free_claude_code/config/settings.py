@@ -13,7 +13,7 @@ from .env_files import (
     settings_env_files,
 )
 from .nim import NimSettings
-from .provider_ids import SUPPORTED_PROVIDER_IDS
+from .provider_catalog import SUPPORTED_PROVIDER_IDS
 
 
 class Settings(BaseSettings):

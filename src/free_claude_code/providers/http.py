@@ -1,4 +1,4 @@
-"""Shared HTTP helpers for provider transports."""
+"""Shared HTTP lifecycle helpers for upstream provider clients."""
 
 import inspect
 from typing import Any

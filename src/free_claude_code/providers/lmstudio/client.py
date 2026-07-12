@@ -7,7 +7,7 @@ model's jinja chat template with strict role-alternation rules and a fragile
 (``[TOOL_CALLS]Read``) and dumping whole tool calls into text
 (``Read[ARGS]{...}``), which ends agent runs silently. The OpenAI
 ``/v1/chat/completions`` path is LM Studio's mature parsing route, and fcc's
-OpenAI transport layers its own tool-call assembly, think-tag parsing, and
+OpenAI provider layers its own tool-call assembly, think-tag parsing, and
 heuristic recovery on top.
 """
 
@@ -25,12 +25,17 @@ from free_claude_code.core.anthropic import (
 from free_claude_code.core.anthropic.conversion import OpenAIConversionError
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.defaults import LMSTUDIO_DEFAULT_BASE
+from free_claude_code.providers.openai_chat import (
+    OpenAIChatProfile,
+    OpenAIChatProvider,
+    OpenAIChatRequestPolicy,
+)
 from free_claude_code.providers.rate_limit import ProviderRateLimiter
-from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
+
+_PROFILE = OpenAIChatProfile(OpenAIChatRequestPolicy(provider_name="LMSTUDIO"))
 
 
-class LMStudioProvider(OpenAIChatTransport):
+class LMStudioProvider(OpenAIChatProvider):
     """LM Studio via its OpenAI-compatible chat completions endpoint."""
 
     # LM Studio truncates the stream silently (no terminal event) when the
@@ -43,9 +48,7 @@ class LMStudioProvider(OpenAIChatTransport):
     def __init__(self, config: ProviderConfig, *, rate_limiter: ProviderRateLimiter):
         super().__init__(
             config,
-            provider_name="LMSTUDIO",
-            base_url=config.base_url or LMSTUDIO_DEFAULT_BASE,
-            api_key=config.api_key or "lm-studio",
+            profile=_PROFILE,
             rate_limiter=rate_limiter,
         )
         self._loaded_context_cache: tuple[float, int | None] = (0.0, None)
@@ -58,7 +61,7 @@ class LMStudioProvider(OpenAIChatTransport):
         Prior-turn thinking is never replayed: Mistral-family templates have
         no assistant reasoning field, and replaying ``<think>`` text inflates
         the local context for no benefit. New-response thinking still streams
-        back via ``reasoning_content``/``<think>`` parsing in the transport.
+        back via ``reasoning_content``/``<think>`` parsing in the provider.
         """
         try:
             return build_base_request_body(

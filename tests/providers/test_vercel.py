@@ -1,16 +1,14 @@
 """Tests for Vercel AI Gateway provider."""
 
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from free_claude_code.config.provider_catalog import VERCEL_AI_GATEWAY_DEFAULT_BASE
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.vercel import (
-    VERCEL_AI_GATEWAY_DEFAULT_BASE,
-    VercelProvider,
-)
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter
+from tests.providers.support import passthrough_rate_limiter, profiled_provider
 
 
 def make_request(**overrides):
@@ -30,7 +28,8 @@ def vercel_config():
 
 @pytest.fixture
 def vercel_provider(vercel_config):
-    return VercelProvider(
+    return profiled_provider(
+        "vercel",
         vercel_config,
         rate_limiter=passthrough_rate_limiter(),
     )
@@ -42,9 +41,10 @@ def test_default_base_url_constant():
 
 def test_init_uses_default_base_url_and_api_key(vercel_config):
     with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+        "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as mock_openai:
-        provider = VercelProvider(
+        provider = profiled_provider(
+            "vercel",
             vercel_config,
             rate_limiter=passthrough_rate_limiter(),
         )
@@ -55,14 +55,11 @@ def test_init_uses_default_base_url_and_api_key(vercel_config):
 
 
 def test_init_strips_trailing_slash(vercel_config):
-    config = vercel_config.model_copy(
-        update={"base_url": f"{VERCEL_AI_GATEWAY_DEFAULT_BASE}/"}
-    )
+    config = replace(vercel_config, base_url=f"{VERCEL_AI_GATEWAY_DEFAULT_BASE}/")
 
-    with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
-    ):
-        provider = VercelProvider(
+    with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
+        provider = profiled_provider(
+            "vercel",
             config,
             rate_limiter=passthrough_rate_limiter(),
         )
@@ -72,7 +69,7 @@ def test_init_strips_trailing_slash(vercel_config):
 
 def test_build_request_body_keeps_max_tokens(vercel_provider):
     with patch(
-        "free_claude_code.providers.transports.openai_chat.request_policy.build_base_request_body"
+        "free_claude_code.providers.openai_chat.request_policy.build_base_request_body"
     ) as mock_convert:
         mock_convert.return_value = {
             "model": "openai/gpt-5.5",

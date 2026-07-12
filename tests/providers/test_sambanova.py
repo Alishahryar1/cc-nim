@@ -1,16 +1,14 @@
 """Tests for SambaNova Cloud (OpenAI-compatible) provider."""
 
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from free_claude_code.config.provider_catalog import SAMBANOVA_DEFAULT_BASE
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.sambanova import (
-    SAMBANOVA_DEFAULT_BASE,
-    SambaNovaProvider,
-)
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter
+from tests.providers.support import passthrough_rate_limiter, profiled_provider
 
 
 def make_request(**overrides):
@@ -30,7 +28,9 @@ def sambanova_config():
 
 @pytest.fixture
 def sambanova_provider(sambanova_config):
-    return SambaNovaProvider(sambanova_config, rate_limiter=passthrough_rate_limiter())
+    return profiled_provider(
+        "sambanova", sambanova_config, rate_limiter=passthrough_rate_limiter()
+    )
 
 
 def test_default_base_url_constant():
@@ -39,10 +39,10 @@ def test_default_base_url_constant():
 
 def test_init_uses_default_base_url_and_api_key(sambanova_config):
     with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+        "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as mock_openai:
-        provider = SambaNovaProvider(
-            sambanova_config, rate_limiter=passthrough_rate_limiter()
+        provider = profiled_provider(
+            "sambanova", sambanova_config, rate_limiter=passthrough_rate_limiter()
         )
 
     assert provider._api_key == "test_sambanova_key"
@@ -51,14 +51,12 @@ def test_init_uses_default_base_url_and_api_key(sambanova_config):
 
 
 def test_init_strips_trailing_slash(sambanova_config):
-    config = sambanova_config.model_copy(
-        update={"base_url": f"{SAMBANOVA_DEFAULT_BASE}/"}
-    )
+    config = replace(sambanova_config, base_url=f"{SAMBANOVA_DEFAULT_BASE}/")
 
-    with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
-    ):
-        provider = SambaNovaProvider(config, rate_limiter=passthrough_rate_limiter())
+    with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
+        provider = profiled_provider(
+            "sambanova", config, rate_limiter=passthrough_rate_limiter()
+        )
 
     assert provider._base_url == SAMBANOVA_DEFAULT_BASE
 

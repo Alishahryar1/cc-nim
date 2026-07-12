@@ -6,17 +6,24 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from free_claude_code.config.provider_catalog import WAFER_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import Message, MessagesRequest, Tool
 from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.openai_chat import (
+    OPENAI_CHAT_PROFILES,
+    OpenAIChatProvider,
+)
 from free_claude_code.providers.rate_limit import ProviderRateLimiter
-from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
-from free_claude_code.providers.wafer import WAFER_DEFAULT_BASE, WaferProvider
-from tests.providers.support import passthrough_rate_limiter
+from tests.providers.support import passthrough_rate_limiter, profiled_provider
 
 
-class CountingWaferProvider(WaferProvider):
+class CountingWaferProvider(OpenAIChatProvider):
     def __init__(self, config: ProviderConfig, *, rate_limiter: ProviderRateLimiter):
-        super().__init__(config, rate_limiter=rate_limiter)
+        super().__init__(
+            config,
+            profile=OPENAI_CHAT_PROFILES["wafer"],
+            rate_limiter=rate_limiter,
+        )
         self.thinking_checks = 0
 
     def _is_thinking_enabled(
@@ -38,7 +45,8 @@ def wafer_config():
 
 @pytest.fixture
 def wafer_provider(wafer_config):
-    return WaferProvider(
+    return profiled_provider(
+        "wafer",
         wafer_config,
         rate_limiter=passthrough_rate_limiter(),
     )
@@ -48,8 +56,8 @@ def test_default_base_url():
     assert WAFER_DEFAULT_BASE == "https://pass.wafer.ai/v1"
 
 
-def test_init_uses_openai_chat_transport(wafer_provider):
-    assert isinstance(wafer_provider, OpenAIChatTransport)
+def test_init_uses_openai_chat_provider(wafer_provider):
+    assert isinstance(wafer_provider, OpenAIChatProvider)
     assert wafer_provider._api_key == "test-wafer-key"
     assert wafer_provider._base_url == WAFER_DEFAULT_BASE
     assert wafer_provider._provider_name == "WAFER"

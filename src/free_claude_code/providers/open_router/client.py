@@ -9,20 +9,18 @@ from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKEN
 from free_claude_code.core.anthropic.models import MessagesRequest, ThinkingConfig
 from free_claude_code.core.anthropic.streaming import AnthropicStreamLedger
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.defaults import OPENROUTER_DEFAULT_BASE
 from free_claude_code.providers.model_listing import (
     extract_openrouter_tool_model_ids,
     extract_openrouter_tool_model_infos,
 )
-from free_claude_code.providers.rate_limit import ProviderRateLimiter
-from free_claude_code.providers.transports.openai_chat import (
+from free_claude_code.providers.openai_chat import (
+    OpenAIChatProfile,
+    OpenAIChatProvider,
     OpenAIChatRequestPolicy,
-    OpenAIChatTransport,
     build_openai_chat_request_body,
-)
-from free_claude_code.providers.transports.openai_chat.extra_body import (
     validate_extra_body_does_not_override_canonical_fields,
 )
+from free_claude_code.providers.rate_limit import ProviderRateLimiter
 
 _REQUEST_POLICY = OpenAIChatRequestPolicy(
     provider_name="OPENROUTER",
@@ -30,17 +28,16 @@ _REQUEST_POLICY = OpenAIChatRequestPolicy(
     extra_body_validator=validate_extra_body_does_not_override_canonical_fields,
     default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
 )
+_PROFILE = OpenAIChatProfile(_REQUEST_POLICY)
 
 
-class OpenRouterProvider(OpenAIChatTransport):
+class OpenRouterProvider(OpenAIChatProvider):
     """OpenRouter provider using the OpenAI-compatible Chat Completions API."""
 
     def __init__(self, config: ProviderConfig, *, rate_limiter: ProviderRateLimiter):
         super().__init__(
             config,
-            provider_name="OPENROUTER",
-            base_url=config.base_url or OPENROUTER_DEFAULT_BASE,
-            api_key=config.api_key,
+            profile=_PROFILE,
             rate_limiter=rate_limiter,
         )
 

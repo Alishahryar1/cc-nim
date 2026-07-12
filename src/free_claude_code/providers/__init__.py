@@ -1,8 +1,7 @@
-"""Providers package - implement your own provider by extending BaseProvider.
+"""Shared provider lifecycle contracts.
 
-Concrete adapters (e.g. ``NvidiaNimProvider``) live in subpackages; import them
-from ``providers.nvidia_nim`` etc. to avoid loading every adapter when the
-``providers`` package is imported.
+Ordinary OpenAI-compatible vendors are immutable profiles. Concrete adapter
+classes exist only for providers with stateful or algorithmic behavior.
 """
 
 from .base import BaseProvider, ProviderConfig

@@ -46,10 +46,15 @@ def build_provider_config(
     base_url = string_setting(
         settings, descriptor.base_url_attr, descriptor.default_base_url or ""
     )
+    resolved_base_url = base_url or descriptor.default_base_url
+    if not resolved_base_url:
+        raise AssertionError(
+            f"Provider {descriptor.provider_id!r} has no configured base URL."
+        )
     proxy = string_setting(settings, descriptor.proxy_attr)
     return ProviderConfig(
         api_key=credential,
-        base_url=base_url or descriptor.default_base_url,
+        base_url=resolved_base_url,
         rate_limit=settings.provider_rate_limit,
         rate_window=settings.provider_rate_window,
         max_concurrency=settings.provider_max_concurrency,

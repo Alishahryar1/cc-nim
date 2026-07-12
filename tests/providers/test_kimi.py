@@ -7,17 +7,17 @@ import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from free_claude_code.config.provider_catalog import KIMI_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.defaults import KIMI_DEFAULT_BASE
-from free_claude_code.providers.kimi import KimiProvider
-from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
-from tests.providers.support import passthrough_rate_limiter
+from free_claude_code.providers.openai_chat import OpenAIChatProvider
+from tests.providers.support import passthrough_rate_limiter, profiled_provider
 
 
 @pytest.fixture
 def kimi_provider():
-    return KimiProvider(
+    return profiled_provider(
+        "kimi",
         ProviderConfig(
             api_key="test_kimi_key",
             base_url=KIMI_DEFAULT_BASE,
@@ -29,8 +29,8 @@ def kimi_provider():
     )
 
 
-def test_init_uses_openai_chat_transport(kimi_provider):
-    assert isinstance(kimi_provider, OpenAIChatTransport)
+def test_init_uses_openai_chat_provider(kimi_provider):
+    assert isinstance(kimi_provider, OpenAIChatProvider)
     assert kimi_provider._api_key == "test_kimi_key"
     assert kimi_provider._base_url == "https://api.moonshot.ai/v1"
 

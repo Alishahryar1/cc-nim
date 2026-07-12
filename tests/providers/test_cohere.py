@@ -1,14 +1,15 @@
 """Tests for Cohere Compatibility API provider."""
 
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
+from free_claude_code.config.provider_catalog import COHERE_DEFAULT_BASE
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.cohere import COHERE_DEFAULT_BASE, CohereProvider
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter
+from tests.providers.support import passthrough_rate_limiter, profiled_provider
 
 
 def make_request(**overrides):
@@ -28,7 +29,9 @@ def cohere_config():
 
 @pytest.fixture
 def cohere_provider(cohere_config):
-    return CohereProvider(cohere_config, rate_limiter=passthrough_rate_limiter())
+    return profiled_provider(
+        "cohere", cohere_config, rate_limiter=passthrough_rate_limiter()
+    )
 
 
 def test_default_base_url_constant():
@@ -37,10 +40,10 @@ def test_default_base_url_constant():
 
 def test_init_uses_default_base_url_and_api_key(cohere_config):
     with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+        "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as mock_openai:
-        provider = CohereProvider(
-            cohere_config, rate_limiter=passthrough_rate_limiter()
+        provider = profiled_provider(
+            "cohere", cohere_config, rate_limiter=passthrough_rate_limiter()
         )
 
     assert provider._api_key == "test_cohere_key"
@@ -49,19 +52,19 @@ def test_init_uses_default_base_url_and_api_key(cohere_config):
 
 
 def test_init_strips_trailing_slash(cohere_config):
-    config = cohere_config.model_copy(update={"base_url": f"{COHERE_DEFAULT_BASE}/"})
+    config = replace(cohere_config, base_url=f"{COHERE_DEFAULT_BASE}/")
 
-    with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
-    ):
-        provider = CohereProvider(config, rate_limiter=passthrough_rate_limiter())
+    with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
+        provider = profiled_provider(
+            "cohere", config, rate_limiter=passthrough_rate_limiter()
+        )
 
     assert provider._base_url == COHERE_DEFAULT_BASE
 
 
 def test_build_request_body_sanitizes_documented_unsupported_fields(cohere_provider):
     with patch(
-        "free_claude_code.providers.transports.openai_chat.request_policy.build_base_request_body"
+        "free_claude_code.providers.openai_chat.request_policy.build_base_request_body"
     ) as mock_convert:
         mock_convert.return_value = {
             "model": "command-a-plus-05-2026",
@@ -107,7 +110,7 @@ def test_build_request_body_maps_thinking_enabled_to_reasoning_high(cohere_provi
 
 def test_build_request_body_preserves_replayed_reasoning_content(cohere_provider):
     with patch(
-        "free_claude_code.providers.transports.openai_chat.request_policy.build_base_request_body"
+        "free_claude_code.providers.openai_chat.request_policy.build_base_request_body"
     ) as mock_convert:
         mock_convert.return_value = {
             "model": "command-a-plus-05-2026",
@@ -133,7 +136,8 @@ def test_build_request_body_preserves_replayed_reasoning_content(cohere_provider
 
 
 def test_build_request_body_maps_thinking_disabled_to_reasoning_none():
-    provider = CohereProvider(
+    provider = profiled_provider(
+        "cohere",
         ProviderConfig(
             api_key="test_cohere_key",
             base_url=COHERE_DEFAULT_BASE,

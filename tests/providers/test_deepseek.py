@@ -8,6 +8,7 @@ import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from free_claude_code.config.provider_catalog import DEEPSEEK_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import (
     ContentBlockImage,
     Message,
@@ -16,10 +17,7 @@ from free_claude_code.core.anthropic.models import (
 )
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.deepseek import (
-    DEEPSEEK_DEFAULT_BASE,
-    DeepSeekProvider,
-)
+from free_claude_code.providers.deepseek import DeepSeekProvider
 from tests.providers.support import passthrough_rate_limiter
 
 
@@ -45,7 +43,7 @@ def test_default_base_url_alias():
 
 def test_init(deepseek_config):
     with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+        "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as mock_client:
         provider = DeepSeekProvider(
             deepseek_config, rate_limiter=passthrough_rate_limiter()

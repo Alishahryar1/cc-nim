@@ -77,7 +77,7 @@ def lmstudio_provider(provider_config):
 @pytest.fixture
 def llamacpp_provider(provider_config):
     from free_claude_code.providers.base import ProviderConfig
-    from free_claude_code.providers.llamacpp import LlamaCppProvider
+    from free_claude_code.providers.openai_chat import create_openai_chat_provider
 
     llamacpp_config = ProviderConfig(
         api_key="llamacpp",
@@ -85,7 +85,11 @@ def llamacpp_provider(provider_config):
         rate_limit=10,
         rate_window=60,
     )
-    return LlamaCppProvider(llamacpp_config, rate_limiter=passthrough_rate_limiter())
+    return create_openai_chat_provider(
+        "llamacpp",
+        llamacpp_config,
+        passthrough_rate_limiter(),
+    )
 
 
 @pytest.fixture

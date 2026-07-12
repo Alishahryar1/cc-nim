@@ -19,17 +19,17 @@ from free_claude_code.core.anthropic.streaming import (
 from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
-from free_claude_code.providers.stream_recovery import (
-    MIDSTREAM_RECOVERY_ATTEMPTS,
-    TruncatedProviderStreamError,
+from free_claude_code.providers.openai_chat.provider import (
+    _OpenAIChatStreamRunner,
 )
-from free_claude_code.providers.transports.openai_chat.tool_calls import (
+from free_claude_code.providers.openai_chat.tool_calls import (
     OpenAIToolCallAssembler,
     has_committed_sse_output,
     iter_heuristic_tool_use_sse,
 )
-from free_claude_code.providers.transports.openai_chat.transport import (
-    _OpenAIChatStreamRunner,
+from free_claude_code.providers.stream_recovery import (
+    MIDSTREAM_RECOVERY_ATTEMPTS,
+    TruncatedProviderStreamError,
 )
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter

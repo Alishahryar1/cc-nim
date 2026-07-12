@@ -42,6 +42,7 @@ IMPORT_EXCEPTIONS: dict[tuple[str, str], str] = {
 FACADE_ONLY_BOUNDARIES = {
     "free_claude_code.core.openai_responses",
     "free_claude_code.messaging.trees",
+    "free_claude_code.providers.openai_chat",
 }
 
 OPTIONAL_IMPORT_OWNERS = {
@@ -190,31 +191,31 @@ def test_first_party_imports_use_the_installable_namespace() -> None:
     assert offenders == []
 
 
-def test_transport_collaborators_have_explicit_ownership_boundaries() -> None:
-    transport_root = _PACKAGE_ROOT / "providers" / "transports"
+def test_openai_chat_collaborators_have_explicit_ownership_boundaries() -> None:
+    provider_root = _PACKAGE_ROOT / "providers" / "openai_chat"
 
-    assert _transport_backchannel_offenders(transport_root) == []
+    assert _provider_backchannel_offenders(provider_root) == []
 
 
-def test_transport_backchannel_detector_reports_untyped_private_access(
+def test_provider_backchannel_detector_reports_untyped_private_access(
     tmp_path: Path,
 ) -> None:
-    transport_root = tmp_path / "transports"
+    provider_root = tmp_path / "openai_chat"
     _write_module(
-        transport_root / "sample" / "runner.py",
+        provider_root / "sample" / "runner.py",
         "from typing import Any\n"
         "\n"
         "class Runner:\n"
-        "    def __init__(self, transport: object | Any) -> None:\n"
-        "        self._transport = transport\n"
+        "    def __init__(self, provider: object | Any) -> None:\n"
+        "        self._provider = provider\n"
         "\n"
         "    def run(self) -> object:\n"
-        "        return self._transport._send()\n",
+        "        return self._provider._send()\n",
     )
 
-    assert _transport_backchannel_offenders(transport_root) == [
-        "sample/runner.py:4: untyped transport collaborator",
-        "sample/runner.py:8: private transport member _send outside transport.py",
+    assert _provider_backchannel_offenders(provider_root) == [
+        "sample/runner.py:4: untyped provider collaborator",
+        "sample/runner.py:8: private provider member _send outside provider.py",
     ]
 
 
@@ -630,10 +631,10 @@ def _legacy_first_party_import_offenders(
     return sorted(offenders)
 
 
-def _transport_backchannel_offenders(transport_root: Path) -> list[str]:
+def _provider_backchannel_offenders(provider_root: Path) -> list[str]:
     offenders: list[str] = []
-    for path in sorted(transport_root.rglob("*.py")):
-        relative_path = path.relative_to(transport_root).as_posix()
+    for path in sorted(provider_root.rglob("*.py")):
+        relative_path = path.relative_to(provider_root).as_posix()
         tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
         for node in ast.walk(tree):
             if isinstance(node, ast.FunctionDef | ast.AsyncFunctionDef):
@@ -643,20 +644,20 @@ def _transport_backchannel_offenders(transport_root: Path) -> list[str]:
                     *node.args.kwonlyargs,
                 )
                 offenders.extend(
-                    f"{relative_path}:{argument.lineno}: untyped transport collaborator"
+                    f"{relative_path}:{argument.lineno}: untyped provider collaborator"
                     for argument in arguments
-                    if argument.arg == "transport"
+                    if argument.arg == "provider"
                     and _annotation_is_any(argument.annotation)
                 )
             if (
-                path.name != "transport.py"
+                path.name != "provider.py"
                 and isinstance(node, ast.Attribute)
                 and node.attr.startswith("_")
-                and _is_transport_reference(node.value)
+                and _is_provider_reference(node.value)
             ):
                 offenders.append(
-                    f"{relative_path}:{node.lineno}: private transport member "
-                    f"{node.attr} outside transport.py"
+                    f"{relative_path}:{node.lineno}: private provider member "
+                    f"{node.attr} outside provider.py"
                 )
     return sorted(offenders)
 
@@ -671,12 +672,12 @@ def _annotation_is_any(annotation: ast.expr | None) -> bool:
     )
 
 
-def _is_transport_reference(expression: ast.expr) -> bool:
-    return (isinstance(expression, ast.Name) and expression.id == "transport") or (
+def _is_provider_reference(expression: ast.expr) -> bool:
+    return (isinstance(expression, ast.Name) and expression.id == "provider") or (
         isinstance(expression, ast.Attribute)
         and isinstance(expression.value, ast.Name)
         and expression.value.id == "self"
-        and expression.attr == "_transport"
+        and expression.attr == "_provider"
     )
 
 

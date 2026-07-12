@@ -4,18 +4,20 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from free_claude_code.config.provider_catalog import OLLAMA_DEFAULT_BASE
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.ollama import OLLAMA_DEFAULT_BASE, OllamaProvider
+from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter
+from tests.providers.support import passthrough_rate_limiter, profiled_provider
 
 OLLAMA_MODEL = "llama3.1:8b"
 
 
-def _provider(base_url: str | None = OLLAMA_DEFAULT_BASE) -> OllamaProvider:
-    return OllamaProvider(
-        ProviderConfig(api_key="", base_url=base_url),
+def _provider(base_url: str = OLLAMA_DEFAULT_BASE) -> OpenAIChatProvider:
+    return profiled_provider(
+        "ollama",
+        ProviderConfig(api_key="ollama", base_url=base_url),
         rate_limiter=passthrough_rate_limiter(),
     )
 
@@ -23,15 +25,14 @@ def _provider(base_url: str | None = OLLAMA_DEFAULT_BASE) -> OllamaProvider:
 @pytest.mark.parametrize(
     ("configured", "expected"),
     [
-        (None, "http://localhost:11434/v1"),
         ("http://localhost:11434", "http://localhost:11434/v1"),
         ("http://localhost:11434/", "http://localhost:11434/v1"),
         ("http://localhost:11434/v1", "http://localhost:11434/v1"),
     ],
 )
-def test_init_normalizes_openai_base_url(configured: str | None, expected: str) -> None:
+def test_init_normalizes_openai_base_url(configured: str, expected: str) -> None:
     with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+        "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as openai_client:
         provider = _provider(configured)
 
@@ -51,7 +52,7 @@ def test_build_request_body_uses_openai_chat_shape() -> None:
 
 
 @pytest.mark.asyncio
-async def test_stream_response_uses_shared_openai_chat_transport() -> None:
+async def test_stream_response_uses_shared_openai_chat_provider() -> None:
     provider = _provider()
     chunk = MagicMock()
     chunk.choices = [

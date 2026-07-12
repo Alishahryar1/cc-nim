@@ -1,6 +1,7 @@
 """Cloudflare Workers AI provider using OpenAI-compatible chat completions."""
 
 from collections.abc import Iterator, Mapping
+from dataclasses import replace
 from typing import Any
 from urllib.parse import quote
 
@@ -8,27 +9,29 @@ import httpx
 
 from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.config.provider_catalog import CLOUDFLARE_AI_REST_ROOT
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.defaults import CLOUDFLARE_AI_REST_ROOT
+from free_claude_code.providers.http import maybe_await_aclose
 from free_claude_code.providers.model_listing import (
     ModelListResponseError,
     extract_openai_model_ids,
     model_infos_from_ids,
 )
-from free_claude_code.providers.rate_limit import ProviderRateLimiter
-from free_claude_code.providers.transports.http import maybe_await_aclose
-from free_claude_code.providers.transports.openai_chat import (
+from free_claude_code.providers.openai_chat import (
+    OpenAIChatProfile,
+    OpenAIChatProvider,
     OpenAIChatRequestPolicy,
-    OpenAIChatTransport,
     build_openai_chat_request_body,
 )
+from free_claude_code.providers.rate_limit import ProviderRateLimiter
 
 _REQUEST_POLICY = OpenAIChatRequestPolicy(
     provider_name="CLOUDFLARE",
     include_extra_body=True,
     max_tokens_field="max_completion_tokens",
 )
+_PROFILE = OpenAIChatProfile(_REQUEST_POLICY)
 
 
 def cloudflare_ai_base_url(api_root: str | None, account_id: str) -> str:
@@ -56,7 +59,7 @@ def _cloudflare_account_api_url(api_root: str | None, account_id: str) -> str:
     return f"{root}/accounts/{encoded_account}"
 
 
-class CloudflareProvider(OpenAIChatTransport):
+class CloudflareProvider(OpenAIChatProvider):
     """Cloudflare Workers AI OpenAI-compatible chat provider."""
 
     def __init__(
@@ -80,10 +83,8 @@ class CloudflareProvider(OpenAIChatTransport):
             ),
         )
         super().__init__(
-            config.model_copy(update={"base_url": base_url}),
-            provider_name="CLOUDFLARE",
-            base_url=base_url,
-            api_key=config.api_key,
+            replace(config, base_url=base_url),
+            profile=_PROFILE,
             rate_limiter=rate_limiter,
         )
 

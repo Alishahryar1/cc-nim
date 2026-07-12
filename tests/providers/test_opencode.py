@@ -2,12 +2,12 @@
 
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.opencode import OpenCodeProvider
-from tests.providers.support import passthrough_rate_limiter
+from tests.providers.support import passthrough_rate_limiter, profiled_provider
 
 
 def test_build_request_body_preserves_empty_reasoning_content() -> None:
-    provider = OpenCodeProvider(
+    provider = profiled_provider(
+        "opencode",
         ProviderConfig(
             api_key="test_opencode_key",
             base_url="https://example.invalid/v1",

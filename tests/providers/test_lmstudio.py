@@ -6,9 +6,9 @@ import httpx
 import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
+from free_claude_code.config.provider_catalog import LMSTUDIO_DEFAULT_BASE
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.lmstudio import LMStudioProvider
-from free_claude_code.providers.lmstudio.client import LMSTUDIO_DEFAULT_BASE
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
 
@@ -35,7 +35,7 @@ def lmstudio_provider(lmstudio_config):
 def test_init(lmstudio_config):
     """Test provider initialization."""
     with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+        "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as mock_openai:
         provider = LMStudioProvider(
             lmstudio_config, rate_limiter=passthrough_rate_limiter()
@@ -131,7 +131,7 @@ def test_preflight_conversion_failure_skips_context_budget(lmstudio_provider):
 
 @pytest.mark.asyncio
 async def test_stream_response_text(lmstudio_provider):
-    """Text content deltas are emitted as text blocks (via the OpenAI chat transport)."""
+    """Text content deltas are emitted through the shared OpenAI-chat provider."""
     req = make_request()
 
     mock_chunk = MagicMock()

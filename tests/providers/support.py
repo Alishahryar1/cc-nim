@@ -3,6 +3,11 @@
 from collections.abc import Callable
 from typing import Any
 
+from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.openai_chat import (
+    OpenAIChatProvider,
+    create_openai_chat_provider,
+)
 from free_claude_code.providers.rate_limit import ProviderRateLimiter
 
 
@@ -29,6 +34,20 @@ class PassthroughProviderRateLimiter(ProviderRateLimiter):
 def passthrough_rate_limiter() -> ProviderRateLimiter:
     """Return a fresh limiter test double for one provider instance."""
     return PassthroughProviderRateLimiter()
+
+
+def profiled_provider(
+    provider_id: str,
+    config: ProviderConfig,
+    *,
+    rate_limiter: ProviderRateLimiter | None = None,
+) -> OpenAIChatProvider:
+    """Construct one declarative provider for a focused behavior test."""
+    return create_openai_chat_provider(
+        provider_id,
+        config,
+        rate_limiter or passthrough_rate_limiter(),
+    )
 
 
 def retrying_rate_limiter() -> ProviderRateLimiter:

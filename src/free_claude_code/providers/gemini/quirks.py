@@ -1,4 +1,4 @@
-"""Gemini request-body quirks for the OpenAI-compatible transport."""
+"""Gemini request-body quirks for the shared OpenAI-chat provider."""
 
 from copy import deepcopy
 from typing import Any, cast

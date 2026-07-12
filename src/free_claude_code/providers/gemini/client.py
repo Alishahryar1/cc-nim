@@ -5,29 +5,28 @@ from typing import Any
 
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.defaults import GEMINI_DEFAULT_BASE
-from free_claude_code.providers.rate_limit import ProviderRateLimiter
-from free_claude_code.providers.transports.openai_chat import (
+from free_claude_code.providers.openai_chat import (
+    OpenAIChatProfile,
+    OpenAIChatProvider,
     OpenAIChatRequestPolicy,
-    OpenAIChatTransport,
     build_openai_chat_request_body,
 )
+from free_claude_code.providers.rate_limit import ProviderRateLimiter
 
 from .quirks import apply_gemini_request_quirks
 
 _MAX_TOOL_CALL_EXTRA_CONTENT_CACHE = 4096
 _REQUEST_POLICY = OpenAIChatRequestPolicy(provider_name="GEMINI")
+_PROFILE = OpenAIChatProfile(_REQUEST_POLICY)
 
 
-class GeminiProvider(OpenAIChatTransport):
+class GeminiProvider(OpenAIChatProvider):
     """Gemini API using ``https://generativelanguage.googleapis.com/v1beta/openai/``."""
 
     def __init__(self, config: ProviderConfig, *, rate_limiter: ProviderRateLimiter):
         super().__init__(
             config,
-            provider_name="GEMINI",
-            base_url=config.base_url or GEMINI_DEFAULT_BASE,
-            api_key=config.api_key,
+            profile=_PROFILE,
             rate_limiter=rate_limiter,
         )
         self._tool_call_extra_content_by_id: dict[str, dict[str, Any]] = {}

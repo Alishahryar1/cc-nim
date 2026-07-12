@@ -1,4 +1,4 @@
-"""The shared provider transport owns explicit request preflight."""
+"""The shared OpenAI-chat provider owns explicit request preflight."""
 
 from collections.abc import AsyncIterator
 
@@ -6,10 +6,10 @@ import pytest
 
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
-from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
+from free_claude_code.providers.openai_chat import OpenAIChatProvider
 
 
-class RecordingOpenAITransport(OpenAIChatTransport):
+class RecordingOpenAIProvider(OpenAIChatProvider):
     def __init__(self) -> None:
         self.build_calls: list[tuple[MessagesRequest, bool | None]] = []
 
@@ -41,20 +41,22 @@ class ProviderWithoutPreflight(BaseProvider):
 
 def test_provider_base_requires_an_explicit_preflight_implementation() -> None:
     with pytest.raises(TypeError, match="preflight_stream"):
-        ProviderWithoutPreflight(ProviderConfig(api_key="test"))
+        ProviderWithoutPreflight(
+            ProviderConfig(api_key="test", base_url="https://test.invalid")
+        )
 
 
-def test_openai_transport_owns_preflight() -> None:
-    assert OpenAIChatTransport.preflight_stream is not BaseProvider.preflight_stream
+def test_openai_provider_owns_preflight() -> None:
+    assert OpenAIChatProvider.preflight_stream is not BaseProvider.preflight_stream
 
 
-def test_transport_preflight_calls_builder_and_preserves_false() -> None:
-    transport = RecordingOpenAITransport()
+def test_provider_preflight_calls_builder_and_preserves_false() -> None:
+    provider = RecordingOpenAIProvider()
     request = MessagesRequest(
         model="test-model",
         messages=[Message(role="user", content="hello")],
     )
 
-    transport.preflight_stream(request, thinking_enabled=False)
+    provider.preflight_stream(request, thinking_enabled=False)
 
-    assert transport.build_calls == [(request, False)]
+    assert provider.build_calls == [(request, False)]

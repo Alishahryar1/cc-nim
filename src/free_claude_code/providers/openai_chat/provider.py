@@ -1,9 +1,8 @@
-"""OpenAI-compatible chat transport and per-request stream execution."""
+"""Concrete OpenAI-compatible provider and per-request stream execution."""
 
 import asyncio
 import sys
 import uuid
-from abc import abstractmethod
 from collections.abc import AsyncIterator, Iterator, Mapping
 from typing import Any
 
@@ -31,6 +30,10 @@ from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.core.trace import provider_chat_body_snapshot, trace_event
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.failure_policy import classify_provider_failure
+from free_claude_code.providers.http import (
+    close_provider_stream,
+    maybe_await_aclose,
+)
 from free_claude_code.providers.model_listing import extract_openai_model_ids
 from free_claude_code.providers.rate_limit import ProviderRateLimiter
 from free_claude_code.providers.stream_recovery import (
@@ -40,12 +43,10 @@ from free_claude_code.providers.stream_recovery import (
     TruncatedProviderStreamError,
     is_retryable_stream_error,
 )
-from free_claude_code.providers.transports.http import (
-    close_provider_stream,
-    maybe_await_aclose,
-)
 
 from .output_cap import clamp_output_tokens, parse_output_token_cap
+from .profiles import OpenAIChatProfile
+from .request_policy import build_openai_chat_request_body
 from .tool_calls import (
     OpenAIToolCallAssembler,
     all_emitted_tools_complete,
@@ -62,23 +63,22 @@ from .usage import (
 )
 
 
-class OpenAIChatTransport(BaseProvider):
-    """Base for OpenAI-compatible ``/chat/completions`` adapters."""
+class OpenAIChatProvider(BaseProvider):
+    """OpenAI-compatible ``/chat/completions`` provider configured by a profile."""
 
     def __init__(
         self,
         config: ProviderConfig,
         *,
-        provider_name: str,
-        base_url: str,
-        api_key: str,
+        profile: OpenAIChatProfile,
         rate_limiter: ProviderRateLimiter,
         default_headers: Mapping[str, str] | None = None,
     ):
         super().__init__(config)
-        self._provider_name = provider_name
-        self._api_key = api_key
-        self._base_url = base_url.rstrip("/")
+        self._profile = profile
+        self._provider_name = profile.provider_name
+        self._api_key = config.api_key
+        self._base_url = profile.base_url(config.base_url).rstrip("/")
         # Learned per-model output-token caps from upstream 400 rejections, so
         # later requests clamp proactively instead of paying the 400 each time.
         self._model_output_caps: dict[str, int] = {}
@@ -119,11 +119,16 @@ class OpenAIChatTransport(BaseProvider):
         payload = await self._client.models.list()
         return extract_openai_model_ids(payload, provider_name=self._provider_name)
 
-    @abstractmethod
     def _build_request_body(
         self, request: MessagesRequest, thinking_enabled: bool | None = None
-    ) -> dict:
-        """Build request body. Must be implemented by subclasses."""
+    ) -> dict[str, Any]:
+        """Build a provider request from the immutable profile."""
+        return build_openai_chat_request_body(
+            request,
+            thinking_enabled=self._is_thinking_enabled(request, thinking_enabled),
+            policy=self._profile.request_policy,
+            postprocessors=self._profile.postprocessors,
+        )
 
     def preflight_stream(
         self, request: MessagesRequest, *, thinking_enabled: bool | None = None
@@ -267,26 +272,26 @@ class _OpenAIChatStreamRunner:
 
     def __init__(
         self,
-        transport: OpenAIChatTransport,
+        provider: OpenAIChatProvider,
         *,
         request: MessagesRequest,
         input_tokens: int,
         request_id: str | None,
         thinking_enabled: bool | None,
     ) -> None:
-        self._transport = transport
+        self._provider = provider
         self._request = request
         self._input_tokens = input_tokens
         self._request_id = request_id
         self._thinking_enabled = thinking_enabled
         self._message_id = f"msg_{uuid.uuid4()}"
         self._tool_calls = OpenAIToolCallAssembler(
-            record_extra_content=transport._record_tool_call_extra_content
+            record_extra_content=provider._record_tool_call_extra_content
         )
 
     async def run(self) -> AsyncIterator[str]:
         """Convert the upstream OpenAI-chat stream into Anthropic SSE."""
-        tag = self._transport._provider_name
+        tag = self._provider._provider_name
         req_tag = f" request_id={self._request_id}" if self._request_id else ""
         ledger = self._new_ledger()
         recovery = RecoveryController(
@@ -301,11 +306,11 @@ class _OpenAIChatStreamRunner:
             for event in events:
                 yield from hold_event(event)
 
-        body = self._transport._build_request_body(
+        body = self._provider._build_request_body(
             self._request, thinking_enabled=self._thinking_enabled
         )
         request_stream_usage(body)
-        thinking_enabled = self._transport._is_thinking_enabled(
+        thinking_enabled = self._provider._is_thinking_enabled(
             self._request, self._thinking_enabled
         )
         trace_event(
@@ -328,7 +333,7 @@ class _OpenAIChatStreamRunner:
         tool_argument_aliases: dict[str, dict[str, str]] = {}
         tool_argument_alias_buffers: dict[int, str] = {}
 
-        async with self._transport._rate_limiter.concurrency_slot():
+        async with self._provider._rate_limiter.concurrency_slot():
             while True:
                 if not ledger.message_started:
                     for event in hold_event(ledger.message_start()):
@@ -336,9 +341,9 @@ class _OpenAIChatStreamRunner:
                 stream: Any | None = None
                 stream_opened = False
                 try:
-                    stream, body = await self._transport._create_stream(body)
+                    stream, body = await self._provider._create_stream(body)
                     stream_opened = True
-                    tool_argument_aliases = self._transport._tool_argument_aliases(body)
+                    tool_argument_aliases = self._provider._tool_argument_aliases(body)
                     async for chunk in stream:
                         chunk_usage = getattr(chunk, "usage", None)
                         if chunk_usage is not None:
@@ -366,7 +371,7 @@ class _OpenAIChatStreamRunner:
                                 ):
                                     yield event
 
-                        for event in self._transport._handle_extra_reasoning(
+                        for event in self._provider._handle_extra_reasoning(
                             delta,
                             ledger,
                             thinking_enabled=thinking_enabled,
@@ -490,19 +495,19 @@ class _OpenAIChatStreamRunner:
                                 yield event
                             return
 
-                    self._transport._log_stream_transport_error(
+                    self._provider._log_stream_transport_error(
                         tag, req_tag, error, request_id=self._request_id
                     )
                     failure = classify_provider_failure(
                         error,
                         provider_name=tag,
-                        read_timeout_s=self._transport._config.http_read_timeout,
+                        read_timeout_s=self._provider._config.http_read_timeout,
                         request_id=self._request_id,
                         mark_rate_limited=(
-                            self._transport._rate_limiter.extend_reactive_block
+                            self._provider._rate_limiter.extend_reactive_block
                         ),
                         provider_failure_override=(
-                            self._transport._provider_failure_override
+                            self._provider._provider_failure_override
                         ),
                     )
                     error_trace: dict[str, Any] = {
@@ -516,7 +521,7 @@ class _OpenAIChatStreamRunner:
                         "status_code": failure.status_code,
                         "provider_retryable": failure.retryable,
                     }
-                    if self._transport._config.log_api_error_tracebacks:
+                    if self._provider._config.log_api_error_tracebacks:
                         error_trace["error_message"] = failure.message
                     trace_event(**error_trace)
                     if (
@@ -625,7 +630,7 @@ class _OpenAIChatStreamRunner:
                 ledger.final_stop_reason(map_stop_reason(finish_reason)),
                 output_tokens,
                 input_tokens=input_tokens,
-                usage_fields=self._transport._anthropic_usage_fields(usage_info),
+                usage_fields=self._provider._anthropic_usage_fields(usage_info),
             )
         ):
             yield event
@@ -640,7 +645,7 @@ class _OpenAIChatStreamRunner:
         for attempt in range(MIDSTREAM_RECOVERY_ATTEMPTS):
             stream: Any | None = None
             try:
-                stream, _ = await self._transport._create_stream(body)
+                stream, _ = await self._provider._create_stream(body)
                 text_parts: list[str] = []
                 thinking_parts: list[str] = []
                 terminal_seen = False
@@ -672,7 +677,7 @@ class _OpenAIChatStreamRunner:
                     stage="provider",
                     event="provider.recovery.retry",
                     source="provider",
-                    provider=self._transport._provider_name,
+                    provider=self._provider._provider_name,
                     recovery_kind="openai_text",
                     attempt=attempt + 1,
                     max_attempts=MIDSTREAM_RECOVERY_ATTEMPTS,
@@ -721,7 +726,7 @@ class _OpenAIChatStreamRunner:
                 stage="provider",
                 event="provider.recovery.tool_salvaged",
                 source="provider",
-                provider=self._transport._provider_name,
+                provider=self._provider._provider_name,
                 request_id=self._request_id,
             )
             return events
@@ -755,7 +760,7 @@ class _OpenAIChatStreamRunner:
             stage="provider",
             event="provider.recovery.continued",
             source="provider",
-            provider=self._transport._provider_name,
+            provider=self._provider._provider_name,
             request_id=self._request_id,
         )
         return events
@@ -807,7 +812,7 @@ class _OpenAIChatStreamRunner:
                         stage="provider",
                         event="provider.recovery.tool_repaired",
                         source="provider",
-                        provider=self._transport._provider_name,
+                        provider=self._provider._provider_name,
                         tool_name=state.name,
                         attempt=attempt + 1,
                     )
@@ -828,5 +833,5 @@ class _OpenAIChatStreamRunner:
             self._message_id,
             self._request.model,
             self._input_tokens,
-            log_raw_events=self._transport._config.log_raw_sse_events,
+            log_raw_events=self._provider._config.log_raw_sse_events,
         )

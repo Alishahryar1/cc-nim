@@ -148,9 +148,7 @@ async def test_degraded_function_exhaustion_is_detailed_redacted_overload() -> N
             "free_claude_code.providers.rate_limit.asyncio.sleep",
             new_callable=AsyncMock,
         ) as sleep,
-        patch(
-            "free_claude_code.providers.transports.openai_chat.transport.trace_event"
-        ) as trace,
+        patch("free_claude_code.providers.openai_chat.provider.trace_event") as trace,
         pytest.raises(ExecutionFailure) as exc_info,
     ):
         [

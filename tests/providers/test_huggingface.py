@@ -1,17 +1,15 @@
 """Tests for Hugging Face Inference Providers."""
 
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from free_claude_code.config.provider_catalog import HUGGINGFACE_DEFAULT_BASE
 from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.huggingface import (
-    HUGGINGFACE_DEFAULT_BASE,
-    HuggingFaceProvider,
-)
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter
+from tests.providers.support import passthrough_rate_limiter, profiled_provider
 
 
 def make_request(**overrides):
@@ -31,8 +29,8 @@ def huggingface_config():
 
 @pytest.fixture
 def huggingface_provider(huggingface_config):
-    return HuggingFaceProvider(
-        huggingface_config, rate_limiter=passthrough_rate_limiter()
+    return profiled_provider(
+        "huggingface", huggingface_config, rate_limiter=passthrough_rate_limiter()
     )
 
 
@@ -42,10 +40,10 @@ def test_default_base_url_constant():
 
 def test_init_uses_default_base_url_and_api_key(huggingface_config):
     with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+        "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as mock_openai:
-        provider = HuggingFaceProvider(
-            huggingface_config, rate_limiter=passthrough_rate_limiter()
+        provider = profiled_provider(
+            "huggingface", huggingface_config, rate_limiter=passthrough_rate_limiter()
         )
 
     assert provider._api_key == "test_hf_key"
@@ -54,21 +52,19 @@ def test_init_uses_default_base_url_and_api_key(huggingface_config):
 
 
 def test_init_strips_trailing_slash(huggingface_config):
-    config = huggingface_config.model_copy(
-        update={"base_url": f"{HUGGINGFACE_DEFAULT_BASE}/"}
-    )
+    config = replace(huggingface_config, base_url=f"{HUGGINGFACE_DEFAULT_BASE}/")
 
-    with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
-    ):
-        provider = HuggingFaceProvider(config, rate_limiter=passthrough_rate_limiter())
+    with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
+        provider = profiled_provider(
+            "huggingface", config, rate_limiter=passthrough_rate_limiter()
+        )
 
     assert provider._base_url == HUGGINGFACE_DEFAULT_BASE
 
 
 def test_build_request_body_keeps_max_tokens(huggingface_provider):
     with patch(
-        "free_claude_code.providers.huggingface.client.build_base_request_body"
+        "free_claude_code.providers.openai_chat.request_policy.build_base_request_body"
     ) as mock_convert:
         mock_convert.return_value = {
             "model": "openai/gpt-oss-120b:fastest",

@@ -190,7 +190,7 @@ class TestSettings:
 
     def test_base_url_constant(self):
         """Test NVIDIA_NIM_DEFAULT_BASE is a constant."""
-        from free_claude_code.providers.nvidia_nim import NVIDIA_NIM_DEFAULT_BASE
+        from free_claude_code.config.provider_catalog import NVIDIA_NIM_DEFAULT_BASE
 
         assert NVIDIA_NIM_DEFAULT_BASE == "https://integrate.api.nvidia.com/v1"
 

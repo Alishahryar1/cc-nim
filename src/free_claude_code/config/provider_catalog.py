@@ -6,7 +6,7 @@ provider implementation imports (see contract tests).
 
 from dataclasses import dataclass
 
-# Default upstream base URLs (also re-exported via :mod:`providers.defaults`)
+# Default upstream base URLs are owned here with the provider catalog.
 NVIDIA_NIM_DEFAULT_BASE = "https://integrate.api.nvidia.com/v1"
 # Moonshot Kimi OpenAI-compatible Chat Completions API.
 KIMI_DEFAULT_BASE = "https://api.moonshot.ai/v1"

@@ -12,7 +12,7 @@ from free_claude_code.core.anthropic import (
     serialize_tool_result_content,
 )
 from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.providers.transports.openai_chat import (
+from free_claude_code.providers.openai_chat import (
     OpenAIChatRequestPolicy,
     build_openai_chat_request_body,
 )

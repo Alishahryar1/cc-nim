@@ -1,5 +1,5 @@
 """Stream/SSE contract tests. Strict transcript *ordering* is covered here for
-``AnthropicStreamLedger`` output; for transport-integrated ordering, add messaging or API
+``AnthropicStreamLedger`` output; for integration ordering, add messaging or API
 integration tests.
 """
 

@@ -2,9 +2,9 @@
 
 from abc import ABC, abstractmethod
 from collections.abc import AsyncIterator
+from dataclasses import dataclass
 
 from loguru import logger
-from pydantic import BaseModel
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.constants import HTTP_CONNECT_TIMEOUT_DEFAULT
@@ -17,15 +17,16 @@ from free_claude_code.core.trace import trace_event
 from free_claude_code.providers.model_listing import model_infos_from_ids
 
 
-class ProviderConfig(BaseModel):
-    """Configuration for a provider.
+@dataclass(frozen=True, slots=True)
+class ProviderConfig:
+    """Resolved immutable configuration for one provider instance.
 
     Base fields apply to all providers. Provider-specific parameters
     (e.g. NIM temperature, top_p) are passed by the provider constructor.
     """
 
     api_key: str
-    base_url: str | None = None
+    base_url: str
     rate_limit: int | None = None
     rate_window: int = 60
     max_concurrency: int = 5

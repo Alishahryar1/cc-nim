@@ -11,12 +11,15 @@ from free_claude_code.config.nim import NimSettings
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.defaults import NVIDIA_NIM_DEFAULT_BASE
 from free_claude_code.providers.failure_policy import (
     overloaded_provider_failure,
 )
+from free_claude_code.providers.openai_chat import (
+    OpenAIChatProfile,
+    OpenAIChatProvider,
+    OpenAIChatRequestPolicy,
+)
 from free_claude_code.providers.rate_limit import ProviderRateLimiter
-from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
 
 from .request_options import build_nim_request_body
 from .retry import (
@@ -30,9 +33,10 @@ from .tool_schema import (
 )
 
 _DEGRADED_FUNCTION_STATE = "degraded function cannot be invoked"
+_PROFILE = OpenAIChatProfile(OpenAIChatRequestPolicy(provider_name="NIM"))
 
 
-class NvidiaNimProvider(OpenAIChatTransport):
+class NvidiaNimProvider(OpenAIChatProvider):
     """NVIDIA NIM provider using official OpenAI client."""
 
     def __init__(
@@ -44,9 +48,7 @@ class NvidiaNimProvider(OpenAIChatTransport):
     ):
         super().__init__(
             config,
-            provider_name="NIM",
-            base_url=config.base_url or NVIDIA_NIM_DEFAULT_BASE,
-            api_key=config.api_key,
+            profile=_PROFILE,
             rate_limiter=rate_limiter,
         )
         self._nim_settings = nim_settings

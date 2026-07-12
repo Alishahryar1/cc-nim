@@ -1,4 +1,5 @@
 import json
+from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import openai
@@ -6,8 +7,8 @@ import pytest
 from httpx import Request, Response
 
 from free_claude_code.config.nim import NimSettings
+from free_claude_code.config.provider_catalog import NVIDIA_NIM_DEFAULT_BASE
 from free_claude_code.core.failures import ExecutionFailure
-from free_claude_code.providers.defaults import NVIDIA_NIM_DEFAULT_BASE
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.nvidia_nim.tool_schema import (
     NIM_TOOL_ARGUMENT_ALIASES_KEY,
@@ -102,7 +103,7 @@ def _make_internal_server_error(message: str) -> openai.InternalServerError:
 async def test_init(provider_config):
     """Test provider initialization."""
     with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+        "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as mock_openai:
         provider = NvidiaNimProvider(
             provider_config,
@@ -127,7 +128,7 @@ async def test_init_uses_configurable_timeouts():
         http_connect_timeout=5.0,
     )
     with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+        "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as mock_openai:
         NvidiaNimProvider(
             config, nim_settings=NimSettings(), rate_limiter=passthrough_rate_limiter()
@@ -169,7 +170,7 @@ async def test_build_request_body_omits_reasoning_when_globally_disabled(
     provider_config,
 ):
     provider = NvidiaNimProvider(
-        provider_config.model_copy(update={"enable_thinking": False}),
+        replace(provider_config, enable_thinking=False),
         nim_settings=NimSettings(),
         rate_limiter=passthrough_rate_limiter(),
     )
@@ -332,7 +333,7 @@ async def test_stream_response_thinking_reasoning_content(nim_provider):
 @pytest.mark.asyncio
 async def test_stream_response_suppresses_thinking_when_disabled(provider_config):
     provider = NvidiaNimProvider(
-        provider_config.model_copy(update={"enable_thinking": False}),
+        replace(provider_config, enable_thinking=False),
         nim_settings=NimSettings(),
         rate_limiter=passthrough_rate_limiter(),
     )

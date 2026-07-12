@@ -1,6 +1,6 @@
 """Tests for OpenAI-compatible output-token cap recovery (issue #955).
 
-Covers the pure parse/clamp helpers and the transport behavior that clamps
+Covers the pure parse/clamp helpers and the provider behavior that clamps
 ``max_completion_tokens``/``max_tokens`` to the upstream maximum, retries once,
 and learns the cap so later requests clamp proactively.
 """
@@ -9,14 +9,14 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from free_claude_code.config.provider_catalog import GROQ_DEFAULT_BASE
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.groq import GROQ_DEFAULT_BASE, GroqProvider
-from free_claude_code.providers.transports.openai_chat.output_cap import (
+from free_claude_code.providers.openai_chat.output_cap import (
     clamp_output_tokens,
     parse_output_token_cap,
 )
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter
+from tests.providers.support import passthrough_rate_limiter, profiled_provider
 
 
 class _BadRequest(Exception):
@@ -106,13 +106,14 @@ def test_clamp_ignores_bool_values():
 
 
 # --------------------------------------------------------------------------- #
-# Transport integration (via GroqProvider, which uses max_completion_tokens)
+# Provider integration (via Groq's profile, which uses max_completion_tokens)
 # --------------------------------------------------------------------------- #
 
 
 @pytest.fixture
 def groq_provider():
-    return GroqProvider(
+    return profiled_provider(
+        "groq",
         ProviderConfig(
             api_key="test_groq_key",
             base_url=GROQ_DEFAULT_BASE,

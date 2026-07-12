@@ -27,6 +27,7 @@ class OpenAIChatRequestPolicy:
     reject_extra_body_message: str | None = None
     default_max_tokens: int | None = None
     max_tokens_field: MaxTokensField = "max_tokens"
+    reasoning_replay: ReasoningReplayMode | None = None
     strip_message_names: bool = False
     unsupported_body_keys: frozenset[str] = field(default_factory=frozenset)
     normalize_n_to_one: bool = False
@@ -47,12 +48,17 @@ def build_openai_chat_request_body(
         len(request_data.messages),
     )
     try:
+        reasoning_replay = policy.reasoning_replay
+        if reasoning_replay is None:
+            reasoning_replay = (
+                ReasoningReplayMode.REASONING_CONTENT
+                if thinking_enabled
+                else ReasoningReplayMode.DISABLED
+            )
         body = build_base_request_body(
             request_data,
             default_max_tokens=policy.default_max_tokens,
-            reasoning_replay=ReasoningReplayMode.REASONING_CONTENT
-            if thinking_enabled
-            else ReasoningReplayMode.DISABLED,
+            reasoning_replay=reasoning_replay,
         )
     except OpenAIConversionError as exc:
         raise InvalidRequestError(str(exc)) from exc

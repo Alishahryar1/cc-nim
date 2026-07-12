@@ -37,8 +37,7 @@ flowchart LR
     Handlers --> Executor[application ProviderExecutor]
     Executor --> Lease[Provider Generation Lease]
     Lease --> Providers[ProviderRuntime]
-    Providers --> OpenAIChat[OpenAI Chat Providers]
-    Providers --> NativeAnthropic[Anthropic Messages Providers]
+    Providers --> OpenAIChat[OpenAI Chat Provider Profiles And Specialized Adapters]
 ```
 
 ## Package Boundaries
@@ -66,8 +65,8 @@ The installable wheel packages are declared in [pyproject.toml](pyproject.toml):
 - [src/free_claude_code/messaging/](src/free_claude_code/messaging/) owns optional platform adapters, incoming message
   handling, tree queues, transcript rendering, persistence, commands, and voice
   support.
-- [src/free_claude_code/providers/](src/free_claude_code/providers/) owns provider construction, shared provider base
-  classes, upstream transports, SDK/HTTP failure classification, retry and
+- [src/free_claude_code/providers/](src/free_claude_code/providers/) owns provider construction, the shared OpenAI-chat
+  provider, specialized adapters, SDK/HTTP failure classification, retry and
   recovery policy, rate limiting, model listing, and concrete provider adapters.
 - [src/free_claude_code/runtime/](src/free_claude_code/runtime/) is the process composition root. It owns application
   startup and shutdown, provider generations, Admin runtime operations, and the
@@ -189,9 +188,9 @@ new places to add unrelated behavior:
   thin, keep Claude-only behavior in the Messages handler, and use
   [application/execution.py](src/free_claude_code/application/execution.py) only for shared
   provider resolution, preflight, tracing, token counting, and streaming.
-- [providers/transports/](src/free_claude_code/providers/transports/) owns provider transport
-  behavior. The OpenAI-chat package splits its transport base from per-request
-  stream execution, recovery, request policy, and tool-call assembly. Shared
+- [providers/openai_chat/](src/free_claude_code/providers/openai_chat/) owns the common upstream provider
+  behavior. It separates immutable vendor profiles from per-request stream
+  execution, recovery, request policy, and tool-call assembly. Shared
   protocol rules belong in [src/free_claude_code/core/](src/free_claude_code/core/).
 - [messaging/workflow.py](src/free_claude_code/messaging/workflow.py) coordinates messaging runtime
   dependencies. Inbound turn intake, queued node execution, slash command
@@ -493,15 +492,15 @@ var, default base URL, settings attribute names, and proxy support. It does not
 select a concrete adapter.
 
 [providers/runtime/](src/free_claude_code/providers/runtime/) owns construction details for one
-closable provider generation: factory wiring, provider configuration, lazy
-provider instances, provider-owned rate limiters, and transport cleanup. The
-explicit factory table in
-[providers/runtime/factory.py](src/free_claude_code/providers/runtime/factory.py)
-owns provider-ID-to-constructor selection; concrete provider classes own their
-transport inheritance or composition. Each lazy provider receives a fresh
-`ProviderRateLimiter`; there is no process singleton or second limiter registry.
-The provider cache already guarantees one provider and limiter per provider ID
-within a generation. Provider admission combines a strict proactive window with
+closable provider generation: construction policy, resolved provider
+configuration, lazy provider instances, provider-owned rate limiters, and
+cleanup. [providers/runtime/factory.py](src/free_claude_code/providers/runtime/factory.py)
+constructs ordinary provider IDs from `OPENAI_CHAT_PROFILES` and keeps a sparse
+factory mapping only for adapters with real state or algorithms. The union of
+those two construction owners must exactly equal the neutral provider catalog.
+`ProviderRuntime` directly guarantees one provider and limiter per provider ID
+within a generation; there is no pass-through cache object, process singleton,
+or second limiter registry. Provider admission combines a strict proactive window with
 one reactive backoff deadline. Positive backoffs can only extend that deadline,
 and admission loops until proactive capacity and the final reactive check are
 simultaneously available. The proactive timestamp is recorded only when that
@@ -530,30 +529,30 @@ compatibility layer.
 [providers/base.py](src/free_claude_code/providers/base.py) defines provider-internal construction and lifecycle contracts:
 
 - `ProviderConfig`: shared provider settings such as API key, base URL, rate
-  limits, timeouts, proxy, thinking, and logging flags.
+  limits, timeouts, proxy, thinking, and logging flags. It is a frozen internal
+  value whose base URL has already been resolved from the catalog.
 - `BaseProvider`: the abstract implementation base for cleanup, model listing,
   explicit preflight, and `stream_response()`.
 
-There is one transport family under [providers/transports/](src/free_claude_code/providers/transports/):
+There is one upstream provider family:
+[providers/openai_chat/](src/free_claude_code/providers/openai_chat/) implements the concrete
+`OpenAIChatProvider` used by every OpenAI-compatible `/chat/completions`
+upstream. `OpenAIChatProfile` contains immutable request policy,
+postprocessors, and base-URL normalization for ordinary vendors. Configuration
+differences therefore remain data rather than empty subclasses. The package also
+owns the exactly typed private per-request runner, recovery operations, tool-call
+assembly, and streamed usage handling. No obsolete generic transport namespace
+or untyped provider backchannel remains.
 
-- [providers/transports/openai_chat/](src/free_claude_code/providers/transports/openai_chat/)
-  implements `OpenAIChatTransport` for providers with OpenAI-compatible
-  `/chat/completions` APIs. Its `transport.py` co-locates the transport base with
-  the exactly typed private per-request runner and its recovery operations; no
-  cross-module object reaches through an untyped transport backchannel. The
-  package also owns OpenAI request policy, tool-call assembly, and the explicit
-  server-root-to-`/v1` normalization selected by local providers that accept both
-  URL forms.
-
-The transport explicitly implements preflight by constructing the same
-upstream request body they will later stream. `BaseProvider` makes that operation
+`OpenAIChatProvider` explicitly implements preflight by constructing the same
+upstream request body it will later stream. `BaseProvider` makes that operation
 abstract, so a new provider cannot silently omit the commit-boundary validation.
 LM Studio composes the OpenAI-chat conversion first and its context-budget probe
 second; conversion failure therefore cannot open a stream or run the probe.
 
 Providers call the OpenAI request policy for Anthropic-to-OpenAI conversion,
 thinking replay selection, `extra_body`, and chat-completion field normalization.
-Concrete provider packages keep only true upstream quirks such as
+Specialized provider packages remain only for true upstream quirks such as
 Gemini thought signatures, NIM tool-schema aliases, retry downgrades, and NVCF
 deployment-failure classification, or DeepSeek attachment/tool/thinking
 compatibility. Ollama, llama.cpp, and LM Studio use their OpenAI-compatible Chat
@@ -564,10 +563,10 @@ into Anthropic usage fields for Claude-compatible clients. Cloudflare uses its
 account-scoped Workers AI OpenAI-compatible Chat Completions endpoint for
 `@cf/...` model IDs, while account ID composition, model search, and
 Cloudflare-specific reasoning deltas stay in the Cloudflare provider client.
-OpenRouter, Wafer, Kimi, MiniMax, Fireworks, and Z.ai also use the shared
-OpenAI-chat transport; their provider clients own provider-specific thinking,
-reasoning replay, model-list filtering, and `extra_body` policy. Z.ai is treated
-as the GLM Coding Plan provider and uses Z.ai's Coding Plan OpenAI base.
+OpenRouter remains specialized for model filtering and reasoning-detail stream
+events. Wafer, Kimi, MiniMax, Fireworks, and Z.ai use ordinary declarative
+profiles for their thinking, token, and `extra_body` policy. Z.ai is treated as
+the GLM Coding Plan provider and uses Z.ai's Coding Plan OpenAI base.
 Mistral La Plateforme keeps its native `reasoning_effort` and thinking-chunk
 request/stream mapping inside
 [providers/mistral/reasoning.py](src/free_claude_code/providers/mistral/reasoning.py), including its
@@ -577,7 +576,7 @@ downgrade: if an upstream NIM deployment rejects explicit budget control, FCC
 retries without the budget while preserving thinking enablement.
 
 Shared provider responsibilities include upstream rate limiting, model listing,
-SDK/HTTP failure classification, safe diagnostic construction, transport
+SDK/HTTP failure classification, safe diagnostic construction, HTTP resource
 cleanup, thinking/tool handling, retry or recovery where supported, and
 returning successful Anthropic SSE strings to the service layer. Final failures
 cross that boundary as `ExecutionFailure`, not as provider-authored wire events.
@@ -588,13 +587,11 @@ SDK response objects and genuinely open-ended nested extension payloads.
 Provider-specific inputs that do not apply to other upstreams, such as
 Cloudflare's account ID, stay in that provider's factory/client instead of being
 added to shared `ProviderConfig`.
-Gateway providers such as Vercel AI Gateway, Hugging Face, Cohere, and GitHub
-Models stay thin when their documented OpenAI-compatible Chat Completions
-behavior matches shared transport policy. Provider-specific gateway quirks, such
-as Cohere's supported `reasoning_effort` values, GitHub's API headers/catalog
-filtering, Hugging Face's disabled prior reasoning replay, and unsupported
-compatibility fields, stay in that provider package.
-The OpenAI-chat transport owns standard streamed usage handling: it requests
+Gateway providers such as Vercel AI Gateway, Hugging Face, and Cohere are
+profiles because their documented behavior is expressible as request policy.
+GitHub Models remains specialized because it owns API headers, a separate model
+catalog client, and capability filtering. The OpenAI-chat provider owns standard
+streamed usage handling: it requests
 `stream_options.include_usage`, consumes provider `prompt_tokens` and
 `completion_tokens` when present, and falls back to local estimates when
 providers omit or reject optional usage metadata. Provider modules only own true
@@ -609,9 +606,11 @@ usage quirks such as DeepSeek prompt-cache counters.
    catalog. Add admin-only help text or provider-specific fields under
    [config/admin/](src/free_claude_code/config/admin/) only when the generated manifest is
    insufficient.
-4. Implement the provider under [src/free_claude_code/providers/](src/free_claude_code/providers/) using the shared
-   OpenAI-chat transport.
-5. Add a factory in [providers/runtime/factory.py](src/free_claude_code/providers/runtime/factory.py).
+4. Add an `OpenAIChatProfile` under [providers/openai_chat/](src/free_claude_code/providers/openai_chat/) when
+   request policy fully describes the upstream.
+5. Add a specialized provider package and sparse factory entry only when the
+   upstream owns state, model-list behavior, stream events, or retry algorithms
+   that a profile cannot express.
 6. Add deterministic tests under [tests/providers/](tests/providers/) and any
    relevant contract tests.
 7. Add smoke coverage or smoke config in [smoke/](smoke/) when the provider can
@@ -671,7 +670,7 @@ its existing five-attempt exponential-backoff budget. `ExecutionFailure.retryabl
 records provider-policy eligibility; it never tells the client to retry after FCC
 has finalized the failure.
 
-The provider transport remains an upstream adapter: it converts OpenAI chat
+The OpenAI-chat provider remains an upstream adapter: it converts OpenAI chat
 chunks into ledger operations. After retry, continuation, and tool salvage are
 exhausted, it discards uncommitted output or flushes committed output, closes
 open content blocks, and raises `ExecutionFailure`. It never synthesizes a
@@ -1139,13 +1138,13 @@ Important safety boundaries:
 ## Testing And CI Strategy
 
 Deterministic tests live under [tests/](tests/). They cover API routes, config,
-provider conversion, provider transports, streaming contracts, messaging, CLI
+provider conversion, upstream adapters, streaming contracts, messaging, CLI
 adapters, import boundaries, provider catalog contracts, and other invariants.
 The import-boundary contract derives every static production edge with one AST
 scanner and checks the package matrix, exact exceptions, facade ownership, and
 lazy optional imports. The resulting first-party module graph must remain
-acyclic. The same contract rejects untyped transport collaborators and private
-transport access from helper modules. These tests protect current architectural
+acyclic. The same contract rejects untyped provider collaborators and private
+provider access from helper modules. These tests protect current architectural
 properties rather than preserving deleted modules or an exact internal file
 layout.
 
@@ -1224,8 +1223,8 @@ when maintainers want branch-level assurance.
 1. Put shared Anthropic behavior under [src/free_claude_code/core/anthropic/](src/free_claude_code/core/anthropic/).
 2. Put OpenAI Responses behavior under
    [src/free_claude_code/core/openai_responses/](src/free_claude_code/core/openai_responses/).
-3. Keep provider-specific request quirks inside the provider module or transport
-   subclass.
+3. Keep provider-specific request quirks inside the provider profile or specialized
+   provider subclass.
 4. Add stream contract tests under [tests/contracts/](tests/contracts/) or
    [tests/core/](tests/core/) when event shape or ordering changes.
 5. Add provider tests when the behavior changes upstream request or response
@@ -1239,7 +1238,7 @@ Update this file when a change adds or meaningfully changes:
 - a public route or wire protocol;
 - startup, shutdown, or resource ownership;
 - configuration precedence or managed config behavior;
-- provider runtime, catalog, or transport architecture;
+- provider runtime, catalog, or upstream-adapter architecture;
 - model routing or thinking behavior;
 - CLI adapter behavior;
 - messaging platform behavior;

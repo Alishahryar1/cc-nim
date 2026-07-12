@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from free_claude_code.config.provider_catalog import MINIMAX_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import Message, MessagesRequest, Tool
 from free_claude_code.core.anthropic.stream_contracts import (
     parse_sse_text,
@@ -13,9 +14,8 @@ from free_claude_code.core.anthropic.stream_contracts import (
     thinking_content,
 )
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.minimax import MINIMAX_DEFAULT_BASE, MiniMaxProvider
-from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
-from tests.providers.support import passthrough_rate_limiter
+from free_claude_code.providers.openai_chat import OpenAIChatProvider
+from tests.providers.support import passthrough_rate_limiter, profiled_provider
 
 
 class AsyncStream:
@@ -36,7 +36,8 @@ class AsyncStream:
 
 @pytest.fixture
 def minimax_provider():
-    return MiniMaxProvider(
+    return profiled_provider(
+        "minimax",
         ProviderConfig(
             api_key="test-minimax-key",
             base_url=MINIMAX_DEFAULT_BASE,
@@ -69,8 +70,8 @@ def test_default_base_url():
     assert MINIMAX_DEFAULT_BASE == "https://api.minimax.io/v1"
 
 
-def test_init_uses_openai_chat_transport(minimax_provider):
-    assert isinstance(minimax_provider, OpenAIChatTransport)
+def test_init_uses_openai_chat_provider(minimax_provider):
+    assert isinstance(minimax_provider, OpenAIChatProvider)
     assert minimax_provider._api_key == "test-minimax-key"
     assert minimax_provider._base_url == MINIMAX_DEFAULT_BASE
     assert minimax_provider._provider_name == "MINIMAX"

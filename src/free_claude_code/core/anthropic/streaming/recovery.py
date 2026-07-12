@@ -125,7 +125,7 @@ def make_text_recovery_body(
     partial_text: str,
     partial_thinking: str = "",
 ) -> dict[str, Any]:
-    """Build a text-only continuation request for either transport family."""
+    """Build a text-only continuation request for an OpenAI-chat upstream."""
     recovery = deepcopy(body)
     recovery.pop("tools", None)
     recovery.pop("tool_choice", None)

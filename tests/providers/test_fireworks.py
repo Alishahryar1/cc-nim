@@ -6,19 +6,20 @@ import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from free_claude_code.config.provider_catalog import FIREWORKS_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.fireworks import FIREWORKS_BASE_URL, FireworksProvider
-from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
-from tests.providers.support import passthrough_rate_limiter
+from free_claude_code.providers.openai_chat import OpenAIChatProvider
+from tests.providers.support import passthrough_rate_limiter, profiled_provider
 
 
 @pytest.fixture
 def fireworks_provider():
-    return FireworksProvider(
+    return profiled_provider(
+        "fireworks",
         ProviderConfig(
             api_key="test_fireworks_key",
-            base_url=FIREWORKS_BASE_URL,
+            base_url=FIREWORKS_DEFAULT_BASE,
             rate_limit=10,
             rate_window=60,
             enable_thinking=True,
@@ -27,14 +28,14 @@ def fireworks_provider():
     )
 
 
-def test_init_uses_openai_chat_transport(fireworks_provider):
-    assert isinstance(fireworks_provider, OpenAIChatTransport)
+def test_init_uses_openai_chat_provider(fireworks_provider):
+    assert isinstance(fireworks_provider, OpenAIChatProvider)
     assert fireworks_provider._api_key == "test_fireworks_key"
-    assert fireworks_provider._base_url == FIREWORKS_BASE_URL
+    assert fireworks_provider._base_url == FIREWORKS_DEFAULT_BASE
 
 
 def test_base_url_constant():
-    assert FIREWORKS_BASE_URL == "https://api.fireworks.ai/inference/v1"
+    assert FIREWORKS_DEFAULT_BASE == "https://api.fireworks.ai/inference/v1"
 
 
 def test_build_request_body_openai_chat_shape(fireworks_provider):
@@ -67,10 +68,11 @@ def test_build_request_body_default_max_tokens(fireworks_provider):
 
 
 def test_build_request_body_global_disable_blocks_thinking():
-    provider = FireworksProvider(
+    provider = profiled_provider(
+        "fireworks",
         ProviderConfig(
             api_key="k",
-            base_url=FIREWORKS_BASE_URL,
+            base_url=FIREWORKS_DEFAULT_BASE,
             rate_limit=1,
             rate_window=1,
             enable_thinking=False,

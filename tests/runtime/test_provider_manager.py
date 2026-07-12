@@ -118,7 +118,7 @@ async def test_real_hot_replacement_owns_a_limiter_per_provider_generation() -> 
         return client
 
     with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI",
+        "free_claude_code.providers.openai_chat.provider.AsyncOpenAI",
         side_effect=create_client,
     ):
         manager = ProviderRuntimeManager(first_settings)

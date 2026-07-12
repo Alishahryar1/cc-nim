@@ -6,17 +6,17 @@ import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
+from free_claude_code.config.provider_catalog import ZAI_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.defaults import ZAI_DEFAULT_BASE
-from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
-from free_claude_code.providers.zai import ZaiProvider
-from tests.providers.support import passthrough_rate_limiter
+from free_claude_code.providers.openai_chat import OpenAIChatProvider
+from tests.providers.support import passthrough_rate_limiter, profiled_provider
 
 
 @pytest.fixture
 def zai_provider():
-    return ZaiProvider(
+    return profiled_provider(
+        "zai",
         ProviderConfig(
             api_key="test_zai_key",
             base_url=ZAI_DEFAULT_BASE,
@@ -29,7 +29,7 @@ def zai_provider():
 
 
 def test_init_uses_openai_chat_coding_endpoint(zai_provider):
-    assert isinstance(zai_provider, OpenAIChatTransport)
+    assert isinstance(zai_provider, OpenAIChatProvider)
     assert zai_provider._api_key == "test_zai_key"
     assert zai_provider._base_url == "https://api.z.ai/api/coding/paas/v4"
 

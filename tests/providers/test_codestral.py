@@ -4,13 +4,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from free_claude_code.config.provider_catalog import CODESTRAL_DEFAULT_BASE
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.codestral import (
-    CODESTRAL_DEFAULT_BASE,
-    CodestralProvider,
-)
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter
+from tests.providers.support import passthrough_rate_limiter, profiled_provider
 
 
 def make_request(**overrides):
@@ -30,16 +27,20 @@ def codestral_config():
 
 @pytest.fixture
 def codestral_provider(codestral_config):
-    return CodestralProvider(codestral_config, rate_limiter=passthrough_rate_limiter())
+    return profiled_provider(
+        "mistral_codestral", codestral_config, rate_limiter=passthrough_rate_limiter()
+    )
 
 
 def test_init(codestral_config):
     """Test provider initialization."""
     with patch(
-        "free_claude_code.providers.transports.openai_chat.transport.AsyncOpenAI"
+        "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as mock_openai:
-        provider = CodestralProvider(
-            codestral_config, rate_limiter=passthrough_rate_limiter()
+        provider = profiled_provider(
+            "mistral_codestral",
+            codestral_config,
+            rate_limiter=passthrough_rate_limiter(),
         )
         assert provider._api_key == "test_codestral_key"
         assert provider._base_url == CODESTRAL_DEFAULT_BASE
@@ -61,7 +62,8 @@ def test_build_request_body_basic(codestral_provider):
 
 def test_build_request_body_global_disable_blocks_reasoning_mapping():
     """Global disable disables reasoning replay in the converter."""
-    provider = CodestralProvider(
+    provider = profiled_provider(
+        "mistral_codestral",
         ProviderConfig(
             api_key="test_codestral_key",
             base_url=CODESTRAL_DEFAULT_BASE,

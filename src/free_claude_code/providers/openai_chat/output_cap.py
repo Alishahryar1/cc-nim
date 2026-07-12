@@ -6,8 +6,8 @@ with an HTTP 400 that names the allowed maximum, e.g.::
 
     max_completion_tokens must be less than or equal to 40960, ...
 
-This module parses that maximum and clamps the request body so the transport can
-retry once and succeed. The transport also remembers the learned cap per model
+This module parses that maximum and clamps the request body so the provider can
+retry once and succeed. The provider also remembers the learned cap per model
 so later requests clamp proactively instead of paying the 400 every time.
 """
 

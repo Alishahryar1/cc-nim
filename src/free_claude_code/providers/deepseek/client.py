@@ -4,23 +4,26 @@ from typing import Any
 
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.defaults import DEEPSEEK_DEFAULT_BASE
+from free_claude_code.providers.openai_chat import (
+    OpenAIChatProfile,
+    OpenAIChatProvider,
+    OpenAIChatRequestPolicy,
+    usage_int,
+)
 from free_claude_code.providers.rate_limit import ProviderRateLimiter
-from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
-from free_claude_code.providers.transports.openai_chat.usage import usage_int
 
 from .compat import build_deepseek_request_body
 
+_PROFILE = OpenAIChatProfile(OpenAIChatRequestPolicy(provider_name="DEEPSEEK"))
 
-class DeepSeekProvider(OpenAIChatTransport):
+
+class DeepSeekProvider(OpenAIChatProvider):
     """DeepSeek using ``https://api.deepseek.com`` Chat Completions."""
 
     def __init__(self, config: ProviderConfig, *, rate_limiter: ProviderRateLimiter):
         super().__init__(
             config,
-            provider_name="DEEPSEEK",
-            base_url=config.base_url or DEEPSEEK_DEFAULT_BASE,
-            api_key=config.api_key,
+            profile=_PROFILE,
             rate_limiter=rate_limiter,
         )
 

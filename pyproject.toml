@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "free-claude-code"
-version = "3.5.13"
-description = "Middleware between Claude Code CLI (Anthropic API) and NVIDIA NIM"
+version = "3.5.14"
+description = "Local proxy connecting Claude Code and Codex to OpenAI-compatible AI providers"
 readme = "README.md"
 requires-python = ">=3.14.0"
 dependencies = [

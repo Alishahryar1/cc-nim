@@ -14,7 +14,7 @@ from free_claude_code.core.anthropic.stream_contracts import (
 )
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.open_router import OpenRouterProvider
-from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
+from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
 
@@ -70,8 +70,8 @@ def _chunk(
     return SimpleNamespace(choices=[choice], usage=None)
 
 
-def test_init_uses_openai_chat_transport(open_router_provider):
-    assert isinstance(open_router_provider, OpenAIChatTransport)
+def test_init_uses_openai_chat_provider(open_router_provider):
+    assert isinstance(open_router_provider, OpenAIChatProvider)
     assert open_router_provider._api_key == "test_openrouter_key"
     assert open_router_provider._base_url == "https://openrouter.ai/api/v1"
 

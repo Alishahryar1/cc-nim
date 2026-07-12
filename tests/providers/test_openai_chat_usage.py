@@ -11,8 +11,12 @@ from httpx import Request, Response
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.transports.openai_chat import OpenAIChatTransport
-from free_claude_code.providers.transports.openai_chat.usage import (
+from free_claude_code.providers.openai_chat import (
+    OpenAIChatProfile,
+    OpenAIChatProvider,
+    OpenAIChatRequestPolicy,
+)
+from free_claude_code.providers.openai_chat.usage import (
     clone_without_stream_usage,
     is_stream_usage_rejection,
     request_stream_usage,
@@ -22,7 +26,7 @@ from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter
 
 
-class _UsageTestProvider(OpenAIChatTransport):
+class _UsageTestProvider(OpenAIChatProvider):
     def __init__(self):
         super().__init__(
             ProviderConfig(
@@ -31,9 +35,9 @@ class _UsageTestProvider(OpenAIChatTransport):
                 rate_limit=100,
                 rate_window=60,
             ),
-            provider_name="USAGE_TEST",
-            base_url="https://provider.example/v1",
-            api_key="test_key",
+            profile=OpenAIChatProfile(
+                OpenAIChatRequestPolicy(provider_name="USAGE_TEST")
+            ),
             rate_limiter=passthrough_rate_limiter(),
         )
 
