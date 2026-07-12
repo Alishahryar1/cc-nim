@@ -68,7 +68,6 @@ async def test_nim_stream_retries_on_openai_5xx_then_streams(status_code):
             "create",
             new_callable=AsyncMock,
         ) as mock_create,
-        patch("asyncio.sleep", new_callable=AsyncMock),
     ):
         mock_create.side_effect = [_internal_5xx(status_code), mock_stream()]
         events = [e async for e in provider.stream_response(req)]
@@ -113,7 +112,6 @@ async def test_nim_stream_retries_on_pre_stream_connection_error_then_streams():
             "create",
             new_callable=AsyncMock,
         ) as mock_create,
-        patch("asyncio.sleep", new_callable=AsyncMock),
     ):
         mock_create.side_effect = [_connection_error(), mock_stream()]
         events = [e async for e in provider.stream_response(req)]
@@ -148,7 +146,6 @@ async def test_nim_stream_connection_error_exhausted_emits_cause_chain():
             new_callable=AsyncMock,
             side_effect=error,
         ) as mock_create,
-        patch("asyncio.sleep", new_callable=AsyncMock),
         patch("free_claude_code.providers.openai_chat.provider.trace_event") as trace,
         pytest.raises(ExecutionFailure) as exc_info,
     ):
@@ -202,7 +199,6 @@ async def test_nim_stream_openai_5xx_exhausted_emits_user_message(
             "create",
             new_callable=AsyncMock,
         ) as mock_create,
-        patch("asyncio.sleep", new_callable=AsyncMock),
     ):
         mock_create.side_effect = _internal_5xx(status_code)
         with pytest.raises(ExecutionFailure) as exc_info:

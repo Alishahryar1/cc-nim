@@ -31,6 +31,23 @@ class PassthroughProviderRateLimiter(ProviderRateLimiter):
         return await fn(*args, **kwargs)
 
 
+class ImmediateRetryProviderRateLimiter(ProviderRateLimiter):
+    """Run the real retry policy without exercising wall-clock backoff."""
+
+    async def execute_with_retry(
+        self,
+        fn: Callable[..., Any],
+        *args: Any,
+        **kwargs: Any,
+    ) -> Any:
+        kwargs.update(base_delay=0.0, max_delay=0.0, jitter=0.0)
+        return await super().execute_with_retry(fn, *args, **kwargs)
+
+    def extend_reactive_block(self, seconds: float) -> None:
+        """Leave reactive timing to the limiter's dedicated unit tests."""
+        del seconds
+
+
 def passthrough_rate_limiter() -> ProviderRateLimiter:
     """Return a fresh limiter test double for one provider instance."""
     return PassthroughProviderRateLimiter()
@@ -51,8 +68,8 @@ def profiled_provider(
 
 
 def retrying_rate_limiter() -> ProviderRateLimiter:
-    """Return a fresh real limiter for provider retry-policy tests."""
-    return ProviderRateLimiter(
+    """Return a limiter that exercises retry policy without elapsed time."""
+    return ImmediateRetryProviderRateLimiter(
         rate_limit=1_000_000,
         rate_window=1.0,
         max_concurrency=1_000,
