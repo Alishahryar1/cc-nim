@@ -132,6 +132,30 @@ def test_ollama_descriptor_uses_local_openai_endpoint_semantics():
     assert descriptor.local is True
 
 
+@pytest.mark.parametrize(
+    ("provider_id", "expected_api_key"),
+    [
+        ("lmstudio", "lm-studio"),
+        ("llamacpp", "llamacpp"),
+        ("ollama", "ollama"),
+    ],
+)
+def test_local_provider_factory_resolves_catalog_static_credential(
+    provider_id: str,
+    expected_api_key: str,
+) -> None:
+    descriptor = PROVIDER_CATALOG[provider_id]
+    settings = _make_settings()
+
+    config = build_provider_config(descriptor, settings)
+    with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
+        provider = create_provider(provider_id, settings)
+
+    assert config.api_key == expected_api_key
+    assert isinstance(provider, OpenAIChatProvider)
+    assert provider._api_key == expected_api_key
+
+
 def test_zai_descriptor_uses_fixed_cloud_base_url():
     descriptor = PROVIDER_CATALOG["zai"]
 
