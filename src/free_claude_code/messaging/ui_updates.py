@@ -82,12 +82,27 @@ class ThrottledTranscriptEditor:
             if self._debug_platform_edits:
                 logger.debug("PLATFORM_EDIT_TEXT:\n{}", display)
             self._last_displayed_text = display
+
+            reply_markup = None
+            if self._parse_mode == "MarkdownV2":
+                from free_claude_code.messaging.keyboards import make_stop_keyboard
+                is_finished = False
+                if status:
+                    status_lower = status.lower()
+                    is_finished = any(
+                        x in status_lower
+                        for x in ["complete", "cancel", "stop", "fail", "error", "✅", "❌", "⏹", "💥"]
+                    )
+                if not is_finished:
+                    reply_markup = make_stop_keyboard(self._node_id)
+
             try:
                 await self._outbound.queue_edit_message(
                     self._chat_id,
                     self._status_msg_id,
                     display,
                     parse_mode=self._parse_mode,
+                    reply_markup=reply_markup,
                 )
             except Exception as e:
                 logger.warning(

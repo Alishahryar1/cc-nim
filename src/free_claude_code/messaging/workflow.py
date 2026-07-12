@@ -96,6 +96,8 @@ class MessagingWorkflow:
         *,
         platform_name: str | None = None,
         voice_cancellation: VoiceCancellation | None = None,
+        apply_config: Any = None,
+        get_settings: Any = None,
         debug_platform_edits: bool = False,
         debug_subagent_stack: bool = False,
         log_raw_cli_diagnostics: bool = False,
@@ -106,6 +108,8 @@ class MessagingWorkflow:
         self.voice_cancellation = voice_cancellation
         self.cli_manager = cli_manager
         self.session_store = session_store
+        self.apply_config = apply_config
+        self.get_settings = get_settings
         self._log_messaging_error_details = log_messaging_error_details
         self._rendering_profile = build_rendering_profile(self.platform_name)
         self._state_lock = asyncio.Lock()
@@ -343,6 +347,54 @@ class MessagingWorkflow:
             chat_id=incoming.chat_id,
             node_id=incoming.message_id,
         ):
+            key = (incoming.platform, incoming.chat_id, incoming.user_id)
+            if incoming.text and incoming.text.startswith("/"):
+                if hasattr(self, "_user_states") and key in self._user_states:
+                    del self._user_states[key]
+            elif hasattr(self, "_user_states") and key in self._user_states:
+                state = self._user_states[key]
+                mode = state.get("mode")
+                if mode == "awaiting_manual_model" and incoming.text:
+                    del self._user_states[key]
+                    model_path = incoming.text.strip()
+                    if self.apply_config:
+                        await self.apply_config({"model": model_path, "model_opus": model_path})
+                        msg_id = await self.outbound.queue_send_message(
+                            incoming.chat_id,
+                            f"🤖 Active model successfully updated to:\n`{model_path}`",
+                            reply_to=incoming.message_id,
+                            fire_and_forget=False,
+                            message_thread_id=incoming.message_thread_id,
+                        )
+                        async with self._state_lock:
+                            self.record_outgoing_message(
+                                incoming.platform, incoming.chat_id, msg_id, "command"
+                            )
+                    return
+                elif mode == "awaiting_model_search" and incoming.text:
+                    del self._user_states[key]
+                    query_str = incoming.text.strip().lower()
+                    current_model = ""
+                    if self.get_settings:
+                        settings = self.get_settings()
+                        current_model = getattr(settings, "model", "")
+                    from free_claude_code.messaging.keyboards import make_model_keyboard
+                    text, kb = make_model_keyboard(current_model, page=0, search_query=query_str)
+                    msg_id = await self.outbound.queue_send_message(
+                        incoming.chat_id,
+                        text,
+                        reply_to=incoming.message_id,
+                        fire_and_forget=False,
+                        message_thread_id=incoming.message_thread_id,
+                        reply_markup=kb,
+                        parse_mode="HTML",
+                    )
+                    async with self._state_lock:
+                        self.record_outgoing_message(
+                            incoming.platform, incoming.chat_id, msg_id, "command"
+                        )
+                    return
+
             is_standalone_clear = (
                 parse_command_base(incoming.text) == "/clear"
                 and not incoming.is_reply()
@@ -633,7 +685,7 @@ class MessagingWorkflow:
             self.session_store.record_message_id(
                 platform,
                 chat_id,
-                str(msg_id),
+                msg_id,
                 "out",
                 kind,
             )
@@ -662,7 +714,7 @@ class MessagingWorkflow:
             self.session_store.record_message_id(
                 incoming.platform,
                 incoming.chat_id,
-                str(incoming.message_id),
+                incoming.message_id,
                 "in",
                 kind,
             )
@@ -709,6 +761,248 @@ class MessagingWorkflow:
                     parse_mode=self._parse_mode(),
                 )
             )
+
+    async def handle_callback_query(self, query: Any) -> None:
+        """Handle incoming callback query clicks from Telegram."""
+        data: str = query.data or ""
+        chat_id = str(query.message.chat_id)
+        user_id = str(query.from_user.id)
+        msg_id = str(query.message.message_id)
+
+        key = ("telegram", chat_id, user_id)
+        if hasattr(self, "_user_states") and key in self._user_states:
+            del self._user_states[key]
+
+        if data.startswith("stop_task:"):
+            # A stop button click
+            node_id = data.split(":", 1)[1]
+            simulated = IncomingMessage(
+                text="/stop",
+                chat_id=chat_id,
+                user_id=user_id,
+                message_id=f"cb_stop_{msg_id}",
+                platform="telegram",
+                reply_to_message_id=node_id,
+            )
+            # Remove inline keyboard or show stopped notice
+            try:
+                await query.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+            await self.handle_message(simulated)
+
+        elif data == "clear_confirm":
+            simulated = IncomingMessage(
+                text="/clear",
+                chat_id=chat_id,
+                user_id=user_id,
+                message_id=f"cb_clear_{msg_id}",
+                platform="telegram",
+            )
+            try:
+                await query.message.edit_reply_markup(reply_markup=None)
+            except Exception:
+                pass
+            await self.handle_message(simulated)
+
+        elif data == "clear_cancel":
+            try:
+                await query.message.edit_text("🧹 Clear operation cancelled.")
+            except Exception:
+                pass
+
+        elif data == "menu_start":
+            help_text = (
+                "👋 <b>Hello! I am the Claude Code Proxy Bot.</b>\n\n"
+                "I help you control and manage Claude Code and Codex directly from Telegram.\n\n"
+                "<b>Available Commands & Actions:</b>\n"
+                "🤖 Ask me anything by sending a message\n"
+                "📁 Browse workspace files and directories\n"
+                "⚙️ Manage web search and debug settings\n"
+                "🤖 Switch upstream AI model overrides\n"
+                "🧹 Clear conversation logs and history\n"
+                "🎙 Send voice notes to transcribe and run\n"
+                "📥 Upload files to your workspace"
+            )
+            from free_claude_code.messaging.keyboards import make_start_keyboard
+            try:
+                await query.message.edit_text(help_text, reply_markup=make_start_keyboard(), parse_mode="HTML")
+            except Exception:
+                pass
+
+        elif data == "menu_settings":
+            web_tools_enabled = False
+            debug_platform_edits = False
+            if self.get_settings:
+                settings = self.get_settings()
+                web_tools_enabled = getattr(settings, "enable_web_server_tools", False)
+                debug_platform_edits = getattr(settings, "debug_platform_edits", False)
+
+            from free_claude_code.messaging.keyboards import make_settings_keyboard
+            kb = make_settings_keyboard(
+                web_tools_enabled=web_tools_enabled,
+                debug_platform_edits=debug_platform_edits,
+            )
+            try:
+                await query.message.edit_text("⚙️ <b>Telegram Bot settings Panel</b>:", reply_markup=kb, parse_mode="HTML")
+            except Exception:
+                pass
+
+        elif data == "menu_clear":
+            from free_claude_code.messaging.keyboards import make_clear_confirm_keyboard
+            try:
+                await query.message.edit_text("⚠️ <b>Are you sure you want to reset this session?</b>", reply_markup=make_clear_confirm_keyboard(), parse_mode="HTML")
+            except Exception:
+                pass
+
+        elif data == "menu_stop":
+            simulated = IncomingMessage(
+                text="/stop",
+                chat_id=chat_id,
+                user_id=user_id,
+                message_id=f"cb_stop_{msg_id}",
+                platform="telegram",
+            )
+            await self.handle_message(simulated)
+
+        elif data.startswith("model_p:"):
+            parts = data.split(":", 2)
+            page = int(parts[1]) if len(parts) > 1 else 0
+            query_str = parts[2] if len(parts) > 2 else ""
+
+            current_model = ""
+            if self.get_settings:
+                settings = self.get_settings()
+                current_model = getattr(settings, "model", "")
+
+            from free_claude_code.messaging.keyboards import make_model_keyboard
+            text, kb = make_model_keyboard(current_model, page=page, search_query=query_str)
+            try:
+                await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+            except Exception:
+                pass
+
+        elif data == "model_search":
+            key = ("telegram", chat_id, user_id)
+            if not hasattr(self, "_user_states"):
+                self._user_states = {}
+            self._user_states[key] = {"mode": "awaiting_model_search"}
+            try:
+                await query.message.edit_text(
+                    "🔍 <b>Search Model</b>:\n\nPlease type and send the search query (e.g. <code>deepseek</code> or <code>gemini</code>) to filter the model list.\n\n<i>To cancel, select any menu option.</i>",
+                    reply_markup=query.message.reply_markup,
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
+
+        elif data == "model_manual":
+            key = ("telegram", chat_id, user_id)
+            if not hasattr(self, "_user_states"):
+                self._user_states = {}
+            self._user_states[key] = {"mode": "awaiting_manual_model"}
+            try:
+                await query.message.edit_text(
+                    "✍️ <b>Manual Model Entry</b>:\n\nPlease type and send the exact model name manually (e.g. <code>open_router/google/gemini-2.5-pro</code>).\n\n<i>To cancel, select any menu option.</i>",
+                    reply_markup=query.message.reply_markup,
+                    parse_mode="HTML"
+                )
+            except Exception:
+                pass
+
+        elif data == "model_noop":
+            pass
+
+        elif data.startswith("model_set:"):
+            from free_claude_code.messaging.keyboards import get_registered_path
+            model_path = get_registered_path(data) or data.split(":", 1)[1]
+            if self.apply_config:
+                await self.apply_config({"model": model_path, "model_opus": model_path})
+                current_model = model_path
+                from free_claude_code.messaging.keyboards import make_model_keyboard
+                text, kb = make_model_keyboard(current_model, page=0, search_query="")
+                try:
+                    await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+                except Exception:
+                    pass
+            else:
+                try:
+                    await query.message.edit_text("❌ Configuration engine not connected to the messaging workflow.")
+                except Exception:
+                    pass
+
+        elif data.startswith("settings_toggle:"):
+            setting_name = data.split(":", 1)[1]
+            if self.get_settings and self.apply_config:
+                settings = self.get_settings()
+                current_val = getattr(settings, setting_name, False)
+                new_val = not current_val
+                await self.apply_config({setting_name: new_val})
+                
+                fresh_settings = self.get_settings()
+                from free_claude_code.messaging.keyboards import make_settings_keyboard
+                kb = make_settings_keyboard(
+                    web_tools_enabled=fresh_settings.enable_web_server_tools,
+                    debug_platform_edits=fresh_settings.debug_platform_edits,
+                )
+                try:
+                    await query.message.edit_reply_markup(reply_markup=kb)
+                except Exception:
+                    pass
+
+        elif data == "settings_close":
+            try:
+                await query.message.delete()
+            except Exception:
+                try:
+                    await query.message.edit_reply_markup(reply_markup=None)
+                except Exception:
+                    pass
+
+        elif data.startswith("workspace_ls:"):
+            from free_claude_code.messaging.keyboards import get_registered_path
+            rel_path = get_registered_path(data) or data.split(":", 1)[1]
+            workspace_dir = getattr(self.cli_manager, "workspace", None)
+            if workspace_dir:
+                from free_claude_code.messaging.keyboards import make_workspace_keyboard
+                text, kb = make_workspace_keyboard(workspace_dir, rel_path)
+                try:
+                    await query.message.edit_text(text, reply_markup=kb, parse_mode="HTML")
+                except Exception:
+                    try:
+                        await query.message.edit_text(text, reply_markup=kb)
+                    except Exception:
+                        pass
+
+        elif data.startswith("workspace_view:"):
+            from free_claude_code.messaging.keyboards import get_registered_path
+            rel_path = get_registered_path(data) or data.split(":", 1)[1]
+            workspace_dir = getattr(self.cli_manager, "workspace", None)
+            if workspace_dir:
+                import os
+                base_abs = os.path.realpath(os.path.abspath(workspace_dir))
+                abs_path = os.path.realpath(os.path.abspath(os.path.join(base_abs, rel_path)))
+                try:
+                    common = os.path.commonpath([base_abs, abs_path])
+                    is_contained = os.path.realpath(common) == base_abs
+                except Exception:
+                    is_contained = False
+
+                if is_contained and os.path.exists(abs_path) and os.path.isfile(abs_path):
+                    try:
+                        with open(abs_path, "rb") as f:
+                            await query.message.reply_document(document=f, filename=os.path.basename(abs_path))
+                    except Exception as e:
+                        logger.error("Failed to send document: {}", e)
+                        try:
+                            await query.message.reply_text(f"❌ Failed to send file: {e}")
+                        except Exception:
+                            pass
+                else:
+                    try:
+                        await query.message.reply_text("❌ Access Denied or file not found.")
+                    except Exception:
+                        pass
 
 
 __all__ = ["MessagingWorkflow"]

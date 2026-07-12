@@ -143,6 +143,26 @@ async def handle_clear_command(
     Reply-scoped: delete the selected message and its literal reply subtree.
     Standalone: reset and delete the invoking chat's managed conversation.
     """
+    if (
+        incoming.platform == "telegram"
+        and getattr(handler, "apply_config", None) is not None
+        and not (incoming.message_id and incoming.message_id.startswith("cb_clear_"))
+    ):
+        from free_claude_code.messaging.keyboards import make_clear_confirm_keyboard
+        msg_id = await handler.outbound.queue_send_message(
+            incoming.chat_id,
+            "⚠️ Are you sure you want to reset this session?",
+            reply_to=incoming.message_id,
+            fire_and_forget=False,
+            message_thread_id=incoming.message_thread_id,
+            reply_markup=make_clear_confirm_keyboard(),
+        )
+        handler.record_outgoing_message(
+            incoming.platform, incoming.chat_id, msg_id, "command"
+        )
+        return
+
+    from free_claude_code.messaging.trees import TreeQueueManager
     if incoming.is_reply() and incoming.reply_to_message_id:
         result = await handler.clear_reply(
             incoming.scope,
@@ -180,3 +200,175 @@ async def handle_clear_command(
         msg_ids.add(str(incoming.message_id))
 
     await _delete_message_ids(handler, incoming.chat_id, msg_ids)
+
+
+async def handle_model_command(
+    handler: MessagingCommandContext, incoming: IncomingMessage
+) -> None:
+    """Handle /model command, showing an interactive selection menu."""
+    if incoming.platform != "telegram":
+        msg_id = await handler.outbound.queue_send_message(
+            incoming.chat_id,
+            "❌ This command is only supported on Telegram.",
+            reply_to=incoming.message_id,
+            fire_and_forget=False,
+            message_thread_id=incoming.message_thread_id,
+        )
+        handler.record_outgoing_message(
+            incoming.platform, incoming.chat_id, msg_id, "command"
+        )
+        return
+
+    # Fetch current model
+    current_model = ""
+    if hasattr(handler, "get_settings") and handler.get_settings:
+        settings = handler.get_settings()
+        current_model = getattr(settings, "model", "")
+
+    from free_claude_code.messaging.keyboards import make_model_keyboard
+    text, kb = make_model_keyboard(current_model)
+    msg_id = await handler.outbound.queue_send_message(
+        incoming.chat_id,
+        text,
+        reply_to=incoming.message_id,
+        fire_and_forget=False,
+        message_thread_id=incoming.message_thread_id,
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
+    handler.record_outgoing_message(
+        incoming.platform, incoming.chat_id, msg_id, "command"
+    )
+
+
+async def handle_settings_command(
+    handler: MessagingCommandContext, incoming: IncomingMessage
+) -> None:
+    """Handle /settings command, showing an interactive toggle dashboard."""
+    if incoming.platform != "telegram":
+        msg_id = await handler.outbound.queue_send_message(
+            incoming.chat_id,
+            "❌ This command is only supported on Telegram.",
+            reply_to=incoming.message_id,
+            fire_and_forget=False,
+            message_thread_id=incoming.message_thread_id,
+        )
+        handler.record_outgoing_message(
+            incoming.platform, incoming.chat_id, msg_id, "command"
+        )
+        return
+
+    web_tools_enabled = False
+    debug_platform_edits = False
+    if hasattr(handler, "get_settings") and handler.get_settings:
+        settings = handler.get_settings()
+        web_tools_enabled = getattr(settings, "enable_web_server_tools", False)
+        debug_platform_edits = getattr(settings, "debug_platform_edits", False)
+
+    from free_claude_code.messaging.keyboards import make_settings_keyboard
+    msg_id = await handler.outbound.queue_send_message(
+        incoming.chat_id,
+        "⚙️ *Telegram Bot settings Panel*:",
+        reply_to=incoming.message_id,
+        fire_and_forget=False,
+        message_thread_id=incoming.message_thread_id,
+        reply_markup=make_settings_keyboard(
+            web_tools_enabled=web_tools_enabled,
+            debug_platform_edits=debug_platform_edits,
+        ),
+    )
+    handler.record_outgoing_message(
+        incoming.platform, incoming.chat_id, msg_id, "command"
+    )
+
+
+async def handle_workspace_command(
+    handler: MessagingCommandContext, incoming: IncomingMessage
+) -> None:
+    """Handle /workspace command, showing the directory explorer."""
+    if incoming.platform != "telegram":
+        msg_id = await handler.outbound.queue_send_message(
+            incoming.chat_id,
+            "❌ This command is only supported on Telegram.",
+            reply_to=incoming.message_id,
+            fire_and_forget=False,
+            message_thread_id=incoming.message_thread_id,
+        )
+        handler.record_outgoing_message(
+            incoming.platform, incoming.chat_id, msg_id, "command"
+        )
+        return
+
+    workspace_dir = None
+    if hasattr(handler, "cli_manager") and handler.cli_manager:
+        workspace_dir = handler.cli_manager.workspace
+
+    if not workspace_dir:
+        msg_id = await handler.outbound.queue_send_message(
+            incoming.chat_id,
+            "❌ Workspace directory not found or not initialized.",
+            reply_to=incoming.message_id,
+            fire_and_forget=False,
+            message_thread_id=incoming.message_thread_id,
+        )
+        handler.record_outgoing_message(
+            incoming.platform, incoming.chat_id, msg_id, "command"
+        )
+        return
+
+    # Extract optional path argument from the command text
+    # e.g., "/workspace src" -> "src"
+    parts = (incoming.text or "").strip().split(None, 1)
+    rel_path = parts[1] if len(parts) > 1 else ""
+
+    from free_claude_code.messaging.keyboards import make_workspace_keyboard
+    text, kb = make_workspace_keyboard(workspace_dir, rel_path)
+
+    msg_id = await handler.outbound.queue_send_message(
+        incoming.chat_id,
+        text,
+        reply_to=incoming.message_id,
+        fire_and_forget=False,
+        message_thread_id=incoming.message_thread_id,
+        reply_markup=kb,
+        parse_mode="HTML",
+    )
+    handler.record_outgoing_message(
+        incoming.platform, incoming.chat_id, msg_id, "command"
+    )
+
+
+async def handle_start_command(
+    handler: MessagingCommandContext, incoming: IncomingMessage
+) -> None:
+    """Handle /start command, showing greeting and instructions."""
+    help_text = (
+        "👋 <b>Hello! I am the Claude Code Proxy Bot.</b>\n\n"
+        "I help you control and manage Claude Code and Codex directly from Telegram.\n\n"
+        "<b>Available Commands & Actions:</b>\n"
+        "🤖 Ask me anything by sending a message\n"
+        "📁 Browse workspace files and directories\n"
+        "⚙️ Manage web search and debug settings\n"
+        "🤖 Switch upstream AI model overrides\n"
+        "🧹 Clear conversation logs and history\n"
+        "🎙 Send voice notes to transcribe and run\n"
+        "📥 Upload files to your workspace"
+    )
+
+    from free_claude_code.messaging.keyboards import make_start_keyboard
+    is_tg = incoming.platform == "telegram"
+    reply_markup = make_start_keyboard() if is_tg else None
+    parse_mode = "HTML" if is_tg else None
+
+    msg_id = await handler.outbound.queue_send_message(
+        incoming.chat_id,
+        help_text,
+        reply_to=incoming.message_id,
+        fire_and_forget=False,
+        message_thread_id=incoming.message_thread_id,
+        reply_markup=reply_markup,
+        parse_mode=parse_mode,
+    )
+    handler.record_outgoing_message(
+        incoming.platform, incoming.chat_id, msg_id, "command"
+    )

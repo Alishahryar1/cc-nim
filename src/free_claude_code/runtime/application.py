@@ -367,11 +367,16 @@ class ApplicationRuntime:
         allowed_dirs = [workspace] if settings.allowed_dir else []
         plans_dir_abs = os.path.abspath(os.path.join(data_path, "plans"))
 
+        try:
+            plans_dir = os.path.relpath(plans_dir_abs, workspace)
+        except ValueError:
+            plans_dir = plans_dir_abs
+
         self._cli_manager = cli_managed.ManagedClaudeSessionManager(
             workspace_path=workspace,
             api_url=f"http://{settings.host}:{settings.port}/v1",
             allowed_dirs=allowed_dirs,
-            plans_directory=os.path.relpath(plans_dir_abs, workspace),
+            plans_directory=plans_dir,
             auth_token=settings.anthropic_auth_token,
             log_raw_cli_diagnostics=settings.log_raw_cli_diagnostics,
             log_messaging_error_details=settings.log_messaging_error_details,
@@ -386,6 +391,8 @@ class ApplicationRuntime:
             voice_cancellation=components.voice_cancellation,
             cli_manager=self._cli_manager,
             session_store=session_store,
+            apply_config=self.apply_admin_config,
+            get_settings=lambda: self.settings,
             debug_platform_edits=settings.debug_platform_edits,
             debug_subagent_stack=settings.debug_subagent_stack,
             log_raw_cli_diagnostics=settings.log_raw_cli_diagnostics,
@@ -394,6 +401,8 @@ class ApplicationRuntime:
         self._messaging_workflow = workflow
         workflow.restore()
         components.runtime.on_message(workflow.handle_message)
+        if hasattr(components.runtime, "on_callback_query"):
+            components.runtime.on_callback_query(workflow.handle_callback_query)
         await components.runtime.start()
         await workflow.repair_restored_statuses()
         if components.startup_notice is not None:

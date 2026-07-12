@@ -1,4 +1,12 @@
 import os
+from unittest.mock import patch
+import pytest
+
+@pytest.fixture
+def mock_shutil_which():
+    with patch("shutil.which") as mock:
+        mock.return_value = "claude"
+        yield mock
 
 from free_claude_code.cli.managed.claude import (
     MANAGED_CLAUDE_MODEL_TIER,
@@ -42,7 +50,7 @@ def _config(**overrides: object) -> ManagedClaudeConfig:
     )
 
 
-def test_managed_claude_builds_new_task_command_and_env() -> None:
+def test_managed_claude_builds_new_task_command_and_env(mock_shutil_which) -> None:
     invocation = build_managed_claude_invocation(
         config=_config(
             allowed_dirs=[os.path.normpath("/tmp/extra")],
@@ -74,7 +82,7 @@ def test_managed_claude_builds_new_task_command_and_env() -> None:
     assert invocation.trace_metadata["managed_model_tier"] == MANAGED_CLAUDE_MODEL_TIER
 
 
-def test_managed_claude_builds_resume_and_fork_commands() -> None:
+def test_managed_claude_builds_resume_and_fork_commands(mock_shutil_which) -> None:
     resume = build_managed_claude_invocation(
         config=_config(),
         request=ManagedClaudeTaskRequest(prompt="again", session_id="sess_1"),
@@ -107,6 +115,26 @@ def test_managed_claude_builds_resume_and_fork_commands() -> None:
         "-p",
     )
     assert "--fork-session" in fork.argv
+
+
+def test_managed_claude_shutil_which_resolves_absolute_path(mock_shutil_which) -> None:
+    mock_shutil_which.return_value = os.path.normpath("/usr/local/bin/claude")
+    invocation = build_managed_claude_invocation(
+        config=_config(claude_bin="claude"),
+        request=ManagedClaudeTaskRequest(prompt="hello"),
+        base_env={},
+    )
+    assert invocation.argv[0] == os.path.normpath("/usr/local/bin/claude")
+
+
+def test_managed_claude_shutil_which_returns_none(mock_shutil_which) -> None:
+    mock_shutil_which.return_value = None
+    invocation = build_managed_claude_invocation(
+        config=_config(claude_bin="custom-claude-bin"),
+        request=ManagedClaudeTaskRequest(prompt="hello"),
+        base_env={},
+    )
+    assert invocation.argv[0] == "custom-claude-bin"
 
 
 def test_managed_claude_env_uses_sentinel_when_proxy_auth_blank() -> None:

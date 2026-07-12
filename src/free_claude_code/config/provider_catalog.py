@@ -37,6 +37,8 @@ GEMINI_DEFAULT_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
 GROQ_DEFAULT_BASE = "https://api.groq.com/openai/v1"
 CEREBRAS_DEFAULT_BASE = "https://api.cerebras.ai/v1"
 SAMBANOVA_DEFAULT_BASE = "https://api.sambanova.ai/v1"
+ZENMUX_DEFAULT_BASE = "https://zenmux.ai/api/v1"
+IAMHC_DEFAULT_BASE = "https://api.iamhc.cn/v1"
 
 
 @dataclass(frozen=True, slots=True)
@@ -268,6 +270,22 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         default_base_url=OLLAMA_DEFAULT_BASE,
         base_url_attr="ollama_base_url",
         local=True,
+    ),
+    "zenmux": ProviderDescriptor(
+        provider_id="zenmux",
+        display_name="Zenmux",
+        credential_env="ZENMUX_API_KEY",
+        credential_attr="zenmux_api_key",
+        default_base_url=ZENMUX_DEFAULT_BASE,
+        proxy_attr="zenmux_proxy",
+    ),
+    "iamhc": ProviderDescriptor(
+        provider_id="iamhc",
+        display_name="Iamhc",
+        credential_env="IAMHC_API_KEY",
+        credential_attr="iamhc_api_key",
+        default_base_url=IAMHC_DEFAULT_BASE,
+        proxy_attr="iamhc_proxy",
     ),
 }
 

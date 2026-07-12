@@ -32,6 +32,7 @@ try:
         ContextTypes,
         MessageHandler,
         filters,
+        CallbackQueryHandler,
     )
     from telegram.request import HTTPXRequest
 
@@ -69,6 +70,7 @@ class TelegramRuntime:
 
         self._application: Application | None = None
         self._message_handler: InboundMessageHandler | None = None
+        self._callback_query_handler: Callable[[Any], Awaitable[None]] | None = None
         self._connected = False
         self._limiter = limiter
         self.outbound = TelegramMessenger(
@@ -142,6 +144,8 @@ class TelegramRuntime:
             MessageHandler(filters.COMMAND, self._on_telegram_message)
         )
         application.add_handler(MessageHandler(filters.VOICE, self._on_telegram_voice))
+        application.add_handler(MessageHandler(filters.Document.ALL, self._on_telegram_document))
+        application.add_handler(CallbackQueryHandler(self._on_callback_query))
 
         await self._retry_connection_step(
             application.initialize,
@@ -233,6 +237,10 @@ class TelegramRuntime:
         """Register the workflow callback for inbound messages."""
         self._message_handler = handler
 
+    def on_callback_query(self, handler: Callable[[Any], Awaitable[None]]) -> None:
+        """Register the workflow callback for callback queries."""
+        self._callback_query_handler = handler
+
     @property
     def is_connected(self) -> bool:
         """Return whether Telegram startup completed."""
@@ -241,8 +249,6 @@ class TelegramRuntime:
     async def _on_start_command(
         self, update: Update, context: ContextTypes.DEFAULT_TYPE
     ) -> None:
-        if update.message:
-            await update.message.reply_text("👋 Hello! I am the Claude Code Proxy Bot.")
         await self._on_telegram_message(update, context)
 
     async def _on_telegram_message(
@@ -298,3 +304,78 @@ class TelegramRuntime:
             queue_send_message=self.outbound.queue_send_message,
             queue_delete_messages=self.outbound.queue_delete_messages,
         )
+
+    async def _on_callback_query(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        query = update.callback_query
+        if not query or not query.message:
+            return
+
+        user_id = str(query.from_user.id)
+        if self.allowed_user_id and user_id != str(self.allowed_user_id).strip():
+            logger.warning("Unauthorized callback query attempt from {}", user_id)
+            await query.answer("Unauthorized", show_alert=True)
+            return
+
+        await query.answer()
+
+        if self._callback_query_handler is not None:
+            try:
+                await self._callback_query_handler(query)
+            except Exception as e:
+                logger.error("Error handling callback query: {}", e)
+
+    async def _on_telegram_document(
+        self, update: Update, context: ContextTypes.DEFAULT_TYPE
+    ) -> None:
+        message = update.message
+        if not message or not message.document or not update.effective_user:
+            return
+
+        user_id = str(update.effective_user.id)
+        if self.allowed_user_id and user_id != str(self.allowed_user_id).strip():
+            logger.warning("Unauthorized document upload attempt from {}", user_id)
+            return
+
+        # Fetch allowed workspace directory from the active messaging workflow
+        workspace_dir = None
+        if self._message_handler and hasattr(self._message_handler, "__self__"):
+            workflow = self._message_handler.__self__
+            if hasattr(workflow, "cli_manager") and workflow.cli_manager:
+                workspace_dir = workflow.cli_manager.workspace
+
+        if not workspace_dir:
+            await message.reply_text("❌ Workspace directory not found or not initialized.")
+            return
+
+        document = message.document
+        file_name = document.file_name or "uploaded_file"
+        dest_path = os.path.join(workspace_dir, file_name)
+
+        # Make sure no directory traversal is possible
+        dest_path = os.path.normpath(os.path.abspath(dest_path))
+        base_abs = os.path.normpath(os.path.abspath(workspace_dir))
+        try:
+            common = os.path.commonpath([base_abs, dest_path])
+            is_contained = os.path.normpath(common) == base_abs
+        except Exception:
+            is_contained = False
+
+        if not is_contained:
+            await message.reply_text("❌ Invalid destination path.")
+            return
+
+        try:
+            tg_file = await context.bot.get_file(document.file_id)
+            if hasattr(tg_file, "download_to_drive"):
+                await tg_file.download_to_drive(dest_path)
+            else:
+                await tg_file.download(dest_path)
+        except Exception as e:
+            logger.error("Failed to download document: {}", e)
+            await message.reply_text(f"❌ Failed to download file: {e}")
+            return
+
+        logger.info("Saved uploaded file {} to {}", file_name, dest_path)
+        await message.reply_text(f"📥 *Received and saved file*:\n`{file_name}`")

@@ -9,11 +9,8 @@ from loguru import logger
 
 from ..limiter import MessagingRateLimiter
 
-SendOperation = Callable[
-    [str, str, str | None, str | None, str | None],
-    Awaitable[str],
-]
-EditOperation = Callable[[str, str, str, str | None], Awaitable[None]]
+SendOperation = Callable[..., Awaitable[str]]
+EditOperation = Callable[..., Awaitable[None]]
 DeleteManyOperation = Callable[[str, list[str]], Awaitable[None]]
 
 
@@ -43,11 +40,21 @@ class PlatformOutbox:
         parse_mode: str | None = None,
         fire_and_forget: bool = True,
         message_thread_id: str | None = None,
+        reply_markup: Any | None = None,
     ) -> str | None:
         """Queue or immediately send a platform message."""
         self._require_open()
 
         async def _send() -> str:
+            if reply_markup is not None:
+                return await self._send(
+                    chat_id,
+                    text,
+                    reply_to,
+                    parse_mode,
+                    message_thread_id,
+                    reply_markup=reply_markup,
+                )
             return await self._send(
                 chat_id,
                 text,
@@ -68,12 +75,16 @@ class PlatformOutbox:
         text: str,
         parse_mode: str | None = None,
         fire_and_forget: bool = True,
+        reply_markup: Any | None = None,
     ) -> None:
         """Queue or immediately edit a platform message."""
         self._require_open()
 
         async def _edit() -> None:
-            await self._edit(chat_id, message_id, text, parse_mode)
+            if reply_markup is not None:
+                await self._edit(chat_id, message_id, text, parse_mode, reply_markup=reply_markup)
+            else:
+                await self._edit(chat_id, message_id, text, parse_mode)
 
         dedup_key = f"edit:{chat_id}:{message_id}"
         if fire_and_forget:

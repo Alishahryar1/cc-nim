@@ -239,6 +239,19 @@ async def test_runtime_asgi_app_starts_and_closes_owner_once():
 
 
 @pytest.mark.asyncio
+async def test_runtime_asgi_app_handles_cancelled_error_gracefully() -> None:
+    import asyncio
+
+    runtime = MagicMock(spec=ApplicationRuntime)
+    runtime.start = AsyncMock()
+    app = RuntimeASGIApp(AsyncMock(), runtime)
+
+    # Calling the app under lifespan should handle CancelledError and complete without raising it
+    receive = AsyncMock(side_effect=asyncio.CancelledError("Graceful shutdown cancellation"))
+    await app({"type": "lifespan"}, receive, AsyncMock())
+
+
+@pytest.mark.asyncio
 async def test_runtime_asgi_app_reports_incomplete_owned_shutdown() -> None:
     runtime = MagicMock(spec=ApplicationRuntime)
     runtime.settings = _settings()

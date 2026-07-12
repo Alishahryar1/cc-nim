@@ -166,6 +166,8 @@ Enter the listed setting in the Admin UI, set `MODEL` to a provider-prefixed mod
 | [LM Studio](https://lmstudio.ai/) | `LM_STUDIO_BASE_URL` | `lmstudio/<model-id>` |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | `LLAMACPP_BASE_URL` | `llamacpp/<model-id>` |
 | [Ollama](https://ollama.com/) | `OLLAMA_BASE_URL` | `ollama/<model-tag>` |
+| [Zenmux](https://zenmux.ai/) | `ZENMUX_API_KEY` | `zenmux/x-ai/grok-4.5-free` |
+| [Iamhc](https://api.iamhc.cn/) | `IAMHC_API_KEY` | `iamhc/DeepSeek-V4-Flash` |
 
 Important provider notes:
 

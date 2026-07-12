@@ -110,6 +110,7 @@ async def create_message(
     _auth=Depends(require_api_key),
 ):
     """Create a message (streaming by default; stream=false gets aggregated JSON)."""
+    logger.info(f"Incoming POST /v1/messages for model: {request_data.model}")
     return await _create_messages_response(
         services,
         request_data,
@@ -130,6 +131,7 @@ async def create_response(
     _auth=Depends(require_api_key),
 ):
     """Create an OpenAI Responses-compatible response through this proxy."""
+    logger.info(f"Incoming POST /v1/responses for model: {request_data.model}")
     return await _create_responses_response(
         services,
         request_data,

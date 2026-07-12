@@ -64,6 +64,12 @@ class Settings(BaseSettings):
     # ==================== Z.ai Config ====================
     zai_api_key: str = Field(default="", validation_alias="ZAI_API_KEY")
 
+    # ==================== Zenmux Config ====================
+    zenmux_api_key: str = Field(default="", validation_alias="ZENMUX_API_KEY")
+
+    # ==================== Iamhc Config ====================
+    iamhc_api_key: str = Field(default="", validation_alias="IAMHC_API_KEY")
+
     # ==================== Fireworks AI Config ====================
     fireworks_api_key: str = Field(default="", validation_alias="FIREWORKS_API_KEY")
 
@@ -148,6 +154,8 @@ class Settings(BaseSettings):
     github_models_proxy: str = Field(default="", validation_alias="GITHUB_MODELS_PROXY")
     sambanova_proxy: str = Field(default="", validation_alias="SAMBANOVA_PROXY")
     zai_proxy: str = Field(default="", validation_alias="ZAI_PROXY")
+    zenmux_proxy: str = Field(default="", validation_alias="ZENMUX_PROXY")
+    iamhc_proxy: str = Field(default="", validation_alias="IAMHC_PROXY")
     fireworks_proxy: str = Field(default="", validation_alias="FIREWORKS_PROXY")
     cloudflare_proxy: str = Field(default="", validation_alias="CLOUDFLARE_PROXY")
     gemini_proxy: str = Field(default="", validation_alias="GEMINI_PROXY")

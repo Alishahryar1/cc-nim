@@ -337,6 +337,8 @@ def test_create_provider_instantiates_each_builtin():
         provider_rate_window=11,
         provider_max_concurrency=3,
         sambanova_api_key="test_sambanova_key",
+        zenmux_api_key="test_zenmux_key",
+        iamhc_api_key="test_iamhc_key",
     )
     cases = {
         "nvidia_nim": NvidiaNimProvider,
@@ -363,6 +365,8 @@ def test_create_provider_instantiates_each_builtin():
         "groq": OpenAIChatProvider,
         "sambanova": OpenAIChatProvider,
         "cerebras": OpenAIChatProvider,
+        "zenmux": OpenAIChatProvider,
+        "iamhc": OpenAIChatProvider,
     }
     sentinel_limiter = MagicMock(spec=ProviderRateLimiter)
 

@@ -128,9 +128,12 @@ def build_managed_claude_command(
 ) -> list[str]:
     """Return the Claude Code stream-json command for a managed task."""
 
+    import shutil
+    resolved_bin = shutil.which(claude_bin) or claude_bin
+
     if session_id and not session_id.startswith("pending_"):
         cmd = [
-            claude_bin,
+            resolved_bin,
             "--resume",
             session_id,
         ]
@@ -148,7 +151,7 @@ def build_managed_claude_command(
         ]
     else:
         cmd = [
-            claude_bin,
+            resolved_bin,
             "--model",
             MANAGED_CLAUDE_MODEL_TIER,
             "-p",

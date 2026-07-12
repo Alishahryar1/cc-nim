@@ -11,11 +11,19 @@
     <div class="app-shell">
       <aside class="sidebar">
         <div class="brand">
-          <div class="brand-mark">FC</div>
-          <div>
-            <h1>Free Claude Code</h1>
-            <p>Server Control</p>
+          <div class="brand-logo">
+            <div class="brand-mark">FC</div>
+            <div class="brand-text">
+              <h1>Free Claude Code</h1>
+              <p>Server Control</p>
+            </div>
           </div>
+          <button type="button" id="sidebarToggle" class="sidebar-toggle" aria-label="Toggle sidebar">
+            <svg viewBox="0 0 24 24" width="20" height="20" stroke="currentColor" stroke-width="2" fill="none" stroke-linecap="round" stroke-linejoin="round">
+              <line x1="19" y1="12" x2="5" y2="12"></line>
+              <polyline points="12 19 5 12 12 5"></polyline>
+            </svg>
+          </button>
         </div>
         <nav id="sectionNav" class="section-nav" aria-label="Admin views"></nav>
       </aside>
@@ -56,6 +64,85 @@
               class="form-sections"
               aria-label="Messaging configuration"
             ></div>
+          </section>
+
+          <section id="view-model_validator" class="admin-view" data-view="model_validator" hidden>
+            <div class="validator-container">
+              <div class="validator-header">
+                <h3>Model Validator & Benchmarker</h3>
+                <p>Select the models or providers you want to test and benchmark. Results are updated live.</p>
+              </div>
+              
+              <div class="validator-toolbar">
+                <div class="selection-actions">
+                  <button type="button" id="btnSelectAllModels" class="ghost-button">Select All</button>
+                  <button type="button" id="btnDeselectAllModels" class="ghost-button">Deselect All</button>
+                </div>
+                <button type="button" id="btnStartValidation" class="primary-button">🚀 Start Validation</button>
+              </div>
+
+              <div class="validator-layout">
+                <aside class="model-selection-panel">
+                  <h4>Available Providers & Models</h4>
+                  <div class="search-box">
+                    <input type="text" id="modelSearchInput" placeholder="🔍 Search models or providers..." class="search-input" />
+                  </div>
+                  <div id="modelChecklist" class="model-checklist">
+                    <!-- Grouped by provider list, populated dynamically -->
+                  </div>
+                </aside>
+
+                <main class="validator-results-panel">
+                  <div class="summary-cards">
+                    <div class="summary-card total">
+                      <span class="label">Tested</span>
+                      <strong id="summaryTotal">0 / 0</strong>
+                    </div>
+                    <div class="summary-card passed">
+                      <span class="label">Passed</span>
+                      <strong id="summaryPassed">0</strong>
+                    </div>
+                    <div class="summary-card failed">
+                      <span class="label">Failed</span>
+                      <strong id="summaryFailed">0</strong>
+                    </div>
+                    <div class="summary-card latency">
+                      <span class="label">Avg Latency</span>
+                      <strong id="summaryAvgLatency">0 ms</strong>
+                    </div>
+                  </div>
+
+                  <div class="progress-bar-container">
+                    <div class="progress-bar-label">
+                      <span id="progressBarStatus">Idle</span>
+                      <span id="progressBarPercent">0%</span>
+                    </div>
+                    <div class="progress-bar-track">
+                      <div id="progressBarFill" class="progress-bar-fill"></div>
+                    </div>
+                  </div>
+
+                  <div class="results-table-container">
+                    <table class="results-table">
+                      <thead>
+                        <tr>
+                          <th>Model</th>
+                          <th>Status</th>
+                          <th>HTTP</th>
+                          <th>Latency</th>
+                          <th>Detail / Response Preview</th>
+                        </tr>
+                      </thead>
+                      <tbody id="resultsTableBody">
+                        <tr>
+                          <td colspan="5" class="empty-state">No validation run has started yet. Select models on the left and click "Start Validation".</td>
+                        </tr>
+                      </tbody>
+                    </table>
+                  </div>
+                </main>
+              </div>
+            </div>
           </section>
         </div>
       </main>

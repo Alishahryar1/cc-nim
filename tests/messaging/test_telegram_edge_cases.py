@@ -367,7 +367,6 @@ async def test_on_start_command_replies_and_forwards():
             update.message.reply_text = AsyncMock()
 
             await platform._on_start_command(update, MagicMock())
-            update.message.reply_text.assert_awaited_once()
             mock_msg.assert_awaited_once()
 
 

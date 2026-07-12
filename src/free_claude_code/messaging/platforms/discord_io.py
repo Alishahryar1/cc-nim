@@ -117,6 +117,7 @@ class DiscordMessenger:
         parse_mode: str | None = None,
         fire_and_forget: bool = True,
         message_thread_id: str | None = None,
+        reply_markup: Any | None = None,
     ) -> str | None:
         """Queue a Discord send."""
         return await self._outbox.queue_send_message(
@@ -126,6 +127,7 @@ class DiscordMessenger:
             parse_mode,
             fire_and_forget,
             message_thread_id,
+            reply_markup=reply_markup,
         )
 
     async def queue_edit_message(
@@ -135,6 +137,7 @@ class DiscordMessenger:
         text: str,
         parse_mode: str | None = None,
         fire_and_forget: bool = True,
+        reply_markup: Any | None = None,
     ) -> None:
         """Queue a Discord edit."""
         await self._outbox.queue_edit_message(
@@ -143,6 +146,7 @@ class DiscordMessenger:
             text,
             parse_mode,
             fire_and_forget,
+            reply_markup=reply_markup,
         )
 
     async def queue_delete_messages(

@@ -13,8 +13,9 @@ from pydantic import BaseModel, Field
 from free_claude_code.config.admin.manifest import FIELD_BY_KEY
 from free_claude_code.config.admin.persistence import validate_updates
 from free_claude_code.config.admin.values import load_config_response
+from free_claude_code.config.settings import Settings
 
-from .dependencies import get_services
+from .dependencies import get_services, get_settings
 from .ports import ApiServices
 
 router = APIRouter()
@@ -193,8 +194,81 @@ async def _check_local_provider(
     except Exception as exc:
         return {
             "provider_id": provider_id,
-            "status": "offline",
             "label": "Offline",
             "base_url": base_url,
             "error_type": type(exc).__name__,
         }
+
+
+class StartTestPayload(BaseModel):
+    """Payload to start validation tests for a list of model IDs."""
+    models: list[str]
+
+
+@router.get("/admin/api/test-models/models")
+async def get_testable_models(
+    request: Request,
+    services: ApiServices = Depends(get_services),
+    settings: Settings = Depends(get_settings),
+):
+    require_loopback_admin(request)
+    from free_claude_code.api.model_catalog import build_models_list_response
+    from free_claude_code.core.gateway_model_ids import decode_gateway_model_id
+    resp = build_models_list_response(settings, services.requests)
+    
+    # Group models by provider
+    grouped = {}
+    for m in resp.data:
+        m_id = m.id
+        decoded = decode_gateway_model_id(m_id)
+        if decoded:
+            provider = decoded.provider_id
+        else:
+            provider = "compatibility"
+            if "/" in m_id:
+                provider = m_id.split("/", 1)[0]
+                
+        if provider not in grouped:
+            grouped[provider] = []
+        grouped[provider].append(m_id)
+        
+    return {"grouped": grouped}
+
+
+@router.post("/admin/api/test-models/run")
+async def run_model_tests(
+    payload: StartTestPayload,
+    request: Request,
+    settings: Settings = Depends(get_settings),
+):
+    require_loopback_admin(request)
+    from .model_testing import testing_manager
+    port = settings.port
+    auth_token = settings.anthropic_auth_token
+    started = testing_manager.start_test(payload.models, auth_token, port)
+    if not started:
+        raise HTTPException(
+            status_code=409,
+            detail={
+                "status": "already_running",
+                "message": "A model test run is already in progress.",
+                "total": testing_manager.total_models,
+            }
+        )
+    return {"status": "started", "total": len(payload.models)}
+
+
+@router.get("/admin/api/test-models/status")
+async def get_model_tests_status(request: Request):
+    require_loopback_admin(request)
+    from .model_testing import testing_manager
+    return {
+        "is_running": testing_manager.is_running,
+        "total": testing_manager.total_models,
+        "tested": testing_manager.tested_count,
+        "elapsed_seconds": testing_manager.elapsed_seconds,
+        "results": {
+            k: v.model_dump() for k, v in testing_manager.results.items()
+        }
+    }
+

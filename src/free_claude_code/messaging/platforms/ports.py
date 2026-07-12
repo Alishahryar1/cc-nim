@@ -41,6 +41,7 @@ class OutboundMessenger(Protocol):
         parse_mode: str | None = None,
         fire_and_forget: bool = True,
         message_thread_id: str | None = None,
+        reply_markup: Any | None = None,
     ) -> str | None: ...
 
     async def queue_edit_message(
@@ -50,6 +51,7 @@ class OutboundMessenger(Protocol):
         text: str,
         parse_mode: str | None = None,
         fire_and_forget: bool = True,
+        reply_markup: Any | None = None,
     ) -> None: ...
 
     async def queue_delete_messages(
