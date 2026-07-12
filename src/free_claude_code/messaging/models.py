@@ -13,6 +13,14 @@ class MessageScope:
     chat_id: str
 
 
+@dataclass(frozen=True, slots=True)
+class AdmissionToken:
+    """Generations that must still match when a turn commits."""
+
+    stop_generation: int
+    clear_generation: int
+
+
 @dataclass
 class IncomingMessage:
     """

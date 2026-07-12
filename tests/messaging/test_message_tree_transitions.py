@@ -26,6 +26,7 @@ async def _add(
     node_id: str,
     status_message_id: str,
     parent_id: str = "root",
+    parent_reference_id: str | None = None,
 ):
     return await tree.add_and_enqueue(
         node_id,
@@ -33,6 +34,7 @@ async def _add(
         f"prompt {node_id}",
         status_message_id,
         parent_id,
+        parent_reference_id or parent_id,
     )
 
 
@@ -158,16 +160,54 @@ async def test_cancelled_queue_member_is_never_claimed() -> None:
 
 
 @pytest.mark.asyncio
-async def test_branch_removal_separates_references_from_clearable_messages() -> None:
+async def test_prompt_subtree_removal_returns_every_platform_message() -> None:
     tree = _tree()
     await _add(tree, "child", "status-child")
 
-    removed = await tree.remove_branch("root")
+    removed = await tree.remove_message_subtree("root")
 
-    assert removed.reference_ids == frozenset(
+    assert removed.removed_message_ids == frozenset(
         {"root", "status-root", "child", "status-child"}
     )
-    assert removed.clearable_message_ids == frozenset({"status-root", "status-child"})
+
+
+@pytest.mark.asyncio
+async def test_status_subtree_preserves_prompt_siblings_and_invalidates_resume() -> (
+    None
+):
+    tree = _tree()
+    root = await tree.enqueue_or_claim("root")
+    assert root.claim is not None
+    await tree.record_session(root.claim.claim_id, "session-root")
+    direct_sibling = await _add(tree, "sibling", "status-sibling")
+    status_descendant = await _add(
+        tree,
+        "descendant",
+        "status-descendant",
+        parent_reference_id="status-root",
+    )
+    assert direct_sibling.position == 1
+    assert status_descendant.position == 2
+
+    removed = await tree.remove_message_subtree("status-root")
+
+    assert removed.removed_message_ids == frozenset(
+        {"status-root", "descendant", "status-descendant"}
+    )
+    root_view = await tree.node_view("root")
+    sibling_view = await tree.node_view("sibling")
+    assert root_view is not None
+    assert root_view.state is MessageState.ERROR
+    assert root_view.session_id is None
+    assert sibling_view is not None
+    assert sibling_view.state is MessageState.PENDING
+    assert await tree.node_view("descendant") is None
+    assert await tree.resolve_reply("status-root") is None
+
+    completion = await tree.finish_and_claim_next(root.claim.claim_id)
+    assert completion.next_claim is not None
+    assert completion.next_claim.node.node_id == "sibling"
+    assert completion.next_claim.parent_session_id is None
 
 
 @pytest.mark.asyncio

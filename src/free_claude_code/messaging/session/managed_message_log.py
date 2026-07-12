@@ -1,11 +1,11 @@
-"""Persist platform messages that `/clear` is authorized to delete."""
+"""Persist platform messages belonging to FCC-managed conversations."""
 
 from datetime import UTC, datetime
 from typing import Any
 
 
-class ClearableMessageLog:
-    """Track FCC output and explicit clear-command IDs in insertion order."""
+class ManagedMessageLog:
+    """Track managed inbound and outbound messages in insertion order."""
 
     def __init__(self, *, cap: int | None = None) -> None:
         self._items: dict[str, list[dict[str, Any]]] = {}
@@ -17,8 +17,8 @@ class ClearableMessageLog:
         return self._cap
 
     @classmethod
-    def from_json(cls, raw_log: Any, *, cap: int | None = None) -> ClearableMessageLog:
-        """Load clearable IDs while dropping legacy user-content entries."""
+    def from_json(cls, raw_log: Any, *, cap: int | None = None) -> ManagedMessageLog:
+        """Load current and legacy message-log entries."""
         log = cls(cap=cap)
         if not isinstance(raw_log, dict):
             return log
@@ -29,11 +29,9 @@ class ClearableMessageLog:
                 if not isinstance(item, dict):
                     continue
                 message_id = item.get("message_id")
-                if message_id is None:
-                    continue
                 direction = str(item.get("direction") or "")
                 kind = str(item.get("kind") or "")
-                if direction != "out" and kind != "clear_command":
+                if message_id is None or direction not in {"in", "out"} or not kind:
                     continue
                 log._append(
                     chat_key,
@@ -47,46 +45,31 @@ class ClearableMessageLog:
     def to_json(self) -> dict[str, list[dict[str, Any]]]:
         return {chat_key: list(items) for chat_key, items in self._items.items()}
 
-    def record_outbound(
+    def record(
         self,
         *,
         platform: str,
         chat_id: str,
         message_id: str,
+        direction: str,
         kind: str,
     ) -> bool:
-        """Record one FCC-authored platform message."""
+        """Record one managed platform message."""
+        if direction not in {"in", "out"}:
+            raise ValueError("Managed message direction must be 'in' or 'out'")
+        if not kind:
+            raise ValueError("Managed message kind cannot be empty")
         return self._append(
             make_chat_key(platform, chat_id),
             str(message_id),
             ts=datetime.now(UTC).isoformat(),
-            direction="out",
+            direction=direction,
             kind=str(kind),
-        )
-
-    def record_clear_command(
-        self,
-        *,
-        platform: str,
-        chat_id: str,
-        message_id: str,
-    ) -> bool:
-        """Record an explicit user command that authorized its own deletion."""
-        return self._append(
-            make_chat_key(platform, chat_id),
-            str(message_id),
-            ts=datetime.now(UTC).isoformat(),
-            direction="in",
-            kind="clear_command",
         )
 
     def ids_for_chat(self, platform: str, chat_id: str) -> list[str]:
         chat_key = make_chat_key(platform, chat_id)
-        return [
-            str(item.get("message_id"))
-            for item in self._items.get(chat_key, [])
-            if item.get("message_id") is not None
-        ]
+        return [str(item["message_id"]) for item in self._items.get(chat_key, [])]
 
     def remove_ids(self, platform: str, chat_id: str, message_ids: set[str]) -> bool:
         chat_key = make_chat_key(platform, chat_id)
@@ -94,25 +77,24 @@ class ClearableMessageLog:
             return False
 
         before_count = len(self._items[chat_key])
-        self._items[chat_key] = [
+        retained = [
             item
             for item in self._items[chat_key]
-            if str(item.get("message_id")) not in message_ids
+            if str(item["message_id"]) not in message_ids
         ]
-        if not self._items[chat_key]:
-            self._items.pop(chat_key, None)
-            self._ids.pop(chat_key, None)
+        if retained:
+            self._items[chat_key] = retained
+            self._ids[chat_key] = {str(item["message_id"]) for item in retained}
         else:
-            self._ids[chat_key] = {
-                str(item.get("message_id"))
-                for item in self._items[chat_key]
-                if item.get("message_id") is not None
-            }
-        return len(self._items.get(chat_key, [])) != before_count
+            self._items.pop(chat_key)
+            self._ids.pop(chat_key, None)
+        return len(retained) != before_count
 
-    def clear(self) -> None:
-        self._items.clear()
-        self._ids.clear()
+    def clear_chat(self, platform: str, chat_id: str) -> bool:
+        chat_key = make_chat_key(platform, chat_id)
+        removed = self._items.pop(chat_key, None) is not None
+        self._ids.pop(chat_key, None)
+        return removed
 
     def _append(
         self,
@@ -144,12 +126,9 @@ class ClearableMessageLog:
         items = self._items.get(chat_key, [])
         if len(items) <= self._cap:
             return
-        self._items[chat_key] = items[-self._cap :]
-        self._ids[chat_key] = {
-            str(item.get("message_id"))
-            for item in self._items[chat_key]
-            if item.get("message_id") is not None
-        }
+        retained = items[-self._cap :]
+        self._items[chat_key] = retained
+        self._ids[chat_key] = {str(item["message_id"]) for item in retained}
 
 
 def make_chat_key(platform: str, chat_id: str) -> str:

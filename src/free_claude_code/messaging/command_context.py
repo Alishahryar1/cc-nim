@@ -11,10 +11,10 @@ from .transcript import RenderCtx
 
 @dataclass(frozen=True, slots=True)
 class ReplyClearResult:
-    """Customer-facing result of clearing one replied-to owner."""
+    """Customer-facing result of clearing one literal reply subtree."""
 
-    clearable_message_ids: frozenset[str]
-    tree_cleared: bool
+    delete_message_ids: frozenset[str]
+    tree_matched: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -69,20 +69,20 @@ class MessagingCommandContext(Protocol):
         scope: MessageScope,
         reply_id: str,
     ) -> ReplyClearResult | None:
-        """Clear the exact voice/tree owner of a replied-to message."""
+        """Clear the literal subtree rooted at a replied-to message."""
         ...
 
-    async def clear_all_state(self, platform: str, chat_id: str) -> frozenset[str]:
-        """Clear FCC state and return authorized invoking-chat deletion IDs."""
+    async def clear_chat(self, platform: str, chat_id: str) -> frozenset[str]:
+        """Clear one chat and return every tracked platform message ID."""
         ...
 
-    def forget_clearable_message_ids(
+    def forget_tracked_message_ids(
         self,
         platform: str,
         chat_id: str,
         message_ids: set[str],
     ) -> None:
-        """Forget deleted platform message IDs authorized for clear."""
+        """Forget platform message IDs removed from the managed conversation."""
         ...
 
     def record_outgoing_message(
@@ -92,7 +92,7 @@ class MessagingCommandContext(Protocol):
         msg_id: str | None,
         kind: str,
     ) -> bool:
-        """Record an outgoing platform message ID and report clear-log ownership."""
+        """Record an outgoing platform message ID and report registry ownership."""
         ...
 
 

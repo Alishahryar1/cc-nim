@@ -561,7 +561,11 @@ async def test_global_command_rejects_transcription_that_finishes_late(
 
     await asyncio.wait_for(
         workflow.handle_message(
-            incoming_message_factory(text=command, message_id="command")
+            incoming_message_factory(
+                text=command,
+                message_id="command",
+                chat_id=VOICE_SCOPE.chat_id,
+            )
         ),
         timeout=1,
     )

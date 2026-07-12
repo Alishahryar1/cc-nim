@@ -2,14 +2,15 @@
 
 from .identity import TreeIdentity
 from .manager import TreeQueueManager
-from .node import MessageState
+from .node import MessageReferenceKind, MessageState
 from .snapshot import ConversationSnapshot, TreeSnapshot
 from .transitions import (
-    BranchRemovalResult,
+    AdmissionRejection,
     CancellationReason,
     CancellationResult,
     CancellationUiOwner,
     FailureResult,
+    MessageSubtreeRemovalResult,
     NodeClaim,
     NodeUiTarget,
     NodeView,
@@ -19,13 +20,15 @@ from .transitions import (
 )
 
 __all__ = [
-    "BranchRemovalResult",
+    "AdmissionRejection",
     "CancellationReason",
     "CancellationResult",
     "CancellationUiOwner",
     "ConversationSnapshot",
     "FailureResult",
+    "MessageReferenceKind",
     "MessageState",
+    "MessageSubtreeRemovalResult",
     "NodeClaim",
     "NodeUiTarget",
     "NodeView",

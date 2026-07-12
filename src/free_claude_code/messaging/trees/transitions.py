@@ -5,7 +5,7 @@ from enum import Enum
 
 from ..models import MessageScope
 from .identity import TreeIdentity
-from .node import MessageState
+from .node import MessageReferenceKind, MessageState
 from .snapshot import TreeSnapshot
 
 
@@ -17,9 +17,17 @@ class CancellationUiOwner(Enum):
 
 
 class CancellationReason(Enum):
-    """Why a running messaging claim was cancelled."""
+    """Customer operation that cancelled a running messaging claim."""
 
     STOP = "stop"
+    CLEAR = "clear"
+
+
+class AdmissionRejection(Enum):
+    """Why a turn was not admitted to an execution tree."""
+
+    DUPLICATE = "duplicate"
+    PARENT_REMOVED = "parent_removed"
 
 
 @dataclass(frozen=True, slots=True)
@@ -57,6 +65,7 @@ class QueueDecision:
     claim: NodeClaim | None
     position: int | None
     snapshot: TreeSnapshot | None
+    rejection: AdmissionRejection | None = None
 
     @property
     def accepted(self) -> bool:
@@ -97,22 +106,22 @@ class CancellationResult:
 
 
 @dataclass(frozen=True, slots=True)
-class TreeBranchRemoval:
-    """Single-tree atomic cancellation and graph-removal transition."""
+class MessageSubtreeRemoval:
+    """Single-tree atomic cancellation and reference-subtree removal."""
 
     cancellation: TreeCancellation
-    reference_ids: frozenset[str]
-    clearable_message_ids: frozenset[str]
+    removed_message_ids: frozenset[str]
     removed_entire_tree: bool
 
 
 @dataclass(frozen=True, slots=True)
-class BranchRemovalResult:
-    """Manager result for a branch clear."""
+class MessageSubtreeRemovalResult:
+    """Manager result for a literal message-subtree clear."""
 
     cancellation: CancellationResult
     removed_tree_identity: TreeIdentity | None
-    clearable_message_ids: frozenset[str]
+    delete_message_ids: frozenset[str]
+    tree_matched: bool
 
 
 @dataclass(frozen=True, slots=True)
@@ -120,6 +129,8 @@ class ReplyTarget:
     """Resolved reply destination and advisory position before admission."""
 
     node_id: str
+    reference_id: str
+    reference_kind: MessageReferenceKind
     queue_position: int | None
 
 
@@ -144,19 +155,20 @@ class FailureResult:
 
 
 __all__ = [
-    "BranchRemovalResult",
+    "AdmissionRejection",
     "CancellationEffect",
     "CancellationReason",
     "CancellationResult",
     "CancellationUiOwner",
     "CompletionResult",
     "FailureResult",
+    "MessageSubtreeRemoval",
+    "MessageSubtreeRemovalResult",
     "NodeClaim",
     "NodeUiTarget",
     "NodeView",
     "QueueDecision",
     "QueueEntry",
     "ReplyTarget",
-    "TreeBranchRemoval",
     "TreeCancellation",
 ]

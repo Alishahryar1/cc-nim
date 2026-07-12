@@ -132,6 +132,7 @@ def mock_platform():
     platform.queue_delete_messages = AsyncMock()
     platform.cancel_pending_voice = AsyncMock(return_value=None)
     platform.cancel_all_pending_voices = AsyncMock(return_value=())
+    platform.cancel_pending_voices_in_scope = AsyncMock(return_value=())
 
     def _fire_and_forget(task):
         if asyncio.iscoroutine(task):
@@ -151,10 +152,10 @@ def mock_session_store():
     store.save_tree = MagicMock()
     store.get_tree = MagicMock(return_value=None)
     store.register_node = MagicMock()
-    store.clear_all = MagicMock()
-    store.record_outbound_message_id = MagicMock()
-    store.record_clear_command_id = MagicMock()
-    store.get_clearable_message_ids_for_chat = MagicMock(return_value=[])
+    store.record_message_id = MagicMock()
+    store.get_tracked_message_ids_for_chat = MagicMock(return_value=[])
+    store.forget_tracked_message_ids = MagicMock()
+    store.clear_scope = MagicMock()
     return store
 
 

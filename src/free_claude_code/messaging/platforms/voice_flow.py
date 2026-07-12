@@ -134,6 +134,13 @@ class VoiceNoteFlow:
         """Cancel every pending voice transcription and published handoff."""
         return await self._pending_voice.cancel_all()
 
+    async def cancel_pending_voices_in_scope(
+        self,
+        scope: MessageScope,
+    ) -> tuple[VoiceCancellationResult, ...]:
+        """Cancel pending voice transcriptions belonging to one chat."""
+        return await self._pending_voice.cancel_scope(scope)
+
     async def handle(
         self,
         request: VoiceNoteRequest,

@@ -378,7 +378,7 @@ class ApplicationRuntime:
         )
         session_store = messaging_session.SessionStore(
             storage_path=os.path.join(data_path, "sessions.json"),
-            message_log_cap=settings.max_message_log_entries_per_chat,
+            managed_message_cap=settings.max_message_log_entries_per_chat,
         )
         workflow = messaging_workflow_module.MessagingWorkflow(
             platform_name=components.name,

@@ -68,13 +68,7 @@ class VoiceCancellationResult:
     scope: MessageScope
     voice_message_id: str
     status_message_id: str | None
-
-    @property
-    def clearable_message_ids(self) -> frozenset[str]:
-        """Return only FCC-authored platform messages authorized for deletion."""
-        if self.status_message_id is None:
-            return frozenset()
-        return frozenset({self.status_message_id})
+    delete_message_ids: frozenset[str]
 
 
 @dataclass(slots=True)
@@ -208,7 +202,7 @@ class PendingVoiceRegistry:
                     return None
                 self._remove(entry)
                 task = entry.handoff_task
-                result = self._cancellation_result(entry)
+                result = self._cancellation_result(entry, reply_id)
             cancellation = await self._cancel_and_drain(task)
             if cancellation is not None:
                 raise cancellation
@@ -218,6 +212,18 @@ class PendingVoiceRegistry:
 
     async def cancel_all(self) -> tuple[VoiceCancellationResult, ...]:
         """Cancel every unique pending voice note and drain published handoffs."""
+        return await self._cancel_matching_scope(None)
+
+    async def cancel_scope(
+        self, scope: MessageScope
+    ) -> tuple[VoiceCancellationResult, ...]:
+        """Cancel every unique pending voice note in one platform chat."""
+        return await self._cancel_matching_scope(scope)
+
+    async def _cancel_matching_scope(
+        self,
+        scope: MessageScope | None,
+    ) -> tuple[VoiceCancellationResult, ...]:
         current_claim = _current_voice_claim.get()
         self._protect_claim(current_claim)
         try:
@@ -225,8 +231,9 @@ class PendingVoiceRegistry:
                 entries = tuple(
                     {
                         entry.claim: entry
-                        for entry in self._pending.values()
-                        if not self._is_excluded(entry, current_claim)
+                        for (entry_scope, _reference_id), entry in self._pending.items()
+                        if (scope is None or entry_scope == scope)
+                        and not self._is_excluded(entry, current_claim)
                     }.values()
                 )
                 for entry in entries:
@@ -312,11 +319,20 @@ class PendingVoiceRegistry:
         return not isinstance(error, (asyncio.CancelledError, Exception))
 
     @staticmethod
-    def _cancellation_result(entry: _PendingVoice) -> VoiceCancellationResult:
+    def _cancellation_result(
+        entry: _PendingVoice,
+        reference_id: str | None = None,
+    ) -> VoiceCancellationResult:
+        delete_message_ids = {entry.claim.voice_message_id}
+        if reference_id is not None and reference_id != entry.claim.voice_message_id:
+            delete_message_ids.clear()
+        if entry.status_message_id is not None:
+            delete_message_ids.add(entry.status_message_id)
         return VoiceCancellationResult(
             scope=entry.claim.scope,
             voice_message_id=entry.claim.voice_message_id,
             status_message_id=entry.status_message_id,
+            delete_message_ids=frozenset(delete_message_ids),
         )
 
     def _entry_for_claim(self, claim: PendingVoiceClaim) -> _PendingVoice | None:

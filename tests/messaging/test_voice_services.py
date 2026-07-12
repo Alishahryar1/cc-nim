@@ -53,8 +53,9 @@ async def test_cancel_before_status_binding_rejects_late_flow() -> None:
         scope=TELEGRAM_CHAT,
         voice_message_id="voice-1",
         status_message_id=None,
+        delete_message_ids=frozenset({"voice-1"}),
     )
-    assert cancellation.clearable_message_ids == frozenset()
+    assert cancellation.delete_message_ids == frozenset({"voice-1"})
     assert await registry.bind_status(claim, "status-1") is False
     assert await registry.handoff(claim, callback) is VoiceHandoffOutcome.REJECTED
     assert callback_called is False
@@ -118,12 +119,42 @@ async def test_cancel_removes_then_drains_handoff_without_holding_lock() -> None
         scope=TELEGRAM_CHAT,
         voice_message_id="voice-1",
         status_message_id="status-1",
+        delete_message_ids=frozenset({"status-1"}),
     )
-    assert cancellation.clearable_message_ids == frozenset({"status-1"})
+    assert cancellation.delete_message_ids == frozenset({"status-1"})
     assert await asyncio.wait_for(handoff_task, timeout=1) is (
         VoiceHandoffOutcome.CANCELLED
     )
     assert await registry.cancel(TELEGRAM_CHAT, "status-new") is not None
+
+
+@pytest.mark.asyncio
+async def test_voice_reference_authorizes_voice_and_status_deletion() -> None:
+    registry = PendingVoiceRegistry()
+    await _reserve_bound(registry)
+
+    cancellation = await registry.cancel(TELEGRAM_CHAT, "voice-1")
+
+    assert cancellation is not None
+    assert cancellation.delete_message_ids == frozenset({"voice-1", "status-1"})
+
+
+@pytest.mark.asyncio
+async def test_cancel_scope_preserves_other_platform_chats() -> None:
+    registry = PendingVoiceRegistry()
+    await _reserve_bound(registry)
+    await _reserve_bound(
+        registry,
+        scope=DISCORD_CHAT,
+        voice_id="voice-2",
+        status_id="status-2",
+    )
+
+    cancellations = await registry.cancel_scope(TELEGRAM_CHAT)
+
+    assert len(cancellations) == 1
+    assert cancellations[0].delete_message_ids == frozenset({"voice-1", "status-1"})
+    assert await registry.cancel(DISCORD_CHAT, "status-2") is not None
 
 
 @pytest.mark.asyncio
@@ -275,6 +306,7 @@ async def test_external_cancel_owns_aliases_during_caller_cancelled_drain() -> N
         scope=TELEGRAM_CHAT,
         voice_message_id="voice-1",
         status_message_id="status-1",
+        delete_message_ids=frozenset({"status-1"}),
     )
     with pytest.raises(asyncio.CancelledError):
         await handoff_task
@@ -584,8 +616,8 @@ async def test_cancel_all_deduplicates_aliases_and_excludes_current_child() -> N
     assert cancellations is not None
     assert len(cancellations) == 1
     assert {result.scope for result in cancellations} == {TELEGRAM_CHAT}
-    assert {result.clearable_message_ids for result in cancellations} == {
-        frozenset({"status-1"}),
+    assert {result.delete_message_ids for result in cancellations} == {
+        frozenset({"voice-1", "status-1"}),
     }
 
 

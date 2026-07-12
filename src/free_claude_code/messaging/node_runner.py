@@ -345,9 +345,10 @@ class MessagingNodeRunner:
                 node_id=node_id,
             )
             logger.warning(f"HANDLER: Task cancelled for node {node_id}")
-            if exc.args and exc.args[0] is CancellationReason.STOP:
+            reason = exc.args[0] if exc.args else None
+            if reason is CancellationReason.STOP:
                 await update_ui(self._format_status("⏹", "Stopped.", None), force=True)
-            else:
+            elif reason is not CancellationReason.CLEAR:
                 transcript.apply({"type": "error", "message": "Task was cancelled"})
                 await update_ui(
                     self._format_status("❌", "Cancelled", None), force=True

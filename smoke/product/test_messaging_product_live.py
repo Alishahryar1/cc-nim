@@ -74,15 +74,87 @@ async def test_messaging_commands_stop_clear_stats_e2e(
     await driver.send("/stats", message_id="stats_1")
     await driver.send("/stop", message_id="stop_1", reply_to=root.message_id)
     await driver.send("/clear", message_id="clear_1", reply_to=root.message_id)
+    global_prompt = await driver.send("clear globally", message_id="global_prompt")
+    global_status_id = driver.platform.sent[-1]["message_id"]
     await driver.send("/clear", message_id="clear_all")
 
     sent_text = "\n".join(sent["text"] for sent in driver.platform.sent)
     deleted = {entry["message_id"] for entry in driver.platform.deletes}
     assert "Stats" in sent_text
     assert "Nothing to stop for that message" in sent_text
-    assert {root_status_id, "clear_1", "clear_all"} <= deleted
-    assert root.message_id not in deleted
+    assert {
+        root.message_id,
+        root_status_id,
+        global_prompt.message_id,
+        global_status_id,
+        "clear_1",
+        "clear_all",
+    } <= deleted
     assert driver.session_store.load_conversation_snapshot().trees == {}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("platform_name", ["discord", "telegram"])
+async def test_reply_clear_uses_literal_platform_subtree_e2e(
+    platform_name: str,
+    tmp_path,
+) -> None:
+    driver = FakePlatformDriver(platform_name, tmp_path)
+    root = await driver.send("root", message_id="root")
+    root_status = driver.platform.sent[-1]["message_id"]
+    sibling = await driver.send(
+        "prompt sibling",
+        message_id="sibling",
+        reply_to=root.message_id,
+    )
+    sibling_status = driver.platform.sent[-1]["message_id"]
+    descendant = await driver.send(
+        "status descendant",
+        message_id="descendant",
+        reply_to=root_status,
+    )
+    descendant_status = driver.platform.sent[-1]["message_id"]
+
+    await driver.send(
+        "/clear",
+        message_id="clear-status",
+        reply_to=root_status,
+    )
+
+    deleted = {entry["message_id"] for entry in driver.platform.deletes}
+    assert {
+        root_status,
+        descendant.message_id,
+        descendant_status,
+        "clear-status",
+    } <= deleted
+    assert {root.message_id, sibling.message_id, sibling_status}.isdisjoint(deleted)
+    root_view = await driver.workflow.tree_queue.get_node(root.scope, root.message_id)
+    sibling_view = await driver.workflow.tree_queue.get_node(
+        sibling.scope, sibling.message_id
+    )
+    assert root_view is not None and root_view.state is MessageState.ERROR
+    assert root_view.session_id is None
+    assert sibling_view is not None and sibling_view.state is MessageState.COMPLETED
+    assert (
+        await driver.workflow.tree_queue.get_node(
+            descendant.scope, descendant.message_id
+        )
+        is None
+    )
+
+    await driver.send(
+        "fresh continuation",
+        message_id="fresh",
+        reply_to=root.message_id,
+    )
+    fresh_call = next(
+        call
+        for session in driver.cli_manager.sessions
+        for call in session.calls
+        if call["prompt"] == "fresh continuation"
+    )
+    assert fresh_call["session_id"] is None
 
 
 @pytest.mark.asyncio
@@ -113,7 +185,7 @@ async def test_messaging_startup_notice_is_clearable_e2e(tmp_path) -> None:
         "🚀 *Claude Code Proxy is online\\!* \\(Bot API\\)"
     )
     assert second_startup["parse_mode"] == "MarkdownV2"
-    assert driver.session_store.get_clearable_message_ids_for_chat(
+    assert driver.session_store.get_tracked_message_ids_for_chat(
         scope.platform, scope.chat_id
     ) == [first_startup_id, second_startup_id]
 
@@ -122,7 +194,7 @@ async def test_messaging_startup_notice_is_clearable_e2e(tmp_path) -> None:
     deleted = {entry["message_id"] for entry in driver.platform.deletes}
     assert {first_startup_id, second_startup_id, "clear_startup"} <= deleted
     assert (
-        driver.session_store.get_clearable_message_ids_for_chat(
+        driver.session_store.get_tracked_message_ids_for_chat(
             scope.platform, scope.chat_id
         )
         == []
@@ -335,7 +407,7 @@ async def test_restart_restore_and_session_persistence_e2e(tmp_path) -> None:
     session_file = tmp_path / "telegram-sessions.json"
     payload = json.loads(session_file.read_text(encoding="utf-8"))
     assert payload["conversation"]["trees"]
-    assert payload["message_log"]
+    assert payload["managed_messages"]
 
     restored = FakePlatformDriver("telegram", tmp_path)
     restored.platform.continue_message_sequence_after(first.platform)
@@ -401,11 +473,10 @@ async def test_voice_platform_fake_e2e(platform_name: str, tmp_path) -> None:
     await driver.send("/stop", message_id="stop_voice")
 
     deleted = {entry["message_id"] for entry in driver.platform.deletes}
-    assert {"voice_status_1", "clear_voice"} <= deleted
-    assert "voice_msg_1" not in deleted
+    assert {"voice_msg_1", "voice_status_1", "clear_voice"} <= deleted
     assert driver.platform.pending_voice_count == 0
     sent_text = "\n".join(sent["text"] for sent in driver.platform.sent)
-    assert "Voice note cancelled" in sent_text
+    assert "Voice note cancelled" not in sent_text
     assert len(driver.platform.sent) == sent_before_stop
     assert any(
         edit["message_id"] == "voice_status_2" and "Stopped" in edit["text"]

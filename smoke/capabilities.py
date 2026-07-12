@@ -373,7 +373,7 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         "messaging_commands",
         "free_claude_code.messaging.commands",
         "/stop, /clear, /stats command messages",
-        "state cleanup with status-owned UI and user-authored messages preserved",
+        "chat-wide cleanup or literal reply-subtree deletion",
         "terminal status edit, no-op feedback, or best-effort platform cleanup",
         (
             "tests/messaging/test_handler.py",
@@ -382,6 +382,7 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         ),
         (
             "test_messaging_commands_stop_clear_stats_e2e",
+            "test_reply_clear_uses_literal_platform_subtree_e2e",
             "test_messaging_startup_notice_is_clearable_e2e",
             "test_messaging_active_stop_uses_status_only_e2e",
             "test_messaging_queued_scoped_cancel_e2e",

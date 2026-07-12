@@ -5,19 +5,20 @@ from copy import deepcopy
 
 from loguru import logger
 
+from free_claude_code.messaging.models import MessageScope
 from free_claude_code.messaging.trees import (
     ConversationSnapshot,
     TreeIdentity,
     TreeSnapshot,
 )
 
-from .clearable_message_log import ClearableMessageLog
+from .managed_message_log import ManagedMessageLog
 from .persistence import DebouncedJsonPersistence
 
 
 class SessionStore:
     """
-    Persistent storage for conversation snapshots and clearable platform messages.
+    Persistent storage for conversation snapshots and managed platform messages.
 
     The store reads both the old raw ``trees``/``node_to_tree`` shape and the
     current typed ``conversation`` snapshot shape. Runtime callers deal in typed
@@ -28,12 +29,12 @@ class SessionStore:
         self,
         storage_path: str = "sessions.json",
         *,
-        message_log_cap: int | None = None,
+        managed_message_cap: int | None = None,
     ) -> None:
         self.storage_path = storage_path
         self._lock = threading.RLock()
         self._conversation = ConversationSnapshot()
-        self._clearable_messages = ClearableMessageLog(cap=message_log_cap)
+        self._managed_messages = ManagedMessageLog(cap=managed_message_cap)
         self._dirty = False
         self._persistence = DebouncedJsonPersistence(
             storage_path,
@@ -63,15 +64,18 @@ class SessionStore:
 
         with self._lock:
             self._conversation = ConversationSnapshot.from_json(conversation_data)
-            self._clearable_messages = ClearableMessageLog.from_json(
-                data.get("message_log", {}) if isinstance(data, dict) else {},
-                cap=self._clearable_messages.cap,
+            raw_messages = {}
+            if isinstance(data, dict):
+                raw_messages = data.get("managed_messages", data.get("message_log", {}))
+            self._managed_messages = ManagedMessageLog.from_json(
+                raw_messages,
+                cap=self._managed_messages.cap,
             )
             message_count = sum(
-                len(items) for items in self._clearable_messages.to_json().values()
+                len(items) for items in self._managed_messages.to_json().values()
             )
             logger.info(
-                "Loaded {} trees and {} clearable message IDs from {}",
+                "Loaded {} trees and {} managed message IDs from {}",
                 len(self._conversation.trees),
                 message_count,
                 self.storage_path,
@@ -81,7 +85,7 @@ class SessionStore:
         with self._lock:
             return {
                 "conversation": self._conversation.to_json(),
-                "message_log": self._clearable_messages.to_json(),
+                "managed_messages": self._managed_messages.to_json(),
             }
 
     def load_conversation_snapshot(self) -> ConversationSnapshot:
@@ -107,53 +111,38 @@ class SessionStore:
     def flush_pending_save(self) -> None:
         self._persistence.flush()
 
-    def record_outbound_message_id(
+    def record_message_id(
         self,
         platform: str,
         chat_id: str,
         message_id: str,
+        direction: str,
         kind: str,
     ) -> None:
         if message_id is None:
             return
         with self._lock:
-            recorded = self._clearable_messages.record_outbound(
+            recorded = self._managed_messages.record(
                 platform=str(platform),
                 chat_id=str(chat_id),
                 message_id=str(message_id),
+                direction=str(direction),
                 kind=str(kind),
             )
             if recorded:
                 self._persistence.schedule_save()
 
-    def record_clear_command_id(
-        self,
-        platform: str,
-        chat_id: str,
-        message_id: str,
-    ) -> None:
-        if message_id is None:
-            return
-        with self._lock:
-            recorded = self._clearable_messages.record_clear_command(
-                platform=str(platform),
-                chat_id=str(chat_id),
-                message_id=str(message_id),
-            )
-            if recorded:
-                self._persistence.schedule_save()
-
-    def get_clearable_message_ids_for_chat(
+    def get_tracked_message_ids_for_chat(
         self, platform: str, chat_id: str
     ) -> list[str]:
         with self._lock:
-            return self._clearable_messages.ids_for_chat(str(platform), str(chat_id))
+            return self._managed_messages.ids_for_chat(str(platform), str(chat_id))
 
-    def forget_clearable_message_ids(
+    def forget_tracked_message_ids(
         self, platform: str, chat_id: str, message_ids: set[str]
     ) -> None:
         with self._lock:
-            removed = self._clearable_messages.remove_ids(
+            removed = self._managed_messages.remove_ids(
                 str(platform),
                 str(chat_id),
                 {str(message_id) for message_id in message_ids},
@@ -161,16 +150,11 @@ class SessionStore:
             if removed:
                 self._persistence.schedule_save()
 
-    def clear_all(self) -> None:
+    def clear_scope(self, scope: MessageScope) -> None:
+        """Authoritatively clear one platform chat while preserving others."""
         with self._lock:
-            self._conversation = ConversationSnapshot()
-            self._clearable_messages.clear()
-            self._write_current_state()
-
-    def clear_conversation_snapshot(self) -> None:
-        """Authoritatively clear trees while preserving newer message logs."""
-        with self._lock:
-            self._conversation = ConversationSnapshot()
+            self._conversation = self._conversation.without_scope(scope)
+            self._managed_messages.clear_chat(scope.platform, scope.chat_id)
             self._write_current_state()
 
     def _write_current_state(self) -> None:

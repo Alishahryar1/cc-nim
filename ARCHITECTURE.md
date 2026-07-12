@@ -911,27 +911,26 @@ when voice does not use it.
 
 [messaging/workflow.py](src/free_claude_code/messaging/workflow.py) contains `MessagingWorkflow`, the
 platform-agnostic coordinator. It owns dependencies, render settings, the
-state-transaction lock, admission epoch, stop/clear side effects, and
-shutdown-visible state. Each inbound turn snapshots the epoch before external
-status I/O and rechecks it while committing admission; global `/stop` and
-`/clear` advance the epoch so an older provisional turn is discarded instead of
-crossing that boundary. Before taking the workflow lock, those global commands
-cancel and join every older voice handoff; they then cancel any tree that won
-admission during the join. Reply-scoped commands first join the matching voice
-claim and then resolve its authoritative tree, so either the voice cancellation
-or the admitted-tree transition wins and the same scoped request is never
-double-counted. Stop operations return one typed outcome after assigning every
-terminal status owner. The outcome records which message scopes own terminal
+state-transaction lock, global stop generation, per-chat clear generations,
+stop/clear side effects, and shutdown-visible state. Each inbound turn snapshots
+both applicable generations before external status I/O and rechecks them while
+committing admission. Global `/stop` invalidates every older provisional turn;
+standalone `/clear` invalidates only the invoking `MessageScope`. Before taking
+the workflow lock, those commands cancel and join their applicable older voice
+handoffs; they then cancel any matching tree that won admission during the join.
+Reply-scoped commands first join the matching voice claim and then apply an exact
+reference transition, so either the voice cancellation or admitted-tree
+transition wins without double-counting. Stop operations return one typed
+outcome after assigning every terminal status owner. The outcome records which message scopes own terminal
 status feedback. Existing task statuses are the sole success UI when every
 affected status is in the invoking scope; the command adapter sends a message
 for a no-op, any cross-scope work, or the rare voice cancellation that wins
-before a status ID is bound. Epoch validation, tree admission, processor
+before a status ID is bound. Generation validation, tree admission, processor
 publication, and persistence of the detached snapshot complete as one
 workflow-owned operation; caller cancellation is restored only after that
 transaction finishes. Stop and clear use the same completion-driven boundary,
-so caller cancellation cannot
-leave a committed state transition without its remaining persistence or CLI
-cleanup. At startup it restores and normalizes
+so caller cancellation cannot leave a committed state transition without its
+remaining cancellation and persistence cleanup. At startup it restores and normalizes
 persisted state before ingress begins, then repairs interrupted platform
 statuses after outbound delivery starts. Diagnostic detail policy is captured
 at construction and passed into the processor; messaging does not read global
@@ -940,25 +939,27 @@ settings while executing callbacks or failures.
 Clearable lifecycle notices are workflow-owned rather than SDK-runtime side
 effects. After transport readiness and restored-status repair,
 `ApplicationRuntime` hands the platform's semantic startup-notice intent to the
-workflow. The workflow owns platform rendering and snapshots a dedicated clear
-generation before sending outside its state lock. Once delivery returns a
+workflow. The workflow owns platform rendering and snapshots the notice chat's
+clear generation before sending outside its state lock. Once delivery returns a
 message ID, a cancellation-safe finalizer briefly reacquires the lock: it records
-the ID only if no global clear or startup cancellation crossed the reservation;
+the ID only if no standalone clear in that chat or startup cancellation crossed
+the reservation;
 otherwise it releases the lock and deletes the notice. Failed compensation
-attempts to restore the ID to the current clearable-message log so a later `/clear` can
+attempts to restore the ID to the current managed-message log so a later `/clear` can
 retry. No platform I/O runs under the workflow lock. Ordinary notice-send
 failure is privacy-safe and nonfatal, while cancellation before a delivery
 receipt remains immediate and cannot create a phantom message ID.
 
-[messaging/turn_intake.py](src/free_claude_code/messaging/turn_intake.py) owns explicit clear-command
-retention, slash command dispatch, status-echo filtering, initial status messages,
-and rendering detached frozen admission/queue effects. Ordinary user messages are
-never inserted into the clearable-message log. Intake asks the workflow to resolve
-and admit turns rather than receiving a mutable tree. Reply lookup is always scoped
-by platform and chat; an unknown or cross-chat reference cannot attach to another
-tree and therefore starts an independent root. If duplicate delivery or an epoch
-change rejects admission after a provisional status was sent, intake deletes that
-status and removes it from the clearable-message log.
+[messaging/turn_intake.py](src/free_claude_code/messaging/turn_intake.py) owns slash command dispatch,
+status-echo filtering, initial status messages, and rendering detached frozen
+admission/queue effects. The workflow records each accepted inbound prompt,
+voice note, or command before intake performs external status I/O. Intake asks
+the workflow to resolve and admit turns rather than receiving a mutable tree.
+Reply lookup is always scoped by platform and chat; an unknown or cross-chat
+reference starts an independent root. A previously resolved exact parent that a
+concurrent clear removes is instead rejected as `PARENT_REMOVED`; intake then
+best-effort deletes both the stale child prompt and its provisional status.
+Duplicate delivery deletes only its provisional status.
 
 [messaging/node_runner.py](src/free_claude_code/messaging/node_runner.py) owns managed CLI session
 lifecycle for queued nodes: parent-session fork/resume, session registration,
@@ -985,7 +986,13 @@ depend on the concrete workflow object or on platform SDK runtimes.
 `MessageTree` aggregate. Its lock is private, and complete operations own every
 graph/queue/claim invariant: add-and-admit, enqueue-or-claim,
 finish-and-claim-next, semantic state writes, cancellation, and atomic branch
-removal. `TreeIdentity` is `(platform, chat_id, root_message_id)`, because
+removal. Logical `parent_id` owns execution/session ancestry, while
+`parent_reference_id` records the exact prompt or FCC status that received the
+platform reply. The aggregate derives literal reference adjacency from those
+canonical fields instead of maintaining a second graph. Removing a prompt
+therefore removes its status and every literal descendant; removing a status
+preserves its prompt and prompt-level siblings while invalidating that prompt's
+session. `TreeIdentity` is `(platform, chat_id, root_message_id)`, because
 platform message IDs are not globally unique. Every execution receives a fresh
 opaque claim ID, so a task from an older runtime generation cannot mutate or
 collide with a re-admitted tree. Active execution ownership is separate from the
@@ -1008,16 +1015,16 @@ transition-owned snapshots. Claim completion re-enters that same lock: the
 manager verifies the exact aggregate is still published and publishes any
 successor task slot before a competing detach can commit. Cancellation and
 removal entrypoints finish their exact transition despite caller cancellation,
-so a committed detach cannot lose its UI or persistence result. Reply `/clear`
-is one cancel-and-detach transition before platform I/O; global clear atomically
-detaches every aggregate before
-task draining. Reply `/stop` cancels exactly one request; its matching finisher
+so a committed detach cannot lose its persistence result. Reply `/clear` is one
+exact-reference cancel-and-detach transition before platform I/O; standalone
+clear atomically detaches every aggregate in the invoking scope before task
+draining. Reply `/stop` cancels exactly one request; its matching finisher
 releases execution ownership and advances the next eligible queued request.
-Global `/stop` drains every queue instead, and reply `/clear` removes the whole
-selected branch before any survivor can advance. Separate trees still progress
-independently. Branch transitions return internal `reference_ids` for repository
-unindexing separately from `clearable_message_ids` for platform deletion. User
-prompt IDs remain references only; FCC status IDs are the branch's deletion targets.
+Global `/stop` drains every queue instead, and reply `/clear` removes the selected
+literal message subtree before any survivor can advance. Separate scopes and
+trees still progress independently. Subtree transitions return exact reference
+IDs for both repository unindexing and authorized platform deletion, including
+user-authored messages selected by the explicit command.
 [messaging/trees/repository.py](src/free_claude_code/messaging/trees/repository.py)
 is manager-private and owns only aggregate/reference indexes.
 [messaging/trees/processor.py](src/free_claude_code/messaging/trees/processor.py) owns every
@@ -1045,8 +1052,11 @@ status-message lookup state, and
 [messaging/trees/snapshot.py](src/free_claude_code/messaging/trees/snapshot.py) owns typed persisted
 conversation snapshots. New snapshots serialize scoped trees as a list, while
 loading derives scope from existing pre-scope `sessions.json` tree roots. Nodes
-persist only their canonical parent relation; runtime child indexes are rebuilt
-on restore, and transport ingress payloads do not leak into aggregate storage.
+persist logical and exact-reference parent relations; runtime child indexes are
+rebuilt on restore, and transport ingress payloads do not leak into aggregate
+storage. Old snapshots without an exact parent reference attach conservatively
+to the logical parent prompt. A cleared optional status is valid only for an
+inert node; runnable restored nodes must still have a status.
 A malformed tree carrying neither current scope nor legacy root ingress is
 reported and skipped because assigning it to an inferred chat would violate the
 same ownership boundary.
@@ -1063,24 +1073,24 @@ Timer-triggered saves are best effort and leave the store dirty on failure;
 explicit flushes and authoritative writes propagate failure while preserving
 that dirty state for retry. Successful retry writes the current in-memory
 snapshot and is the only operation that marks it clean.
-Global `/clear` performs an early authoritative wipe, detaches and drains every
-tree, then writes an authoritative empty conversation snapshot while preserving
-clearable IDs recorded after the early wipe. Once clear commits, ordinary failures
-from final persistence, cancellation effects, and CLI cleanup are all attempted and
-preserved rather than producing a false successful clear.
-Per-chat deletion ownership for `/clear` lives in
-[messaging/session/clearable_message_log.py](src/free_claude_code/messaging/session/clearable_message_log.py).
-The bounded log accepts only FCC-authored output and explicit clear commands;
-loading drops legacy user-content entries. Startup notices use the same log as other
-clearable output. An incoming standalone `/clear` defers insertion because the
-command handler owns its ID on success; this prevents the command from evicting an
-older deletion target at the cap. Failed or cancelled clear attempts record the
-command before propagating so it remains discoverable by a later clear.
+Standalone `/clear` detaches and drains only the invoking scope, then writes an
+authoritative scoped removal while other chats remain intact. Per-chat deletion
+ownership lives in
+[messaging/session/managed_message_log.py](src/free_claude_code/messaging/session/managed_message_log.py).
+The registry accepts managed inbound prompts, voice notes, and commands as well
+as FCC output. It migrates legacy `message_log` entries and persists the final
+shape as `managed_messages`. Startup notices use the same registry. An incoming
+standalone `/clear` defers insertion because the command handler already owns its
+ID on success; this prevents the command from evicting an older deletion target
+when an explicit cap is configured. Failed or cancelled clear attempts record
+the command before propagating so a later clear can discover it.
 
-`/clear` guarantees FCC state cleanup and tries only authorized platform deletes
-through the list-based outbound delete port. User-authored prompts and voice notes
-remain on the platform. Discord/Telegram can still reject individual deletions for
-platform reasons such as permissions, age, or missing messages.
+`/clear` commits FCC state cleanup first and then best-effort deletes the exact
+authorized message-ID set through the list-based outbound port. Standalone clear
+deletes every tracked user and FCC message in its chat; reply clear deletes only
+the selected literal reply subtree plus its command. Discord/Telegram can still
+reject individual deletions for platform reasons such as permissions, age, or
+missing messages; such failures never restore cleared FCC state.
 
 ```mermaid
 sequenceDiagram

@@ -9,19 +9,20 @@ from loguru import logger
 from ..models import MessageScope
 from .graph import MessageTreeGraph
 from .identity import TreeIdentity
-from .node import MessageNode, MessageState
+from .node import MessageNode, MessageReferenceKind, MessageState
 from .queue import MessageNodeQueue
 from .snapshot import TreeSnapshot
 from .transitions import (
+    AdmissionRejection,
     CompletionResult,
     FailureResult,
+    MessageSubtreeRemoval,
     NodeClaim,
     NodeUiTarget,
     NodeView,
     QueueDecision,
     QueueEntry,
     ReplyTarget,
-    TreeBranchRemoval,
     TreeCancellation,
 )
 
@@ -70,6 +71,8 @@ class MessageTree:
         return self._restored_stale_targets
 
     def _ui_target(self, node: MessageNode) -> NodeUiTarget:
+        if node.status_message_id is None:
+            raise ValueError("Runnable node has no status message")
         return NodeUiTarget(
             scope=node.scope,
             node_id=node.node_id,
@@ -106,6 +109,7 @@ class MessageTree:
                 claim=None,
                 position=None,
                 snapshot=None,
+                rejection=AdmissionRejection.DUPLICATE,
             )
 
         if self._active is None:
@@ -121,6 +125,7 @@ class MessageTree:
                 claim=None,
                 position=None,
                 snapshot=None,
+                rejection=AdmissionRejection.DUPLICATE,
             )
 
         position = self._queue.qsize()
@@ -143,6 +148,7 @@ class MessageTree:
         prompt: str,
         status_message_id: str,
         parent_id: str,
+        parent_reference_id: str,
     ) -> QueueDecision:
         """Atomically add a reply and admit it to this tree."""
         async with self._lock:
@@ -152,6 +158,7 @@ class MessageTree:
                 prompt=prompt,
                 status_message_id=status_message_id,
                 parent_id=parent_id,
+                parent_reference_id=parent_reference_id,
             )
             return self._enqueue_or_claim(node_id)
 
@@ -266,31 +273,39 @@ class MessageTree:
                 queue_update=() if queued_ids else None,
             )
 
-    async def remove_branch(
+    async def remove_message_subtree(
         self,
-        branch_root_id: str,
-    ) -> TreeBranchRemoval:
-        """Atomically cancel and detach one subtree before external effects."""
+        reference_id: str,
+    ) -> MessageSubtreeRemoval:
+        """Atomically cancel and detach one literal platform reply subtree."""
         async with self._lock:
-            branch_ids = tuple(self._graph.get_descendants(branch_root_id))
-            if not branch_ids:
+            resolved = self._graph.resolve_reference(reference_id)
+            reference_ids = tuple(self._graph.get_reference_descendants(reference_id))
+            if resolved is None or not reference_ids:
                 empty = TreeCancellation(
                     nodes=(),
                     active_claim=None,
                     queue_update=None,
                 )
-                return TreeBranchRemoval(
+                return MessageSubtreeRemoval(
                     cancellation=empty,
-                    reference_ids=frozenset(),
-                    clearable_message_ids=frozenset(),
+                    removed_message_ids=frozenset(),
                     removed_entire_tree=False,
                 )
 
-            branch_set = set(branch_ids)
+            owner, reference_kind = resolved
+            removed_node_ids = {
+                candidate
+                for candidate in reference_ids
+                if self._graph.get_node(candidate) is not None
+            }
+            affected_node_ids = set(removed_node_ids)
+            if reference_kind is MessageReferenceKind.STATUS:
+                affected_node_ids.add(owner.node_id)
             active_claim = (
                 self._active.claim
                 if self._active is not None
-                and self._active.claim.node.node_id in branch_set
+                and self._active.claim.node.node_id in affected_node_ids
                 else None
             )
             if active_claim is not None:
@@ -298,23 +313,17 @@ class MessageTree:
                 if active is not None:
                     active.cancellation_requested = True
             cancelled_nodes: list[NodeUiTarget] = []
-            reference_ids: set[str] = set()
-            clearable_message_ids: set[str] = set()
             queue_changed = False
 
-            for node_id in branch_ids:
+            for node_id in affected_node_ids:
                 node = self._graph.get_node(node_id)
                 if node is None:
                     continue
-                reference_ids.add(node.node_id)
-                if node.status_message_id:
-                    status_message_id = str(node.status_message_id)
-                    reference_ids.add(status_message_id)
-                    clearable_message_ids.add(status_message_id)
                 queue_changed = self._queue.remove(node_id) or queue_changed
                 if node.state in (MessageState.PENDING, MessageState.IN_PROGRESS):
+                    target = self._ui_target(node)
                     node.mark_error()
-                    cancelled_nodes.append(self._ui_target(node))
+                    cancelled_nodes.append(target)
                 elif (
                     node.state is MessageState.ERROR
                     and active_claim is not None
@@ -322,17 +331,18 @@ class MessageTree:
                 ):
                     cancelled_nodes.append(self._ui_target(node))
 
-            removed_entire_tree = branch_root_id == self.root_id
-            self._graph.remove_branch(branch_root_id)
+            if reference_kind is MessageReferenceKind.STATUS:
+                self._graph.clear_status(owner.node_id)
+            removed_entire_tree = self.root_id in removed_node_ids
+            self._graph.remove_nodes(removed_node_ids)
             cancellation = TreeCancellation(
                 nodes=tuple(cancelled_nodes),
                 active_claim=active_claim,
                 queue_update=self._queue_entries() if queue_changed else None,
             )
-            return TreeBranchRemoval(
+            return MessageSubtreeRemoval(
                 cancellation=cancellation,
-                reference_ids=frozenset(reference_ids),
-                clearable_message_ids=frozenset(clearable_message_ids),
+                removed_message_ids=frozenset(reference_ids),
                 removed_entire_tree=removed_entire_tree,
             )
 
@@ -418,13 +428,14 @@ class MessageTree:
     async def resolve_reply(self, reference_id: str) -> ReplyTarget | None:
         """Resolve a node/status reference without exposing the mutable graph."""
         async with self._lock:
-            node = self._graph.get_node(reference_id)
-            if node is None:
-                node = self._graph.find_node_by_status_message(reference_id)
-            if node is None:
+            resolved = self._graph.resolve_reference(reference_id)
+            if resolved is None:
                 return None
+            node, reference_kind = resolved
             return ReplyTarget(
                 node_id=node.node_id,
+                reference_id=reference_id,
+                reference_kind=reference_kind,
                 queue_position=(self._queue.qsize() + 1)
                 if self._active is not None
                 else None,
@@ -449,20 +460,14 @@ class MessageTree:
         async with self._lock:
             return self._graph.snapshot()
 
-    async def clearable_message_ids_for_chat(
-        self, platform: str, chat_id: str
-    ) -> set[str]:
-        """Copy FCC-authored message IDs belonging to one platform chat."""
+    async def message_ids_for_chat(self, platform: str, chat_id: str) -> set[str]:
+        """Copy every prompt and FCC status belonging to one platform chat."""
         async with self._lock:
             if self.identity.scope.platform != str(platform) or (
                 self.identity.scope.chat_id != str(chat_id)
             ):
                 return set()
-            clearable_message_ids: set[str] = set()
-            for node in self._graph.all_nodes():
-                if node.status_message_id:
-                    clearable_message_ids.add(str(node.status_message_id))
-            return clearable_message_ids
+            return self._graph.all_reference_ids()
 
     @classmethod
     def from_snapshot(cls, snapshot: TreeSnapshot) -> MessageTree:
