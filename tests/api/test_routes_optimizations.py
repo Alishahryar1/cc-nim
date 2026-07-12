@@ -135,6 +135,28 @@ def test_count_tokens_endpoint(client):
     assert response.json()["input_tokens"] == 5
 
 
+def test_count_tokens_accepts_system_role_messages(client):
+    """Regression for #616 on the count_tokens ingress path."""
+    payload = {
+        "model": "claude-3-sonnet",
+        "messages": [
+            {"role": "user", "content": "context"},
+            {"role": "system", "content": "system prompt"},
+            {"role": "user", "content": "hello"},
+        ],
+    }
+    token_counter = MagicMock(return_value=5)
+
+    with patch("free_claude_code.api.routes.get_token_count", token_counter):
+        response = client.post("/v1/messages/count_tokens", json=payload)
+
+    assert response.status_code == 200
+    assert response.json()["input_tokens"] == 5
+    messages, system, _tools = token_counter.call_args[0]
+    assert [message.role for message in messages] == ["user", "user"]
+    assert system == "system prompt"
+
+
 def test_count_tokens_error_returns_500(client):
     """When get_token_count raises, count_tokens returns 500."""
     payload = {

@@ -206,7 +206,7 @@ def test_create_message_pre_start_provider_error_returns_terminal_json(
 
 
 def test_create_message_accepts_system_role_messages(client: TestClient):
-    """Create message accepts latest-client system messages."""
+    """Regression for #616: inline system-role messages must not return HTTP 422."""
     mock_provider.stream_response = _mock_stream_response
     _stream_response_calls.clear()
     payload = {
