@@ -211,9 +211,10 @@ For terminal use, start `fcc-server`, then prefer `fcc-claude` or `fcc-codex`. U
 <details>
 <summary><strong>Claude Code in VS Code</strong></summary>
 
-Install the [Claude Code extension](https://marketplace.visualstudio.com/items?itemName=anthropic.claude-code). In VS Code settings, edit `claudeCode.environmentVariables`:
+Install the [Claude Code extension](https://marketplace.visualstudio.com/items?itemName=anthropic.claude-code). Open VS Code's user settings as JSON and add:
 
 ```json
+"claudeCode.disableLoginPrompt": true,
 "claudeCode.environmentVariables": [
   { "name": "ANTHROPIC_BASE_URL", "value": "http://localhost:8082" },
   { "name": "ANTHROPIC_AUTH_TOKEN", "value": "freecc" },
@@ -222,7 +223,7 @@ Install the [Claude Code extension](https://marketplace.visualstudio.com/items?i
 ]
 ```
 
-Match the port and authentication token to the Admin UI, then reload the extension. If prompted to log in, choose the Anthropic Console path once; FCC still handles model traffic.
+Match the port and authentication token to the Admin UI, then reload the extension.
 
 </details>
 
@@ -274,6 +275,32 @@ Set the environment for `acp.registry.claude-acp`:
 ```
 
 Match the port and token to the Admin UI, then restart the IDE.
+
+</details>
+
+<details>
+<summary><strong>Claude Code still asks you to log in</strong></summary>
+
+If Claude Code asks you to log in after you configure the FCC URL and token, open its state file:
+
+- Windows: `%USERPROFILE%\.claude.json`
+- macOS/Linux/WSL: `~/.claude.json`
+
+Merge this property into the existing JSON without removing its other fields:
+
+```json
+"hasCompletedOnboarding": true
+```
+
+If the file does not exist, create it with a complete JSON object:
+
+```json
+{
+  "hasCompletedOnboarding": true
+}
+```
+
+Restart Claude Code or the IDE after saving the file.
 
 </details>
 
