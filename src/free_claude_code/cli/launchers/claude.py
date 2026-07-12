@@ -7,6 +7,7 @@ from collections.abc import Mapping, Sequence
 from free_claude_code.cli.claude_env import (
     CLAUDE_BINARY_NAME,
     CLAUDE_CODE_AUTO_COMPACT_WINDOW,
+    CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC,
     claude_auth_token,
 )
 from free_claude_code.config.server_urls import local_proxy_root_url
@@ -81,5 +82,8 @@ def build_claude_launcher_env(
     env["ANTHROPIC_BASE_URL"] = proxy_root_url
     env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1"
     env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = CLAUDE_CODE_AUTO_COMPACT_WINDOW
+    env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = (
+        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
+    )
     env["ANTHROPIC_AUTH_TOKEN"] = claude_auth_token(auth_token)
     return env

@@ -219,7 +219,8 @@ Install the [Claude Code extension](https://marketplace.visualstudio.com/items?i
   { "name": "ANTHROPIC_BASE_URL", "value": "http://localhost:8082" },
   { "name": "ANTHROPIC_AUTH_TOKEN", "value": "freecc" },
   { "name": "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "value": "1" },
-  { "name": "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "value": "190000" }
+  { "name": "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "value": "190000" },
+  { "name": "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "value": "1" }
 ]
 ```
 
@@ -270,13 +271,16 @@ Set the environment for `acp.registry.claude-acp`:
   "ANTHROPIC_BASE_URL": "http://localhost:8082",
   "ANTHROPIC_AUTH_TOKEN": "freecc",
   "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
-  "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "190000"
+  "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "190000",
+  "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
 }
 ```
 
 Match the port and token to the Admin UI, then restart the IDE.
 
 </details>
+
+The nonessential-traffic setting disables Claude Code telemetry, error reporting, feedback, and automatic update checks for FCC sessions. Update Claude Code separately when needed.
 
 <details>
 <summary><strong>Claude Code still asks you to log in</strong></summary>
