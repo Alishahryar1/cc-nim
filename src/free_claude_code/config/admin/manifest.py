@@ -137,6 +137,18 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         default="true",
     ),
     ConfigFieldSpec(
+        "ENABLE_VISION",
+        "Enable Vision",
+        "providers",
+        "boolean",
+        settings_attr="enable_vision",
+        default="false",
+        description=(
+            "Allow image blocks to be forwarded through OpenAI-compatible provider "
+            "requests for vision-capable models such as NVIDIA NIM."
+        ),
+    ),
+    ConfigFieldSpec(
         "ENABLE_OPUS_THINKING",
         "Opus Thinking",
         "thinking",

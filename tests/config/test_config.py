@@ -48,6 +48,7 @@ class TestSettings:
         assert isinstance(settings.nim.temperature, float)
         assert isinstance(settings.fast_prefix_detection, bool)
         assert isinstance(settings.enable_model_thinking, bool)
+        assert settings.enable_vision is False
         assert settings.http_read_timeout == 120.0
         assert settings.http_connect_timeout == HTTP_CONNECT_TIMEOUT_DEFAULT
         assert settings.enable_web_server_tools is False
@@ -277,6 +278,14 @@ class TestSettings:
         monkeypatch.setenv("ENABLE_MODEL_THINKING", "false")
         settings = Settings()
         assert settings.enable_model_thinking is False
+
+    def test_enable_vision_from_env(self, monkeypatch):
+        """ENABLE_VISION env var is loaded into settings."""
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.setenv("ENABLE_VISION", "true")
+        settings = Settings()
+        assert settings.enable_vision is True
 
     def test_wafer_api_key_from_env(self, monkeypatch):
         """WAFER_API_KEY env var is loaded into settings."""

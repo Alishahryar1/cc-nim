@@ -36,6 +36,7 @@ class OpenAIChatRequestPolicy:
 def build_openai_chat_request_body(
     request_data: MessagesRequest,
     *,
+    vision_enabled: bool = False,
     thinking_enabled: bool,
     policy: OpenAIChatRequestPolicy,
     postprocessors: Iterable[OpenAIChatPostprocessor] = (),
@@ -59,6 +60,7 @@ def build_openai_chat_request_body(
             request_data,
             default_max_tokens=policy.default_max_tokens,
             reasoning_replay=reasoning_replay,
+            vision_enabled=vision_enabled,
         )
     except OpenAIConversionError as exc:
         raise InvalidRequestError(str(exc)) from exc

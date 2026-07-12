@@ -44,6 +44,7 @@ class NvidiaNimProvider(OpenAIChatProvider):
         config: ProviderConfig,
         *,
         nim_settings: NimSettings,
+        enable_vision: bool = False,
         rate_limiter: ProviderRateLimiter,
     ):
         super().__init__(
@@ -52,6 +53,7 @@ class NvidiaNimProvider(OpenAIChatProvider):
             rate_limiter=rate_limiter,
         )
         self._nim_settings = nim_settings
+        self._enable_vision = enable_vision
 
     def _build_request_body(
         self, request: MessagesRequest, thinking_enabled: bool | None = None
@@ -60,6 +62,7 @@ class NvidiaNimProvider(OpenAIChatProvider):
         return build_nim_request_body(
             request,
             self._nim_settings,
+            vision_enabled=self._enable_vision,
             thinking_enabled=self._is_thinking_enabled(request, thinking_enabled),
         )
 

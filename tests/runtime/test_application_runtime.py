@@ -219,6 +219,59 @@ async def test_provider_apply_constructs_before_commit_then_publishes(tmp_path) 
 
 
 @pytest.mark.asyncio
+async def test_enable_vision_apply_hot_reloads_provider_without_restart(
+    tmp_path,
+) -> None:
+    factory = TrackingFactory()
+    manager = ProviderRuntimeManager(
+        _settings("nvidia_nim/old"),
+        runtime_factory=factory,
+    )
+    runtime = ApplicationRuntime(manager, transcriber=None)
+    factory.events.clear()
+    prepared = PreparedAdminUpdate(
+        target_values={"MODEL": "nvidia_nim/old", "ENABLE_VISION": "true"},
+        settings=_settings("nvidia_nim/old").model_copy(update={"enable_vision": True}),
+        errors=(),
+        pending_fields=(),
+        path=tmp_path / ".env",
+    )
+
+    def commit(_prepared_update: PreparedAdminUpdate) -> dict[str, object]:
+        factory.events.append("commit")
+        return {
+            "applied": True,
+            "valid": True,
+            "errors": [],
+            "env_preview": "MODEL=nvidia_nim/old\nENABLE_VISION=true\n",
+            "path": str(tmp_path / ".env"),
+            "pending_fields": [],
+        }
+
+    with (
+        patch(
+            "free_claude_code.runtime.application.prepare_admin_update",
+            return_value=prepared,
+        ),
+        patch(
+            "free_claude_code.runtime.application.commit_prepared_admin_update",
+            side_effect=commit,
+        ),
+    ):
+        result = await runtime.apply_admin_config({"ENABLE_VISION": True})
+
+    assert factory.events == ["construct:nvidia_nim/old", "commit"]
+    assert manager.current_settings().enable_vision is True
+    assert result["restart"] == {
+        "required": False,
+        "automatic": False,
+        "admin_url": None,
+        "fields": [],
+    }
+    await manager.close()
+
+
+@pytest.mark.asyncio
 async def test_candidate_failure_never_commits_and_preserves_current(tmp_path) -> None:
     factory = TrackingFactory()
     manager = ProviderRuntimeManager(

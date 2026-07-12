@@ -119,6 +119,42 @@ class TestBuildRequestBody:
         body = build_request_body(req, nim, thinking_enabled=True)
         assert body["parallel_tool_calls"] is False
 
+    def test_user_image_blocks_are_serialized_when_vision_enabled(self):
+        request = MessagesRequest.model_validate(
+            {
+                "model": "test",
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": [
+                            {"type": "text", "text": "Describe this"},
+                            {
+                                "type": "image",
+                                "source": {
+                                    "type": "base64",
+                                    "media_type": "image/png",
+                                    "data": "YQ==",
+                                },
+                            },
+                        ],
+                    }
+                ],
+            }
+        )
+
+        body = build_request_body(
+            request,
+            NimSettings(),
+            vision_enabled=True,
+            thinking_enabled=False,
+        )
+
+        assert body["messages"][0]["role"] == "user"
+        assert body["messages"][0]["content"] == [
+            {"type": "text", "text": "Describe this"},
+            {"type": "image_url", "image_url": {"url": "data:image/png;base64,YQ=="}},
+        ]
+
     def test_tool_schema_boolean_subschemas_are_removed_without_mutating_request(
         self, req
     ):

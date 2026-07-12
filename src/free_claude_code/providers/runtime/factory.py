@@ -29,6 +29,7 @@ def _create_nvidia_nim(
     return NvidiaNimProvider(
         config,
         nim_settings=settings.nim,
+        enable_vision=settings.enable_vision,
         rate_limiter=rate_limiter,
     )
 

@@ -165,6 +165,7 @@ class Settings(BaseSettings):
     enable_model_thinking: bool = Field(
         default=True, validation_alias="ENABLE_MODEL_THINKING"
     )
+    enable_vision: bool = Field(default=False, validation_alias="ENABLE_VISION")
     enable_opus_thinking: bool | None = Field(
         default=None, validation_alias="ENABLE_OPUS_THINKING"
     )

@@ -146,13 +146,39 @@ def _assert_no_forbidden_assistant_block(block: Any) -> None:
         )
 
 
+def _convert_user_image_source(source: dict[str, Any]) -> dict[str, Any]:
+    source_type = str(source.get("type") or "").strip().lower()
+    if source_type == "url":
+        url = source.get("url")
+        if not isinstance(url, str) or not url.strip():
+            raise OpenAIConversionError("User image URL source must include a URL")
+        return {"type": "image_url", "image_url": {"url": url}}
+
+    if source_type == "base64":
+        data = source.get("data") or source.get("base64")
+        if not isinstance(data, str) or not data.strip():
+            raise OpenAIConversionError("User base64 image source must include data")
+        media_type = source.get("media_type") or source.get("mime_type") or "image/png"
+        return {
+            "type": "image_url",
+            "image_url": {
+                "url": f"data:{media_type};base64,{data}",
+            },
+        }
+
+    raise OpenAIConversionError(
+        "User image blocks must use a url or base64 source for OpenAI chat conversion"
+    )
+
+
 class _OpenAIChatHistoryLedger:
     """Assemble OpenAI chat history while respecting tool-result dependencies."""
 
-    def __init__(self) -> None:
+    def __init__(self, *, vision_enabled: bool = False) -> None:
         self._output: list[dict[str, Any]] = []
         self._segments: list[_TranscriptSegment] = []
         self._tool_results: dict[str, dict[str, Any]] = {}
+        self._vision_enabled = vision_enabled
 
     def add_plain(self, messages: list[dict[str, Any]]) -> None:
         if messages:
@@ -194,7 +220,12 @@ class _OpenAIChatHistoryLedger:
     def _add_text_blocks(self, blocks: list[Any]) -> None:
         if not blocks:
             return
-        self.add_plain(AnthropicToOpenAIConverter._convert_user_message(blocks))
+        self.add_plain(
+            AnthropicToOpenAIConverter._convert_user_message(
+                blocks,
+                vision_enabled=self._vision_enabled,
+            )
+        )
         blocks.clear()
 
     def _record_tool_result(self, block: Any) -> None:
@@ -282,9 +313,10 @@ class AnthropicToOpenAIConverter:
     def convert_messages(
         messages: list[Any],
         *,
+        vision_enabled: bool = False,
         reasoning_replay: ReasoningReplayMode = ReasoningReplayMode.THINK_TAGS,
     ) -> list[dict[str, Any]]:
-        ledger = _OpenAIChatHistoryLedger()
+        ledger = _OpenAIChatHistoryLedger(vision_enabled=vision_enabled)
 
         for msg in messages:
             role = msg.role
@@ -300,6 +332,7 @@ class AnthropicToOpenAIConverter:
             segments = AnthropicToOpenAIConverter._convert_message_to_segments(
                 role,
                 content,
+                vision_enabled=vision_enabled,
                 reasoning_content=reasoning_content,
                 reasoning_replay=reasoning_replay,
             )
@@ -316,6 +349,7 @@ class AnthropicToOpenAIConverter:
         role: str,
         content: Any,
         *,
+        vision_enabled: bool,
         reasoning_content: str | None,
         reasoning_replay: ReasoningReplayMode,
     ) -> list[_TranscriptSegment]:
@@ -346,7 +380,12 @@ class AnthropicToOpenAIConverter:
             ]
         if role == "user" and isinstance(content, list):
             return [
-                _PlainSegment(AnthropicToOpenAIConverter._convert_user_message(content))
+                _PlainSegment(
+                    AnthropicToOpenAIConverter._convert_user_message(
+                        content,
+                        vision_enabled=vision_enabled,
+                    )
+                )
             ]
         if isinstance(content, str):
             converted = {"role": role, "content": content}
@@ -480,14 +519,47 @@ class AnthropicToOpenAIConverter:
         )
 
     @staticmethod
-    def _convert_user_message(content: list[Any]) -> list[dict[str, Any]]:
+    def _convert_user_message(
+        content: list[Any],
+        *,
+        vision_enabled: bool = False,
+    ) -> list[dict[str, Any]]:
         result: list[dict[str, Any]] = []
         text_parts: list[str] = []
+        image_parts: list[dict[str, Any]] | None = None
 
-        def flush_text() -> None:
-            if text_parts:
+        def flush_user_message() -> None:
+            nonlocal image_parts
+            if not text_parts and image_parts is None:
+                return
+            if image_parts is None:
                 result.append({"role": "user", "content": "\n".join(text_parts)})
+            else:
+                if text_parts:
+                    image_parts.append(
+                        {"type": "text", "text": "\n\n".join(text_parts)}
+                    )
+                result.append({"role": "user", "content": image_parts})
+            text_parts.clear()
+            image_parts = None
+
+        def append_image_part(block: Any) -> None:
+            nonlocal image_parts
+            if not vision_enabled:
+                raise OpenAIConversionError(
+                    "User message image blocks are not supported for OpenAI chat "
+                    "conversion; use a vision-capable native Anthropic provider or "
+                    "enable vision support."
+                )
+            source = get_block_attr(block, "source", {})
+            if not isinstance(source, dict):
+                raise OpenAIConversionError("User image block source must be a mapping")
+            if image_parts is None:
+                image_parts = []
+            if text_parts:
+                image_parts.append({"type": "text", "text": "\n\n".join(text_parts)})
                 text_parts.clear()
+            image_parts.append(_convert_user_image_source(source))
 
         for block in content:
             block_type = get_block_type(block)
@@ -495,12 +567,9 @@ class AnthropicToOpenAIConverter:
             if block_type == "text":
                 text_parts.append(get_block_attr(block, "text", ""))
             elif block_type == "image":
-                raise OpenAIConversionError(
-                    "User message image blocks are not supported for OpenAI chat "
-                    "conversion; remove the image blocks or extend the converter."
-                )
+                append_image_part(block)
             elif block_type == "tool_result":
-                flush_text()
+                flush_user_message()
                 tool_content = get_block_attr(block, "content", "")
                 serialized = serialize_tool_result_content(tool_content)
                 result.append(
@@ -511,7 +580,7 @@ class AnthropicToOpenAIConverter:
                     }
                 )
 
-        flush_text()
+        flush_user_message()
         return result
 
     @staticmethod
@@ -566,12 +635,14 @@ def build_base_request_body(
     request_data: MessagesRequest,
     *,
     default_max_tokens: int | None = None,
+    vision_enabled: bool = False,
     reasoning_replay: ReasoningReplayMode = ReasoningReplayMode.THINK_TAGS,
 ) -> dict[str, Any]:
     """Build the common parts of an OpenAI-format request body."""
     _openai_reject_native_only_top_level_fields(request_data)
     messages = AnthropicToOpenAIConverter.convert_messages(
         request_data.messages,
+        vision_enabled=vision_enabled,
         reasoning_replay=reasoning_replay,
     )
 

@@ -32,6 +32,7 @@ def _clear_process_config(monkeypatch) -> None:
         "FCC_ENV_FILE",
         "CLOUDFLARE_API_TOKEN",
         "CLOUDFLARE_ACCOUNT_ID",
+        "ENABLE_VISION",
         "GITHUB_MODELS_TOKEN",
         "SAMBANOVA_API_KEY",
         "HOST",
@@ -116,6 +117,7 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     assert "FIREWORKS_API_KEY" in keys
     assert "CLOUDFLARE_API_TOKEN" in keys
     assert "CLOUDFLARE_ACCOUNT_ID" in keys
+    assert "ENABLE_VISION" in keys
     assert "GITHUB_MODELS_TOKEN" in keys
     assert "GEMINI_API_KEY" in keys
     assert "GROQ_API_KEY" in keys
@@ -149,6 +151,7 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
         "LOG_RAW_CLI_DIAGNOSTICS",
         "LOG_MESSAGING_ERROR_DETAILS",
     } <= restart_required
+    assert "ENABLE_VISION" not in restart_required
 
 
 def test_admin_config_preserves_managed_env_source_contract(monkeypatch, tmp_path):

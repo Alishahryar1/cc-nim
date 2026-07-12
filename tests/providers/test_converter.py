@@ -707,6 +707,58 @@ def test_convert_user_message_image_raises():
         AnthropicToOpenAIConverter.convert_messages(messages)
 
 
+def test_convert_user_message_image_url_when_vision_enabled():
+    content = [
+        MockBlock(type="text", text="Describe this picture"),
+        MockBlock(type="image", source={"type": "url", "url": "https://example.com/x"}),
+    ]
+    messages = [MockMessage("user", content)]
+    result = AnthropicToOpenAIConverter.convert_messages(
+        messages,
+        vision_enabled=True,
+    )
+
+    assert result == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Describe this picture"},
+                {"type": "image_url", "image_url": {"url": "https://example.com/x"}},
+            ],
+        }
+    ]
+
+
+def test_convert_user_message_image_base64_when_vision_enabled():
+    content = [
+        MockBlock(
+            type="image",
+            source={
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "YQ==",
+            },
+        )
+    ]
+    messages = [MockMessage("user", content)]
+    result = AnthropicToOpenAIConverter.convert_messages(
+        messages,
+        vision_enabled=True,
+    )
+
+    assert result == [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/png;base64,YQ=="},
+                }
+            ],
+        }
+    ]
+
+
 def test_convert_assistant_text_after_tool_use_requires_matching_tool_result():
     """Dangling post-tool assistant text cannot be replayed as valid OpenAI chat."""
     content = [
