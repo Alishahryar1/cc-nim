@@ -16,7 +16,9 @@ async def test_register_real_session_id_moves_pending_to_active_and_maps():
         mock_session_cls.return_value = mock_session
 
         manager = ManagedClaudeSessionManager(
-            workspace_path="/tmp", api_url="http://x/v1", auth_token="proxy-token"
+            workspace_path="/tmp",
+            proxy_root_url="http://x",
+            auth_token="proxy-token",
         )
         session, temp_id, is_new = await manager.get_or_create_session()
         assert session is mock_session
@@ -38,7 +40,9 @@ async def test_register_real_session_id_moves_pending_to_active_and_maps():
 async def test_register_real_session_id_missing_temp_id_returns_false():
     from free_claude_code.cli.managed.manager import ManagedClaudeSessionManager
 
-    manager = ManagedClaudeSessionManager(workspace_path="/tmp", api_url="http://x/v1")
+    manager = ManagedClaudeSessionManager(
+        workspace_path="/tmp", proxy_root_url="http://x"
+    )
     ok = await manager.register_real_session_id("missing", "real_1")
     assert ok is False
 
@@ -56,7 +60,7 @@ async def test_remove_session_pending_stops_and_returns_true():
         mock_session_cls.return_value = mock_session
 
         manager = ManagedClaudeSessionManager(
-            workspace_path="/tmp", api_url="http://x/v1"
+            workspace_path="/tmp", proxy_root_url="http://x"
         )
         _, temp_id, _ = await manager.get_or_create_session()
 
@@ -78,7 +82,7 @@ async def test_remove_session_active_removes_temp_mapping():
         mock_session_cls.return_value = mock_session
 
         manager = ManagedClaudeSessionManager(
-            workspace_path="/tmp", api_url="http://x/v1"
+            workspace_path="/tmp", proxy_root_url="http://x"
         )
         _, temp_id, _ = await manager.get_or_create_session()
         await manager.register_real_session_id(temp_id, "real_1")
@@ -96,7 +100,9 @@ async def test_remove_session_active_removes_temp_mapping():
 async def test_stop_all_reports_and_retains_stop_exceptions():
     from free_claude_code.cli.managed.manager import ManagedClaudeSessionManager
 
-    manager = ManagedClaudeSessionManager(workspace_path="/tmp", api_url="http://x/v1")
+    manager = ManagedClaudeSessionManager(
+        workspace_path="/tmp", proxy_root_url="http://x"
+    )
 
     s1 = MagicMock()
     s1.stop = AsyncMock(side_effect=RuntimeError("boom"))

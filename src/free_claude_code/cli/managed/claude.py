@@ -9,8 +9,7 @@ from loguru import logger
 
 from free_claude_code.cli.claude_env import (
     CLAUDE_BINARY_NAME,
-    CLAUDE_CODE_AUTO_COMPACT_WINDOW,
-    claude_auth_token,
+    build_claude_proxy_env,
 )
 
 MANAGED_CLAUDE_MODEL_TIER = "opus"
@@ -40,7 +39,7 @@ class ManagedClaudeConfig:
     """Configuration for a managed Claude Code subprocess."""
 
     workspace_path: str
-    api_url: str
+    proxy_root_url: str
     allowed_dirs: list[str] = field(default_factory=list)
     plans_directory: str | None = None
     claude_bin: str = CLAUDE_BINARY_NAME
@@ -79,7 +78,7 @@ def build_managed_claude_invocation(
     return ManagedClaudeInvocation(
         argv=tuple(cmd),
         env=build_managed_claude_env(
-            api_url=config.api_url,
+            proxy_root_url=config.proxy_root_url,
             auth_token=config.auth_token,
             base_env=base_env,
         ),
@@ -99,19 +98,17 @@ def build_managed_claude_invocation(
 
 def build_managed_claude_env(
     *,
-    api_url: str,
+    proxy_root_url: str,
     auth_token: str,
     base_env: Mapping[str, str],
 ) -> dict[str, str]:
     """Return a Claude Code task environment that targets the local proxy."""
 
-    env = dict(base_env)
-    env["ANTHROPIC_API_URL"] = api_url
-    env["ANTHROPIC_BASE_URL"] = api_url[:-3] if api_url.endswith("/v1") else api_url
-    env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1"
-    env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = CLAUDE_CODE_AUTO_COMPACT_WINDOW
-    env.pop("ANTHROPIC_API_KEY", None)
-    env["ANTHROPIC_AUTH_TOKEN"] = claude_auth_token(auth_token)
+    env = build_claude_proxy_env(
+        proxy_root_url=proxy_root_url,
+        auth_token=auth_token,
+        base_env=base_env,
+    )
     env["TERM"] = "dumb"
     env["PYTHONIOENCODING"] = "utf-8"
     return env

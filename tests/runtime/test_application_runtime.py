@@ -912,7 +912,7 @@ async def test_composition_publishes_startup_notice_after_runtime_and_repair() -
         patch(
             "free_claude_code.runtime.application.cli_managed.ManagedClaudeSessionManager",
             return_value=cli_manager,
-        ),
+        ) as manager_constructor,
         patch("free_claude_code.runtime.application.messaging_session.SessionStore"),
         patch(
             "free_claude_code.runtime.application.messaging_workflow_module.MessagingWorkflow",
@@ -928,5 +928,9 @@ async def test_composition_publishes_startup_notice_after_runtime_and_repair() -
         "workflow.notice",
     ]
     workflow.publish_startup_notice.assert_awaited_once_with(notice)
+    assert manager_constructor.call_args.kwargs["proxy_root_url"] == (
+        "http://127.0.0.1:8082"
+    )
+    assert "api_url" not in manager_constructor.call_args.kwargs
 
     assert await runtime.close() is True

@@ -10,6 +10,7 @@ from dataclasses import asdict, dataclass
 from pathlib import Path
 from typing import Any
 
+from free_claude_code.cli.claude_env import build_claude_proxy_env
 from smoke.lib.child_process import run_captured_text
 from smoke.lib.config import ProviderModel, SmokeConfig, redacted
 from smoke.lib.server import RunningServer
@@ -117,14 +118,11 @@ def run_claude_cli(
         )
     )
 
-    env = os.environ.copy()
-    env["ANTHROPIC_BASE_URL"] = server.base_url
-    env["ANTHROPIC_API_URL"] = f"{server.base_url}/v1"
-    env.pop("ANTHROPIC_API_KEY", None)
-    if config.settings.anthropic_auth_token:
-        env["ANTHROPIC_AUTH_TOKEN"] = config.settings.anthropic_auth_token
-    else:
-        env.pop("ANTHROPIC_AUTH_TOKEN", None)
+    env = build_claude_proxy_env(
+        proxy_root_url=server.base_url,
+        auth_token=config.settings.anthropic_auth_token,
+        base_env=os.environ,
+    )
     env["TERM"] = "dumb"
     env["NO_COLOR"] = "1"
     env["PYTHONIOENCODING"] = "utf-8"
