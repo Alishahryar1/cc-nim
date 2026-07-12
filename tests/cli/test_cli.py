@@ -1,7 +1,6 @@
 """Tests for cli/ module."""
 
 import asyncio
-import json
 import os
 from typing import cast
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -674,36 +673,6 @@ class TestManagedClaudeSession:
             assert "--add-dir" in cmd
             assert os.path.normpath("/dir1") in cmd
             assert os.path.normpath("/dir2") in cmd
-
-    @pytest.mark.asyncio
-    async def test_start_task_plans_directory(self):
-        """Test start_task includes --settings plansDirectory when plans_directory set."""
-        from free_claude_code.cli.managed.session import ManagedClaudeSession
-
-        session = ManagedClaudeSession(
-            "/tmp",
-            "http://localhost:8082",
-            plans_directory="./agent_workspace/plans",
-        )
-
-        mock_process = AsyncMock()
-        mock_process.stdout.read.side_effect = [b""]
-        mock_process.stderr.read.return_value = b""
-        mock_process.wait.return_value = 0
-
-        with patch(
-            "asyncio.create_subprocess_exec", new_callable=AsyncMock
-        ) as mock_exec:
-            mock_exec.return_value = mock_process
-            async for _ in session.start_task("test"):
-                pass
-
-            cmd = mock_exec.call_args[0]
-            assert "--settings" in cmd
-            settings_idx = cmd.index("--settings")
-            assert settings_idx + 1 < len(cmd)
-            settings = json.loads(cmd[settings_idx + 1])
-            assert settings["plansDirectory"] == "./agent_workspace/plans"
 
     @pytest.mark.asyncio
     async def test_start_task_json_error(self):

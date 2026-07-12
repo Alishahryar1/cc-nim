@@ -932,5 +932,6 @@ async def test_composition_publishes_startup_notice_after_runtime_and_repair() -
         "http://127.0.0.1:8082"
     )
     assert "api_url" not in manager_constructor.call_args.kwargs
+    assert "plans_directory" not in manager_constructor.call_args.kwargs
 
     assert await runtime.close() is True

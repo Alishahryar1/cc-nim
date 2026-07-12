@@ -24,20 +24,17 @@ def _config(**overrides: object) -> ManagedClaudeConfig:
         for directory in raw_allowed_dirs:
             assert isinstance(directory, str)
             allowed_dirs.append(directory)
-    plans_directory = overrides.get("plans_directory")
     claude_bin = overrides.get("claude_bin", "claude")
     auth_token = overrides.get("auth_token", "proxy-token")
 
     assert isinstance(workspace_path, str)
     assert isinstance(proxy_root_url, str)
-    assert plans_directory is None or isinstance(plans_directory, str)
     assert isinstance(claude_bin, str)
     assert isinstance(auth_token, str)
     return ManagedClaudeConfig(
         workspace_path=workspace_path,
         proxy_root_url=proxy_root_url,
         allowed_dirs=allowed_dirs,
-        plans_directory=plans_directory,
         claude_bin=claude_bin,
         auth_token=auth_token,
     )
@@ -45,10 +42,7 @@ def _config(**overrides: object) -> ManagedClaudeConfig:
 
 def test_managed_claude_builds_new_task_command_and_env() -> None:
     invocation = build_managed_claude_invocation(
-        config=_config(
-            allowed_dirs=[os.path.normpath("/tmp/extra")],
-            plans_directory=".plans",
-        ),
+        config=_config(allowed_dirs=[os.path.normpath("/tmp/extra")]),
         request=ManagedClaudeTaskRequest(prompt="hello"),
         base_env={"PATH": "keep", "ANTHROPIC_API_KEY": "official"},
     )
@@ -64,7 +58,7 @@ def test_managed_claude_builds_new_task_command_and_env() -> None:
     assert "stream-json" in invocation.argv
     assert "--add-dir" in invocation.argv
     assert os.path.normpath("/tmp/extra") in invocation.argv
-    assert "--settings" in invocation.argv
+    assert "--settings" not in invocation.argv
     assert invocation.env["PATH"] == "keep"
     assert invocation.env["ANTHROPIC_BASE_URL"] == "http://localhost:8082"
     assert invocation.env["ANTHROPIC_AUTH_TOKEN"] == "proxy-token"
@@ -111,6 +105,16 @@ def test_managed_claude_builds_resume_and_fork_commands() -> None:
         "-p",
     )
     assert "--fork-session" in fork.argv
+
+
+def test_managed_claude_uses_native_plan_storage() -> None:
+    invocation = build_managed_claude_invocation(
+        config=_config(),
+        request=ManagedClaudeTaskRequest(prompt="hello"),
+        base_env={},
+    )
+
+    assert "--settings" not in invocation.argv
 
 
 def test_managed_claude_env_uses_sentinel_when_proxy_auth_blank() -> None:

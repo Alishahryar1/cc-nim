@@ -27,7 +27,7 @@ from free_claude_code.config.env_files import (
     process_env_key_is_effective,
 )
 from free_claude_code.config.model_refs import parse_provider_type
-from free_claude_code.config.paths import default_claude_workspace_path
+from free_claude_code.config.paths import messaging_state_dir_path
 from free_claude_code.config.server_urls import local_admin_url, local_proxy_root_url
 from free_claude_code.config.settings import Settings, get_settings
 from free_claude_code.messaging.platforms import factory as messaging_platform_factory
@@ -362,16 +362,14 @@ class ApplicationRuntime:
             else os.getcwd()
         )
         os.makedirs(workspace, exist_ok=True)
-        data_path = os.path.abspath(default_claude_workspace_path())
+        data_path = os.path.abspath(messaging_state_dir_path())
         os.makedirs(data_path, exist_ok=True)
         allowed_dirs = [workspace] if settings.allowed_dir else []
-        plans_dir_abs = os.path.abspath(os.path.join(data_path, "plans"))
 
         self._cli_manager = cli_managed.ManagedClaudeSessionManager(
             workspace_path=workspace,
             proxy_root_url=local_proxy_root_url(settings),
             allowed_dirs=allowed_dirs,
-            plans_directory=os.path.relpath(plans_dir_abs, workspace),
             auth_token=settings.anthropic_auth_token,
             log_raw_cli_diagnostics=settings.log_raw_cli_diagnostics,
             log_messaging_error_details=settings.log_messaging_error_details,
