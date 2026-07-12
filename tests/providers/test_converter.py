@@ -1,4 +1,5 @@
 import json
+import socket
 
 import pytest
 
@@ -745,6 +746,60 @@ def test_convert_user_message_image_url_policy_blocks_private_and_unsupported(
 
     with pytest.raises(OpenAIConversionError, match=match):
         AnthropicToOpenAIConverter.convert_messages(messages, vision_enabled=True)
+
+
+def test_convert_user_message_image_url_policy_blocks_private_dns_resolution(
+    monkeypatch,
+):
+    content = [
+        MockBlock(type="image", source={"type": "url", "url": "https://images.example"})
+    ]
+    messages = [MockMessage("user", content)]
+
+    def fake_getaddrinfo(*args, **kwargs):
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("169.254.169.254", 443),
+            )
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+    with pytest.raises(OpenAIConversionError, match="non-public address"):
+        AnthropicToOpenAIConverter.convert_messages(messages, vision_enabled=True)
+
+
+def test_convert_user_message_image_url_policy_allows_public_dns_resolution(
+    monkeypatch,
+):
+    content = [
+        MockBlock(type="image", source={"type": "url", "url": "https://images.example"})
+    ]
+    messages = [MockMessage("user", content)]
+
+    def fake_getaddrinfo(*args, **kwargs):
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", 443),
+            )
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+    result = AnthropicToOpenAIConverter.convert_messages(
+        messages,
+        vision_enabled=True,
+    )
+
+    assert result[0]["content"][0]["image_url"]["url"] == "https://images.example"
 
 
 def test_convert_user_message_image_base64_when_vision_enabled():

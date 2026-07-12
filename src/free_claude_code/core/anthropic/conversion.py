@@ -2,6 +2,7 @@
 
 import json
 import ipaddress
+import socket
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -194,21 +195,54 @@ def _normalize_user_image_url(url: str) -> str:
     try:
         ip = ipaddress.ip_address(normalized_host.strip("[]"))
     except ValueError:
+        ip = None
+
+    if ip is not None:
+        if _is_non_public_ip(ip):
+            raise OpenAIConversionError(
+                "User image URL source must not target local or private network addresses"
+            )
         return url
 
-    if (
+    infos = _resolve_user_image_host(normalized_host, parsed.port)
+    for *_, sockaddr in infos:
+        resolved_host = sockaddr[0]
+        try:
+            resolved_ip = ipaddress.ip_address(resolved_host)
+        except ValueError:
+            continue
+        if _is_non_public_ip(resolved_ip):
+            raise OpenAIConversionError(
+                f"User image URL source resolves to a non-public address ({resolved_ip})"
+            )
+
+    return url
+
+
+def _resolve_user_image_host(host: str, port: int | None) -> list[tuple]:
+    resolved_port = port if port is not None else 443
+    try:
+        return socket.getaddrinfo(
+            host,
+            resolved_port,
+            type=socket.SOCK_STREAM,
+            proto=socket.IPPROTO_TCP,
+        )
+    except OSError as exc:
+        raise OpenAIConversionError(
+            f"Could not resolve image URL host {host!r}: {exc}"
+        ) from exc
+
+
+def _is_non_public_ip(ip: ipaddress._BaseAddress) -> bool:
+    return (
         ip.is_loopback
         or ip.is_private
         or ip.is_link_local
         or ip.is_multicast
         or ip.is_reserved
         or ip.is_unspecified
-    ):
-        raise OpenAIConversionError(
-            "User image URL source must not target local or private network addresses"
-        )
-
-    return url
+    )
 
 
 class _OpenAIChatHistoryLedger:
