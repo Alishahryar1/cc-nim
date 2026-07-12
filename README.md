@@ -351,8 +351,6 @@ Configure integrations from **Admin UI → Messaging**, then click **Validate** 
 | Standalone `/clear` | Reset all FCC state and remove every tracked message in that chat, including user prompts, voice notes, FCC replies, Telegram's online notice, and the clear command itself. |
 | Reply with `/clear` | Delete the selected message and its literal platform reply subtree while preserving its ancestors and siblings. |
 
-A successful stop updates the affected task status instead of posting a second confirmation. FCC still replies when there is nothing to stop or when a global stop affects statuses in another chat.
-
 <details>
 <summary><strong>Voice notes</strong></summary>
 
