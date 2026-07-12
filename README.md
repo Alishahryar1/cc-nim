@@ -341,15 +341,17 @@ Configure integrations from **Admin UI → Messaging**, then click **Validate** 
 
 </details>
 
-Bot commands: standalone `/stop` cancels all work, standalone `/clear` resets all
-FCC state and removes every tracked message in that chat—including user prompts,
-voice notes, FCC replies, Telegram's online notice, and the clear command itself.
-`/stats` shows session state. Reply with `/stop` to cancel only that request while
-other queued requests continue. Reply with `/clear` to delete the selected message
-and its literal platform reply subtree while preserving its ancestors and siblings.
-A successful stop updates the affected task status instead of posting a second
-confirmation message. A no-op, or a global stop whose affected statuses are in
-another chat, still replies explicitly.
+### Messaging commands
+
+| Usage | Behavior |
+| --- | --- |
+| `/stats` | Show session state. |
+| Standalone `/stop` | Cancel all work. |
+| Reply with `/stop` | Cancel only the selected request while other queued requests continue. |
+| Standalone `/clear` | Reset all FCC state and remove every tracked message in that chat, including user prompts, voice notes, FCC replies, Telegram's online notice, and the clear command itself. |
+| Reply with `/clear` | Delete the selected message and its literal platform reply subtree while preserving its ancestors and siblings. |
+
+A successful stop updates the affected task status instead of posting a second confirmation. FCC still replies when there is nothing to stop or when a global stop affects statuses in another chat.
 
 <details>
 <summary><strong>Voice notes</strong></summary>
