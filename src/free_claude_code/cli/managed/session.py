@@ -32,7 +32,7 @@ class ManagedClaudeSession:
     def __init__(
         self,
         workspace_path: str,
-        api_url: str,
+        proxy_root_url: str,
         allowed_dirs: list[str] | None = None,
         plans_directory: str | None = None,
         claude_bin: str = "claude",
@@ -42,14 +42,14 @@ class ManagedClaudeSession:
     ):
         self.config = ManagedClaudeConfig(
             workspace_path=os.path.normpath(os.path.abspath(workspace_path)),
-            api_url=api_url,
+            proxy_root_url=proxy_root_url,
             allowed_dirs=[os.path.normpath(d) for d in (allowed_dirs or [])],
             plans_directory=plans_directory,
             claude_bin=claude_bin,
             auth_token=auth_token,
         )
         self.workspace = self.config.workspace_path
-        self.api_url = self.config.api_url
+        self.proxy_root_url = self.config.proxy_root_url
         self.allowed_dirs = self.config.allowed_dirs
         self.plans_directory = self.config.plans_directory
         self.claude_bin = self.config.claude_bin

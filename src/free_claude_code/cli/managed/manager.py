@@ -21,7 +21,7 @@ class ManagedClaudeSessionManager:
     def __init__(
         self,
         workspace_path: str,
-        api_url: str,
+        proxy_root_url: str,
         allowed_dirs: list[str] | None = None,
         plans_directory: str | None = None,
         claude_bin: str = CLAUDE_BINARY_NAME,
@@ -35,12 +35,12 @@ class ManagedClaudeSessionManager:
 
         Args:
             workspace_path: Working directory for CLI processes
-            api_url: API URL for the proxy
+            proxy_root_url: Root URL for the local proxy
             allowed_dirs: Directories the CLI is allowed to access
             plans_directory: Directory for Claude Code CLI plan files (passed via --settings)
         """
         self.workspace = workspace_path
-        self.api_url = api_url
+        self.proxy_root_url = proxy_root_url
         self.allowed_dirs = allowed_dirs or []
         self.plans_directory = plans_directory
         self.claude_bin = claude_bin
@@ -110,7 +110,7 @@ class ManagedClaudeSessionManager:
 
             new_session = ManagedClaudeSession(
                 workspace_path=self.workspace,
-                api_url=self.api_url,
+                proxy_root_url=self.proxy_root_url,
                 allowed_dirs=self.allowed_dirs,
                 plans_directory=self.plans_directory,
                 claude_bin=self.claude_bin,

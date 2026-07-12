@@ -777,14 +777,19 @@ otherwise the Messages handler rejects them before provider execution.
 
 ## CLI Launchers And Managed Claude
 
+[cli/claude_env.py](src/free_claude_code/cli/claude_env.py) owns the canonical
+Claude Code proxy environment used by every FCC-launched Claude process. It
+strips inherited `ANTHROPIC_*` variables, sets `ANTHROPIC_BASE_URL`, enables
+gateway model discovery, configures the auto-compact window, disables
+nonessential Anthropic traffic, and always sets `ANTHROPIC_AUTH_TOKEN`. Blank
+proxy auth becomes the local-only `fcc-no-auth` sentinel so Claude Code reaches
+the proxy instead of stopping at its login gate.
+
 [cli/launchers/claude.py](src/free_claude_code/cli/launchers/claude.py) owns the installed
 `fcc-claude` launcher:
 
-- `fcc-claude` strips inherited `ANTHROPIC_*` variables, sets
-  `ANTHROPIC_BASE_URL`, enables gateway model discovery, configures the
-  auto-compact window, and always sets `ANTHROPIC_AUTH_TOKEN`. Blank proxy auth
-  becomes the local-only `fcc-no-auth` sentinel so Claude Code reaches the proxy
-  instead of stopping at its login gate.
+- `fcc-claude` applies the shared proxy environment without changing the user's
+  Claude command arguments.
 
 [cli/launchers/codex.py](src/free_claude_code/cli/launchers/codex.py) owns the installed
 `fcc-codex` launcher:
@@ -801,10 +806,9 @@ otherwise the Messages handler rejects them before provider execution.
 - It stores the proxy auth token in `FCC_CODEX_API_KEY` for Codex to read.
 
 [cli/managed/](src/free_claude_code/cli/managed/) owns managed Claude Code subprocesses used by
-Discord and Telegram messaging. Managed task invocations set
-`ANTHROPIC_API_URL`, `ANTHROPIC_BASE_URL`, gateway model discovery,
-non-interactive terminal settings, optional `--resume`, optional
-`--fork-session`, `--model opus`, and `--output-format stream-json`. Messaging
+Discord and Telegram messaging. Managed task invocations extend the same proxy
+environment only with non-interactive terminal settings, optional `--resume`,
+optional `--fork-session`, `--model opus`, and `--output-format stream-json`. Messaging
 pins this Claude tier alias so phone sessions route through `MODEL_OPUS` or the
 `MODEL` fallback instead of inheriting a user's interactive `/model` picker
 state. The managed session parser extracts persistent Claude session IDs and

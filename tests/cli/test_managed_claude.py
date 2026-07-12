@@ -1,5 +1,6 @@
 import os
 
+from free_claude_code.cli.claude_env import build_claude_proxy_env
 from free_claude_code.cli.managed.claude import (
     MANAGED_CLAUDE_MODEL_TIER,
     ManagedClaudeConfig,
@@ -15,7 +16,7 @@ from free_claude_code.cli.managed.diagnostics import classify_managed_claude_std
 
 def _config(**overrides: object) -> ManagedClaudeConfig:
     workspace_path = overrides.get("workspace_path", os.path.normpath("/tmp/workspace"))
-    api_url = overrides.get("api_url", "http://localhost:8082/v1")
+    proxy_root_url = overrides.get("proxy_root_url", "http://localhost:8082")
     raw_allowed_dirs = overrides.get("allowed_dirs")
     allowed_dirs: list[str] = []
     if raw_allowed_dirs is not None:
@@ -28,13 +29,13 @@ def _config(**overrides: object) -> ManagedClaudeConfig:
     auth_token = overrides.get("auth_token", "proxy-token")
 
     assert isinstance(workspace_path, str)
-    assert isinstance(api_url, str)
+    assert isinstance(proxy_root_url, str)
     assert plans_directory is None or isinstance(plans_directory, str)
     assert isinstance(claude_bin, str)
     assert isinstance(auth_token, str)
     return ManagedClaudeConfig(
         workspace_path=workspace_path,
-        api_url=api_url,
+        proxy_root_url=proxy_root_url,
         allowed_dirs=allowed_dirs,
         plans_directory=plans_directory,
         claude_bin=claude_bin,
@@ -65,9 +66,12 @@ def test_managed_claude_builds_new_task_command_and_env() -> None:
     assert os.path.normpath("/tmp/extra") in invocation.argv
     assert "--settings" in invocation.argv
     assert invocation.env["PATH"] == "keep"
-    assert invocation.env["ANTHROPIC_API_URL"] == "http://localhost:8082/v1"
     assert invocation.env["ANTHROPIC_BASE_URL"] == "http://localhost:8082"
     assert invocation.env["ANTHROPIC_AUTH_TOKEN"] == "proxy-token"
+    assert invocation.env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] == "1"
+    assert invocation.env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "190000"
+    assert invocation.env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"
+    assert "ANTHROPIC_API_URL" not in invocation.env
     assert "ANTHROPIC_API_KEY" not in invocation.env
     assert invocation.trace_metadata["client_cli_id"] == "claude"
     assert invocation.trace_metadata["claude_binary"] == "claude"
@@ -111,12 +115,38 @@ def test_managed_claude_builds_resume_and_fork_commands() -> None:
 
 def test_managed_claude_env_uses_sentinel_when_proxy_auth_blank() -> None:
     env = build_managed_claude_env(
-        api_url="http://localhost:8082/v1",
+        proxy_root_url="http://localhost:8082",
         auth_token="",
         base_env={"ANTHROPIC_AUTH_TOKEN": "stale"},
     )
 
     assert env["ANTHROPIC_AUTH_TOKEN"] == "fcc-no-auth"
+
+
+def test_managed_claude_env_only_adds_noninteractive_process_settings() -> None:
+    base_env = {
+        "PATH": "keep",
+        "ANTHROPIC_API_URL": "https://api.anthropic.com/v1",
+        "ANTHROPIC_API_KEY": "official-key",
+        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "0",
+    }
+    proxy_env = build_claude_proxy_env(
+        proxy_root_url="http://localhost:8082",
+        auth_token="proxy-token",
+        base_env=base_env,
+    )
+
+    managed_env = build_managed_claude_env(
+        proxy_root_url="http://localhost:8082",
+        auth_token="proxy-token",
+        base_env=base_env,
+    )
+
+    assert managed_env == {
+        **proxy_env,
+        "TERM": "dumb",
+        "PYTHONIOENCODING": "utf-8",
+    }
 
 
 def test_managed_claude_stderr_classifier_filters_known_benign_notice() -> None:

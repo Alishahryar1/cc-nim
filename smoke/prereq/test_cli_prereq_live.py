@@ -4,6 +4,7 @@ from pathlib import Path
 
 import pytest
 
+from free_claude_code.cli.claude_env import build_claude_proxy_env
 from smoke.lib.child_process import (
     cmd_fcc_init,
     cmd_free_claude_code_serve,
@@ -58,10 +59,11 @@ def test_claude_cli_prompt_when_available(
         env_overrides={"MODEL": models[0].full_model, "MESSAGING_PLATFORM": "none"},
         name="claude-cli",
     ) as server:
-        env = os.environ.copy()
-        env["ANTHROPIC_BASE_URL"] = server.base_url
-        if smoke_config.settings.anthropic_auth_token:
-            env["ANTHROPIC_AUTH_TOKEN"] = smoke_config.settings.anthropic_auth_token
+        env = build_claude_proxy_env(
+            proxy_root_url=server.base_url,
+            auth_token=smoke_config.settings.anthropic_auth_token,
+            base_env=os.environ,
+        )
         result = run_captured_text(
             [claude_bin, "-p", "Reply with exactly FCC_SMOKE_PONG"],
             cwd=tmp_path,

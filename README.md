@@ -211,18 +211,20 @@ For terminal use, start `fcc-server`, then prefer `fcc-claude` or `fcc-codex`. U
 <details>
 <summary><strong>Claude Code in VS Code</strong></summary>
 
-Install the [Claude Code extension](https://marketplace.visualstudio.com/items?itemName=anthropic.claude-code). In VS Code settings, edit `claudeCode.environmentVariables`:
+Install the [Claude Code extension](https://marketplace.visualstudio.com/items?itemName=anthropic.claude-code). Open VS Code's user settings as JSON and add:
 
 ```json
+"claudeCode.disableLoginPrompt": true,
 "claudeCode.environmentVariables": [
   { "name": "ANTHROPIC_BASE_URL", "value": "http://localhost:8082" },
   { "name": "ANTHROPIC_AUTH_TOKEN", "value": "freecc" },
   { "name": "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "value": "1" },
-  { "name": "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "value": "190000" }
+  { "name": "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "value": "190000" },
+  { "name": "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "value": "1" }
 ]
 ```
 
-Match the port and authentication token to the Admin UI, then reload the extension. If prompted to log in, choose the Anthropic Console path once; FCC still handles model traffic.
+Match the port and authentication token to the Admin UI, then reload the extension.
 
 </details>
 
@@ -269,11 +271,38 @@ Set the environment for `acp.registry.claude-acp`:
   "ANTHROPIC_BASE_URL": "http://localhost:8082",
   "ANTHROPIC_AUTH_TOKEN": "freecc",
   "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
-  "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "190000"
+  "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "190000",
+  "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
 }
 ```
 
 Match the port and token to the Admin UI, then restart the IDE.
+
+</details>
+
+<details>
+<summary><strong>Claude Code still asks you to log in</strong></summary>
+
+If Claude Code asks you to log in after you configure the FCC URL and token, open its state file:
+
+- Windows: `%USERPROFILE%\.claude.json`
+- macOS/Linux/WSL: `~/.claude.json`
+
+Merge this property into the existing JSON without removing its other fields:
+
+```json
+"hasCompletedOnboarding": true
+```
+
+If the file does not exist, create it with a complete JSON object:
+
+```json
+{
+  "hasCompletedOnboarding": true
+}
+```
+
+Restart Claude Code or the IDE after saving the file.
 
 </details>
 
@@ -312,15 +341,15 @@ Configure integrations from **Admin UI → Messaging**, then click **Validate** 
 
 </details>
 
-Bot commands: standalone `/stop` cancels all work, standalone `/clear` resets all
-FCC state and removes every tracked message in that chat—including user prompts,
-voice notes, FCC replies, Telegram's online notice, and the clear command itself.
-`/stats` shows session state. Reply with `/stop` to cancel only that request while
-other queued requests continue. Reply with `/clear` to delete the selected message
-and its literal platform reply subtree while preserving its ancestors and siblings.
-A successful stop updates the affected task status instead of posting a second
-confirmation message. A no-op, or a global stop whose affected statuses are in
-another chat, still replies explicitly.
+### Messaging commands
+
+| Usage | Behavior |
+| --- | --- |
+| `/stats` | Show session state. |
+| Standalone `/stop` | Cancel all work. |
+| Reply with `/stop` | Cancel only the selected request while other queued requests continue. |
+| Standalone `/clear` | Reset all FCC state and remove every tracked message in that chat, including user prompts, voice notes, FCC replies, Telegram's online notice, and the clear command itself. |
+| Reply with `/clear` | Delete the selected message and its literal platform reply subtree while preserving its ancestors and siblings. |
 
 <details>
 <summary><strong>Voice notes</strong></summary>

@@ -2,12 +2,11 @@
 
 import os
 import sys
-from collections.abc import Mapping, Sequence
+from collections.abc import Sequence
 
 from free_claude_code.cli.claude_env import (
     CLAUDE_BINARY_NAME,
-    CLAUDE_CODE_AUTO_COMPACT_WINDOW,
-    claude_auth_token,
+    build_claude_proxy_env,
 )
 from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.config.settings import get_settings
@@ -40,7 +39,7 @@ def launch(argv: Sequence[str] | None = None) -> None:
     args = list(sys.argv[1:] if argv is None else argv)
     run_client_process(
         command=build_claude_launcher_command(binary_path=binary_path, argv=args),
-        env=build_claude_launcher_env(
+        env=build_claude_proxy_env(
             proxy_root_url=proxy_root_url,
             auth_token=settings.anthropic_auth_token,
             base_env=os.environ,
@@ -63,23 +62,3 @@ def build_claude_launcher_command(
     """Return the Claude wrapper command without changing user arguments."""
 
     return [binary_path, *argv]
-
-
-def build_claude_launcher_env(
-    *,
-    proxy_root_url: str,
-    auth_token: str,
-    base_env: Mapping[str, str],
-) -> dict[str, str]:
-    """Return a Claude Code environment that targets the local proxy."""
-
-    env = {
-        key: value
-        for key, value in base_env.items()
-        if not key.startswith("ANTHROPIC_")
-    }
-    env["ANTHROPIC_BASE_URL"] = proxy_root_url
-    env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1"
-    env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = CLAUDE_CODE_AUTO_COMPACT_WINDOW
-    env["ANTHROPIC_AUTH_TOKEN"] = claude_auth_token(auth_token)
-    return env

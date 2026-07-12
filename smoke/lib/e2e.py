@@ -16,6 +16,7 @@ from typing import Any
 import httpx
 import pytest
 
+from free_claude_code.cli.claude_env import build_claude_proxy_env
 from free_claude_code.config.provider_catalog import SUPPORTED_PROVIDER_IDS
 from free_claude_code.core.anthropic.stream_contracts import (
     SSEEvent,
@@ -278,15 +279,11 @@ class ClientProtocolDriver:
         prompt: str,
         model: str | None = None,
     ) -> subprocess.CompletedProcess[str]:
-        env = os.environ.copy()
-        env["ANTHROPIC_BASE_URL"] = server.base_url
-        env["ANTHROPIC_API_URL"] = f"{server.base_url}/v1"
-        env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = "1"
-        env.pop("ANTHROPIC_API_KEY", None)
-        if config.settings.anthropic_auth_token:
-            env["ANTHROPIC_AUTH_TOKEN"] = config.settings.anthropic_auth_token
-        else:
-            env.pop("ANTHROPIC_AUTH_TOKEN", None)
+        env = build_claude_proxy_env(
+            proxy_root_url=server.base_url,
+            auth_token=config.settings.anthropic_auth_token,
+            base_env=os.environ,
+        )
         command = [
             claude_bin,
             "--bare",
