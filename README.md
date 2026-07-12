@@ -280,8 +280,6 @@ Match the port and token to the Admin UI, then restart the IDE.
 
 </details>
 
-The nonessential-traffic setting disables Claude Code telemetry, error reporting, feedback, and automatic update checks for FCC sessions. Update Claude Code separately when needed.
-
 <details>
 <summary><strong>Claude Code still asks you to log in</strong></summary>
 
