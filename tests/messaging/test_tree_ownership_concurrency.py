@@ -7,6 +7,7 @@ from free_claude_code.messaging.models import IncomingMessage, MessageScope
 from free_claude_code.messaging.trees import manager as manager_module
 from free_claude_code.messaging.trees.manager import TreeQueueManager
 from free_claude_code.messaging.trees.transitions import (
+    AdmissionRejection,
     CancellationReason,
     CancellationUiOwner,
     NodeClaim,
@@ -76,7 +77,7 @@ async def test_cancelled_finisher_cannot_erase_or_overlap_a_new_claim() -> None:
     child = await manager.admit(
         _incoming("child", reply_to="root"),
         "status-child",
-        parent_node_id="root",
+        parent_reference_id="root",
     )
 
     assert child.position == 1
@@ -117,7 +118,7 @@ async def test_cancelled_runner_exception_cannot_fail_or_skip_queued_claim() -> 
     await manager.admit(
         _incoming("child", reply_to="root"),
         "status-child",
-        parent_node_id="root",
+        parent_reference_id="root",
     )
 
     try:
@@ -168,7 +169,7 @@ async def test_terminal_operation_serializes_with_successor_task_publication(
     await manager.admit(
         _incoming("child", reply_to="root"),
         "status-child",
-        parent_node_id="root",
+        parent_reference_id="root",
     )
     tree = manager._repository.get_tree(root.claim.identity)
     assert tree is not None
@@ -196,11 +197,11 @@ async def test_terminal_operation_serializes_with_successor_task_publication(
             )
         elif operation == "global_clear":
             operation_task = asyncio.create_task(
-                manager.clear_all(reason=CancellationReason.STOP)
+                manager.clear_scope(_SCOPE, reason=CancellationReason.STOP)
             )
         else:
             operation_task = asyncio.create_task(
-                manager.remove_branch(
+                manager.remove_message_subtree(
                     _SCOPE,
                     "root",
                     reason=CancellationReason.STOP,
@@ -295,7 +296,7 @@ async def test_callback_failure_does_not_block_the_next_claim() -> None:
     await manager.admit(
         _incoming("child", reply_to="root"),
         "status-child",
-        parent_node_id="root",
+        parent_reference_id="root",
     )
 
     release_root.set()
@@ -319,22 +320,21 @@ async def test_branch_removal_cannot_leave_a_detached_running_descendant() -> No
     await manager.admit(
         _incoming("branch", reply_to="root"),
         "status-branch",
-        parent_node_id="root",
+        parent_reference_id="root",
     )
 
-    removed = await manager.remove_branch(_SCOPE, "branch")
+    removed = await manager.remove_message_subtree(_SCOPE, "branch")
     late = await manager.admit(
         _incoming("late", reply_to="branch"),
         "status-late",
-        parent_node_id="branch",
+        parent_reference_id="branch",
     )
 
-    assert removed.clearable_message_ids == frozenset({"status-branch"})
+    assert removed.delete_message_ids == frozenset({"branch", "status-branch"})
     assert await manager.resolve_node_id(_SCOPE, "branch") is None
-    assert late.accepted is True
-    late_node = await manager.get_node(_SCOPE, "late")
-    assert late_node is not None
-    assert late_node.parent_id is None
+    assert late.accepted is False
+    assert late.rejection is AdmissionRejection.PARENT_REMOVED
+    assert await manager.get_node(_SCOPE, "late") is None
 
     release_root.set()
 
@@ -359,7 +359,7 @@ async def test_clear_all_drains_terminal_claim_task_before_returning() -> None:
     await terminal.wait()
 
     try:
-        await manager.clear_all(reason=CancellationReason.STOP)
+        await manager.clear_scope(_SCOPE, reason=CancellationReason.STOP)
 
         assert cleanup_finished.is_set()
         assert manager.task_count() == 0
@@ -392,7 +392,9 @@ async def test_clear_all_returns_committed_result_after_caller_cancellation() ->
     asyncio.get_running_loop().call_soon(checkpoint.set)
     await checkpoint.wait()
 
-    clear_task = asyncio.create_task(manager.clear_all(reason=CancellationReason.STOP))
+    clear_task = asyncio.create_task(
+        manager.clear_scope(_SCOPE, reason=CancellationReason.STOP)
+    )
     await runner_cancelled.wait()
 
     try:
@@ -478,7 +480,7 @@ async def test_absorbed_pre_run_cancellation_cannot_start_node_processor() -> No
     child = await manager.admit(
         _incoming("child", reply_to="root"),
         "status-child",
-        parent_node_id="root",
+        parent_reference_id="root",
     )
     assert child.position == 1
 
@@ -530,7 +532,7 @@ async def test_same_scoped_root_can_be_readmitted_while_detached_claim_finishes(
     await old_started.wait()
 
     try:
-        cleared = await manager.clear_all(reason=CancellationReason.STOP)
+        cleared = await manager.clear_scope(_SCOPE, reason=CancellationReason.STOP)
         await old_cancelled.wait()
         assert {effect.node.node_id for effect in cleared.effects} == {"root"}
         assert manager.get_tree_count() == 0

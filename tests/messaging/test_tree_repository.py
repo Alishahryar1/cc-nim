@@ -182,8 +182,9 @@ async def test_claim_state_and_session_updates_produce_detached_snapshots() -> N
     view = await manager.get_node(TELEGRAM_CHAT, "status-root")
     assert view is not None and view.state is MessageState.COMPLETED
     assert view.session_id == "session-root"
-    assert await manager.get_clearable_message_ids_for_chat("telegram", "chat") == {
-        "status-root"
+    assert await manager.get_message_ids_for_chat("telegram", "chat") == {
+        "root",
+        "status-root",
     }
 
     release.set()

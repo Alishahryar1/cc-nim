@@ -102,7 +102,7 @@ async def test_queued_cancel_returns_workflow_effect_and_exact_queue_update() ->
     decision = await manager.admit(
         _incoming("child", reply_to="root"),
         "status-child",
-        parent_node_id="root",
+        parent_reference_id="root",
     )
     assert decision.position == 1
 
@@ -192,7 +192,7 @@ async def test_escaped_processor_failure_persists_effects_through_manager_owner(
     await manager.admit(
         _incoming("child", reply_to="root"),
         "status-child",
-        parent_node_id="root",
+        parent_reference_id="root",
     )
 
     release.set()
@@ -229,7 +229,7 @@ async def test_wait_idle_spans_successor_publication_and_completion() -> None:
     await manager.admit(
         _incoming("child", reply_to="root"),
         "status-child",
-        parent_node_id="root",
+        parent_reference_id="root",
     )
     idle_task = asyncio.create_task(manager.wait_idle())
 

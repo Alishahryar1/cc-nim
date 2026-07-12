@@ -315,7 +315,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
     ),
     ConfigFieldSpec(
         "MAX_MESSAGE_LOG_ENTRIES_PER_CHAT",
-        "Max Clearable Messages Per Chat",
+        "Max Tracked Messages Per Chat",
         "messaging",
         "number",
         settings_attr="max_message_log_entries_per_chat",

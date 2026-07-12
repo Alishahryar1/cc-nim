@@ -440,6 +440,7 @@ class FakePlatform:
             scope=scope,
             voice_message_id=voice_message_id,
             status_message_id=status_message_id,
+            delete_message_ids=frozenset({voice_message_id, status_message_id}),
         )
         self._pending_voice[(scope, voice_message_id)] = result
         self._pending_voice[(scope, status_message_id)] = result
@@ -453,7 +454,19 @@ class FakePlatform:
         self._pending_voice.pop((scope, result.voice_message_id), None)
         if result.status_message_id is not None:
             self._pending_voice.pop((scope, result.status_message_id), None)
-        return result
+        delete_message_ids = {result.voice_message_id, result.status_message_id}
+        if reply_id == result.status_message_id:
+            delete_message_ids = {result.status_message_id}
+        return VoiceCancellationResult(
+            scope=result.scope,
+            voice_message_id=result.voice_message_id,
+            status_message_id=result.status_message_id,
+            delete_message_ids=frozenset(
+                message_id
+                for message_id in delete_message_ids
+                if message_id is not None
+            ),
+        )
 
     async def cancel_all_pending_voices(
         self,
@@ -465,6 +478,23 @@ class FakePlatform:
             }.values()
         )
         self._pending_voice.clear()
+        return results
+
+    async def cancel_pending_voices_in_scope(
+        self,
+        scope: MessageScope,
+    ) -> tuple[VoiceCancellationResult, ...]:
+        results = tuple(
+            {
+                result.voice_message_id: result
+                for (entry_scope, _reference_id), result in self._pending_voice.items()
+                if entry_scope == scope
+            }.values()
+        )
+        for result in results:
+            self._pending_voice.pop((scope, result.voice_message_id), None)
+            if result.status_message_id is not None:
+                self._pending_voice.pop((scope, result.status_message_id), None)
         return results
 
     @property

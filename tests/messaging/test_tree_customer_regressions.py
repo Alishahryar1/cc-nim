@@ -65,12 +65,8 @@ async def test_same_telegram_ids_in_different_chats_remain_independent_after_res
 
     assert restored.get_tree_count() == 2
     assert _snapshot_chat_ids(await restored.snapshot()) == {"chat-a", "chat-b"}
-    assert await restored.get_clearable_message_ids_for_chat("telegram", "chat-a") == {
-        "99"
-    }
-    assert await restored.get_clearable_message_ids_for_chat("telegram", "chat-b") == {
-        "99"
-    }
+    assert await restored.get_message_ids_for_chat("telegram", "chat-a") == {"42", "99"}
+    assert await restored.get_message_ids_for_chat("telegram", "chat-b") == {"42", "99"}
     assert await restored.get_node(chat_a, "42") is not None
     assert await restored.get_node(chat_b, "42") is not None
 

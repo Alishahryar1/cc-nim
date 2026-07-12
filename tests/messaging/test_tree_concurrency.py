@@ -77,7 +77,7 @@ async def test_one_tree_processes_fifo_with_transition_owned_queue_updates() -> 
         await manager.admit(
             _incoming(node_id, reply_to="root"),
             f"status-{node_id}",
-            parent_node_id="root",
+            parent_reference_id="root",
         )
         for node_id in node_ids[1:]
     ]
@@ -167,12 +167,12 @@ async def test_cancel_all_cancels_active_and_queued_work_across_trees() -> None:
     await manager.admit(
         _incoming("one-child", reply_to="one"),
         "status-one-child",
-        parent_node_id="one",
+        parent_reference_id="one",
     )
     await manager.admit(
         _incoming("two-child", reply_to="two"),
         "status-two-child",
-        parent_node_id="two",
+        parent_reference_id="two",
     )
 
     result = await manager.cancel_all(reason=CancellationReason.STOP)
@@ -221,27 +221,29 @@ async def test_branch_removal_atomically_unindexes_subtree_and_preserves_sibling
     await manager.admit(
         _incoming("branch", reply_to="root"),
         "status-branch",
-        parent_node_id="root",
+        parent_reference_id="root",
     )
     await manager.admit(
         _incoming("leaf", reply_to="branch"),
         "status-leaf",
-        parent_node_id="branch",
+        parent_reference_id="branch",
     )
     await manager.admit(
         _incoming("sibling", reply_to="root"),
         "status-sibling",
-        parent_node_id="root",
+        parent_reference_id="root",
     )
 
-    result = await manager.remove_branch(
+    result = await manager.remove_message_subtree(
         _SCOPE,
-        "status-branch",
+        "branch",
         reason=CancellationReason.STOP,
     )
 
     assert result.removed_tree_identity is None
-    assert result.clearable_message_ids == frozenset({"status-branch", "status-leaf"})
+    assert result.delete_message_ids == frozenset(
+        {"branch", "status-branch", "leaf", "status-leaf"}
+    )
     assert {
         effect.node.node_id: effect.ui_owner for effect in result.cancellation.effects
     } == {
@@ -277,19 +279,21 @@ async def test_root_removal_atomically_cancels_and_unindexes_entire_tree() -> No
     await manager.admit(
         _incoming("child", reply_to="root"),
         "status-child",
-        parent_node_id="root",
+        parent_reference_id="root",
     )
 
-    result = await manager.remove_branch(
+    result = await manager.remove_message_subtree(
         _SCOPE,
-        "status-root",
+        "root",
         reason=CancellationReason.STOP,
     )
 
     assert result.removed_tree_identity is not None
     assert result.removed_tree_identity.scope == _SCOPE
     assert result.removed_tree_identity.root_id == "root"
-    assert result.clearable_message_ids == frozenset({"status-root", "status-child"})
+    assert result.delete_message_ids == frozenset(
+        {"root", "status-root", "child", "status-child"}
+    )
     assert {
         effect.node.node_id: effect.ui_owner for effect in result.cancellation.effects
     } == {

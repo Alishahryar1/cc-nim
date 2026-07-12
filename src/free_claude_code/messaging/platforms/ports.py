@@ -82,6 +82,11 @@ class VoiceCancellation(Protocol):
         self,
     ) -> tuple[VoiceCancellationResult, ...]: ...
 
+    async def cancel_pending_voices_in_scope(
+        self,
+        scope: MessageScope,
+    ) -> tuple[VoiceCancellationResult, ...]: ...
+
 
 @dataclass(frozen=True, slots=True)
 class MessagingPlatformComponents:

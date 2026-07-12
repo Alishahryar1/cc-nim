@@ -20,12 +20,13 @@ from .repository import TreeRepository
 from .runtime import MessageTree
 from .snapshot import ConversationSnapshot, TreeSnapshot
 from .transitions import (
-    BranchRemovalResult,
+    AdmissionRejection,
     CancellationEffect,
     CancellationReason,
     CancellationResult,
     CancellationUiOwner,
     FailureResult,
+    MessageSubtreeRemovalResult,
     NodeClaim,
     NodeUiTarget,
     NodeView,
@@ -119,7 +120,7 @@ class TreeQueueManager:
         incoming: IncomingMessage,
         status_message_id: str,
         *,
-        parent_node_id: str | None = None,
+        parent_reference_id: str | None = None,
     ) -> QueueDecision:
         """Publish one admission before its processor can begin."""
         node_id = str(incoming.message_id)
@@ -137,10 +138,20 @@ class TreeQueueManager:
 
             tree: MessageTree | None = None
             resolved_parent: ReplyTarget | None = None
-            if parent_node_id is not None:
-                tree = self._repository.get_tree_for_reference(scope, parent_node_id)
+            if parent_reference_id is not None:
+                tree = self._repository.get_tree_for_reference(
+                    scope, parent_reference_id
+                )
                 if tree is not None:
-                    resolved_parent = await tree.resolve_reply(parent_node_id)
+                    resolved_parent = await tree.resolve_reply(parent_reference_id)
+
+                if tree is None or resolved_parent is None:
+                    return QueueDecision(
+                        claim=None,
+                        position=None,
+                        snapshot=None,
+                        rejection=AdmissionRejection.PARENT_REMOVED,
+                    )
 
             if tree is not None and resolved_parent is not None:
                 decision = await tree.add_and_enqueue(
@@ -149,6 +160,7 @@ class TreeQueueManager:
                     prompt,
                     status_message_id,
                     resolved_parent.node_id,
+                    resolved_parent.reference_id,
                 )
                 self._repository.register_node(
                     identity=tree.identity,
@@ -409,21 +421,25 @@ class TreeQueueManager:
                 snapshots.append(snapshot)
         return CancellationResult(effects=tuple(effects), snapshots=tuple(snapshots))
 
-    async def clear_all(
+    async def clear_scope(
         self,
+        scope: MessageScope,
         *,
         reason: CancellationReason | None = None,
     ) -> CancellationResult:
-        """Atomically detach all trees, then drain their exact active tasks."""
-        return await _finish_transition(self._clear_all(reason))
+        """Atomically detach one chat's trees, then drain their active tasks."""
+        return await _finish_transition(self._clear_scope(scope, reason))
 
-    async def _clear_all(
+    async def _clear_scope(
         self,
+        scope: MessageScope,
         reason: CancellationReason | None,
     ) -> CancellationResult:
         transitions: list[tuple[TreeCancellation, CancelledTask | None]] = []
         async with self._lock:
             for tree in self._repository.trees():
+                if tree.identity.scope != scope:
+                    continue
                 transition = await tree.cancel_all()
                 cancelled_task = (
                     self._processor.cancel(transition.active_claim, reason)
@@ -431,7 +447,7 @@ class TreeQueueManager:
                     else None
                 )
                 transitions.append((transition, cancelled_task))
-            self._repository = TreeRepository()
+                self._repository.remove_tree(tree.identity)
 
         await _drain_cancelled_tasks(
             [
@@ -445,42 +461,44 @@ class TreeQueueManager:
             effects.extend(self._external_effects(transition, cancelled_task))
         return CancellationResult(effects=tuple(effects))
 
-    async def remove_branch(
+    async def remove_message_subtree(
         self,
         scope: MessageScope,
-        branch_root_id: str,
+        reference_id: str,
         *,
         reason: CancellationReason | None = None,
-    ) -> BranchRemovalResult:
-        """Atomically cancel, detach, and unindex one scoped branch."""
+    ) -> MessageSubtreeRemovalResult:
+        """Atomically cancel, detach, and unindex one literal reply subtree."""
         return await _finish_transition(
-            self._remove_branch(scope, branch_root_id, reason)
+            self._remove_message_subtree(scope, reference_id, reason)
         )
 
-    async def _remove_branch(
+    async def _remove_message_subtree(
         self,
         scope: MessageScope,
-        branch_root_id: str,
+        reference_id: str,
         reason: CancellationReason | None,
-    ) -> BranchRemovalResult:
+    ) -> MessageSubtreeRemovalResult:
         async with self._lock:
-            tree = self._repository.get_tree_for_reference(scope, branch_root_id)
+            tree = self._repository.get_tree_for_reference(scope, reference_id)
             if tree is None:
-                return BranchRemovalResult(
+                return MessageSubtreeRemovalResult(
                     cancellation=CancellationResult(),
                     removed_tree_identity=None,
-                    clearable_message_ids=frozenset(),
+                    delete_message_ids=frozenset(),
+                    tree_matched=False,
                 )
-            target = await tree.resolve_reply(branch_root_id)
+            target = await tree.resolve_reply(reference_id)
             if target is None:
-                return BranchRemovalResult(
+                return MessageSubtreeRemovalResult(
                     cancellation=CancellationResult(),
                     removed_tree_identity=None,
-                    clearable_message_ids=frozenset(),
+                    delete_message_ids=frozenset(),
+                    tree_matched=False,
                 )
             identity = tree.identity
-            transition = await tree.remove_branch(target.node_id)
-            lookup_ids = set(transition.reference_ids)
+            transition = await tree.remove_message_subtree(target.reference_id)
+            lookup_ids = set(transition.removed_message_ids)
             if transition.removed_entire_tree:
                 self._repository.remove_tree(identity)
             else:
@@ -509,12 +527,13 @@ class TreeQueueManager:
             ),
             snapshots=(snapshot,) if snapshot is not None else (),
         )
-        return BranchRemovalResult(
+        return MessageSubtreeRemovalResult(
             cancellation=cancellation,
             removed_tree_identity=(
                 identity if transition.removed_entire_tree else None
             ),
-            clearable_message_ids=transition.clearable_message_ids,
+            delete_message_ids=transition.removed_message_ids,
+            tree_matched=True,
         )
 
     def get_tree_count(self) -> int:
@@ -527,16 +546,12 @@ class TreeQueueManager:
         """Wait until every processor-owned claim has finished cleanup."""
         await self._processor.wait_idle()
 
-    async def get_clearable_message_ids_for_chat(
-        self, platform: str, chat_id: str
-    ) -> set[str]:
+    async def get_message_ids_for_chat(self, platform: str, chat_id: str) -> set[str]:
         async with self._lock:
-            clearable_message_ids: set[str] = set()
+            message_ids: set[str] = set()
             for tree in self._repository.trees():
-                clearable_message_ids.update(
-                    await tree.clearable_message_ids_for_chat(platform, chat_id)
-                )
-            return clearable_message_ids
+                message_ids.update(await tree.message_ids_for_chat(platform, chat_id))
+            return message_ids
 
     async def snapshot(self) -> ConversationSnapshot:
         async with self._lock:

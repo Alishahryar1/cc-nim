@@ -12,11 +12,16 @@ from .command_dispatcher import (
     dispatch_command,
     parse_command_base,
 )
-from .models import IncomingMessage, MessageScope
+from .models import AdmissionToken, IncomingMessage, MessageScope
 from .platforms.ports import OutboundMessenger
-from .safe_diagnostics import format_exception_for_log
 from .session import SessionStore
-from .trees import NodeClaim, QueueDecision, QueueEntry, ReplyTarget
+from .trees import (
+    AdmissionRejection,
+    NodeClaim,
+    QueueDecision,
+    QueueEntry,
+    ReplyTarget,
+)
 
 
 class MessagingTurnIntake:
@@ -31,13 +36,12 @@ class MessagingTurnIntake:
         command_context: MessagingCommandContext,
         resolve_reply: Callable[[MessageScope, str], Awaitable[ReplyTarget | None]],
         admit_turn: Callable[
-            [IncomingMessage, str, str | None, int],
+            [IncomingMessage, str, str | None, AdmissionToken],
             Awaitable[QueueDecision | None],
         ],
         format_status: Callable[[str, str, str | None], str],
         get_parse_mode: Callable[[], str | None],
         record_outgoing_message: Callable[[str, str, str | None, str], bool],
-        log_messaging_error_details: bool = False,
     ) -> None:
         self.platform_name = platform_name
         self.outbound = outbound
@@ -48,53 +52,20 @@ class MessagingTurnIntake:
         self._format_status = format_status
         self._get_parse_mode = get_parse_mode
         self._record_outgoing_message = record_outgoing_message
-        self._log_messaging_error_details = log_messaging_error_details
-
-    def _record_clear_command(self, incoming: IncomingMessage) -> None:
-        """Retain a clear command only when later clear cleanup may need it."""
-        if incoming.message_id is None:
-            return
-        try:
-            self.session_store.record_clear_command_id(
-                incoming.platform,
-                incoming.chat_id,
-                str(incoming.message_id),
-            )
-        except Exception as exc:
-            logger.debug(
-                "Failed to record clear command message_id: {}",
-                format_exception_for_log(
-                    exc,
-                    log_full_message=self._log_messaging_error_details,
-                ),
-            )
 
     async def handle_message(
         self,
         incoming: IncomingMessage,
         *,
-        admission_epoch: int,
+        admission_token: AdmissionToken,
     ) -> None:
         """
         Handle an inbound platform message and queue it if it is a user prompt.
         """
         cmd_base = parse_command_base(incoming.text)
 
-        # Standalone clear owns and deletes its command ID. Defer recording so the
-        # command cannot evict an older deletion target from a bounded log; if the
-        # clear fails or is cancelled, retain the command for a later clear.
-        is_clear = cmd_base == "/clear"
-        is_global_clear = is_clear and not incoming.is_reply()
-        if is_clear and not is_global_clear:
-            self._record_clear_command(incoming)
-
-        try:
-            if await dispatch_command(self._command_context, incoming, cmd_base):
-                return
-        except BaseException:
-            if is_global_clear:
-                self._record_clear_command(incoming)
-            raise
+        if await dispatch_command(self._command_context, incoming, cmd_base):
+            return
 
         text = incoming.text or ""
         if any(text.startswith(p) for p in STATUS_MESSAGE_PREFIXES):
@@ -138,19 +109,34 @@ class MessagingTurnIntake:
         decision = await self._admit_turn(
             incoming,
             status_msg_id,
-            reply_target.node_id if reply_target is not None else None,
-            admission_epoch,
+            reply_target.reference_id if reply_target is not None else None,
+            admission_token,
         )
         if decision is None:
             logger.info(
-                "Discarded messaging admission invalidated by global stop/clear for node {}",
+                "Discarded messaging admission invalidated by a stop/clear boundary for node {}",
                 node_id,
             )
-            await self._discard_rejected_status(incoming, status_msg_id)
+            await self._discard_rejected_messages(
+                incoming,
+                status_msg_id,
+                include_prompt=False,
+            )
             return
         if not decision.accepted:
-            logger.debug("Ignored duplicate messaging admission for node {}", node_id)
-            await self._discard_rejected_status(incoming, status_msg_id)
+            include_prompt = decision.rejection is AdmissionRejection.PARENT_REMOVED
+            logger.debug(
+                "Rejected messaging admission for node {}: {}",
+                node_id,
+                decision.rejection.value
+                if decision.rejection is not None
+                else "unknown",
+            )
+            await self._discard_rejected_messages(
+                incoming,
+                status_msg_id,
+                include_prompt=include_prompt,
+            )
             return
 
         if decision.position is not None and status_msg_id:
@@ -174,16 +160,21 @@ class MessagingTurnIntake:
                 parse_mode=self._get_parse_mode(),
             )
 
-    async def _discard_rejected_status(
+    async def _discard_rejected_messages(
         self,
         incoming: IncomingMessage,
         status_message_id: str,
+        *,
+        include_prompt: bool,
     ) -> None:
-        """Remove the provisional status created for a rejected admission."""
+        """Remove messages created by an admission that cannot commit."""
+        message_ids = {status_message_id}
+        if include_prompt:
+            message_ids.add(str(incoming.message_id))
         try:
             await self.outbound.queue_delete_messages(
                 incoming.chat_id,
-                [status_message_id],
+                list(message_ids),
                 fire_and_forget=False,
             )
         except Exception as exc:
@@ -192,10 +183,10 @@ class MessagingTurnIntake:
                 type(exc).__name__,
             )
         try:
-            self.session_store.forget_clearable_message_ids(
+            self.session_store.forget_tracked_message_ids(
                 incoming.platform,
                 incoming.chat_id,
-                {status_message_id},
+                message_ids,
             )
         except Exception as exc:
             logger.debug(

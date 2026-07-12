@@ -150,6 +150,13 @@ class DiscordRuntime:
         """Cancel every pending voice transcription and handoff."""
         return await self._voice_flow.cancel_all_pending_voices()
 
+    async def cancel_pending_voices_in_scope(
+        self,
+        scope: MessageScope,
+    ) -> tuple[VoiceCancellationResult, ...]:
+        """Cancel pending voice transcriptions belonging to one chat."""
+        return await self._voice_flow.cancel_pending_voices_in_scope(scope)
+
     async def _handle_voice_note(
         self, message: Any, attachment: Any, channel_id: str
     ) -> bool:

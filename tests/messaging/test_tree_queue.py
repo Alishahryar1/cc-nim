@@ -36,6 +36,7 @@ def _add(
         prompt=f"prompt {node_id}",
         status_message_id=status_message_id,
         parent_id=parent_id,
+        parent_reference_id=parent_id,
     )
 
 
@@ -54,6 +55,7 @@ def test_node_snapshot_round_trip_preserves_execution_state_only() -> None:
     assert restored.status_message_id == "status-root"
     assert restored.state is MessageState.COMPLETED
     assert restored.session_id == "session-root"
+    assert restored.parent_reference_id is None
     assert restored.children_ids == []
     assert "children_ids" not in snapshot
     assert "created_at" not in snapshot
@@ -95,6 +97,41 @@ def test_graph_restore_normalizes_numeric_ids_to_string_references() -> None:
     assert child is not None and child.node_id == "2"
 
 
+def test_graph_restore_normalizes_legacy_parent_to_prompt_reference() -> None:
+    graph = MessageTreeGraph(_root())
+    _add(graph, "child", "status-child", "root")
+    snapshot = graph.snapshot()
+    snapshot.nodes["child"].pop("parent_reference_id")
+
+    restored = MessageTreeGraph.from_snapshot(snapshot)
+
+    child = restored.get_node("child")
+    assert child is not None
+    assert child.parent_reference_id == "root"
+    assert restored.snapshot().nodes["child"]["parent_reference_id"] == "root"
+
+
+def test_cleared_status_round_trip_preserves_prompt_anchor() -> None:
+    graph = MessageTreeGraph(_root())
+    graph.clear_status("root")
+
+    restored = MessageTreeGraph.from_snapshot(graph.snapshot())
+
+    root = restored.get_root()
+    assert root.status_message_id is None
+    assert root.state is MessageState.ERROR
+    assert restored.resolve_reference("root") is not None
+    assert restored.resolve_reference("status-root") is None
+
+
+def test_snapshot_rejects_runnable_node_without_status() -> None:
+    snapshot = MessageTreeGraph(_root()).snapshot()
+    snapshot.nodes["root"]["status_message_id"] = None
+
+    with pytest.raises(ValueError, match="requires a status"):
+        MessageTreeGraph.from_snapshot(snapshot)
+
+
 def test_graph_rejects_duplicate_node_and_status_identity() -> None:
     graph = MessageTreeGraph(_root())
     _add(graph, "child", "status-child", "root")
@@ -103,15 +140,20 @@ def test_graph_rejects_duplicate_node_and_status_identity() -> None:
         _add(graph, "child", "status-other", "root")
     with pytest.raises(ValueError, match="already exists"):
         _add(graph, "other", "status-child", "root")
+    with pytest.raises(ValueError, match="must be distinct"):
+        _add(graph, "same", "same", "root")
 
 
-def test_graph_remove_branch_removes_descendants_and_status_lookups() -> None:
+def test_graph_reference_subtree_can_remove_exact_nodes_and_status_lookups() -> None:
     graph = MessageTreeGraph(_root())
     _add(graph, "branch", "status-branch", "root")
     _add(graph, "leaf", "status-leaf", "branch")
     _add(graph, "sibling", "status-sibling", "root")
 
-    graph.remove_branch("branch")
+    references = graph.get_reference_descendants("branch")
+    graph.remove_nodes(
+        {reference for reference in references if not reference.startswith("status-")}
+    )
 
     assert graph.get_node("branch") is None
     assert graph.get_node("leaf") is None

@@ -14,6 +14,7 @@ from free_claude_code.messaging.trees import (
     CancellationResult,
     CancellationUiOwner,
     FailureResult,
+    MessageReferenceKind,
     NodeClaim,
     NodeUiTarget,
     QueueDecision,
@@ -131,13 +132,23 @@ def test_get_initial_status_branches():
     handler = MessagingWorkflow(platform, cli_manager, session_store)
 
     s1 = handler.turn_intake._get_initial_status(
-        ReplyTarget(node_id="p", queue_position=3)
+        ReplyTarget(
+            node_id="p",
+            reference_id="p",
+            reference_kind=MessageReferenceKind.PROMPT,
+            queue_position=3,
+        )
     )
     assert "Queued" in s1
     assert "position 3" in s1 or "position 3" in s1.replace("\\", "")
 
     s2 = handler.turn_intake._get_initial_status(
-        ReplyTarget(node_id="p", queue_position=None)
+        ReplyTarget(
+            node_id="p",
+            reference_id="status-p",
+            reference_kind=MessageReferenceKind.STATUS,
+            queue_position=None,
+        )
     )
     assert "Continuing" in s2
 
@@ -329,7 +340,7 @@ async def test_handle_message_unresolved_reply_is_admitted_as_new():
     admit.assert_awaited_once_with(
         incoming,
         "status_1",
-        parent_node_id=None,
+        parent_reference_id=None,
     )
 
 
@@ -415,7 +426,7 @@ async def test_handle_message_incoming_text_none_safe():
     admit.assert_awaited_once_with(
         incoming,
         "status_1",
-        parent_node_id=None,
+        parent_reference_id=None,
     )
 
 

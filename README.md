@@ -291,7 +291,9 @@ Configure integrations from **Admin UI → Messaging**, then click **Validate** 
 <summary><strong>Discord bot</strong></summary>
 
 1. Create a bot in the [Discord Developer Portal](https://discord.com/developers/applications).
-2. Enable **Message Content Intent** and invite it with read, send, and message-history permissions.
+2. Enable **Message Content Intent** and invite it with read, send,
+   message-history, and **Manage Messages** permissions so `/clear` can remove
+   user prompts.
 3. Set **Messaging Platform** to **discord**.
 4. Enter **Discord Bot Token**, **Allowed Discord Channels**, and an absolute **Allowed Directory**.
 5. Apply the settings and restart the server if requested.
@@ -303,6 +305,7 @@ Configure integrations from **Admin UI → Messaging**, then click **Validate** 
 
 1. Create a bot with [@BotFather](https://t.me/BotFather).
 2. Get your numeric user ID from [@userinfobot](https://t.me/userinfobot).
+   In groups, grant the bot permission to delete messages.
 3. Set **Messaging Platform** to **telegram**.
 4. Enter **Telegram Bot Token**, **Allowed Telegram User ID**, and an absolute **Allowed Directory**.
 5. Apply the settings and restart the server if requested.
@@ -310,11 +313,11 @@ Configure integrations from **Admin UI → Messaging**, then click **Validate** 
 </details>
 
 Bot commands: standalone `/stop` cancels all work, standalone `/clear` resets all
-sessions and removes tracked FCC messages in that chat—including Telegram's
-online notice and the clear command itself—while preserving user messages and
-voice notes. `/stats` shows session state. Reply with `/stop` to cancel only that
-request while other queued requests continue. Reply with `/clear` to remove that
-conversation branch and its FCC replies without deleting user-authored messages.
+FCC state and removes every tracked message in that chat—including user prompts,
+voice notes, FCC replies, Telegram's online notice, and the clear command itself.
+`/stats` shows session state. Reply with `/stop` to cancel only that request while
+other queued requests continue. Reply with `/clear` to delete the selected message
+and its literal platform reply subtree while preserving its ancestors and siblings.
 A successful stop updates the affected task status instead of posting a second
 confirmation message. A no-op, or a global stop whose affected statuses are in
 another chat, still replies explicitly.

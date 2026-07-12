@@ -438,7 +438,7 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     ),
     FeatureCoverage(
         "messaging_commands",
-        "Messaging commands mutate FCC state while preserving user-authored messages",
+        "Messaging commands clear exact reply subtrees or whole managed chats",
         "public_surface",
         (
             "tests/messaging/test_handler.py",
@@ -448,6 +448,7 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         (),
         (
             "test_messaging_commands_stop_clear_stats_e2e",
+            "test_reply_clear_uses_literal_platform_subtree_e2e",
             "test_messaging_startup_notice_is_clearable_e2e",
             "test_messaging_active_stop_uses_status_only_e2e",
             "test_messaging_queued_scoped_cancel_e2e",

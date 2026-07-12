@@ -120,6 +120,16 @@ class ConversationSnapshot:
         trees.pop(identity, None)
         return ConversationSnapshot(trees=trees)
 
+    def without_scope(self, scope: MessageScope) -> ConversationSnapshot:
+        """Remove every tree belonging to one platform chat."""
+        return ConversationSnapshot(
+            trees={
+                identity: tree
+                for identity, tree in self.trees.items()
+                if identity.scope != scope
+            }
+        )
+
 
 def _legacy_scope(
     root_id: str,
@@ -159,21 +169,36 @@ def node_to_snapshot(node: MessageNode) -> dict[str, Any]:
         "status_message_id": node.status_message_id,
         "state": node.state.value,
         "parent_id": node.parent_id,
+        "parent_reference_id": node.parent_reference_id,
         "session_id": node.session_id,
     }
 
 
 def node_from_snapshot(data: dict[str, Any], scope: MessageScope) -> MessageNode:
+    state = MessageState(data["state"])
+    status_message_id = _optional_id(
+        data.get("status_message_id"),
+        "status_message_id",
+    )
+    if state in (MessageState.PENDING, MessageState.IN_PROGRESS) and (
+        status_message_id is None
+    ):
+        raise ValueError("Runnable tree snapshot node requires a status message")
+    parent_id = _optional_id(data.get("parent_id"), "parent_id")
+    parent_reference_id = _optional_id(
+        data.get("parent_reference_id"),
+        "parent_reference_id",
+    )
+    if parent_reference_id is None:
+        parent_reference_id = parent_id
     return MessageNode(
         node_id=_required_id(data.get("node_id"), "node_id"),
         scope=scope,
         prompt="",
-        status_message_id=_required_id(
-            data.get("status_message_id"),
-            "status_message_id",
-        ),
-        state=MessageState(data["state"]),
-        parent_id=_optional_id(data.get("parent_id"), "parent_id"),
+        status_message_id=status_message_id,
+        state=state,
+        parent_id=parent_id,
+        parent_reference_id=parent_reference_id,
         session_id=_optional_id(data.get("session_id"), "session_id"),
     )
 

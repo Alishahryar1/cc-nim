@@ -531,17 +531,19 @@ async def test_close_retries_real_workflow_persistence_without_losing_latest_sta
 
     with patch.object(persistence_module.threading, "Timer"):
         store = SessionStore(storage_path=str(store_path))
-        store.record_outbound_message_id(
+        store.record_message_id(
             "telegram",
             "chat_1",
             "old",
+            "out",
             "status",
         )
         store.flush_pending_save()
-        store.record_outbound_message_id(
+        store.record_message_id(
             "telegram",
             "chat_1",
             "latest",
+            "out",
             "status",
         )
         workflow = MessagingWorkflow(outbound, cli_manager, store)
@@ -561,13 +563,13 @@ async def test_close_retries_real_workflow_persistence_without_losing_latest_sta
             assert runtime._cli_manager is cli_manager
             assert runtime.is_closed is False
             assert store.dirty is True
-            assert store.get_clearable_message_ids_for_chat("telegram", "chat_1") == [
+            assert store.get_tracked_message_ids_for_chat("telegram", "chat_1") == [
                 "old",
                 "latest",
             ]
             assert SessionStore(
                 storage_path=str(store_path)
-            ).get_clearable_message_ids_for_chat("telegram", "chat_1") == ["old"]
+            ).get_tracked_message_ids_for_chat("telegram", "chat_1") == ["old"]
 
             assert await runtime.close() is True
 
@@ -578,7 +580,7 @@ async def test_close_retries_real_workflow_persistence_without_losing_latest_sta
         assert store.dirty is False
         assert SessionStore(
             storage_path=str(store_path)
-        ).get_clearable_message_ids_for_chat("telegram", "chat_1") == [
+        ).get_tracked_message_ids_for_chat("telegram", "chat_1") == [
             "old",
             "latest",
         ]

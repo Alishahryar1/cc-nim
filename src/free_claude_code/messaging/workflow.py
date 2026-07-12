@@ -9,8 +9,9 @@ from loguru import logger
 from free_claude_code.core.trace import trace_event
 
 from .command_context import ReplyClearResult, StopOutcome
+from .command_dispatcher import parse_command_base
 from .managed_protocols import ManagedClaudeSessionManagerProtocol
-from .models import IncomingMessage, MessageScope
+from .models import AdmissionToken, IncomingMessage, MessageScope
 from .node_runner import MessagingNodeRunner
 from .platforms.ports import (
     MessagingStartupNotice,
@@ -108,8 +109,8 @@ class MessagingWorkflow:
         self._log_messaging_error_details = log_messaging_error_details
         self._rendering_profile = build_rendering_profile(self.platform_name)
         self._state_lock = asyncio.Lock()
-        self._admission_epoch = 0
-        self._clear_generation = 0
+        self._stop_generation = 0
+        self._clear_generations: dict[MessageScope, int] = {}
         self._pending_restored_status_targets: tuple[NodeUiTarget, ...] = ()
 
         self._tree_queue: TreeQueueManager
@@ -138,7 +139,6 @@ class MessagingWorkflow:
             format_status=self.format_status,
             get_parse_mode=self._parse_mode,
             record_outgoing_message=self.record_outgoing_message,
-            log_messaging_error_details=log_messaging_error_details,
         )
         self._tree_queue = self._build_tree_queue()
 
@@ -217,8 +217,9 @@ class MessagingWorkflow:
 
     async def publish_startup_notice(self, notice: MessagingStartupNotice) -> None:
         """Publish one notice, then transfer its receipt to clear ownership."""
+        scope = MessageScope(platform=self.platform_name, chat_id=notice.chat_id)
         async with self._state_lock:
-            clear_generation = self._clear_generation
+            clear_generation = self._clear_generations.get(scope, 0)
 
         try:
             message_id = await self.outbound.queue_send_message(
@@ -266,7 +267,9 @@ class MessagingWorkflow:
         async with self._state_lock:
             must_discard = (
                 publisher_task is not None and publisher_task.cancelling() > 0
-            ) or clear_generation != self._clear_generation
+            ) or clear_generation != self._clear_generations.get(
+                MessageScope(platform=self.platform_name, chat_id=notice.chat_id), 0
+            )
             if not must_discard:
                 must_discard = not self.record_outgoing_message(
                     self.platform_name,
@@ -312,7 +315,7 @@ class MessagingWorkflow:
             return
 
         async with self._state_lock:
-            self.forget_clearable_message_ids(
+            self.forget_tracked_message_ids(
                 self.platform_name,
                 chat_id,
                 {message_id},
@@ -340,12 +343,27 @@ class MessagingWorkflow:
             chat_id=incoming.chat_id,
             node_id=incoming.message_id,
         ):
-            async with self._state_lock:
-                admission_epoch = self._admission_epoch
-            await self.turn_intake.handle_message(
-                incoming,
-                admission_epoch=admission_epoch,
+            is_standalone_clear = (
+                parse_command_base(incoming.text) == "/clear"
+                and not incoming.is_reply()
             )
+            async with self._state_lock:
+                admission_token = AdmissionToken(
+                    stop_generation=self._stop_generation,
+                    clear_generation=self._clear_generations.get(incoming.scope, 0),
+                )
+                if not is_standalone_clear:
+                    self._record_incoming_message(incoming)
+            try:
+                await self.turn_intake.handle_message(
+                    incoming,
+                    admission_token=admission_token,
+                )
+            except BaseException:
+                if is_standalone_clear:
+                    async with self._state_lock:
+                        self._record_incoming_message(incoming)
+                raise
 
     async def resolve_reply(
         self,
@@ -358,15 +376,15 @@ class MessagingWorkflow:
         self,
         incoming: IncomingMessage,
         status_message_id: str,
-        parent_node_id: str | None,
-        admission_epoch: int,
+        parent_reference_id: str | None,
+        admission_token: AdmissionToken,
     ) -> QueueDecision | None:
         return await _finish_owned_operation(
             self._admit_if_current(
                 incoming,
                 status_message_id,
-                parent_node_id,
-                admission_epoch,
+                parent_reference_id,
+                admission_token,
             ),
             name=f"messaging-admit-{incoming.message_id}",
         )
@@ -375,17 +393,21 @@ class MessagingWorkflow:
         self,
         incoming: IncomingMessage,
         status_message_id: str,
-        parent_node_id: str | None,
-        admission_epoch: int,
+        parent_reference_id: str | None,
+        admission_token: AdmissionToken,
     ) -> QueueDecision | None:
         """Commit admission and its exact snapshot as one owned transaction."""
         async with self._state_lock:
-            if admission_epoch != self._admission_epoch:
+            current_token = AdmissionToken(
+                stop_generation=self._stop_generation,
+                clear_generation=self._clear_generations.get(incoming.scope, 0),
+            )
+            if admission_token != current_token:
                 return None
             decision = await self._tree_queue.admit(
                 incoming,
                 status_message_id,
-                parent_node_id=parent_node_id,
+                parent_reference_id=parent_reference_id,
             )
             if decision.snapshot is not None:
                 self.session_store.save_tree_snapshot(decision.snapshot)
@@ -446,30 +468,25 @@ class MessagingWorkflow:
         reply_id: str,
     ) -> ReplyClearResult | None:
         voice_result = await self._cancel_pending_voice(scope, reply_id)
-        if voice_result is not None:
-            self.render_voice_stopped(voice_result)
 
         async with self._state_lock:
-            node_id = await self._tree_queue.resolve_node_id(scope, reply_id)
-            if node_id is None:
-                if voice_result is None:
-                    return None
-                return ReplyClearResult(
-                    clearable_message_ids=voice_result.clearable_message_ids,
-                    tree_cleared=False,
-                )
+            subtree = await self._tree_queue.remove_message_subtree(
+                scope,
+                reply_id,
+                reason=CancellationReason.CLEAR,
+            )
+            if not subtree.tree_matched and voice_result is None:
+                return None
+            self._save_cancellation_snapshots(subtree.cancellation)
+            if subtree.removed_tree_identity is not None:
+                self.session_store.remove_tree_snapshot(subtree.removed_tree_identity)
 
-            branch = await self._tree_queue.remove_branch(scope, node_id)
-            self._apply_cancellation_result(branch.cancellation)
-            if branch.removed_tree_identity is not None:
-                self.session_store.remove_tree_snapshot(branch.removed_tree_identity)
-
-        clearable_message_ids = set(branch.clearable_message_ids)
+        delete_message_ids = set(subtree.delete_message_ids)
         if voice_result is not None:
-            clearable_message_ids.update(voice_result.clearable_message_ids)
+            delete_message_ids.update(voice_result.delete_message_ids)
         return ReplyClearResult(
-            clearable_message_ids=frozenset(clearable_message_ids),
-            tree_cleared=True,
+            delete_message_ids=frozenset(delete_message_ids),
+            tree_matched=subtree.tree_matched,
         )
 
     async def stop_all_tasks(self) -> StopOutcome:
@@ -484,7 +501,7 @@ class MessagingWorkflow:
         for voice in voice_results:
             self.render_voice_stopped(voice)
         async with self._state_lock:
-            self._admission_epoch += 1
+            self._stop_generation += 1
             logger.info("Cancelling tree queue tasks...")
             result = await self._tree_queue.cancel_all(reason=CancellationReason.STOP)
             logger.info("Cancelled {} nodes", len(result.effects))
@@ -493,89 +510,58 @@ class MessagingWorkflow:
             await self.cli_manager.stop_all()
             return _stop_outcome(voice_results, result)
 
-    async def clear_all_state(self, platform: str, chat_id: str) -> frozenset[str]:
+    async def clear_chat(self, platform: str, chat_id: str) -> frozenset[str]:
         """Clear FCC state atomically with respect to later turn admission."""
         return await _finish_owned_operation(
-            self._clear_all_state(platform, chat_id),
-            name="messaging-clear-all",
+            self._clear_chat(platform, chat_id),
+            name=f"messaging-clear-{platform}-{chat_id}",
         )
 
-    async def _clear_all_state(
+    async def _clear_chat(
         self,
         platform: str,
         chat_id: str,
     ) -> frozenset[str]:
-        """Globally reset FCC state; return deletion IDs for the invoking chat."""
-        voice_results = await self._cancel_all_pending_voices()
-        for voice in voice_results:
-            self.render_voice_stopped(voice)
+        """Reset one chat's FCC state and return all tracked deletion IDs."""
+        clear_scope = MessageScope(platform=platform, chat_id=chat_id)
+        voice_results = await self._cancel_pending_voices_in_scope(clear_scope)
         async with self._state_lock:
-            clearable_message_ids: set[str] = set()
-            clear_scope = MessageScope(platform=platform, chat_id=chat_id)
+            delete_message_ids: set[str] = set()
             for voice in voice_results:
-                if voice.scope == clear_scope:
-                    clearable_message_ids.update(voice.clearable_message_ids)
-            try:
-                clearable_message_ids.update(
-                    str(message_id)
-                    for message_id in self.session_store.get_clearable_message_ids_for_chat(
-                        platform, chat_id
-                    )
-                    if message_id is not None
-                )
-            except Exception as exc:
-                logger.debug(
-                    "Failed to read clearable-message log for /clear: {}",
-                    type(exc).__name__,
-                )
+                delete_message_ids.update(voice.delete_message_ids)
+            delete_message_ids.update(
+                self.session_store.get_tracked_message_ids_for_chat(platform, chat_id)
+            )
 
-            clearable_message_ids.update(
-                await self._tree_queue.get_clearable_message_ids_for_chat(
-                    platform, chat_id
-                )
+            delete_message_ids.update(
+                await self._tree_queue.get_message_ids_for_chat(platform, chat_id)
             )
             # All fallible/cancellable reads precede the commit boundary. Once
-            # the epoch advances, the following synchronous wipe and the
-            # manager's cancellation-safe detach complete as one-way work.
-            self._admission_epoch += 1
-            self._clear_generation += 1
-            try:
-                self.session_store.clear_all()
-            except Exception as exc:
-                logger.warning("Failed to clear session store: {}", type(exc).__name__)
-
+            # the scope generation advances, state removal is one-way work.
+            self._clear_generations[clear_scope] = (
+                self._clear_generations.get(clear_scope, 0) + 1
+            )
             failures: list[Exception] = []
-            result = CancellationResult()
             try:
-                result = await self._tree_queue.clear_all(
-                    reason=CancellationReason.STOP
+                await self._tree_queue.clear_scope(
+                    clear_scope,
+                    reason=CancellationReason.CLEAR,
                 )
             except Exception as exc:
                 failures.append(exc)
-            # A runner may terminalize during task draining after the early
-            # store clear. The detached manager now rejects later writes; clear
-            # this final pre-detach snapshot without erasing newer clearable IDs.
             try:
-                self.session_store.clear_conversation_snapshot()
+                self.session_store.clear_scope(clear_scope)
             except Exception as exc:
                 failures.append(exc)
                 logger.warning(
                     "Failed to persist final cleared session state: {}",
                     type(exc).__name__,
                 )
-            try:
-                self._apply_cancellation_result(result)
-            except Exception as exc:
-                failures.append(exc)
-            try:
-                await self.cli_manager.stop_all()
-            except Exception as exc:
-                failures.append(exc)
             if len(failures) == 1:
                 raise failures[0]
             if failures:
-                raise ExceptionGroup("Global clear failed", failures)
-            return frozenset(clearable_message_ids)
+                raise ExceptionGroup("Chat clear failed", failures)
+            return frozenset(delete_message_ids)
 
     async def _cancel_all_pending_voices(
         self,
@@ -584,6 +570,15 @@ class MessagingWorkflow:
         if cancellation is None:
             return ()
         return await cancellation.cancel_all_pending_voices()
+
+    async def _cancel_pending_voices_in_scope(
+        self,
+        scope: MessageScope,
+    ) -> tuple[VoiceCancellationResult, ...]:
+        cancellation = self.voice_cancellation
+        if cancellation is None:
+            return ()
+        return await cancellation.cancel_pending_voices_in_scope(scope)
 
     async def _cancel_pending_voice(
         self,
@@ -608,19 +603,19 @@ class MessagingWorkflow:
             )
         )
 
-    def forget_clearable_message_ids(
+    def forget_tracked_message_ids(
         self,
         platform: str,
         chat_id: str,
         message_ids: set[str],
     ) -> None:
         try:
-            self.session_store.forget_clearable_message_ids(
+            self.session_store.forget_tracked_message_ids(
                 platform, chat_id, message_ids
             )
         except Exception as exc:
             logger.warning(
-                "Failed to update session store after branch clear: {}",
+                "Failed to update managed-message log after clear: {}",
                 type(exc).__name__,
             )
 
@@ -635,10 +630,11 @@ class MessagingWorkflow:
         if not msg_id:
             return False
         try:
-            self.session_store.record_outbound_message_id(
+            self.session_store.record_message_id(
                 platform,
                 chat_id,
                 str(msg_id),
+                "out",
                 kind,
             )
         except Exception as exc:
@@ -652,6 +648,40 @@ class MessagingWorkflow:
             return False
         return True
 
+    def _record_incoming_message(self, incoming: IncomingMessage) -> bool:
+        """Record an inbound prompt, voice note, or command for standalone clear."""
+        command = parse_command_base(incoming.text)
+        kind = (
+            "command"
+            if command.startswith("/")
+            else "voice"
+            if incoming.status_message_id is not None
+            else "prompt"
+        )
+        try:
+            self.session_store.record_message_id(
+                incoming.platform,
+                incoming.chat_id,
+                str(incoming.message_id),
+                "in",
+                kind,
+            )
+        except Exception as exc:
+            logger.debug(
+                "Failed to record managed inbound message_id: {}",
+                format_exception_for_log(
+                    exc,
+                    log_full_message=self._log_messaging_error_details,
+                ),
+            )
+            return False
+        return True
+
+    def _save_cancellation_snapshots(self, result: CancellationResult) -> None:
+        """Persist transition snapshots without publishing cancellation UI."""
+        for snapshot in result.snapshots:
+            self.session_store.save_tree_snapshot(snapshot)
+
     def _apply_cancellation_result(self, result: CancellationResult) -> None:
         """Apply detached UI and persistence effects from one transition."""
         for effect in result.effects:
@@ -664,8 +694,7 @@ class MessagingWorkflow:
                         parse_mode=self._parse_mode(),
                     )
                 )
-        for snapshot in result.snapshots:
-            self.session_store.save_tree_snapshot(snapshot)
+        self._save_cancellation_snapshots(result)
 
     def _apply_unexpected_failure(self, result: FailureResult) -> None:
         """Persist and render a failure that escaped the total node runner."""

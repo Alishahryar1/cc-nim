@@ -15,6 +15,7 @@ from free_claude_code.messaging.session.persistence import DebouncedJsonPersiste
 from free_claude_code.messaging.trees import TreeIdentity, TreeSnapshot
 
 TELEGRAM_C1 = MessageScope(platform="telegram", chat_id="c1")
+TELEGRAM_C2 = MessageScope(platform="telegram", chat_id="c2")
 
 
 def _identity(root_id: str, scope: MessageScope = TELEGRAM_C1) -> TreeIdentity:
@@ -500,7 +501,7 @@ class TestSessionStoreAtomicWrites:
             ),
             pytest.raises(OSError, match="clear replace failed"),
         ):
-            store.clear_all()
+            store.clear_scope(TELEGRAM_C1)
 
         assert store.load_conversation_snapshot().is_empty
         assert store.dirty is True
@@ -525,17 +526,17 @@ class TestSessionStoreAtomicWrites:
             ),
             pytest.raises(RuntimeError, match="authoritative snapshot failed"),
         ):
-            store.clear_all()
+            store.clear_scope(TELEGRAM_C1)
 
         assert store.dirty is True
 
-        store.clear_all()
+        store.clear_scope(TELEGRAM_C1)
 
         assert store.dirty is False
 
 
-class TestSessionStoreClearAll:
-    def test_clear_all_wipes_state_and_persists(self, tmp_path):
+class TestSessionStoreClearScope:
+    def test_clear_scope_wipes_matching_state_and_persists(self, tmp_path):
         path = str(tmp_path / "sessions.json")
         store = SessionStore(storage_path=path)
 
@@ -567,37 +568,74 @@ class TestSessionStoreClearAll:
             )
         )
 
-        store.clear_all()
+        store.clear_scope(TELEGRAM_C1)
 
         assert store.load_conversation_snapshot().is_empty
 
         with open(path, encoding="utf-8") as f:
             data = json.load(f)
         assert data["conversation"]["trees"] == []
-        assert data["message_log"] == {}
+        assert data["managed_messages"] == {}
 
         store2 = SessionStore(storage_path=path)
         assert store2.load_conversation_snapshot().is_empty
 
-    def test_clearable_message_log_persists_and_dedups(self, tmp_path):
+    def test_clear_scope_preserves_other_chat_trees_and_messages(self, tmp_path):
+        path = str(tmp_path / "sessions.json")
+        store = SessionStore(storage_path=path)
+        other_tree = TreeSnapshot(
+            scope=TELEGRAM_C2,
+            root_id="root2",
+            nodes={
+                "root2": {
+                    "node_id": "root2",
+                    "status_message_id": "status2",
+                    "state": "completed",
+                    "parent_id": None,
+                    "parent_reference_id": None,
+                    "session_id": "session2",
+                }
+            },
+        )
+        store.save_tree_snapshot(other_tree)
+        store.record_message_id("telegram", "c1", "message1", "in", "prompt")
+        store.record_message_id("telegram", "c2", "message2", "in", "prompt")
+
+        store.clear_scope(TELEGRAM_C1)
+
+        assert (
+            store.load_conversation_snapshot().get_tree(other_tree.identity) is not None
+        )
+        assert store.get_tracked_message_ids_for_chat("telegram", "c1") == []
+        assert store.get_tracked_message_ids_for_chat("telegram", "c2") == ["message2"]
+        restored = SessionStore(storage_path=path)
+        assert (
+            restored.load_conversation_snapshot().get_tree(other_tree.identity)
+            is not None
+        )
+        assert restored.get_tracked_message_ids_for_chat("telegram", "c2") == [
+            "message2"
+        ]
+
+    def test_managed_message_log_persists_and_dedups(self, tmp_path):
         path = str(tmp_path / "sessions.json")
         store = SessionStore(storage_path=path)
 
-        store.record_outbound_message_id("telegram", "c1", "2", "command")
-        store.record_outbound_message_id("telegram", "c1", "2", "command")
-        store.record_clear_command_id("telegram", "c1", "3")
+        store.record_message_id("telegram", "c1", "2", "out", "command")
+        store.record_message_id("telegram", "c1", "2", "out", "command")
+        store.record_message_id("telegram", "c1", "3", "in", "command")
 
-        ids = store.get_clearable_message_ids_for_chat("telegram", "c1")
+        ids = store.get_tracked_message_ids_for_chat("telegram", "c1")
         assert ids == ["2", "3"]
 
         store.flush_pending_save()
         store2 = SessionStore(storage_path=path)
-        assert store2.get_clearable_message_ids_for_chat("telegram", "c1") == [
+        assert store2.get_tracked_message_ids_for_chat("telegram", "c1") == [
             "2",
             "3",
         ]
 
-    def test_load_drops_legacy_user_messages_from_clearable_log(self, tmp_path):
+    def test_load_preserves_legacy_managed_messages(self, tmp_path):
         path = tmp_path / "sessions.json"
         path.write_text(
             json.dumps(
@@ -634,7 +672,9 @@ class TestSessionStoreClearAll:
 
         store = SessionStore(storage_path=str(path))
 
-        assert store.get_clearable_message_ids_for_chat("telegram", "c1") == [
+        assert store.get_tracked_message_ids_for_chat("telegram", "c1") == [
+            "prompt",
+            "old-command",
             "status",
             "clear-command",
         ]
