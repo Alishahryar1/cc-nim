@@ -150,15 +150,17 @@ def _convert_user_image_source(source: dict[str, Any]) -> dict[str, Any]:
     source_type = str(source.get("type") or "").strip().lower()
     if source_type == "url":
         url = source.get("url")
-        if not isinstance(url, str) or not url.strip():
+        if not isinstance(url, str) or not (url := url.strip()):
             raise OpenAIConversionError("User image URL source must include a URL")
         return {"type": "image_url", "image_url": {"url": url}}
 
     if source_type == "base64":
         data = source.get("data") or source.get("base64")
-        if not isinstance(data, str) or not data.strip():
+        if not isinstance(data, str) or not (data := data.strip()):
             raise OpenAIConversionError("User base64 image source must include data")
         media_type = source.get("media_type") or source.get("mime_type") or "image/png"
+        if not isinstance(media_type, str) or not (media_type := media_type.strip()):
+            media_type = "image/png"
         return {
             "type": "image_url",
             "image_url": {
