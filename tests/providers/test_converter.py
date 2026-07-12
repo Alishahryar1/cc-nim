@@ -729,6 +729,24 @@ def test_convert_user_message_image_url_when_vision_enabled():
     ]
 
 
+@pytest.mark.parametrize(
+    ("bad_url", "match"),
+    [
+        ("http://169.254.169.254/latest/meta-data", "private network"),
+        ("https://localhost/image.png", "localhost"),
+        ("ftp://example.com/image.png", "http or https"),
+    ],
+)
+def test_convert_user_message_image_url_policy_blocks_private_and_unsupported(
+    bad_url, match
+):
+    content = [MockBlock(type="image", source={"type": "url", "url": bad_url})]
+    messages = [MockMessage("user", content)]
+
+    with pytest.raises(OpenAIConversionError, match=match):
+        AnthropicToOpenAIConverter.convert_messages(messages, vision_enabled=True)
+
+
 def test_convert_user_message_image_base64_when_vision_enabled():
     content = [
         MockBlock(
@@ -757,6 +775,26 @@ def test_convert_user_message_image_base64_when_vision_enabled():
             ],
         }
     ]
+
+
+def test_convert_user_message_image_source_trims_whitespace():
+    content = [
+        MockBlock(
+            type="image",
+            source={
+                "type": "base64",
+                "media_type": " image/png \n",
+                "data": " YQ== ",
+            },
+        )
+    ]
+    messages = [MockMessage("user", content)]
+    result = AnthropicToOpenAIConverter.convert_messages(
+        messages,
+        vision_enabled=True,
+    )
+
+    assert result[0]["content"][0]["image_url"]["url"] == "data:image/png;base64,YQ=="
 
 
 def test_convert_assistant_text_after_tool_use_requires_matching_tool_result():

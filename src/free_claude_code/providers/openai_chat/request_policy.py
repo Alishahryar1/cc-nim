@@ -36,8 +36,8 @@ class OpenAIChatRequestPolicy:
 def build_openai_chat_request_body(
     request_data: MessagesRequest,
     *,
-    vision_enabled: bool = False,
     thinking_enabled: bool,
+    vision_enabled: bool = False,
     policy: OpenAIChatRequestPolicy,
     postprocessors: Iterable[OpenAIChatPostprocessor] = (),
 ) -> dict[str, Any]:

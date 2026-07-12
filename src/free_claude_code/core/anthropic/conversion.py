@@ -1,10 +1,12 @@
 """Message and tool format converters."""
 
 import json
+import ipaddress
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import StrEnum
 from typing import Any
+from urllib.parse import urlsplit
 
 from .content import get_block_attr, get_block_type
 from .models import MessagesRequest
@@ -152,7 +154,7 @@ def _convert_user_image_source(source: dict[str, Any]) -> dict[str, Any]:
         url = source.get("url")
         if not isinstance(url, str) or not (url := url.strip()):
             raise OpenAIConversionError("User image URL source must include a URL")
-        return {"type": "image_url", "image_url": {"url": url}}
+        return {"type": "image_url", "image_url": {"url": _normalize_user_image_url(url)}}
 
     if source_type == "base64":
         data = source.get("data") or source.get("base64")
@@ -171,6 +173,42 @@ def _convert_user_image_source(source: dict[str, Any]) -> dict[str, Any]:
     raise OpenAIConversionError(
         "User image blocks must use a url or base64 source for OpenAI chat conversion"
     )
+
+
+def _normalize_user_image_url(url: str) -> str:
+    parsed = urlsplit(url)
+    scheme = (parsed.scheme or "").lower()
+    if scheme not in {"http", "https"}:
+        raise OpenAIConversionError(
+            "User image URL source must use http or https"
+        )
+
+    host = parsed.hostname
+    if host is None:
+        raise OpenAIConversionError("User image URL source must include a host")
+
+    normalized_host = host.strip().lower()
+    if normalized_host == "localhost" or normalized_host.endswith(".localhost"):
+        raise OpenAIConversionError("User image URL source must not target localhost")
+
+    try:
+        ip = ipaddress.ip_address(normalized_host.strip("[]"))
+    except ValueError:
+        return url
+
+    if (
+        ip.is_loopback
+        or ip.is_private
+        or ip.is_link_local
+        or ip.is_multicast
+        or ip.is_reserved
+        or ip.is_unspecified
+    ):
+        raise OpenAIConversionError(
+            "User image URL source must not target local or private network addresses"
+        )
+
+    return url
 
 
 class _OpenAIChatHistoryLedger:
