@@ -112,6 +112,28 @@ function Get-ApplicationCommand {
     return $commands[0]
 }
 
+function Get-PowerShellExecutable {
+    param([string] $PowerShellHome = $PSHOME)
+
+    $executableName = if ($PSVersionTable.PSEdition -eq "Core") {
+        "pwsh.exe"
+    }
+    else {
+        "powershell.exe"
+    }
+    $bundledExecutable = Join-Path $PowerShellHome $executableName
+    if (Test-Path -LiteralPath $bundledExecutable -PathType Leaf) {
+        return $bundledExecutable
+    }
+
+    $pathCommand = Get-ApplicationCommand ([IO.Path]::GetFileNameWithoutExtension($executableName))
+    if ($pathCommand) {
+        return $pathCommand.Source
+    }
+
+    throw "Unable to locate a PowerShell executable for the downloaded installer."
+}
+
 function Add-PathEntry {
     param([string] $PathEntry)
 
@@ -174,10 +196,7 @@ function Invoke-DownloadedPowerShellInstaller {
             throw "The downloaded $Name installer was empty."
         }
 
-        $powerShellPath = (Get-Process -Id $PID).Path
-        if ([string]::IsNullOrWhiteSpace($powerShellPath)) {
-            throw "Unable to locate the current PowerShell executable."
-        }
+        $powerShellPath = Get-PowerShellExecutable
 
         $hadNonInteractive = Test-Path Env:CODEX_NON_INTERACTIVE
         $previousNonInteractive = $env:CODEX_NON_INTERACTIVE

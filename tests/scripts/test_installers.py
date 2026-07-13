@@ -17,6 +17,20 @@ def _write_executable(path: Path, text: str) -> None:
     path.chmod(0o755)
 
 
+def _braced_body(text: str, declaration: str) -> str:
+    start = text.index(declaration)
+    brace_start = text.index("{", start)
+    depth = 0
+    for index, char in enumerate(text[brace_start:], start=brace_start):
+        if char == "{":
+            depth += 1
+        elif char == "}":
+            depth -= 1
+            if depth == 0:
+                return text[brace_start + 1 : index]
+    raise AssertionError(f"Unclosed function body for {declaration}")
+
+
 def _posix_command(name: str) -> str:
     return f"""#!/bin/sh
 echo "{name}:$*" >> "$CALL_LOG"
@@ -729,3 +743,39 @@ def test_installers_use_native_clients_and_single_python_selection() -> None:
         assert "python install" not in text
         assert "tool update-shell" in text
         assert "--python" in text
+
+
+@pytest.mark.parametrize("powershell", _powershells())
+def test_install_ps1_falls_back_when_pshome_executable_is_unavailable(
+    tmp_path: Path,
+    powershell: str,
+) -> None:
+    text = (_repo_root() / "scripts" / "install.ps1").read_text(encoding="utf-8")
+    body = _braced_body(text, "function Get-PowerShellExecutable")
+    fallback = tmp_path / "fallback" / "powershell.exe"
+    script = tmp_path / "test-powershell-resolution.ps1"
+    script.write_text(
+        f"""Set-StrictMode -Version Latest
+function Get-ApplicationCommand {{
+    param([string] $Name)
+    return [pscustomobject] @{{ Source = {str(fallback)!r} }}
+}}
+function Get-PowerShellExecutable {{
+{body}
+}}
+$resolved = Get-PowerShellExecutable -PowerShellHome {str(tmp_path / "missing")!r}
+if ($resolved -ne {str(fallback)!r}) {{
+    throw "Unexpected fallback: $resolved"
+}}
+""",
+        encoding="utf-8",
+    )
+
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-File", str(script)],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
