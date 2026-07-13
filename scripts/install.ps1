@@ -1,4 +1,6 @@
 param(
+    [switch] $ClaudeOnly,
+    [switch] $CodexOnly,
     [switch] $VoiceNim,
     [switch] $VoiceLocal,
     [switch] $VoiceAll,
@@ -24,6 +26,8 @@ Usage: install.ps1 [options]
 Installs Claude Code and Codex if missing, installs or updates uv, Python 3.14.0, and Free Claude Code.
 
 Options:
+  -ClaudeOnly            Install only Claude Code (skip Codex).
+  -CodexOnly             Install only Codex (skip Claude Code).
   -VoiceNim              Install NVIDIA NIM voice transcription support.
   -VoiceLocal            Install local Whisper voice transcription support.
   -VoiceAll              Install all voice transcription backends.
@@ -395,11 +399,19 @@ if ((-not [string]::IsNullOrWhiteSpace($TorchBackend)) -and (-not ($VoiceLocal -
     throw "-TorchBackend requires -VoiceLocal or -VoiceAll."
 }
 
-Write-Step "Installing Claude Code if missing"
-Install-ClaudeIfMissing
+if ($ClaudeOnly -and $CodexOnly) {
+    throw "-ClaudeOnly and -CodexOnly are mutually exclusive. Omit both flags to install everything."
+}
 
-Write-Step "Installing Codex if missing"
-Install-CodexIfMissing
+if (-not $CodexOnly) {
+    Write-Step "Installing Claude Code if missing"
+    Install-ClaudeIfMissing
+}
+
+if (-not $ClaudeOnly) {
+    Write-Step "Installing Codex if missing"
+    Install-CodexIfMissing
+}
 
 Write-Step "Installing uv if missing, updating if present"
 Install-OrUpdateUv

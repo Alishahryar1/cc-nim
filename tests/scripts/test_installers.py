@@ -41,7 +41,7 @@ def test_install_sh_installs_claude_only_when_missing() -> None:
     assert "run npm install -g @anthropic-ai/claude-code" in body
     assert body.index("command -v claude") < body.index("run npm install")
     assert body.index("return 0") < body.index("run npm install")
-    assert 'step "Installing Claude Code if missing"\ninstall_claude_if_missing' in main
+    assert 'if [ "$install_claude" -eq 1 ]; then\n    step "Installing Claude Code if missing"\n    install_claude_if_missing\nfi' in main
     assert "npm install -g @anthropic-ai/claude-code" not in main
 
 
@@ -56,7 +56,7 @@ def test_install_sh_installs_codex_only_when_missing() -> None:
     assert "run npm install -g @openai/codex" in body
     assert body.index("command -v codex") < body.index("run npm install")
     assert body.index("return 0") < body.index("run npm install")
-    assert 'step "Installing Codex if missing"\ninstall_codex_if_missing' in main
+    assert 'if [ "$install_codex" -eq 1 ]; then\n    step "Installing Codex if missing"\n    install_codex_if_missing\nfi' in main
     assert "npm install -g @openai/codex" not in main
     assert "fcc-claude" in text
     assert "fcc-codex" in text
@@ -125,7 +125,7 @@ def test_install_ps1_installs_claude_only_when_missing() -> None:
     assert body.index("Get-Command claude") < body.index("Invoke-InstallCommand")
     assert body.index("return") < body.index("Invoke-InstallCommand")
     assert (
-        'Write-Step "Installing Claude Code if missing"\nInstall-ClaudeIfMissing'
+        'if (-not $CodexOnly) {\n    Write-Step "Installing Claude Code if missing"\n    Install-ClaudeIfMissing\n}'
         in text
     )
 
@@ -143,7 +143,7 @@ def test_install_ps1_installs_codex_only_when_missing() -> None:
     ) in body
     assert body.index("Get-Command codex") < body.index("Invoke-InstallCommand")
     assert body.index("return") < body.index("Invoke-InstallCommand")
-    assert 'Write-Step "Installing Codex if missing"\nInstall-CodexIfMissing' in text
+    assert 'if (-not $ClaudeOnly) {\n    Write-Step "Installing Codex if missing"\n    Install-CodexIfMissing\n}' in text
     assert "fcc-claude" in text
     assert "fcc-codex" in text
 

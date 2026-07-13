@@ -11,6 +11,8 @@ voice_nim=0
 voice_local=0
 voice_all=0
 torch_backend=""
+install_claude=1
+install_codex=1
 
 show_usage() {
     cat <<'USAGE'
@@ -19,6 +21,8 @@ Usage: install.sh [options]
 Installs Claude Code and Codex if missing, installs or updates uv, Python 3.14.0, and Free Claude Code.
 
 Options:
+  --claude-only            Install only Claude Code (skip Codex).
+  --codex-only             Install only Codex (skip Claude Code).
   --voice-nim              Install NVIDIA NIM voice transcription support.
   --voice-local            Install local Whisper voice transcription support.
   --voice-all              Install all voice transcription backends.
@@ -260,6 +264,12 @@ parse_args() {
                 torch_backend="${1#*=}"
                 [ -n "$torch_backend" ] || fail "--torch-backend requires a non-empty value."
                 ;;
+            --claude-only)
+                install_codex=0
+                ;;
+            --codex-only)
+                install_claude=0
+                ;;
             --dry-run)
                 dry_run=1
                 ;;
@@ -277,6 +287,10 @@ parse_args() {
 }
 
 validate_args() {
+    if [ "$install_claude" -eq 0 ] && [ "$install_codex" -eq 0 ]; then
+        fail "--claude-only and --codex-only are mutually exclusive. Omit both flags to install everything."
+    fi
+
     include_local=$voice_local
 
     if [ "$voice_all" -eq 1 ]; then
@@ -325,11 +339,15 @@ install_free_claude_code() {
 parse_args "$@"
 validate_args
 
-step "Installing Claude Code if missing"
-install_claude_if_missing
+if [ "$install_claude" -eq 1 ]; then
+    step "Installing Claude Code if missing"
+    install_claude_if_missing
+fi
 
-step "Installing Codex if missing"
-install_codex_if_missing
+if [ "$install_codex" -eq 1 ]; then
+    step "Installing Codex if missing"
+    install_codex_if_missing
+fi
 
 step "Installing uv if missing, updating if present"
 install_or_update_uv
