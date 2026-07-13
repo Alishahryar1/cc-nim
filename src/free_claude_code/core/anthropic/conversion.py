@@ -1,8 +1,10 @@
 """Message and tool format converters."""
 
+import http.client
 import ipaddress
 import json
 import socket
+import urllib.request
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -149,6 +151,66 @@ def _assert_no_forbidden_assistant_block(block: Any) -> None:
         )
 
 
+class PinnedHTTPConnection(http.client.HTTPConnection):
+    """An HTTPConnection that forces connections to a pinned IP address."""
+
+    def __init__(self, *args, **kwargs):
+        self.pinned_ip = kwargs.pop("pinned_ip", None)
+        super().__init__(*args, **kwargs)
+        self._create_connection = self._pinned_create_connection
+
+    def _pinned_create_connection(
+        self, address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None
+    ):
+        if self.pinned_ip:
+            address = (self.pinned_ip, address[1])
+        return socket.create_connection(address, timeout, source_address)
+
+
+class PinnedHTTPSConnection(http.client.HTTPSConnection):
+    """An HTTPSConnection that forces connections to a pinned IP address while keeping original SNI/headers."""
+
+    def __init__(self, *args, **kwargs):
+        self.pinned_ip = kwargs.pop("pinned_ip", None)
+        super().__init__(*args, **kwargs)
+        self._create_connection = self._pinned_create_connection
+
+    def _pinned_create_connection(
+        self, address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None
+    ):
+        if self.pinned_ip:
+            address = (self.pinned_ip, address[1])
+        return socket.create_connection(address, timeout, source_address)
+
+
+class PinnedHTTPHandler(urllib.request.HTTPHandler):
+    """custom HTTPHandler that instantiates PinnedHTTPConnection."""
+
+    def __init__(self, pinned_ip):
+        self.pinned_ip = pinned_ip
+        super().__init__()
+
+    def http_open(self, req):
+        return self.do_open(self._get_connection, req)
+
+    def _get_connection(self, host, **kwargs):
+        return PinnedHTTPConnection(host, pinned_ip=self.pinned_ip, **kwargs)
+
+
+class PinnedHTTPSHandler(urllib.request.HTTPSHandler):
+    """custom HTTPSHandler that instantiates PinnedHTTPSConnection."""
+
+    def __init__(self, pinned_ip, debuglevel=0, context=None, check_hostname=None):
+        self.pinned_ip = pinned_ip
+        super().__init__(debuglevel, context, check_hostname)
+
+    def https_open(self, req):
+        return self.do_open(self._get_connection, req)
+
+    def _get_connection(self, host, **kwargs):
+        return PinnedHTTPSConnection(host, pinned_ip=self.pinned_ip, **kwargs)
+
+
 def _normalize_media_type(media_type: Any) -> str:
     if not isinstance(media_type, str):
         return "image/png"
@@ -182,8 +244,6 @@ def _fetch_image_as_data_url(url: str) -> str:
             # Return None to block automatic redirection so we can handle it manually with IP/DNS validation
             return None
 
-    opener = urllib.request.build_opener(NoRedirectHandler)
-
     for _ in range(max_redirects):
         parsed = urlsplit(current_url)
         scheme = (parsed.scheme or "").lower()
@@ -215,6 +275,7 @@ def _fetch_image_as_data_url(url: str) -> str:
                 raise OpenAIConversionError(
                     "User image URL source must not target local or private network addresses"
                 )
+            pinned_ip_str = str(ip)
         else:
             # Resolve host DNS and check all IPs
             resolved_ips = []
@@ -252,6 +313,14 @@ def _fetch_image_as_data_url(url: str) -> str:
                     raise OpenAIConversionError(
                         f"User image URL source resolves to a non-public address ({resolved_ip})"
                     )
+            pinned_ip_str = str(resolved_ips[0])
+
+        # Build custom opener with custom HTTP and HTTPS handlers pinned specifically to pinned_ip_str
+        opener = urllib.request.build_opener(
+            NoRedirectHandler,
+            PinnedHTTPHandler(pinned_ip_str),
+            PinnedHTTPSHandler(pinned_ip_str),
+        )
 
         # Build request with custom User-Agent to avoid generic python blocks
         req = urllib.request.Request(

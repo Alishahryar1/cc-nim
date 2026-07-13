@@ -1,3 +1,4 @@
+import contextlib
 import json
 import socket
 
@@ -1451,3 +1452,41 @@ def test_fetch_image_as_data_url_redirect_blocked_by_private_ip(monkeypatch):
         OpenAIConversionError, match=r"not target localhost|local or private"
     ):
         _fetch_image_as_data_url("https://images.example/first")
+
+
+def test_pinned_http_and_https_connections_override_address(monkeypatch):
+    import socket
+
+    from free_claude_code.core.anthropic.conversion import (
+        PinnedHTTPConnection,
+        PinnedHTTPSConnection,
+    )
+
+    created_addresses = []
+
+    def mock_create_connection(address, timeout=None, source_address=None):
+        created_addresses.append(address)
+
+        # Create a dummy socket-like object that satisfies basic wrapper requirements without connecting
+        class DummySocket:
+            def close(self):
+                pass
+
+            def setsockopt(self, *args, **kwargs):
+                pass
+
+        return DummySocket()
+
+    monkeypatch.setattr(socket, "create_connection", mock_create_connection)
+
+    # Test HTTP Connection
+    conn = PinnedHTTPConnection("example.com", port=80, pinned_ip="1.2.3.4")
+    with contextlib.suppress(Exception):
+        conn.connect()
+    assert ("1.2.3.4", 80) in created_addresses
+
+    # Test HTTPS Connection
+    conn_s = PinnedHTTPSConnection("example.com", port=443, pinned_ip="5.6.7.8")
+    with contextlib.suppress(Exception):
+        conn_s.connect()
+    assert ("5.6.7.8", 443) in created_addresses
