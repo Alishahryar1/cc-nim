@@ -400,7 +400,7 @@ Re-run the matching command from [Install Or Update](#install).
 
 ### Uninstall
 
-Stop every running FCC command first. The uninstall script removes the FCC uv tool and always deletes `~/.fcc/`; it does not remove uv, Python, Claude Code, or Codex.
+Stop every running FCC command first. The uninstaller removes the FCC uv tool, verifies every FCC command is gone, and then deletes `~/.fcc/`. It leaves uv, Python, Claude Code, Codex, and shared PATH entries intact.
 
 macOS/Linux:
 
@@ -411,7 +411,7 @@ curl -fsSL "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main
 Windows PowerShell:
 
 ```powershell
-irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/uninstall.ps1" | iex
+& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/uninstall.ps1")))
 ```
 
 ## Project Links
