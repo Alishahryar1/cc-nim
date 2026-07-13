@@ -226,12 +226,15 @@ def test_preflight_rejection_is_protocol_specific_400_without_terminal_header(
 @pytest.mark.parametrize(
     ("headers", "detail"),
     [
-        ({}, "Missing API key"),
-        ({"x-api-key": "wrong"}, "Invalid API key"),
+        ({}, "Missing proxy authentication token"),
+        (
+            {"authorization": "Bearer wrong"},
+            "Invalid proxy authentication token",
+        ),
     ],
     ids=("missing", "invalid"),
 )
-def test_proxy_auth_preserves_fastapi_detail_contract(
+def test_proxy_auth_preserves_ingress_detail_contract(
     wire_api: str,
     path: str,
     payload: dict[str, object],

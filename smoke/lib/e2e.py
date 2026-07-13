@@ -207,12 +207,8 @@ class ClientProtocolDriver:
         return headers
 
     @staticmethod
-    def jetbrains_headers(config: SmokeConfig) -> dict[str, str]:
+    def jetbrains_headers() -> dict[str, str]:
         headers = auth_headers()
-        token = config.settings.anthropic_auth_token
-        if token:
-            headers.pop("x-api-key", None)
-            headers["authorization"] = f"Bearer {token}"
         headers["user-agent"] = "JetBrains-ACP product smoke"
         return headers
 

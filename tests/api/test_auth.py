@@ -9,7 +9,7 @@ from tests.api.support import create_test_app
 app = create_test_app()
 
 
-def test_anthropic_auth_token_required_and_accepts_x_api_key():
+def test_proxy_auth_requires_canonical_bearer_header():
     client = TestClient(app)
     settings = Settings()
     settings.anthropic_auth_token = "s3cr3t"
@@ -21,15 +21,28 @@ def test_anthropic_auth_token_required_and_accepts_x_api_key():
     }
 
     with patch("free_claude_code.api.routes.get_token_count", return_value=1):
-        # No header -> 401
         r = client.post("/v1/messages/count_tokens", json=payload)
         assert r.status_code == 401
+        assert r.json() == {"detail": "Missing proxy authentication token"}
         assert r.headers["request-id"].startswith("req_")
         assert "x-should-retry" not in r.headers
 
-        # X-API-Key header -> 200
+        for headers in (
+            {"X-API-Key": "s3cr3t"},
+            {"anthropic-auth-token": "s3cr3t"},
+        ):
+            r = client.post(
+                "/v1/messages/count_tokens",
+                json=payload,
+                headers=headers,
+            )
+            assert r.status_code == 401
+            assert r.json() == {"detail": "Missing proxy authentication token"}
+
         r = client.post(
-            "/v1/messages/count_tokens", json=payload, headers={"X-API-Key": "s3cr3t"}
+            "/v1/messages/count_tokens",
+            json=payload,
+            headers={"Authorization": "Bearer s3cr3t"},
         )
         assert r.status_code == 200
         assert r.json()["input_tokens"] == 1
@@ -37,7 +50,7 @@ def test_anthropic_auth_token_required_and_accepts_x_api_key():
     app.dependency_overrides.clear()
 
 
-def test_anthropic_auth_token_accepts_bearer_authorization():
+def test_proxy_auth_ignores_conflicting_legacy_headers():
     client = TestClient(app)
     settings = Settings()
     settings.anthropic_auth_token = "b3artoken"
@@ -49,14 +62,28 @@ def test_anthropic_auth_token_accepts_bearer_authorization():
     }
 
     with patch("free_claude_code.api.routes.get_token_count", return_value=2):
-        # Authorization Bearer -> 200
         r = client.post(
             "/v1/messages/count_tokens",
             json=payload,
-            headers={"Authorization": "Bearer b3artoken"},
+            headers={
+                "Authorization": "Bearer b3artoken",
+                "X-API-Key": "stale-anthropic-key",
+                "anthropic-auth-token": "stale-proxy-token",
+            },
         )
         assert r.status_code == 200
         assert r.json()["input_tokens"] == 2
+
+        r = client.post(
+            "/v1/messages/count_tokens",
+            json=payload,
+            headers={
+                "Authorization": "Bearer wrong",
+                "X-API-Key": "b3artoken",
+            },
+        )
+        assert r.status_code == 401
+        assert r.json() == {"detail": "Invalid proxy authentication token"}
 
     app.dependency_overrides.clear()
 
@@ -95,7 +122,7 @@ def test_anthropic_auth_token_applies_to_models_endpoint():
     assert r.headers["x-request-id"] == r.headers["request-id"]
     assert "x-should-retry" not in r.headers
 
-    r = client.get("/v1/models", headers={"X-API-Key": "models-token"})
+    r = client.get("/v1/models", headers={"Authorization": "Bearer models-token"})
     assert r.status_code == 200
     assert "data" in r.json()
 

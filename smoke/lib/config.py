@@ -426,7 +426,7 @@ def auth_headers(token: str | None = None) -> dict[str, str]:
         "content-type": "application/json",
     }
     if resolved:
-        headers["x-api-key"] = resolved
+        headers["authorization"] = f"Bearer {resolved}"
     return headers
 
 

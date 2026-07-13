@@ -44,31 +44,35 @@ def resolve_provider(
     return provider
 
 
-def require_api_key(
+def require_proxy_auth(
     request: Request,
     settings: Settings = Depends(get_settings),
 ) -> None:
-    """Require the configured Anthropic-style server API key."""
+    """Require the configured proxy token as HTTP bearer authorization."""
     anthropic_auth_token = settings.anthropic_auth_token.strip()
     if not anthropic_auth_token:
         return
 
-    header = (
-        request.headers.get("x-api-key")
-        or request.headers.get("authorization")
-        or request.headers.get("anthropic-auth-token")
-    )
-    if not header:
-        raise HTTPException(status_code=401, detail="Missing API key")
+    authorization = request.headers.get("authorization")
+    if not authorization:
+        raise HTTPException(
+            status_code=401,
+            detail="Missing proxy authentication token",
+        )
 
-    token = header.strip()
-    if header.lower().startswith("bearer "):
-        token = header.split(" ", 1)[1].strip()
-    if token and ":" in token:
-        token = token.split(":", 1)[0].strip()
+    parts = authorization.strip().split(maxsplit=1)
+    if len(parts) != 2 or parts[0].casefold() != "bearer":
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid proxy authentication token",
+        )
+    token = parts[1].strip()
 
-    if not secrets.compare_digest(
+    if not token or not secrets.compare_digest(
         token.encode("utf-8"),
         anthropic_auth_token.encode("utf-8"),
     ):
-        raise HTTPException(status_code=401, detail="Invalid API key")
+        raise HTTPException(
+            status_code=401,
+            detail="Invalid proxy authentication token",
+        )

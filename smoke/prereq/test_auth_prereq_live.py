@@ -9,7 +9,7 @@ from smoke.lib.server import start_server
 pytestmark = [pytest.mark.live, pytest.mark.smoke_target("auth")]
 
 
-def test_auth_token_is_enforced_for_all_supported_header_shapes(
+def test_bearer_auth_is_the_only_supported_header_shape(
     smoke_config: SmokeConfig, tmp_path: Path
 ) -> None:
     token = "fcc-smoke-token"
@@ -32,7 +32,7 @@ def test_auth_token_is_enforced_for_all_supported_header_shapes(
         )
         assert (
             httpx.get(f"{server.base_url}/", headers={"x-api-key": token}).status_code
-            == 200
+            == 401
         )
         assert (
             httpx.get(
@@ -45,6 +45,16 @@ def test_auth_token_is_enforced_for_all_supported_header_shapes(
             httpx.get(
                 f"{server.base_url}/",
                 headers={"anthropic-auth-token": token},
+            ).status_code
+            == 401
+        )
+        assert (
+            httpx.get(
+                f"{server.base_url}/",
+                headers={
+                    "authorization": f"Bearer {token}",
+                    "x-api-key": "stale-provider-key",
+                },
             ).status_code
             == 200
         )

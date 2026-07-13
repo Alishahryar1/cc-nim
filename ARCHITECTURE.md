@@ -353,11 +353,12 @@ and non-local origins.
 
 Admin routes live beside these in [api/admin_routes.py](src/free_claude_code/api/admin_routes.py).
 
-Authentication is handled by `require_api_key()` in
+Authentication is handled by `require_proxy_auth()` in
 [api/dependencies.py](src/free_claude_code/api/dependencies.py). If `ANTHROPIC_AUTH_TOKEN` is blank,
-proxy auth is disabled. Otherwise the token may be supplied through `x-api-key`,
-`Authorization: Bearer ...`, or `anthropic-auth-token`. Comparisons use
-constant-time matching.
+proxy auth is disabled. Otherwise FCC accepts exactly `Authorization: Bearer
+<token>`. Other credential headers are ignored, so a stale provider API key
+cannot mask valid proxy authorization. The complete bearer token is compared
+in constant time; no model suffix or other token mutation is accepted.
 
 HTTP request correlation is owned at ingress. A pure ASGI boundary creates one
 opaque FCC request ID before routing, places it in log context and request state,
@@ -428,7 +429,7 @@ sequenceDiagram
     participant Provider
 
     Client->>Route: POST /v1/messages
-    Route->>Route: require_api_key
+    Route->>Route: require_proxy_auth
     Route->>Manager: acquire current generation
     Manager-->>Route: Lease(settings, provider resolver)
     Route->>Handler: create message
@@ -820,7 +821,10 @@ instead of stopping at its login gate.
   `model_catalog_json` file under `~/.fcc/`, and injects that path so Codex's
   native `/model` picker lists FCC provider slugs. Catalog generation is
   fail-open: launch continues with a warning if the catalog cannot be prepared.
-- It stores the proxy auth token in `FCC_CODEX_API_KEY` for Codex to read.
+- Catalog discovery and inference both authenticate with HTTP bearer authorization.
+- It stores the proxy auth token in `FCC_CODEX_API_KEY` for Codex's provider
+  `env_key` to read. This process-local variable is a client credential carrier,
+  not a second FCC setting.
 
 [cli/launchers/pi.py](src/free_claude_code/cli/launchers/pi.py) owns the installed
 `fcc-pi` launcher and [cli/launchers/pi_extension.ts](src/free_claude_code/cli/launchers/pi_extension.ts)
@@ -833,6 +837,8 @@ is its bundled Pi adapter:
   only routable provider-model IDs, and registers an `anthropic-messages`
   provider targeting the local proxy. Catalog failure is fail-closed so Pi never
   silently falls back to a different provider.
+- Catalog discovery and provider inference use HTTP bearer authorization. Pi's
+  provider API-key field remains its process-local credential carrier.
 - FCC connection values live only in child-process `FCC_PI_*` variables. Native
   Pi credentials and persistent configuration remain untouched.
 - Pi package-management, configuration, help, and version commands pass through

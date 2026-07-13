@@ -112,7 +112,7 @@ async function fetchFccModels(baseUrl: string, apiKey: string): Promise<Provider
 		let response: Response;
 		try {
 			response = await fetch(`${baseUrl}/v1/models`, {
-				headers: { "X-API-Key": apiKey },
+				headers: { Authorization: `Bearer ${apiKey}` },
 				signal: controller.signal,
 			});
 		} catch (error) {
@@ -151,6 +151,7 @@ export default async function freeClaudeCode(pi: ExtensionAPI): Promise<void> {
 		name: "Free Claude Code",
 		baseUrl,
 		apiKey: `$${API_KEY_ENV}`,
+		authHeader: true,
 		api: "anthropic-messages",
 		models,
 	});

@@ -169,7 +169,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         default="freecc",
         secret=True,
         restart_required=True,
-        description="Protects Claude/API access. It is not admin-page login.",
+        description="Bearer token protecting Claude/API access. It is not admin-page login.",
     ),
     ConfigFieldSpec(
         "PROVIDER_RATE_LIMIT",

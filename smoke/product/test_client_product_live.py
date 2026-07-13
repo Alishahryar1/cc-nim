@@ -56,7 +56,7 @@ def test_jetbrains_protocol_e2e(smoke_config: SmokeConfig) -> None:
         driver = ConversationDriver(server, smoke_config)
         first = driver.stream(
             ClientProtocolDriver.tool_result_payload(),
-            headers=ClientProtocolDriver.jetbrains_headers(smoke_config),
+            headers=ClientProtocolDriver.jetbrains_headers(),
         )
 
     assert_product_stream(first.events)

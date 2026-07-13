@@ -162,7 +162,7 @@ def fetch_proxy_models_response(
     url = f"{proxy_root_url.rstrip('/')}/v1/models"
     headers: dict[str, str] = {}
     if token := auth_token.strip():
-        headers["X-API-Key"] = token
+        headers["Authorization"] = f"Bearer {token}"
 
     request = Request(url, headers=headers, method="GET")
     with urlopen(request, timeout=PROXY_PREFLIGHT_TIMEOUT_SECONDS) as response:

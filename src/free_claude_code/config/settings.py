@@ -275,7 +275,7 @@ class Settings(BaseSettings):
     host: str = "0.0.0.0"
     port: int = 8082
     open_admin_browser: bool = Field(default=True, validation_alias="FCC_OPEN_BROWSER")
-    # Optional server API key to protect endpoints (Anthropic-style)
+    # Optional proxy bearer token protecting public API endpoints.
     # Set via env `ANTHROPIC_AUTH_TOKEN`. When empty, no auth is required.
     anthropic_auth_token: str = Field(
         default="", validation_alias="ANTHROPIC_AUTH_TOKEN"

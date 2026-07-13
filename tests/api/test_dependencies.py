@@ -6,7 +6,7 @@ from fastapi import HTTPException, Request
 from free_claude_code.api.dependencies import (
     get_services,
     get_settings,
-    require_api_key,
+    require_proxy_auth,
     resolve_provider,
 )
 from free_claude_code.api.ports import ApiServices
@@ -106,42 +106,97 @@ def test_resolve_provider_unrelated_error_is_not_reclassified() -> None:
         resolve_provider("nvidia_nim", lease=lease)
 
 
-def test_require_api_key_allows_when_no_token_configured():
+def test_require_proxy_auth_allows_when_no_token_configured():
     request, settings = _request(headers={}, token="")
 
-    require_api_key(request, settings)
+    require_proxy_auth(request, settings)
 
 
-def test_require_api_key_rejects_missing_token():
+def test_require_proxy_auth_rejects_missing_authorization():
     request, settings = _request(headers={}, token="secret")
 
     with pytest.raises(HTTPException) as exc_info:
-        require_api_key(request, settings)
+        require_proxy_auth(request, settings)
 
     assert exc_info.value.status_code == 401
-    assert exc_info.value.detail == "Missing API key"
+    assert exc_info.value.detail == "Missing proxy authentication token"
 
 
-def test_require_api_key_accepts_x_api_key():
-    request, settings = _request(headers={"x-api-key": "secret"}, token="secret")
+@pytest.mark.parametrize("header_name", ["x-api-key", "anthropic-auth-token"])
+def test_require_proxy_auth_rejects_legacy_header_only(header_name: str):
+    request, settings = _request(headers={header_name: "secret"}, token="secret")
 
-    require_api_key(request, settings)
+    with pytest.raises(HTTPException) as exc_info:
+        require_proxy_auth(request, settings)
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Missing proxy authentication token"
 
 
-def test_require_api_key_accepts_bearer_token_and_strips_model_suffix():
+def test_require_proxy_auth_accepts_exact_bearer_token():
     request, settings = _request(
-        headers={"authorization": "Bearer secret:claude-sonnet"},
+        headers={"authorization": "bEaReR secret"},
         token="secret",
     )
 
-    require_api_key(request, settings)
+    require_proxy_auth(request, settings)
 
 
-def test_require_api_key_rejects_invalid_token():
-    request, settings = _request(headers={"x-api-key": "wrong"}, token="secret")
+def test_require_proxy_auth_accepts_colons_in_configured_token():
+    request, settings = _request(
+        headers={"authorization": "Bearer secret:with:colons"},
+        token="secret:with:colons",
+    )
+
+    require_proxy_auth(request, settings)
+
+
+def test_require_proxy_auth_accepts_valid_bearer_with_conflicting_legacy_headers():
+    request, settings = _request(
+        headers={
+            "authorization": "Bearer secret",
+            "x-api-key": "wrong",
+            "anthropic-auth-token": "also-wrong",
+        },
+        token="secret",
+    )
+
+    require_proxy_auth(request, settings)
+
+
+@pytest.mark.parametrize(
+    "authorization",
+    [
+        "secret",
+        "Basic secret",
+        "Bearer",
+        "Bearer wrong",
+        "Bearer secret:claude-sonnet",
+    ],
+)
+def test_require_proxy_auth_rejects_malformed_or_invalid_authorization(
+    authorization: str,
+):
+    request, settings = _request(
+        headers={"authorization": authorization},
+        token="secret",
+    )
 
     with pytest.raises(HTTPException) as exc_info:
-        require_api_key(request, settings)
+        require_proxy_auth(request, settings)
 
     assert exc_info.value.status_code == 401
-    assert exc_info.value.detail == "Invalid API key"
+    assert exc_info.value.detail == "Invalid proxy authentication token"
+
+
+def test_require_proxy_auth_rejects_invalid_bearer_when_legacy_header_matches():
+    request, settings = _request(
+        headers={"authorization": "Bearer wrong", "x-api-key": "secret"},
+        token="secret",
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        require_proxy_auth(request, settings)
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Invalid proxy authentication token"

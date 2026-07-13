@@ -620,7 +620,8 @@ def test_launch_codex_passes_responses_config_and_child_env(
     request = requests[0]
     assert request.full_url == "http://127.0.0.1:9191/v1/models"
     headers = {key.lower(): value for key, value in request.header_items()}
-    assert headers["x-api-key"] == "proxy-token"
+    assert headers["authorization"] == "Bearer proxy-token"
+    assert "x-api-key" not in headers
     catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
     assert [model["slug"] for model in catalog["models"]] == [
         "nvidia_nim/provider-model"

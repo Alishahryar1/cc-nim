@@ -247,11 +247,11 @@ model = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
 [model_providers.fcc]
 name = "Free Claude Code"
 base_url = "http://127.0.0.1:8082/v1"
-http_headers = { "X-API-Key" = "freecc" }
+http_headers = { Authorization = "Bearer freecc" }
 wire_api = "responses"
 ```
 
-Match `model`, the port, and `X-API-Key` to the Admin UI, then restart VS Code. For WSL-backed Codex, edit the file inside WSL.
+Match `model`, the port, and bearer token to the Admin UI, then restart VS Code. For WSL-backed Codex, edit the file inside WSL.
 
 </details>
 
