@@ -2,7 +2,7 @@
 
 # 🤖 Free Claude Code
 
-Use Claude Code, Codex, Pi, editor extensions, or chat bots through your own provider-backed proxy.
+Use Claude Code, Codex, Pi, or their IDE extensions through your own provider-backed proxy.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 [![Python 3.14](https://img.shields.io/badge/python-3.14-3776ab.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/)
