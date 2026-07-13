@@ -58,7 +58,7 @@ Run your coding agents with free, paid, or local models. Choose and validate pro
 - Switch among 24 cloud and local providers from the Admin UI.
 - Use each coding agent's native model picker.
 - Route Opus, Sonnet, Haiku, and fallback traffic to different models.
-- Keep streaming, tool use, and reasoning support across compatible models.
+- Keep streaming, tool use, reasoning, and image input across compatible models.
 - Connect Claude Code and Codex in VS Code or Claude Code through JetBrains ACP.
 - Optionally run Claude Code sessions through Discord or Telegram with voice-note transcription.
 - Protect the local proxy with optional token authentication.

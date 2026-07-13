@@ -698,12 +698,131 @@ def test_assistant_redacted_thinking_omitted_from_openai_chat():
     assert "reasoning_content" not in result[0]
 
 
-def test_convert_user_message_image_raises():
-    content = [
-        MockBlock(type="image", source={"type": "url", "url": "https://example.com/x"})
+@pytest.mark.parametrize(
+    "source,expected_url",
+    [
+        (
+            {"type": "base64", "media_type": "image/png", "data": "AAAA"},
+            "data:image/png;base64,AAAA",
+        ),
+        (
+            {"type": "url", "url": "https://example.com/image.png"},
+            "https://example.com/image.png",
+        ),
+    ],
+)
+def test_convert_user_message_image_sources(source, expected_url):
+    messages = [MockMessage("user", [MockBlock(type="image", source=source)])]
+
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert result == [
+        {
+            "role": "user",
+            "content": [{"type": "image_url", "image_url": {"url": expected_url}}],
+        }
     ]
-    messages = [MockMessage("user", content)]
-    with pytest.raises(OpenAIConversionError):
+
+
+def test_convert_user_message_preserves_interleaved_image_text_order():
+    messages = [
+        MockMessage(
+            "user",
+            [
+                MockBlock(
+                    type="image",
+                    source={
+                        "type": "base64",
+                        "media_type": "image/jpeg",
+                        "data": "FIRST",
+                    },
+                ),
+                MockBlock(type="text", text="Compare the first image with this one."),
+                MockBlock(
+                    type="image",
+                    source={"type": "url", "url": "https://example.com/second.jpg"},
+                ),
+                MockBlock(type="text", text="Describe the differences."),
+            ],
+        )
+    ]
+
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert result == [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/jpeg;base64,FIRST"},
+                },
+                {
+                    "type": "text",
+                    "text": "Compare the first image with this one.",
+                },
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "https://example.com/second.jpg"},
+                },
+                {"type": "text", "text": "Describe the differences."},
+            ],
+        }
+    ]
+
+
+def test_convert_user_image_before_tool_result_preserves_message_order():
+    messages = [
+        MockMessage(
+            "user",
+            [
+                MockBlock(type="text", text="Inspect this."),
+                MockBlock(
+                    type="image",
+                    source={"type": "url", "url": "https://example.com/image.png"},
+                ),
+                MockBlock(type="tool_result", tool_use_id="tool_1", content="done"),
+            ],
+        )
+    ]
+
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert result == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Inspect this."},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "https://example.com/image.png"},
+                },
+            ],
+        },
+        {"role": "tool", "tool_call_id": "tool_1", "content": "done"},
+    ]
+
+
+@pytest.mark.parametrize(
+    "source,error",
+    [
+        (
+            {"type": "base64", "media_type": "", "data": "AAAA"},
+            "non-empty media_type",
+        ),
+        (
+            {"type": "base64", "media_type": "image/png", "data": ""},
+            "non-empty data",
+        ),
+        ({"type": "url", "url": ""}, "non-empty url"),
+        ({"type": "file", "file_id": "file_1"}, "Unsupported image source type"),
+        ({}, "Unsupported image source type"),
+    ],
+)
+def test_convert_user_message_rejects_unconvertible_image_sources(source, error):
+    messages = [MockMessage("user", [MockBlock(type="image", source=source)])]
+
+    with pytest.raises(OpenAIConversionError, match=error):
         AnthropicToOpenAIConverter.convert_messages(messages)
 
 
@@ -1011,6 +1130,45 @@ def test_openai_build_accepts_declared_native_top_level_hints() -> None:
     assert "output_config" not in body
     assert "mcp_servers" not in body
     assert body["model"] == "m"
+
+
+def test_openai_build_converts_validated_anthropic_image_block() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "vision-model",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/webp",
+                                "data": "AAAA",
+                            },
+                        },
+                        {"type": "text", "text": "What is shown?"},
+                    ],
+                }
+            ],
+        }
+    )
+
+    body = build_base_request_body(request)
+
+    assert body["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "data:image/webp;base64,AAAA"},
+                },
+                {"type": "text", "text": "What is shown?"},
+            ],
+        }
+    ]
 
 
 def test_openai_build_rejects_unknown_top_level_extras() -> None:

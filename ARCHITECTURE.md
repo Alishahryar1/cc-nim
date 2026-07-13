@@ -631,13 +631,20 @@ usage quirks such as DeepSeek prompt-cache counters.
   content/tool/thinking blocks, and Anthropic response envelopes;
 - trace-safe request snapshots stay beside those models so the generic trace
   module remains protocol-independent and import-order safe;
-- content and message conversion for OpenAI-compatible upstreams;
+- text, image, and message conversion for OpenAI-compatible upstreams;
 - request serialization primitives shared by provider request policies;
 - tool schema and tool-result handling;
 - thinking block handling;
 - stream lifecycle through `src/free_claude_code/core/anthropic/streaming`, including the neutral
   stream ledger, Anthropic SSE emitter, continuation-body construction, and tool repair;
 - token counting and Anthropic-owned failure-kind-to-wire mapping.
+
+User image conversion is a pure protocol operation. Core maps Anthropic base64
+and URL image sources to ordered OpenAI `image_url` content parts without
+fetching remote content. Provider adapters do not gate that conversion behind a
+provider-wide vision flag; the selected upstream model owns image capability,
+while any deliberate provider-specific attachment removal remains explicit
+compatibility policy.
 
 Shared stream behavior lives under
 [src/free_claude_code/core/anthropic/streaming/](src/free_claude_code/core/anthropic/streaming/). The shared layer owns the
