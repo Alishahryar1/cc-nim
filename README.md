@@ -69,18 +69,16 @@ Run Claude Code or Codex with free, paid, or local models. Choose and validate p
 
 ### 1. Install Or Update
 
-The installer provisions Free Claude Code, uv, and Python 3.14. It also installs Claude Code and Codex when they are missing; install [Node.js](https://nodejs.org/) first so `npm` is available for those agents.
-
 macOS/Linux:
 
 ```bash
-curl -fsSL "https://github.com/Alishahryar1/free-claude-code/blob/main/scripts/install.sh?raw=1" | sh
+curl -fsSL "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.sh" | sh
 ```
 
 Windows PowerShell:
 
 ```powershell
-irm "https://github.com/Alishahryar1/free-claude-code/blob/main/scripts/install.ps1?raw=1" | iex
+& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.ps1")))
 ```
 
 Re-run the same command whenever you want to update. You can review the installers before running them: [install.sh](scripts/install.sh) and [install.ps1](scripts/install.ps1).
@@ -360,32 +358,32 @@ macOS/Linux:
 
 ```bash
 # NVIDIA NIM transcription
-curl -fsSL "https://github.com/Alishahryar1/free-claude-code/blob/main/scripts/install.sh?raw=1" | sh -s -- --voice-nim
+curl -fsSL "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.sh" | sh -s -- --voice-nim
 
 # Local Whisper on CPU or CUDA
-curl -fsSL "https://github.com/Alishahryar1/free-claude-code/blob/main/scripts/install.sh?raw=1" | sh -s -- --voice-local
+curl -fsSL "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.sh" | sh -s -- --voice-local
 
 # Both backends
-curl -fsSL "https://github.com/Alishahryar1/free-claude-code/blob/main/scripts/install.sh?raw=1" | sh -s -- --voice-all
+curl -fsSL "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.sh" | sh -s -- --voice-all
 
 # Local Whisper with the CUDA 13.0 PyTorch backend
-curl -fsSL "https://github.com/Alishahryar1/free-claude-code/blob/main/scripts/install.sh?raw=1" | sh -s -- --voice-local --torch-backend cu130
+curl -fsSL "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.sh" | sh -s -- --voice-local --torch-backend cu130
 ```
 
 Windows PowerShell:
 
 ```powershell
 # NVIDIA NIM transcription
-& ([scriptblock]::Create((irm "https://github.com/Alishahryar1/free-claude-code/blob/main/scripts/install.ps1?raw=1"))) -VoiceNim
+& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.ps1"))) -VoiceNim
 
 # Local Whisper on CPU or CUDA
-& ([scriptblock]::Create((irm "https://github.com/Alishahryar1/free-claude-code/blob/main/scripts/install.ps1?raw=1"))) -VoiceLocal
+& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.ps1"))) -VoiceLocal
 
 # Both backends
-& ([scriptblock]::Create((irm "https://github.com/Alishahryar1/free-claude-code/blob/main/scripts/install.ps1?raw=1"))) -VoiceAll
+& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.ps1"))) -VoiceAll
 
 # Local Whisper with the CUDA 13.0 PyTorch backend
-& ([scriptblock]::Create((irm "https://github.com/Alishahryar1/free-claude-code/blob/main/scripts/install.ps1?raw=1"))) -VoiceLocal -TorchBackend cu130
+& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.ps1"))) -VoiceLocal -TorchBackend cu130
 ```
 
 Restart `fcc-server`. In **Admin UI → Messaging → Voice**, enable voice notes, select `cpu`, `cuda`, or `nvidia_nim`, and choose the Whisper model. Local gated models need `HUGGINGFACE_API_KEY`; NVIDIA NIM transcription needs `NVIDIA_NIM_API_KEY`.
@@ -400,7 +398,7 @@ Re-run the matching command from [Install Or Update](#install).
 
 ### Uninstall
 
-Stop every running FCC command first. The uninstall script removes the FCC uv tool and always deletes `~/.fcc/`; it does not remove uv, Python, Claude Code, or Codex.
+Stop every running FCC command first. The uninstaller removes the FCC uv tool, verifies every FCC command is gone, and then deletes `~/.fcc/`. It leaves uv, Python, Claude Code, Codex, and shared PATH entries intact.
 
 macOS/Linux:
 
@@ -411,7 +409,7 @@ curl -fsSL "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main
 Windows PowerShell:
 
 ```powershell
-irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/uninstall.ps1" | iex
+& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/uninstall.ps1")))
 ```
 
 ## Project Links

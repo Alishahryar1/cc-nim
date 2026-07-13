@@ -17,13 +17,15 @@ $FccCommands = @(
     "fcc-init",
     "free-claude-code"
 )
+$script:UvPath = ""
+$script:UvToolBin = ""
 
 function Show-Usage {
     @"
 Usage: uninstall.ps1 [options]
 
-Removes the Free Claude Code uv tool and deletes ~/.fcc/.
-Does not remove uv, Claude Code, Codex, or the uv-managed Python runtime.
+Removes the Free Claude Code uv tool and deletes ~/.fcc/ after removal is verified.
+Does not remove uv, Claude Code, Codex, the uv-managed Python runtime, or shared PATH entries.
 
 Options:
   -DryRun                Print commands without running them.
@@ -41,22 +43,58 @@ function Write-Step {
 function Format-Argument {
     param([string] $Value)
 
-    if ($Value -match '^[A-Za-z0-9_./:@%+=,\[\]-]+$') {
+    if ($Value -match '^[A-Za-z0-9_./:@%+=,\[\]\\-]+$') {
         return $Value
     }
-
     return "'" + ($Value -replace "'", "''") + "'"
+}
+
+function Format-Command {
+    param(
+        [string] $FilePath,
+        [string[]] $Arguments = @()
+    )
+
+    $parts = @($FilePath) + $Arguments
+    return ($parts | ForEach-Object { Format-Argument ([string] $_) }) -join " "
+}
+
+function Get-ApplicationCommand {
+    param([string] $Name)
+
+    $commands = @(Get-Command $Name -CommandType Application -ErrorAction SilentlyContinue)
+    if ($commands.Count -eq 0) {
+        return $null
+    }
+    return $commands[0]
+}
+
+function Invoke-NativeResult {
+    param(
+        [string] $FilePath,
+        [string[]] $Arguments
+    )
+
+    $previousErrorActionPreference = $ErrorActionPreference
+    $ErrorActionPreference = "Continue"
+    try {
+        $global:LASTEXITCODE = 0
+        $output = (& $FilePath @Arguments 2>&1 | Out-String).Trim()
+        return [pscustomobject] @{
+            ExitCode = $LASTEXITCODE
+            Output = $output
+        }
+    }
+    finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+    }
 }
 
 function Test-MissingUvToolError {
     param([string] $Output)
 
     $normalized = $Output.ToLowerInvariant()
-    return (
-        $normalized.Contains("not installed") -or
-        $normalized.Contains("no tool") -or
-        $normalized.Contains("nothing to uninstall")
-    )
+    return $normalized.Contains($PackageName) -and $normalized.Contains("is not installed")
 }
 
 function Add-PathEntry {
@@ -65,73 +103,113 @@ function Add-PathEntry {
     if ([string]::IsNullOrWhiteSpace($PathEntry)) {
         return
     }
-
     $separator = [IO.Path]::PathSeparator
     $entries = @()
     if (-not [string]::IsNullOrEmpty($env:Path)) {
         $entries = $env:Path -split [regex]::Escape([string] $separator)
     }
-
     if ($entries -notcontains $PathEntry) {
         $env:Path = "$PathEntry$separator$env:Path"
     }
 }
 
-function Add-UvToPath {
-    Add-PathEntry (Join-Path $HOME ".local\bin")
-    Add-PathEntry (Join-Path $HOME ".cargo\bin")
+function Add-KnownUvPaths {
+    Add-PathEntry (Join-Path $env:USERPROFILE ".local\bin")
+    Add-PathEntry (Join-Path $env:USERPROFILE ".cargo\bin")
 }
 
 function Assert-NoFccProcessesRunning {
     $running = @()
-
     foreach ($commandName in $FccCommands) {
         $processes = @(Get-Process -Name $commandName -ErrorAction SilentlyContinue)
         if ($processes.Count -gt 0) {
             $running += $commandName
         }
     }
-
     if ($running.Count -gt 0) {
         throw "Free Claude Code is still running ($($running -join ', ')). Stop those processes, then rerun uninstall."
     }
 }
 
-function Uninstall-FreeClaudeCode {
-    Add-UvToPath
+function Initialize-UvContext {
+    Add-KnownUvPaths
 
-    if (-not (Get-Command uv -ErrorAction SilentlyContinue)) {
-        Write-Host "uv not found on PATH; skipping uv tool uninstall."
+    if ($DryRun) {
+        Write-Host "+ uv tool dir --bin"
         return
     }
 
+    $uvCommand = Get-ApplicationCommand "uv"
+    if (-not $uvCommand) {
+        throw "uv is required to remove the Free Claude Code tool. Install uv, then rerun this uninstaller; ~/.fcc was not deleted."
+    }
+    $script:UvPath = $uvCommand.Source
+
+    $commandText = Format-Command -FilePath $script:UvPath -Arguments @("tool", "dir", "--bin")
+    Write-Host "+ $commandText"
+    $result = Invoke-NativeResult -FilePath $script:UvPath -Arguments @("tool", "dir", "--bin")
+    if ($result.ExitCode -ne 0) {
+        if (-not [string]::IsNullOrWhiteSpace($result.Output)) {
+            [Console]::Error.WriteLine($result.Output)
+        }
+        throw "Could not determine the uv tool bin directory (exit code $($result.ExitCode)); ~/.fcc was not deleted."
+    }
+    $script:UvToolBin = $result.Output.Trim()
+    if ([string]::IsNullOrWhiteSpace($script:UvToolBin)) {
+        throw "uv returned an empty tool bin directory; ~/.fcc was not deleted."
+    }
+}
+
+function Uninstall-FreeClaudeCode {
     Write-Host "+ uv tool uninstall $PackageName"
-    if (-not $DryRun) {
-        $previousErrorActionPreference = $ErrorActionPreference
-        $ErrorActionPreference = "Continue"
-        try {
-            $output = (& uv tool uninstall $PackageName 2>&1 | Out-String).Trim()
-            $exitCode = $LASTEXITCODE
-            if ($exitCode -eq 0) {
-                return
-            }
-            if (Test-MissingUvToolError -Output $output) {
-                Write-Host "Free Claude Code uv tool not installed or already removed; skipping uv tool uninstall."
-                return
-            }
-            if (-not [string]::IsNullOrWhiteSpace($output)) {
-                [Console]::Error.WriteLine($output)
-            }
-            throw "uv tool uninstall $PackageName failed with exit code $exitCode; aborting before deleting ~/.fcc."
+    if ($DryRun) {
+        return
+    }
+
+    $result = Invoke-NativeResult -FilePath $script:UvPath -Arguments @(
+        "tool",
+        "uninstall",
+        $PackageName
+    )
+    if ($result.ExitCode -eq 0) {
+        if (-not [string]::IsNullOrWhiteSpace($result.Output)) {
+            Write-Host $result.Output
         }
-        finally {
-            $ErrorActionPreference = $previousErrorActionPreference
+        return
+    }
+    if (Test-MissingUvToolError -Output $result.Output) {
+        Write-Host "Free Claude Code uv tool is already absent; verifying its entry points."
+        return
+    }
+    if (-not [string]::IsNullOrWhiteSpace($result.Output)) {
+        [Console]::Error.WriteLine($result.Output)
+    }
+    throw "uv tool uninstall $PackageName failed with exit code $($result.ExitCode); ~/.fcc was not deleted."
+}
+
+function Confirm-FccCommandsRemoved {
+    if ($DryRun) {
+        Write-Host "+ verify all Free Claude Code entry points are absent from the uv tool bin directory"
+        return
+    }
+
+    $remaining = @()
+    $extensions = @("", ".exe", ".cmd", ".bat", ".ps1")
+    foreach ($commandName in $FccCommands) {
+        foreach ($extension in $extensions) {
+            $commandPath = Join-Path $script:UvToolBin "$commandName$extension"
+            if (Test-Path -LiteralPath $commandPath) {
+                $remaining += $commandPath
+            }
         }
+    }
+    if ($remaining.Count -gt 0) {
+        throw "Free Claude Code entry points remain after uv uninstall: $($remaining -join ', '); ~/.fcc was not deleted."
     }
 }
 
 function Purge-FccHome {
-    $fccHome = Join-Path $HOME $FccHomeDirname
+    $fccHome = Join-Path $env:USERPROFILE $FccHomeDirname
     if (-not (Test-Path -LiteralPath $fccHome)) {
         Write-Host "No FCC config directory at $fccHome; skipping purge."
         return
@@ -145,9 +223,13 @@ function Purge-FccHome {
         "-Force"
     ) -join " "
     Write-Host "+ $commandText"
+    if ($DryRun) {
+        return
+    }
 
-    if (-not $DryRun) {
-        Remove-Item -LiteralPath $fccHome -Recurse -Force
+    Remove-Item -LiteralPath $fccHome -Recurse -Force
+    if (Test-Path -LiteralPath $fccHome) {
+        throw "FCC config directory still exists after deletion: $fccHome"
     }
 }
 
@@ -155,21 +237,34 @@ if ($Help) {
     Show-Usage
     return
 }
-
 if ($RemainingArgs.Count -gt 0) {
     Show-Usage
     throw "Unknown option: $($RemainingArgs -join ' ')"
+}
+if ([string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+    throw "USERPROFILE is not set; cannot locate Free Claude Code data."
 }
 
 Write-Step "Checking for running Free Claude Code processes"
 Assert-NoFccProcessesRunning
 
-Write-Step "Removing Free Claude Code uv tool"
+Write-Step "Locating the uv-managed Free Claude Code installation"
+Initialize-UvContext
+
+Write-Step "Removing the Free Claude Code uv tool"
 Uninstall-FreeClaudeCode
+
+Write-Step "Verifying Free Claude Code entry points were removed"
+Confirm-FccCommandsRemoved
 
 Write-Step "Purging FCC config and data from ~/.fcc"
 Purge-FccHome
 
 Write-Host ""
-Write-Host "Free Claude Code has been removed."
-Write-Host "uv, Claude Code, Codex, and the uv-managed Python runtime were left installed."
+if ($DryRun) {
+    Write-Host "Dry run complete. No changes were made."
+}
+else {
+    Write-Host "Free Claude Code has been removed and verified."
+    Write-Host "uv, Claude Code, Codex, the uv-managed Python runtime, and shared PATH entries were left installed."
+}

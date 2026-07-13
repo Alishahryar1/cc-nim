@@ -300,7 +300,7 @@ source detection for startup warnings also belongs to `src/free_claude_code/conf
 - config directory: `~/.fcc`;
 - managed env file: `~/.fcc/.env`;
 - generated Codex model catalog: `~/.fcc/codex-model-catalog.json`;
-- agent workspace: `~/.fcc/agent_workspace`;
+- messaging state directory: `~/.fcc/agent_workspace`;
 - server log: `~/.fcc/logs/server.log`.
 
 Model routing configuration is tiered:
@@ -808,11 +808,14 @@ the proxy instead of stopping at its login gate.
 [cli/managed/](src/free_claude_code/cli/managed/) owns managed Claude Code subprocesses used by
 Discord and Telegram messaging. Managed task invocations extend the same proxy
 environment only with non-interactive terminal settings, optional `--resume`,
-optional `--fork-session`, `--model opus`, and `--output-format stream-json`. Messaging
-pins this Claude tier alias so phone sessions route through `MODEL_OPUS` or the
-`MODEL` fallback instead of inheriting a user's interactive `/model` picker
-state. The managed session parser extracts persistent Claude session IDs and
-yields Claude stream-json events to the messaging event parser. Managed Claude
+optional `--fork-session`, `--model opus`, and `--output-format stream-json`.
+Messaging pins this Claude tier alias so phone sessions route through
+`MODEL_OPUS` or the `MODEL` fallback instead of inheriting a user's interactive
+`/model` picker state. Managed execution does not override Claude's
+`plansDirectory`; plan files use Claude's native user-level location so the
+project workspace may reside on any filesystem volume. The managed session
+parser extracts persistent Claude session IDs and yields Claude stream-json
+events to the messaging event parser. Managed Claude
 also owns subprocess stderr diagnostic classification so known benign Claude
 Code notices do not become messaging task errors, while unknown stderr remains
 fatal. Before subprocess stop, the manager marks the session closing so new
@@ -1066,7 +1069,7 @@ reported and skipped because assigning it to an inferred chat would violate the
 same ownership boundary.
 
 [messaging/session/](src/free_claude_code/messaging/session/) persists typed conversation snapshots
-and message IDs to a JSON file under the managed agent workspace.
+and message IDs to a JSON file under the managed messaging state directory.
 `SessionStore` reads existing `sessions.json` files but exposes typed snapshot
 APIs to runtime code and deep-copies snapshot ingress and egress so no caller
 shares mutable persisted state. Debounced atomic writes live in

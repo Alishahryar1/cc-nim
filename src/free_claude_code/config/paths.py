@@ -6,7 +6,7 @@ FCC_CONFIG_DIRNAME = ".fcc"
 FCC_ENV_FILENAME = ".env"
 LEGACY_REPO_DIRNAME = "free-claude-code"
 LEGACY_XDG_CONFIG_DIRNAME = ".config"
-CLAUDE_WORKSPACE_DIRNAME = "agent_workspace"
+MESSAGING_STATE_DIRNAME = "agent_workspace"
 FCC_LOGS_DIRNAME = "logs"
 SERVER_LOG_FILENAME = "server.log"
 CODEX_MODEL_CATALOG_FILENAME = "codex-model-catalog.json"
@@ -34,10 +34,10 @@ def legacy_env_paths() -> tuple[Path, ...]:
     )
 
 
-def default_claude_workspace_path() -> Path:
-    """Return the default Claude workspace path."""
+def messaging_state_dir_path() -> Path:
+    """Return the managed messaging state directory."""
 
-    return config_dir_path() / CLAUDE_WORKSPACE_DIRNAME
+    return config_dir_path() / MESSAGING_STATE_DIRNAME
 
 
 def server_log_path() -> Path:

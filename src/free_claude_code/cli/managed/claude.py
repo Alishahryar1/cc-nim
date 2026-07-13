@@ -41,7 +41,6 @@ class ManagedClaudeConfig:
     workspace_path: str
     proxy_root_url: str
     allowed_dirs: list[str] = field(default_factory=list)
-    plans_directory: str | None = None
     claude_bin: str = CLAUDE_BINARY_NAME
     auth_token: str = ""
 
@@ -68,7 +67,6 @@ def build_managed_claude_invocation(
         session_id=request.session_id,
         fork_session=request.fork_session,
         allowed_dirs=config.allowed_dirs,
-        plans_directory=config.plans_directory,
     )
     resume_session_id = (
         request.session_id
@@ -121,7 +119,6 @@ def build_managed_claude_command(
     session_id: str | None,
     fork_session: bool,
     allowed_dirs: list[str],
-    plans_directory: str | None,
 ) -> list[str]:
     """Return the Claude Code stream-json command for a managed task."""
 
@@ -158,9 +155,6 @@ def build_managed_claude_command(
 
     for directory in allowed_dirs:
         cmd.extend(["--add-dir", directory])
-
-    if plans_directory is not None:
-        cmd.extend(["--settings", json.dumps({"plansDirectory": plans_directory})])
 
     return cmd
 

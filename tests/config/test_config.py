@@ -19,7 +19,7 @@ from free_claude_code.config.model_refs import (
     parse_provider_type,
 )
 from free_claude_code.config.nim import NimSettings
-from free_claude_code.config.paths import default_claude_workspace_path
+from free_claude_code.config.paths import messaging_state_dir_path
 
 
 class TestSettings:
@@ -68,7 +68,7 @@ class TestSettings:
 
         settings = Settings()
 
-        assert default_claude_workspace_path() == tmp_path / ".fcc" / "agent_workspace"
+        assert messaging_state_dir_path() == tmp_path / ".fcc" / "agent_workspace"
         assert not hasattr(settings, "claude_workspace")
 
     def test_server_log_path_uses_fcc_home(self, monkeypatch, tmp_path):
@@ -113,7 +113,7 @@ class TestSettings:
 
         settings = Settings()
 
-        assert default_claude_workspace_path() == tmp_path / ".fcc" / "agent_workspace"
+        assert messaging_state_dir_path() == tmp_path / ".fcc" / "agent_workspace"
         assert not hasattr(settings, "claude_workspace")
 
     def test_explicit_claude_workspace_is_ignored(self, monkeypatch, tmp_path):
@@ -128,7 +128,7 @@ class TestSettings:
 
         settings = Settings()
 
-        assert default_claude_workspace_path() == tmp_path / ".fcc" / "agent_workspace"
+        assert messaging_state_dir_path() == tmp_path / ".fcc" / "agent_workspace"
         assert not hasattr(settings, "claude_workspace")
 
     def test_explicit_claude_cli_bin_is_ignored(self, monkeypatch):
@@ -161,7 +161,7 @@ class TestSettings:
             )
         )
 
-        assert default_claude_workspace_path() == tmp_path / ".fcc" / "agent_workspace"
+        assert messaging_state_dir_path() == tmp_path / ".fcc" / "agent_workspace"
         assert not hasattr(settings, "claude_workspace")
         assert not hasattr(settings, "claude_cli_bin")
 
