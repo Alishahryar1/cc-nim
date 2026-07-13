@@ -125,10 +125,6 @@ def posix_harness(tmp_path: Path) -> PosixHarness:
         path.mkdir(parents=True)
 
     _write_executable(
-        bin_dir / "git",
-        '#!/bin/sh\necho "git:$*" >> "$CALL_LOG"\necho "git version 2.0.0"\n',
-    )
-    _write_executable(
         bin_dir / "curl",
         """#!/bin/sh
 url=""
@@ -232,9 +228,14 @@ def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> No
     assert calls.index("codex-install:1") < calls.index("codex:--version")
     assert calls.index("uv-install") < calls.index("uv:--version")
     assert any(
-        call.startswith("uv:tool install --force --python 3.14.0 git+")
+        call.startswith(
+            "uv:tool install --force --refresh-package free-claude-code "
+            "--python 3.14.0 free-claude-code @ "
+            "https://github.com/Alishahryar1/free-claude-code/archive/refs/heads/main.zip"
+        )
         for call in calls
     )
+    assert not any(call.startswith("git:") for call in calls)
     assert calls[-3:] == [
         "uv:tool update-shell",
         "uv:tool dir --bin",
@@ -354,7 +355,9 @@ def test_install_sh_voice_flags_only_change_fcc_spec(
 
     assert result.returncode == 0, result.stderr
     assert any(
-        "--torch-backend cu130 free-claude-code[voice,voice_local] @ git+" in call
+        "--torch-backend cu130 free-claude-code[voice,voice_local] @ "
+        "https://github.com/Alishahryar1/free-claude-code/archive/refs/heads/main.zip"
+        in call
         for call in posix_harness.calls()
     )
 
@@ -427,7 +430,7 @@ class PowerShellHarness:
     def add_uv(self, version: str) -> None:
         _write_executable(self.bin_dir / "uv.cmd", _batch_uv(version))
 
-    def run(self, fail_step: str = "") -> subprocess.CompletedProcess[str]:
+    def run(self, *args: str, fail_step: str = "") -> subprocess.CompletedProcess[str]:
         env = self.env | {"FAIL_STEP": fail_step}
         return subprocess.run(
             [
@@ -437,6 +440,7 @@ class PowerShellHarness:
                 "Bypass",
                 "-File",
                 str(self.wrapper),
+                *args,
             ],
             check=False,
             capture_output=True,
@@ -471,10 +475,6 @@ def powershell_harness(
     for path in (bin_dir, fixtures, tool_bin, home, local_app_data):
         path.mkdir(parents=True)
 
-    _write_executable(
-        bin_dir / "git.cmd",
-        '@echo off\necho git:%*>>"%CALL_LOG%"\necho git version 2.0.0\n',
-    )
     (fixtures / "claude-command.cmd").write_text(
         _batch_client("claude"), encoding="utf-8"
     )
@@ -551,7 +551,7 @@ function Invoke-RestMethod {
     Copy-Item -LiteralPath $source -Destination $OutFile -Force
 }
 $installer = [scriptblock]::Create([IO.File]::ReadAllText($env:FCC_INSTALLER))
-& $installer
+& $installer @args
 """,
         encoding="utf-8",
     )
@@ -590,9 +590,14 @@ def test_install_ps1_fresh_install_is_verified(
     assert calls.index("codex-install:1") < calls.index("codex:--version")
     assert calls.index("uv-install") < calls.index("uv:--version")
     assert any(
-        call.startswith("uv:tool install --force --python 3.14.0 git+")
+        call.startswith(
+            "uv:tool install --force --refresh-package free-claude-code "
+            '--python 3.14.0 "free-claude-code @ '
+            'https://github.com/Alishahryar1/free-claude-code/archive/refs/heads/main.zip"'
+        )
         for call in calls
     )
+    assert not any(call.startswith("git:") for call in calls)
     assert calls[-3:] == [
         "uv:tool update-shell",
         "uv:tool dir --bin",
@@ -721,16 +726,18 @@ def test_install_ps1_rejects_unparseable_existing_uv(
     assert not any("astral.sh" in call for call in powershell_harness.calls())
 
 
-def test_install_ps1_requires_git_before_mutation(
+def test_install_ps1_voice_flags_only_change_fcc_spec(
     powershell_harness: PowerShellHarness,
 ) -> None:
-    (powershell_harness.bin_dir / "git.cmd").unlink()
+    result = powershell_harness.run("-VoiceAll", "-TorchBackend", "cu130")
 
-    result = powershell_harness.run()
-
-    assert result.returncode != 0
-    assert powershell_harness.calls() == []
-    assert "git is required" in result.stderr
+    assert result.returncode == 0, result.stderr
+    assert any(
+        '--torch-backend cu130 "free-claude-code[voice,voice_local] @ '
+        'https://github.com/Alishahryar1/free-claude-code/archive/refs/heads/main.zip"'
+        in call
+        for call in powershell_harness.calls()
+    )
 
 
 def test_installers_use_native_clients_and_single_python_selection() -> None:
@@ -740,9 +747,26 @@ def test_installers_use_native_clients_and_single_python_selection() -> None:
     for text in (shell, powershell):
         assert "@anthropic-ai/claude-code" not in text
         assert "@openai/codex" not in text
+        assert "git+" not in text
+        assert "git --version" not in text
+        assert (
+            "https://github.com/Alishahryar1/free-claude-code/archive/refs/heads/main.zip"
+            in text
+        )
         assert "python install" not in text
+        assert "--refresh-package" in text
         assert "tool update-shell" in text
         assert "--python" in text
+
+
+def test_readme_install_section_has_no_manual_git_prerequisite() -> None:
+    readme = (_repo_root() / "README.md").read_text(encoding="utf-8")
+    install_section = readme.split("### 1. Install Or Update", 1)[1].split(
+        "### 2. Start The Server", 1
+    )[0]
+
+    assert "Install Git" not in install_section
+    assert "official native installers" not in install_section
 
 
 @pytest.mark.parametrize("powershell", _powershells())

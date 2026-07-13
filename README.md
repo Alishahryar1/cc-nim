@@ -69,8 +69,6 @@ Run Claude Code or Codex with free, paid, or local models. Choose and validate p
 
 ### 1. Install Or Update
 
-The installer uses the official native installers for missing Claude Code, Codex, and uv, then installs Free Claude Code with uv-managed Python 3.14. Install [Git](https://git-scm.com/downloads) first because FCC is installed directly from this repository. Every step is verified, and the installer stops immediately if one fails.
-
 macOS/Linux:
 
 ```bash

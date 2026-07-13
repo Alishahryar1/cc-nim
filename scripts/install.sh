@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-REPO_GIT_URL="git+https://github.com/Alishahryar1/free-claude-code.git"
+REPO_ARCHIVE_URL="https://github.com/Alishahryar1/free-claude-code/archive/refs/heads/main.zip"
 PYTHON_VERSION="3.14.0"
 MIN_UV_VERSION="0.11.0"
 CLAUDE_INSTALL_URL="https://claude.ai/install.sh"
@@ -355,13 +355,13 @@ package_spec() {
     fi
 
     if [ "$include_nim" -eq 1 ] && [ "$include_local" -eq 1 ]; then
-        printf 'free-claude-code[voice,voice_local] @ %s' "$REPO_GIT_URL"
+        printf 'free-claude-code[voice,voice_local] @ %s' "$REPO_ARCHIVE_URL"
     elif [ "$include_nim" -eq 1 ]; then
-        printf 'free-claude-code[voice] @ %s' "$REPO_GIT_URL"
+        printf 'free-claude-code[voice] @ %s' "$REPO_ARCHIVE_URL"
     elif [ "$include_local" -eq 1 ]; then
-        printf 'free-claude-code[voice_local] @ %s' "$REPO_GIT_URL"
+        printf 'free-claude-code[voice_local] @ %s' "$REPO_ARCHIVE_URL"
     else
-        printf '%s' "$REPO_GIT_URL"
+        printf 'free-claude-code @ %s' "$REPO_ARCHIVE_URL"
     fi
 }
 
@@ -369,9 +369,9 @@ install_free_claude_code() {
     spec=$(package_spec)
 
     if [ -n "$torch_backend" ]; then
-        run uv tool install --force --python "$PYTHON_VERSION" --torch-backend "$torch_backend" "$spec"
+        run uv tool install --force --refresh-package free-claude-code --python "$PYTHON_VERSION" --torch-backend "$torch_backend" "$spec"
     else
-        run uv tool install --force --python "$PYTHON_VERSION" "$spec"
+        run uv tool install --force --refresh-package free-claude-code --python "$PYTHON_VERSION" "$spec"
     fi
 }
 
@@ -414,8 +414,6 @@ require_command curl
 require_command bash
 require_command sh
 require_command mktemp
-require_command git
-run git --version
 
 step "Ensuring Claude Code is installed"
 ensure_claude

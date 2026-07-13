@@ -13,7 +13,7 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-$RepoGitUrl = "git+https://github.com/Alishahryar1/free-claude-code.git"
+$RepoArchiveUrl = "https://github.com/Alishahryar1/free-claude-code/archive/refs/heads/main.zip"
 $PythonVersion = "3.14.0"
 $MinUvVersion = "0.11.0"
 $ClaudeInstallUrl = "https://claude.ai/install.ps1"
@@ -159,19 +159,6 @@ function Add-KnownBinDirectories {
     if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
         Add-PathEntry (Join-Path $env:LOCALAPPDATA "Programs\OpenAI\Codex\bin")
     }
-}
-
-function Assert-Prerequisites {
-    if ($DryRun) {
-        Write-Host "+ git --version"
-        return
-    }
-
-    $gitCommand = Get-ApplicationCommand "git"
-    if (-not $gitCommand) {
-        throw "git is required to install Free Claude Code from GitHub. Install Git, then rerun this installer."
-    }
-    Invoke-NativeCommand -FilePath $gitCommand.Source -Arguments @("--version")
 }
 
 function Invoke-DownloadedPowerShellInstaller {
@@ -369,20 +356,28 @@ function Get-PackageSpec {
     }
 
     if ($includeNim -and $includeLocal) {
-        return "free-claude-code[voice,voice_local] @ $RepoGitUrl"
+        return "free-claude-code[voice,voice_local] @ $RepoArchiveUrl"
     }
     if ($includeNim) {
-        return "free-claude-code[voice] @ $RepoGitUrl"
+        return "free-claude-code[voice] @ $RepoArchiveUrl"
     }
     if ($includeLocal) {
-        return "free-claude-code[voice_local] @ $RepoGitUrl"
+        return "free-claude-code[voice_local] @ $RepoArchiveUrl"
     }
-    return $RepoGitUrl
+    return "free-claude-code @ $RepoArchiveUrl"
 }
 
 function Install-FreeClaudeCode {
     $packageSpec = Get-PackageSpec
-    $arguments = @("tool", "install", "--force", "--python", $PythonVersion)
+    $arguments = @(
+        "tool",
+        "install",
+        "--force",
+        "--refresh-package",
+        "free-claude-code",
+        "--python",
+        $PythonVersion
+    )
     if (-not [string]::IsNullOrWhiteSpace($TorchBackend)) {
         $arguments += @("--torch-backend", $TorchBackend)
     }
@@ -457,9 +452,6 @@ if ((-not [string]::IsNullOrWhiteSpace($TorchBackend)) -and (-not ($VoiceLocal -
 }
 
 Add-KnownBinDirectories
-
-Write-Step "Checking installation prerequisites"
-Assert-Prerequisites
 
 Write-Step "Ensuring Claude Code is installed"
 Ensure-ClaudeCode
