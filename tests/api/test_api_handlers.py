@@ -103,6 +103,7 @@ async def test_messages_handler_passes_routed_request_and_stream_metadata() -> N
     request = MessagesRequest(
         model="nvidia_nim/test-model",
         max_tokens=100,
+        stream=True,
         messages=[Message(role="user", content="hi")],
     )
 
@@ -373,6 +374,7 @@ async def test_messages_handler_forces_no_thinking_for_safety_classifier() -> No
     request = MessagesRequest(
         model="nvidia_nim/test-model",
         max_tokens=100,
+        stream=True,
         system=_CLASSIFIER_SYSTEM,
         messages=[Message(role="user", content=_CLASSIFIER_USER)],
     )
@@ -406,6 +408,7 @@ async def test_messages_handler_preserves_thinking_for_non_classifier() -> None:
     request = MessagesRequest(
         model="nvidia_nim/test-model",
         max_tokens=100,
+        stream=True,
         system="Explain XML formats.",
         messages=[
             Message(
@@ -441,6 +444,7 @@ async def test_messages_handler_keeps_existing_no_thinking_for_classifier() -> N
     request = MessagesRequest(
         model="claude-3-freecc-no-thinking/nvidia_nim/test-model",
         max_tokens=100,
+        stream=True,
         system=_CLASSIFIER_SYSTEM,
         messages=[Message(role="user", content=_CLASSIFIER_USER)],
     )

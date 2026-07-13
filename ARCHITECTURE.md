@@ -396,7 +396,8 @@ response. Once FCC has finalized the failure, the response includes
 without causing a second client retry loop. After the first chunk has escaped,
 HTTP status is committed; Messages emits an Anthropic `event: error` and closes
 without a synthetic `message_stop`; Responses emits `response.failed` with the
-original response ID. Non-streaming Messages aggregate internally and return
+original response ID. Messages are non-streaming unless the client explicitly
+sets `stream: true`. Non-streaming Messages aggregate internally and return
 non-2xx JSON for any terminal stream error, discarding incomplete content rather
 than presenting a partial success.
 

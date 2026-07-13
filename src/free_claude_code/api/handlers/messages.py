@@ -135,12 +135,12 @@ class MessagesHandler:
         self,
         result: _MessagesResult,
         *,
-        stream: bool | None,
+        stream: bool,
         request_id: str,
     ) -> object:
         if isinstance(result, _MessagesCompleteResult):
             return result.response
-        if stream is False:
+        if not stream:
             # Non-streaming clients (e.g. Claude Code utility calls) need a
             # complete JSON Message; the internal pipeline is always SSE, so
             # serving that raw here breaks the client SDK's response parse.

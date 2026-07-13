@@ -1,10 +1,10 @@
 """Fold an Anthropic Messages SSE stream into a single JSON Message body.
 
-Used to honor client requests with ``stream: false``. The internal pipeline
-is always SSE (provider execution always yields a stream), so
-callers that need a non-streaming response consume the stream here and get
-back the same shape the real Anthropic API returns for a non-streaming
-``messages.create()`` call.
+Used when client requests omit ``stream`` or set ``stream: false``. The internal
+pipeline is always SSE (provider execution always yields a stream), so callers
+that need a non-streaming response consume the stream here and get back the same
+shape the real Anthropic API returns for a non-streaming ``messages.create()``
+call.
 """
 
 import json

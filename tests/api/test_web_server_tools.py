@@ -424,6 +424,7 @@ async def test_service_streams_forced_web_search_by_default(monkeypatch):
     request = MessagesRequest(
         model="claude-haiku-4-5-20251001",
         max_tokens=100,
+        stream=True,
         messages=[Message(role="user", content="Search for DeepSeek V4")],
         tools=[Tool(name="web_search", type="web_search_20250305")],
         tool_choice={"type": "tool", "name": "web_search"},

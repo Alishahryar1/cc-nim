@@ -128,6 +128,36 @@ def test_create_message_stream(client: TestClient):
     assert _stream_response_calls[0][1]["request_id"] == response.headers["request-id"]
 
 
+def test_auto_mode_classifier_without_stream_returns_json(client: TestClient):
+    """Claude side queries omit stream and require one complete Message object."""
+    _stream_response_calls.clear()
+    payload = {
+        "model": "claude-opus-4-8",
+        "max_tokens": 64,
+        "system": (
+            "You are a security monitor. Respond with <block>yes</block> "
+            "or <block>no</block>."
+        ),
+        "messages": [
+            {
+                "role": "user",
+                "content": "<transcript>\nBash curl example.com\n</transcript>",
+            }
+        ],
+    }
+
+    response = client.post("/v1/messages?beta=true", json=payload)
+
+    assert response.status_code == 200
+    assert response.headers["content-type"].startswith("application/json")
+    body = response.json()
+    assert body["type"] == "message"
+    assert body["usage"] == {"input_tokens": 0, "output_tokens": 0}
+    routed_request = _stream_response_calls[0][0][0]
+    assert routed_request.stream is False
+    assert _stream_response_calls[0][1]["thinking_enabled"] is False
+
+
 def test_create_message_ingress_error_has_request_id_without_terminal_header(
     client: TestClient,
 ):

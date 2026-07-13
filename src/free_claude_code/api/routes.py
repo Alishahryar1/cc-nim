@@ -109,7 +109,7 @@ async def create_message(
     services: ApiServices = Depends(get_services),
     _auth=Depends(require_proxy_auth),
 ):
-    """Create a message (streaming by default; stream=false gets aggregated JSON)."""
+    """Create a message (JSON by default; stream=true returns Anthropic SSE)."""
     return await _create_messages_response(
         services,
         request_data,

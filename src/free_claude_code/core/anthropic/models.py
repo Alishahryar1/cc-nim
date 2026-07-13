@@ -183,7 +183,7 @@ class MessagesRequest(BaseModel):
     messages: list[Message]
     system: str | list[SystemContent] | None = None
     stop_sequences: list[str] | None = None
-    stream: bool | None = True
+    stream: bool = False
     temperature: float | None = None
     top_p: float | None = None
     top_k: int | None = None

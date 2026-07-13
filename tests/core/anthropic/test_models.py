@@ -1,4 +1,5 @@
 import pytest
+from pydantic import ValidationError
 
 from free_claude_code.core.anthropic.conversion import (
     OpenAIConversionError,
@@ -21,6 +22,19 @@ def test_messages_request_parses_without_model_mapping_side_effects():
     )
 
     assert request.model == "claude-3-opus"
+    assert request.stream is False
+
+
+def test_messages_request_rejects_null_stream() -> None:
+    with pytest.raises(ValidationError):
+        MessagesRequest.model_validate(
+            {
+                "model": "claude-3-opus",
+                "max_tokens": 100,
+                "messages": [{"role": "user", "content": "hello"}],
+                "stream": None,
+            }
+        )
 
 
 def test_messages_request_normalizes_system_role_messages():
@@ -292,7 +306,7 @@ def test_messages_request_dump_preserves_public_defaults_and_excludes_internal_f
     assert dumped == {
         "model": "model",
         "messages": [{"role": "user", "content": "hello"}],
-        "stream": True,
+        "stream": False,
         "thinking": {"enabled": True, "type": "adaptive"},
         "client_extension": {"enabled": True},
     }
