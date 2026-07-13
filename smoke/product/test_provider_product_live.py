@@ -33,7 +33,13 @@ def test_provider_matrix_presence_e2e(smoke_config: SmokeConfig) -> None:
 def test_model_mapping_matrix_e2e(smoke_config: SmokeConfig) -> None:
     models = ProviderMatrixDriver(smoke_config).configured_models()
     sources = {model.source for model in models}
-    assert sources <= {"MODEL", "MODEL_OPUS", "MODEL_SONNET", "MODEL_HAIKU"}
+    assert sources <= {
+        "MODEL",
+        "MODEL_FABLE",
+        "MODEL_OPUS",
+        "MODEL_SONNET",
+        "MODEL_HAIKU",
+    }
     for model in models:
         assert model.provider
         assert model.model_name

@@ -138,7 +138,7 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         "mixed_provider_resolution",
         "mixed_provider_mapping",
         "free_claude_code.application.routing.ModelRouter",
-        "Opus/Sonnet/Haiku/fallback model config",
+        "Fable/Opus/Sonnet/Haiku/fallback model config",
         "distinct provider selections per request",
         "skip live execution when providers are not configured",
         ("tests/application/test_routing.py", "tests/config/test_config.py"),

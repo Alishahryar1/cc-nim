@@ -17,10 +17,12 @@ from free_claude_code.core.anthropic.models import (
 def settings():
     settings = Settings()
     settings.model = "nvidia_nim/fallback-model"
+    settings.model_fable = None
     settings.model_opus = None
     settings.model_sonnet = None
     settings.model_haiku = None
     settings.enable_model_thinking = True
+    settings.enable_fable_thinking = None
     settings.enable_opus_thinking = None
     settings.enable_sonnet_thinking = None
     settings.enable_haiku_thinking = None
@@ -54,13 +56,31 @@ def test_model_router_applies_opus_override(settings):
     assert request.model == "claude-opus-4-20250514"
 
 
+def test_model_router_applies_fable_override(settings):
+    settings.model_fable = "open_router/anthropic/claude-fable-5"
+
+    routed = ModelRouter(settings).resolve_messages_request(
+        MessagesRequest(
+            model="claude-fable-5",
+            max_tokens=100,
+            messages=[Message(role="user", content="hello")],
+        )
+    )
+
+    assert routed.request.model == "anthropic/claude-fable-5"
+    assert routed.resolved.provider_model_ref == "open_router/anthropic/claude-fable-5"
+    assert routed.resolved.original_model == "claude-fable-5"
+
+
 def test_model_router_resolves_per_model_thinking(settings):
     settings.enable_model_thinking = False
+    settings.enable_fable_thinking = True
     settings.enable_opus_thinking = True
     settings.enable_haiku_thinking = False
 
     router = ModelRouter(settings)
 
+    assert router.resolve("claude-fable-5").thinking_enabled is True
     assert router.resolve("claude-opus-4-20250514").thinking_enabled is True
     assert router.resolve("claude-sonnet-4-20250514").thinking_enabled is False
     assert router.resolve("claude-3-haiku-20240307").thinking_enabled is False

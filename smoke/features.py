@@ -123,13 +123,13 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     ),
     FeatureCoverage(
         "per_model_mapping",
-        "Opus, Sonnet, Haiku, and fallback mappings route explicitly",
+        "Fable, Opus, Sonnet, Haiku, and fallback mappings route explicitly",
         "readme",
         ("tests/application/test_routing.py", "tests/config/test_config.py"),
         ("test_model_mapping_configuration_is_consistent",),
         ("test_model_mapping_matrix_e2e",),
         ("providers",),
-        ("MODEL", "MODEL_OPUS", "MODEL_SONNET", "MODEL_HAIKU"),
+        ("MODEL", "MODEL_FABLE", "MODEL_OPUS", "MODEL_SONNET", "MODEL_HAIKU"),
         "skip only when live smoke is intentionally allowed to run with no provider",
     ),
     FeatureCoverage(
@@ -140,7 +140,7 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         ("test_mixed_provider_model_mapping_when_configured",),
         ("test_model_mapping_matrix_e2e",),
         ("providers",),
-        ("MODEL", "MODEL_OPUS", "MODEL_SONNET", "MODEL_HAIKU"),
+        ("MODEL", "MODEL_FABLE", "MODEL_OPUS", "MODEL_SONNET", "MODEL_HAIKU"),
         "configured mixed-provider mappings must resolve consistently",
     ),
     FeatureCoverage(

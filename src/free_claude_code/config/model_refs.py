@@ -16,6 +16,7 @@ class ConfiguredChatModelRef:
 
 class ChatModelConfig(Protocol):
     model: str
+    model_fable: str | None
     model_opus: str | None
     model_sonnet: str | None
     model_haiku: str | None
@@ -40,6 +41,7 @@ def configured_chat_model_refs(
 
     candidates = (
         ("MODEL", settings.model),
+        ("MODEL_FABLE", settings.model_fable),
         ("MODEL_OPUS", settings.model_opus),
         ("MODEL_SONNET", settings.model_sonnet),
         ("MODEL_HAIKU", settings.model_haiku),

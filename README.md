@@ -57,7 +57,7 @@ Run your coding agents with free, paid, or local models. Choose and validate pro
 - Launch Claude Code with `fcc-claude`, Codex with `fcc-codex`, or Pi with `fcc-pi`.
 - Switch among 24 cloud and local providers from the Admin UI.
 - Use each coding agent's native model picker.
-- Route Opus, Sonnet, Haiku, and fallback traffic to different models.
+- Route Fable, Opus, Sonnet, Haiku, and fallback traffic to different models.
 - Keep streaming, tool use, reasoning, and image input across compatible models.
 - Connect Claude Code and Codex in VS Code or Claude Code through JetBrains ACP.
 - Optionally run Claude Code sessions through Discord or Telegram with voice-note transcription.
@@ -205,7 +205,7 @@ Use the tag shown by `ollama list` with the `ollama/` prefix. `OLLAMA_BASE_URL` 
 
 ### Optional Model-Tier Routing
 
-`MODEL` is the fallback for every request. Set `MODEL_OPUS`, `MODEL_SONNET`, or `MODEL_HAIKU` to override individual Claude Code tiers; leave a tier blank to inherit `MODEL`.
+`MODEL` is the fallback for every request. Set `MODEL_FABLE`, `MODEL_OPUS`, `MODEL_SONNET`, or `MODEL_HAIKU` to override individual Claude Code tiers; leave a tier blank to inherit `MODEL`.
 
 For example, route Opus to `nvidia_nim/moonshotai/kimi-k2.6`, Sonnet to `open_router/openrouter/free`, Haiku to `lmstudio/qwen3.5-coder`, and keep `MODEL` on `zai/glm-5.2`.
 

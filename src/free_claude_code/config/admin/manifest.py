@@ -108,6 +108,13 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         description="Fallback provider/model route for all Claude model names.",
     ),
     ConfigFieldSpec(
+        "MODEL_FABLE",
+        "Fable Override",
+        "models",
+        settings_attr="model_fable",
+        description="Optional provider/model route for Fable requests.",
+    ),
+    ConfigFieldSpec(
         "MODEL_OPUS",
         "Opus Override",
         "models",
@@ -135,6 +142,14 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "boolean",
         settings_attr="enable_model_thinking",
         default="true",
+    ),
+    ConfigFieldSpec(
+        "ENABLE_FABLE_THINKING",
+        "Fable Thinking",
+        "thinking",
+        "tri_boolean",
+        settings_attr="enable_fable_thinking",
+        description="Blank inherits Enable Thinking.",
     ),
     ConfigFieldSpec(
         "ENABLE_OPUS_THINKING",

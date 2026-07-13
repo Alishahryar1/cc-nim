@@ -40,6 +40,7 @@ from free_claude_code.providers.runtime import (
 def _make_settings(**overrides):
     mock = MagicMock()
     mock.model = "nvidia_nim/meta/llama3"
+    mock.model_fable = None
     mock.model_opus = None
     mock.model_sonnet = None
     mock.model_haiku = None

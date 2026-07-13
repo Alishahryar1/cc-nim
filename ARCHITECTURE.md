@@ -311,9 +311,9 @@ source detection for startup warnings also belongs to `src/free_claude_code/conf
 Model routing configuration is tiered:
 
 - `MODEL` is the fallback provider-prefixed model ref.
-- `MODEL_OPUS`, `MODEL_SONNET`, and `MODEL_HAIKU` override Claude model tiers.
+- `MODEL_FABLE`, `MODEL_OPUS`, `MODEL_SONNET`, and `MODEL_HAIKU` override Claude model tiers.
 - `ENABLE_MODEL_THINKING` is the global thinking switch.
-- `ENABLE_OPUS_THINKING`, `ENABLE_SONNET_THINKING`, and
+- `ENABLE_FABLE_THINKING`, `ENABLE_OPUS_THINKING`, `ENABLE_SONNET_THINKING`, and
   `ENABLE_HAIKU_THINKING` optionally override thinking by tier.
 
 [config/model_refs.py](src/free_claude_code/config/model_refs.py) owns provider-prefixed model ref
@@ -462,7 +462,7 @@ It supports two forms:
 - Gateway model IDs decoded by [core/gateway_model_ids.py](src/free_claude_code/core/gateway_model_ids.py).
 
 If the incoming model is not direct, `ModelRouter` maps it by Claude tier. Names
-containing `opus`, `sonnet`, or `haiku` use the matching tier override when set,
+containing `fable`, `opus`, `sonnet`, or `haiku` use the matching tier override when set,
 otherwise they fall back to `MODEL`.
 
 The router also resolves thinking. Gateway model IDs can force thinking on or

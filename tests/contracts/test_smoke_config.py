@@ -24,6 +24,7 @@ from smoke.lib.config import (
 def _settings(**overrides):
     values = {
         "model": "ollama/llama3.1",
+        "model_fable": None,
         "model_opus": None,
         "model_sonnet": None,
         "model_haiku": None,

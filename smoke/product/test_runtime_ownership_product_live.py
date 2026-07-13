@@ -179,6 +179,7 @@ def _write_initial_managed_config(home: Path, upstream: FakeOpenAIUpstream) -> N
         + "\n".join(
             [
                 "MODEL=lmstudio/model-a",
+                "MODEL_FABLE=",
                 "MODEL_OPUS=",
                 "MODEL_SONNET=",
                 "MODEL_HAIKU=",
@@ -240,6 +241,7 @@ def test_provider_hot_swap_preserves_inflight_stream_e2e(
                     "FCC_ENV_FILE",
                     "LM_STUDIO_BASE_URL",
                     "MODEL",
+                    "MODEL_FABLE",
                     "MODEL_HAIKU",
                     "MODEL_OPUS",
                     "MODEL_SONNET",

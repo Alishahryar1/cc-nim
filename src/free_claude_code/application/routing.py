@@ -117,6 +117,8 @@ class ModelRouter:
         """Resolve a Claude model name to the configured provider/model ref."""
 
         name_lower = claude_model_name.lower()
+        if "fable" in name_lower and self._settings.model_fable is not None:
+            return self._settings.model_fable
         if "opus" in name_lower and self._settings.model_opus is not None:
             return self._settings.model_opus
         if "haiku" in name_lower and self._settings.model_haiku is not None:
@@ -129,6 +131,8 @@ class ModelRouter:
         """Resolve whether thinking is enabled for an incoming Claude model name."""
 
         name_lower = claude_model_name.lower()
+        if "fable" in name_lower and self._settings.enable_fable_thinking is not None:
+            return self._settings.enable_fable_thinking
         if "opus" in name_lower and self._settings.enable_opus_thinking is not None:
             return self._settings.enable_opus_thinking
         if "haiku" in name_lower and self._settings.enable_haiku_thinking is not None:

@@ -112,6 +112,8 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     assert response.status_code == 200
     body = response.json()
     keys = {field["key"] for field in body["fields"]}
+    assert "MODEL_FABLE" in keys
+    assert "ENABLE_FABLE_THINKING" in keys
     assert "ANTHROPIC_AUTH_TOKEN" in keys
     assert "OPENROUTER_API_KEY" in keys
     assert "FIREWORKS_API_KEY" in keys

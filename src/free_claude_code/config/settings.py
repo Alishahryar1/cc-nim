@@ -124,6 +124,7 @@ class Settings(BaseSettings):
 
     # Per-model overrides (optional, falls back to MODEL)
     # Each can use a different provider
+    model_fable: str | None = Field(default=None, validation_alias="MODEL_FABLE")
     model_opus: str | None = Field(default=None, validation_alias="MODEL_OPUS")
     model_sonnet: str | None = Field(default=None, validation_alias="MODEL_SONNET")
     model_haiku: str | None = Field(default=None, validation_alias="MODEL_HAIKU")
@@ -164,6 +165,9 @@ class Settings(BaseSettings):
     )
     enable_model_thinking: bool = Field(
         default=True, validation_alias="ENABLE_MODEL_THINKING"
+    )
+    enable_fable_thinking: bool | None = Field(
+        default=None, validation_alias="ENABLE_FABLE_THINKING"
     )
     enable_opus_thinking: bool | None = Field(
         default=None, validation_alias="ENABLE_OPUS_THINKING"
@@ -287,9 +291,11 @@ class Settings(BaseSettings):
         "allowed_telegram_user_id",
         "discord_bot_token",
         "allowed_discord_channels",
+        "model_fable",
         "model_opus",
         "model_sonnet",
         "model_haiku",
+        "enable_fable_thinking",
         "enable_opus_thinking",
         "enable_sonnet_thinking",
         "enable_haiku_thinking",
@@ -353,7 +359,9 @@ class Settings(BaseSettings):
                 )
         return ",".join(schemes)
 
-    @field_validator("model", "model_opus", "model_sonnet", "model_haiku")
+    @field_validator(
+        "model", "model_fable", "model_opus", "model_sonnet", "model_haiku"
+    )
     @classmethod
     def validate_model_format(cls, v: str | None) -> str | None:
         if v is None:

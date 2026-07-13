@@ -41,7 +41,7 @@ uv run pytest smoke -n auto --dist=loadgroup -s --tb=short
 ```
 
 Provider product E2E runs once per configured provider, independent of `MODEL`,
-`MODEL_OPUS`, `MODEL_SONNET`, and `MODEL_HAIKU`. Defaults come from the provider
+`MODEL_FABLE`, `MODEL_OPUS`, `MODEL_SONNET`, and `MODEL_HAIKU`. Defaults come from the provider
 catalog/docs and can be overridden with `FCC_SMOKE_MODEL_<PROVIDER>`, for example
 `FCC_SMOKE_MODEL_DEEPSEEK=deepseek-v4-pro` (or `deepseek-v4-flash`). If no provider smoke model is
 configured, live product smoke fails as `missing_env` unless you explicitly set

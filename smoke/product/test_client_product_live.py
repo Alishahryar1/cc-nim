@@ -171,6 +171,7 @@ def test_claude_cli_provider_error_e2e(
             name="product-claude-cli-provider-error",
             env_overrides={
                 "MODEL": broken_model,
+                "MODEL_FABLE": broken_model,
                 "MODEL_OPUS": broken_model,
                 "MODEL_SONNET": broken_model,
                 "MODEL_HAIKU": broken_model,

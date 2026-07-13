@@ -68,6 +68,7 @@ def test_per_model_thinking_config_e2e(smoke_config: SmokeConfig, tmp_path) -> N
     env_file = tmp_path / "thinking.env"
     env_file.write_text(
         'ENABLE_MODEL_THINKING="false"\n'
+        'ENABLE_FABLE_THINKING="true"\n'
         'ENABLE_OPUS_THINKING="true"\n'
         "ENABLE_SONNET_THINKING=\n"
         'ENABLE_HAIKU_THINKING="false"\n',
@@ -80,6 +81,7 @@ def test_per_model_thinking_config_e2e(smoke_config: SmokeConfig, tmp_path) -> N
         "from free_claude_code.config.settings import Settings; "
         "s=Settings(); "
         "r=ModelRouter(s); "
+        "print(r.resolve('claude-fable-5').thinking_enabled); "
         "print(r.resolve('claude-opus-4-20250514').thinking_enabled); "
         "print(r.resolve('claude-sonnet-4-20250514').thinking_enabled); "
         "print(r.resolve('claude-haiku-4-20250514').thinking_enabled); "
@@ -93,7 +95,13 @@ def test_per_model_thinking_config_e2e(smoke_config: SmokeConfig, tmp_path) -> N
         check=False,
     )
     assert result.returncode == 0, result.stderr
-    assert result.stdout.splitlines() == ["True", "False", "False", "False"]
+    assert result.stdout.splitlines() == [
+        "True",
+        "True",
+        "False",
+        "False",
+        "False",
+    ]
 
 
 @pytest.mark.smoke_target("config")
