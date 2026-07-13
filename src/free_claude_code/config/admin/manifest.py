@@ -237,6 +237,15 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         restart_required=True,
     ),
     ConfigFieldSpec(
+        "FCC_OPEN_BROWSER",
+        "Open Admin on Startup",
+        "runtime",
+        "boolean",
+        settings_attr="open_admin_browser",
+        default="true",
+        description="Open the Admin UI after the next fcc-server launch becomes healthy.",
+    ),
+    ConfigFieldSpec(
         "MESSAGING_PLATFORM",
         "Messaging Platform",
         "messaging",

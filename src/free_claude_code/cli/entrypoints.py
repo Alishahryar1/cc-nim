@@ -44,11 +44,14 @@ def serve(argv: Sequence[str] | None = None) -> None:
                 _migrate_legacy_env_if_missing()
                 _migrate_config_env_keys()
                 settings = get_settings()
+                should_open_admin = (
+                    settings.open_admin_browser and not opened_admin_browser
+                )
                 if not _run_supervised_server(
-                    settings, open_admin_browser=not opened_admin_browser
+                    settings, open_admin_browser=should_open_admin
                 ):
                     return
-                opened_admin_browser = True
+                opened_admin_browser = opened_admin_browser or should_open_admin
                 get_settings.cache_clear()
         except KeyboardInterrupt:
             return
@@ -56,18 +59,8 @@ def serve(argv: Sequence[str] | None = None) -> None:
         kill_all_best_effort()
 
 
-def _admin_browser_open_enabled() -> bool:
-    """Whether to open /admin when the server becomes reachable (FCC_OPEN_BROWSER)."""
-
-    raw = os.environ.get("FCC_OPEN_BROWSER", "true").strip().lower()
-    return raw not in {"", "0", "false", "no"}
-
-
 def _schedule_open_admin_browser(settings: Settings) -> None:
     """After /health succeeds, open the admin UI in the default browser (daemon thread)."""
-
-    if not _admin_browser_open_enabled():
-        return
 
     admin_url = local_admin_url(settings)
     proxy_root_url = local_proxy_root_url(settings)

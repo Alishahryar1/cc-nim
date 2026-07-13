@@ -18,12 +18,14 @@ def _launcher_settings(
     *,
     port: int = 8082,
     token: str = "freecc",
+    open_admin_browser: bool = True,
 ) -> Settings:
     return Settings.model_construct(
         host="0.0.0.0",
         port=port,
         anthropic_auth_token=token,
         model="nvidia_nim/test-model",
+        open_admin_browser=open_admin_browser,
     )
 
 
@@ -221,11 +223,8 @@ def test_fcc_owned_entrypoints_report_version_without_side_effects(
         side_effect.assert_not_called()
 
 
-def test_schedule_open_admin_browser_opens_when_health_ready(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
+def test_schedule_open_admin_browser_opens_when_health_ready() -> None:
     """Opening /admin runs after /health preflight succeeds."""
-    monkeypatch.delenv("FCC_OPEN_BROWSER", raising=False)
     from free_claude_code.cli import entrypoints
     from free_claude_code.config.server_urls import local_admin_url
 
@@ -255,18 +254,23 @@ def test_schedule_open_admin_browser_opens_when_health_ready(
     assert opened_urls == [local_admin_url(settings)]
 
 
-def test_schedule_open_admin_browser_skips_when_disabled(
-    monkeypatch: pytest.MonkeyPatch,
-) -> None:
-    monkeypatch.setenv("FCC_OPEN_BROWSER", "0")
+def test_serve_skips_admin_browser_when_setting_is_disabled() -> None:
     from free_claude_code.cli import entrypoints
 
-    settings = _launcher_settings()
+    settings = _launcher_settings(open_admin_browser=False)
+    get_settings = MagicMock(return_value=settings)
+    get_settings.cache_clear = MagicMock()
 
-    with patch.object(entrypoints.threading, "Thread") as thread_cls:
-        entrypoints._schedule_open_admin_browser(settings)
+    with (
+        patch.object(entrypoints, "get_settings", get_settings),
+        patch.object(
+            entrypoints, "_run_supervised_server", return_value=False
+        ) as run_server,
+        patch.object(entrypoints, "kill_all_best_effort"),
+    ):
+        entrypoints.serve()
 
-    thread_cls.assert_not_called()
+    run_server.assert_called_once_with(settings, open_admin_browser=False)
 
 
 def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
@@ -306,12 +310,15 @@ def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
         patch.object(entrypoints.uvicorn, "Config", side_effect=fake_config),
         patch.object(entrypoints.uvicorn, "Server", side_effect=FakeServer),
         patch.object(entrypoints, "build_asgi_app", side_effect=build_asgi_app),
-        patch.object(entrypoints, "_schedule_open_admin_browser"),
+        patch.object(
+            entrypoints, "_schedule_open_admin_browser"
+        ) as schedule_open_admin,
         patch.object(entrypoints, "kill_all_best_effort") as kill_all,
     ):
         entrypoints.serve()
 
     assert len(servers) == 2
+    schedule_open_admin.assert_called_once_with(settings)
     get_settings.cache_clear.assert_called_once()
     kill_all.assert_called_once()
 

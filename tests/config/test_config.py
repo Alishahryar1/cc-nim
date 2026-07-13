@@ -55,6 +55,15 @@ class TestSettings:
         assert settings.log_raw_sse_events is False
         assert settings.debug_platform_edits is False
         assert settings.debug_subagent_stack is False
+        assert settings.open_admin_browser is True
+
+    def test_open_admin_browser_loads_from_environment(self, monkeypatch):
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.setenv("FCC_OPEN_BROWSER", "false")
+        monkeypatch.setitem(Settings.model_config, "env_file", ())
+
+        assert Settings().open_admin_browser is False
 
     def test_default_claude_workspace_uses_fcc_home(self, monkeypatch, tmp_path):
         """Unset CLAUDE_WORKSPACE stores agent data under the fixed path helper."""
