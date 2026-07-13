@@ -820,7 +820,8 @@ instead of stopping at its login gate.
 is its bundled Pi adapter:
 
 - Session commands load the extension from its absolute installed path and
-  scope Pi to the ephemeral `free-claude-code/*` provider.
+  scope Pi to the ephemeral `free-claude-code/**` provider, whose model IDs
+  retain FCC's nested `provider/model` routing reference.
 - The extension fetches FCC's `/v1/models` catalog before registration, projects
   only routable provider-model IDs, and registers an `anthropic-messages`
   provider targeting the local proxy. Catalog failure is fail-closed so Pi never

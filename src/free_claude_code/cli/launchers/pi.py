@@ -17,7 +17,7 @@ _BASE_URL_ENV = "FCC_PI_BASE_URL"
 _BINARY_NAME = "pi"
 _DISPLAY_NAME = "Pi"
 _HELP_TIMEOUT_SECONDS = 5.0
-_MODEL_SCOPE = "free-claude-code/*"
+_MODEL_SCOPE = "free-claude-code/**"
 _REQUIRED_HELP_MARKERS = ("--extension", "--models")
 _PASSTHROUGH_COMMANDS = frozenset(
     {"config", "install", "list", "remove", "uninstall", "update"}

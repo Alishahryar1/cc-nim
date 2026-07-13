@@ -704,7 +704,7 @@ def test_pi_launcher_builds_scoped_session_command_and_proxy_env(
         "-e",
         str(extension),
         "--models",
-        "free-claude-code/*",
+        "free-claude-code/**",
         "--print",
         "hello",
     ]
@@ -771,7 +771,7 @@ def test_launch_pi_registers_bundled_extension_for_sessions(
         "-e",
         str(extension),
         "--models",
-        "free-claude-code/*",
+        "free-claude-code/**",
         "--print",
         "hello",
     ]
