@@ -247,19 +247,11 @@ model = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
 [model_providers.fcc]
 name = "Free Claude Code"
 base_url = "http://127.0.0.1:8082/v1"
-env_key = "FCC_CODEX_API_KEY"
+http_headers = { "X-API-Key" = "freecc" }
 wire_api = "responses"
 ```
 
-Store the Admin UI authentication token in `~/.codex/auth.json` or its Windows equivalent:
-
-```json
-{
-  "FCC_CODEX_API_KEY": "freecc"
-}
-```
-
-Match `model`, the port, and the token to the Admin UI, then restart VS Code. For WSL-backed Codex, edit the files inside WSL.
+Match `model`, the port, and `X-API-Key` to the Admin UI, then restart VS Code. For WSL-backed Codex, edit the file inside WSL.
 
 </details>
 
