@@ -708,7 +708,11 @@ def test_convert_user_message_image_raises():
         AnthropicToOpenAIConverter.convert_messages(messages)
 
 
-def test_convert_user_message_image_url_when_vision_enabled():
+def test_convert_user_message_image_url_when_vision_enabled(monkeypatch):
+    monkeypatch.setattr(
+        "free_claude_code.core.anthropic.conversion._fetch_image_as_data_url",
+        lambda url: f"data:image/png;base64,mocked_{url}",
+    )
     content = [
         MockBlock(type="text", text="Describe this picture"),
         MockBlock(type="image", source={"type": "url", "url": "https://example.com/x"}),
@@ -724,7 +728,12 @@ def test_convert_user_message_image_url_when_vision_enabled():
             "role": "user",
             "content": [
                 {"type": "text", "text": "Describe this picture"},
-                {"type": "image_url", "image_url": {"url": "https://example.com/x"}},
+                {
+                    "type": "image_url",
+                    "image_url": {
+                        "url": "data:image/png;base64,mocked_https://example.com/x"
+                    },
+                },
             ],
         }
     ]
@@ -776,6 +785,10 @@ def test_convert_user_message_image_url_policy_blocks_private_dns_resolution(
 def test_convert_user_message_image_url_policy_allows_public_dns_resolution(
     monkeypatch,
 ):
+    monkeypatch.setattr(
+        "free_claude_code.core.anthropic.conversion._fetch_image_as_data_url",
+        lambda url: f"data:image/png;base64,mocked_{url}",
+    )
     content = [
         MockBlock(type="image", source={"type": "url", "url": "https://images.example"})
     ]
@@ -799,7 +812,10 @@ def test_convert_user_message_image_url_policy_allows_public_dns_resolution(
         vision_enabled=True,
     )
 
-    assert result[0]["content"][0]["image_url"]["url"] == "https://images.example"
+    assert (
+        result[0]["content"][0]["image_url"]["url"]
+        == "data:image/png;base64,mocked_https://images.example"
+    )
 
 
 def test_convert_user_message_image_base64_when_vision_enabled():
@@ -1189,3 +1205,249 @@ def test_convert_assistant_server_tool_blocks_raise(content) -> None:
     messages = [MockMessage("assistant", content)]
     with pytest.raises(OpenAIConversionError, match="server tool"):
         AnthropicToOpenAIConverter.convert_messages(messages)
+
+
+def test_fetch_image_as_data_url_success(monkeypatch):
+    import socket
+    import urllib.request
+
+    from free_claude_code.core.anthropic.conversion import _fetch_image_as_data_url
+
+    class MockResponse:
+        def __init__(self):
+            self.status = 200
+            self.code = 200
+
+        def getheader(self, name, default=None):
+            if name.lower() == "content-type":
+                return "image/jpeg"
+            return default
+
+        def info(self):
+            return {}
+
+        def read(self, max_bytes=None):
+            return b"fake_image_bytes"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    class MockOpener:
+        def open(self, req, timeout=None):
+            return MockResponse()
+
+    monkeypatch.setattr(
+        urllib.request, "build_opener", lambda *args, **kwargs: MockOpener()
+    )
+
+    # Mock dns resolution to avoid actual network/dns call for images.example
+    def fake_getaddrinfo(*args, **kwargs):
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", 443),
+            )
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+    result = _fetch_image_as_data_url("https://images.example")
+    # b"fake_image_bytes" base64 encoded is "ZmFrZV9pbWFnZV9ieXRlcw=="
+    assert result == "data:image/jpeg;base64,ZmFrZV9pbWFnZV9ieXRlcw=="
+
+
+def test_fetch_image_as_data_url_too_large(monkeypatch):
+    import socket
+    import urllib.request
+
+    from free_claude_code.core.anthropic.conversion import (
+        OpenAIConversionError,
+        _fetch_image_as_data_url,
+    )
+
+    class MockResponse:
+        def __init__(self):
+            self.status = 200
+            self.code = 200
+
+        def getheader(self, name, default=None):
+            return default
+
+        def info(self):
+            return {}
+
+        def read(self, max_bytes=None):
+            # Return slightly more than 5MB to trigger the limit check
+            return b"x" * (5 * 1024 * 1024 + 1)
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    class MockOpener:
+        def open(self, req, timeout=None):
+            return MockResponse()
+
+    monkeypatch.setattr(
+        urllib.request, "build_opener", lambda *args, **kwargs: MockOpener()
+    )
+
+    def fake_getaddrinfo(*args, **kwargs):
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", 443),
+            )
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+    with pytest.raises(OpenAIConversionError, match=r"maximum allowed size|exceeds"):
+        _fetch_image_as_data_url("https://images.example")
+
+
+def test_fetch_image_as_data_url_redirect_allowed_then_success(monkeypatch):
+    import socket
+    import urllib.request
+
+    from free_claude_code.core.anthropic.conversion import _fetch_image_as_data_url
+
+    calls = []
+
+    class MockRedirectResponse:
+        def __init__(self, location):
+            self.status = 302
+            self.code = 302
+            self.location = location
+
+        def getheader(self, name, default=None):
+            if name.lower() == "location":
+                return self.location
+            return default
+
+        def info(self):
+            return {"Location": self.location}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    class MockSuccessResponse:
+        def __init__(self):
+            self.status = 200
+            self.code = 200
+
+        def getheader(self, name, default=None):
+            if name.lower() == "content-type":
+                return "image/png"
+            return default
+
+        def info(self):
+            return {}
+
+        def read(self, max_bytes=None):
+            return b"ok"
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    class MockOpener:
+        def open(self, req, timeout=None):
+            url = req.full_url if hasattr(req, "full_url") else req.get_full_url()
+            calls.append(url)
+            if url == "https://images.example/first":
+                return MockRedirectResponse("https://images.example/second")
+            return MockSuccessResponse()
+
+    monkeypatch.setattr(
+        urllib.request, "build_opener", lambda *args, **kwargs: MockOpener()
+    )
+
+    def fake_getaddrinfo(*args, **kwargs):
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", 443),
+            )
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+    result = _fetch_image_as_data_url("https://images.example/first")
+    assert calls == ["https://images.example/first", "https://images.example/second"]
+    assert result == "data:image/png;base64,b2s="
+
+
+def test_fetch_image_as_data_url_redirect_blocked_by_private_ip(monkeypatch):
+    import socket
+    import urllib.request
+
+    from free_claude_code.core.anthropic.conversion import (
+        OpenAIConversionError,
+        _fetch_image_as_data_url,
+    )
+
+    class MockRedirectResponse:
+        def __init__(self, location):
+            self.status = 302
+            self.code = 302
+            self.location = location
+
+        def getheader(self, name, default=None):
+            if name.lower() == "location":
+                return self.location
+            return default
+
+        def info(self):
+            return {"Location": self.location}
+
+        def __enter__(self):
+            return self
+
+        def __exit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    class MockOpener:
+        def open(self, req, timeout=None):
+            return MockRedirectResponse("http://127.0.0.1/evil.png")
+
+    monkeypatch.setattr(
+        urllib.request, "build_opener", lambda *args, **kwargs: MockOpener()
+    )
+
+    def fake_getaddrinfo(*args, **kwargs):
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", 443),
+            )
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+    with pytest.raises(
+        OpenAIConversionError, match=r"not target localhost|local or private"
+    ):
+        _fetch_image_as_data_url("https://images.example/first")

@@ -1,7 +1,7 @@
 """Message and tool format converters."""
 
-import json
 import ipaddress
+import json
 import socket
 from copy import deepcopy
 from dataclasses import dataclass, field
@@ -149,21 +149,193 @@ def _assert_no_forbidden_assistant_block(block: Any) -> None:
         )
 
 
+def _normalize_media_type(media_type: Any) -> str:
+    if not isinstance(media_type, str):
+        return "image/png"
+    mt = media_type.split(";")[0].strip().lower()
+    if mt.count("/") != 1:
+        return "image/png"
+    parts = mt.split("/")
+    allowed_chars = set("abcdefghijklmnopqrstuvwxyz0123456789-._+")
+    for part in parts:
+        if not part or not set(part).issubset(allowed_chars):
+            return "image/png"
+    return mt
+
+
+def _fetch_image_as_data_url(url: str) -> str:
+    """Fetch an image from url, checking for private IPs at every step and redirect.
+    Returns a data: URL format.
+    """
+    import base64
+    import ipaddress
+    import urllib.request
+    from urllib.parse import urljoin
+
+    current_url = url
+    max_redirects = 5
+    timeout = 5.0
+
+    # Custom HTTP handler to prevent automatic redirecting
+    class NoRedirectHandler(urllib.request.HTTPRedirectHandler):
+        def redirect_request(self, req, fp, code, msg, headers, newurl):
+            # Return None to block automatic redirection so we can handle it manually with IP/DNS validation
+            return None
+
+    opener = urllib.request.build_opener(NoRedirectHandler)
+
+    for _ in range(max_redirects):
+        parsed = urlsplit(current_url)
+        scheme = (parsed.scheme or "").lower()
+        if scheme not in {"http", "https"}:
+            raise OpenAIConversionError("User image URL source must use http or https")
+
+        host = parsed.hostname
+        if host is None or host == "":
+            raise OpenAIConversionError("User image URL source must include a host")
+
+        normalized_host = host.strip().lower()
+        if (
+            normalized_host == "localhost"
+            or normalized_host.endswith(".localhost")
+            or normalized_host.endswith(".local")
+        ):
+            raise OpenAIConversionError(
+                "User image URL source must not target localhost"
+            )
+
+        # Check raw IP
+        try:
+            ip = ipaddress.ip_address(normalized_host.strip("[]"))
+        except ValueError:
+            ip = None
+
+        if ip is not None:
+            if _is_non_public_ip(ip):
+                raise OpenAIConversionError(
+                    "User image URL source must not target local or private network addresses"
+                )
+        else:
+            # Resolve host DNS and check all IPs
+            resolved_ips = []
+            resolved_port = (
+                parsed.port
+                if parsed.port is not None
+                else (443 if scheme == "https" else 80)
+            )
+            try:
+                infos = socket.getaddrinfo(
+                    normalized_host,
+                    resolved_port,
+                    type=socket.SOCK_STREAM,
+                    proto=socket.IPPROTO_TCP,
+                )
+                for *_, sockaddr in infos:
+                    resolved_host_ip = sockaddr[0]
+                    try:
+                        resolved_ip = ipaddress.ip_address(resolved_host_ip)
+                        resolved_ips.append(resolved_ip)
+                    except ValueError:
+                        continue
+            except OSError as exc:
+                raise OpenAIConversionError(
+                    f"Could not resolve image URL host {normalized_host!r}: {exc}"
+                ) from exc
+
+            if not resolved_ips:
+                raise OpenAIConversionError(
+                    f"No IP addresses resolved for host {normalized_host!r}"
+                )
+
+            for resolved_ip in resolved_ips:
+                if _is_non_public_ip(resolved_ip):
+                    raise OpenAIConversionError(
+                        f"User image URL source resolves to a non-public address ({resolved_ip})"
+                    )
+
+        # Build request with custom User-Agent to avoid generic python blocks
+        req = urllib.request.Request(
+            current_url, headers={"User-Agent": "free-claude-code-proxy/1.0"}
+        )
+
+        try:
+            with opener.open(req, timeout=timeout) as response:
+                status = getattr(response, "status", getattr(response, "code", 200))
+                if status in {301, 302, 303, 307, 308}:
+                    new_url = response.getheader("Location") or response.info().get(
+                        "Location"
+                    )
+                    if not new_url:
+                        raise OpenAIConversionError(
+                            "Redirect response missing Location header"
+                        )
+                    current_url = urljoin(current_url, new_url)
+                    continue
+
+                if status != 200:
+                    raise OpenAIConversionError(
+                        f"Failed to fetch user image URL, status code: {status}"
+                    )
+
+                # Read body, subject to maximum size (e.g. 5MB)
+                max_bytes = 5 * 1024 * 1024
+                data = response.read(max_bytes + 1)
+                if len(data) > max_bytes:
+                    raise OpenAIConversionError(
+                        "User image size exceeds maximum allowed size of 5MB"
+                    )
+
+                content_type = (
+                    response.getheader("Content-Type")
+                    or response.info().get("Content-Type")
+                    or "image/png"
+                )
+                media_type = _normalize_media_type(content_type)
+
+                encoded_data = base64.b64encode(data).decode("utf-8")
+                return f"data:{media_type};base64,{encoded_data}"
+
+        except urllib.request.HTTPError as exc:
+            if exc.code in {301, 302, 303, 307, 308}:
+                new_url = exc.headers.get("Location") or exc.headers.get("location")
+                if not new_url:
+                    raise OpenAIConversionError(
+                        "Redirect response missing Location header"
+                    ) from exc
+                current_url = urljoin(current_url, new_url)
+                continue
+            raise OpenAIConversionError(
+                f"HTTP error fetching image URL: {exc.code} {exc.reason}"
+            ) from exc
+        except urllib.request.URLError as exc:
+            raise OpenAIConversionError(
+                f"Network error fetching image URL: {exc.reason}"
+            ) from exc
+        except Exception as exc:
+            if isinstance(exc, OpenAIConversionError):
+                raise
+            raise OpenAIConversionError(f"Error fetching image URL: {exc}") from exc
+
+    raise OpenAIConversionError("Too many redirects fetching image URL")
+
+
 def _convert_user_image_source(source: dict[str, Any]) -> dict[str, Any]:
     source_type = str(source.get("type") or "").strip().lower()
     if source_type == "url":
         url = source.get("url")
         if not isinstance(url, str) or not (url := url.strip()):
             raise OpenAIConversionError("User image URL source must include a URL")
-        return {"type": "image_url", "image_url": {"url": _normalize_user_image_url(url)}}
+        data_url = _fetch_image_as_data_url(url)
+        return {"type": "image_url", "image_url": {"url": data_url}}
 
     if source_type == "base64":
         data = source.get("data") or source.get("base64")
         if not isinstance(data, str) or not (data := data.strip()):
             raise OpenAIConversionError("User base64 image source must include data")
-        media_type = source.get("media_type") or source.get("mime_type") or "image/png"
-        if not isinstance(media_type, str) or not (media_type := media_type.strip()):
-            media_type = "image/png"
+
+        media_type = _normalize_media_type(
+            source.get("media_type") or source.get("mime_type") or "image/png"
+        )
         return {
             "type": "image_url",
             "image_url": {
@@ -174,64 +346,6 @@ def _convert_user_image_source(source: dict[str, Any]) -> dict[str, Any]:
     raise OpenAIConversionError(
         "User image blocks must use a url or base64 source for OpenAI chat conversion"
     )
-
-
-def _normalize_user_image_url(url: str) -> str:
-    parsed = urlsplit(url)
-    scheme = (parsed.scheme or "").lower()
-    if scheme not in {"http", "https"}:
-        raise OpenAIConversionError(
-            "User image URL source must use http or https"
-        )
-
-    host = parsed.hostname
-    if host is None:
-        raise OpenAIConversionError("User image URL source must include a host")
-
-    normalized_host = host.strip().lower()
-    if normalized_host == "localhost" or normalized_host.endswith(".localhost"):
-        raise OpenAIConversionError("User image URL source must not target localhost")
-
-    try:
-        ip = ipaddress.ip_address(normalized_host.strip("[]"))
-    except ValueError:
-        ip = None
-
-    if ip is not None:
-        if _is_non_public_ip(ip):
-            raise OpenAIConversionError(
-                "User image URL source must not target local or private network addresses"
-            )
-        return url
-
-    infos = _resolve_user_image_host(normalized_host, parsed.port)
-    for *_, sockaddr in infos:
-        resolved_host = sockaddr[0]
-        try:
-            resolved_ip = ipaddress.ip_address(resolved_host)
-        except ValueError:
-            continue
-        if _is_non_public_ip(resolved_ip):
-            raise OpenAIConversionError(
-                f"User image URL source resolves to a non-public address ({resolved_ip})"
-            )
-
-    return url
-
-
-def _resolve_user_image_host(host: str, port: int | None) -> list[tuple]:
-    resolved_port = port if port is not None else 443
-    try:
-        return socket.getaddrinfo(
-            host,
-            resolved_port,
-            type=socket.SOCK_STREAM,
-            proto=socket.IPPROTO_TCP,
-        )
-    except OSError as exc:
-        raise OpenAIConversionError(
-            f"Could not resolve image URL host {host!r}: {exc}"
-        ) from exc
 
 
 def _is_non_public_ip(ip: ipaddress._BaseAddress) -> bool:

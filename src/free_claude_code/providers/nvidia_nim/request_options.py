@@ -19,14 +19,14 @@ def build_nim_request_body(
     request_data: MessagesRequest,
     nim: NimSettings,
     *,
-    vision_enabled: bool = False,
     thinking_enabled: bool,
+    vision_enabled: bool = False,
 ) -> dict[str, Any]:
     """Build OpenAI-format request body from Anthropic request plus NIM settings."""
     return build_openai_chat_request_body(
         request_data,
-        vision_enabled=vision_enabled,
         thinking_enabled=thinking_enabled,
+        vision_enabled=vision_enabled,
         policy=_REQUEST_POLICY,
         postprocessors=(
             lambda body, request, enabled: apply_nim_request_options(
