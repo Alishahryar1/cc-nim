@@ -44,8 +44,8 @@ class NvidiaNimProvider(OpenAIChatProvider):
         config: ProviderConfig,
         *,
         nim_settings: NimSettings,
-        enable_vision: bool = False,
         rate_limiter: ProviderRateLimiter,
+        enable_vision: bool = False,
     ):
         super().__init__(
             config,

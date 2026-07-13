@@ -133,7 +133,7 @@ function Invoke-SuppressionsCheck {
         $matches = Get-ChildItem -Path . -Recurse -Filter *.py -File |
             Where-Object {
                 $full = $_.FullName
-                $full -notmatch '[\\/]\.venv[\\/]' -and
+                $full -notmatch '[\\/]\.venv[^\\/]*[\\/]' -and
                     $full -notmatch '[\\/]\.git[\\/]'
             } |
             Select-String -Pattern $pattern

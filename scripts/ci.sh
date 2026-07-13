@@ -127,10 +127,10 @@ run_suppressions() {
     step "Ban suppressions and legacy annotations"
     pattern='# type: ignore|# ty: ignore|from __future__ import annotations'
     print_command grep -rE "$pattern" --include='*.py' . \
-        --exclude-dir=.venv --exclude-dir=.git
+        --exclude-dir='.venv*' --exclude-dir=.git
     if [ "$dry_run" -eq 0 ]; then
         if grep -rE "$pattern" --include='*.py' . \
-            --exclude-dir=.venv --exclude-dir=.git; then
+            --exclude-dir='.venv*' --exclude-dir=.git; then
             fail "type: ignore / ty: ignore comments and legacy future annotations are not allowed. Fix the underlying type/import issue instead."
         fi
     fi

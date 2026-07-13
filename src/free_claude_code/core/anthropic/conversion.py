@@ -159,9 +159,7 @@ class PinnedHTTPConnection(http.client.HTTPConnection):
         super().__init__(*args, **kwargs)
         self._create_connection = self._pinned_create_connection
 
-    def _pinned_create_connection(
-        self, address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None
-    ):
+    def _pinned_create_connection(self, address, timeout=None, source_address=None):
         if self.pinned_ip:
             address = (self.pinned_ip, address[1])
         return socket.create_connection(address, timeout, source_address)
@@ -175,9 +173,7 @@ class PinnedHTTPSConnection(http.client.HTTPSConnection):
         super().__init__(*args, **kwargs)
         self._create_connection = self._pinned_create_connection
 
-    def _pinned_create_connection(
-        self, address, timeout=socket._GLOBAL_DEFAULT_TIMEOUT, source_address=None
-    ):
+    def _pinned_create_connection(self, address, timeout=None, source_address=None):
         if self.pinned_ip:
             address = (self.pinned_ip, address[1])
         return socket.create_connection(address, timeout, source_address)
@@ -205,7 +201,15 @@ class PinnedHTTPSHandler(urllib.request.HTTPSHandler):
         super().__init__(debuglevel, context, check_hostname)
 
     def https_open(self, req):
-        return self.do_open(self._get_connection, req)
+        # Pass context and check_hostname to ensure full HTTPS/TLS verification
+        ctx = getattr(self, "_context", None)
+        chk = getattr(self, "_check_hostname", None)
+        return self.do_open(
+            self._get_connection,
+            req,
+            context=ctx,
+            check_hostname=chk,
+        )
 
     def _get_connection(self, host, **kwargs):
         return PinnedHTTPSConnection(host, pinned_ip=self.pinned_ip, **kwargs)
@@ -231,6 +235,7 @@ def _fetch_image_as_data_url(url: str) -> str:
     """
     import base64
     import ipaddress
+    import urllib.error
     import urllib.request
     from urllib.parse import urljoin
 
@@ -317,6 +322,9 @@ def _fetch_image_as_data_url(url: str) -> str:
 
         # Build custom opener with custom HTTP and HTTPS handlers pinned specifically to pinned_ip_str
         opener = urllib.request.build_opener(
+            urllib.request.ProxyHandler(
+                {}
+            ),  # Explicitly disable any ambient proxy handlers to prevent bypassing the pinned DNS fetch
             NoRedirectHandler,
             PinnedHTTPHandler(pinned_ip_str),
             PinnedHTTPSHandler(pinned_ip_str),
@@ -364,7 +372,7 @@ def _fetch_image_as_data_url(url: str) -> str:
                 encoded_data = base64.b64encode(data).decode("utf-8")
                 return f"data:{media_type};base64,{encoded_data}"
 
-        except urllib.request.HTTPError as exc:
+        except urllib.error.HTTPError as exc:
             if exc.code in {301, 302, 303, 307, 308}:
                 new_url = exc.headers.get("Location") or exc.headers.get("location")
                 if not new_url:
@@ -376,7 +384,7 @@ def _fetch_image_as_data_url(url: str) -> str:
             raise OpenAIConversionError(
                 f"HTTP error fetching image URL: {exc.code} {exc.reason}"
             ) from exc
-        except urllib.request.URLError as exc:
+        except urllib.error.URLError as exc:
             raise OpenAIConversionError(
                 f"Network error fetching image URL: {exc.reason}"
             ) from exc
@@ -392,19 +400,26 @@ def _convert_user_image_source(source: dict[str, Any]) -> dict[str, Any]:
     source_type = str(source.get("type") or "").strip().lower()
     if source_type == "url":
         url = source.get("url")
-        if not isinstance(url, str) or not (url := url.strip()):
+        if not isinstance(url, str):
+            raise OpenAIConversionError("User image URL source must include a URL")
+        url = url.strip()
+        if not url:
             raise OpenAIConversionError("User image URL source must include a URL")
         data_url = _fetch_image_as_data_url(url)
         return {"type": "image_url", "image_url": {"url": data_url}}
 
     if source_type == "base64":
         data = source.get("data") or source.get("base64")
-        if not isinstance(data, str) or not (data := data.strip()):
+        if not isinstance(data, str):
+            raise OpenAIConversionError("User base64 image source must include data")
+        data = data.strip()
+        if not data:
             raise OpenAIConversionError("User base64 image source must include data")
 
-        media_type = _normalize_media_type(
-            source.get("media_type") or source.get("mime_type") or "image/png"
-        )
+        raw_media_type = source.get("media_type") or source.get("mime_type")
+        if not isinstance(raw_media_type, str):
+            raw_media_type = ""
+        media_type = _normalize_media_type(raw_media_type.strip())
         return {
             "type": "image_url",
             "image_url": {
@@ -417,15 +432,28 @@ def _convert_user_image_source(source: dict[str, Any]) -> dict[str, Any]:
     )
 
 
-def _is_non_public_ip(ip: ipaddress._BaseAddress) -> bool:
-    return (
+def _is_non_public_ip(ip: ipaddress.IPv4Address | ipaddress.IPv6Address) -> bool:
+    if (
         ip.is_loopback
         or ip.is_private
         or ip.is_link_local
         or ip.is_multicast
         or ip.is_reserved
         or ip.is_unspecified
-    )
+    ):
+        return True
+    if isinstance(ip, ipaddress.IPv6Address) and ip.ipv4_mapped is not None:
+        mapped = ip.ipv4_mapped
+        if (
+            mapped.is_loopback
+            or mapped.is_private
+            or mapped.is_link_local
+            or mapped.is_multicast
+            or mapped.is_reserved
+            or mapped.is_unspecified
+        ):
+            return True
+    return False
 
 
 class _OpenAIChatHistoryLedger:

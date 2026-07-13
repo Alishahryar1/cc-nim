@@ -1490,3 +1490,82 @@ def test_pinned_http_and_https_connections_override_address(monkeypatch):
     with contextlib.suppress(Exception):
         conn_s.connect()
     assert ("5.6.7.8", 443) in created_addresses
+
+
+def test_is_non_public_ip_ipv4_mapped_ipv6():
+    import ipaddress
+
+    from free_claude_code.core.anthropic.conversion import _is_non_public_ip
+
+    # IPv4 mapped IPv6 loopback
+    ip_mapped_loopback = ipaddress.ip_address("::ffff:127.0.0.1")
+    assert _is_non_public_ip(ip_mapped_loopback) is True
+
+    # IPv4 mapped IPv6 private address
+    ip_mapped_private = ipaddress.ip_address("::ffff:192.168.1.100")
+    assert _is_non_public_ip(ip_mapped_private) is True
+
+    # Normal public IPv6 address
+    ip_public = ipaddress.ip_address("2001:4860:4860::8888")
+    assert _is_non_public_ip(ip_public) is False
+
+
+def test_fetch_image_as_data_url_explicitly_disables_proxies(monkeypatch):
+    import urllib.request
+
+    from free_claude_code.core.anthropic.conversion import _fetch_image_as_data_url
+
+    built_handlers = []
+
+    def mock_build_opener(*handlers):
+        built_handlers.extend(handlers)
+
+        # return a dummy opener
+        class DummyOpener:
+            def open(self, req, timeout=None):
+                class DummyResponse:
+                    status = 200
+                    code = 200
+
+                    def getheader(self, *args, **kwargs):
+                        return "image/png"
+
+                    def info(self):
+                        return {}
+
+                    def read(self, *args, **kwargs):
+                        return b"dummy"
+
+                    def __enter__(self):
+                        return self
+
+                    def __exit__(self, *args):
+                        pass
+
+                return DummyResponse()
+
+        return DummyOpener()
+
+    monkeypatch.setattr(urllib.request, "build_opener", mock_build_opener)
+
+    def fake_getaddrinfo(*args, **kwargs):
+        return [
+            (
+                socket.AF_INET,
+                socket.SOCK_STREAM,
+                socket.IPPROTO_TCP,
+                "",
+                ("93.184.216.34", 443),
+            )
+        ]
+
+    monkeypatch.setattr(socket, "getaddrinfo", fake_getaddrinfo)
+
+    _fetch_image_as_data_url("https://images.example/explicit")
+
+    # Verify that ProxyHandler with empty dict was passed to disable ambient proxies
+    proxy_handlers = [
+        h for h in built_handlers if isinstance(h, urllib.request.ProxyHandler)
+    ]
+    assert len(proxy_handlers) == 1
+    assert proxy_handlers[0].proxies == {}

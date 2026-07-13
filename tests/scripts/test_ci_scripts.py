@@ -66,7 +66,7 @@ def test_ci_sh_runs_ci_checks_in_order() -> None:
     assert "Fix the underlying type/import issue instead" in text
     assert legacy_future_import in text
     assert "legacy future annotations are not allowed" in text
-    assert "--exclude-dir=.venv" in text
+    assert "--exclude-dir='.venv*'" in text
     assert "--exclude-dir=.git" in text
     assert "uv run ruff format" in text
     assert "uv run ruff format --check" not in text

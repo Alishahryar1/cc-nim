@@ -37,9 +37,9 @@ def build_openai_chat_request_body(
     request_data: MessagesRequest,
     *,
     thinking_enabled: bool,
-    vision_enabled: bool = False,
     policy: OpenAIChatRequestPolicy,
     postprocessors: Iterable[OpenAIChatPostprocessor] = (),
+    vision_enabled: bool = False,
 ) -> dict[str, Any]:
     """Build an OpenAI-compatible chat request body from an Anthropic request."""
     logger.debug(
