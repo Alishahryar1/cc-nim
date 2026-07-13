@@ -6,6 +6,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from urllib.request import Request, urlopen
 
+from free_claude_code.cli.proxy_auth import proxy_auth_token
 from free_claude_code.config.paths import codex_model_catalog_path
 from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.config.settings import Settings, get_settings
@@ -118,7 +119,7 @@ def build_codex_launcher_env(
         for key, value in base_env.items()
         if key not in _STRIPPED_CODEX_ENV_KEYS and not key.startswith("OPENAI_")
     }
-    env[_CODEX_AUTH_ENV_KEY] = auth_token.strip() or "fcc-no-auth"
+    env[_CODEX_AUTH_ENV_KEY] = proxy_auth_token(auth_token)
     return env
 
 

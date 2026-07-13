@@ -10,6 +10,7 @@ FCC_COMMANDS = (
     "fcc-server",
     "fcc-claude",
     "fcc-codex",
+    "fcc-pi",
     "fcc-init",
     "free-claude-code",
 )
@@ -84,6 +85,7 @@ def posix_uninstall_harness(tmp_path: Path) -> PosixUninstallHarness:
 
     _write_executable(bin_dir / "claude", "#!/bin/sh\nexit 0\n")
     _write_executable(bin_dir / "codex", "#!/bin/sh\nexit 0\n")
+    _write_executable(bin_dir / "pi", "#!/bin/sh\nexit 0\n")
     _write_executable(
         bin_dir / "uv",
         """#!/bin/sh
@@ -105,7 +107,7 @@ if [ "${1:-}" = "tool" ] && [ "${2:-}" = "uninstall" ]; then
         echo 'Tool `free-claude-code` is not installed' >&2
         exit 2
     fi
-    for name in fcc-server fcc-claude fcc-codex fcc-init free-claude-code; do
+    for name in fcc-server fcc-claude fcc-codex fcc-pi fcc-init free-claude-code; do
         /bin/rm -f "$FAKE_TOOL_BIN/$name"
     done
     echo "Uninstalled free-claude-code"
@@ -154,6 +156,7 @@ def test_uninstall_sh_removes_and_verifies_only_fcc(
     assert (posix_uninstall_harness.bin_dir / "uv").exists()
     assert (posix_uninstall_harness.bin_dir / "claude").exists()
     assert (posix_uninstall_harness.bin_dir / "codex").exists()
+    assert (posix_uninstall_harness.bin_dir / "pi").exists()
     assert posix_uninstall_harness.calls() == [
         "uv:tool dir --bin",
         "uv:tool uninstall free-claude-code",
@@ -308,7 +311,7 @@ def powershell_uninstall_harness(
         (tool_bin / f"{name}.cmd").write_text(
             "@echo off\nexit /b 0\n", encoding="utf-8"
         )
-    for name in ("claude", "codex"):
+    for name in ("claude", "codex", "pi"):
         (bin_dir / f"{name}.cmd").write_text("@echo off\nexit /b 0\n", encoding="utf-8")
 
     uv_commands = " ".join(FCC_COMMANDS)
@@ -398,6 +401,7 @@ def test_uninstall_ps1_removes_and_verifies_only_fcc(
     assert (powershell_uninstall_harness.bin_dir / "uv.cmd").exists()
     assert (powershell_uninstall_harness.bin_dir / "claude.cmd").exists()
     assert (powershell_uninstall_harness.bin_dir / "codex.cmd").exists()
+    assert (powershell_uninstall_harness.bin_dir / "pi.cmd").exists()
     assert powershell_uninstall_harness.calls() == [
         "uv:tool dir --bin",
         "uv:tool uninstall free-claude-code",

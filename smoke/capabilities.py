@@ -490,6 +490,17 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         (),
     ),
     CapabilityContract(
+        "cli",
+        "pi_cli_integration",
+        "pi_cli_integration",
+        "free_claude_code.cli.launchers.pi",
+        "Pi CLI binary, bundled extension, and FCC child-process environment",
+        "Anthropic Messages provider with an FCC-scoped live model catalog",
+        "proxy preflight, missing extension, or catalog failure exits without fallback",
+        ("tests/cli/test_entrypoints.py",),
+        ("test_pi_cli_prompt_e2e",),
+    ),
+    CapabilityContract(
         "extensibility",
         "provider_platform_abcs",
         "extensible_provider_platform_abcs",

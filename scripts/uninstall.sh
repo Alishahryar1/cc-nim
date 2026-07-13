@@ -3,7 +3,7 @@ set -eu
 
 PACKAGE_NAME="free-claude-code"
 FCC_HOME_DIRNAME=".fcc"
-FCC_COMMANDS="fcc-server fcc-claude fcc-codex fcc-init free-claude-code"
+FCC_COMMANDS="fcc-server fcc-claude fcc-codex fcc-pi fcc-init free-claude-code"
 
 dry_run=0
 uv_tool_bin=""
@@ -13,7 +13,7 @@ show_usage() {
 Usage: uninstall.sh [options]
 
 Removes the Free Claude Code uv tool and deletes ~/.fcc/ after removal is verified.
-Does not remove uv, Claude Code, Codex, the uv-managed Python runtime, or shared PATH entries.
+Does not remove uv, Claude Code, Codex, Pi, the uv-managed Python runtime, or shared PATH entries.
 
 Options:
   --dry-run                Print commands without running them.
@@ -239,5 +239,5 @@ if [ "$dry_run" -eq 1 ]; then
     printf '\nDry run complete. No changes were made.\n'
 else
     printf '\nFree Claude Code has been removed and verified.\n'
-    printf 'uv, Claude Code, Codex, the uv-managed Python runtime, and shared PATH entries were left installed.\n'
+    printf 'uv, Claude Code, Codex, Pi, the uv-managed Python runtime, and shared PATH entries were left installed.\n'
 fi

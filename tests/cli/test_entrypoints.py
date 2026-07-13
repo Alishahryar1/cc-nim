@@ -177,6 +177,7 @@ def test_cli_scripts_are_registered() -> None:
     assert scripts["free-claude-code"] == "free_claude_code.cli.entrypoints:serve"
     assert scripts["fcc-claude"] == "free_claude_code.cli.launchers.claude:launch"
     assert scripts["fcc-codex"] == "free_claude_code.cli.launchers.codex:launch"
+    assert scripts["fcc-pi"] == "free_claude_code.cli.launchers.pi:launch"
 
 
 @pytest.mark.parametrize("entrypoint_name", ["serve", "init"])
@@ -672,6 +673,247 @@ def test_launch_codex_catalog_failure_warns_and_continues(
     captured = capsys.readouterr()
     assert "could not prepare Codex model catalog" in captured.err
     assert "launching without model picker catalog" in captured.err
+
+
+def test_pi_launcher_builds_scoped_session_command_and_proxy_env(
+    tmp_path: Path,
+) -> None:
+    from free_claude_code.cli.launchers.pi import (
+        build_pi_launcher_command,
+        build_pi_launcher_env,
+    )
+
+    extension = tmp_path / "pi_extension.ts"
+    env = build_pi_launcher_env(
+        proxy_root_url="http://127.0.0.1:9191/",
+        auth_token=" proxy-token ",
+        base_env={
+            "PATH": "keep",
+            "ANTHROPIC_API_KEY": "native-pi-credential",
+            "FCC_PI_API_KEY": "stale-key",
+            "FCC_PI_BASE_URL": "https://stale.invalid",
+        },
+    )
+
+    assert build_pi_launcher_command(
+        binary_path="resolved-pi.cmd",
+        extension_path=extension,
+        argv=["--print", "hello"],
+    ) == [
+        "resolved-pi.cmd",
+        "-e",
+        str(extension),
+        "--models",
+        "free-claude-code/*",
+        "--print",
+        "hello",
+    ]
+    assert env == {
+        "PATH": "keep",
+        "ANTHROPIC_API_KEY": "native-pi-credential",
+        "FCC_PI_BASE_URL": "http://127.0.0.1:9191",
+        "FCC_PI_API_KEY": "proxy-token",
+    }
+
+
+def test_pi_launcher_uses_no_auth_sentinel_for_blank_token() -> None:
+    from free_claude_code.cli.launchers.pi import build_pi_launcher_env
+
+    env = build_pi_launcher_env(
+        proxy_root_url="http://127.0.0.1:8082",
+        auth_token="",
+        base_env={},
+    )
+
+    assert env["FCC_PI_API_KEY"] == "fcc-no-auth"
+
+
+def test_launch_pi_registers_bundled_extension_for_sessions(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from free_claude_code.cli.launchers.pi import launch
+
+    monkeypatch.setenv("KEEP_ME", "yes")
+    monkeypatch.setenv("FCC_PI_API_KEY", "stale-key")
+    extension = tmp_path / "pi_extension.ts"
+    extension.write_text("export default () => {};", encoding="utf-8")
+    settings = _launcher_settings(port=9191, token="proxy-token")
+
+    with (
+        patch("free_claude_code.cli.launchers.pi.get_settings", return_value=settings),
+        patch("free_claude_code.cli.launchers.pi.preflight_proxy", return_value=None),
+        patch(
+            "free_claude_code.cli.launchers.pi.pi_extension_path",
+            return_value=extension,
+        ),
+        patch(
+            "free_claude_code.cli.launchers.common.shutil.which",
+            return_value="resolved-pi.cmd",
+        ),
+        patch(
+            "free_claude_code.cli.launchers.pi.pi_binary_is_compatible",
+            return_value=True,
+        ),
+        patch("free_claude_code.cli.launchers.common.subprocess.Popen") as popen,
+        patch("free_claude_code.cli.launchers.common.register_pid"),
+        patch("free_claude_code.cli.launchers.common.unregister_pid"),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        process = popen.return_value
+        process.pid = 12345
+        process.wait.return_value = 0
+        launch(["--print", "hello"])
+
+    assert exc_info.value.code == 0
+    assert popen.call_args.args[0] == [
+        "resolved-pi.cmd",
+        "-e",
+        str(extension),
+        "--models",
+        "free-claude-code/*",
+        "--print",
+        "hello",
+    ]
+    child_env = popen.call_args.kwargs["env"]
+    assert child_env["FCC_PI_BASE_URL"] == "http://127.0.0.1:9191"
+    assert child_env["FCC_PI_API_KEY"] == "proxy-token"
+    assert child_env["KEEP_ME"] == "yes"
+
+
+@pytest.mark.parametrize(
+    "argv",
+    [
+        ["--help"],
+        ["--version"],
+        ["config", "set", "theme", "dark"],
+        ["install", "npm:example"],
+        ["list"],
+        ["remove", "npm:example"],
+        ["uninstall", "npm:example"],
+        ["update"],
+    ],
+)
+def test_launch_pi_passes_management_commands_through_without_proxy(
+    argv: list[str],
+) -> None:
+    from free_claude_code.cli.launchers.pi import launch
+
+    with (
+        patch("free_claude_code.cli.launchers.pi.get_settings") as get_settings,
+        patch("free_claude_code.cli.launchers.pi.preflight_proxy") as preflight,
+        patch(
+            "free_claude_code.cli.launchers.common.shutil.which",
+            return_value="resolved-pi",
+        ),
+        patch(
+            "free_claude_code.cli.launchers.pi.pi_binary_is_compatible",
+            return_value=True,
+        ),
+        patch("free_claude_code.cli.launchers.common.subprocess.Popen") as popen,
+        patch("free_claude_code.cli.launchers.common.register_pid"),
+        patch("free_claude_code.cli.launchers.common.unregister_pid"),
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        process = popen.return_value
+        process.pid = 12345
+        process.wait.return_value = 0
+        launch(argv)
+
+    assert exc_info.value.code == 0
+    assert popen.call_args.args[0] == ["resolved-pi", *argv]
+    get_settings.assert_not_called()
+    preflight.assert_not_called()
+
+
+def test_launch_pi_fails_closed_when_bundled_extension_is_missing(
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    from free_claude_code.cli.launchers.pi import launch
+
+    settings = _launcher_settings(port=9191)
+    with (
+        patch("free_claude_code.cli.launchers.pi.get_settings", return_value=settings),
+        patch("free_claude_code.cli.launchers.pi.preflight_proxy", return_value=None),
+        patch(
+            "free_claude_code.cli.launchers.pi.pi_extension_path",
+            return_value=tmp_path / "missing.ts",
+        ),
+        patch(
+            "free_claude_code.cli.launchers.common.shutil.which",
+            return_value="resolved-pi",
+        ),
+        patch(
+            "free_claude_code.cli.launchers.pi.pi_binary_is_compatible",
+            return_value=True,
+        ),
+        patch("free_claude_code.cli.launchers.common.subprocess.Popen") as popen,
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        launch([])
+
+    assert exc_info.value.code == 1
+    popen.assert_not_called()
+    assert "bundled Pi extension is missing" in capsys.readouterr().err
+
+
+def test_pi_install_hints_use_official_platform_installers() -> None:
+    from free_claude_code.cli.launchers.pi import pi_install_hint
+
+    assert "https://pi.dev/install.ps1" in pi_install_hint("win32")
+    assert "https://pi.dev/install.sh" in pi_install_hint("darwin")
+
+
+@pytest.mark.parametrize(
+    ("help_output", "return_code", "expected"),
+    [
+        ("--extension <path>\n--models <patterns>\n", 0, True),
+        ("--models <patterns>\n", 0, False),
+        ("--extension <path>\n", 0, False),
+        ("--extension <path>\n--models <patterns>\n", 1, False),
+    ],
+)
+def test_pi_binary_compatibility_requires_both_launcher_capabilities(
+    help_output: str,
+    return_code: int,
+    expected: bool,
+) -> None:
+    from free_claude_code.cli.launchers.pi import pi_binary_is_compatible
+
+    with patch(
+        "free_claude_code.cli.launchers.pi.subprocess.run",
+        return_value=SimpleNamespace(returncode=return_code, stdout=help_output),
+    ):
+        assert pi_binary_is_compatible("resolved-pi") is expected
+
+
+def test_launch_pi_rejects_unrelated_pi_binary(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from free_claude_code.cli.launchers.pi import launch
+
+    with (
+        patch(
+            "free_claude_code.cli.launchers.common.shutil.which",
+            return_value="unrelated-pi",
+        ),
+        patch(
+            "free_claude_code.cli.launchers.pi.pi_binary_is_compatible",
+            return_value=False,
+        ),
+        patch("free_claude_code.cli.launchers.pi.get_settings") as get_settings,
+        patch("free_claude_code.cli.launchers.common.subprocess.Popen") as popen,
+        pytest.raises(SystemExit) as exc_info,
+    ):
+        launch([])
+
+    assert exc_info.value.code == 126
+    get_settings.assert_not_called()
+    popen.assert_not_called()
+    captured = capsys.readouterr()
+    assert "not a compatible Pi Coding Agent" in captured.err
+    assert "https://pi.dev/install." in captured.err
 
 
 def test_launch_claude_keyboard_interrupt_kills_child_tree() -> None:

@@ -32,6 +32,12 @@ def _braced_body(text: str, declaration: str) -> str:
 
 
 def _posix_command(name: str) -> str:
+    help_output = (
+        '    echo "  --extension, -e <path>  Load an extension"\n'
+        '    echo "  --models <patterns>     Scope models"'
+        if name == "pi"
+        else "    :"
+    )
     return f"""#!/bin/sh
 echo "{name}:$*" >> "$CALL_LOG"
 if [ "$FAIL_STEP" = "{name}-verify" ]; then
@@ -40,6 +46,24 @@ fi
 if [ "${{1:-}}" = "--version" ]; then
     echo "{name} 1.0.0"
 fi
+if [ "${{1:-}}" = "--help" ]; then
+{help_output}
+fi
+"""
+
+
+def _posix_npm_command() -> str:
+    return """#!/bin/sh
+echo "npm:$*" >> "$CALL_LOG"
+if [ "${1:-}" = "prefix" ] && [ "${2:-}" = "-g" ]; then
+    printf '%s\n' "$FAKE_NPM_PREFIX"
+    exit 0
+fi
+if [ "${1:-}" = "config" ] && [ "${2:-}" = "get" ] && [ "${3:-}" = "prefix" ]; then
+    printf '%s\n' "$FAKE_NPM_PREFIX"
+    exit 0
+fi
+exit 71
 """
 
 
@@ -60,6 +84,7 @@ if [ "${{1:-}}" = "tool" ] && [ "${{2:-}}" = "install" ]; then
     mkdir -p "$FAKE_TOOL_BIN"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-server"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-claude"
+    cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-pi"
     if [ "$FAIL_STEP" != "fcc-missing" ]; then
         cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-codex"
     fi
@@ -91,6 +116,14 @@ class PosixHarness:
 
     def add_client(self, name: str) -> None:
         _write_executable(self.bin_dir / name, _posix_command(name))
+
+    def add_unrelated_pi(self) -> None:
+        _write_executable(self.bin_dir / "pi", _posix_command("unrelated-pi"))
+
+    def add_npm_prefix(self, prefix: Path) -> None:
+        prefix.mkdir(parents=True)
+        self.env["FAKE_NPM_PREFIX"] = str(prefix)
+        _write_executable(self.bin_dir / "npm", _posix_npm_command())
 
     def add_uv(self, version: str) -> None:
         _write_executable(self.bin_dir / "uv", _posix_uv_command(version))
@@ -143,13 +176,14 @@ while [ "$#" -gt 0 ]; do
 done
 echo "download:$url" >> "$CALL_LOG"
 case "$url:$FAIL_STEP" in
-    *claude.ai*:claude-download|*chatgpt.com*:codex-download|*astral.sh*:uv-download)
+    *claude.ai*:claude-download|*chatgpt.com*:codex-download|*pi.dev*:pi-download|*astral.sh*:uv-download)
         exit 41
         ;;
 esac
 case "$url" in
     *claude.ai*) source="$FAKE_FIXTURES/claude-installer.sh" ;;
     *chatgpt.com*) source="$FAKE_FIXTURES/codex-installer.sh" ;;
+    *pi.dev*) source="$FAKE_FIXTURES/pi-installer.sh" ;;
     *astral.sh*) source="$FAKE_FIXTURES/uv-installer.sh" ;;
     *) exit 42 ;;
 esac
@@ -177,6 +211,21 @@ chmod +x "$HOME/.local/bin/codex"
 """,
     )
     _write_executable(
+        fixtures / "pi-installer.sh",
+        """#!/bin/sh
+echo "pi-install" >> "$CALL_LOG"
+[ "$FAIL_STEP" = "pi-install" ] && exit 24
+if [ -n "${FAKE_NPM_PREFIX:-}" ]; then
+    pi_bin="$FAKE_NPM_PREFIX/bin"
+else
+    pi_bin="$HOME/.local/bin"
+fi
+mkdir -p "$pi_bin"
+cp "$FAKE_FIXTURES/pi-command.sh" "$pi_bin/pi"
+chmod +x "$pi_bin/pi"
+""",
+    )
+    _write_executable(
         fixtures / "uv-installer.sh",
         """#!/bin/sh
 echo "uv-install" >> "$CALL_LOG"
@@ -188,6 +237,7 @@ chmod +x "$HOME/.local/bin/uv"
     )
     _write_executable(fixtures / "claude-command.sh", _posix_command("claude"))
     _write_executable(fixtures / "codex-command.sh", _posix_command("codex"))
+    _write_executable(fixtures / "pi-command.sh", _posix_command("pi"))
     _write_executable(fixtures / "uv-command.sh", _posix_uv_command("0.11.28"))
     _write_executable(
         fixtures / "fcc-command.sh",
@@ -226,6 +276,7 @@ def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> No
     calls = posix_harness.calls()
     assert calls.index("claude-install") < calls.index("claude:--version")
     assert calls.index("codex-install:1") < calls.index("codex:--version")
+    assert calls.index("pi-install") < calls.index("pi:--version")
     assert calls.index("uv-install") < calls.index("uv:--version")
     assert any(
         call.startswith(
@@ -248,6 +299,7 @@ def test_install_sh_preserves_valid_existing_tools(
 ) -> None:
     posix_harness.add_client("claude")
     posix_harness.add_client("codex")
+    posix_harness.add_client("pi")
     posix_harness.add_uv("0.11.7")
 
     result = posix_harness.run()
@@ -257,9 +309,42 @@ def test_install_sh_preserves_valid_existing_tools(
     assert "leaving it unchanged" in result.stdout
 
 
+def test_install_sh_replaces_unrelated_pi_command(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.add_client("claude")
+    posix_harness.add_client("codex")
+    posix_harness.add_unrelated_pi()
+    posix_harness.add_uv("0.11.7")
+
+    result = posix_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "is not Pi Coding Agent; installing Pi" in result.stdout
+    assert "pi-install" in posix_harness.calls()
+
+
+def test_install_sh_discovers_custom_pi_npm_prefix(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.add_client("claude")
+    posix_harness.add_client("codex")
+    posix_harness.add_npm_prefix(posix_harness.root / "custom-npm")
+    posix_harness.add_uv("0.11.7")
+
+    result = posix_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    calls = posix_harness.calls()
+    assert "npm:prefix -g" in calls
+    assert "pi:--help" in calls
+    assert "pi:--version" in calls
+
+
 def test_install_sh_replaces_obsolete_uv(posix_harness: PosixHarness) -> None:
     posix_harness.add_client("claude")
     posix_harness.add_client("codex")
+    posix_harness.add_client("pi")
     posix_harness.add_uv("0.5.9")
 
     result = posix_harness.run()
@@ -278,6 +363,9 @@ def test_install_sh_replaces_obsolete_uv(posix_harness: PosixHarness) -> None:
         "codex-download",
         "codex-install",
         "codex-verify",
+        "pi-download",
+        "pi-install",
+        "pi-verify",
         "uv-download",
         "uv-install",
         "uv-verify",
@@ -301,7 +389,10 @@ def test_install_sh_stops_without_success_on_each_failure(
         "claude-verify": "chatgpt.com",
         "codex-download": "codex-install",
         "codex-install": "codex:--version",
-        "codex-verify": "astral.sh",
+        "codex-verify": "pi.dev",
+        "pi-download": "pi-install",
+        "pi-install": "pi:--version",
+        "pi-verify": "astral.sh",
         "uv-download": "uv-install",
         "uv-install": "uv:--version",
         "uv-verify": "uv:tool install",
@@ -340,6 +431,7 @@ def test_install_sh_rejects_unparseable_existing_uv(
 ) -> None:
     posix_harness.add_client("claude")
     posix_harness.add_client("codex")
+    posix_harness.add_client("pi")
     posix_harness.add_uv("not-a-version")
 
     result = posix_harness.run()
@@ -377,11 +469,29 @@ def _powershells() -> tuple[str, ...]:
 
 
 def _batch_client(name: str) -> str:
+    help_output = (
+        "echo   --extension, -e ^<path^>  Load an extension\n"
+        "echo   --models ^<patterns^>     Scope models"
+        if name == "pi"
+        else "rem no product help"
+    )
     return f"""@echo off
 echo {name}:%*>>"%CALL_LOG%"
 if "%FAIL_STEP%"=="{name}-verify" exit /b 51
 if "%1"=="--version" echo {name} 1.0.0
+if "%1"=="--help" (
+{help_output}
+)
 exit /b 0
+"""
+
+
+def _batch_npm() -> str:
+    return r"""@echo off
+echo npm:%*>>"%CALL_LOG%"
+if "%1"=="prefix" if "%2"=="-g" echo %FAKE_NPM_PREFIX%& exit /b 0
+if "%1"=="config" if "%2"=="get" if "%3"=="prefix" echo %FAKE_NPM_PREFIX%& exit /b 0
+exit /b 71
 """
 
 
@@ -402,6 +512,7 @@ if "%FAIL_STEP%"=="fcc-install" exit /b 53
 if not exist "%FAKE_TOOL_BIN%" mkdir "%FAKE_TOOL_BIN%"
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-server.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-claude.cmd" >nul
+copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-pi.cmd" >nul
 if not "%FAIL_STEP%"=="fcc-missing" copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-codex.cmd" >nul
 exit /b 0
 :update_shell
@@ -426,6 +537,14 @@ class PowerShellHarness:
 
     def add_client(self, name: str) -> None:
         _write_executable(self.bin_dir / f"{name}.cmd", _batch_client(name))
+
+    def add_unrelated_pi(self) -> None:
+        _write_executable(self.bin_dir / "pi.cmd", _batch_client("unrelated-pi"))
+
+    def add_npm_prefix(self, prefix: Path) -> None:
+        prefix.mkdir(parents=True)
+        self.env["FAKE_NPM_PREFIX"] = str(prefix)
+        _write_executable(self.bin_dir / "npm.cmd", _batch_npm())
 
     def add_uv(self, version: str) -> None:
         _write_executable(self.bin_dir / "uv.cmd", _batch_uv(version))
@@ -471,8 +590,9 @@ def powershell_harness(
     tool_bin = tmp_path / "tool-bin"
     home = tmp_path / "home"
     local_app_data = tmp_path / "local-app-data"
+    app_data = tmp_path / "app-data"
     log = tmp_path / "calls.log"
-    for path in (bin_dir, fixtures, tool_bin, home, local_app_data):
+    for path in (bin_dir, fixtures, tool_bin, home, local_app_data, app_data):
         path.mkdir(parents=True)
 
     (fixtures / "claude-command.cmd").write_text(
@@ -481,6 +601,7 @@ def powershell_harness(
     (fixtures / "codex-command.cmd").write_text(
         _batch_client("codex"), encoding="utf-8"
     )
+    (fixtures / "pi-command.cmd").write_text(_batch_client("pi"), encoding="utf-8")
     (fixtures / "uv-command.cmd").write_text(_batch_uv("0.11.28"), encoding="utf-8")
     (fixtures / "fcc-command.cmd").write_text(
         """@echo off
@@ -510,6 +631,15 @@ Add-Content -LiteralPath $env:CALL_LOG -Value "codex-install:$env:CODEX_NON_INTE
 """,
         encoding="utf-8",
     )
+    (fixtures / "pi-installer.ps1").write_text(
+        r"""if ($env:FAIL_STEP -eq "pi-install") { exit 64 }
+$bin = if ($env:FAKE_NPM_PREFIX) { $env:FAKE_NPM_PREFIX } else { Join-Path $env:APPDATA "npm" }
+New-Item -ItemType Directory -Force -Path $bin | Out-Null
+Copy-Item (Join-Path $env:FAKE_FIXTURES "pi-command.cmd") (Join-Path $bin "pi.cmd") -Force
+Add-Content -LiteralPath $env:CALL_LOG -Value "pi-install"
+""",
+        encoding="utf-8",
+    )
     (fixtures / "uv-installer.ps1").write_text(
         r"""if ($env:FAIL_STEP -eq "uv-install") { exit 63 }
 $bin = Join-Path $env:USERPROFILE ".local\bin"
@@ -532,6 +662,7 @@ function Invoke-RestMethod {
     if (
         ($env:FAIL_STEP -eq "claude-download" -and $Uri.Contains("claude.ai")) -or
         ($env:FAIL_STEP -eq "codex-download" -and $Uri.Contains("chatgpt.com")) -or
+        ($env:FAIL_STEP -eq "pi-download" -and $Uri.Contains("pi.dev")) -or
         ($env:FAIL_STEP -eq "uv-download" -and $Uri.Contains("astral.sh"))
     ) {
         throw "simulated download failure"
@@ -541,6 +672,9 @@ function Invoke-RestMethod {
     }
     elseif ($Uri.Contains("chatgpt.com")) {
         $source = Join-Path $env:FAKE_FIXTURES "codex-installer.ps1"
+    }
+    elseif ($Uri.Contains("pi.dev")) {
+        $source = Join-Path $env:FAKE_FIXTURES "pi-installer.ps1"
     }
     elseif ($Uri.Contains("astral.sh")) {
         $source = Join-Path $env:FAKE_FIXTURES "uv-installer.ps1"
@@ -566,6 +700,7 @@ $installer = [scriptblock]::Create([IO.File]::ReadAllText($env:FCC_INSTALLER))
             "PATHEXT": ".COM;.EXE;.BAT;.CMD",
             "USERPROFILE": str(home),
             "LOCALAPPDATA": str(local_app_data),
+            "APPDATA": str(app_data),
             "CALL_LOG": str(log),
             "FAKE_FIXTURES": str(fixtures),
             "FAKE_TOOL_BIN": str(tool_bin),
@@ -588,6 +723,7 @@ def test_install_ps1_fresh_install_is_verified(
     calls = powershell_harness.calls()
     assert calls.index("claude-install") < calls.index("claude:--version")
     assert calls.index("codex-install:1") < calls.index("codex:--version")
+    assert calls.index("pi-install") < calls.index("pi:--version")
     assert calls.index("uv-install") < calls.index("uv:--version")
     assert any(
         call.startswith(
@@ -610,6 +746,7 @@ def test_install_ps1_preserves_valid_existing_tools(
 ) -> None:
     powershell_harness.add_client("claude")
     powershell_harness.add_client("codex")
+    powershell_harness.add_client("pi")
     powershell_harness.add_uv("0.11.7")
 
     result = powershell_harness.run()
@@ -619,11 +756,44 @@ def test_install_ps1_preserves_valid_existing_tools(
     assert "leaving it unchanged" in result.stdout
 
 
+def test_install_ps1_replaces_unrelated_pi_command(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    powershell_harness.add_client("claude")
+    powershell_harness.add_client("codex")
+    powershell_harness.add_unrelated_pi()
+    powershell_harness.add_uv("0.11.7")
+
+    result = powershell_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "is not Pi Coding Agent; installing Pi" in result.stdout
+    assert "pi-install" in powershell_harness.calls()
+
+
+def test_install_ps1_discovers_custom_pi_npm_prefix(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    powershell_harness.add_client("claude")
+    powershell_harness.add_client("codex")
+    powershell_harness.add_npm_prefix(powershell_harness.root / "custom-npm")
+    powershell_harness.add_uv("0.11.7")
+
+    result = powershell_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    calls = powershell_harness.calls()
+    assert "npm:prefix -g" in calls
+    assert "pi:--help" in calls
+    assert "pi:--version" in calls
+
+
 def test_install_ps1_replaces_obsolete_uv(
     powershell_harness: PowerShellHarness,
 ) -> None:
     powershell_harness.add_client("claude")
     powershell_harness.add_client("codex")
+    powershell_harness.add_client("pi")
     powershell_harness.add_uv("0.5.9")
 
     result = powershell_harness.run()
@@ -642,6 +812,9 @@ def test_install_ps1_replaces_obsolete_uv(
         "codex-download",
         "codex-install",
         "codex-verify",
+        "pi-download",
+        "pi-install",
+        "pi-verify",
         "uv-download",
         "uv-install",
         "uv-verify",
@@ -665,7 +838,10 @@ def test_install_ps1_stops_without_success_on_each_failure(
         "claude-verify": "chatgpt.com",
         "codex-download": "codex-install",
         "codex-install": "codex:--version",
-        "codex-verify": "astral.sh",
+        "codex-verify": "pi.dev",
+        "pi-download": "pi-install",
+        "pi-install": "pi:--version",
+        "pi-verify": "astral.sh",
         "uv-download": "uv-install",
         "uv-install": "uv:--version",
         "uv-verify": "uv:tool install",
@@ -718,6 +894,7 @@ def test_install_ps1_rejects_unparseable_existing_uv(
 ) -> None:
     powershell_harness.add_client("claude")
     powershell_harness.add_client("codex")
+    powershell_harness.add_client("pi")
     powershell_harness.add_uv("not-a-version")
 
     result = powershell_harness.run()
@@ -747,6 +924,7 @@ def test_installers_use_native_clients_and_single_python_selection() -> None:
     for text in (shell, powershell):
         assert "@anthropic-ai/claude-code" not in text
         assert "@openai/codex" not in text
+        assert "@earendil-works/pi-coding-agent" not in text
         assert "git+" not in text
         assert "git --version" not in text
         assert (
@@ -757,6 +935,9 @@ def test_installers_use_native_clients_and_single_python_selection() -> None:
         assert "--refresh-package" in text
         assert "tool update-shell" in text
         assert "--python" in text
+
+    assert "https://pi.dev/install.sh" in shell
+    assert "https://pi.dev/install.ps1" in powershell
 
 
 def test_readme_install_section_has_no_manual_git_prerequisite() -> None:

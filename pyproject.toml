@@ -4,8 +4,8 @@ build-backend = "hatchling.build"
 
 [project]
 name = "free-claude-code"
-version = "3.5.19"
-description = "Local proxy connecting Claude Code and Codex to OpenAI-compatible AI providers"
+version = "3.6.0"
+description = "Local proxy connecting coding agents to OpenAI-compatible AI providers"
 readme = "README.md"
 requires-python = ">=3.14.0"
 dependencies = [
@@ -31,6 +31,7 @@ free-claude-code = "free_claude_code.cli.entrypoints:serve"
 fcc-init = "free_claude_code.cli.entrypoints:init"
 fcc-claude = "free_claude_code.cli.launchers.claude:launch"
 fcc-codex = "free_claude_code.cli.launchers.codex:launch"
+fcc-pi = "free_claude_code.cli.launchers.pi:launch"
 
 [project.optional-dependencies]
 voice = [

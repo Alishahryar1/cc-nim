@@ -2,7 +2,7 @@
 
 # 🤖 Free Claude Code
 
-Use Claude Code CLI, Codex CLI, their VS Code extensions, JetBrains ACP, or chat bots through your own provider-backed proxy.
+Use Claude Code, Codex, Pi, editor extensions, or chat bots through your own provider-backed proxy.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
 [![Python 3.14](https://img.shields.io/badge/python-3.14-3776ab.svg?style=for-the-badge&logo=python&logoColor=white)](https://www.python.org/downloads/)
@@ -12,7 +12,7 @@ Use Claude Code CLI, Codex CLI, their VS Code extensions, JetBrains ACP, or chat
 [![Code style: Ruff](https://img.shields.io/badge/code%20formatting-ruff-f5a623.svg?style=for-the-badge)](https://github.com/astral-sh/ruff)
 [![Logging: Loguru](https://img.shields.io/badge/logging-loguru-4ecdc4.svg?style=for-the-badge)](https://github.com/Delgan/loguru)
 
-Run Claude Code or Codex with free, paid, or local models. Choose and validate providers from one local Admin UI.
+Run your coding agents with free, paid, or local models. Choose and validate providers from one local Admin UI.
 
 [Quick Start](#quick-start) · [Providers](#choose-a-provider) · [Clients](#connect-your-client) · [Integrations](#optional-integrations) · [Manage](#manage-your-installation)
 
@@ -54,9 +54,9 @@ Run Claude Code or Codex with free, paid, or local models. Choose and validate p
 
 ## What You Get
 
-- Launch Claude Code with `fcc-claude` or Codex with `fcc-codex`.
+- Launch Claude Code with `fcc-claude`, Codex with `fcc-codex`, or Pi with `fcc-pi`.
 - Switch among 24 cloud and local providers from the Admin UI.
-- Use the native Claude Code and Codex `/model` pickers.
+- Use each coding agent's native model picker.
 - Route Opus, Sonnet, Haiku, and fallback traffic to different models.
 - Keep streaming, tool use, and reasoning support across compatible models.
 - Connect Claude Code and Codex in VS Code or Claude Code through JetBrains ACP.
@@ -128,11 +128,19 @@ Codex:
 fcc-codex
 ```
 
-Both launchers use the current Admin UI settings. Type `/model` inside either agent to choose from the models FCC exposes. Normal CLI arguments still work, for example:
+Pi:
+
+```bash
+fcc-pi
+```
+
+All three launchers use the current Admin UI settings. Use the agent's model picker to choose from the models FCC exposes. Normal CLI arguments still work, for example:
 
 ```bash
 fcc-codex exec "hello"
 ```
+
+`fcc-pi` registers FCC only for that Pi process; your existing Pi settings, sessions, credentials, and extensions remain unchanged.
 
 ## Choose A Provider
 
@@ -204,7 +212,7 @@ For example, route Opus to `nvidia_nim/moonshotai/kimi-k2.6`, Sonnet to `open_ro
 
 ## Connect Your Client
 
-For terminal use, start `fcc-server`, then prefer `fcc-claude` or `fcc-codex`. Use the guides below for editor integrations.
+For terminal use, start `fcc-server`, then run `fcc-claude`, `fcc-codex`, or `fcc-pi`. Use the guides below for editor integrations.
 
 <details>
 <summary><strong>Claude Code in VS Code</strong></summary>
@@ -398,7 +406,7 @@ Re-run the matching command from [Install Or Update](#install).
 
 ### Uninstall
 
-Stop every running FCC command first. The uninstaller removes the FCC uv tool, verifies every FCC command is gone, and then deletes `~/.fcc/`. It leaves uv, Python, Claude Code, Codex, and shared PATH entries intact.
+Stop every running FCC command first. The uninstaller removes the FCC uv tool, verifies every FCC command is gone, and then deletes `~/.fcc/`. It leaves uv, Python, Claude Code, Codex, Pi, and shared PATH entries intact.
 
 macOS/Linux:
 

@@ -18,13 +18,14 @@ $PythonVersion = "3.14.0"
 $MinUvVersion = "0.11.0"
 $ClaudeInstallUrl = "https://claude.ai/install.ps1"
 $CodexInstallUrl = "https://chatgpt.com/codex/install.ps1"
+$PiInstallUrl = "https://pi.dev/install.ps1"
 $UvInstallUrl = "https://astral.sh/uv/install.ps1"
 
 function Show-Usage {
     @"
 Usage: install.ps1 [options]
 
-Installs Claude Code and Codex if missing, ensures a compatible uv, and installs or updates Free Claude Code.
+Installs Claude Code, Codex, and Pi if missing, ensures a compatible uv, and installs or updates Free Claude Code.
 
 Options:
   -VoiceNim              Install NVIDIA NIM voice transcription support.
@@ -158,6 +159,30 @@ function Add-KnownBinDirectories {
     }
     if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
         Add-PathEntry (Join-Path $env:LOCALAPPDATA "Programs\OpenAI\Codex\bin")
+        Add-PathEntry (Join-Path $env:LOCALAPPDATA "pi-node\current")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:APPDATA)) {
+        Add-PathEntry (Join-Path $env:APPDATA "npm")
+    }
+}
+
+function Add-PiBinDirectories {
+    if ($DryRun) {
+        return
+    }
+
+    Add-KnownBinDirectories
+    $npm = Get-ApplicationCommand "npm"
+    if (-not $npm) {
+        return
+    }
+
+    $prefix = (& $npm.Source prefix -g 2>$null | Out-String).Trim()
+    if ($LASTEXITCODE -ne 0 -or [string]::IsNullOrWhiteSpace($prefix)) {
+        $prefix = (& $npm.Source config get prefix 2>$null | Out-String).Trim()
+    }
+    if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($prefix)) {
+        Add-PathEntry $prefix
     }
 }
 
@@ -231,6 +256,39 @@ function Confirm-Application {
     Invoke-NativeCommand -FilePath $command.Source -Arguments @("--version")
 }
 
+function Test-PiApplication {
+    param($Command)
+
+    try {
+        $helpOutput = (& $Command.Source --help 2>$null | Out-String)
+    }
+    catch {
+        return $false
+    }
+    return (
+        $LASTEXITCODE -eq 0 -and
+        $helpOutput.Contains("--extension") -and
+        $helpOutput.Contains("--models")
+    )
+}
+
+function Confirm-PiApplication {
+    if ($DryRun) {
+        Write-Host "+ pi --help (verify --extension and --models support)"
+        Write-Host "+ pi --version"
+        return
+    }
+
+    $command = Get-ApplicationCommand "pi"
+    if (-not $command) {
+        throw "Pi was installed, but 'pi' is not available on PATH."
+    }
+    if (-not (Test-PiApplication $command)) {
+        throw "The 'pi' command at '$($command.Source)' is not a compatible Pi Coding Agent."
+    }
+    Invoke-NativeCommand -FilePath $command.Source -Arguments @("--version")
+}
+
 function Ensure-ClaudeCode {
     if (Get-ApplicationCommand "claude") {
         Write-Host "Claude Code already found on PATH; verifying it."
@@ -253,6 +311,22 @@ function Ensure-Codex {
     }
 
     Confirm-Application -CommandName "codex" -DisplayName "Codex"
+}
+
+function Ensure-Pi {
+    $existingPi = Get-ApplicationCommand "pi"
+    if ($existingPi -and ($DryRun -or (Test-PiApplication $existingPi))) {
+        Write-Host "Pi already found on PATH; verifying it."
+    }
+    else {
+        if ($existingPi) {
+            Write-Host "The existing 'pi' command at '$($existingPi.Source)' is not Pi Coding Agent; installing Pi."
+        }
+        Invoke-DownloadedPowerShellInstaller -Url $PiInstallUrl -Name "Pi"
+        Add-PiBinDirectories
+    }
+
+    Confirm-PiApplication
 }
 
 function Convert-UvVersionOutput {
@@ -398,7 +472,7 @@ function Configure-AndConfirmFreeClaudeCode {
     if ($DryRun) {
         Write-Host "+ uv tool update-shell"
         Write-Host "+ uv tool dir --bin"
-        Write-Host "+ verify fcc-server, fcc-claude, and fcc-codex in the uv tool bin directory"
+        Write-Host "+ verify fcc-server, fcc-claude, fcc-codex, and fcc-pi in the uv tool bin directory"
         Write-Host "+ fcc-server --version"
         return
     }
@@ -419,7 +493,7 @@ function Configure-AndConfirmFreeClaudeCode {
         [IO.Path]::AltDirectorySeparatorChar
     )
     $installedCommands = @{}
-    foreach ($commandName in @("fcc-server", "fcc-claude", "fcc-codex")) {
+    foreach ($commandName in @("fcc-server", "fcc-claude", "fcc-codex", "fcc-pi")) {
         $command = Get-ApplicationCommand $commandName
         if (-not $command) {
             throw "Free Claude Code installation did not create '$commandName'."
@@ -459,6 +533,9 @@ Ensure-ClaudeCode
 Write-Step "Ensuring Codex is installed"
 Ensure-Codex
 
+Write-Step "Ensuring Pi is installed"
+Ensure-Pi
+
 Write-Step "Ensuring uv $MinUvVersion or newer is installed"
 Ensure-Uv
 
@@ -476,4 +553,5 @@ else {
     Write-Host "Free Claude Code is installed and verified. Start the proxy with: fcc-server"
     Write-Host "Run Claude Code with: fcc-claude"
     Write-Host "Run Codex with: fcc-codex"
+    Write-Host "Run Pi with: fcc-pi"
 }
