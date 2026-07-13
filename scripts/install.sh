@@ -4,6 +4,8 @@ set -eu
 REPO_GIT_URL="git+https://github.com/Alishahryar1/free-claude-code.git"
 PYTHON_VERSION="3.14.0"
 MIN_UV_VERSION="0.11.0"
+CLAUDE_INSTALL_URL="https://claude.ai/install.sh"
+CODEX_INSTALL_URL="https://chatgpt.com/codex/install.sh"
 UV_INSTALL_URL="https://astral.sh/uv/install.sh"
 
 dry_run=0
@@ -11,12 +13,13 @@ voice_nim=0
 voice_local=0
 voice_all=0
 torch_backend=""
+temporary_script=""
 
 show_usage() {
     cat <<'USAGE'
 Usage: install.sh [options]
 
-Installs Claude Code and Codex if missing, installs or updates uv, Python 3.14.0, and Free Claude Code.
+Installs Claude Code and Codex if missing, ensures a compatible uv, and installs or updates Free Claude Code.
 
 Options:
   --voice-nim              Install NVIDIA NIM voice transcription support.
@@ -60,18 +63,28 @@ print_command() {
 
 run() {
     print_command "$@"
-    if [ "$dry_run" -eq 0 ]; then
-        "$@"
+    if [ "$dry_run" -eq 1 ]; then
+        return 0
+    fi
+
+    if "$@"; then
+        return 0
+    else
+        status=$?
+    fi
+
+    fail "Command failed with exit code $status: $1"
+}
+
+cleanup() {
+    if [ -n "$temporary_script" ] && [ -e "$temporary_script" ]; then
+        rm -f "$temporary_script"
     fi
 }
 
-run_uv_installer() {
-    printf '+ curl -LsSf %s | sh\n' "$UV_INSTALL_URL"
-    if [ "$dry_run" -eq 0 ]; then
-        command -v curl >/dev/null 2>&1 || fail "curl is required to install uv."
-        curl -LsSf "$UV_INSTALL_URL" | sh
-    fi
-}
+trap cleanup EXIT
+trap 'exit 130' INT
+trap 'exit 143' HUP TERM
 
 add_path_entry() {
     [ -n "$1" ] || return 0
@@ -81,7 +94,7 @@ add_path_entry() {
     esac
 }
 
-add_uv_to_path() {
+add_known_bin_directories() {
     if [ -n "${XDG_BIN_HOME:-}" ]; then
         add_path_entry "$XDG_BIN_HOME"
     fi
@@ -92,6 +105,7 @@ add_uv_to_path() {
     fi
 
     export PATH
+    hash -r 2>/dev/null || true
 }
 
 require_command() {
@@ -100,14 +114,115 @@ require_command() {
     fi
 }
 
-current_uv_version() {
-    version=$(uv self version --short 2>/dev/null || true)
-    if [ -z "$version" ]; then
-        version=$(uv --version 2>/dev/null | sed 's/^uv //; s/ .*//' || true)
+download_and_run() {
+    url=$1
+    interpreter=$2
+    label=$3
+    non_interactive=${4:-0}
+
+    if [ "$dry_run" -eq 1 ]; then
+        print_command curl -fsSL "$url" -o "<temporary-script>"
+        if [ "$non_interactive" -eq 1 ]; then
+            printf '+ CODEX_NON_INTERACTIVE=1 '
+            quote_arg "$interpreter"
+            printf ' <temporary-script>\n'
+        else
+            print_command "$interpreter" "<temporary-script>"
+        fi
+        return 0
     fi
 
-    [ -n "$version" ] || return 1
-    printf '%s\n' "$version"
+    temporary_script=$(mktemp "${TMPDIR:-/tmp}/fcc-install.XXXXXX") || fail "Unable to create a temporary file for $label."
+    print_command curl -fsSL "$url" -o "$temporary_script"
+    if curl -fsSL "$url" -o "$temporary_script"; then
+        :
+    else
+        status=$?
+        fail "Could not download the $label installer (curl exit code $status)."
+    fi
+
+    if [ ! -s "$temporary_script" ]; then
+        fail "The downloaded $label installer was empty."
+    fi
+
+    if [ "$non_interactive" -eq 1 ]; then
+        printf '+ CODEX_NON_INTERACTIVE=1 '
+        quote_arg "$interpreter"
+        printf ' '
+        quote_arg "$temporary_script"
+        printf '\n'
+        if CODEX_NON_INTERACTIVE=1 "$interpreter" "$temporary_script"; then
+            :
+        else
+            status=$?
+            fail "$label installation failed with exit code $status."
+        fi
+    else
+        print_command "$interpreter" "$temporary_script"
+        if "$interpreter" "$temporary_script"; then
+            :
+        else
+            status=$?
+            fail "$label installation failed with exit code $status."
+        fi
+    fi
+
+    rm -f "$temporary_script"
+    temporary_script=""
+}
+
+verify_command() {
+    command_name=$1
+    display_name=$2
+
+    if [ "$dry_run" -eq 1 ]; then
+        print_command "$command_name" --version
+        return 0
+    fi
+
+    command_path=$(command -v "$command_name" 2>/dev/null) || fail "$display_name was installed, but '$command_name' is not available on PATH."
+    run "$command_path" --version
+}
+
+ensure_claude() {
+    if command -v claude >/dev/null 2>&1; then
+        printf 'Claude Code already found on PATH; verifying it.\n'
+    else
+        download_and_run "$CLAUDE_INSTALL_URL" bash "Claude Code"
+        add_known_bin_directories
+    fi
+
+    verify_command claude "Claude Code"
+}
+
+ensure_codex() {
+    if command -v codex >/dev/null 2>&1; then
+        printf 'Codex already found on PATH; verifying it.\n'
+    else
+        download_and_run "$CODEX_INSTALL_URL" sh "Codex" 1
+        add_known_bin_directories
+    fi
+
+    verify_command codex "Codex"
+}
+
+current_uv_version() {
+    if output=$(uv --version); then
+        :
+    else
+        return 1
+    fi
+
+    case "$output" in
+        uv\ *) version=${output#uv } ;;
+        *) version=$output ;;
+    esac
+    version=${version%% *}
+
+    case "$version" in
+        [0-9]*.[0-9]*.[0-9]*) printf '%s\n' "$version" ;;
+        *) return 1 ;;
+    esac
 }
 
 version_ge() {
@@ -126,6 +241,10 @@ version_ge() {
     minimum_patch=${3:-0}
     IFS=$old_ifs
 
+    case "$current_major$current_minor$current_patch$minimum_major$minimum_minor$minimum_patch" in
+        *[!0-9]*) return 1 ;;
+    esac
+
     [ "$current_major" -gt "$minimum_major" ] && return 0
     [ "$current_major" -lt "$minimum_major" ] && return 1
     [ "$current_minor" -gt "$minimum_minor" ] && return 0
@@ -133,109 +252,48 @@ version_ge() {
     [ "$current_patch" -ge "$minimum_patch" ]
 }
 
-uv_version_satisfies_minimum() {
-    version=$(current_uv_version) || return 1
-    version_ge "$version" "$MIN_UV_VERSION"
-}
+verify_uv() {
+    if [ "$dry_run" -eq 1 ]; then
+        print_command uv --version
+        return 0
+    fi
 
-validate_uv_version() {
-    [ "$dry_run" -eq 1 ] && return 0
-
-    version=$(current_uv_version) || fail "Unable to determine uv version."
+    command -v uv >/dev/null 2>&1 || fail "uv was installed, but it is not available on PATH."
+    version=$(current_uv_version) || fail "uv is present, but 'uv --version' did not return a valid version."
     if ! version_ge "$version" "$MIN_UV_VERSION"; then
-        fail "uv $MIN_UV_VERSION or newer is required; found uv $version. Upgrade uv with its installer or package manager, then rerun this installer."
+        fail "uv $MIN_UV_VERSION or newer is required; found uv $version after installation."
     fi
+
+    printf 'Verified uv %s.\n' "$version"
 }
 
-uv_self_update_supported() {
-    uv self update --dry-run >/dev/null 2>&1
-}
-
-uv_installed_by_homebrew() {
-    command -v brew >/dev/null 2>&1 && brew list --versions uv >/dev/null 2>&1
-}
-
-uv_installed_by_pipx() {
-    command -v pipx >/dev/null 2>&1 && pipx list 2>/dev/null | grep -Eq '(^|[[:space:]])package uv([[:space:]]|$)'
-}
-
-uv_installed_in_active_virtualenv() {
-    [ -n "${VIRTUAL_ENV:-}" ] || return 1
-
-    uv_path=$(command -v uv)
-    case "$uv_path" in
-        "$VIRTUAL_ENV"/*) return 0 ;;
-        *) return 1 ;;
-    esac
-}
-
-update_existing_uv() {
-    if uv_self_update_supported; then
-        run uv self update
+ensure_uv() {
+    if [ "$dry_run" -eq 1 ]; then
+        if command -v uv >/dev/null 2>&1; then
+            print_command uv --version
+            printf 'A compatible existing uv will be left unchanged; an obsolete one will be replaced by the standalone installer.\n'
+        else
+            printf 'uv is not installed; the current standalone uv would be installed.\n'
+            download_and_run "$UV_INSTALL_URL" sh "uv"
+            verify_uv
+        fi
         return 0
     fi
-
-    if uv_installed_by_homebrew; then
-        run brew upgrade uv
-        return 0
-    fi
-
-    if uv_installed_by_pipx; then
-        run pipx upgrade uv
-        return 0
-    fi
-
-    if uv_installed_in_active_virtualenv; then
-        run python -m pip install --upgrade uv
-        return 0
-    fi
-
-    if uv_version_satisfies_minimum; then
-        printf 'uv is already installed and satisfies >=%s; skipping automatic uv update because the install source was not detected.\n' "$MIN_UV_VERSION"
-        return 0
-    fi
-
-    version=$(current_uv_version 2>/dev/null || printf 'unknown')
-    fail "uv $MIN_UV_VERSION or newer is required; found uv $version. The existing uv install source was not detected. Upgrade uv manually with the package manager that installed it, then rerun this installer."
-}
-
-install_claude_if_missing() {
-    if command -v claude >/dev/null 2>&1; then
-        printf 'Claude Code already found on PATH; skipping install.\n'
-        return 0
-    fi
-
-    require_command npm
-    run npm install -g @anthropic-ai/claude-code
-}
-
-install_codex_if_missing() {
-    if command -v codex >/dev/null 2>&1; then
-        printf 'Codex already found on PATH; skipping install.\n'
-        return 0
-    fi
-
-    require_command npm
-    run npm install -g @openai/codex
-}
-
-install_or_update_uv() {
-    add_uv_to_path
 
     if command -v uv >/dev/null 2>&1; then
-        update_existing_uv
-        validate_uv_version
-        return 0
+        version=$(current_uv_version) || fail "uv is present, but 'uv --version' did not return a valid version."
+        if version_ge "$version" "$MIN_UV_VERSION"; then
+            printf 'uv %s already satisfies >=%s; leaving it unchanged.\n' "$version" "$MIN_UV_VERSION"
+            return 0
+        fi
+        printf 'uv %s is below %s; installing the current standalone uv.\n' "$version" "$MIN_UV_VERSION"
+    else
+        printf 'uv is not installed; installing the current standalone uv.\n'
     fi
 
-    run_uv_installer
-    add_uv_to_path
-
-    if [ "$dry_run" -eq 0 ] && ! command -v uv >/dev/null 2>&1; then
-        fail "uv was installed, but it is not available on PATH. Open a new terminal or add uv's bin directory to PATH."
-    fi
-
-    validate_uv_version
+    download_and_run "$UV_INSTALL_URL" sh "uv"
+    add_known_bin_directories
+    verify_uv
 }
 
 parse_args() {
@@ -253,11 +311,11 @@ parse_args() {
             --torch-backend)
                 shift
                 [ "$#" -gt 0 ] || fail "--torch-backend requires a value."
-                torch_backend="$1"
+                torch_backend=$1
                 [ -n "$torch_backend" ] || fail "--torch-backend requires a non-empty value."
                 ;;
             --torch-backend=*)
-                torch_backend="${1#*=}"
+                torch_backend=${1#*=}
                 [ -n "$torch_backend" ] || fail "--torch-backend requires a non-empty value."
                 ;;
             --dry-run)
@@ -278,7 +336,6 @@ parse_args() {
 
 validate_args() {
     include_local=$voice_local
-
     if [ "$voice_all" -eq 1 ]; then
         include_local=1
     fi
@@ -297,10 +354,6 @@ package_spec() {
         include_local=1
     fi
 
-    if [ -n "$torch_backend" ] && [ "$include_local" -ne 1 ]; then
-        fail "--torch-backend requires --voice-local or --voice-all."
-    fi
-
     if [ "$include_nim" -eq 1 ] && [ "$include_local" -eq 1 ]; then
         printf 'free-claude-code[voice,voice_local] @ %s' "$REPO_GIT_URL"
     elif [ "$include_nim" -eq 1 ]; then
@@ -316,30 +369,73 @@ install_free_claude_code() {
     spec=$(package_spec)
 
     if [ -n "$torch_backend" ]; then
-        run uv tool install --force --torch-backend "$torch_backend" "$spec"
+        run uv tool install --force --python "$PYTHON_VERSION" --torch-backend "$torch_backend" "$spec"
     else
-        run uv tool install --force "$spec"
+        run uv tool install --force --python "$PYTHON_VERSION" "$spec"
     fi
+}
+
+configure_and_verify_free_claude_code() {
+    run uv tool update-shell
+
+    if [ "$dry_run" -eq 1 ]; then
+        print_command uv tool dir --bin
+        printf '+ verify fcc-server, fcc-claude, and fcc-codex in the uv tool bin directory\n'
+        print_command fcc-server --version
+        return 0
+    fi
+
+    print_command uv tool dir --bin
+    if tool_bin=$(uv tool dir --bin); then
+        :
+    else
+        status=$?
+        fail "Could not determine the uv tool bin directory (exit code $status)."
+    fi
+    [ -n "$tool_bin" ] || fail "uv returned an empty tool bin directory."
+
+    add_path_entry "$tool_bin"
+    export PATH
+    hash -r 2>/dev/null || true
+
+    for command_name in fcc-server fcc-claude fcc-codex; do
+        [ -x "$tool_bin/$command_name" ] || fail "Free Claude Code installation did not create $tool_bin/$command_name."
+    done
+
+    run "$tool_bin/fcc-server" --version
 }
 
 parse_args "$@"
 validate_args
+add_known_bin_directories
 
-step "Installing Claude Code if missing"
-install_claude_if_missing
+step "Checking installation prerequisites"
+require_command curl
+require_command bash
+require_command sh
+require_command mktemp
+require_command git
+run git --version
 
-step "Installing Codex if missing"
-install_codex_if_missing
+step "Ensuring Claude Code is installed"
+ensure_claude
 
-step "Installing uv if missing, updating if present"
-install_or_update_uv
+step "Ensuring Codex is installed"
+ensure_codex
 
-step "Installing Python $PYTHON_VERSION"
-run uv python install "$PYTHON_VERSION"
+step "Ensuring uv $MIN_UV_VERSION or newer is installed"
+ensure_uv
 
 step "Installing or updating Free Claude Code"
 install_free_claude_code
 
-printf '\nFree Claude Code is installed. Start the proxy with: fcc-server\n'
-printf 'Run Claude Code with: fcc-claude\n'
-printf 'Run Codex with: fcc-codex\n'
+step "Configuring PATH and verifying Free Claude Code"
+configure_and_verify_free_claude_code
+
+if [ "$dry_run" -eq 1 ]; then
+    printf '\nDry run complete. No changes were made.\n'
+else
+    printf '\nFree Claude Code is installed and verified. Start the proxy with: fcc-server\n'
+    printf 'Run Claude Code with: fcc-claude\n'
+    printf 'Run Codex with: fcc-codex\n'
+fi
