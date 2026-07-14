@@ -30,7 +30,7 @@ WireApi = Literal["messages", "responses"]
 
 
 class ProviderExecutor:
-    """Resolve a provider and execute one routed Anthropic Messages stream."""
+    """Resolve a provider & execute one routed Anthropic Messages stream."""
 
     def __init__(
         self,
