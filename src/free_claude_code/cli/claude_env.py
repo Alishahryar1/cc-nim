@@ -5,7 +5,6 @@ from collections.abc import Mapping
 from free_claude_code.cli.proxy_auth import proxy_auth_token
 
 CLAUDE_CODE_AUTO_COMPACT_WINDOW = "190000"
-CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC = "1"
 CLAUDE_BINARY_NAME = "claude"
 
 
@@ -26,7 +25,4 @@ def build_claude_proxy_env(
     env["ANTHROPIC_AUTH_TOKEN"] = proxy_auth_token(auth_token)
     env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] = "1"
     env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] = CLAUDE_CODE_AUTO_COMPACT_WINDOW
-    env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] = (
-        CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC
-    )
     return env
