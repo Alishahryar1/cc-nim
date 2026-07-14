@@ -8,8 +8,8 @@ body:
     id: fcc-version
     attributes:
       label: FCC version
-      description: Run `fcc-server --version` and enter the reported version.
-      placeholder: "4.4.1"
+      description: Run `fcc-server --version` and enter the reported version. If FCC did not install, enter `not installed`.
+      placeholder: "4.4.1 or not installed"
     validations:
       required: true
 
