@@ -192,8 +192,8 @@ def test_claude_cli_provider_error_e2e(
 
     combined = f"{result.stdout}\n{result.stderr}"
     lower = combined.lower()
-    downstream_requests = sum(
-        "POST /v1/messages" in line and "HTTP/1.1" in line
+    failed_downstream_requests = sum(
+        "POST /v1/messages" in line and "400 Bad Request" in line
         for line in server_log.splitlines()
     )
 
@@ -202,7 +202,7 @@ def test_claude_cli_provider_error_e2e(
     assert "proxy or gateway intercepting" not in lower
     assert "api error" in lower or "selected model" in lower
     assert "fcc smoke provider rejected the request deliberately" in lower
-    assert downstream_requests == 1, server_log
+    assert failed_downstream_requests == 1, server_log
     assert provider_requests == ["/v1/chat/completions"]
 
 

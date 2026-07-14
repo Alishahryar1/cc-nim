@@ -621,7 +621,9 @@ class TestManagedClaudeSession:
             assert env["ANTHROPIC_AUTH_TOKEN"] == "proxy-token"
             assert env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] == "1"
             assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "190000"
+            assert env["DISABLE_TELEMETRY"] == "1"
             assert "ANTHROPIC_API_KEY" not in env
+            assert "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" not in env
 
     @pytest.mark.asyncio
     async def test_start_task_uses_sentinel_when_proxy_auth_blank(self):

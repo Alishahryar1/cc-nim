@@ -231,7 +231,10 @@ Install the [Claude Code extension](https://marketplace.visualstudio.com/items?i
   { "name": "ANTHROPIC_AUTH_TOKEN", "value": "freecc" },
   { "name": "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY", "value": "1" },
   { "name": "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "value": "190000" },
-  { "name": "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "value": "1" }
+  { "name": "DISABLE_AUTOUPDATER", "value": "1" },
+  { "name": "DISABLE_FEEDBACK_COMMAND", "value": "1" },
+  { "name": "DISABLE_ERROR_REPORTING", "value": "1" },
+  { "name": "DISABLE_TELEMETRY", "value": "1" }
 ]
 ```
 
@@ -275,7 +278,10 @@ Set the environment for `acp.registry.claude-acp`:
   "ANTHROPIC_AUTH_TOKEN": "freecc",
   "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "1",
   "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "190000",
-  "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1"
+  "DISABLE_AUTOUPDATER": "1",
+  "DISABLE_FEEDBACK_COMMAND": "1",
+  "DISABLE_ERROR_REPORTING": "1",
+  "DISABLE_TELEMETRY": "1"
 }
 ```
 

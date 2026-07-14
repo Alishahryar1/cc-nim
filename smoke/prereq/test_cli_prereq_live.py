@@ -73,6 +73,9 @@ def test_claude_cli_prompt_when_available(
         )
         server_log = server.log_path.read_text(encoding="utf-8", errors="replace")
     assert result.returncode == 0, result.stderr or result.stdout
+    assert "GET /v1/models" in server_log, (
+        "Claude CLI did not discover models from the local gateway"
+    )
     assert "POST /v1/messages" in server_log, (
         "Claude CLI did not call the local Anthropic-compatible endpoint"
     )

@@ -468,7 +468,12 @@ def test_claude_child_env_targets_current_proxy_config() -> None:
             "ANTHROPIC_BASE_URL": "https://api.anthropic.com",
             "ANTHROPIC_AUTH_TOKEN": "old-token",
             "ANTHROPIC_API_KEY": "official-key",
-            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "0",
+            "CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY": "0",
+            "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "1",
+            "DISABLE_AUTOUPDATER": "0",
+            "DISABLE_FEEDBACK_COMMAND": "0",
+            "DISABLE_ERROR_REPORTING": "0",
+            "DISABLE_TELEMETRY": "0",
         },
     )
 
@@ -477,9 +482,13 @@ def test_claude_child_env_targets_current_proxy_config() -> None:
     assert env["ANTHROPIC_AUTH_TOKEN"] == "proxy-token"
     assert env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] == "1"
     assert env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "190000"
-    assert env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"
+    assert env["DISABLE_AUTOUPDATER"] == "1"
+    assert env["DISABLE_FEEDBACK_COMMAND"] == "1"
+    assert env["DISABLE_ERROR_REPORTING"] == "1"
+    assert env["DISABLE_TELEMETRY"] == "1"
     assert "ANTHROPIC_API_URL" not in env
     assert "ANTHROPIC_API_KEY" not in env
+    assert "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" not in env
 
 
 def test_claude_child_env_uses_sentinel_for_blank_configured_auth_token() -> None:
@@ -537,7 +546,11 @@ def test_launch_claude_passes_args_and_child_env(
     assert child_env["ANTHROPIC_AUTH_TOKEN"] == "proxy-token"
     assert child_env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] == "1"
     assert child_env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "190000"
-    assert child_env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"
+    assert child_env["DISABLE_AUTOUPDATER"] == "1"
+    assert child_env["DISABLE_FEEDBACK_COMMAND"] == "1"
+    assert child_env["DISABLE_ERROR_REPORTING"] == "1"
+    assert child_env["DISABLE_TELEMETRY"] == "1"
+    assert "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" not in child_env
     assert child_env["KEEP_ME"] == "yes"
     register_pid.assert_called_once_with(12345)
     unregister_pid.assert_called_once_with(12345)
