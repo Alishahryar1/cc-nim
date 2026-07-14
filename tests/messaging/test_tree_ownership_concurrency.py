@@ -1,6 +1,5 @@
 import asyncio
 import contextlib
-import importlib
 import sys
 
 import pytest
@@ -482,7 +481,7 @@ async def test_claim_launch_uses_portable_event_loop_task_contract(
     reason="uvloop is not installed on this Python platform",
 )
 def test_claim_launch_runs_on_uvloop() -> None:
-    uvloop = importlib.import_module("uvloop")
+    uvloop = pytest.importorskip("uvloop")
 
     async def scenario() -> None:
         processed = asyncio.Event()
