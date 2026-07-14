@@ -78,9 +78,18 @@ def test_build_request_body_uses_openai_chat_shape() -> None:
 
     assert body["model"] == OLLAMA_MODEL
     assert body["messages"][0]["role"] == "system"
-    assert body["reasoning_effort"] == "high"
+    assert "reasoning_effort" not in body
     assert "thinking" not in body
     assert "extra_body" not in body
+
+
+def test_cloud_build_request_body_enables_ollama_reasoning() -> None:
+    body = _cloud_provider()._build_request_body(
+        make_messages_request(OLLAMA_CLOUD_MODEL)
+    )
+
+    assert body["model"] == OLLAMA_CLOUD_MODEL
+    assert body["reasoning_effort"] == "high"
 
 
 @pytest.mark.parametrize("provider", [_provider, _cloud_provider])
@@ -124,9 +133,12 @@ def test_build_request_body_replays_thinking_in_ollama_reasoning_field(
     assert "reasoning_content" not in assistant
 
 
-@pytest.mark.parametrize("provider", [_provider, _cloud_provider])
+@pytest.mark.parametrize(
+    ("provider", "expected_effort"),
+    [(_provider, None), (_cloud_provider, "none")],
+)
 def test_disabled_thinking_is_not_replayed_and_disables_ollama_reasoning(
-    provider,
+    provider, expected_effort
 ) -> None:
     request = make_messages_request(
         OLLAMA_CLOUD_MODEL,
@@ -147,7 +159,10 @@ def test_disabled_thinking_is_not_replayed_and_disables_ollama_reasoning(
         message for message in body["messages"] if message["role"] == "assistant"
     )
 
-    assert body["reasoning_effort"] == "none"
+    if expected_effort is None:
+        assert "reasoning_effort" not in body
+    else:
+        assert body["reasoning_effort"] == expected_effort
     assert "reasoning" not in assistant
     assert "reasoning_content" not in assistant
     assert assistant["content"] == "Visible answer."

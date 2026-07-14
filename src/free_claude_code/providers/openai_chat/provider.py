@@ -477,6 +477,7 @@ class _OpenAIChatStreamRunner:
                                 ledger=ledger,
                                 error=error,
                                 tool_argument_alias_buffers=tool_argument_alias_buffers,
+                                thinking_enabled=thinking_enabled,
                             )
                         except Exception as recovery_error:
                             trace_event(
@@ -639,7 +640,9 @@ class _OpenAIChatStreamRunner:
         for event in recovery.flush():
             yield event
 
-    async def _collect_recovery_text(self, body: dict[str, Any]) -> tuple[str, str]:
+    async def _collect_recovery_text(
+        self, body: dict[str, Any], *, include_reasoning: bool
+    ) -> tuple[str, str]:
         """Collect a complete text/reasoning continuation stream."""
         last_error: Exception | None = None
         for attempt in range(MIDSTREAM_RECOVERY_ATTEMPTS):
@@ -658,9 +661,10 @@ class _OpenAIChatStreamRunner:
                     delta = choice.delta
                     if delta is None:
                         continue
-                    reasoning = self._provider._profile.reasoning_delta(delta)
-                    if reasoning:
-                        thinking_parts.append(reasoning)
+                    if include_reasoning:
+                        reasoning = self._provider._profile.reasoning_delta(delta)
+                        if reasoning:
+                            thinking_parts.append(reasoning)
                     content = getattr(delta, "content", None)
                     if isinstance(content, str) and content:
                         text_parts.append(content)
@@ -697,6 +701,7 @@ class _OpenAIChatStreamRunner:
         ledger: AnthropicStreamLedger,
         error: Exception,
         tool_argument_alias_buffers: dict[int, str],
+        thinking_enabled: bool,
     ) -> list[str] | None:
         """Build terminal recovery events when the interrupted stream permits it."""
         if not is_retryable_stream_error(error):
@@ -737,7 +742,9 @@ class _OpenAIChatStreamRunner:
             return None
 
         recovery_body = make_text_recovery_body(body, partial_text, partial_thinking)
-        text, thinking = await self._collect_recovery_text(recovery_body)
+        text, thinking = await self._collect_recovery_text(
+            recovery_body, include_reasoning=thinking_enabled
+        )
         text_suffix = continuation_suffix(partial_text, text)
         thinking_suffix = continuation_suffix(partial_thinking, thinking)
         events: list[str] = []
@@ -799,7 +806,9 @@ class _OpenAIChatStreamRunner:
             )
             accepted_suffix: str | None = None
             for attempt in range(MIDSTREAM_RECOVERY_ATTEMPTS):
-                text, _ = await self._collect_recovery_text(recovery_body)
+                text, _ = await self._collect_recovery_text(
+                    recovery_body, include_reasoning=False
+                )
                 repair = accept_tool_json_repair(
                     repair_prefix,
                     text,

@@ -247,7 +247,6 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
             reasoning_replay=ReasoningReplayMode.REASONING,
         ),
-        postprocessors=(_apply_ollama_thinking_policy,),
         normalize_base_url=True,
         reasoning_delta_field="reasoning",
     ),

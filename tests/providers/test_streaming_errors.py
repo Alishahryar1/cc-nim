@@ -842,6 +842,40 @@ class TestStreamingExceptionHandling:
         assert not any(event.event == "error" for event in parsed)
 
     @pytest.mark.asyncio
+    async def test_disabled_thinking_recovery_discards_reasoning(self):
+        provider = _make_provider_with_thinking_enabled(False)
+        request = _make_request()
+        initial_stream = AsyncStreamMock([_make_chunk(content="hello")])
+        recovery_stream = AsyncStreamMock(
+            [
+                _make_chunk(reasoning_content="hidden reasoning"),
+                _make_chunk(content="hello world"),
+                _make_chunk(finish_reason="stop"),
+            ]
+        )
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=[initial_stream, recovery_stream],
+        ):
+            events = await _collect_stream(provider, request)
+
+        parsed = parse_sse_text("".join(events))
+        text = "".join(
+            event.data.get("delta", {}).get("text", "")
+            for event in parsed
+            if event.event == "content_block_delta"
+        )
+        assert text == "hello world"
+        assert "hidden reasoning" not in "".join(events)
+        assert not any(
+            event.data.get("delta", {}).get("type") == "thinking_delta"
+            for event in parsed
+        )
+
+    @pytest.mark.asyncio
     async def test_recovery_collect_text_requires_finish_reason(self):
         """Recovery collectors reject truncated OpenAI-chat continuation streams."""
         streams = [
@@ -856,7 +890,9 @@ class TestStreamingExceptionHandling:
             patch.object(provider, "_create_stream", create_stream),
             pytest.raises(TruncatedProviderStreamError),
         ):
-            await runner._collect_recovery_text({"messages": []})
+            await runner._collect_recovery_text(
+                {"messages": []}, include_reasoning=True
+            )
 
         assert create_stream.await_count == MIDSTREAM_RECOVERY_ATTEMPTS
         assert all(stream.closed for stream in streams)
@@ -879,7 +915,9 @@ class TestStreamingExceptionHandling:
             patch.object(provider, "_create_stream", create_stream),
             pytest.raises(TimeoutError),
         ):
-            await runner._collect_recovery_text({"messages": []})
+            await runner._collect_recovery_text(
+                {"messages": []}, include_reasoning=True
+            )
 
         assert create_stream.await_count == MIDSTREAM_RECOVERY_ATTEMPTS
         assert all(stream.closed for stream in streams)
@@ -903,7 +941,9 @@ class TestStreamingExceptionHandling:
         runner = _make_stream_runner(provider)
 
         with patch.object(provider, "_create_stream", create_stream):
-            result = await runner._collect_recovery_text({"messages": []})
+            result = await runner._collect_recovery_text(
+                {"messages": []}, include_reasoning=True
+            )
 
         assert result == ("world", "")
         assert stream.closed is True
@@ -956,12 +996,14 @@ class TestStreamingExceptionHandling:
                 ledger=ledger,
                 error=TimeoutError("cutoff"),
                 tool_argument_alias_buffers={},
+                thinking_enabled=True,
             )
 
         assert events is not None
         assert mock_collect.await_args is not None
         recovery_body = mock_collect.await_args.args[0]
         assert "hidden reasoning" in recovery_body["messages"][-1]["content"]
+        assert mock_collect.await_args.kwargs["include_reasoning"] is True
 
     @pytest.mark.asyncio
     async def test_primary_stream_closes_when_iteration_fails(self):
