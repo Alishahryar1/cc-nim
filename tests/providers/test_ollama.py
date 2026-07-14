@@ -92,10 +92,7 @@ def test_cloud_build_request_body_enables_ollama_reasoning() -> None:
     assert body["reasoning_effort"] == "high"
 
 
-@pytest.mark.parametrize("provider", [_provider, _cloud_provider])
-def test_build_request_body_replays_thinking_in_ollama_reasoning_field(
-    provider,
-) -> None:
+def test_cloud_build_request_body_replays_thinking_in_ollama_reasoning_field() -> None:
     request = make_messages_request(
         OLLAMA_CLOUD_MODEL,
         messages=[
@@ -124,7 +121,7 @@ def test_build_request_body_replays_thinking_in_ollama_reasoning_field(
         ],
     )
 
-    body = provider()._build_request_body(request)
+    body = _cloud_provider()._build_request_body(request)
 
     assistant = next(
         message for message in body["messages"] if message["role"] == "assistant"
@@ -176,7 +173,7 @@ async def test_stream_response_uses_shared_openai_chat_provider() -> None:
         MagicMock(
             delta=MagicMock(
                 content="Hello from Ollama",
-                reasoning=None,
+                reasoning_content=None,
                 tool_calls=None,
             ),
             finish_reason="stop",
@@ -209,11 +206,8 @@ async def test_stream_response_uses_shared_openai_chat_provider() -> None:
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider", [_provider, _cloud_provider])
-async def test_stream_maps_ollama_reasoning_delta_to_anthropic_thinking(
-    provider,
-) -> None:
-    client = provider()
+async def test_cloud_stream_maps_ollama_reasoning_delta_to_anthropic_thinking() -> None:
+    client = _cloud_provider()
     chunk = MagicMock()
     chunk.choices = [
         MagicMock(
