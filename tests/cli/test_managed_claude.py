@@ -40,6 +40,10 @@ def _config(**overrides: object) -> ManagedClaudeConfig:
     )
 
 
+def test_managed_claude_defaults_to_fable() -> None:
+    assert MANAGED_CLAUDE_MODEL_TIER == "fable"
+
+
 def test_managed_claude_builds_new_task_command_and_env() -> None:
     invocation = build_managed_claude_invocation(
         config=_config(allowed_dirs=[os.path.normpath("/tmp/extra")]),

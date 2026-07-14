@@ -12,7 +12,7 @@ from free_claude_code.cli.claude_env import (
     build_claude_proxy_env,
 )
 
-MANAGED_CLAUDE_MODEL_TIER = "opus"
+MANAGED_CLAUDE_MODEL_TIER = "fable"
 
 
 @dataclass(frozen=True, slots=True)

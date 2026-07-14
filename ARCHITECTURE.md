@@ -848,9 +848,9 @@ is its bundled Pi adapter:
 [cli/managed/](src/free_claude_code/cli/managed/) owns managed Claude Code subprocesses used by
 Discord and Telegram messaging. Managed task invocations extend the same proxy
 environment only with non-interactive terminal settings, optional `--resume`,
-optional `--fork-session`, `--model opus`, and `--output-format stream-json`.
+optional `--fork-session`, `--model fable`, and `--output-format stream-json`.
 Messaging pins this Claude tier alias so phone sessions route through
-`MODEL_OPUS` or the `MODEL` fallback instead of inheriting a user's interactive
+`MODEL_FABLE` or the `MODEL` fallback instead of inheriting a user's interactive
 `/model` picker state. Managed execution does not override Claude's
 `plansDirectory`; plan files use Claude's native user-level location so the
 project workspace may reside on any filesystem volume. The managed session
