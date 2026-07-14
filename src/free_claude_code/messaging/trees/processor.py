@@ -90,7 +90,6 @@ class TreeQueueProcessor:
             task = asyncio.create_task(
                 claim_runner,
                 name=(f"messaging-claim-{claim.identity.root_id}-{claim.claim_id[:8]}"),
-                eager_start=False,
             )
         except BaseException:
             claim_runner.close()
