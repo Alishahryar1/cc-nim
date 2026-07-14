@@ -38,6 +38,23 @@ def build_asgi_app(
     return RuntimeASGIApp(create_app(services), runtime)
 
 
+def create_asgi_app() -> RuntimeASGIApp:
+    """Uvicorn ``--factory`` entry point: load settings from env and build the full app.
+
+    Called by the WinSW service manager via::
+
+        python -m uvicorn free_claude_code.runtime.bootstrap:create_asgi_app --factory
+
+    Do not remove or rename this function without updating:
+    - ``free-claude-proxy-service.xml`` (``<arguments>`` element)
+    - ``scripts/check-service.ps1`` (``$candidates`` list)
+    - ``MAINTENANCE.md`` and ``TROUBLESHOOTING.md``
+    """
+    from free_claude_code.config.settings import get_settings
+
+    return build_asgi_app(get_settings())
+
+
 def _create_transcriber(settings: Settings) -> Transcriber | None:
     if not settings.voice_note_enabled:
         return None

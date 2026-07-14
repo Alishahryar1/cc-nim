@@ -1,0 +1,18 @@
+<service>
+  <id>FreeClaudeProxy</id>
+  <name>Free Claude Code Proxy</name>
+  <description>Proxy para Claude Code</description>
+  <executable>C:\Users\eltho\free-claude-code\.venv\Scripts\python.exe</executable>
+  <arguments>-m uvicorn free_claude_code.runtime.bootstrap:create_asgi_app --factory --host 127.0.0.1 --port 8082</arguments>
+  <workingdirectory>C:\Users\eltho\free-claude-code</workingdirectory>
+  <log mode="roll-by-size">
+    <sizeThreshold>10485760</sizeThreshold>
+    <keepFiles>3</keepFiles>
+  </log>
+  <onfailure action="restart" delay="10 sec"/>
+  <priority>Normal</priority>
+  <stoptimeout>15 sec</stoptimeout>
+  <stopparentprocessfirst>true</stopparentprocessfirst>
+  <startmode>Automatic</startmode>
+  <delayedautoStart>true</delayedautoStart>
+</service>
