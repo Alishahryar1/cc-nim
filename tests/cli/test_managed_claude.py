@@ -68,7 +68,6 @@ def test_managed_claude_builds_new_task_command_and_env() -> None:
     assert invocation.env["ANTHROPIC_AUTH_TOKEN"] == "proxy-token"
     assert invocation.env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] == "1"
     assert invocation.env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "190000"
-    assert invocation.env["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"] == "1"
     assert "ANTHROPIC_API_URL" not in invocation.env
     assert "ANTHROPIC_API_KEY" not in invocation.env
     assert invocation.trace_metadata["client_cli_id"] == "claude"
@@ -136,7 +135,6 @@ def test_managed_claude_env_only_adds_noninteractive_process_settings() -> None:
         "PATH": "keep",
         "ANTHROPIC_API_URL": "https://api.anthropic.com/v1",
         "ANTHROPIC_API_KEY": "official-key",
-        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "0",
     }
     proxy_env = build_claude_proxy_env(
         proxy_root_url="http://localhost:8082",
