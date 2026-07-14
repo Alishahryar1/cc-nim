@@ -87,10 +87,18 @@ class TreeQueueProcessor:
             queue=queue,
         )
         try:
-            task = asyncio.create_task(
-                claim_runner,
-                name=(f"messaging-claim-{claim.identity.root_id}-{claim.claim_id[:8]}"),
-            )
+	       try:
+               task = asyncio.create_task(
+                  claim_runner,
+                  name=(f"messaging-claim-{claim.identity.root_id}-{claim.claim_id[:8]}"),
+                  eager_start=False,
+               )
+           except TypeError:
+               task = asyncio.create_task(
+                   claim_runner,
+                   name=(f"messaging-claim-{claim.identity.root_id}-{claim.claim_id[:8]}"),
+              )
+
         except BaseException:
             claim_runner.close()
             if self._tasks.get(key) is slot:
