@@ -245,6 +245,26 @@ def test_convert_assistant_message_thinking_replays_reasoning_content():
     assert "<think>" not in result[0]["content"]
 
 
+def test_convert_assistant_message_thinking_replays_reasoning():
+    content = [
+        MockBlock(type="thinking", thinking="I need to calculate this."),
+        MockBlock(type="text", text="The answer is 4."),
+    ]
+    messages = [MockMessage("assistant", content)]
+
+    result = AnthropicToOpenAIConverter.convert_messages(
+        messages, reasoning_replay=ReasoningReplayMode.REASONING
+    )
+
+    assert result == [
+        {
+            "role": "assistant",
+            "content": "The answer is 4.",
+            "reasoning": "I need to calculate this.",
+        }
+    ]
+
+
 def test_convert_assistant_top_level_reasoning_content_is_preserved():
     messages = [
         MockMessage(
@@ -314,6 +334,30 @@ def test_convert_assistant_thinking_tool_use_replays_top_level_reasoning():
     assert result[0]["reasoning_content"] == "I should call the tool."
     assert "<think>" not in result[0]["content"]
     assert result[0]["tool_calls"][0]["id"] == "call_reasoning"
+
+
+def test_convert_assistant_tool_use_replays_ollama_reasoning_field():
+    messages = [
+        MockMessage(
+            "assistant",
+            [
+                MockBlock(type="thinking", thinking="Call the tool."),
+                MockBlock(type="tool_use", id="call_1", name="Read", input={}),
+            ],
+        ),
+        MockMessage(
+            "user",
+            [MockBlock(type="tool_result", tool_use_id="call_1", content="done")],
+        ),
+    ]
+
+    result = AnthropicToOpenAIConverter.convert_messages(
+        messages, reasoning_replay=ReasoningReplayMode.REASONING
+    )
+
+    assert result[0]["reasoning"] == "Call the tool."
+    assert "reasoning_content" not in result[0]
+    assert result[0]["tool_calls"][0]["id"] == "call_1"
 
 
 def test_convert_assistant_empty_thinking_replays_empty_reasoning_content():

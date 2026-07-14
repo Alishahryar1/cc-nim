@@ -32,3 +32,13 @@ def test_catalog_local_assignments_are_exact() -> None:
         for provider_id, descriptor in PROVIDER_CATALOG.items()
         if descriptor.local
     } == {"lmstudio", "llamacpp", "ollama"}
+
+
+def test_ollama_cloud_is_remote_and_distinct_from_local_ollama() -> None:
+    cloud = PROVIDER_CATALOG["ollama_cloud"]
+    local = PROVIDER_CATALOG["ollama"]
+
+    assert cloud.local is False
+    assert cloud.credential_env == "OLLAMA_API_KEY"
+    assert local.local is True
+    assert local.credential_env is None

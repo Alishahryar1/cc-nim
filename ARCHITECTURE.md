@@ -544,9 +544,10 @@ compatibility layer.
 There is one upstream provider family:
 [providers/openai_chat/](src/free_claude_code/providers/openai_chat/) implements the concrete
 `OpenAIChatProvider` used by every OpenAI-compatible `/chat/completions`
-upstream. `OpenAIChatProfile` contains immutable request policy,
-postprocessors, and base-URL normalization for ordinary vendors. Configuration
-differences therefore remain data rather than empty subclasses. The package also
+upstream. `OpenAIChatProfile` contains immutable request policy, its standard
+streamed-reasoning field, postprocessors, and base-URL normalization for
+ordinary vendors. Configuration differences therefore remain data rather than
+empty subclasses. The package also
 owns the exactly typed private per-request runner, recovery operations, tool-call
 assembly, and streamed usage handling. No obsolete generic transport namespace
 or untyped provider backchannel remains.
@@ -562,8 +563,10 @@ thinking replay selection, `extra_body`, and chat-completion field normalization
 Specialized provider packages remain only for true upstream quirks such as
 Gemini thought signatures, NIM tool-schema aliases, retry downgrades, and NVCF
 deployment-failure classification, or DeepSeek attachment/tool/thinking
-compatibility. Ollama, llama.cpp, and LM Studio use their OpenAI-compatible Chat
-Completions endpoints like the remote providers. DeepSeek intentionally uses its
+compatibility. Local Ollama, Ollama Cloud, llama.cpp, and LM Studio all use the
+same OpenAI-compatible Chat Completions provider family;
+Ollama's standard `reasoning` delta and history field are profile data rather
+than a specialized adapter. DeepSeek intentionally uses its
 OpenAI-compatible Chat Completions endpoint because that is the endpoint that
 reports prompt-cache hit/miss counters; the provider maps those counters back
 into Anthropic usage fields for Claude-compatible clients. Cloudflare uses its

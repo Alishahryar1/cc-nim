@@ -27,6 +27,7 @@ def _clear_process_config(monkeypatch) -> None:
         "NVIDIA_NIM_API_KEY",
         "HUGGINGFACE_API_KEY",
         "OPENROUTER_API_KEY",
+        "OLLAMA_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
         "TELEGRAM_PROXY_URL",
         "FCC_ENV_FILE",
@@ -125,6 +126,7 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     assert "SAMBANOVA_API_KEY" in keys
     assert "TELEGRAM_PROXY_URL" in keys
     assert "CEREBRAS_API_KEY" in keys
+    assert "OLLAMA_API_KEY" in keys
     assert "FCC_OPEN_BROWSER" in keys
     assert "ZAI_BASE_URL" not in keys
     assert "CLAUDE_WORKSPACE" not in keys

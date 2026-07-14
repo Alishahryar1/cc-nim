@@ -46,6 +46,7 @@ def _settings(**overrides):
         "groq_api_key": "",
         "sambanova_api_key": "",
         "cerebras_api_key": "",
+        "ollama_api_key": "",
         "fireworks_api_key": "",
         "cloudflare_api_token": "",
         "cloudflare_account_id": "",
@@ -102,6 +103,23 @@ def test_ollama_provider_matrix_filters_models() -> None:
     config = _smoke_config(provider_matrix=frozenset({"ollama"}))
 
     assert [model.provider for model in config.provider_models()] == ["ollama"]
+
+
+def test_ollama_cloud_provider_configuration_uses_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_OLLAMA_CLOUD", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            ollama_api_key="ollama-cloud-key",
+        )
+    )
+
+    assert config.has_provider_configuration("ollama_cloud")
+    models = config.provider_smoke_models()
+    assert [model.provider for model in models] == ["ollama_cloud"]
+    assert models[0].full_model == "ollama_cloud/qwen3-coder:480b"
+    assert models[0].source == "provider_default"
 
 
 def test_provider_smoke_models_cover_configured_providers_independent_of_model_mapping(

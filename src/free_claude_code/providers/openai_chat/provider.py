@@ -361,8 +361,8 @@ class _OpenAIChatStreamRunner:
                             finish_reason = choice.finish_reason
                             logger.debug("{} finish_reason: {}", tag, finish_reason)
 
-                        reasoning = getattr(delta, "reasoning_content", None)
-                        if thinking_enabled and isinstance(reasoning, str):
+                        reasoning = self._provider._profile.reasoning_delta(delta)
+                        if thinking_enabled and reasoning is not None:
                             for event in hold_events(ledger.ensure_thinking_block()):
                                 yield event
                             if reasoning:
@@ -658,8 +658,8 @@ class _OpenAIChatStreamRunner:
                     delta = choice.delta
                     if delta is None:
                         continue
-                    reasoning = getattr(delta, "reasoning_content", None)
-                    if isinstance(reasoning, str) and reasoning:
+                    reasoning = self._provider._profile.reasoning_delta(delta)
+                    if reasoning:
                         thinking_parts.append(reasoning)
                     content = getattr(delta, "content", None)
                     if isinstance(content, str) and content:

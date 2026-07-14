@@ -55,7 +55,7 @@ Run your coding agents with free, paid, or local models. Choose and validate pro
 ## What You Get
 
 - Launch Claude Code with `fcc-claude`, Codex with `fcc-codex`, or Pi with `fcc-pi`.
-- Switch among 24 cloud and local providers from the Admin UI.
+- Switch among 25 cloud and local providers from the Admin UI.
 - Use each coding agent's native model picker.
 - Route Fable, Opus, Sonnet, Haiku, and fallback traffic to different models.
 - Keep streaming, tool use, reasoning, and image input across compatible models.
@@ -170,6 +170,7 @@ Enter the listed setting in the Admin UI, set `MODEL` to a provider-prefixed mod
 | [Fireworks AI](https://fireworks.ai/account/api-keys) | `FIREWORKS_API_KEY` | `fireworks/accounts/fireworks/models/llama-v3p3-70b-instruct` |
 | [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/) | `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` | `cloudflare/@cf/moonshotai/kimi-k2.6` |
 | [Z.ai](https://z.ai/manage-apikey/apikey-list) | `ZAI_API_KEY` | `zai/glm-5.2` |
+| [Ollama Cloud](https://ollama.com/settings/keys) | `OLLAMA_API_KEY` | `ollama_cloud/qwen3-coder:480b` |
 | [LM Studio](https://lmstudio.ai/) | `LM_STUDIO_BASE_URL` | `lmstudio/<model-id>` |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | `LLAMACPP_BASE_URL` | `llamacpp/<model-id>` |
 | [Ollama](https://ollama.com/) | `OLLAMA_BASE_URL` | `ollama/<model-tag>` |
@@ -179,6 +180,9 @@ Important provider notes:
 - Mistral Codestral uses a separate key from Mistral La Plateforme.
 - OpenCode Zen and OpenCode Go share `OPENCODE_API_KEY` but use different model prefixes.
 - Cloudflare requires both its API token and account ID.
+- Ollama Cloud connects directly to `ollama.com`; use the exact model IDs shown
+  by FCC's model picker. Local Ollama remains available through the separate
+  `ollama/` prefix.
 - Prefer tool-capable models for coding agents. Local models also need enough context for the agent's system prompt and tool definitions.
 
 <details>

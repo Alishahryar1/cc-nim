@@ -24,6 +24,7 @@ CODESTRAL_DEFAULT_BASE = "https://codestral.mistral.ai/v1"
 LMSTUDIO_DEFAULT_BASE = "http://localhost:1234/v1"
 LLAMACPP_DEFAULT_BASE = "http://localhost:8080/v1"
 OLLAMA_DEFAULT_BASE = "http://localhost:11434"
+OLLAMA_CLOUD_DEFAULT_BASE = "https://ollama.com/v1"
 OPENCODE_DEFAULT_BASE = "https://opencode.ai/zen/v1"
 OPENCODE_GO_DEFAULT_BASE = "https://opencode.ai/zen/go/v1"
 VERCEL_AI_GATEWAY_DEFAULT_BASE = "https://ai-gateway.vercel.sh/v1"
@@ -243,6 +244,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         default_base_url=ZAI_DEFAULT_BASE,
         proxy_attr="zai_proxy",
     ),
+    "ollama_cloud": ProviderDescriptor(
+        provider_id="ollama_cloud",
+        display_name="Ollama Cloud",
+        credential_env="OLLAMA_API_KEY",
+        credential_url="https://ollama.com/settings/keys",
+        credential_attr="ollama_api_key",
+        default_base_url=OLLAMA_CLOUD_DEFAULT_BASE,
+        proxy_attr="ollama_cloud_proxy",
+    ),
     "lmstudio": ProviderDescriptor(
         provider_id="lmstudio",
         display_name="LM Studio",
@@ -274,7 +284,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
 # Key order:
 # NVIDIA NIM first (README default), DeepSeek fourth, OpenCode gateways adjacent,
 # Vercel / Hugging Face / Cohere / GitHub Models follow gateway-style remotes,
-# then cloud gateways and local providers per project plan
+# then cloud gateways, Ollama Cloud, and local providers per project plan
 # (github.com/cheahjs/free-llm-api-resources Free Providers TOC as rough guide
 # beyond fixed slots).
 # ``SUPPORTED_PROVIDER_IDS`` inherits this insertion order for UI and error-message listing.

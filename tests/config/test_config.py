@@ -227,6 +227,13 @@ class TestSettings:
         monkeypatch.setenv("OLLAMA_BASE_URL", "http://localhost:11434/v1")
         assert Settings().ollama_base_url == "http://localhost:11434/v1"
 
+    def test_ollama_cloud_api_key_from_env(self, monkeypatch):
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.setenv("OLLAMA_API_KEY", "ollama-cloud-key")
+
+        assert Settings().ollama_api_key == "ollama-cloud-key"
+
     def test_provider_rate_limit_from_env(self, monkeypatch):
         """PROVIDER_RATE_LIMIT env var is loaded into settings."""
         from free_claude_code.config.settings import Settings
@@ -798,6 +805,11 @@ class TestPerModelMapping:
             ({"MODEL": "lmstudio/qwen2.5-7b"}, "lmstudio/qwen2.5-7b", None),
             ({"MODEL": "llamacpp/local-model"}, "llamacpp/local-model", None),
             ({"MODEL": "ollama/llama3.1"}, "ollama/llama3.1", None),
+            (
+                {"MODEL": "ollama_cloud/qwen3-coder:480b"},
+                "ollama_cloud/qwen3-coder:480b",
+                None,
+            ),
         ],
     )
     def test_settings_models_from_env(
@@ -999,6 +1011,7 @@ class TestPerModelMapping:
         assert parse_provider_type("lmstudio/qwen") == "lmstudio"
         assert parse_provider_type("llamacpp/model") == "llamacpp"
         assert parse_provider_type("ollama/llama3.1") == "ollama"
+        assert parse_provider_type("ollama_cloud/qwen3-coder:480b") == "ollama_cloud"
         assert parse_provider_type("wafer/DeepSeek-V4-Pro") == "wafer"
         assert parse_provider_type("minimax/MiniMax-M3") == "minimax"
         assert (
@@ -1032,6 +1045,7 @@ class TestPerModelMapping:
         assert parse_model_name("lmstudio/qwen") == "qwen"
         assert parse_model_name("llamacpp/model") == "model"
         assert parse_model_name("ollama/llama3.1") == "llama3.1"
+        assert parse_model_name("ollama_cloud/qwen3-coder:480b") == "qwen3-coder:480b"
         assert parse_model_name("wafer/DeepSeek-V4-Pro") == "DeepSeek-V4-Pro"
         assert parse_model_name("minimax/MiniMax-M3") == "MiniMax-M3"
         assert (

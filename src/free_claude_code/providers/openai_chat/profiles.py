@@ -3,7 +3,7 @@
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
-from typing import Any
+from typing import Any, Literal
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
@@ -22,6 +22,9 @@ class OpenAIChatProfile:
     request_policy: OpenAIChatRequestPolicy
     postprocessors: tuple[OpenAIChatPostprocessor, ...] = ()
     normalize_base_url: bool = False
+    reasoning_delta_field: Literal["reasoning_content", "reasoning"] = (
+        "reasoning_content"
+    )
 
     @property
     def provider_name(self) -> str:
@@ -29,6 +32,10 @@ class OpenAIChatProfile:
 
     def base_url(self, configured: str) -> str:
         return openai_v1_base_url(configured) if self.normalize_base_url else configured
+
+    def reasoning_delta(self, delta: Any) -> str | None:
+        value = getattr(delta, self.reasoning_delta_field, None)
+        return value if isinstance(value, str) else None
 
 
 def _apply_cohere_request_quirks(
@@ -85,6 +92,12 @@ def _apply_minimax_thinking_policy(
     extra_body["thinking"] = (
         {"type": "adaptive"} if thinking_enabled else {"type": "disabled"}
     )
+
+
+def _apply_ollama_thinking_policy(
+    body: dict[str, Any], _request: MessagesRequest, thinking_enabled: bool
+) -> None:
+    body["reasoning_effort"] = "high" if thinking_enabled else "none"
 
 
 def _apply_wafer_thinking_policy(
@@ -212,6 +225,15 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         ),
         postprocessors=(_apply_zai_thinking_policy,),
     ),
+    "ollama_cloud": OpenAIChatProfile(
+        OpenAIChatRequestPolicy(
+            provider_name="OLLAMA_CLOUD",
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+            reasoning_replay=ReasoningReplayMode.REASONING,
+        ),
+        postprocessors=(_apply_ollama_thinking_policy,),
+        reasoning_delta_field="reasoning",
+    ),
     "llamacpp": OpenAIChatProfile(
         OpenAIChatRequestPolicy(
             provider_name="LLAMACPP",
@@ -223,7 +245,10 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         OpenAIChatRequestPolicy(
             provider_name="OLLAMA",
             default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+            reasoning_replay=ReasoningReplayMode.REASONING,
         ),
+        postprocessors=(_apply_ollama_thinking_policy,),
         normalize_base_url=True,
+        reasoning_delta_field="reasoning",
     ),
 }

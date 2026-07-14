@@ -12,6 +12,7 @@ from free_claude_code.config.provider_catalog import (
     GITHUB_MODELS_DEFAULT_BASE,
     HUGGINGFACE_DEFAULT_BASE,
     MINIMAX_DEFAULT_BASE,
+    OLLAMA_CLOUD_DEFAULT_BASE,
     PROVIDER_CATALOG,
     SUPPORTED_PROVIDER_IDS,
     VERCEL_AI_GATEWAY_DEFAULT_BASE,
@@ -60,6 +61,7 @@ def _make_settings(**overrides):
     mock.lm_studio_base_url = "http://localhost:1234/v1"
     mock.llamacpp_base_url = "http://localhost:8080/v1"
     mock.ollama_base_url = "http://localhost:11434"
+    mock.ollama_api_key = "test_ollama_cloud_key"
     mock.nvidia_nim_proxy = ""
     mock.open_router_proxy = ""
     mock.lmstudio_proxy = ""
@@ -88,6 +90,7 @@ def _make_settings(**overrides):
     mock.groq_proxy = ""
     mock.cerebras_api_key = ""
     mock.cerebras_proxy = ""
+    mock.ollama_cloud_proxy = ""
     mock.provider_rate_limit = 40
     mock.provider_rate_window = 60
     mock.provider_max_concurrency = 5
@@ -131,6 +134,30 @@ def test_ollama_descriptor_uses_local_openai_endpoint_semantics():
 
     assert descriptor.default_base_url == "http://localhost:11434"
     assert descriptor.local is True
+
+
+def test_ollama_cloud_descriptor_uses_direct_authenticated_endpoint():
+    descriptor = PROVIDER_CATALOG["ollama_cloud"]
+
+    assert descriptor.default_base_url == OLLAMA_CLOUD_DEFAULT_BASE
+    assert descriptor.credential_env == "OLLAMA_API_KEY"
+    assert descriptor.credential_attr == "ollama_api_key"
+    assert descriptor.base_url_attr is None
+    assert descriptor.local is False
+
+
+def test_ollama_cloud_provider_config_uses_key_and_proxy():
+    descriptor = PROVIDER_CATALOG["ollama_cloud"]
+    settings = _make_settings(
+        ollama_api_key="ollama-cloud-token",
+        ollama_cloud_proxy="http://proxy.test:8080",
+    )
+
+    config = build_provider_config(descriptor, settings)
+
+    assert config.api_key == "ollama-cloud-token"
+    assert config.base_url == OLLAMA_CLOUD_DEFAULT_BASE
+    assert config.proxy == "http://proxy.test:8080"
 
 
 @pytest.mark.parametrize(
@@ -352,6 +379,7 @@ def test_create_provider_instantiates_each_builtin():
         "lmstudio": LMStudioProvider,
         "llamacpp": OpenAIChatProvider,
         "ollama": OpenAIChatProvider,
+        "ollama_cloud": OpenAIChatProvider,
         "wafer": OpenAIChatProvider,
         "opencode": OpenAIChatProvider,
         "opencode_go": OpenAIChatProvider,

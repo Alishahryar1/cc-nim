@@ -109,6 +109,11 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "[OpenAI compatibility](https://inference-docs.cerebras.ai/resources/openai)."
         ),
     },
+    "OLLAMA_API_KEY": {
+        "description": (
+            "Ollama API key for direct OpenAI-compatible Cloud access at ollama.com/v1."
+        ),
+    },
 }
 
 

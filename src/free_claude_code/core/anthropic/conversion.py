@@ -22,6 +22,24 @@ class ReasoningReplayMode(StrEnum):
     DISABLED = "disabled"
     THINK_TAGS = "think_tags"
     REASONING_CONTENT = "reasoning_content"
+    REASONING = "reasoning"
+
+
+def _reasoning_replay_field(mode: ReasoningReplayMode) -> str | None:
+    if mode in (
+        ReasoningReplayMode.REASONING_CONTENT,
+        ReasoningReplayMode.REASONING,
+    ):
+        return mode.value
+    return None
+
+
+def _set_replayed_reasoning(
+    message: dict[str, Any], reasoning: str, mode: ReasoningReplayMode
+) -> None:
+    field_name = _reasoning_replay_field(mode)
+    if field_name is not None:
+        message[field_name] = reasoning
 
 
 def _openai_reject_native_only_top_level_fields(
@@ -378,8 +396,10 @@ class AnthropicToOpenAIConverter:
         if isinstance(content, str):
             converted = {"role": role, "content": content}
             if role == "assistant" and reasoning_content is not None:
-                if reasoning_replay == ReasoningReplayMode.REASONING_CONTENT:
-                    converted["reasoning_content"] = reasoning_content
+                if _reasoning_replay_field(reasoning_replay) is not None:
+                    _set_replayed_reasoning(
+                        converted, reasoning_content, reasoning_replay
+                    )
                 elif (
                     reasoning_replay == ReasoningReplayMode.THINK_TAGS
                     and reasoning_content
@@ -422,10 +442,8 @@ class AnthropicToOpenAIConverter:
                 "role": "assistant",
                 "content": "",
             }
-            if reasoning_replay == ReasoningReplayMode.REASONING_CONTENT:
-                replay = reasoning_content
-                if replay is not None:
-                    pre_msg["reasoning_content"] = replay
+            if reasoning_content is not None:
+                _set_replayed_reasoning(pre_msg, reasoning_content, reasoning_replay)
         else:
             pre_msg = AnthropicToOpenAIConverter._convert_assistant_message(
                 pre,
@@ -469,7 +487,7 @@ class AnthropicToOpenAIConverter:
                     thinking_parts.append(thinking)
             elif block_type == "redacted_thinking":
                 # Opaque provider continuation data; do not materialize as model-visible text
-                # or reasoning_content for OpenAI chat upstreams.
+                # or native reasoning fields for OpenAI chat upstreams.
                 continue
             elif block_type == "tool_use":
                 tool_calls.append(_tool_call_from_tool_use(block))
@@ -486,11 +504,13 @@ class AnthropicToOpenAIConverter:
         }
         if tool_calls:
             msg["tool_calls"] = tool_calls
-        if reasoning_replay == ReasoningReplayMode.REASONING_CONTENT:
+        if _reasoning_replay_field(reasoning_replay) is not None:
             if reasoning_content is not None:
-                msg["reasoning_content"] = reasoning_content
+                _set_replayed_reasoning(msg, reasoning_content, reasoning_replay)
             elif thinking_seen:
-                msg["reasoning_content"] = "\n".join(thinking_parts)
+                _set_replayed_reasoning(
+                    msg, "\n".join(thinking_parts), reasoning_replay
+                )
 
         return [msg]
 

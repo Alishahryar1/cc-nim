@@ -48,12 +48,11 @@ def build_openai_chat_request_body(
         len(request_data.messages),
     )
     try:
-        reasoning_replay = policy.reasoning_replay
-        if reasoning_replay is None:
+        if not thinking_enabled:
+            reasoning_replay = ReasoningReplayMode.DISABLED
+        else:
             reasoning_replay = (
-                ReasoningReplayMode.REASONING_CONTENT
-                if thinking_enabled
-                else ReasoningReplayMode.DISABLED
+                policy.reasoning_replay or ReasoningReplayMode.REASONING_CONTENT
             )
         body = build_base_request_body(
             request_data,

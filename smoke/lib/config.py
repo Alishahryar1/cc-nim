@@ -49,6 +49,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "mistral": "mistral/devstral-small-latest",
     "mistral_codestral": "mistral_codestral/codestral-latest",
     "deepseek": "deepseek/deepseek-v4-pro",
+    "ollama_cloud": "ollama_cloud/qwen3-coder:480b",
     "lmstudio": "lmstudio/local-model",
     "llamacpp": "llamacpp/local-model",
     "ollama": "ollama/llama3.1",
@@ -259,6 +260,8 @@ class SmokeConfig:
             return bool(self.settings.codestral_api_key.strip())
         if provider == "deepseek":
             return bool(self.settings.deepseek_api_key.strip())
+        if provider == "ollama_cloud":
+            return bool(self.settings.ollama_api_key.strip())
         if provider == "kimi":
             return bool(self.settings.kimi_api_key.strip())
         if provider == "lmstudio":

@@ -569,6 +569,12 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         advanced=True,
     ),
     ConfigFieldSpec(
+        "FCC_SMOKE_MODEL_OLLAMA_CLOUD",
+        "Smoke Ollama Cloud Model",
+        "smoke",
+        advanced=True,
+    ),
+    ConfigFieldSpec(
         "FCC_SMOKE_MODEL_KIMI",
         "Smoke Kimi Model",
         "smoke",
