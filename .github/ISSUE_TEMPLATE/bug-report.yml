@@ -23,6 +23,13 @@ body:
         - Codex (fcc-codex)
         - Pi (fcc-pi)
 
+  - type: input
+    id: selected-models
+    attributes:
+      label: Selected model(s)
+      description: If relevant, enter each model exactly as shown in the selector or configuration.
+      placeholder: nvidia_nim/nvidia/nemotron-3-super-120b-a12b
+
   - type: textarea
     id: model-mappings
     attributes:
