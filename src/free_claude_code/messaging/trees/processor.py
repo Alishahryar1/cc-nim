@@ -81,8 +81,10 @@ class TreeQueueProcessor:
         slot = _TaskSlot(tree=tree, claim=claim)
         self._tasks[key] = slot
         self._idle.clear()
+        ownership_ready = asyncio.Event()
         claim_runner = self._run_claim(
             slot,
+            ownership_ready=ownership_ready,
             announce_started=announce_started,
             queue=queue,
         )
@@ -90,7 +92,6 @@ class TreeQueueProcessor:
             task = asyncio.create_task(
                 claim_runner,
                 name=(f"messaging-claim-{claim.identity.root_id}-{claim.claim_id[:8]}"),
-                eager_start=False,
             )
         except BaseException:
             claim_runner.close()
@@ -101,6 +102,7 @@ class TreeQueueProcessor:
             raise
         slot.task = task
         task.add_done_callback(lambda _task, claim_key=key: self._task_done(claim_key))
+        ownership_ready.set()
 
     def _task_done(self, key: str) -> None:
         """Recover a claim if its task was cancelled before entering its body."""
@@ -156,9 +158,11 @@ class TreeQueueProcessor:
         self,
         slot: _TaskSlot,
         *,
+        ownership_ready: asyncio.Event,
         announce_started: bool,
         queue: tuple[QueueEntry, ...],
     ) -> None:
+        await ownership_ready.wait()
         claim = slot.claim
         try:
             if announce_started:

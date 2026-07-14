@@ -1,5 +1,7 @@
 import asyncio
 import contextlib
+import importlib
+import sys
 
 import pytest
 
@@ -448,6 +450,54 @@ async def test_eager_task_factory_cannot_run_claim_before_admission_returns() ->
     finally:
         release.set()
         await _wait_for_no_tasks(manager)
+
+
+@pytest.mark.asyncio
+async def test_claim_launch_uses_portable_event_loop_task_contract(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    processed = asyncio.Event()
+
+    async def process(_claim: NodeClaim) -> None:
+        processed.set()
+
+    loop = asyncio.get_running_loop()
+    original_create_task = loop.create_task
+
+    def portable_create_task(coro, *, name=None, context=None):
+        return original_create_task(coro, name=name, context=context)
+
+    monkeypatch.setattr(loop, "create_task", portable_create_task)
+    manager = TreeQueueManager(process)
+
+    decision = await manager.admit(_incoming("root"), "status-root")
+    await asyncio.wait_for(manager.wait_idle(), timeout=1)
+
+    assert decision.accepted is True
+    assert processed.is_set()
+
+
+@pytest.mark.skipif(
+    sys.platform in {"cygwin", "win32"} or sys.implementation.name == "pypy",
+    reason="uvloop is not installed on this Python platform",
+)
+def test_claim_launch_runs_on_uvloop() -> None:
+    uvloop = importlib.import_module("uvloop")
+
+    async def scenario() -> None:
+        processed = asyncio.Event()
+
+        async def process(_claim: NodeClaim) -> None:
+            processed.set()
+
+        manager = TreeQueueManager(process)
+        decision = await manager.admit(_incoming("root"), "status-root")
+        await asyncio.wait_for(manager.wait_idle(), timeout=1)
+
+        assert decision.accepted is True
+        assert processed.is_set()
+
+    uvloop.run(scenario())
 
 
 @pytest.mark.asyncio
