@@ -8,8 +8,8 @@ body:
     id: fcc-version
     attributes:
       label: FCC version
-      description: Run `fcc-server --version` and enter only the version number, such as `4.6.1`. If FCC did not install, enter `None`.
-      placeholder: "4.6.1 or None"
+      description: Paste the output of `fcc-server --version`, such as `free-claude-code 4.6.1`. A bare version number or `None` is also accepted.
+      placeholder: "free-claude-code 4.6.1, 4.6.1, or None"
     validations:
       required: true
 

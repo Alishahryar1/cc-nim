@@ -15,17 +15,27 @@ def _workflow_pattern(name: str) -> str:
     return json.loads(match.group(1))
 
 
-def test_bug_form_requires_an_exact_version_or_none() -> None:
+def test_bug_form_accepts_the_version_command_output_or_none() -> None:
     form = BUG_FORM.read_text(encoding="utf-8")
 
-    assert "Run `fcc-server --version`" in form
-    assert "enter only the version number" in form
-    assert "enter `None`" in form
-    assert 'placeholder: "4.6.1 or None"' in form
-    assert "not installed" not in form
+    assert "`fcc-server --version`" in form
+    assert "Paste the output" in form
+    assert "bare version number" in form
+    assert 'placeholder: "free-claude-code 4.6.1, 4.6.1, or None"' in form
 
 
-@pytest.mark.parametrize("value", ["0.0.0", "4.6.1", "123.45.678", "None"])
+@pytest.mark.parametrize(
+    "value",
+    [
+        "0.0.0",
+        "4.6.1",
+        "123.45.678",
+        "free-claude-code 0.0.0",
+        "free-claude-code 4.6.1",
+        "free-claude-code 123.45.678",
+        "None",
+    ],
+)
 def test_version_pattern_accepts_supported_values(value: str) -> None:
     assert re.fullmatch(_workflow_pattern("versionPattern"), value)
 
@@ -40,7 +50,10 @@ def test_version_pattern_accepts_supported_values(value: str) -> None:
         "v4.6.1",
         "4.6.x",
         "none",
-        "free-claude-code 4.6.1",
+        "free-claude-code",
+        "free-claude-code v4.6.1",
+        "free-claude-code 4.6",
+        "free-claude-code 4.6.1 extra",
     ],
 )
 def test_version_pattern_rejects_ambiguous_values(value: str) -> None:
