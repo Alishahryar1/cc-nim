@@ -55,7 +55,7 @@ def build_deepseek_request_body(
     _downgrade_forced_tool_choice(data)
 
     has_tool_history = _has_tool_history(data)
-    has_replayable_tool_thinking = _has_replayable_tool_thinking(data)
+    has_replayable_tool_thinking = _all_tool_calls_have_replayable_thinking(data)
     unsafe_tool_followup = has_tool_history and not has_replayable_tool_thinking
     effective_thinking_enabled = thinking_enabled and not unsafe_tool_followup
     if thinking_enabled:
@@ -87,16 +87,14 @@ def build_deepseek_request_body(
 
     if "messages" in data:
         data["messages"] = _normalize_tool_result_content(
-            sanitize_deepseek_messages_for_openai(
-                data["messages"],
-                thinking_enabled=effective_thinking_enabled,
-            )
+            sanitize_deepseek_messages_for_openai(data["messages"])
         )
 
     sanitized_request = MessagesRequest.model_validate(data)
     body = build_openai_chat_request_body(
         sanitized_request,
         thinking_enabled=effective_thinking_enabled,
+        reasoning_history_enabled=True,
         policy=_REQUEST_POLICY,
         postprocessors=(_apply_deepseek_chat_extras,),
     )
@@ -112,10 +110,8 @@ def build_deepseek_request_body(
     return body
 
 
-def sanitize_deepseek_messages_for_openai(
-    messages: Any, *, thinking_enabled: bool
-) -> Any:
-    """Filter assistant content before converting to DeepSeek Chat Completions."""
+def sanitize_deepseek_messages_for_openai(messages: Any) -> Any:
+    """Keep only DeepSeek-required reasoning history on assistant tool calls."""
     if not isinstance(messages, list):
         return messages
 
@@ -127,29 +123,26 @@ def sanitize_deepseek_messages_for_openai(
         if message.get("role") != "assistant":
             sanitized.append(message)
             continue
+        replay_tool_reasoning = _assistant_has_tool_use(message)
+        new_msg = dict(message)
+        if not replay_tool_reasoning:
+            new_msg.pop("reasoning_content", None)
         content = message.get("content")
         if not isinstance(content, list):
-            sanitized.append(message)
+            sanitized.append(new_msg)
             continue
 
-        if not thinking_enabled:
-            filtered = [
-                block
-                for block in content
-                if not (
-                    isinstance(block, dict)
-                    and block.get("type") in ("thinking", "redacted_thinking")
+        filtered = [
+            block
+            for block in content
+            if not (
+                isinstance(block, dict)
+                and (
+                    block.get("type") == "redacted_thinking"
+                    or (block.get("type") == "thinking" and not replay_tool_reasoning)
                 )
-            ]
-        else:
-            filtered = [
-                block
-                for block in content
-                if not (
-                    isinstance(block, dict) and block.get("type") == "redacted_thinking"
-                )
-            ]
-        new_msg = dict(message)
+            )
+        ]
         new_msg["content"] = filtered or ""
         sanitized.append(new_msg)
     return sanitized
@@ -314,6 +307,15 @@ def _has_replayable_thinking_before_tool_use(message: Mapping[str, Any]) -> bool
     return False
 
 
+def _assistant_has_tool_use(message: Mapping[str, Any]) -> bool:
+    if message.get("role") != "assistant":
+        return False
+    content = message.get("content")
+    return isinstance(content, list) and any(
+        isinstance(block, dict) and block.get("type") == "tool_use" for block in content
+    )
+
+
 def _has_tool_history(data: dict[str, Any]) -> bool:
     for message in data.get("messages") or ():
         if isinstance(message, Mapping) and _has_tool_history_blocks(message):
@@ -321,13 +323,15 @@ def _has_tool_history(data: dict[str, Any]) -> bool:
     return False
 
 
-def _has_replayable_tool_thinking(data: dict[str, Any]) -> bool:
+def _all_tool_calls_have_replayable_thinking(data: dict[str, Any]) -> bool:
+    found_tool_call = False
     for message in data.get("messages") or ():
-        if isinstance(message, Mapping) and _has_replayable_thinking_before_tool_use(
-            message
-        ):
-            return True
-    return False
+        if not isinstance(message, Mapping) or not _assistant_has_tool_use(message):
+            continue
+        found_tool_call = True
+        if not _has_replayable_thinking_before_tool_use(message):
+            return False
+    return found_tool_call
 
 
 def _remove_deepseek_thinking_hints(data: dict[str, Any]) -> None:

@@ -37,6 +37,7 @@ def build_openai_chat_request_body(
     request_data: MessagesRequest,
     *,
     thinking_enabled: bool,
+    reasoning_history_enabled: bool | None = None,
     policy: OpenAIChatRequestPolicy,
     postprocessors: Iterable[OpenAIChatPostprocessor] = (),
 ) -> dict[str, Any]:
@@ -48,7 +49,9 @@ def build_openai_chat_request_body(
         len(request_data.messages),
     )
     try:
-        if not thinking_enabled:
+        if reasoning_history_enabled is None:
+            reasoning_history_enabled = thinking_enabled
+        if not reasoning_history_enabled:
             reasoning_replay = ReasoningReplayMode.DISABLED
         else:
             reasoning_replay = (

@@ -1,10 +1,13 @@
 """Tests for DeepSeek OpenAI-compatible Chat Completions provider."""
 
+import json
 import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
+import httpx
 import pytest
+from openai import AsyncOpenAI
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
@@ -35,6 +38,36 @@ def deepseek_config():
 @pytest.fixture
 def deepseek_provider(deepseek_config):
     return DeepSeekProvider(deepseek_config, rate_limiter=passthrough_rate_limiter())
+
+
+async def _capture_openai_wire_body(body: dict) -> dict:
+    captured: list[dict] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        payload = json.loads(request.content)
+        assert isinstance(payload, dict)
+        captured.append(payload)
+        return httpx.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text="data: [DONE]\n\n",
+        )
+
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    client = AsyncOpenAI(
+        api_key="test",
+        base_url="https://deepseek.invalid",
+        http_client=http_client,
+        max_retries=0,
+    )
+    try:
+        stream = await client.chat.completions.create(**body, stream=True)
+        await stream.close()
+    finally:
+        await client.close()
+
+    assert len(captured) == 1
+    return captured[0]
 
 
 def test_default_base_url_alias():
@@ -177,7 +210,7 @@ def test_build_request_body_respects_global_thinking_disable():
     assert "stream_options" not in body
 
 
-def test_preserve_unsigned_thinking_when_thinking_on(deepseek_provider):
+def test_non_tool_thinking_is_omitted_from_first_replay(deepseek_provider):
     request = MessagesRequest.model_validate(
         {
             "model": "m",
@@ -197,8 +230,7 @@ def test_preserve_unsigned_thinking_when_thinking_on(deepseek_provider):
         }
     )
     body = deepseek_provider._build_request_body(request)
-    assert body["messages"][0]["content"] == "out"
-    assert body["messages"][0]["reasoning_content"] == "plain"
+    assert body["messages"][0] == {"role": "assistant", "content": "out"}
 
 
 def test_strip_redacted_thinking_when_thinking_on(deepseek_provider):
@@ -484,6 +516,53 @@ def test_thinking_off_strips_thinking_history():
     assert "sec" not in str(body["messages"])
 
 
+def test_thinking_off_still_replays_required_tool_reasoning():
+    provider = DeepSeekProvider(
+        ProviderConfig(
+            api_key="k",
+            base_url=DEEPSEEK_DEFAULT_BASE,
+            rate_limit=1,
+            rate_window=1,
+            enable_thinking=False,
+        ),
+        rate_limiter=passthrough_rate_limiter(),
+    )
+    request = MessagesRequest.model_validate(
+        {
+            "model": "m",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "thinking", "thinking": "required"},
+                        {
+                            "type": "tool_use",
+                            "id": "t1",
+                            "name": "Read",
+                            "input": {"file_path": "x"},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "t1",
+                            "content": "ok",
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+
+    body = provider._build_request_body(request)
+
+    assert "extra_body" not in body
+    assert body["messages"][0]["reasoning_content"] == "required"
+
+
 def test_passthrough_tool_use_and_result(deepseek_provider):
     request = MessagesRequest.model_validate(
         {
@@ -630,7 +709,7 @@ def test_preflight_rejects_server_tool_result_blocks():
         provider.preflight_stream(request)
 
 
-def test_reasoning_content_replayed_to_openai_chat(deepseek_provider):
+def test_non_tool_top_level_reasoning_is_not_replayed(deepseek_provider):
     request = MessagesRequest(
         model="m",
         messages=[
@@ -642,7 +721,131 @@ def test_reasoning_content_replayed_to_openai_chat(deepseek_provider):
         ],
     )
     body = deepseek_provider._build_request_body(request)
-    assert body["messages"][0]["reasoning_content"] == "r"
+    assert body["messages"][0] == {"role": "assistant", "content": "hi"}
+
+
+def test_tool_call_top_level_reasoning_is_replayed(deepseek_provider):
+    request = MessagesRequest.model_validate(
+        {
+            "model": "m",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "t1",
+                            "name": "Read",
+                            "input": {"file_path": "x"},
+                        }
+                    ],
+                    "reasoning_content": "required",
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "t1",
+                            "content": "ok",
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+
+    body = deepseek_provider._build_request_body(request)
+
+    assert body["messages"][0]["reasoning_content"] == "required"
+
+
+@pytest.mark.asyncio
+async def test_wire_messages_keep_prefix_across_tool_thinking_fallback(
+    deepseek_provider,
+):
+    prefix_messages = [
+        {"role": "user", "content": "first"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "ordinary reasoning"},
+                {"type": "text", "text": "answer"},
+            ],
+        },
+        {"role": "user", "content": "use the first tool"},
+        {
+            "role": "assistant",
+            "content": [
+                {"type": "thinking", "thinking": "required tool reasoning"},
+                {
+                    "type": "tool_use",
+                    "id": "t1",
+                    "name": "Read",
+                    "input": {"file_path": "one"},
+                },
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "t1",
+                    "content": "one",
+                }
+            ],
+        },
+        {"role": "user", "content": "use the second tool"},
+    ]
+    continued_messages = [
+        *prefix_messages,
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "t2",
+                    "name": "Read",
+                    "input": {"file_path": "two"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "t2",
+                    "content": "two",
+                }
+            ],
+        },
+    ]
+
+    def build(messages: list[dict]) -> dict:
+        request = MessagesRequest.model_validate(
+            {
+                "model": "deepseek-v4-pro",
+                "messages": messages,
+                "thinking": {"type": "enabled"},
+            }
+        )
+        return deepseek_provider._build_request_body(request)
+
+    first_wire = await _capture_openai_wire_body(build(prefix_messages))
+    continued_wire = await _capture_openai_wire_body(build(continued_messages))
+    first_messages = first_wire["messages"]
+    continued = continued_wire["messages"]
+
+    assert continued[: len(first_messages)] == first_messages
+    assistant_messages = [
+        message for message in first_messages if message["role"] == "assistant"
+    ]
+    assert "reasoning_content" not in assistant_messages[0]
+    assert assistant_messages[1]["reasoning_content"] == "required tool reasoning"
+    assert first_wire["thinking"] == {"type": "enabled"}
+    assert "thinking" not in continued_wire
 
 
 @pytest.mark.asyncio
