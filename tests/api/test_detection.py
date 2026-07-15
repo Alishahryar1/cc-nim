@@ -5,21 +5,57 @@ from unittest.mock import patch
 from free_claude_code.api.detection import (
     is_filepath_extraction_request,
     is_prefix_detection_request,
+    is_quota_check_request,
     is_safety_classifier_request,
+    is_title_generation_request,
 )
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
 
 
-def _make_request(content: str, **kwargs) -> MessagesRequest:
+def _make_request(
+    content: str, *, inline_system: str | None = None, **kwargs
+) -> MessagesRequest:
+    messages = []
+    if inline_system is not None:
+        messages.append(Message(role="system", content=inline_system))
+    messages.append(Message(role="user", content=content))
     return MessagesRequest(
         model="claude-3-sonnet",
-        max_tokens=100,
-        messages=[Message(role="user", content=content)],
+        max_tokens=kwargs.pop("max_tokens", 100),
+        messages=messages,
         **kwargs,
     )
 
 
+def test_quota_detection_ignores_inline_system_context() -> None:
+    request = _make_request(
+        "Check my quota", inline_system="Current request context", max_tokens=1
+    )
+
+    assert is_quota_check_request(request) is True
+
+
+def test_title_detection_reads_inline_system_context() -> None:
+    request = _make_request(
+        "Summarize this session",
+        inline_system=(
+            "Generate a concise, sentence-case title for this coding session. "
+            'Return JSON with a single "title" field.'
+        ),
+    )
+
+    assert is_title_generation_request(request) is True
+
+
 class TestIsPrefixDetectionRequest:
+    def test_inline_system_context_does_not_hide_single_user_turn(self):
+        req = _make_request(
+            "<policy_spec> Command: git status",
+            inline_system="Current request context",
+        )
+
+        assert is_prefix_detection_request(req) == (True, "git status")
+
     def test_output_marker_handling(self):
         """Content with Command: but Output: after cmd_start; output has < or \\n\\n."""
         content = "<policy_spec> Command:\nls -la\nOutput:\na.txt\nb.txt\n\nmore"
@@ -95,6 +131,14 @@ class TestIsSafetyClassifierRequest:
 
 
 class TestIsFilepathExtractionRequest:
+    def test_inline_system_context_preserves_filepath_detection(self):
+        req = _make_request(
+            "Command:\nls\nOutput:\na.txt",
+            inline_system="Extract any file paths that this command reads or modifies.",
+        )
+
+        assert is_filepath_extraction_request(req) == (True, "ls", "a.txt")
+
     def test_output_marker_minus_one_returns_false(self):
         """Output: not found after Command: returns False."""
         content = "Command:\nls\nfilepaths"

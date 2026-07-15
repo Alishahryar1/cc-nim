@@ -130,6 +130,7 @@ class TestTitleGenerationRequest:
         req = MagicMock(spec=MessagesRequest)
         req.system = self._title_gen_system()
         req.tools = None
+        req.messages = []
 
         assert is_title_generation_request(req) is True
 
@@ -138,6 +139,7 @@ class TestTitleGenerationRequest:
         req = MagicMock(spec=MessagesRequest)
         req.system = self._title_gen_system()
         req.tools = [MagicMock()]
+        req.messages = []
 
         assert is_title_generation_request(req) is False
 
@@ -146,6 +148,7 @@ class TestTitleGenerationRequest:
         req = MagicMock(spec=MessagesRequest)
         req.system = None
         req.tools = None
+        req.messages = []
 
         assert is_title_generation_request(req) is False
 
@@ -156,6 +159,7 @@ class TestTitleGenerationRequest:
         req = MagicMock(spec=MessagesRequest)
         req.system = [block]
         req.tools = None
+        req.messages = []
 
         assert is_title_generation_request(req) is False
 
@@ -166,6 +170,7 @@ class TestTitleGenerationRequest:
         req = MagicMock(spec=MessagesRequest)
         req.system = [block]
         req.tools = None
+        req.messages = []
 
         assert is_title_generation_request(req) is True
 

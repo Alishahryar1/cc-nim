@@ -4,7 +4,39 @@ Detects quota checks, title generation, prefix detection, safety classifier,
 suggestion mode, and filepath extraction requests to enable targeted handling.
 """
 
-from free_claude_code.core.anthropic import MessagesRequest, extract_text_from_content
+from free_claude_code.core.anthropic import (
+    Message,
+    MessagesRequest,
+    extract_text_from_content,
+)
+
+
+def _single_user_turn(request_data: MessagesRequest) -> Message | None:
+    """Return the sole conversational user turn, ignoring system context."""
+    user_turn: Message | None = None
+    for message in request_data.messages:
+        if message.role == "system":
+            continue
+        if message.role != "user" or user_turn is not None:
+            return None
+        user_turn = message
+    return user_turn
+
+
+def _request_system_text(request_data: MessagesRequest) -> str:
+    """Return top-level and inline system text for request-shape detection."""
+    parts: list[str] = []
+    if request_data.system:
+        text = extract_text_from_content(request_data.system)
+        if text:
+            parts.append(text)
+    for message in request_data.messages:
+        if message.role != "system":
+            continue
+        text = extract_text_from_content(message.content)
+        if text:
+            parts.append(text)
+    return "\n".join(parts)
 
 
 def is_quota_check_request(request_data: MessagesRequest) -> bool:
@@ -13,15 +45,11 @@ def is_quota_check_request(request_data: MessagesRequest) -> bool:
     Quota checks are typically simple requests with max_tokens=1
     and a single message containing the word "quota".
     """
-    if (
-        request_data.max_tokens == 1
-        and len(request_data.messages) == 1
-        and request_data.messages[0].role == "user"
-    ):
-        text = extract_text_from_content(request_data.messages[0].content)
-        if "quota" in text.lower():
-            return True
-    return False
+    message = _single_user_turn(request_data)
+    if request_data.max_tokens != 1 or message is None:
+        return False
+    text = extract_text_from_content(message.content)
+    return "quota" in text.lower()
 
 
 def is_title_generation_request(request_data: MessagesRequest) -> bool:
@@ -33,9 +61,9 @@ def is_title_generation_request(request_data: MessagesRequest) -> bool:
     Matches Claude Code session title prompts (sentence-case title, JSON
     \"title\" field, etc.).
     """
-    if not request_data.system or request_data.tools:
+    if request_data.tools:
         return False
-    system_text = extract_text_from_content(request_data.system).lower()
+    system_text = _request_system_text(request_data).lower()
     if "title" not in system_text:
         return False
     return "sentence-case title" in system_text or (
@@ -54,10 +82,11 @@ def is_prefix_detection_request(request_data: MessagesRequest) -> tuple[bool, st
     Returns:
         Tuple of (is_prefix_request, command_string)
     """
-    if len(request_data.messages) != 1 or request_data.messages[0].role != "user":
+    message = _single_user_turn(request_data)
+    if message is None:
         return False, ""
 
-    content = extract_text_from_content(request_data.messages[0].content)
+    content = extract_text_from_content(message.content)
 
     if "<policy_spec>" in content and "Command:" in content:
         try:
@@ -111,12 +140,13 @@ def is_filepath_extraction_request(
     Returns:
         Tuple of (is_filepath_request, command, output)
     """
-    if len(request_data.messages) != 1 or request_data.messages[0].role != "user":
+    message = _single_user_turn(request_data)
+    if message is None:
         return False, "", ""
     if request_data.tools:
         return False, "", ""
 
-    content = extract_text_from_content(request_data.messages[0].content)
+    content = extract_text_from_content(message.content)
 
     if "Command:" not in content or "Output:" not in content:
         return False, "", ""
@@ -125,9 +155,7 @@ def is_filepath_extraction_request(
     user_has_filepaths = (
         "filepaths" in content.lower() or "<filepaths>" in content.lower()
     )
-    system_text = (
-        extract_text_from_content(request_data.system) if request_data.system else ""
-    )
+    system_text = _request_system_text(request_data)
     system_has_extract = (
         "extract any file paths" in system_text.lower()
         or "file paths that this command" in system_text.lower()

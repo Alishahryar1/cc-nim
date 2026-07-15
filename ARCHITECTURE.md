@@ -780,6 +780,10 @@ common low-value client requests before they reach a provider:
 - suggestion mode;
 - filepath extraction.
 
+Detection derives a read-only semantic view: inline `system` messages contribute
+system context but are not counted as conversational turns. The original
+request remains ordered and unchanged for provider execution.
+
 The Messages handler runs these only after model routing and after local server-tool
 handling. Each optimization is controlled by settings flags.
 
