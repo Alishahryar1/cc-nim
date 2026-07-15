@@ -235,8 +235,8 @@ def test_create_message_pre_start_provider_error_returns_terminal_json(
     mock_provider.stream_response = _mock_stream_response
 
 
-def test_create_message_accepts_system_role_messages(client: TestClient):
-    """Create message accepts latest-client system messages."""
+def test_create_message_preserves_system_role_messages(client: TestClient):
+    """Create message preserves latest-client system message placement."""
     mock_provider.stream_response = _mock_stream_response
     _stream_response_calls.clear()
     payload = {
@@ -254,8 +254,13 @@ def test_create_message_accepts_system_role_messages(client: TestClient):
 
     assert response.status_code == 200
     routed_request = _stream_response_calls[0][0][0]
-    assert [message.role for message in routed_request.messages] == ["user", "user"]
-    assert routed_request.system == "system prompt"
+    assert [message.role for message in routed_request.messages] == [
+        "user",
+        "system",
+        "user",
+    ]
+    assert routed_request.messages[1].content == "system prompt"
+    assert routed_request.system is None
 
 
 def test_model_mapping(client: TestClient):

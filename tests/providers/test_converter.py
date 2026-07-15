@@ -59,6 +59,171 @@ def test_convert_system_prompt_none():
     assert AnthropicToOpenAIConverter.convert_system_prompt(None) is None
 
 
+def test_openai_build_preserves_top_level_and_inline_system_message_order() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "model",
+            "system": "Conversation-wide instructions",
+            "messages": [
+                {"role": "user", "content": "First question"},
+                {"role": "assistant", "content": "First answer"},
+                {"role": "system", "content": "Instructions from this point"},
+                {"role": "user", "content": "Second question"},
+            ],
+        }
+    )
+
+    body = build_base_request_body(request)
+
+    assert body["messages"] == [
+        {"role": "system", "content": "Conversation-wide instructions"},
+        {"role": "user", "content": "First question"},
+        {"role": "assistant", "content": "First answer"},
+        {"role": "system", "content": "Instructions from this point"},
+        {"role": "user", "content": "Second question"},
+    ]
+
+
+def test_openai_build_joins_inline_system_text_blocks_without_repositioning() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "model",
+            "messages": [
+                {"role": "user", "content": "Before"},
+                {
+                    "role": "system",
+                    "content": [
+                        {"type": "text", "text": "First instruction"},
+                        {"type": "text", "text": "Second instruction"},
+                    ],
+                },
+                {"role": "user", "content": "After"},
+            ],
+        }
+    )
+
+    body = build_base_request_body(request)
+
+    assert body["messages"][1] == {
+        "role": "system",
+        "content": "First instruction\n\nSecond instruction",
+    }
+
+
+def test_inline_system_message_preserves_existing_openai_cache_prefix() -> None:
+    prefix_request = MessagesRequest.model_validate(
+        {
+            "model": "model",
+            "system": "Conversation-wide instructions",
+            "messages": [
+                {"role": "user", "content": "First question"},
+                {"role": "assistant", "content": "First answer"},
+            ],
+        }
+    )
+    continued_request = MessagesRequest.model_validate(
+        {
+            "model": "model",
+            "system": "Conversation-wide instructions",
+            "messages": [
+                {"role": "user", "content": "First question"},
+                {"role": "assistant", "content": "First answer"},
+                {"role": "system", "content": "Instructions from this point"},
+                {"role": "user", "content": "Second question"},
+            ],
+        }
+    )
+
+    prefix = build_base_request_body(prefix_request)["messages"]
+    continued = build_base_request_body(continued_request)["messages"]
+
+    assert continued[: len(prefix)] == prefix
+    assert continued[len(prefix) :] == [
+        {"role": "system", "content": "Instructions from this point"},
+        {"role": "user", "content": "Second question"},
+    ]
+
+
+def test_inline_system_message_follows_completed_tool_result() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "model",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_1",
+                            "name": "Read",
+                            "input": {},
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_1",
+                            "content": "done",
+                        }
+                    ],
+                },
+                {"role": "system", "content": "New instructions"},
+            ],
+        }
+    )
+
+    body = build_base_request_body(request)
+
+    assert [message["role"] for message in body["messages"]] == [
+        "assistant",
+        "tool",
+        "system",
+    ]
+
+
+def test_openai_build_rejects_non_text_inline_system_blocks() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "model",
+            "messages": [
+                {
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "url",
+                                "url": "https://example.com/a.png",
+                            },
+                        }
+                    ],
+                }
+            ],
+        }
+    )
+
+    with pytest.raises(
+        OpenAIConversionError,
+        match="inline Anthropic system message content block 'image' without data loss",
+    ):
+        build_base_request_body(request)
+
+
+def test_openai_build_rejects_empty_inline_system_content() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "model",
+            "messages": [{"role": "system", "content": []}],
+        }
+    )
+
+    with pytest.raises(OpenAIConversionError, match="contain text"):
+        build_base_request_body(request)
+
+
 # --- Tool Conversion Tests ---
 
 

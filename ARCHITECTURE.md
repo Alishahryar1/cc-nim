@@ -644,6 +644,14 @@ usage quirks such as DeepSeek prompt-cache counters.
   stream ledger, Anthropic SSE emitter, continuation-body construction, and tool repair;
 - token counting and Anthropic-owned failure-kind-to-wire mapping.
 
+Anthropic request models validate transcript data without merging, hoisting, or
+reordering semantically meaningful message roles. Top-level `system` content
+stays distinct from inline `system` messages. Target-protocol conversion owns
+their representation: neutral OpenAI Chat conversion preserves inline role and
+order, and rejects unrepresentable blocks instead of dropping them. Any
+provider-specific deviation belongs in an explicit request policy backed by a
+known upstream incompatibility.
+
 User image conversion is a pure protocol operation. Core maps Anthropic base64
 and URL image sources to ordered OpenAI `image_url` content parts without
 fetching remote content. Provider adapters do not gate that conversion behind a

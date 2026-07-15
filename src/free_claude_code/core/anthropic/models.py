@@ -1,15 +1,8 @@
 """Pydantic models for the Anthropic Messages protocol."""
 
-from enum import StrEnum
 from typing import Any, Literal
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
-
-
-class Role(StrEnum):
-    user = "user"
-    assistant = "assistant"
-    system = "system"
+from pydantic import BaseModel, ConfigDict, Field
 
 
 class _AnthropicBlockBase(BaseModel):
@@ -85,58 +78,8 @@ class SystemContent(_AnthropicBlockBase):
     text: str
 
 
-def _text_system_block(text: str) -> dict[str, str]:
-    return {"type": "text", "text": text}
-
-
-def _merge_system_values(existing: Any, additions: list[Any]) -> Any:
-    values = [existing] if existing is not None else []
-    values.extend(additions)
-
-    if all(isinstance(value, str) for value in values):
-        return "\n\n".join(value for value in values if value)
-
-    blocks: list[Any] = []
-    for value in values:
-        if isinstance(value, str):
-            blocks.append(_text_system_block(value))
-        elif isinstance(value, list):
-            blocks.extend(value)
-        else:
-            blocks.append(value)
-    return blocks
-
-
-def _normalize_system_role_messages(data: Any) -> Any:
-    if not isinstance(data, dict):
-        return data
-
-    messages = data.get("messages")
-    if not isinstance(messages, list):
-        return data
-
-    system_contents: list[Any] = []
-    normalized_messages: list[Any] = []
-    for message in messages:
-        role = message.get("role") if isinstance(message, dict) else None
-        if role == Role.system:
-            system_contents.append(message.get("content", ""))
-            continue
-        normalized_messages.append(message)
-
-    if not system_contents:
-        return data
-
-    normalized = dict(data)
-    normalized["messages"] = normalized_messages
-    normalized["system"] = _merge_system_values(
-        normalized.get("system"), system_contents
-    )
-    return normalized
-
-
 class Message(BaseModel):
-    role: Literal["user", "assistant"]
+    role: Literal["user", "assistant", "system"]
     content: (
         str
         | list[
@@ -171,11 +114,6 @@ class ThinkingConfig(BaseModel):
 class MessagesRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_system_role_messages(cls, data: Any) -> Any:
-        return _normalize_system_role_messages(data)
-
     model: str
     original_model: str | None = Field(default=None, exclude=True)
     resolved_provider_model: str | None = Field(default=None, exclude=True)
@@ -200,11 +138,6 @@ class MessagesRequest(BaseModel):
 
 class TokenCountRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
-
-    @model_validator(mode="before")
-    @classmethod
-    def normalize_system_role_messages(cls, data: Any) -> Any:
-        return _normalize_system_role_messages(data)
 
     model: str
     original_model: str | None = Field(default=None, exclude=True)

@@ -37,7 +37,7 @@ def test_messages_request_rejects_null_stream() -> None:
         )
 
 
-def test_messages_request_normalizes_system_role_messages():
+def test_messages_request_preserves_system_role_message_order():
     request = MessagesRequest.model_validate(
         {
             "model": "claude-3-opus",
@@ -50,11 +50,16 @@ def test_messages_request_normalizes_system_role_messages():
         }
     )
 
-    assert [message.role for message in request.messages] == ["user", "user"]
-    assert request.system == "system prompt"
+    assert [message.role for message in request.messages] == [
+        "user",
+        "system",
+        "user",
+    ]
+    assert request.messages[1].content == "system prompt"
+    assert request.system is None
 
 
-def test_messages_request_merges_system_role_messages_with_existing_system():
+def test_messages_request_keeps_top_level_and_inline_system_content_distinct():
     request = MessagesRequest.model_validate(
         {
             "model": "claude-3-opus",
@@ -67,11 +72,12 @@ def test_messages_request_merges_system_role_messages_with_existing_system():
         }
     )
 
-    assert len(request.messages) == 1
-    assert request.system == "existing system\n\nmessage system"
+    assert request.system == "existing system"
+    assert [message.role for message in request.messages] == ["system", "user"]
+    assert request.messages[0].content == "message system"
 
 
-def test_messages_request_preserves_system_block_cache_control_when_normalizing():
+def test_messages_request_preserves_inline_system_block_metadata():
     request = MessagesRequest.model_validate(
         {
             "model": "claude-3-opus",
@@ -99,14 +105,17 @@ def test_messages_request_preserves_system_block_cache_control_when_normalizing(
         }
     )
 
-    assert len(request.messages) == 1
+    assert len(request.messages) == 2
     assert isinstance(request.system, list)
-    assert [block.text for block in request.system] == [
-        "existing system",
-        "message system",
-    ]
+    assert [block.text for block in request.system] == ["existing system"]
     assert request.system[0].model_dump()["cache_control"] == {"type": "ephemeral"}
-    assert request.system[1].model_dump()["cache_control"] == {"type": "ephemeral"}
+    inline_content = request.messages[0].content
+    assert isinstance(inline_content, list)
+    assert inline_content[0].model_dump() == {
+        "type": "text",
+        "text": "message system",
+        "cache_control": {"type": "ephemeral"},
+    }
 
 
 def test_messages_request_ignores_internal_routing_fields_when_supplied():
@@ -133,7 +142,7 @@ def test_token_count_request_parses_without_model_mapping_side_effects():
     assert request.model == "claude-3-sonnet"
 
 
-def test_token_count_request_normalizes_system_role_messages():
+def test_token_count_request_preserves_system_role_messages():
     request = TokenCountRequest.model_validate(
         {
             "model": "claude-3-sonnet",
@@ -144,9 +153,9 @@ def test_token_count_request_normalizes_system_role_messages():
         }
     )
 
-    assert len(request.messages) == 1
-    assert request.messages[0].role == "user"
-    assert request.system == "counting system"
+    assert [message.role for message in request.messages] == ["system", "user"]
+    assert request.messages[0].content == "counting system"
+    assert request.system is None
 
 
 def test_messages_request_preserves_thinking_signature():

@@ -164,6 +164,34 @@ def _assert_no_forbidden_assistant_block(block: Any) -> None:
         )
 
 
+def _openai_system_text(
+    content: Any,
+    *,
+    context: str,
+) -> str | None:
+    """Return OpenAI-compatible system text without silently dropping blocks."""
+    if isinstance(content, str):
+        return content
+    if not isinstance(content, list):
+        raise OpenAIConversionError(
+            f"OpenAI chat conversion requires {context} content to be text."
+        )
+    if not content:
+        return None
+
+    text_parts: list[str] = []
+    for block in content:
+        block_type = get_block_type(block)
+        if block_type != "text":
+            raise OpenAIConversionError(
+                f"OpenAI chat conversion cannot represent {context} content block "
+                f"{block_type!r} without data loss."
+            )
+        text_parts.append(str(get_block_attr(block, "text", "")))
+
+    return "\n\n".join(text_parts)
+
+
 def _openai_user_image_part(block: Any) -> dict[str, Any]:
     """Convert one Anthropic user image block without performing I/O."""
     source = get_block_attr(block, "source", {})
@@ -364,6 +392,17 @@ class AnthropicToOpenAIConverter:
         reasoning_content: str | None,
         reasoning_replay: ReasoningReplayMode,
     ) -> list[_TranscriptSegment]:
+        if role == "system":
+            system_text = _openai_system_text(
+                content,
+                context="an inline Anthropic system message",
+            )
+            if system_text is None:
+                raise OpenAIConversionError(
+                    "OpenAI chat conversion requires an inline Anthropic system "
+                    "message to contain text."
+                )
+            return [_PlainSegment([{"role": "system", "content": system_text}])]
         if role == "assistant" and isinstance(content, list):
             if (first_i := _index_first_tool_use(content)) is not None:
                 for block in content:
@@ -602,17 +641,17 @@ class AnthropicToOpenAIConverter:
 
     @staticmethod
     def convert_system_prompt(system: Any) -> dict[str, str] | None:
-        if isinstance(system, str):
-            return {"role": "system", "content": system}
+        if system is None:
+            return None
+        system_text = _openai_system_text(
+            system,
+            context="the top-level Anthropic system prompt",
+        )
+        if system_text is None:
+            return None
         if isinstance(system, list):
-            text_parts = [
-                get_block_attr(block, "text", "")
-                for block in system
-                if get_block_type(block) == "text"
-            ]
-            if text_parts:
-                return {"role": "system", "content": "\n\n".join(text_parts).strip()}
-        return None
+            system_text = system_text.strip()
+        return {"role": "system", "content": system_text}
 
 
 def build_base_request_body(
