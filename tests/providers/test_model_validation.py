@@ -367,7 +367,11 @@ class FakeProvider(BaseProvider):
 
 @pytest.mark.asyncio
 async def test_runtime_validation_succeeds_for_all_configured_models() -> None:
-    settings = _settings(model_opus="open_router/anthropic/claude-opus")
+    settings = _settings(
+        model_opus="open_router/anthropic/claude-opus",
+        nvidia_nim_api_key="nim-key",
+        open_router_api_key="open-router-key",
+    )
     runtime = _manager(
         settings,
         {
@@ -468,12 +472,14 @@ async def test_runtime_refresh_model_list_cache_uses_configured_remote_keys_and_
         },
     )
 
-    await runtime.refresh_model_list_cache()
+    result = await runtime.refresh_model_list_cache()
 
     assert runtime.cached_model_ids() == {
         "open_router": frozenset({"anthropic/claude-sonnet"}),
         "lmstudio": frozenset({"local-qwen"}),
     }
+    assert result.refreshed_provider_ids == ("open_router", "lmstudio")
+    assert result.failed_provider_ids == ()
 
 
 @pytest.mark.asyncio
@@ -491,9 +497,11 @@ async def test_runtime_refresh_model_list_cache_keeps_prior_cache_on_failure() -
         {ProviderModelInfo("cached-model")},
     )
 
-    await runtime.refresh_model_list_cache()
+    result = await runtime.refresh_model_list_cache()
 
     assert runtime.cached_model_ids() == {"nvidia_nim": frozenset({"cached-model"})}
+    assert result.refreshed_provider_ids == ()
+    assert result.failed_provider_ids == ("nvidia_nim",)
 
 
 def test_runtime_metadata_cache_exposes_ids_and_prefixed_infos() -> None:
@@ -517,6 +525,21 @@ def test_runtime_metadata_cache_exposes_ids_and_prefixed_infos() -> None:
         ProviderModelInfo("open_router/plain-model", supports_thinking=False),
         ProviderModelInfo("open_router/reasoning-model", supports_thinking=True),
     )
+
+
+def test_runtime_metadata_cache_enforces_replaced_provider_scope() -> None:
+    cache = ProviderModelCache({"open_router", "lmstudio"})
+    cache.cache_model_ids("open_router", {"old-model"})
+    cache.cache_model_ids("lmstudio", {"local-model"})
+
+    cache.set_available_providers({"deepseek", "lmstudio"})
+    cache.cache_model_ids("open_router", {"late-old-model"})
+    cache.cache_model_ids("deepseek", {"new-model"})
+
+    assert cache.cached_model_ids() == {
+        "deepseek": frozenset({"new-model"}),
+        "lmstudio": frozenset({"local-model"}),
+    }
 
 
 def test_runtime_model_id_cache_keeps_unknown_thinking_support() -> None:

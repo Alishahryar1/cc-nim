@@ -19,6 +19,9 @@ def _settings(
         model_sonnet=None,
         model_haiku=model_haiku,
         anthropic_auth_token="",
+        deepseek_api_key="deepseek-key",
+        open_router_api_key="open-router-key",
+        wafer_api_key="wafer-key",
     )
 
 

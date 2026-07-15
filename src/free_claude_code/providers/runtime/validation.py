@@ -81,8 +81,8 @@ class ConfiguredModelValidator:
                         self._format_provider_query_failures(provider_refs, result)
                     )
                     continue
+                model_ids = frozenset(info.model_id for info in result)
                 self._model_cache.cache_model_infos(provider_id, result)
-                model_ids = self._model_cache.cached_model_ids()[provider_id]
                 failures.extend(
                     self._format_missing_model_failure(ref)
                     for ref in provider_refs

@@ -325,7 +325,7 @@ async def test_failed_candidate_cleanup_is_retried_at_shutdown() -> None:
     assert factory.runtimes[1].cleanup_calls == 1
     assert manager._unpublished == {factory.runtimes[1]}
 
-    manager.cache_model_infos("nvidia_nim", {ProviderModelInfo("cached")})
+    manager.cache_model_infos("lmstudio", {ProviderModelInfo("cached")})
     with pytest.raises(
         RuntimeError,
         match="One or more provider runtimes failed to close",
@@ -335,7 +335,7 @@ async def test_failed_candidate_cleanup_is_retried_at_shutdown() -> None:
     assert "private cleanup detail" not in str(exc_info.value)
     assert manager._closed is False
     assert manager._unpublished == {factory.runtimes[1]}
-    assert manager.cached_model_ids() == {"nvidia_nim": frozenset({"cached"})}
+    assert manager.cached_model_ids() == {"lmstudio": frozenset({"cached"})}
 
     factory.runtimes[1].cleanup_error = None
     await manager.close()
@@ -554,7 +554,7 @@ async def test_failed_shutdown_cleanup_is_retryable() -> None:
         _settings("nvidia_nim/one"),
         runtime_factory=factory,
     )
-    manager.cache_model_infos("nvidia_nim", {ProviderModelInfo("cached")})
+    manager.cache_model_infos("lmstudio", {ProviderModelInfo("cached")})
     factory.runtimes[0].cleanup_error = RuntimeError("private provider detail")
 
     with pytest.raises(
@@ -566,7 +566,7 @@ async def test_failed_shutdown_cleanup_is_retryable() -> None:
     assert "private provider detail" not in str(exc_info.value)
     assert manager._closed is False
     assert 1 in manager._retired
-    assert manager.cached_model_ids() == {"nvidia_nim": frozenset({"cached"})}
+    assert manager.cached_model_ids() == {"lmstudio": frozenset({"cached"})}
     assert factory.runtimes[0].cleanup_calls == 1
 
     factory.runtimes[0].cleanup_error = None
@@ -582,21 +582,40 @@ async def test_failed_shutdown_cleanup_is_retryable() -> None:
 async def test_application_catalog_survives_generation_replacement() -> None:
     factory = RuntimeFactory()
     manager = ProviderRuntimeManager(
-        _settings("open_router/one"),
+        _settings("nvidia_nim/one"),
         runtime_factory=factory,
     )
     manager.cache_model_infos(
-        "open_router",
+        "lmstudio",
         {ProviderModelInfo("persisted", supports_thinking=True)},
     )
 
     await manager.replace(
-        _settings("open_router/two"),
+        _settings("nvidia_nim/two"),
         commit=lambda: None,
     )
 
-    assert manager.cached_model_ids() == {"open_router": frozenset({"persisted"})}
-    assert manager.cached_model_supports_thinking("open_router", "persisted") is True
+    assert manager.cached_model_ids() == {"lmstudio": frozenset({"persisted"})}
+    assert manager.cached_model_supports_thinking("lmstudio", "persisted") is True
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_replacement_prunes_and_rejects_removed_remote_provider_cache() -> None:
+    factory = RuntimeFactory()
+    first_settings = _settings("open_router/one").model_copy(
+        update={"open_router_api_key": "open-router-key"}
+    )
+    manager = ProviderRuntimeManager(first_settings, runtime_factory=factory)
+    manager.cache_model_infos("open_router", {ProviderModelInfo("old-model")})
+
+    await manager.replace(
+        _settings("nvidia_nim/two"),
+        commit=lambda: None,
+    )
+    manager.cache_model_infos("open_router", {ProviderModelInfo("late-old-model")})
+
+    assert "open_router" not in manager.cached_model_ids()
     await manager.close()
 
 

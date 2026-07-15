@@ -84,7 +84,7 @@ async function load() {
   renderProviders(config.provider_status);
   renderSections(config.sections, config.fields);
   byId("configPath").textContent = config.paths.managed;
-  await loadModelOptions();
+  await hydrateModelOptions();
   await validate(false);
   await refreshLocalStatus();
   updateDirtyState();
@@ -480,12 +480,20 @@ async function testProvider(providerId, button) {
   }
 }
 
+async function hydrateModelOptions() {
+  try {
+    await loadModelOptions();
+  } catch {
+    // Model fields remain editable when optional catalog hydration is unavailable.
+  }
+}
+
 async function loadModelOptions(refresh = false) {
   const result = await api("/admin/api/models" + (refresh ? "/refresh" : ""), {
     method: refresh ? "POST" : "GET",
   });
   setModelOptions(result.models);
-  return state.modelOptions.length;
+  return result;
 }
 
 async function refreshModelOptions(button) {
@@ -493,14 +501,30 @@ async function refreshModelOptions(button) {
   button.disabled = true;
   button.textContent = "Refreshing";
   try {
-    const count = await loadModelOptions(true);
-    showMessage(`${count} models available`, "ok");
+    const result = await loadModelOptions(true);
+    const failedProviders = result.failed_providers || [];
+    if (failedProviders.length) {
+      const labels = failedProviders.map(providerDisplayName).join(", ");
+      showMessage(
+        `${state.modelOptions.length} models available; could not refresh ${labels}`,
+        "warn",
+      );
+    } else {
+      showMessage(`${state.modelOptions.length} models available`, "ok");
+    }
   } catch (error) {
     showMessage(`Could not refresh models: ${error.message}`, "error");
   } finally {
     button.disabled = false;
     button.textContent = original;
   }
+}
+
+function providerDisplayName(providerId) {
+  const provider = state.config?.provider_status?.find(
+    (candidate) => candidate.provider_id === providerId,
+  );
+  return provider?.display_name || providerId;
 }
 
 function setModelOptions(models) {

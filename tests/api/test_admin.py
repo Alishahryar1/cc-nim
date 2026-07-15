@@ -5,7 +5,10 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
-from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.application.model_metadata import (
+    ProviderModelInfo,
+    ProviderModelRefreshResult,
+)
 from free_claude_code.config.admin.values import MASKED_SECRET
 from free_claude_code.config.server_urls import local_admin_url
 from free_claude_code.config.settings import Settings
@@ -114,6 +117,10 @@ def test_admin_static_loads_searchable_model_options_and_maps_none_to_unset():
     assert '"optional-model-options", ["None", ...state.modelOptions]' in script
     assert 'input.dataset.fieldType === "optional_model"' in script
     assert 'return "";' in script
+    assert "await hydrateModelOptions();" in script
+    assert "Model fields remain editable" in script
+    assert "result.failed_providers || []" in script
+    assert '"warn"' in script
 
 
 def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
@@ -193,6 +200,7 @@ def test_admin_models_include_configured_and_cached_canonical_slugs():
     settings = Settings()
     settings.model = "nvidia_nim/configured-model"
     settings.model_opus = "open_router/anthropic/configured-opus"
+    settings.open_router_api_key = "open-router-key"
     app = create_test_app(settings)
     provider_manager_for_app(app).cache_model_infos(
         "open_router",
@@ -210,21 +218,24 @@ def test_admin_models_include_configured_and_cached_canonical_slugs():
             "nvidia_nim/configured-model",
             "open_router/anthropic/configured-opus",
             "open_router/meta/llama-3.3",
-        ]
+        ],
+        "failed_providers": [],
     }
 
 
 def test_admin_model_refresh_returns_the_updated_canonical_catalog():
     settings = Settings()
     settings.model = "deepseek/deepseek-chat"
+    settings.deepseek_api_key = "deepseek-key"
     app = create_test_app(settings)
     runtime = app.state.services.admin
 
-    async def refresh_models() -> None:
+    async def refresh_models() -> ProviderModelRefreshResult:
         provider_manager_for_app(app).cache_model_infos(
             "deepseek",
             {ProviderModelInfo("deepseek-reasoner")},
         )
+        return ProviderModelRefreshResult(refreshed_provider_ids=("deepseek",))
 
     runtime.refresh_models = AsyncMock(side_effect=refresh_models)
 
@@ -232,9 +243,31 @@ def test_admin_model_refresh_returns_the_updated_canonical_catalog():
 
     assert response.status_code == 200
     assert response.json() == {
-        "models": ["deepseek/deepseek-chat", "deepseek/deepseek-reasoner"]
+        "models": ["deepseek/deepseek-chat", "deepseek/deepseek-reasoner"],
+        "failed_providers": [],
     }
     runtime.refresh_models.assert_awaited_once_with()
+
+
+def test_admin_model_refresh_reports_partial_provider_failures():
+    settings = Settings()
+    settings.model = "deepseek/deepseek-chat"
+    app = create_test_app(settings)
+    runtime = app.state.services.admin
+    runtime.refresh_models = AsyncMock(
+        return_value=ProviderModelRefreshResult(
+            refreshed_provider_ids=("deepseek",),
+            failed_provider_ids=("open_router",),
+        )
+    )
+
+    response = _local_client(app).post("/admin/api/models/refresh")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "models": ["deepseek/deepseek-chat"],
+        "failed_providers": ["open_router"],
+    }
 
 
 def test_admin_config_preserves_managed_env_source_contract(monkeypatch, tmp_path):

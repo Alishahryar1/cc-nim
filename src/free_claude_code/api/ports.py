@@ -4,6 +4,7 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
+from free_claude_code.application.model_metadata import ProviderModelRefreshResult
 from free_claude_code.application.ports import RequestRuntimePort, TaskController
 
 
@@ -18,7 +19,7 @@ class AdminRuntimePort(Protocol):
 
     async def test_provider(self, provider_id: str) -> dict[str, Any]: ...
 
-    async def refresh_models(self) -> None: ...
+    async def refresh_models(self) -> ProviderModelRefreshResult: ...
 
     async def request_restart(self) -> None: ...
 

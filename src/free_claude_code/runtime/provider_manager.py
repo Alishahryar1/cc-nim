@@ -7,12 +7,18 @@ from dataclasses import dataclass, field
 from loguru import logger
 
 from free_claude_code.application.errors import ApplicationUnavailableError
-from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.application.model_metadata import (
+    ProviderModelInfo,
+    ProviderModelRefreshResult,
+)
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.trace import trace_event
 from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.runtime import ProviderRuntime
-from free_claude_code.providers.runtime.discovery import ProviderModelDiscovery
+from free_claude_code.providers.runtime.discovery import (
+    ProviderModelDiscovery,
+    model_cache_provider_ids_for_settings,
+)
 from free_claude_code.providers.runtime.model_cache import ProviderModelCache
 from free_claude_code.providers.runtime.validation import ConfiguredModelValidator
 
@@ -86,7 +92,9 @@ class ProviderRuntimeManager:
         self._runtime_factory = runtime_factory
         self._replace_lock = asyncio.Lock()
         self._close_lock = asyncio.Lock()
-        self._model_cache = ProviderModelCache()
+        self._model_cache = ProviderModelCache(
+            model_cache_provider_ids_for_settings(settings)
+        )
         self._refresh_task: asyncio.Task[None] | None = None
         self._next_generation_id = 2
         self._retired: dict[int, _ProviderGeneration] = {}
@@ -153,16 +161,16 @@ class ProviderRuntimeManager:
             return
         generation = self._current
         self._refresh_task = asyncio.create_task(
-            self._refresh_generation(generation, only_missing=True)
+            self._refresh_generation_in_background(generation, only_missing=True)
         )
 
-    async def refresh_model_list_cache(self) -> None:
+    async def refresh_model_list_cache(self) -> ProviderModelRefreshResult:
         """Run an explicit full refresh without racing replacement."""
         async with self._replace_lock:
             if self._closing or self._closed:
                 raise ApplicationUnavailableError("Provider runtime is shutting down.")
             await self._cancel_refresh()
-            await self._refresh_generation(self._current, only_missing=False)
+            return await self._refresh_generation(self._current, only_missing=False)
 
     async def replace(
         self,
@@ -205,13 +213,16 @@ class ProviderRuntimeManager:
                 runtime=candidate_runtime,
             )
             self._current = candidate
+            self._model_cache.set_available_providers(
+                model_cache_provider_ids_for_settings(settings)
+            )
             previous.retired = True
             self._retired[previous.generation_id] = previous
             self._trace_published(candidate, previous=previous, reason=reason)
             self._trace_retired(previous, reason=reason)
 
             self._refresh_task = asyncio.create_task(
-                self._refresh_generation(candidate, only_missing=False)
+                self._refresh_generation_in_background(candidate, only_missing=False)
             )
             if previous.active_leases == 0:
                 await self._close_generation(previous, forced=False)
@@ -262,9 +273,9 @@ class ProviderRuntimeManager:
         generation: _ProviderGeneration,
         *,
         only_missing: bool,
-    ) -> None:
+    ) -> ProviderModelRefreshResult:
         if generation.closed:
-            return
+            return ProviderModelRefreshResult()
         generation.active_leases += 1
         generation.drained.clear()
         try:
@@ -273,7 +284,18 @@ class ProviderRuntimeManager:
                 generation.runtime.resolve_provider,
                 self._model_cache,
             )
-            await discovery.refresh_model_list_cache(only_missing=only_missing)
+            return await discovery.refresh_model_list_cache(only_missing=only_missing)
+        finally:
+            await self._release(generation)
+
+    async def _refresh_generation_in_background(
+        self,
+        generation: _ProviderGeneration,
+        *,
+        only_missing: bool,
+    ) -> None:
+        try:
+            await self._refresh_generation(generation, only_missing=only_missing)
         except asyncio.CancelledError:
             raise
         except Exception as exc:
@@ -281,8 +303,6 @@ class ProviderRuntimeManager:
                 "Provider model discovery task failed: exc_type={}",
                 type(exc).__name__,
             )
-        finally:
-            await self._release(generation)
 
     async def _cancel_refresh(self) -> None:
         task = self._refresh_task

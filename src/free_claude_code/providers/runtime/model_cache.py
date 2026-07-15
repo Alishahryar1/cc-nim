@@ -10,7 +10,11 @@ from free_claude_code.providers.model_listing import model_infos_from_ids
 class ProviderModelCache:
     """Store provider model metadata for instant model-list responses."""
 
-    def __init__(self) -> None:
+    def __init__(
+        self,
+        available_provider_ids: Iterable[str] = SUPPORTED_PROVIDER_IDS,
+    ) -> None:
+        self._available_provider_ids = frozenset(available_provider_ids)
         self._model_infos_by_provider: dict[str, dict[str, ProviderModelInfo]] = {}
 
     def cache_model_ids(self, provider_id: str, model_ids: Iterable[str]) -> None:
@@ -21,10 +25,21 @@ class ProviderModelCache:
         self, provider_id: str, model_infos: Iterable[ProviderModelInfo]
     ) -> None:
         """Store provider model metadata by raw provider model id."""
+        if provider_id not in self._available_provider_ids:
+            return
         clean_infos = {
             info.model_id: info for info in model_infos if info.model_id.strip()
         }
         self._model_infos_by_provider[provider_id] = clean_infos
+
+    def set_available_providers(self, provider_ids: Iterable[str]) -> None:
+        """Replace the provider scope and discard entries outside it."""
+        self._available_provider_ids = frozenset(provider_ids)
+        self._model_infos_by_provider = {
+            provider_id: infos
+            for provider_id, infos in self._model_infos_by_provider.items()
+            if provider_id in self._available_provider_ids
+        }
 
     def cached_model_ids(self) -> dict[str, frozenset[str]]:
         """Return cached raw provider model ids by provider."""

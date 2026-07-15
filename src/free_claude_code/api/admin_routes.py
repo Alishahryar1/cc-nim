@@ -10,6 +10,7 @@ from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field
 
+from free_claude_code.application.model_metadata import ProviderModelRefreshResult
 from free_claude_code.config.admin.manifest import FIELD_BY_KEY
 from free_claude_code.config.admin.persistence import validate_updates
 from free_claude_code.config.admin.values import load_config_response
@@ -159,11 +160,15 @@ async def refresh_models(
     services: ApiServices = Depends(get_services),
 ):
     require_loopback_admin(request)
-    await services.admin.refresh_models()
-    return _model_options(services)
+    result = await services.admin.refresh_models()
+    return _model_options(services, refresh_result=result)
 
 
-def _model_options(services: ApiServices) -> dict[str, list[str]]:
+def _model_options(
+    services: ApiServices,
+    *,
+    refresh_result: ProviderModelRefreshResult | None = None,
+) -> dict[str, list[str]]:
     configured = {
         ref.model_ref
         for ref in configured_chat_model_refs(services.requests.current_settings())
@@ -171,7 +176,13 @@ def _model_options(services: ApiServices) -> dict[str, list[str]]:
     discovered = {
         info.model_id for info in services.requests.cached_prefixed_model_infos()
     }
-    return {"models": sorted(configured | discovered, key=str.casefold)}
+    failed_provider_ids = (
+        refresh_result.failed_provider_ids if refresh_result is not None else ()
+    )
+    return {
+        "models": sorted(configured | discovered, key=str.casefold),
+        "failed_providers": list(failed_provider_ids),
+    }
 
 
 def _filtered_values(values: dict[str, Any]) -> dict[str, Any]:

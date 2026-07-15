@@ -613,6 +613,11 @@ textarea:focus-visible,
   font-weight: 600;
 }
 
+.message-area.warn {
+  color: var(--warn);
+  font-weight: 600;
+}
+
 .action-buttons {
   display: flex;
   gap: 12px;
