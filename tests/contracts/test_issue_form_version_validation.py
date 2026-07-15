@@ -15,13 +15,15 @@ def _workflow_pattern(name: str) -> str:
     return json.loads(match.group(1))
 
 
-def test_bug_form_accepts_the_version_command_output_or_none() -> None:
+def test_bug_form_requests_an_exact_version_or_none() -> None:
     form = BUG_FORM.read_text(encoding="utf-8")
 
-    assert "`fcc-server --version`" in form
-    assert "Paste the output" in form
-    assert "bare version number" in form
-    assert 'placeholder: "free-claude-code 4.6.1, 4.6.1, or None"' in form
+    assert "Run `fcc-server --version`" in form
+    assert "enter only the version number" in form
+    assert "enter `None`" in form
+    assert 'placeholder: "4.6.1 or None"' in form
+    assert "not installed" not in form
+    assert "free-claude-code" not in form
 
 
 @pytest.mark.parametrize(

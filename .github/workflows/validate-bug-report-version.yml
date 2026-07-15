@@ -54,7 +54,7 @@ jobs:
                     ...repo,
                     name: labelName,
                     color: "d4c5f9",
-                    description: "FCC version output, number.number.number, or None required",
+                    description: "FCC version must be number.number.number or None",
                   });
                 } catch (createError) {
                   if (createError.status !== 422) throw createError;
@@ -75,6 +75,6 @@ jobs:
               await github.rest.issues.createComment({
                 ...repo,
                 issue_number,
-                body: `${marker}\nPlease edit **FCC version** and paste the output of \`fcc-server --version\`, such as \`free-claude-code 4.6.1\`. A bare version like \`4.6.1\` or \`None\` is also accepted.`,
+                body: `${marker}\nPlease edit **FCC version** to contain only an exact \`number.number.number\` value, such as \`4.6.1\`, or \`None\`. Run \`fcc-server --version\` to find the installed version.`,
               });
             }
