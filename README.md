@@ -108,7 +108,7 @@ Use the port shown in your terminal if it differs from `8082`.
 1. Create an API key at [build.nvidia.com/settings/api-keys](https://build.nvidia.com/settings/api-keys).
 2. Open the Admin UI URL from the server log.
 3. Paste the key into `NVIDIA_NIM_API_KEY`.
-4. Leave `MODEL` on the default `nvidia_nim/nvidia/nemotron-3-super-120b-a12b`, or select another model.
+4. Leave `MODEL` on the default `nvidia_nim/nvidia/nemotron-3-super-120b-a12b`, or search the model dropdown and select another model.
 5. Click **Validate**, then **Apply**.
 
 <div align="center">
@@ -145,7 +145,7 @@ fcc-codex exec "hello"
 
 ## Choose A Provider
 
-Enter the listed setting in the Admin UI, set `MODEL` to a provider-prefixed model ID, then click **Validate** and **Apply**. Provider names link to their key, model, or setup pages.
+Enter the listed setting in the Admin UI, open **Model Config**, then search the `MODEL` dropdown and select a model. FCC constructs each slug as `<provider-id>/<exact-provider-model-id>`; free-text entry remains available when a provider cannot list a model. Click **Validate** and **Apply**. Provider names link to their key, model, or setup pages.
 
 | Provider | Admin UI setting | Example `MODEL` |
 | --- | --- | --- |
@@ -209,7 +209,7 @@ Use the tag shown by `ollama list` with the `ollama/` prefix. `OLLAMA_BASE_URL` 
 
 ### Optional Model-Tier Routing
 
-`MODEL` is the fallback for every request. Set `MODEL_FABLE`, `MODEL_OPUS`, `MODEL_SONNET`, or `MODEL_HAIKU` to override individual Claude Code tiers; leave a tier blank to inherit `MODEL`.
+`MODEL` is the fallback for every request. Select a model for `MODEL_FABLE`, `MODEL_OPUS`, `MODEL_SONNET`, or `MODEL_HAIKU` to override an individual Claude Code tier; select **None** to use `MODEL`.
 
 For example, route Opus to `nvidia_nim/moonshotai/kimi-k2.6`, Sonnet to `open_router/openrouter/free`, Haiku to `lmstudio/qwen3.5-coder`, and keep `MODEL` on `zai/glm-5.2`.
 

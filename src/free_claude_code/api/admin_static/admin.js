@@ -84,6 +84,7 @@ async function load() {
   renderProviders(config.provider_status);
   renderSections(config.sections, config.fields);
   byId("configPath").textContent = config.paths.managed;
+  await loadModelOptions();
   await validate(false);
   await refreshLocalStatus();
   updateDirtyState();
@@ -210,6 +211,14 @@ function renderSections(sections, fields) {
       const heading = document.createElement("div");
       heading.className = "section-heading";
       heading.innerHTML = `<div><h3>${section.label}</h3><p>${section.description}</p></div>`;
+      if (section.id === "models") {
+        const refreshButton = document.createElement("button");
+        refreshButton.type = "button";
+        refreshButton.className = "secondary-button";
+        refreshButton.textContent = "Refresh models";
+        refreshButton.addEventListener("click", () => refreshModelOptions(refreshButton));
+        heading.appendChild(refreshButton);
+      }
       sectionEl.appendChild(heading);
 
       const grid = document.createElement("div");
@@ -261,9 +270,18 @@ function renderField(field) {
   input.dataset.original = field.value || "";
   input.dataset.secret = field.secret ? "true" : "false";
   input.dataset.configured = field.configured ? "true" : "false";
+  input.dataset.fieldType = field.type;
   input.disabled = field.locked;
   input.addEventListener("input", updateDirtyState);
   input.addEventListener("change", updateDirtyState);
+  if (field.type === "optional_model") {
+    input.addEventListener("blur", () => {
+      if (!input.value.trim() || input.value.trim().toLowerCase() === "none") {
+        input.value = "None";
+        updateDirtyState();
+      }
+    });
+  }
 
   wrapper.append(label, input);
   if (field.description) {
@@ -308,6 +326,18 @@ function inputForField(field) {
     return textarea;
   }
 
+  if (field.type === "model" || field.type === "optional_model") {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = field.value || (field.type === "optional_model" ? "None" : "");
+    input.setAttribute(
+      "list",
+      field.type === "optional_model" ? "optional-model-options" : "model-options",
+    );
+    input.autocomplete = "off";
+    return input;
+  }
+
   const input = document.createElement("input");
   input.type = field.type === "number" ? "number" : "text";
   if (field.type === "secret") {
@@ -319,9 +349,6 @@ function inputForField(field) {
     input.autocomplete = "off";
   } else {
     input.value = field.value || "";
-  }
-  if (field.key.startsWith("MODEL")) {
-    input.setAttribute("list", "model-options");
   }
   return input;
 }
@@ -335,6 +362,12 @@ function option(value, label) {
 
 function readFieldValue(input) {
   if (input.type === "checkbox") return input.checked ? "true" : "false";
+  if (
+    input.dataset.fieldType === "optional_model" &&
+    input.value.trim().toLowerCase() === "none"
+  ) {
+    return "";
+  }
   if (input.dataset.secret === "true" && input.dataset.configured === "true") {
     return input.value ? input.value : MASKED_SECRET;
   }
@@ -434,13 +467,10 @@ async function testProvider(providerId, button) {
         `${result.models.length} models`,
         result.models.slice(0, 3).join(", ") || "No models returned",
       );
-      state.modelOptions = Array.from(
-        new Set([
-          ...state.modelOptions,
-          ...result.models.map((model) => `${providerId}/${model}`),
-        ]),
-      ).sort();
-      syncModelDatalist();
+      setModelOptions([
+        ...state.modelOptions,
+        ...result.models.map((model) => `${providerId}/${model}`),
+      ]);
     } else {
       updateProviderCard(providerId, "offline", result.error_type, result.error_type);
     }
@@ -450,15 +480,50 @@ async function testProvider(providerId, button) {
   }
 }
 
-function syncModelDatalist() {
-  let datalist = byId("model-options");
+async function loadModelOptions(refresh = false) {
+  const result = await api("/admin/api/models" + (refresh ? "/refresh" : ""), {
+    method: refresh ? "POST" : "GET",
+  });
+  setModelOptions(result.models);
+  return state.modelOptions.length;
+}
+
+async function refreshModelOptions(button) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "Refreshing";
+  try {
+    const count = await loadModelOptions(true);
+    showMessage(`${count} models available`, "ok");
+  } catch (error) {
+    showMessage(`Could not refresh models: ${error.message}`, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+function setModelOptions(models) {
+  state.modelOptions = Array.from(
+    new Set(models.filter((model) => typeof model === "string" && model.trim())),
+  ).sort((left, right) => left.localeCompare(right));
+  syncModelDatalists();
+}
+
+function syncModelDatalist(id, values) {
+  let datalist = byId(id);
   if (!datalist) {
     datalist = document.createElement("datalist");
-    datalist.id = "model-options";
+    datalist.id = id;
     document.body.appendChild(datalist);
   }
   datalist.innerHTML = "";
-  state.modelOptions.forEach((model) => datalist.appendChild(option(model, model)));
+  values.forEach((model) => datalist.appendChild(option(model, model)));
+}
+
+function syncModelDatalists() {
+  syncModelDatalist("model-options", state.modelOptions);
+  syncModelDatalist("optional-model-options", ["None", ...state.modelOptions]);
 }
 
 function showMessage(message, kind = "") {

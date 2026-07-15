@@ -13,6 +13,7 @@ from pydantic import BaseModel, Field
 from free_claude_code.config.admin.manifest import FIELD_BY_KEY
 from free_claude_code.config.admin.persistence import validate_updates
 from free_claude_code.config.admin.values import load_config_response
+from free_claude_code.config.model_refs import configured_chat_model_refs
 
 from .dependencies import get_services
 from .ports import ApiServices
@@ -143,13 +144,34 @@ async def test_provider(
     return await services.admin.test_provider(provider_id)
 
 
+@router.get("/admin/api/models")
+async def models(
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    require_loopback_admin(request)
+    return _model_options(services)
+
+
 @router.post("/admin/api/models/refresh")
 async def refresh_models(
     request: Request,
     services: ApiServices = Depends(get_services),
 ):
     require_loopback_admin(request)
-    return await services.admin.refresh_models()
+    await services.admin.refresh_models()
+    return _model_options(services)
+
+
+def _model_options(services: ApiServices) -> dict[str, list[str]]:
+    configured = {
+        ref.model_ref
+        for ref in configured_chat_model_refs(services.requests.current_settings())
+    }
+    discovered = {
+        info.model_id for info in services.requests.cached_prefixed_model_infos()
+    }
+    return {"models": sorted(configured | discovered, key=str.casefold)}
 
 
 def _filtered_values(values: dict[str, Any]) -> dict[str, Any]:

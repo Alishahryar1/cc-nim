@@ -1,14 +1,15 @@
 from pathlib import Path
-from unittest.mock import patch
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.admin.values import MASKED_SECRET
 from free_claude_code.config.server_urls import local_admin_url
 from free_claude_code.config.settings import Settings
-from tests.api.support import create_test_app
+from tests.api.support import create_test_app, provider_manager_for_app
 
 
 def _local_client(app):
@@ -103,6 +104,18 @@ def test_admin_static_hides_managed_source_label():
     assert "sourceEl.textContent = source" in script
 
 
+def test_admin_static_loads_searchable_model_options_and_maps_none_to_unset():
+    script = Path("src/free_claude_code/api/admin_static/admin.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'api("/admin/api/models" + (refresh ? "/refresh" : "")' in script
+    assert 'field.type === "model" || field.type === "optional_model"' in script
+    assert '"optional-model-options", ["None", ...state.modelOptions]' in script
+    assert 'input.dataset.fieldType === "optional_model"' in script
+    assert 'return "";' in script
+
+
 def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
@@ -148,6 +161,19 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     assert open_browser_field["type"] == "boolean"
     assert open_browser_field["value"] == "true"
     assert open_browser_field["restart_required"] is False
+    model_field_types = {
+        field["key"]: field["type"]
+        for field in body["fields"]
+        if field["key"]
+        in {"MODEL", "MODEL_FABLE", "MODEL_OPUS", "MODEL_SONNET", "MODEL_HAIKU"}
+    }
+    assert model_field_types == {
+        "MODEL": "model",
+        "MODEL_FABLE": "optional_model",
+        "MODEL_OPUS": "optional_model",
+        "MODEL_SONNET": "optional_model",
+        "MODEL_HAIKU": "optional_model",
+    }
     restart_required = {
         field["key"] for field in body["fields"] if field["restart_required"] is True
     }
@@ -161,6 +187,54 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
         "LOG_RAW_CLI_DIAGNOSTICS",
         "LOG_MESSAGING_ERROR_DETAILS",
     } <= restart_required
+
+
+def test_admin_models_include_configured_and_cached_canonical_slugs():
+    settings = Settings()
+    settings.model = "nvidia_nim/configured-model"
+    settings.model_opus = "open_router/anthropic/configured-opus"
+    app = create_test_app(settings)
+    provider_manager_for_app(app).cache_model_infos(
+        "open_router",
+        {
+            ProviderModelInfo("anthropic/configured-opus"),
+            ProviderModelInfo("meta/llama-3.3"),
+        },
+    )
+
+    response = _local_client(app).get("/admin/api/models")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "models": [
+            "nvidia_nim/configured-model",
+            "open_router/anthropic/configured-opus",
+            "open_router/meta/llama-3.3",
+        ]
+    }
+
+
+def test_admin_model_refresh_returns_the_updated_canonical_catalog():
+    settings = Settings()
+    settings.model = "deepseek/deepseek-chat"
+    app = create_test_app(settings)
+    runtime = app.state.services.admin
+
+    async def refresh_models() -> None:
+        provider_manager_for_app(app).cache_model_infos(
+            "deepseek",
+            {ProviderModelInfo("deepseek-reasoner")},
+        )
+
+    runtime.refresh_models = AsyncMock(side_effect=refresh_models)
+
+    response = _local_client(app).post("/admin/api/models/refresh")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "models": ["deepseek/deepseek-chat", "deepseek/deepseek-reasoner"]
+    }
+    runtime.refresh_models.assert_awaited_once_with()
 
 
 def test_admin_config_preserves_managed_env_source_contract(monkeypatch, tmp_path):

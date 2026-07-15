@@ -244,14 +244,8 @@ class ApplicationRuntime:
             "models": sorted(info.model_id for info in infos),
         }
 
-    async def refresh_models(self) -> dict[str, Any]:
+    async def refresh_models(self) -> None:
         await self.provider_manager.refresh_model_list_cache()
-        return {
-            "cached_models": {
-                provider_id: sorted(model_ids)
-                for provider_id, model_ids in self.provider_manager.cached_model_ids().items()
-            }
-        }
 
     async def request_restart(self) -> None:
         callback = self._restart_callback
