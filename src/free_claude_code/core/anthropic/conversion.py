@@ -164,6 +164,44 @@ def _assert_no_forbidden_assistant_block(block: Any) -> None:
         )
 
 
+# Tag for messages that started out as a system-role message and were
+# demoted to user role by the mid-conversation system→user conversion.
+# The wrapper is a well-formed XML tag so the model can see both that
+# the content originated as a system instruction and where the boundary
+# lies. A ``role`` attribute distinguishes ``<system-reminder>`` injections
+# (``"reminder"``) from other system content (``"system"``).
+_SYSTEM_AS_USER_TAG = "system-msg"
+
+
+def _wrap_as_user_system(content: Any, kind: str) -> str:
+    """Wrap demoted system content with an XML marker tag.
+
+    *kind* is ``"reminder"`` (content includes ``<system-reminder>``)
+    or ``"system"`` (any other system content).
+
+    String content is wrapped directly. List-of-blocks content is
+    collapsed to a single string by joining the text portions.
+    """
+    if isinstance(content, list):
+        parts: list[str] = []
+        for block in content:
+            if isinstance(block, dict):
+                if block.get("type") == "text":
+                    parts.append(str(block.get("text", "")))
+                else:
+                    parts.append(str(block))
+            else:
+                btype = getattr(block, "type", None)
+                if btype == "text":
+                    parts.append(str(getattr(block, "text", "") or ""))
+                else:
+                    parts.append(str(block))
+        joined = "\n".join(p for p in parts if p)
+        content = joined
+    s = str(content) if not isinstance(content, str) else content
+    return f'<{_SYSTEM_AS_USER_TAG} role="{kind}">{s}</{_SYSTEM_AS_USER_TAG}>'
+
+
 def _openai_user_image_part(block: Any) -> dict[str, Any]:
     """Convert one Anthropic user image block without performing I/O."""
     source = get_block_attr(block, "source", {})
@@ -334,6 +372,21 @@ class AnthropicToOpenAIConverter:
         for msg in messages:
             role = msg.role
             content = msg.content
+
+            # Demote system-role messages to user role in-place.
+            # OpenAI Chat Completions providers expect the system role
+            # only at position 0 (inserted from the top-level ``system``
+            # field below). Mid-array ``role: system`` messages confuse
+            # most providers and break the position-based prefix cache.
+            # Flipping the role to ``user`` and wrapping the content
+            # with a ``<system-msg>`` marker keeps the byte sequence
+            # stable for upstream caching while still letting the model
+            # recognise the content as system-level instruction.
+            if role == "system":
+                role = "user"
+                kind = "reminder" if "<system-reminder>" in str(content) else "system"
+                content = _wrap_as_user_system(content, kind)
+
             reasoning_content = _clean_reasoning_content(
                 getattr(msg, "reasoning_content", None)
             )
