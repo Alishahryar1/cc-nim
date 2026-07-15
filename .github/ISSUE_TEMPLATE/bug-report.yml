@@ -8,8 +8,8 @@ body:
     id: fcc-version
     attributes:
       label: FCC version
-      description: Run `fcc-server --version` and enter the reported version. If FCC did not install, enter `not installed`.
-      placeholder: "4.4.1 or not installed"
+      description: Run `fcc-server --version` and enter only the version number, such as `4.6.1`. If FCC did not install, enter `None`.
+      placeholder: "4.6.1 or None"
     validations:
       required: true
 
