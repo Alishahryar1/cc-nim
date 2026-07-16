@@ -23,7 +23,11 @@ def build_asgi_app(
 ) -> RuntimeASGIApp:
     """Construct the complete server application and its resource owner."""
     log_path = Path(os.getenv("LOG_FILE", server_log_path()))
-    configure_logging(log_path, verbose_third_party=settings.log_raw_api_payloads)
+    configure_logging(
+        log_path,
+        level=settings.log_level,
+        verbose_third_party=settings.log_raw_api_payloads,
+    )
     provider_manager = ProviderRuntimeManager(settings)
     runtime = ApplicationRuntime(
         provider_manager,

@@ -101,3 +101,72 @@ def test_httpx_resets_to_notset_when_verbose_third_party(tmp_path) -> None:
     log_file = str(tmp_path / "verbose.log")
     configure_logging(log_file, force=True, verbose_third_party=True)
     assert logging.getLogger("httpx").level == logging.NOTSET
+
+
+def test_configure_logging_respects_level(tmp_path) -> None:
+    """INFO level suppresses DEBUG messages from the file sink."""
+    log_file = str(tmp_path / "level.log")
+    configure_logging(log_file, force=True, level="INFO")
+
+    logger.debug("should not appear")
+    logger.info("should appear")
+    logger.complete()
+
+    text = Path(log_file).read_text(encoding="utf-8")
+    assert "should appear" in text
+    assert "should not appear" not in text
+
+
+def test_configure_logging_defaults_to_debug(tmp_path) -> None:
+    """Backward compat: default level is DEBUG so all messages appear."""
+    log_file = str(tmp_path / "default.log")
+    configure_logging(log_file, force=True)
+
+    logger.debug("debug message")
+    logger.info("info message")
+    logger.complete()
+
+    text = Path(log_file).read_text(encoding="utf-8")
+    assert "debug message" in text
+    assert "info message" in text
+
+
+def test_configure_logging_handles_level_change_on_restart(tmp_path) -> None:
+    """Restart with a different level replaces the sink without truncating."""
+    log_file = str(tmp_path / "restart.log")
+
+    # First call: DEBUG level
+    configure_logging(log_file, force=True, level="DEBUG")
+    logger.debug("first debug")
+    logger.complete()
+
+    # Second call: change to INFO (simulates supervised restart)
+    configure_logging(log_file, level="INFO")
+    logger.debug("second debug")
+    logger.info("second info")
+    logger.complete()
+
+    text = Path(log_file).read_text(encoding="utf-8")
+    # First DEBUG message was written before the level change
+    assert "first debug" in text
+    # Second DEBUG is suppressed by the new INFO level
+    assert "second debug" not in text
+    # INFO messages appear regardless
+    assert "second info" in text
+
+
+def test_configure_logging_skips_when_level_unchanged(tmp_path) -> None:
+    """When level hasn't changed, the existing sink is reused."""
+    log_file = str(tmp_path / "same.log")
+    configure_logging(log_file, force=True, level="WARNING")
+    logger.warning("first warning")
+    logger.complete()
+
+    # Second call with same level — should be a no-op for the sink
+    configure_logging(log_file, level="WARNING")
+    logger.warning("second warning")
+    logger.complete()
+
+    text = Path(log_file).read_text(encoding="utf-8")
+    assert "first warning" in text
+    assert "second warning" in text
