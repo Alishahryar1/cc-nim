@@ -107,14 +107,38 @@ def test_admin_static_hides_managed_source_label():
     assert "sourceEl.textContent = source" in script
 
 
-def test_admin_static_loads_searchable_model_options_and_maps_none_to_unset():
+def test_admin_static_model_combobox_owns_dropdown_and_search_behavior():
     script = Path("src/free_claude_code/api/admin_static/admin.js").read_text(
+        encoding="utf-8"
+    )
+    styles = Path("src/free_claude_code/api/admin_static/admin.css").read_text(
         encoding="utf-8"
     )
 
     assert 'api("/admin/api/models" + (refresh ? "/refresh" : "")' in script
     assert 'field.type === "model" || field.type === "optional_model"' in script
-    assert '"optional-model-options", ["None", ...state.modelOptions]' in script
+    assert 'input.setAttribute("role", "combobox")' in script
+    assert 'listbox.setAttribute("role", "listbox")' in script
+    assert 'toggle.className = "model-combobox-toggle"' in script
+    assert "class ModelCombobox" in script
+    assert 'input.addEventListener("click", () => this.open())' in script
+    assert "value.toLocaleLowerCase().includes(normalizedQuery)" in script
+    assert 'event.key === "ArrowDown" || event.key === "ArrowUp"' in script
+    assert 'event.key === "Enter"' in script
+    assert 'event.key === "Escape"' in script
+    assert 'document.createElement("datalist")' not in script
+    assert ".model-combobox-list" in styles
+    assert ".model-combobox-option.active" in styles
+    assert styles.count("background-image: var(--dropdown-chevron)") == 2
+
+
+def test_admin_static_model_combobox_preserves_custom_slugs_and_none_semantics():
+    script = Path("src/free_claude_code/api/admin_static/admin.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert '? ["None", ...state.modelOptions]' in script
+    assert "You can still enter a custom slug." in script
     assert 'input.dataset.fieldType === "optional_model"' in script
     assert 'return "";' in script
     assert "await hydrateModelOptions();" in script
