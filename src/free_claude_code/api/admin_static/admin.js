@@ -509,7 +509,14 @@ class ModelCombobox {
   handleKeydown(event) {
     if (event.key === "ArrowDown" || event.key === "ArrowUp") {
       event.preventDefault();
-      this.isOpen ? this.move(event.key === "ArrowDown" ? 1 : -1) : this.open();
+      if (this.isOpen) {
+        this.move(event.key === "ArrowDown" ? 1 : -1);
+      } else {
+        this.open();
+        if (event.key === "ArrowUp") {
+          this.setActive(this.visibleOptions.length - 1);
+        }
+      }
     } else if (this.isOpen && (event.key === "Home" || event.key === "End")) {
       event.preventDefault();
       this.setActive(event.key === "Home" ? 0 : this.visibleOptions.length - 1);

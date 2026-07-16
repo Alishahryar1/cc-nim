@@ -124,6 +124,7 @@ def test_admin_static_model_combobox_owns_dropdown_and_search_behavior():
     assert 'input.addEventListener("click", () => this.open())' in script
     assert "value.toLocaleLowerCase().includes(normalizedQuery)" in script
     assert 'event.key === "ArrowDown" || event.key === "ArrowUp"' in script
+    assert "this.setActive(this.visibleOptions.length - 1)" in script
     assert 'event.key === "Enter"' in script
     assert 'event.key === "Escape"' in script
     assert 'document.createElement("datalist")' not in script
