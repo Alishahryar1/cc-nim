@@ -31,11 +31,11 @@ ALLOWED_PACKAGE_DEPENDENCIES: dict[str, set[str]] = {
 
 IMPORT_EXCEPTIONS: dict[tuple[str, str], str] = {
     (
-        "free_claude_code.cli.entrypoints",
+        "free_claude_code.cli.commands",
         "free_claude_code.runtime.bootstrap",
     ): (
-        "Owner: installed server entrypoint. "
-        "Reason: the executable delegates construction to the process composition root."
+        "Owner: installed server command. "
+        "Reason: the command delegates construction to the process composition root."
     ),
 }
 
