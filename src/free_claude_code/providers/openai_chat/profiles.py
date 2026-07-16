@@ -248,6 +248,7 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             provider_name="OLLAMA",
             default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
         ),
+        postprocessors=(_apply_ollama_thinking_policy,),
         normalize_base_url=True,
     ),
 }

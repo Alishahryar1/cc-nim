@@ -78,7 +78,7 @@ def test_build_request_body_uses_openai_chat_shape() -> None:
 
     assert body["model"] == OLLAMA_MODEL
     assert body["messages"][0]["role"] == "system"
-    assert "reasoning_effort" not in body
+    assert body["reasoning_effort"] == "high"
     assert "thinking" not in body
     assert "extra_body" not in body
 
@@ -132,7 +132,7 @@ def test_cloud_build_request_body_replays_thinking_in_ollama_reasoning_field() -
 
 @pytest.mark.parametrize(
     ("provider", "expected_effort"),
-    [(_provider, None), (_cloud_provider, "none")],
+    [(_provider, "none"), (_cloud_provider, "none")],
 )
 def test_disabled_thinking_is_not_replayed_and_disables_ollama_reasoning(
     provider, expected_effort
