@@ -930,64 +930,110 @@ async function startChatGPTOAuthLogin(button) {
   const original = button.textContent;
   button.disabled = true;
   button.textContent = "Starting login...";
-  let pollHandle = null;
 
   try {
-    const initiate = await api("/admin/api/chatgpt-oauth/initiate", {
-      method: "POST",
-      body: "{}",
-    });
-    const verificationUrl = initiate.verification_url;
-    const userCode = initiate.user_code;
-
-    showMessage(
-      `ChatGPT OAuth: open ${verificationUrl} and enter code ${userCode}`,
-      "warn",
-    );
-
-    const tokenField = document.querySelector('[data-key="CHATGPT_OAUTH_ACCESS_TOKEN"] input');
-    const accountField = document.querySelector('[data-key="CHATGPT_OAUTH_ACCOUNT_ID"] input');
-
-    const stopPolling = () => {
-      if (pollHandle) {
-        clearInterval(pollHandle);
-        pollHandle = null;
-      }
+    // Primary: browser PKCE flow — the login page opens automatically and the
+    // local callback completes the flow; no code to copy or paste.
+    try {
+      const initiate = await api("/admin/api/chatgpt-oauth/browser/initiate", {
+        method: "POST",
+        body: "{}",
+      });
+      window.open(initiate.authorize_url, "_blank", "noopener");
+      showMessage(
+        "ChatGPT OAuth: complete the login in the browser tab that just opened.",
+        "warn",
+      );
+      await pollBrowserOAuthLogin();
       button.disabled = false;
       button.textContent = original;
-    };
+      return;
+    } catch (browserError) {
+      showMessage(
+        `Browser login unavailable (${browserError.message}); trying device-code login...`,
+        "warn",
+      );
+    }
 
-    pollHandle = setInterval(async () => {
-      try {
-        const result = await api("/admin/api/chatgpt-oauth/exchange", {
-          method: "POST",
-          body: JSON.stringify({
-            device_auth_id: initiate.device_auth_id,
-            user_code: userCode,
-          }),
-        });
-        if (result.status === "complete") {
-          stopPolling();
-          if (tokenField) {
-            tokenField.value = result.access_token;
-            tokenField.dispatchEvent(new Event("input"));
-          }
-          if (accountField && result.account_id) {
-            accountField.value = result.account_id;
-            accountField.dispatchEvent(new Event("input"));
-          }
-          showMessage("ChatGPT OAuth login complete. Apply settings to save.", "ok");
-        }
-      } catch (error) {
-        stopPolling();
-        showMessage(`ChatGPT OAuth login failed: ${error.message}`, "error");
-      }
-    }, 8000);
+    await startDeviceOAuthLogin(button);
+    button.disabled = false;
+    button.textContent = original;
   } catch (error) {
     button.disabled = false;
     button.textContent = original;
     showMessage(`ChatGPT OAuth login failed: ${error.message}`, "error");
   }
+}
+
+async function pollBrowserOAuthLogin() {
+  const deadline = Date.now() + 5 * 60 * 1000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 3000));
+    const result = await api("/admin/api/chatgpt-oauth/browser/status", {
+      method: "POST",
+      body: "{}",
+    });
+    if (result.status === "complete") {
+      fillChatGPTOAuthFields(result.access_token, result.account_id);
+      showMessage("ChatGPT OAuth login complete. Apply settings to save.", "ok");
+      return;
+    }
+    if (result.status === "error") {
+      throw new Error(result.message || "Browser login failed");
+    }
+  }
+  throw new Error("Timed out waiting for the browser login to complete");
+}
+
+function fillChatGPTOAuthFields(accessToken, accountId) {
+  const tokenField = document.querySelector(
+    '[data-key="CHATGPT_OAUTH_ACCESS_TOKEN"] input',
+  );
+  const accountField = document.querySelector(
+    '[data-key="CHATGPT_OAUTH_ACCOUNT_ID"] input',
+  );
+  if (tokenField) {
+    tokenField.value = accessToken;
+    tokenField.dispatchEvent(new Event("input"));
+  }
+  if (accountField && accountId) {
+    accountField.value = accountId;
+    accountField.dispatchEvent(new Event("input"));
+  }
+}
+
+async function startDeviceOAuthLogin(button) {
+  const initiate = await api("/admin/api/chatgpt-oauth/initiate", {
+    method: "POST",
+    body: "{}",
+  });
+  const verificationUrl = initiate.verification_url;
+  const userCode = initiate.user_code;
+
+  // Open the verification page automatically; the user only enters the code.
+  window.open(verificationUrl, "_blank", "noopener");
+  showMessage(
+    `ChatGPT OAuth: a browser tab was opened for ${verificationUrl} - enter code ${userCode}`,
+    "warn",
+  );
+
+  const deadline = Date.now() + 10 * 60 * 1000;
+  while (Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 8000));
+    const result = await api("/admin/api/chatgpt-oauth/exchange", {
+      method: "POST",
+      body: JSON.stringify({
+        device_auth_id: initiate.device_auth_id,
+        user_code: userCode,
+      }),
+    });
+    if (result.status === "complete") {
+      fillChatGPTOAuthFields(result.access_token, result.account_id);
+      showMessage("ChatGPT OAuth login complete. Apply settings to save.", "ok");
+      return;
+    }
+  }
+  throw new Error("Timed out waiting for device authorization");
 }
 
 function providerDisplayName(providerId) {

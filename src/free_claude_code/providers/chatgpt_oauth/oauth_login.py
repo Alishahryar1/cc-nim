@@ -348,8 +348,27 @@ def exchange_device_auth_for_tokens(
 
 
 def chatgpt_oauth_login_command() -> None:
-    """CLI entry point for ``fcc-chatgpt-oauth-login``."""
+    """CLI entry point for ``fcc-chatgpt-oauth-login``.
+
+    Uses the browser PKCE flow by default (opens the login page automatically)
+    and falls back to the headless device-code flow when a browser cannot be
+    opened. ``--device`` forces the device flow.
+    """
+    from .browser_login import (
+        ChatGPTOAuthBrowserUnavailableError,
+        perform_browser_login,
+    )
+
+    force_device = "--device" in sys.argv[1:]
+
     try:
+        if not force_device:
+            try:
+                perform_browser_login()
+                return
+            except ChatGPTOAuthBrowserUnavailableError as exc:
+                print(f"Browser login unavailable: {exc}", file=sys.stderr, flush=True)
+                print("Falling back to device-code login...", flush=True)
         perform_chatgpt_oauth_login()
     except ChatGPTOAuthLoginTimeoutError as exc:
         print(f"Timeout: {exc}", file=sys.stderr, flush=True)
