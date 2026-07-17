@@ -79,6 +79,7 @@ def apply_nim_request_options(
         extra_body.update(deepcopy(request_extra))
     for key in (
         "reasoning",
+        "reasoning_budget",
         "reasoning_effort",
         "reasoning_tokens",
         "thinking",

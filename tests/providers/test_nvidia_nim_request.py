@@ -128,6 +128,34 @@ class TestBuildRequestBody:
             "reasoning_budget": expected_budget,
         }
 
+    def test_named_effort_replaces_client_reasoning_budgets(self):
+        req = make_messages_request(
+            model="test",
+            thinking=None,
+            extra_body={
+                "reasoning_budget": 99,
+                "chat_template_kwargs": {
+                    "reasoning_budget": 100,
+                    "custom": "value",
+                },
+            },
+        )
+
+        body = build_request_body(
+            req,
+            NimSettings(),
+            reasoning=ReasoningPolicy(effort=ReasoningEffort.HIGH),
+        )
+
+        extra_body = body["extra_body"]
+        assert "reasoning_budget" not in extra_body
+        assert extra_body["chat_template_kwargs"] == {
+            "custom": "value",
+            "thinking": True,
+            "enable_thinking": True,
+            "reasoning_budget": 2048,
+        }
+
     def test_max_tokens_capped_by_nim(self, req):
         req.max_tokens = 100000
         nim = NimSettings(max_tokens=4096)
