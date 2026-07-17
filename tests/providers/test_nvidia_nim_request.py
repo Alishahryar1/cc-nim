@@ -101,14 +101,31 @@ class TestSetExtra:
 
 
 class TestBuildRequestBody:
-    def test_named_effort_enables_boolean_chat_template_control(self, req):
-        policy = ReasoningPolicy(effort=ReasoningEffort.HIGH)
+    @pytest.mark.parametrize(
+        ("effort", "expected_budget"),
+        (
+            (ReasoningEffort.MINIMAL, 512),
+            (ReasoningEffort.LOW, 512),
+            (ReasoningEffort.MEDIUM, 1_024),
+            (ReasoningEffort.HIGH, 2_048),
+            (ReasoningEffort.XHIGH, 4_096),
+            (ReasoningEffort.MAX, 8_192),
+        ),
+    )
+    def test_named_effort_enables_thinking_with_numeric_budget(
+        self,
+        req,
+        effort: ReasoningEffort,
+        expected_budget: int,
+    ):
+        policy = ReasoningPolicy(effort=effort)
 
         body = build_request_body(req, NimSettings(), reasoning=policy)
 
         assert body["extra_body"]["chat_template_kwargs"] == {
             "thinking": True,
             "enable_thinking": True,
+            "reasoning_budget": expected_budget,
         }
 
     def test_max_tokens_capped_by_nim(self, req):

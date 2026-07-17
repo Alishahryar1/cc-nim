@@ -110,13 +110,13 @@ class ChatTemplateReasoning:
 
 @dataclass(frozen=True, slots=True)
 class LlamaCppReasoning:
-    """Encode llama.cpp's exact per-request numeric thinking budget."""
+    """Encode llama.cpp's per-request numeric thinking budget."""
 
     def encode(self, body: dict[str, Any], policy: ReasoningPolicy) -> None:
         if policy.control is ReasoningControl.OFF:
             _extra_body(body)["thinking_budget_tokens"] = 0
-        elif policy.budget_tokens is not None:
-            _extra_body(body)["thinking_budget_tokens"] = policy.budget_tokens
+        elif (budget := policy.numeric_budget_tokens) is not None:
+            _extra_body(body)["thinking_budget_tokens"] = budget
 
 
 @dataclass(frozen=True, slots=True)

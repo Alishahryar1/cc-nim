@@ -88,17 +88,17 @@ def test_chat_template_encoder_maps_named_effort_to_boolean_capability() -> None
     assert body == {"extra_body": {"chat_template_kwargs": {"thinking": True}}}
 
 
-def test_llamacpp_encoder_forwards_only_exact_budget_or_off() -> None:
-    default_body: dict = {}
+def test_llamacpp_encoder_maps_effort_preserves_exact_budget_and_disables() -> None:
+    effort_body: dict = {}
     budget_body: dict = {}
     off_body: dict = {}
     encoder = LlamaCppReasoning()
 
-    encoder.encode(default_body, ReasoningPolicy.on(effort=ReasoningEffort.HIGH))
+    encoder.encode(effort_body, ReasoningPolicy.on(effort=ReasoningEffort.HIGH))
     encoder.encode(budget_body, ReasoningPolicy.on(budget_tokens=256))
     encoder.encode(off_body, ReasoningPolicy.off())
 
-    assert default_body == {}
+    assert effort_body == {"extra_body": {"thinking_budget_tokens": 2048}}
     assert budget_body == {"extra_body": {"thinking_budget_tokens": 256}}
     assert off_body == {"extra_body": {"thinking_budget_tokens": 0}}
 

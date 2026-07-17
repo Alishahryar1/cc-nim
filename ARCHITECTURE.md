@@ -611,14 +611,18 @@ provider-neutral `ReasoningPolicy`. It represents three distinct facts:
 
 - `control`: provider default, explicitly off, or explicitly on;
 - `effort`: the client's named effort when one was supplied;
-- `budget_tokens`: an exact positive client budget, never a derived value.
+- `budget_tokens`: an exact positive client budget when one was supplied.
+
+When a numeric-budget provider needs a budget, `ReasoningPolicy` expresses named
+effort through FCC's single product scale: `minimal`/`low=512`, `medium=1024`,
+`high=2048`, `xhigh=4096`, and `max=8192`. Exact client budgets take precedence.
 
 The application layer resolves configuration and client input into this value;
 the API layer may replace it for a product policy such as the safety classifier;
 providers receive it unchanged. Provider adapters alone translate the subset
 their documented wire API can represent. The shared OpenAI-chat implementation
 uses small encoder objects for named effort, reasoning objects, thinking
-objects, chat-template booleans, exact llama.cpp budgets, and split reasoning
+objects, chat-template booleans, numeric llama.cpp budgets, and split reasoning
 output. Specialized providers keep only translations that cannot be expressed
 by those encoders.
 
@@ -631,11 +635,11 @@ for a valid continuation.
 The boundary has four hard rules:
 
 1. Never inspect an upstream model name or version to select reasoning behavior.
-2. Never convert a named effort into a fabricated token budget, or use the
-   output-token limit as a reasoning budget.
-3. Forward an exact token budget only where the provider documents one; otherwise
-   translate a supported named or boolean control and leave unsupported precision
-   to the provider.
+2. Prefer a provider's named effort vocabulary; use FCC's documented numeric
+   scale only when the provider exposes a numeric budget rather than named effort.
+3. Never use the output-token limit as a reasoning budget. Forward exact or
+   FCC-mapped budgets only through documented numeric fields; otherwise translate
+   a supported named or boolean control and leave unsupported precision upstream.
 4. Provider-default intent emits no compute-control field. Explicit off requests
    an upstream disable where supported and always suppresses reasoning output at
    the FCC protocol boundary.

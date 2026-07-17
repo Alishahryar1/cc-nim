@@ -22,6 +22,22 @@ class ReasoningEffort(StrEnum):
     XHIGH = "xhigh"
     MAX = "max"
 
+    @property
+    def budget_tokens(self) -> int:
+        """Return FCC's numeric token budget for this effort."""
+
+        return _EFFORT_BUDGET_TOKENS[self]
+
+
+_EFFORT_BUDGET_TOKENS = {
+    ReasoningEffort.MINIMAL: 512,
+    ReasoningEffort.LOW: 512,
+    ReasoningEffort.MEDIUM: 1_024,
+    ReasoningEffort.HIGH: 2_048,
+    ReasoningEffort.XHIGH: 4_096,
+    ReasoningEffort.MAX: 8_192,
+}
+
 
 @dataclass(frozen=True, slots=True)
 class ReasoningPolicy:
@@ -88,6 +104,18 @@ class ReasoningPolicy:
             or self.effort is not None
             or self.budget_tokens is not None
         )
+
+    @property
+    def numeric_budget_tokens(self) -> int | None:
+        """Express this intent as an exact or FCC-mapped numeric budget."""
+
+        if self.control is ReasoningControl.OFF:
+            return None
+        if self.budget_tokens is not None:
+            return self.budget_tokens
+        if self.effort is None:
+            return None
+        return self.effort.budget_tokens
 
 
 DEFAULT_REASONING_POLICY = ReasoningPolicy.provider_default()

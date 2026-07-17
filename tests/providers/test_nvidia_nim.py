@@ -8,7 +8,7 @@ from httpx import Request, Response
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.config.provider_catalog import NVIDIA_NIM_DEFAULT_BASE
 from free_claude_code.core.failures import ExecutionFailure
-from free_claude_code.core.reasoning import ReasoningPolicy
+from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.nvidia_nim.tool_schema import (
     NIM_TOOL_ARGUMENT_ALIASES_KEY,
@@ -767,14 +767,15 @@ async def test_stream_response_retries_without_reasoning_budget(nim_provider):
         events = [
             e
             async for e in nim_provider.stream_response(
-                req, reasoning=ReasoningPolicy.on(budget_tokens=77)
+                req,
+                reasoning=ReasoningPolicy.on(effort=ReasoningEffort.XHIGH),
             )
         ]
 
     assert mock_create.await_count == 2
     first_call = mock_create.await_args_list[0].kwargs
     second_call = mock_create.await_args_list[1].kwargs
-    assert first_call["extra_body"]["chat_template_kwargs"]["reasoning_budget"] == 77
+    assert first_call["extra_body"]["chat_template_kwargs"]["reasoning_budget"] == 4096
     assert "reasoning_budget" not in second_call["extra_body"]
     assert "reasoning_budget" not in second_call["extra_body"]["chat_template_kwargs"]
     assert second_call["extra_body"]["chat_template_kwargs"]["enable_thinking"] is True

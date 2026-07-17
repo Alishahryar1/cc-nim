@@ -40,7 +40,7 @@ def test_client_reasoning_preserves_effort_and_exact_budget() -> None:
     )
 
 
-def test_named_effort_does_not_invent_a_token_budget() -> None:
+def test_named_effort_preserves_intent_without_exact_client_budget() -> None:
     policy = client_reasoning_policy(_request(output_config={"effort": "high"}))
 
     assert policy == ReasoningPolicy(
@@ -127,3 +127,43 @@ def test_reasoning_budget_requires_a_positive_integer(budget: int) -> None:
 def test_reasoning_budget_requires_explicit_on_control() -> None:
     with pytest.raises(ValueError, match="control to be on"):
         ReasoningPolicy(budget_tokens=100)
+
+
+@pytest.mark.parametrize(
+    ("effort", "expected"),
+    (
+        (ReasoningEffort.MINIMAL, 512),
+        (ReasoningEffort.LOW, 512),
+        (ReasoningEffort.MEDIUM, 1_024),
+        (ReasoningEffort.HIGH, 2_048),
+        (ReasoningEffort.XHIGH, 4_096),
+        (ReasoningEffort.MAX, 8_192),
+    ),
+)
+def test_reasoning_effort_has_one_fcc_numeric_budget(
+    effort: ReasoningEffort, expected: int
+) -> None:
+    assert ReasoningPolicy.on(effort=effort).numeric_budget_tokens == expected
+
+
+def test_exact_reasoning_budget_takes_precedence_over_effort_mapping() -> None:
+    policy = ReasoningPolicy.on(
+        effort=ReasoningEffort.XHIGH,
+        budget_tokens=777,
+    )
+
+    assert policy.numeric_budget_tokens == 777
+
+
+@pytest.mark.parametrize(
+    "policy",
+    (
+        ReasoningPolicy.provider_default(),
+        ReasoningPolicy.off(),
+        ReasoningPolicy.on(),
+    ),
+)
+def test_reasoning_without_numeric_intensity_has_no_budget(
+    policy: ReasoningPolicy,
+) -> None:
+    assert policy.numeric_budget_tokens is None
