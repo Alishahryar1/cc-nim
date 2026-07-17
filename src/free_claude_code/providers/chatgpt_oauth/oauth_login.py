@@ -19,7 +19,7 @@ from .credentials import (
     CODEX_OAUTH_TOKEN_URL,
     _codex_home,
     _decode_jwt_claims,
-    _extract_account_id,
+    extract_account_id_from_tokens,
 )
 
 CHATGPT_OAUTH_ISSUER = "https://auth.openai.com"
@@ -103,6 +103,7 @@ def _poll_device_auth(
     user_code: str,
     *,
     deadline: float,
+    interval_ms: int = 5000,
     http_client: httpx.Client | None = None,
 ) -> dict[str, Any]:
     """Poll the device-auth token endpoint until success or timeout."""
@@ -140,15 +141,6 @@ def _poll_device_auth(
                     "Timed out waiting for ChatGPT OAuth login completion."
                 )
 
-            interval_ms = (
-                _parse_device_response(response).get("interval", 5)
-                if response.status_code == 200
-                else 5000
-            )
-            try:
-                interval_ms = max(int(interval_ms or 5), 1) * 1000
-            except (TypeError, ValueError):
-                interval_ms = 5000
             time.sleep((interval_ms + CHATGPT_OAUTH_POLL_SAFETY_MS) / 1000.0)
     finally:
         if http_client is None:
@@ -217,17 +209,19 @@ def _write_codex_auth_file(
 
     access_token = tokens.get("access_token")
     refresh_token = tokens.get("refresh_token")
+    id_token = tokens.get("id_token")
     expires_at = _extract_expires_at(tokens)
 
-    payload = {
-        "tokens": {
-            "access_token": access_token,
-            "refresh_token": refresh_token,
-        }
+    payload_tokens: dict[str, Any] = {
+        "access_token": access_token,
+        "refresh_token": refresh_token,
     }
+    if isinstance(id_token, str) and id_token:
+        payload_tokens["id_token"] = id_token
     if expires_at is not None:
-        payload["tokens"]["expires_at"] = expires_at
+        payload_tokens["expires_at"] = expires_at
 
+    payload = {"tokens": payload_tokens}
     path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
     return path
 
@@ -243,7 +237,7 @@ def perform_chatgpt_oauth_login(
     Returns the token payload. Raises ChatGPTOAuthLoginError or
     ChatGPTOAuthLoginTimeoutError on failure.
     """
-    device_auth_id, user_code, _interval_ms = _initiate_device_auth(http_client)
+    device_auth_id, user_code, interval_ms = _initiate_device_auth(http_client)
 
     print(
         "\n".join(
@@ -264,6 +258,7 @@ def perform_chatgpt_oauth_login(
         device_auth_id,
         user_code,
         deadline=deadline,
+        interval_ms=interval_ms,
         http_client=http_client,
     )
 
@@ -286,7 +281,10 @@ def perform_chatgpt_oauth_login(
     if not isinstance(access_token, str) or not access_token:
         raise ChatGPTOAuthLoginError("Token exchange did not return an access_token")
 
-    account_id = _extract_account_id(access_token)
+    account_id = extract_account_id_from_tokens(
+        access_token=access_token,
+        id_token=tokens.get("id_token"),
+    )
     tokens["account_id"] = account_id
 
     path = _write_codex_auth_file(tokens, auth_path=auth_path)
@@ -340,7 +338,10 @@ def exchange_device_auth_for_tokens(
     if not isinstance(access_token, str) or not access_token:
         raise ChatGPTOAuthLoginError("Token exchange did not return an access_token")
 
-    account_id = _extract_account_id(access_token)
+    account_id = extract_account_id_from_tokens(
+        access_token=access_token,
+        id_token=tokens.get("id_token"),
+    )
     tokens["account_id"] = account_id
     _write_codex_auth_file(tokens, auth_path=auth_path)
     return tokens

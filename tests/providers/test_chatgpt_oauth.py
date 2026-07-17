@@ -243,6 +243,97 @@ def test_load_credentials_reads_codex_auth_file(tmp_path, monkeypatch):
     assert creds.access_token == "file_token"
 
 
+def _jwt(payload_dict: dict) -> str:
+    import base64
+
+    header = base64.urlsafe_b64encode(b"{}").decode().rstrip("=")
+    payload = base64.urlsafe_b64encode(json.dumps(payload_dict).encode()).decode().rstrip("=")
+    return f"{header}.{payload}."
+
+
+def test_load_credentials_prefers_id_token_for_account_id(tmp_path, monkeypatch):
+    codex_home = tmp_path / ".codex"
+    codex_home.mkdir()
+    access_token = _jwt({"exp": 9999999999})
+    id_token = _jwt({"chatgpt_account_id": "acct_from_id_token"})
+    (codex_home / "auth.json").write_text(
+        json.dumps({"tokens": {"access_token": access_token, "id_token": id_token}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    creds = load_chatgpt_oauth_credentials()
+
+    assert creds.account_id == "acct_from_id_token"
+
+
+def test_load_credentials_falls_back_to_organization_id(tmp_path, monkeypatch):
+    codex_home = tmp_path / ".codex"
+    codex_home.mkdir()
+    access_token = _jwt({"organizations": [{"id": "org_123"}], "exp": 9999999999})
+    (codex_home / "auth.json").write_text(
+        json.dumps({"tokens": {"access_token": access_token}}),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    creds = load_chatgpt_oauth_credentials()
+
+    assert creds.account_id == "org_123"
+
+
+def test_refresh_persists_rotated_tokens_to_auth_file(tmp_path, monkeypatch):
+    import time
+
+    from free_claude_code.providers.chatgpt_oauth import credentials as creds_module
+
+    codex_home = tmp_path / ".codex"
+    codex_home.mkdir()
+    auth_path = codex_home / "auth.json"
+    expired_access = _jwt({"exp": int(time.time()) - 100})
+    auth_path.write_text(
+        json.dumps(
+            {"tokens": {"access_token": expired_access, "refresh_token": "refresh_old"}}
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("CODEX_HOME", str(codex_home))
+
+    new_access = _jwt({"exp": 9999999999, "chatgpt_account_id": "acct_new"})
+    monkeypatch.setattr(
+        creds_module,
+        "_refresh_access_token",
+        lambda refresh: (new_access, "refresh_rotated", 9999999999, None),
+    )
+
+    creds = load_chatgpt_oauth_credentials()
+
+    assert creds.access_token == new_access
+    assert creds.account_id == "acct_new"
+    saved = json.loads(auth_path.read_text(encoding="utf-8"))
+    assert saved["tokens"]["access_token"] == new_access
+    assert saved["tokens"]["refresh_token"] == "refresh_rotated"
+    assert saved["tokens"]["expires_at"] == 9999999999
+
+
+def test_write_codex_auth_file_stores_id_token(tmp_path, monkeypatch):
+    from free_claude_code.providers.chatgpt_oauth import oauth_login
+
+    auth_path = tmp_path / ".codex" / "auth.json"
+    oauth_login._write_codex_auth_file(
+        {
+            "access_token": "access_1",
+            "refresh_token": "refresh_1",
+            "id_token": "id_1",
+            "expires_in": 3600,
+        },
+        auth_path=auth_path,
+    )
+
+    saved = json.loads(auth_path.read_text(encoding="utf-8"))
+    assert saved["tokens"]["id_token"] == "id_1"
+
+
 def test_load_credentials_extracts_account_id_from_jwt(tmp_path, monkeypatch):
     import base64
 

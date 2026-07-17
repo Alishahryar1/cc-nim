@@ -1,8 +1,10 @@
 """ChatGPT/Codex OAuth credential loading and refresh.
 
 This mirrors the token sources used by OpenAI's Codex CLI and the Hermes
-auth file. Tokens are read from disk (not written) and refreshed in memory
-when they are close to expiry.
+auth file. Refreshed tokens are written back to the source auth file so
+rotated refresh tokens survive restarts (matching OpenCode's behaviour of
+persisting refreshed credentials), and concurrent refreshes are deduplicated
+with a process-wide lock.
 """
 
 from __future__ import annotations
@@ -11,11 +13,13 @@ import base64
 import dataclasses
 import json
 import os
+import threading
 import time
 from pathlib import Path
 from typing import Any
 
 import httpx
+from loguru import logger
 
 CODEX_OAUTH_CLIENT_ID = "app_EMoamEEZ73f0CkXaXp7hrann"
 CODEX_OAUTH_TOKEN_URL = "https://auth.openai.com/oauth/token"
@@ -42,6 +46,7 @@ class _TokenSource:
     path: Path
     access_token: str | None
     refresh_token: str | None
+    id_token: str | None = None
 
     @property
     def has_access_token(self) -> bool:
@@ -81,6 +86,7 @@ def _load_codex_cli_source() -> _TokenSource:
         path=path,
         access_token=tokens.get("access_token"),
         refresh_token=tokens.get("refresh_token"),
+        id_token=tokens.get("id_token"),
     )
 
 
@@ -94,7 +100,17 @@ def _load_hermes_source() -> _TokenSource:
         path=path,
         access_token=tokens.get("access_token"),
         refresh_token=tokens.get("refresh_token"),
+        id_token=tokens.get("id_token"),
     )
+
+
+def _reload_source(source: _TokenSource) -> _TokenSource:
+    """Re-read one token source from disk (e.g. after another thread refreshed)."""
+    if source.name == "codex-cli":
+        return _load_codex_cli_source()
+    if source.name == "hermes-openai-codex":
+        return _load_hermes_source()
+    return source
 
 
 def _load_sources() -> list[_TokenSource]:
@@ -112,16 +128,48 @@ def _decode_jwt_claims(token: str | None) -> dict[str, Any]:
         return {}
 
 
-def _extract_account_id(access_token: str) -> str:
-    claims = _decode_jwt_claims(access_token)
+def _extract_account_id_from_claims(claims: dict[str, Any]) -> str:
+    """Extract the ChatGPT account id from decoded JWT claims.
+
+    Mirrors OpenCode's extraction order: top-level ``chatgpt_account_id``,
+    then the namespaced auth claim, then a generic ``account_id``, then the
+    first organization id.
+    """
+    account_id = claims.get("chatgpt_account_id")
+    if isinstance(account_id, str) and account_id:
+        return account_id
     auth_claim = claims.get("https://api.openai.com/auth") or {}
     account_id = auth_claim.get("chatgpt_account_id")
     if isinstance(account_id, str) and account_id:
         return account_id
-    # Fallback: some tokens carry the account id in the top-level claim.
-    account_id = claims.get("chatgpt_account_id") or claims.get("account_id")
+    account_id = claims.get("account_id")
     if isinstance(account_id, str) and account_id:
         return account_id
+    organizations = claims.get("organizations")
+    if isinstance(organizations, list) and organizations:
+        first = organizations[0]
+        if isinstance(first, dict):
+            org_id = first.get("id")
+            if isinstance(org_id, str) and org_id:
+                return org_id
+    return ""
+
+
+def _extract_account_id(access_token: str) -> str:
+    return _extract_account_id_from_claims(_decode_jwt_claims(access_token))
+
+
+def extract_account_id_from_tokens(
+    access_token: str | None = None,
+    id_token: str | None = None,
+) -> str:
+    """Extract the account id, preferring the id token like OpenCode does."""
+    if id_token:
+        account_id = _extract_account_id_from_claims(_decode_jwt_claims(id_token))
+        if account_id:
+            return account_id
+    if access_token:
+        return _extract_account_id_from_claims(_decode_jwt_claims(access_token))
     return ""
 
 
@@ -158,7 +206,61 @@ def _refresh_access_token(refresh_token: str) -> tuple[str, str | None, int | No
     expires_at = None
     if isinstance(expires_in, (int, float)):
         expires_at = int(time.time() + expires_in)
-    return new_access, new_refresh, expires_at
+    new_id_token = payload.get("id_token")
+    return new_access, new_refresh, expires_at, new_id_token
+
+
+def _persist_refreshed_tokens(
+    source: _TokenSource,
+    *,
+    access_token: str,
+    refresh_token: str | None,
+    id_token: str | None,
+    expires_at: int | None,
+) -> None:
+    """Write refreshed tokens back to the source auth file.
+
+    OpenCode persists refreshed credentials so rotated refresh tokens keep
+    working across restarts; we do the same. Failures are logged but never
+    fatal — the in-memory refreshed token still serves this process.
+    """
+    try:
+        payload = _load_json(source.path)
+        if source.name == "hermes-openai-codex":
+            tokens = (
+                payload.setdefault("providers", {})
+                .setdefault("openai-codex", {})
+                .setdefault("tokens", {})
+            )
+        else:
+            tokens = payload.setdefault("tokens", {})
+        tokens["access_token"] = access_token
+        if refresh_token:
+            tokens["refresh_token"] = refresh_token
+        if id_token:
+            tokens["id_token"] = id_token
+        if expires_at is not None:
+            tokens["expires_at"] = expires_at
+        source.path.parent.mkdir(parents=True, exist_ok=True)
+        temp_path = source.path.with_suffix(source.path.suffix + ".tmp")
+        try:
+            temp_path.write_text(json.dumps(payload, indent=2), encoding="utf-8")
+            os.replace(temp_path, source.path)
+        finally:
+            temp_path.unlink(missing_ok=True)
+        try:
+            os.chmod(source.path, 0o600)
+        except OSError:
+            pass
+    except Exception as exc:  # noqa: BLE001 - persistence must not break refresh
+        logger.warning(
+            "ChatGPT OAuth: could not persist refreshed tokens to {}: {}",
+            source.path,
+            exc,
+        )
+
+
+_REFRESH_LOCK = threading.Lock()
 
 
 def _ensure_fresh_source(source: _TokenSource) -> _TokenSource:
@@ -173,12 +275,33 @@ def _ensure_fresh_source(source: _TokenSource) -> _TokenSource:
         # Token is expiring and we cannot refresh; return as-is and let the
         # upstream request fail with a clear 401 if expired.
         return source
-    new_access, new_refresh, _ = _refresh_access_token(source.refresh_token)
-    return dataclasses.replace(
-        source,
-        access_token=new_access,
-        refresh_token=new_refresh,
-    )
+
+    with _REFRESH_LOCK:
+        # Another thread may have refreshed while we waited on the lock.
+        current = _reload_source(source)
+        if current.has_access_token:
+            remaining = _access_token_seconds_remaining(current.access_token)
+            if remaining is not None and remaining > 300:
+                return current
+        if not current.has_refresh_token or current.refresh_token is None:
+            return source
+
+        new_access, new_refresh, expires_at, new_id_token = _refresh_access_token(
+            current.refresh_token
+        )
+        _persist_refreshed_tokens(
+            current,
+            access_token=new_access,
+            refresh_token=new_refresh,
+            id_token=new_id_token,
+            expires_at=expires_at,
+        )
+        return dataclasses.replace(
+            current,
+            access_token=new_access,
+            refresh_token=new_refresh,
+            id_token=new_id_token or current.id_token,
+        )
 
 
 def _choose_runtime_source(sources: list[_TokenSource]) -> _TokenSource:
@@ -220,8 +343,9 @@ def load_chatgpt_oauth_credentials(
         )
 
     source = _choose_runtime_source(_load_sources())
-    resolved_account_id = (account_id or "").strip() or _extract_account_id(
-        source.access_token or ""
+    resolved_account_id = (account_id or "").strip() or extract_account_id_from_tokens(
+        access_token=source.access_token,
+        id_token=source.id_token,
     )
     return ChatGPTOAuthCredentials(
         access_token=source.access_token or "",
@@ -246,7 +370,10 @@ def import_codex_cli_tokens() -> ChatGPTOAuthCredentials:
         )
     return ChatGPTOAuthCredentials(
         access_token=source.access_token or "",
-        account_id=_extract_account_id(source.access_token or ""),
+        account_id=extract_account_id_from_tokens(
+            access_token=source.access_token,
+            id_token=source.id_token,
+        ),
         refresh_token=source.refresh_token,
         source_name=source.name,
     )
