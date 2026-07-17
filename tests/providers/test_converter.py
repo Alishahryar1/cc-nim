@@ -59,7 +59,7 @@ def test_convert_system_prompt_none():
     assert AnthropicToOpenAIConverter.convert_system_prompt(None) is None
 
 
-def test_openai_build_preserves_top_level_and_inline_system_message_order() -> None:
+def test_openai_build_uses_only_top_level_system_role() -> None:
     request = MessagesRequest.model_validate(
         {
             "model": "model",
@@ -69,6 +69,7 @@ def test_openai_build_preserves_top_level_and_inline_system_message_order() -> N
                 {"role": "assistant", "content": "First answer"},
                 {"role": "system", "content": "Instructions from this point"},
                 {"role": "user", "content": "Second question"},
+                {"role": "system", "content": "A second reminder"},
             ],
         }
     )
@@ -79,12 +80,13 @@ def test_openai_build_preserves_top_level_and_inline_system_message_order() -> N
         {"role": "system", "content": "Conversation-wide instructions"},
         {"role": "user", "content": "First question"},
         {"role": "assistant", "content": "First answer"},
-        {"role": "system", "content": "Instructions from this point"},
+        {"role": "user", "content": "Instructions from this point"},
         {"role": "user", "content": "Second question"},
+        {"role": "user", "content": "A second reminder"},
     ]
 
 
-def test_openai_build_joins_inline_system_text_blocks_without_repositioning() -> None:
+def test_openai_build_demotes_inline_system_text_blocks_without_repositioning() -> None:
     request = MessagesRequest.model_validate(
         {
             "model": "model",
@@ -104,10 +106,14 @@ def test_openai_build_joins_inline_system_text_blocks_without_repositioning() ->
 
     body = build_base_request_body(request)
 
-    assert body["messages"][1] == {
-        "role": "system",
-        "content": "First instruction\n\nSecond instruction",
-    }
+    assert body["messages"] == [
+        {"role": "user", "content": "Before"},
+        {
+            "role": "user",
+            "content": "First instruction\n\nSecond instruction",
+        },
+        {"role": "user", "content": "After"},
+    ]
 
 
 def test_inline_system_message_preserves_existing_openai_cache_prefix() -> None:
@@ -128,7 +134,13 @@ def test_inline_system_message_preserves_existing_openai_cache_prefix() -> None:
             "messages": [
                 {"role": "user", "content": "First question"},
                 {"role": "assistant", "content": "First answer"},
-                {"role": "system", "content": "Instructions from this point"},
+                {
+                    "role": "system",
+                    "content": (
+                        "<system-reminder>Instructions from this point"
+                        "</system-reminder>"
+                    ),
+                },
                 {"role": "user", "content": "Second question"},
             ],
         }
@@ -139,7 +151,12 @@ def test_inline_system_message_preserves_existing_openai_cache_prefix() -> None:
 
     assert continued[: len(prefix)] == prefix
     assert continued[len(prefix) :] == [
-        {"role": "system", "content": "Instructions from this point"},
+        {
+            "role": "user",
+            "content": (
+                "<system-reminder>Instructions from this point</system-reminder>"
+            ),
+        },
         {"role": "user", "content": "Second question"},
     ]
 
@@ -180,7 +197,7 @@ def test_inline_system_message_follows_completed_tool_result() -> None:
     assert [message["role"] for message in body["messages"]] == [
         "assistant",
         "tool",
-        "system",
+        "user",
     ]
 
 

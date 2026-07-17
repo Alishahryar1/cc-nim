@@ -402,7 +402,8 @@ class AnthropicToOpenAIConverter:
                     "OpenAI chat conversion requires an inline Anthropic system "
                     "message to contain text."
                 )
-            return [_PlainSegment([{"role": "system", "content": system_text}])]
+            # Reserve the downstream system role for request.system at index zero.
+            return [_PlainSegment([{"role": "user", "content": system_text}])]
         if role == "assistant" and isinstance(content, list):
             if (first_i := _index_first_tool_use(content)) is not None:
                 for block in content:
