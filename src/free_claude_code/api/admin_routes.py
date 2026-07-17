@@ -20,6 +20,11 @@ from free_claude_code.providers.chatgpt_oauth.credentials import (
     ChatGPTOAuthError,
     import_codex_cli_tokens,
 )
+from free_claude_code.providers.chatgpt_oauth.browser_login import (
+    ChatGPTOAuthBrowserUnavailableError,
+    browser_login_status,
+    start_browser_login,
+)
 from free_claude_code.providers.chatgpt_oauth.oauth_login import (
     CHATGPT_OAUTH_DEVICE_VERIFICATION_URL,
     _initiate_device_auth,
@@ -250,6 +255,29 @@ class _ChatGPTOAuthInitiateResponse(BaseModel):
     device_auth_id: str
     user_code: str
     verification_url: str
+
+
+class _ChatGPTOAuthBrowserInitiateResponse(BaseModel):
+    authorize_url: str
+    expires_in: str
+
+
+@router.post("/admin/api/chatgpt-oauth/browser/initiate")
+async def chatgpt_oauth_browser_initiate(request: Request):
+    """Start a browser-based ChatGPT OAuth login (PKCE + local callback)."""
+    require_loopback_admin(request)
+    try:
+        payload = await asyncio.to_thread(start_browser_login)
+    except ChatGPTOAuthBrowserUnavailableError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    return _ChatGPTOAuthBrowserInitiateResponse(**payload)
+
+
+@router.post("/admin/api/chatgpt-oauth/browser/status")
+async def chatgpt_oauth_browser_status(request: Request):
+    """Poll the status of the in-flight browser OAuth login."""
+    require_loopback_admin(request)
+    return await asyncio.to_thread(browser_login_status)
 
 
 class _ChatGPTOAuthExchangeRequest(BaseModel):
