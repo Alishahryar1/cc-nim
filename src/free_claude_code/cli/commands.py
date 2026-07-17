@@ -151,3 +151,10 @@ def _migrate_config_env_keys() -> tuple[Path, ...]:
     if warning := explicit_env_file_migration_warning(os.environ):
         print(warning, file=sys.stderr)
     return migrated
+
+
+def chatgpt_oauth_login() -> None:
+    """Run the ChatGPT/Codex OAuth device-flow login."""
+    from free_claude_code.providers.chatgpt_oauth import chatgpt_oauth_login_command
+
+    chatgpt_oauth_login_command()

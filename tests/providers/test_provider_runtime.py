@@ -18,6 +18,7 @@ from free_claude_code.config.provider_catalog import (
     VERCEL_AI_GATEWAY_DEFAULT_BASE,
     ZAI_DEFAULT_BASE,
 )
+from free_claude_code.providers.chatgpt_oauth import ChatGPTOAuthProvider
 from free_claude_code.providers.cloudflare import CloudflareProvider
 from free_claude_code.providers.deepseek import DeepSeekProvider
 from free_claude_code.providers.gemini import GeminiProvider
@@ -72,6 +73,10 @@ def _make_settings(**overrides):
     mock.kimi_api_key = "test_kimi_key"
     mock.kimi_coding_proxy = ""
     mock.kimi_coding_api_key = "test_kimi_coding_key"
+    mock.chatgpt_oauth_access_token = "test_chatgpt_oauth_token"
+    mock.chatgpt_oauth_account_id = ""
+    mock.chatgpt_oauth_base_url = "http://localhost:9999/v1"
+    mock.chatgpt_oauth_proxy = ""
     mock.wafer_proxy = ""
     mock.minimax_proxy = ""
     mock.opencode_proxy = ""
@@ -375,6 +380,7 @@ def test_create_provider_instantiates_each_builtin():
         "deepseek": DeepSeekProvider,
         "kimi": OpenAIChatProvider,
         "kimi_coding": OpenAIChatProvider,
+        "chatgpt_oauth": ChatGPTOAuthProvider,
         "minimax": OpenAIChatProvider,
         "fireworks": OpenAIChatProvider,
         "cloudflare": CloudflareProvider,

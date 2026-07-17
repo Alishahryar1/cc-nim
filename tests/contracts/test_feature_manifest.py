@@ -4,6 +4,7 @@ from pathlib import Path
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.messaging.platforms.factory import create_messaging_components
 from free_claude_code.providers.base import BaseProvider
+from free_claude_code.providers.chatgpt_oauth import ChatGPTOAuthProvider
 from free_claude_code.providers.cloudflare import CloudflareProvider
 from free_claude_code.providers.deepseek import DeepSeekProvider
 from free_claude_code.providers.gemini import GeminiProvider
@@ -98,6 +99,7 @@ def test_provider_and_platform_registries_include_advertised_builtins() -> None:
         "lmstudio": LMStudioProvider,
         "github_models": GitHubModelsProvider,
         "gemini": GeminiProvider,
+        "chatgpt_oauth": ChatGPTOAuthProvider,
     }
     assert set(OPENAI_CHAT_PROFILES).isdisjoint(specialized_provider_classes)
     assert set(PROVIDER_CATALOG) == (

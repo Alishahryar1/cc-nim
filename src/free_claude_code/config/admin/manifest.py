@@ -22,6 +22,7 @@ FieldType = Literal[
     "optional_model",
     "select",
     "textarea",
+    "oauth_login",
 ]
 
 

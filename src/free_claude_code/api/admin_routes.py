@@ -1,5 +1,6 @@
 """Local admin UI routes and APIs."""
 
+import asyncio
 import ipaddress
 from pathlib import Path
 from typing import Any
@@ -15,6 +16,18 @@ from free_claude_code.config.admin.manifest import FIELD_BY_KEY
 from free_claude_code.config.admin.persistence import validate_updates
 from free_claude_code.config.admin.values import load_config_response
 from free_claude_code.config.model_refs import configured_chat_model_refs
+from free_claude_code.providers.chatgpt_oauth.credentials import (
+    ChatGPTOAuthError,
+    import_codex_cli_tokens,
+)
+from free_claude_code.providers.chatgpt_oauth.oauth_login import (
+    CHATGPT_OAUTH_DEVICE_VERIFICATION_URL,
+    _initiate_device_auth,
+    exchange_device_auth_for_tokens,
+)
+from free_claude_code.providers.chatgpt_oauth.oauth_login import (
+    ChatGPTOAuthLoginError as ChatGPTOAuthLoginFlowError,
+)
 
 from .dependencies import get_services
 from .ports import ApiServices
@@ -231,3 +244,92 @@ async def _check_local_provider(
             "base_url": base_url,
             "error_type": type(exc).__name__,
         }
+
+
+class _ChatGPTOAuthInitiateResponse(BaseModel):
+    device_auth_id: str
+    user_code: str
+    verification_url: str
+
+
+class _ChatGPTOAuthExchangeRequest(BaseModel):
+    device_auth_id: str
+    user_code: str
+
+
+class _ChatGPTOAuthExchangeResponse(BaseModel):
+    status: str
+    access_token: str = ""
+    account_id: str = ""
+    message: str = ""
+
+
+@router.post("/admin/api/chatgpt-oauth/initiate")
+async def chatgpt_oauth_initiate(request: Request):
+    """Start a ChatGPT/Codex OAuth device-auth flow from the admin UI."""
+    require_loopback_admin(request)
+    try:
+        device_auth_id, user_code, _interval_ms = await asyncio.to_thread(
+            _initiate_device_auth
+        )
+    except ChatGPTOAuthLoginFlowError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    return _ChatGPTOAuthInitiateResponse(
+        device_auth_id=device_auth_id,
+        user_code=user_code,
+        verification_url=CHATGPT_OAUTH_DEVICE_VERIFICATION_URL,
+    )
+
+
+@router.post("/admin/api/chatgpt-oauth/exchange")
+async def chatgpt_oauth_exchange(
+    payload: _ChatGPTOAuthExchangeRequest,
+    request: Request,
+):
+    """Poll for ChatGPT/Codex OAuth completion and return tokens."""
+    require_loopback_admin(request)
+    try:
+        tokens = await asyncio.to_thread(
+            exchange_device_auth_for_tokens,
+            payload.device_auth_id,
+            payload.user_code,
+            timeout_seconds=8.0,
+        )
+    except ChatGPTOAuthLoginFlowError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if tokens is None:
+        return _ChatGPTOAuthExchangeResponse(
+            status="pending",
+            message="Waiting for authorization. Open the verification URL and enter the code.",
+        )
+    return _ChatGPTOAuthExchangeResponse(
+        status="complete",
+        access_token=tokens.get("access_token", ""),
+        account_id=tokens.get("account_id", ""),
+        message="Login successful. Tokens saved to ~/.codex/auth.json.",
+    )
+
+
+class _ChatGPTOAuthImportCodexResponse(BaseModel):
+    status: str
+    access_token: str = ""
+    account_id: str = ""
+    message: str = ""
+
+
+@router.post("/admin/api/chatgpt-oauth/import-codex")
+async def chatgpt_oauth_import_codex(request: Request):
+    """Import ChatGPT/Codex OAuth tokens from an existing Codex CLI install."""
+    require_loopback_admin(request)
+    try:
+        credentials = await asyncio.to_thread(import_codex_cli_tokens)
+    except ChatGPTOAuthError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    return _ChatGPTOAuthImportCodexResponse(
+        status="complete",
+        access_token=credentials.access_token,
+        account_id=credentials.account_id,
+        message="Imported existing Codex CLI tokens.",
+    )

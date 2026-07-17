@@ -275,15 +275,17 @@ function renderField(field) {
   input.dataset.configured = field.configured ? "true" : "false";
   input.dataset.fieldType = field.type;
   input.disabled = field.locked;
-  input.addEventListener("input", updateDirtyState);
-  input.addEventListener("change", updateDirtyState);
-  if (field.type === "optional_model") {
-    input.addEventListener("blur", () => {
-      if (!input.value.trim() || input.value.trim().toLowerCase() === "none") {
-        input.value = "None";
-        updateDirtyState();
-      }
-    });
+  if (field.type !== "oauth_login") {
+    input.addEventListener("input", updateDirtyState);
+    input.addEventListener("change", updateDirtyState);
+    if (field.type === "optional_model") {
+      input.addEventListener("blur", () => {
+        if (!input.value.trim() || input.value.trim().toLowerCase() === "none") {
+          input.value = "None";
+          updateDirtyState();
+        }
+      });
+    }
   }
 
   const control =
@@ -307,6 +309,30 @@ function inputForField(field) {
     input.checked = String(field.value).toLowerCase() === "true";
     input.dataset.original = input.checked ? "true" : "false";
     return input;
+  }
+
+  if (field.type === "oauth_login") {
+    const wrapper = document.createElement("div");
+    wrapper.className = "oauth-login-control";
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className =
+      field.key === "CHATGPT_OAUTH_IMPORT_CODEX"
+        ? "secondary-button"
+        : "primary-button";
+    button.textContent =
+      field.key === "CHATGPT_OAUTH_IMPORT_CODEX"
+        ? "Import existing Codex login"
+        : "Log in with ChatGPT";
+    button.addEventListener("click", () => {
+      if (field.key === "CHATGPT_OAUTH_IMPORT_CODEX") {
+        importChatGPTOAuthCodexTokens(button);
+      } else {
+        startChatGPTOAuthLogin(button);
+      }
+    });
+    wrapper.appendChild(button);
+    return wrapper;
   }
 
   if (field.type === "select") {
@@ -691,6 +717,100 @@ async function refreshModelOptions(button) {
   } finally {
     button.disabled = false;
     button.textContent = original;
+  }
+}
+
+async function importChatGPTOAuthCodexTokens(button) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "Importing...";
+  try {
+    const result = await api("/admin/api/chatgpt-oauth/import-codex", {
+      method: "POST",
+      body: "{}",
+    });
+    if (result.status === "complete") {
+      const tokenField = document.querySelector('[data-key="CHATGPT_OAUTH_ACCESS_TOKEN"] input');
+      const accountField = document.querySelector('[data-key="CHATGPT_OAUTH_ACCOUNT_ID"] input');
+      if (tokenField) {
+        tokenField.value = result.access_token;
+        tokenField.dispatchEvent(new Event("input"));
+      }
+      if (accountField && result.account_id) {
+        accountField.value = result.account_id;
+        accountField.dispatchEvent(new Event("input"));
+      }
+      showMessage("Imported existing Codex CLI tokens. Apply settings to save.", "ok");
+    }
+  } catch (error) {
+    showMessage(`Could not import Codex tokens: ${error.message}`, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+async function startChatGPTOAuthLogin(button) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "Starting login...";
+  let pollHandle = null;
+
+  try {
+    const initiate = await api("/admin/api/chatgpt-oauth/initiate", {
+      method: "POST",
+      body: "{}",
+    });
+    const verificationUrl = initiate.verification_url;
+    const userCode = initiate.user_code;
+
+    showMessage(
+      `ChatGPT OAuth: open ${verificationUrl} and enter code ${userCode}`,
+      "warn",
+    );
+
+    const tokenField = document.querySelector('[data-key="CHATGPT_OAUTH_ACCESS_TOKEN"] input');
+    const accountField = document.querySelector('[data-key="CHATGPT_OAUTH_ACCOUNT_ID"] input');
+
+    const stopPolling = () => {
+      if (pollHandle) {
+        clearInterval(pollHandle);
+        pollHandle = null;
+      }
+      button.disabled = false;
+      button.textContent = original;
+    };
+
+    pollHandle = setInterval(async () => {
+      try {
+        const result = await api("/admin/api/chatgpt-oauth/exchange", {
+          method: "POST",
+          body: JSON.stringify({
+            device_auth_id: initiate.device_auth_id,
+            user_code: userCode,
+          }),
+        });
+        if (result.status === "complete") {
+          stopPolling();
+          if (tokenField) {
+            tokenField.value = result.access_token;
+            tokenField.dispatchEvent(new Event("input"));
+          }
+          if (accountField && result.account_id) {
+            accountField.value = result.account_id;
+            accountField.dispatchEvent(new Event("input"));
+          }
+          showMessage("ChatGPT OAuth login complete. Apply settings to save.", "ok");
+        }
+      } catch (error) {
+        stopPolling();
+        showMessage(`ChatGPT OAuth login failed: ${error.message}`, "error");
+      }
+    }, 8000);
+  } catch (error) {
+    button.disabled = false;
+    button.textContent = original;
+    showMessage(`ChatGPT OAuth login failed: ${error.message}`, "error");
   }
 }
 

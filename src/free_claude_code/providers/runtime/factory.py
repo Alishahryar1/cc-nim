@@ -107,6 +107,20 @@ def _create_github_models(
     return GitHubModelsProvider(config, rate_limiter=rate_limiter)
 
 
+def _create_chatgpt_oauth(
+    config: ProviderConfig,
+    settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
+    from free_claude_code.providers.chatgpt_oauth import ChatGPTOAuthProvider
+
+    return ChatGPTOAuthProvider(
+        config,
+        rate_limiter=rate_limiter,
+        account_id=settings.chatgpt_oauth_account_id,
+    )
+
+
 _SPECIAL_PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "nvidia_nim": _create_nvidia_nim,
     "open_router": _create_open_router,
@@ -116,6 +130,7 @@ _SPECIAL_PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "cloudflare": _create_cloudflare,
     "gemini": _create_gemini,
     "github_models": _create_github_models,
+    "chatgpt_oauth": _create_chatgpt_oauth,
 }
 
 _profiled_ids = set(OPENAI_CHAT_PROFILES)

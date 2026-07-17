@@ -1072,3 +1072,148 @@ def test_admin_launch_url_uses_loopback_for_wildcard_host():
     settings = Settings.model_construct(host="0.0.0.0", port=8082)
 
     assert local_admin_url(settings) == "http://127.0.0.1:8082/admin"
+
+
+def test_admin_chatgpt_oauth_initiate_is_loopback_only(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+    remote_client = TestClient(app, client=("203.0.113.10", 50000))
+
+    response = remote_client.post("/admin/api/chatgpt-oauth/initiate")
+
+    assert response.status_code == 403
+
+
+def test_admin_chatgpt_oauth_initiate_returns_device_code(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+
+    def fake_initiate():
+        return ("device_1", "ABCD-EFGH", 5000)
+
+    with patch(
+        "free_claude_code.api.admin_routes._initiate_device_auth",
+        fake_initiate,
+    ):
+        response = _local_client(app).post("/admin/api/chatgpt-oauth/initiate")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["device_auth_id"] == "device_1"
+    assert data["user_code"] == "ABCD-EFGH"
+    assert "auth.openai.com/codex/device" in data["verification_url"]
+
+
+def test_admin_chatgpt_oauth_exchange_returns_tokens(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+
+    def fake_exchange(*args, **kwargs):
+        return {
+            "access_token": "access_1",
+            "refresh_token": "refresh_1",
+            "account_id": "acct_1",
+        }
+
+    with patch(
+        "free_claude_code.api.admin_routes.exchange_device_auth_for_tokens",
+        fake_exchange,
+    ):
+        response = _local_client(app).post(
+            "/admin/api/chatgpt-oauth/exchange",
+            json={"device_auth_id": "device_1", "user_code": "ABCD-EFGH"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "complete"
+    assert data["access_token"] == "access_1"
+    assert data["account_id"] == "acct_1"
+
+
+def test_admin_chatgpt_oauth_exchange_returns_pending(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+
+    def fake_exchange(*args, **kwargs):
+        return None
+
+    with patch(
+        "free_claude_code.api.admin_routes.exchange_device_auth_for_tokens",
+        fake_exchange,
+    ):
+        response = _local_client(app).post(
+            "/admin/api/chatgpt-oauth/exchange",
+            json={"device_auth_id": "device_1", "user_code": "ABCD-EFGH"},
+        )
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "pending"
+
+
+def test_admin_chatgpt_oauth_import_codex_is_loopback_only(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+    remote_client = TestClient(app, client=("203.0.113.10", 50000))
+
+    response = remote_client.post("/admin/api/chatgpt-oauth/import-codex")
+
+    assert response.status_code == 403
+
+
+def test_admin_chatgpt_oauth_import_codex_returns_tokens(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+
+    from free_claude_code.providers.chatgpt_oauth.credentials import (
+        ChatGPTOAuthCredentials,
+    )
+
+    def fake_import():
+        return ChatGPTOAuthCredentials(
+            access_token="codex_token",
+            account_id="codex_acct",
+            refresh_token="codex_refresh",
+            source_name="codex-cli",
+        )
+
+    with patch(
+        "free_claude_code.api.admin_routes.import_codex_cli_tokens",
+        fake_import,
+    ):
+        response = _local_client(app).post("/admin/api/chatgpt-oauth/import-codex")
+
+    assert response.status_code == 200
+    data = response.json()
+    assert data["status"] == "complete"
+    assert data["access_token"] == "codex_token"
+    assert data["account_id"] == "codex_acct"
+
+
+def test_admin_chatgpt_oauth_import_codex_reports_missing_tokens(
+    monkeypatch, tmp_path
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+
+    from free_claude_code.providers.chatgpt_oauth.credentials import ChatGPTOAuthError
+
+    def fake_import():
+        raise ChatGPTOAuthError("No Codex CLI access token found")
+
+    with patch(
+        "free_claude_code.api.admin_routes.import_codex_cli_tokens",
+        fake_import,
+    ):
+        response = _local_client(app).post("/admin/api/chatgpt-oauth/import-codex")
+
+    assert response.status_code == 400
+    assert "Codex" in response.json()["detail"]

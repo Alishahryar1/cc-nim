@@ -1,5 +1,7 @@
 """Flat application settings schema loaded by Pydantic Settings."""
 
+import json
+import os
 from functools import lru_cache
 from typing import Any
 
@@ -37,6 +39,17 @@ class Settings(BaseSettings):
 
     # ==================== Kimi For Coding Config ====================
     kimi_coding_api_key: str = Field(default="", validation_alias="KIMI_CODING_API_KEY")
+
+    # ==================== ChatGPT OAuth (experimental) Config ====================
+    chatgpt_oauth_access_token: str = Field(
+        default="", validation_alias="CHATGPT_OAUTH_ACCESS_TOKEN"
+    )
+    chatgpt_oauth_account_id: str = Field(
+        default="", validation_alias="CHATGPT_OAUTH_ACCOUNT_ID"
+    )
+    chatgpt_oauth_base_url: str = Field(
+        default="", validation_alias="CHATGPT_OAUTH_BASE_URL"
+    )
 
     # ==================== Wafer Config ====================
     wafer_api_key: str = Field(default="", validation_alias="WAFER_API_KEY")
@@ -145,6 +158,9 @@ class Settings(BaseSettings):
     llamacpp_proxy: str = Field(default="", validation_alias="LLAMACPP_PROXY")
     kimi_proxy: str = Field(default="", validation_alias="KIMI_PROXY")
     kimi_coding_proxy: str = Field(default="", validation_alias="KIMI_CODING_PROXY")
+    chatgpt_oauth_proxy: str = Field(
+        default="", validation_alias="CHATGPT_OAUTH_PROXY"
+    )
     wafer_proxy: str = Field(default="", validation_alias="WAFER_PROXY")
     minimax_proxy: str = Field(default="", validation_alias="MINIMAX_PROXY")
     opencode_proxy: str = Field(default="", validation_alias="OPENCODE_PROXY")
@@ -407,6 +423,27 @@ class Settings(BaseSettings):
             supported = ", ".join(f"'{p}'" for p in SUPPORTED_PROVIDER_IDS)
             raise ValueError(f"Invalid provider: '{provider}'. Supported: {supported}")
         return v
+
+    @model_validator(mode="after")
+    def load_chatgpt_oauth_token_from_codex_cli(self) -> Settings:
+        """Backfill CHATGPT_OAUTH_ACCESS_TOKEN from Codex CLI auth file."""
+        if self.chatgpt_oauth_access_token.strip():
+            return self
+        try:
+            from pathlib import Path
+
+            codex_home = Path(os.environ.get("CODEX_HOME", "")).expanduser()
+            if not str(codex_home).strip() or str(codex_home) == ".":
+                codex_home = Path.home() / ".codex"
+            auth_path = codex_home / "auth.json"
+            data = json.loads(auth_path.read_text(encoding="utf-8"))
+            tokens = data.get("tokens") or {}
+            access_token = tokens.get("access_token")
+            if isinstance(access_token, str) and access_token.strip():
+                self.chatgpt_oauth_access_token = access_token
+        except (FileNotFoundError, json.JSONDecodeError, OSError):
+            pass
+        return self
 
     @model_validator(mode="after")
     def check_nvidia_nim_api_key(self) -> Settings:

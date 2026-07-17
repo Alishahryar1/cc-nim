@@ -28,6 +28,16 @@ def init(argv: Sequence[str] | None = None) -> None:
     initialize_config()
 
 
+def chatgpt_oauth_login(argv: Sequence[str] | None = None) -> None:
+    """Log in to ChatGPT/Codex via OAuth device flow (``fcc-chatgpt-oauth-login``)."""
+    if _print_version_if_requested(argv):
+        return
+
+    from free_claude_code.cli.commands import chatgpt_oauth_login as run_login
+
+    run_login()
+
+
 def _print_version_if_requested(argv: Sequence[str] | None) -> bool:
     args = sys.argv[1:] if argv is None else argv
     if "--version" not in args:
