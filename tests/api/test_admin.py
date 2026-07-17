@@ -61,6 +61,31 @@ def test_admin_page_is_loopback_only(monkeypatch, tmp_path):
     assert remote_client.get("/admin").status_code == 403
 
 
+@pytest.mark.parametrize(
+    "path",
+    (
+        "/admin",
+        "/admin/assets/admin.css",
+        "/admin/assets/admin.js",
+        "/admin/api/config",
+    ),
+)
+def test_admin_responses_are_never_cached(monkeypatch, tmp_path, path):
+    _set_home(monkeypatch, tmp_path)
+    response = _local_client(create_test_app()).get(path)
+
+    assert response.status_code == 200
+    assert response.headers["cache-control"] == "no-store"
+
+
+def test_admin_api_fetches_bypass_browser_cache():
+    script = Path("src/free_claude_code/api/admin_static/admin.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'cache: "no-store"' in script
+
+
 def test_admin_page_no_longer_renders_generated_env_panel(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     app = create_test_app()

@@ -69,6 +69,7 @@ async function api(path, options = {}) {
   const response = await fetch(path, {
     headers: { "Content-Type": "application/json", ...(options.headers || {}) },
     ...options,
+    cache: "no-store",
   });
   if (!response.ok) {
     throw new Error(`${response.status} ${response.statusText}`);

@@ -1,13 +1,15 @@
 """Local admin UI routes and APIs."""
 
 import ipaddress
+from collections.abc import Callable, Coroutine
 from pathlib import Path
 from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
+from fastapi.routing import APIRoute
 from pydantic import BaseModel, Field
 
 from free_claude_code.application.model_metadata import ProviderModelRefreshResult
@@ -19,7 +21,26 @@ from free_claude_code.config.model_refs import configured_chat_model_refs
 from .dependencies import get_services
 from .ports import ApiServices
 
-router = APIRouter()
+_ADMIN_CACHE_CONTROL = "no-store"
+
+
+class _AdminNoStoreRoute(APIRoute):
+    """Prevent browsers from retaining any local admin response."""
+
+    def get_route_handler(
+        self,
+    ) -> Callable[[Request], Coroutine[Any, Any, Response]]:
+        route_handler = super().get_route_handler()
+
+        async def no_store_handler(request: Request) -> Response:
+            response = await route_handler(request)
+            response.headers["Cache-Control"] = _ADMIN_CACHE_CONTROL
+            return response
+
+        return no_store_handler
+
+
+router = APIRouter(route_class=_AdminNoStoreRoute)
 
 STATIC_DIR = Path(__file__).resolve().parent / "admin_static"
 LOCAL_PROVIDER_PATHS = {
