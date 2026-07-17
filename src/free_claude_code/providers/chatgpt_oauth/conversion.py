@@ -25,56 +25,103 @@ def _strip_openai_system_message(messages: list[dict[str, Any]]) -> tuple[str | 
     return None, messages
 
 
-def _openai_message_to_chatgpt_input(message: dict[str, Any]) -> dict[str, Any]:
-    """Convert one OpenAI-chat message to a ChatGPT Responses API input item."""
+def _openai_content_to_chatgpt_parts(
+    content: Any, *, assistant: bool
+) -> list[dict[str, Any]]:
+    """Convert OpenAI chat content parts to Responses API content parts.
+
+    User/system parts become ``input_text``/``input_image``; assistant parts
+    become ``output_text``. String content becomes a single text part.
+    """
+    text_type = "output_text" if assistant else "input_text"
+    if isinstance(content, str):
+        return [{"type": text_type, "text": content}] if content.strip() else []
+    if not isinstance(content, list):
+        return []
+    parts: list[dict[str, Any]] = []
+    for part in content:
+        if not isinstance(part, dict):
+            continue
+        part_type = part.get("type")
+        if part_type == "text":
+            text = part.get("text", "")
+            if isinstance(text, str) and text.strip():
+                parts.append({"type": text_type, "text": text})
+        elif part_type == "image_url" and not assistant:
+            image_url = part.get("image_url")
+            if isinstance(image_url, dict):
+                image_url = image_url.get("url")
+            if isinstance(image_url, str) and image_url:
+                parts.append({"type": "input_image", "image_url": image_url})
+    return parts
+
+
+def _openai_message_to_chatgpt_items(message: dict[str, Any]) -> list[dict[str, Any]]:
+    """Convert one OpenAI-chat message to Responses API input items.
+
+    The Responses API has no ``tool_calls`` field on message items: assistant
+    tool calls are standalone ``function_call`` items, and tool results are
+    ``function_call_output`` items keyed by ``call_id``.
+    """
     role = message.get("role")
     content = message.get("content")
 
     if role == "tool":
-        return {
-            "type": "message",
-            "role": "user",
-            "content": [
-                {
-                    "type": "input_text",
-                    "text": f"Tool result ({message.get('tool_call_id')}): {content}",
-                }
-            ],
-        }
+        output = content if isinstance(content, str) else json.dumps(content)
+        return [
+            {
+                "type": "function_call_output",
+                "call_id": message.get("tool_call_id") or "",
+                "output": output,
+            }
+        ]
 
     if role == "assistant":
-        item: dict[str, Any] = {
-            "type": "message",
-            "role": "assistant",
-        }
-        if isinstance(content, str):
-            item["content"] = [{"type": "output_text", "text": content}]
-        elif isinstance(content, list):
-            item["content"] = content
-        tool_calls = message.get("tool_calls")
-        if isinstance(tool_calls, list) and tool_calls:
-            item["tool_calls"] = tool_calls
-        return item
+        items: list[dict[str, Any]] = []
+        parts = _openai_content_to_chatgpt_parts(content, assistant=True)
+        if parts:
+            items.append(
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": parts,
+                }
+            )
+        for tool_call in message.get("tool_calls") or []:
+            if not isinstance(tool_call, dict):
+                continue
+            function = tool_call.get("function") or {}
+            arguments = function.get("arguments")
+            items.append(
+                {
+                    "type": "function_call",
+                    "call_id": tool_call.get("id") or "",
+                    "name": function.get("name") or "unknown",
+                    "arguments": arguments
+                    if isinstance(arguments, str)
+                    else json.dumps(arguments or {}),
+                }
+            )
+        return items
 
     # user / system converted to user
     if role == "system":
         role = "user"
-    if isinstance(content, str):
-        return {
+    return [
+        {
             "type": "message",
             "role": role,
-            "content": [{"type": "input_text", "text": content}],
+            "content": _openai_content_to_chatgpt_parts(content, assistant=False),
         }
-    return {
-        "type": "message",
-        "role": role,
-        "content": content if isinstance(content, list) else [],
-    }
+    ]
 
 
 def _openai_messages_to_chatgpt_input(messages: list[dict[str, Any]]) -> list[dict[str, Any]]:
     """Convert OpenAI-chat message list to Responses API input list."""
-    return [_openai_message_to_chatgpt_input(msg) for msg in messages]
+    items: list[dict[str, Any]] = []
+    for message in messages:
+        items.extend(_openai_message_to_chatgpt_items(message))
+    return items
 
 
 def _convert_tools(tools: list[Any] | None) -> list[dict[str, Any]] | None:

@@ -83,6 +83,74 @@ def test_build_request_body_converts_messages():
     ]
 
 
+def test_build_request_body_converts_tool_calls_to_function_items():
+    """Assistant tool calls become function_call items; results become outputs."""
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-5",
+            "messages": [
+                {"role": "user", "content": "list files"},
+                {
+                    "role": "assistant",
+                    "content": [
+                        {"type": "text", "text": "Let me check."},
+                        {
+                            "type": "tool_use",
+                            "id": "toolu_1",
+                            "name": "bash",
+                            "input": {"command": "ls"},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "toolu_1",
+                            "content": "file.txt",
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+
+    body = build_chatgpt_oauth_request_body(request)
+
+    items = body["input"]
+    types = [item["type"] for item in items]
+    assert "tool_calls" not in str(items)
+    function_calls = [item for item in items if item["type"] == "function_call"]
+    function_outputs = [
+        item for item in items if item["type"] == "function_call_output"
+    ]
+    assert function_calls == [
+        {
+            "type": "function_call",
+            "call_id": "toolu_1",
+            "name": "bash",
+            "arguments": '{"command": "ls"}',
+        }
+    ]
+    assert function_outputs == [
+        {
+            "type": "function_call_output",
+            "call_id": "toolu_1",
+            "output": "file.txt",
+        }
+    ]
+    assistant_messages = [
+        item
+        for item in items
+        if item["type"] == "message" and item["role"] == "assistant"
+    ]
+    assert assistant_messages[0]["content"] == [
+        {"type": "output_text", "text": "Let me check."}
+    ]
+    assert types[0] == "message"
+
+
 def test_build_request_body_adds_reasoning_for_gpt5():
     request = MessagesRequest(
         model="gpt-5",
