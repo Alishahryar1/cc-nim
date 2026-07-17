@@ -414,6 +414,77 @@ textarea:focus-visible,
   background: var(--panel-strong);
 }
 
+/* Credential key manager */
+.key-manager {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.key-manager-toggle {
+  align-self: flex-start;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  padding: 6px 12px;
+}
+
+.key-manager-panel {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  padding: 12px;
+  background: var(--panel-strong);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+}
+
+.key-manager-list {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.key-manager-empty,
+.key-manager-note {
+  color: var(--muted);
+  font-size: 0.85rem;
+}
+
+.key-manager-row {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+}
+
+.key-manager-key {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: 0.85rem;
+  color: var(--text-strong);
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.key-manager-remove {
+  flex-shrink: 0;
+  padding: 2px 8px;
+  font-size: 0.8rem;
+}
+
+.key-manager-remove:hover:not(:disabled) {
+  color: var(--error, #f87171);
+}
+
+.key-manager-add {
+  display: flex;
+  gap: 8px;
+}
+
+.key-manager-add input {
+  flex: 1;
+  min-width: 0;
+}
+
 /* Forms layout */
 .form-sections {
   display: grid;

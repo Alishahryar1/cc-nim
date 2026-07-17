@@ -72,7 +72,14 @@ async function api(path, options = {}) {
     cache: "no-store",
   });
   if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`);
+    let detail = "";
+    try {
+      const data = await response.json();
+      detail = typeof data.detail === "string" ? data.detail : "";
+    } catch {
+      // Non-JSON error body; fall back to the status line.
+    }
+    throw new Error(detail || `${response.status} ${response.statusText}`);
   }
   return response.json();
 }
@@ -82,6 +89,11 @@ async function load() {
   const config = await api("/admin/api/config");
   state.config = config;
   state.fields = new Map(config.fields.map((field) => [field.key, field]));
+  state.credentialEnvs = new Set(
+    (config.provider_status || [])
+      .map((provider) => provider.credential_env)
+      .filter(Boolean),
+  );
   renderNav();
   renderProviders(config.provider_status);
   renderSections(config.sections, config.fields);
@@ -297,7 +309,171 @@ function renderField(field) {
     description.textContent = field.description;
     wrapper.appendChild(description);
   }
+  if (
+    field.secret &&
+    state.credentialEnvs &&
+    state.credentialEnvs.has(field.key)
+  ) {
+    wrapper.appendChild(keyManagerForField(field));
+  }
   return wrapper;
+}
+
+function keyManagerForField(field) {
+  const container = document.createElement("div");
+  container.className = "key-manager";
+
+  const toggle = document.createElement("button");
+  toggle.type = "button";
+  toggle.className = "ghost-button key-manager-toggle";
+  toggle.textContent = "Manage keys";
+
+  const panel = document.createElement("div");
+  panel.className = "key-manager-panel";
+  panel.hidden = true;
+
+  const open = async () => {
+    panel.hidden = false;
+    toggle.textContent = "Hide keys";
+    await renderKeyManager(panel, field);
+  };
+  const close = () => {
+    panel.hidden = true;
+    toggle.textContent = "Manage keys";
+  };
+  toggle.addEventListener("click", () => {
+    if (panel.hidden) {
+      open();
+    } else {
+      close();
+    }
+  });
+
+  container.append(toggle, panel);
+
+  if (state.reopenKeyManager === field.key) {
+    state.reopenKeyManager = null;
+    open();
+  }
+  return container;
+}
+
+async function renderKeyManager(panel, field) {
+  panel.textContent = "Loading keys...";
+  let info;
+  try {
+    info = await api(`/admin/api/credentials/${field.key}/keys`);
+  } catch (error) {
+    panel.textContent = `Could not load keys: ${error.message}`;
+    return;
+  }
+
+  panel.innerHTML = "";
+
+  const list = document.createElement("div");
+  list.className = "key-manager-list";
+  if (info.count === 0) {
+    const empty = document.createElement("div");
+    empty.className = "key-manager-empty";
+    empty.textContent = "No keys configured.";
+    list.appendChild(empty);
+  }
+  info.keys.forEach((masked, index) => {
+    const row = document.createElement("div");
+    row.className = "key-manager-row";
+
+    const label = document.createElement("code");
+    label.className = "key-manager-key";
+    label.textContent = masked;
+
+    const remove = document.createElement("button");
+    remove.type = "button";
+    remove.className = "ghost-button key-manager-remove";
+    remove.textContent = "Remove";
+    remove.disabled = info.locked;
+    remove.addEventListener("click", () =>
+      removeCredentialKey(field, index, remove),
+    );
+
+    row.append(label, remove);
+    list.appendChild(row);
+  });
+  panel.appendChild(list);
+
+  const addRow = document.createElement("div");
+  addRow.className = "key-manager-add";
+  const input = document.createElement("input");
+  input.type = "password";
+  input.autocomplete = "off";
+  input.placeholder = info.locked
+    ? "Locked by process environment"
+    : "Paste a new key";
+  input.disabled = info.locked;
+
+  const add = document.createElement("button");
+  add.type = "button";
+  add.className = "secondary-button";
+  add.textContent = "Add key";
+  add.disabled = info.locked;
+
+  const submit = () => addCredentialKey(field, input, add);
+  add.addEventListener("click", submit);
+  input.addEventListener("keydown", (event) => {
+    if (event.key === "Enter") submit();
+  });
+
+  addRow.append(input, add);
+  panel.appendChild(addRow);
+
+  if (info.locked) {
+    const note = document.createElement("div");
+    note.className = "key-manager-note";
+    note.textContent =
+      "This credential comes from the process environment and is read-only here.";
+    panel.appendChild(note);
+  }
+}
+
+async function reloadAndReopenKeyManager(field, message) {
+  state.reopenKeyManager = field.key;
+  await load();
+  showMessage(message, "ok");
+}
+
+async function addCredentialKey(field, input, button) {
+  const value = input.value.trim();
+  if (!value) return;
+  button.disabled = true;
+  try {
+    const result = await api(`/admin/api/credentials/${field.key}/keys`, {
+      method: "POST",
+      body: JSON.stringify({ key: value }),
+    });
+    await reloadAndReopenKeyManager(
+      field,
+      `Added key ${result.added} (${result.count} configured). Applied.`,
+    );
+  } catch (error) {
+    button.disabled = false;
+    showMessage(`Could not add key: ${error.message}`, "error");
+  }
+}
+
+async function removeCredentialKey(field, index, button) {
+  button.disabled = true;
+  try {
+    const result = await api(
+      `/admin/api/credentials/${field.key}/keys/${index}`,
+      { method: "DELETE" },
+    );
+    await reloadAndReopenKeyManager(
+      field,
+      `Removed key ${result.removed} (${result.count} remaining). Applied.`,
+    );
+  } catch (error) {
+    button.disabled = false;
+    showMessage(`Could not remove key: ${error.message}`, "error");
+  }
 }
 
 function inputForField(field) {

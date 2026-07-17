@@ -13,8 +13,11 @@ from pydantic import BaseModel, Field
 from free_claude_code.application.model_metadata import ProviderModelRefreshResult
 from free_claude_code.config.admin.manifest import FIELD_BY_KEY
 from free_claude_code.config.admin.persistence import validate_updates
-from free_claude_code.config.admin.values import load_config_response
+from free_claude_code.config.admin.sources import is_locked_source
+from free_claude_code.config.admin.values import load_config_response, load_value_state
 from free_claude_code.config.model_refs import configured_chat_model_refs
+from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
+from free_claude_code.providers.runtime.config import parse_credential_keys
 
 from .dependencies import get_services
 from .ports import ApiServices
@@ -143,6 +146,130 @@ async def test_provider(
 ):
     require_loopback_admin(request)
     return await services.admin.test_provider(provider_id)
+
+
+_CREDENTIAL_ENV_KEYS = frozenset(
+    descriptor.credential_env
+    for descriptor in PROVIDER_CATALOG.values()
+    if descriptor.credential_env is not None
+)
+
+
+class _CredentialKeyAddRequest(BaseModel):
+    key: str
+
+
+def _mask_credential_key(key: str) -> str:
+    """Return a display-safe rendering of one credential key."""
+    if len(key) <= 4:
+        return "****"
+    if len(key) <= 10:
+        return f"{key[:2]}…{key[-2:]}"
+    return f"{key[:6]}…{key[-4:]}"
+
+
+def _credential_entry_or_404(env_key: str) -> dict[str, Any]:
+    if env_key not in _CREDENTIAL_ENV_KEYS:
+        raise HTTPException(status_code=404, detail="Unknown credential env key")
+    return load_value_state().get(env_key, {"value": "", "source": "default"})
+
+
+def _require_unlocked_credential(entry: dict[str, Any]) -> None:
+    if is_locked_source(entry["source"]):
+        raise HTTPException(
+            status_code=409,
+            detail=(
+                "This credential is set via the process environment and cannot "
+                "be edited from the dashboard."
+            ),
+        )
+
+
+@router.get("/admin/api/credentials/{env_key}/keys")
+async def list_credential_keys(env_key: str, request: Request):
+    """List the configured keys for one provider credential (masked)."""
+    require_loopback_admin(request)
+    entry = _credential_entry_or_404(env_key)
+    keys = parse_credential_keys(str(entry["value"]))
+    return {
+        "env_key": env_key,
+        "source": entry["source"],
+        "locked": is_locked_source(entry["source"]),
+        "count": len(keys),
+        "keys": [_mask_credential_key(key) for key in keys],
+    }
+
+
+@router.post("/admin/api/credentials/{env_key}/keys")
+async def add_credential_key(
+    env_key: str,
+    payload: _CredentialKeyAddRequest,
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    """Append one key to a provider credential and apply immediately."""
+    require_loopback_admin(request)
+    entry = _credential_entry_or_404(env_key)
+    _require_unlocked_credential(entry)
+
+    new_key = payload.key.strip()
+    if not new_key:
+        raise HTTPException(status_code=400, detail="Key is empty")
+    if "," in new_key:
+        raise HTTPException(
+            status_code=400, detail="Paste a single key without commas"
+        )
+
+    keys = list(parse_credential_keys(str(entry["value"])))
+    if new_key in keys:
+        raise HTTPException(status_code=409, detail="Key is already configured")
+    keys.append(new_key)
+
+    result = await services.admin.apply_admin_config({env_key: ",".join(keys)})
+    if not result.get("applied"):
+        raise HTTPException(
+            status_code=400,
+            detail="; ".join(result.get("errors", [])) or "Update rejected",
+        )
+    return {
+        "applied": True,
+        "env_key": env_key,
+        "count": len(keys),
+        "added": _mask_credential_key(new_key),
+        "restart": result.get("restart"),
+    }
+
+
+@router.delete("/admin/api/credentials/{env_key}/keys/{index}")
+async def delete_credential_key(
+    env_key: str,
+    index: int,
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    """Remove one key from a provider credential and apply immediately."""
+    require_loopback_admin(request)
+    entry = _credential_entry_or_404(env_key)
+    _require_unlocked_credential(entry)
+
+    keys = list(parse_credential_keys(str(entry["value"])))
+    if index < 0 or index >= len(keys):
+        raise HTTPException(status_code=404, detail="Key index out of range")
+    removed = keys.pop(index)
+
+    result = await services.admin.apply_admin_config({env_key: ",".join(keys)})
+    if not result.get("applied"):
+        raise HTTPException(
+            status_code=400,
+            detail="; ".join(result.get("errors", [])) or "Update rejected",
+        )
+    return {
+        "applied": True,
+        "env_key": env_key,
+        "count": len(keys),
+        "removed": _mask_credential_key(removed),
+        "restart": result.get("restart"),
+    }
 
 
 @router.get("/admin/api/models")
