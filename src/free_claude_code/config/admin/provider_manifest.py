@@ -8,7 +8,10 @@ from free_claude_code.config.settings import Settings
 _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
     "NVIDIA_NIM_API_KEY": {
         "label": "NVIDIA NIM API Key",
-        "description": "Used by NVIDIA NIM chat and optional NIM voice transcription.",
+        "description": (
+            "Used by NVIDIA NIM chat and optional NIM voice transcription. "
+            "Accepts a comma-separated list of keys for multi-key rotation."
+        ),
     },
     "MISTRAL_API_KEY": {
         "label": "Mistral API Key",
@@ -129,6 +132,7 @@ def provider_field_specs() -> tuple[dict[str, Any], ...]:
 
     return (
         *_credential_field_specs(),
+        *_rotation_field_specs(),
         *_cloudflare_account_field_specs(),
         *_local_base_url_field_specs(),
         *_proxy_field_specs(),
@@ -154,6 +158,37 @@ def _credential_field_specs() -> tuple[dict[str, Any], ...]:
         }
         spec.update(_PROVIDER_FIELD_OVERRIDES.get(descriptor.credential_env, {}))
         specs.append(spec)
+    return tuple(specs)
+
+
+def _rotation_field_specs() -> tuple[dict[str, Any], ...]:
+    specs: list[dict[str, Any]] = []
+    seen_env_keys: set[str] = set()
+    for descriptor in PROVIDER_CATALOG.values():
+        if descriptor.credential_env is None:
+            continue
+        if descriptor.credential_env in seen_env_keys:
+            continue
+        seen_env_keys.add(descriptor.credential_env)
+        specs.append(
+            {
+                "key": f"{descriptor.credential_env}_ROTATION",
+                "label": f"{descriptor.display_name} Key Rotation",
+                "section_id": "providers",
+                "field_type": "select",
+                "default": "single",
+                "options": ("single", "round_robin", "on_error"),
+                "advanced": True,
+                "restart_required": True,
+                "description": (
+                    "Rotation policy across a comma-separated list of keys in "
+                    f"{descriptor.credential_env}. single = use the first key only; "
+                    "round_robin = spread requests across keys; "
+                    "on_error = stick to one key until it fails, then fail over. "
+                    "Requires restart."
+                ),
+            }
+        )
     return tuple(specs)
 
 

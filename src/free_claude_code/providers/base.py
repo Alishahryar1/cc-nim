@@ -24,6 +24,11 @@ class ProviderConfig:
 
     Base fields apply to all providers. Provider-specific parameters
     (e.g. NIM temperature, top_p) are passed by the provider constructor.
+
+    ``api_key`` is the first configured credential and remains the value all
+    existing providers use. ``api_keys`` carries every configured credential
+    (comma-separated in env) for multi-key rotation; ``credential_rotation``
+    selects the policy: ``single`` (default), ``round_robin`` or ``on_error``.
     """
 
     api_key: str
@@ -37,6 +42,8 @@ class ProviderConfig:
     proxy: str = ""
     log_raw_sse_events: bool = False
     log_api_error_tracebacks: bool = False
+    api_keys: tuple[str, ...] = ()
+    credential_rotation: str = "single"
 
 
 class BaseProvider(ABC):
