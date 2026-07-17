@@ -21,6 +21,7 @@ from free_claude_code.core.trace import (
 )
 from free_claude_code.core.version import package_version
 
+from .admin_cache import AdminNoStoreMiddleware, attach_admin_no_store
 from .admin_routes import router as admin_router
 from .ports import ApiServices
 from .request_errors import ordinary_application_error_response
@@ -38,6 +39,7 @@ def create_app(services: ApiServices) -> FastAPI:
     app = FastAPI(title="Claude Code Proxy", version=package_version())
     app.state.services = services
     app.add_middleware(RequestCorrelationMiddleware)
+    app.add_middleware(AdminNoStoreMiddleware)
 
     app.include_router(admin_router)
     app.include_router(router)
@@ -108,6 +110,7 @@ def create_app(services: ApiServices) -> FastAPI:
                     request_id=request_id,
                 )
             response = JSONResponse(status_code=500, content=content)
+        attach_admin_no_store(response, path=request.url.path)
         attach_request_id_headers(
             response,
             request_id=request_id,
