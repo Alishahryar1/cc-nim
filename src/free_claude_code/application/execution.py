@@ -58,7 +58,7 @@ class ProviderExecutor:
         provider = self._provider_resolver(routed.resolved.provider_id)
         provider.preflight_stream(
             routed.request,
-            thinking_enabled=routed.resolved.thinking_enabled,
+            reasoning=routed.reasoning,
         )
 
         route_trace: dict[str, object] = {
@@ -70,7 +70,13 @@ class ProviderExecutor:
             "provider_model": routed.resolved.provider_model,
             "provider_model_ref": routed.resolved.provider_model_ref,
             "gateway_model": routed.request.model,
-            "thinking_enabled": routed.resolved.thinking_enabled,
+            "reasoning_control": routed.reasoning.control.value,
+            "reasoning_effort": (
+                routed.reasoning.effort.value
+                if routed.reasoning.effort is not None
+                else None
+            ),
+            "reasoning_budget_tokens": routed.reasoning.budget_tokens,
         }
         if wire_api == "responses":
             route_trace["wire_api"] = "responses"
@@ -107,7 +113,7 @@ class ProviderExecutor:
                     routed.request,
                     input_tokens=input_tokens,
                     request_id=request_id,
-                    thinking_enabled=routed.resolved.thinking_enabled,
+                    reasoning=routed.reasoning,
                 )
                 async for chunk in provider_stream:
                     yield chunk

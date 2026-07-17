@@ -4,9 +4,12 @@ from typing import Any
 
 from loguru import logger
 
+from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import (
+    NO_REASONING,
     OpenAIChatProfile,
     OpenAIChatProvider,
     OpenAIChatRequestPolicy,
@@ -21,8 +24,11 @@ from .reasoning import (
     normalize_mistral_stream,
 )
 
-_REQUEST_POLICY = OpenAIChatRequestPolicy(provider_name="MISTRAL")
-_PROFILE = OpenAIChatProfile(_REQUEST_POLICY)
+_REQUEST_POLICY = OpenAIChatRequestPolicy(
+    provider_name="MISTRAL",
+    reasoning_replay=ReasoningReplayMode.REASONING_CONTENT,
+)
+_PROFILE = OpenAIChatProfile(_REQUEST_POLICY, NO_REASONING)
 
 
 class MistralProvider(OpenAIChatProvider):
@@ -36,19 +42,17 @@ class MistralProvider(OpenAIChatProvider):
         )
 
     def _build_request_body(
-        self, request: MessagesRequest, thinking_enabled: bool | None = None
+        self,
+        request: MessagesRequest,
+        *,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> dict:
-        effective_thinking_enabled = self._is_thinking_enabled(
-            request, thinking_enabled
-        )
         body = build_openai_chat_request_body(
             request,
-            thinking_enabled=effective_thinking_enabled,
+            reasoning=reasoning,
             policy=_REQUEST_POLICY,
         )
-        apply_mistral_reasoning_request_shape(
-            body, thinking_enabled=effective_thinking_enabled
-        )
+        apply_mistral_reasoning_request_shape(body, reasoning=reasoning)
         return body
 
     def _get_retry_request_body(self, error: Exception, body: dict) -> dict | None:

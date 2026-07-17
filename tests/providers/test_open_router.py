@@ -16,7 +16,11 @@ from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.open_router import OpenRouterProvider
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter
+from tests.providers.support import (
+    REASONING_OFF,
+    passthrough_rate_limiter,
+    reasoning_for,
+)
 
 
 class AsyncStream:
@@ -86,7 +90,7 @@ def test_build_request_body_uses_openai_chat_shape(open_router_provider):
         {"role": "user", "content": "Hello"},
     ]
     assert body["max_tokens"] == 100
-    assert body["extra_body"]["reasoning"] == {"enabled": True}
+    assert "extra_body" not in body
 
 
 def test_build_request_body_default_max_tokens(open_router_provider):
@@ -107,30 +111,36 @@ def test_openrouter_extra_body_rejects_overriding_reserved_fields(
 def test_openrouter_extra_body_allows_provider_keys(open_router_provider):
     body = open_router_provider._build_request_body(
         make_request(extra_body={"transforms": ["no-web"], "plugins": []}),
-        thinking_enabled=False,
+        reasoning=REASONING_OFF,
     )
 
-    assert body["extra_body"] == {"transforms": ["no-web"], "plugins": []}
+    assert body["extra_body"] == {
+        "transforms": ["no-web"],
+        "plugins": [],
+        "reasoning": {"enabled": False},
+    }
 
 
-def test_build_request_body_omits_reasoning_when_thinking_disabled(
+def test_build_request_body_disables_reasoning_when_client_disables_it(
     open_router_provider,
 ):
+    request = make_request(thinking={"type": "disabled"})
     body = open_router_provider._build_request_body(
-        make_request(thinking={"type": "disabled"})
+        request, reasoning=reasoning_for(request)
     )
 
-    assert "extra_body" not in body
+    assert body["extra_body"]["reasoning"] == {"enabled": False}
 
 
 def test_build_request_body_maps_thinking_budget_to_reasoning_max_tokens(
     open_router_provider,
 ):
+    request = make_request(thinking={"type": "enabled", "budget_tokens": 4096})
     body = open_router_provider._build_request_body(
-        make_request(thinking={"type": "enabled", "budget_tokens": 4096})
+        request, reasoning=reasoning_for(request)
     )
 
-    assert body["extra_body"]["reasoning"] == {"enabled": True, "max_tokens": 4096}
+    assert body["extra_body"]["reasoning"] == {"max_tokens": 4096}
 
 
 def test_build_request_body_replays_openrouter_reasoning_details(
@@ -156,7 +166,9 @@ def test_build_request_body_replays_openrouter_reasoning_details(
         }
     )
 
-    body = open_router_provider._build_request_body(request)
+    body = open_router_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     assistant = next(msg for msg in body["messages"] if msg["role"] == "assistant")
     assert assistant["reasoning_details"] == [detail]

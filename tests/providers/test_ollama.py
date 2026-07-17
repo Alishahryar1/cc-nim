@@ -15,7 +15,12 @@ from free_claude_code.core.anthropic.stream_contracts import (
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter, profiled_provider
+from tests.providers.support import (
+    REASONING_OFF,
+    passthrough_rate_limiter,
+    profiled_provider,
+    reasoning_for,
+)
 
 OLLAMA_MODEL = "llama3.1:8b"
 OLLAMA_CLOUD_MODEL = "qwen3-coder:480b"
@@ -83,9 +88,12 @@ def test_build_request_body_uses_openai_chat_shape() -> None:
     assert "extra_body" not in body
 
 
-def test_cloud_build_request_body_enables_ollama_reasoning() -> None:
+def test_cloud_build_request_body_forwards_client_reasoning_effort() -> None:
+    request = make_messages_request(
+        OLLAMA_CLOUD_MODEL, output_config={"effort": "high"}
+    )
     body = _cloud_provider()._build_request_body(
-        make_messages_request(OLLAMA_CLOUD_MODEL)
+        request, reasoning=reasoning_for(request)
     )
 
     assert body["model"] == OLLAMA_CLOUD_MODEL
@@ -121,7 +129,9 @@ def test_cloud_build_request_body_replays_thinking_in_ollama_reasoning_field() -
         ],
     )
 
-    body = _cloud_provider()._build_request_body(request)
+    body = _cloud_provider()._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     assistant = next(
         message for message in body["messages"] if message["role"] == "assistant"
@@ -130,13 +140,8 @@ def test_cloud_build_request_body_replays_thinking_in_ollama_reasoning_field() -
     assert "reasoning_content" not in assistant
 
 
-@pytest.mark.parametrize(
-    ("provider", "expected_effort"),
-    [(_provider, None), (_cloud_provider, "none")],
-)
-def test_disabled_thinking_is_not_replayed_and_disables_ollama_reasoning(
-    provider, expected_effort
-) -> None:
+@pytest.mark.parametrize("provider", [_provider, _cloud_provider])
+def test_replay_is_independent_of_disabled_current_turn_reasoning(provider) -> None:
     request = make_messages_request(
         OLLAMA_CLOUD_MODEL,
         messages=[
@@ -151,16 +156,13 @@ def test_disabled_thinking_is_not_replayed_and_disables_ollama_reasoning(
         ],
     )
 
-    body = provider()._build_request_body(request, thinking_enabled=False)
+    body = provider()._build_request_body(request, reasoning=REASONING_OFF)
     assistant = next(
         message for message in body["messages"] if message["role"] == "assistant"
     )
 
-    if expected_effort is None:
-        assert "reasoning_effort" not in body
-    else:
-        assert body["reasoning_effort"] == expected_effort
-    assert "reasoning" not in assistant
+    assert body["reasoning_effort"] == "none"
+    assert assistant["reasoning"] == "Hidden plan."
     assert "reasoning_content" not in assistant
     assert assistant["content"] == "Visible answer."
 

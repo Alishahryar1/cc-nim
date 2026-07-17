@@ -12,7 +12,11 @@ from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.mistral import MistralProvider
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter
+from tests.providers.support import (
+    REASONING_OFF,
+    passthrough_rate_limiter,
+    reasoning_for,
+)
 
 
 def make_request(**overrides):
@@ -26,7 +30,6 @@ def mistral_config():
         base_url=MISTRAL_DEFAULT_BASE,
         rate_limit=10,
         rate_window=60,
-        enable_thinking=True,
     )
 
 
@@ -55,7 +58,7 @@ def test_default_base_url():
 def test_build_request_body_basic(mistral_provider):
     """Basic request body conversion works for Mistral."""
     req = make_request()
-    body = mistral_provider._build_request_body(req)
+    body = mistral_provider._build_request_body(req, reasoning=reasoning_for(req))
 
     assert body["model"] == "devstral-small-latest"
     assert body["messages"][0]["role"] == "system"
@@ -94,7 +97,7 @@ def test_build_request_body_replays_prior_thinking_as_mistral_chunks(
         ],
     )
 
-    body = mistral_provider._build_request_body(req)
+    body = mistral_provider._build_request_body(req, reasoning=reasoning_for(req))
 
     assistant = body["messages"][0]
     assert "reasoning_content" not in assistant
@@ -125,7 +128,7 @@ def test_build_request_body_preserves_tools_tool_choice_and_params(mistral_provi
         stop_sequences=["STOP"],
     )
 
-    body = mistral_provider._build_request_body(req)
+    body = mistral_provider._build_request_body(req, reasoning=reasoning_for(req))
 
     assert body["max_tokens"] == 100
     assert body["temperature"] == 0.5
@@ -135,33 +138,30 @@ def test_build_request_body_preserves_tools_tool_choice_and_params(mistral_provi
     assert body["tool_choice"] == {"type": "function", "function": {"name": "echo"}}
 
 
-def test_build_request_body_global_disable_blocks_reasoning_mapping():
-    """Global disable disables reasoning replay in the converter."""
+def test_build_request_body_reasoning_off_uses_native_none():
     provider = MistralProvider(
         ProviderConfig(
             api_key="test_mistral_key",
             base_url=MISTRAL_DEFAULT_BASE,
             rate_limit=10,
             rate_window=60,
-            enable_thinking=False,
         ),
         rate_limiter=passthrough_rate_limiter(),
     )
     req = make_request()
-    body = provider._build_request_body(req)
+    body = provider._build_request_body(req, reasoning=REASONING_OFF)
 
-    assert "reasoning_effort" not in body
+    assert body["reasoning_effort"] == "none"
     assert all("reasoning_content" not in m for m in body.get("messages", []))
 
 
-def test_build_request_body_thinking_disabled_strips_prior_mistral_thinking():
+def test_reasoning_off_keeps_replay_separate_from_new_turn_compute():
     provider = MistralProvider(
         ProviderConfig(
             api_key="test_mistral_key",
             base_url=MISTRAL_DEFAULT_BASE,
             rate_limit=10,
             rate_window=60,
-            enable_thinking=False,
         ),
         rate_limiter=passthrough_rate_limiter(),
     )
@@ -178,10 +178,16 @@ def test_build_request_body_thinking_disabled_strips_prior_mistral_thinking():
         ],
     )
 
-    body = provider._build_request_body(req)
+    body = provider._build_request_body(req, reasoning=REASONING_OFF)
 
-    assert "reasoning_effort" not in body
-    assert body["messages"][0]["content"] == "Visible."
+    assert body["reasoning_effort"] == "none"
+    assert body["messages"][0]["content"] == [
+        {
+            "type": "thinking",
+            "thinking": [{"type": "text", "text": "Hidden."}],
+        },
+        {"type": "text", "text": "Visible."},
+    ]
 
 
 @pytest.mark.asyncio
@@ -467,7 +473,7 @@ async def test_stream_response_suppresses_native_mistral_thinking_when_disabled(
         events = [
             event
             async for event in mistral_provider.stream_response(
-                req, thinking_enabled=False
+                req, reasoning=REASONING_OFF
             )
         ]
 
@@ -529,7 +535,12 @@ async def test_stream_response_retries_without_mistral_reasoning_on_rejection(
     ) as mock_create:
         mock_create.side_effect = [error, mock_stream()]
 
-        events = [e async for e in mistral_provider.stream_response(req)]
+        events = [
+            e
+            async for e in mistral_provider.stream_response(
+                req, reasoning=reasoning_for(req)
+            )
+        ]
 
     assert mock_create.await_count == 2
     first_call = mock_create.await_args_list[0].kwargs
@@ -595,7 +606,12 @@ async def test_stream_response_reasoning_retry_preserves_visible_text_and_tools(
     ) as mock_create:
         mock_create.side_effect = [error, mock_stream()]
 
-        events = [e async for e in mistral_provider.stream_response(req)]
+        events = [
+            e
+            async for e in mistral_provider.stream_response(
+                req, reasoning=reasoning_for(req)
+            )
+        ]
 
     second_call = mock_create.await_args_list[1].kwargs
     assert second_call["messages"][0]["content"] == "Visible history."
@@ -632,7 +648,12 @@ async def test_stream_response_retries_on_mistral_422_reasoning_rejection(
     ) as mock_create:
         mock_create.side_effect = [error, mock_stream()]
 
-        events = [e async for e in mistral_provider.stream_response(req)]
+        events = [
+            e
+            async for e in mistral_provider.stream_response(
+                req, reasoning=reasoning_for(req)
+            )
+        ]
 
     assert mock_create.await_count == 2
     assert "reasoning_effort" not in mock_create.await_args_list[1].kwargs

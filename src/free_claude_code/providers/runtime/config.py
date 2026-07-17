@@ -61,7 +61,6 @@ def build_provider_config(
         http_read_timeout=settings.http_read_timeout,
         http_write_timeout=settings.http_write_timeout,
         http_connect_timeout=settings.http_connect_timeout,
-        enable_thinking=settings.enable_model_thinking,
         proxy=proxy,
         log_raw_sse_events=settings.log_raw_sse_events,
         log_api_error_tracebacks=settings.log_api_error_tracebacks,

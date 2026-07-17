@@ -15,7 +15,12 @@ from free_claude_code.core.anthropic.stream_contracts import (
 )
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
-from tests.providers.support import passthrough_rate_limiter, profiled_provider
+from tests.providers.support import (
+    REASONING_OFF,
+    passthrough_rate_limiter,
+    profiled_provider,
+    reasoning_for,
+)
 
 
 class AsyncStream:
@@ -43,7 +48,6 @@ def minimax_provider():
             base_url=MINIMAX_DEFAULT_BASE,
             rate_limit=10,
             rate_window=60,
-            enable_thinking=True,
         ),
         rate_limiter=passthrough_rate_limiter(),
     )
@@ -77,7 +81,7 @@ def test_init_uses_openai_chat_provider(minimax_provider):
     assert minimax_provider._provider_name == "MINIMAX"
 
 
-def test_build_request_body_uses_adaptive_thinking_and_max_completion_tokens(
+def test_build_request_body_requests_split_output_and_max_completion_tokens(
     minimax_provider,
 ):
     request = MessagesRequest.model_validate(
@@ -95,25 +99,28 @@ def test_build_request_body_uses_adaptive_thinking_and_max_completion_tokens(
         }
     )
 
-    body = minimax_provider._build_request_body(request)
+    body = minimax_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     assert body["model"] == "MiniMax-M3"
     assert body["tools"][0]["function"]["name"] == "echo"
     assert body["max_completion_tokens"] == ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
     assert "max_tokens" not in body
-    assert body["extra_body"]["reasoning_split"] is True
-    assert body["extra_body"]["thinking"] == {"type": "adaptive"}
+    assert body["extra_body"] == {"reasoning_split": True}
 
 
-def test_build_request_body_honors_no_thinking(minimax_provider):
+def test_build_request_body_does_not_invent_unsupported_compute_control(
+    minimax_provider,
+):
     request = MessagesRequest(
         model="MiniMax-M3",
         messages=[Message(role="user", content="Hello")],
     )
 
-    body = minimax_provider._build_request_body(request, thinking_enabled=False)
+    body = minimax_provider._build_request_body(request, reasoning=REASONING_OFF)
 
-    assert body["extra_body"]["thinking"] == {"type": "disabled"}
+    assert body["extra_body"] == {"reasoning_split": True}
 
 
 @pytest.mark.asyncio

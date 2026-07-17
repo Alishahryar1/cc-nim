@@ -1,5 +1,4 @@
 import json
-from dataclasses import replace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import openai
@@ -9,12 +8,18 @@ from httpx import Request, Response
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.config.provider_catalog import NVIDIA_NIM_DEFAULT_BASE
 from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.nvidia_nim.tool_schema import (
     NIM_TOOL_ARGUMENT_ALIASES_KEY,
 )
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter
+from tests.providers.support import (
+    REASONING_OFF,
+    REASONING_ON,
+    passthrough_rate_limiter,
+    reasoning_for,
+)
 
 
 def message(role, content):
@@ -149,7 +154,7 @@ async def test_build_request_body(provider_config):
         rate_limiter=passthrough_rate_limiter(),
     )
     req = make_request()
-    body = provider._build_request_body(req)
+    body = provider._build_request_body(req, reasoning=reasoning_for(req))
 
     assert body["model"] == "test-model"
     assert body["temperature"] == 0.5
@@ -161,24 +166,27 @@ async def test_build_request_body(provider_config):
     ctk = body["extra_body"]["chat_template_kwargs"]
     assert ctk["thinking"] is True
     assert ctk["enable_thinking"] is True
-    assert ctk["reasoning_budget"] == body["max_tokens"]
+    assert "reasoning_budget" not in ctk
     assert "reasoning_budget" not in body["extra_body"]
 
 
 @pytest.mark.asyncio
-async def test_build_request_body_omits_reasoning_when_globally_disabled(
+async def test_build_request_body_encodes_explicit_reasoning_off(
     provider_config,
 ):
     provider = NvidiaNimProvider(
-        replace(provider_config, enable_thinking=False),
+        provider_config,
         nim_settings=NimSettings(),
         rate_limiter=passthrough_rate_limiter(),
     )
     req = make_request()
-    body = provider._build_request_body(req)
+    body = provider._build_request_body(req, reasoning=REASONING_OFF)
 
     extra = body.get("extra_body", {})
-    assert "chat_template_kwargs" not in extra
+    assert extra["chat_template_kwargs"] == {
+        "thinking": False,
+        "enable_thinking": False,
+    }
     assert "reasoning_budget" not in extra
 
 
@@ -230,8 +238,8 @@ def test_preflight_and_build_request_issue_206_post_tool_text(nim_provider):
             ),
         ],
     )
-    nim_provider.preflight_stream(req, thinking_enabled=False)
-    body = nim_provider._build_request_body(req, thinking_enabled=False)
+    nim_provider.preflight_stream(req, reasoning=REASONING_OFF)
+    body = nim_provider._build_request_body(req, reasoning=REASONING_OFF)
     assert "messages" in body
     assert any(m.get("role") == "tool" for m in body["messages"])
 
@@ -333,7 +341,7 @@ async def test_stream_response_thinking_reasoning_content(nim_provider):
 @pytest.mark.asyncio
 async def test_stream_response_suppresses_thinking_when_disabled(provider_config):
     provider = NvidiaNimProvider(
-        replace(provider_config, enable_thinking=False),
+        provider_config,
         nim_settings=NimSettings(),
         rate_limiter=passthrough_rate_limiter(),
     )
@@ -358,7 +366,9 @@ async def test_stream_response_suppresses_thinking_when_disabled(provider_config
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = [e async for e in provider.stream_response(req)]
+        events = [
+            e async for e in provider.stream_response(req, reasoning=REASONING_OFF)
+        ]
 
     event_text = "".join(events)
     assert "thinking_delta" not in event_text
@@ -403,7 +413,9 @@ async def test_stream_response_retries_without_chat_template(provider_config):
     ) as mock_create:
         mock_create.side_effect = [first_error, mock_stream()]
 
-        events = [e async for e in provider.stream_response(req)]
+        events = [
+            e async for e in provider.stream_response(req, reasoning=REASONING_ON)
+        ]
 
     assert mock_create.await_count == 2
 
@@ -414,7 +426,6 @@ async def test_stream_response_retries_without_chat_template(provider_config):
     assert first_extra["chat_template_kwargs"] == {
         "thinking": True,
         "enable_thinking": True,
-        "reasoning_budget": 100,
     }
     assert "reasoning_budget" not in first_extra
 
@@ -459,7 +470,9 @@ async def test_stream_response_retries_without_chat_template_kwargs_issue_993(
     ) as mock_create:
         mock_create.side_effect = [first_error, mock_stream()]
 
-        events = [e async for e in provider.stream_response(req)]
+        events = [
+            e async for e in provider.stream_response(req, reasoning=REASONING_ON)
+        ]
 
     assert mock_create.await_count == 2
 
@@ -470,7 +483,6 @@ async def test_stream_response_retries_without_chat_template_kwargs_issue_993(
     assert first_extra["chat_template_kwargs"] == {
         "thinking": True,
         "enable_thinking": True,
-        "reasoning_budget": 100,
     }
     second_extra = second_kwargs.get("extra_body") or {}
     assert "chat_template" not in second_extra
@@ -752,15 +764,17 @@ async def test_stream_response_retries_without_reasoning_budget(nim_provider):
     ) as mock_create:
         mock_create.side_effect = [error, mock_stream()]
 
-        events = [e async for e in nim_provider.stream_response(req)]
+        events = [
+            e
+            async for e in nim_provider.stream_response(
+                req, reasoning=ReasoningPolicy.on(budget_tokens=77)
+            )
+        ]
 
     assert mock_create.await_count == 2
     first_call = mock_create.await_args_list[0].kwargs
     second_call = mock_create.await_args_list[1].kwargs
-    assert (
-        first_call["extra_body"]["chat_template_kwargs"]["reasoning_budget"]
-        == first_call["max_tokens"]
-    )
+    assert first_call["extra_body"]["chat_template_kwargs"]["reasoning_budget"] == 77
     assert "reasoning_budget" not in second_call["extra_body"]
     assert "reasoning_budget" not in second_call["extra_body"]["chat_template_kwargs"]
     assert second_call["extra_body"]["chat_template_kwargs"]["enable_thinking"] is True
@@ -796,15 +810,17 @@ async def test_stream_response_retries_without_budget_for_thinking_token_error(
     ) as mock_create:
         mock_create.side_effect = [error, mock_stream()]
 
-        events = [e async for e in nim_provider.stream_response(req)]
+        events = [
+            e
+            async for e in nim_provider.stream_response(
+                req, reasoning=ReasoningPolicy.on(budget_tokens=77)
+            )
+        ]
 
     assert mock_create.await_count == 2
     first_call = mock_create.await_args_list[0].kwargs
     second_call = mock_create.await_args_list[1].kwargs
-    assert (
-        first_call["extra_body"]["chat_template_kwargs"]["reasoning_budget"]
-        == first_call["max_tokens"]
-    )
+    assert first_call["extra_body"]["chat_template_kwargs"]["reasoning_budget"] == 77
     assert "reasoning_budget" not in second_call["extra_body"]
     assert "reasoning_budget" not in second_call["extra_body"]["chat_template_kwargs"]
     assert second_call["extra_body"]["chat_template_kwargs"]["thinking"] is True

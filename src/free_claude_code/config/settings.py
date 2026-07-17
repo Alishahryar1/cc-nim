@@ -14,6 +14,7 @@ from .env_files import (
 )
 from .nim import NimSettings
 from .provider_catalog import SUPPORTED_PROVIDER_IDS
+from .reasoning import ReasoningPreference
 
 
 class Settings(BaseSettings):
@@ -167,20 +168,25 @@ class Settings(BaseSettings):
     provider_max_concurrency: int = Field(
         default=5, validation_alias="PROVIDER_MAX_CONCURRENCY"
     )
-    enable_model_thinking: bool = Field(
-        default=True, validation_alias="ENABLE_MODEL_THINKING"
+    reasoning_policy: ReasoningPreference = Field(
+        default=ReasoningPreference.CLIENT,
+        validation_alias="REASONING_POLICY",
     )
-    enable_fable_thinking: bool | None = Field(
-        default=None, validation_alias="ENABLE_FABLE_THINKING"
+    reasoning_fable: ReasoningPreference = Field(
+        default=ReasoningPreference.INHERIT,
+        validation_alias="REASONING_FABLE",
     )
-    enable_opus_thinking: bool | None = Field(
-        default=None, validation_alias="ENABLE_OPUS_THINKING"
+    reasoning_opus: ReasoningPreference = Field(
+        default=ReasoningPreference.INHERIT,
+        validation_alias="REASONING_OPUS",
     )
-    enable_sonnet_thinking: bool | None = Field(
-        default=None, validation_alias="ENABLE_SONNET_THINKING"
+    reasoning_sonnet: ReasoningPreference = Field(
+        default=ReasoningPreference.INHERIT,
+        validation_alias="REASONING_SONNET",
     )
-    enable_haiku_thinking: bool | None = Field(
-        default=None, validation_alias="ENABLE_HAIKU_THINKING"
+    reasoning_haiku: ReasoningPreference = Field(
+        default=ReasoningPreference.INHERIT,
+        validation_alias="REASONING_HAIKU",
     )
 
     # ==================== HTTP Client Timeouts ====================
@@ -301,10 +307,6 @@ class Settings(BaseSettings):
         "model_opus",
         "model_sonnet",
         "model_haiku",
-        "enable_fable_thinking",
-        "enable_opus_thinking",
-        "enable_sonnet_thinking",
-        "enable_haiku_thinking",
         mode="before",
     )
     @classmethod
@@ -328,6 +330,15 @@ class Settings(BaseSettings):
         if upper not in valid:
             raise ValueError(f"LOG_LEVEL must be one of {sorted(valid)}, got {v!r}")
         return upper
+
+    @field_validator("reasoning_policy")
+    @classmethod
+    def validate_root_reasoning_policy(
+        cls, value: ReasoningPreference
+    ) -> ReasoningPreference:
+        if value is ReasoningPreference.INHERIT:
+            raise ValueError("REASONING_POLICY cannot inherit")
+        return value
 
     @field_validator("whisper_device")
     @classmethod

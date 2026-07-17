@@ -5,12 +5,14 @@ import pytest
 from free_claude_code.application.errors import UnknownProviderError
 from free_claude_code.application.routing import ModelRouter
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
+from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic.models import (
     Message,
     MessagesRequest,
     TokenCountRequest,
 )
+from free_claude_code.core.reasoning import ReasoningControl, ReasoningEffort
 
 
 @pytest.fixture
@@ -21,11 +23,11 @@ def settings():
     settings.model_opus = None
     settings.model_sonnet = None
     settings.model_haiku = None
-    settings.enable_model_thinking = True
-    settings.enable_fable_thinking = None
-    settings.enable_opus_thinking = None
-    settings.enable_sonnet_thinking = None
-    settings.enable_haiku_thinking = None
+    settings.reasoning_policy = ReasoningPreference.CLIENT
+    settings.reasoning_fable = ReasoningPreference.INHERIT
+    settings.reasoning_opus = ReasoningPreference.INHERIT
+    settings.reasoning_sonnet = ReasoningPreference.INHERIT
+    settings.reasoning_haiku = ReasoningPreference.INHERIT
     return settings
 
 
@@ -36,7 +38,7 @@ def test_model_router_resolves_default_model(settings):
     assert resolved.provider_id == "nvidia_nim"
     assert resolved.provider_model == "fallback-model"
     assert resolved.provider_model_ref == "nvidia_nim/fallback-model"
-    assert resolved.thinking_enabled is True
+    assert resolved.reasoning_preference is ReasoningPreference.CLIENT
 
 
 def test_model_router_applies_opus_override(settings):
@@ -52,7 +54,7 @@ def test_model_router_applies_opus_override(settings):
     assert routed.request.model == "deepseek/deepseek-r1"
     assert routed.resolved.provider_model_ref == "open_router/deepseek/deepseek-r1"
     assert routed.resolved.original_model == "claude-opus-4-20250514"
-    assert routed.resolved.thinking_enabled is True
+    assert routed.reasoning.control is ReasoningControl.DEFAULT
     assert request.model == "claude-opus-4-20250514"
 
 
@@ -72,19 +74,31 @@ def test_model_router_applies_fable_override(settings):
     assert routed.resolved.original_model == "claude-fable-5"
 
 
-def test_model_router_resolves_per_model_thinking(settings):
-    settings.enable_model_thinking = False
-    settings.enable_fable_thinking = True
-    settings.enable_opus_thinking = True
-    settings.enable_haiku_thinking = False
+def test_model_router_resolves_route_reasoning_preferences(settings):
+    settings.reasoning_policy = ReasoningPreference.OFF
+    settings.reasoning_fable = ReasoningPreference.HIGH
+    settings.reasoning_opus = ReasoningPreference.MAX
+    settings.reasoning_haiku = ReasoningPreference.OFF
 
     router = ModelRouter(settings)
 
-    assert router.resolve("claude-fable-5").thinking_enabled is True
-    assert router.resolve("claude-opus-4-20250514").thinking_enabled is True
-    assert router.resolve("claude-sonnet-4-20250514").thinking_enabled is False
-    assert router.resolve("claude-3-haiku-20240307").thinking_enabled is False
-    assert router.resolve("claude-2.1").thinking_enabled is False
+    assert (
+        router.resolve("claude-fable-5").reasoning_preference
+        is ReasoningPreference.HIGH
+    )
+    assert (
+        router.resolve("claude-opus-4-20250514").reasoning_preference
+        is ReasoningPreference.MAX
+    )
+    assert (
+        router.resolve("claude-sonnet-4-20250514").reasoning_preference
+        is ReasoningPreference.OFF
+    )
+    assert (
+        router.resolve("claude-3-haiku-20240307").reasoning_preference
+        is ReasoningPreference.OFF
+    )
+    assert router.resolve("claude-2.1").reasoning_preference is ReasoningPreference.OFF
 
 
 def test_model_router_applies_haiku_override(settings):
@@ -188,8 +202,6 @@ def test_model_router_routes_gateway_encoded_provider_model_directly(settings):
 
 
 def test_model_router_routes_no_thinking_gateway_model_directly(settings):
-    settings.enable_model_thinking = True
-
     routed = ModelRouter(settings).resolve_messages_request(
         MessagesRequest(
             model="claude-3-freecc-no-thinking/nvidia_nim/deepseek-ai/deepseek-v4-pro",
@@ -205,18 +217,23 @@ def test_model_router_routes_no_thinking_gateway_model_directly(settings):
     )
     assert routed.resolved.provider_id == "nvidia_nim"
     assert routed.resolved.provider_model == "deepseek-ai/deepseek-v4-pro"
-    assert routed.resolved.thinking_enabled is False
+    assert routed.reasoning.control is ReasoningControl.OFF
 
 
-def test_model_router_direct_prefixed_model_uses_provider_model_for_thinking(settings):
-    settings.enable_model_thinking = False
-    settings.enable_opus_thinking = True
+def test_direct_provider_model_uses_root_policy_without_model_name_guessing(settings):
+    settings.reasoning_policy = ReasoningPreference.LOW
+    settings.reasoning_opus = ReasoningPreference.MAX
 
-    resolved = ModelRouter(settings).resolve("open_router/anthropic/claude-opus-4")
+    routed = ModelRouter(settings).resolve_messages_request(
+        MessagesRequest(
+            model="open_router/anthropic/claude-opus-4",
+            messages=[Message(role="user", content="hello")],
+        )
+    )
 
-    assert resolved.provider_id == "open_router"
-    assert resolved.provider_model == "anthropic/claude-opus-4"
-    assert resolved.thinking_enabled is True
+    assert routed.resolved.provider_id == "open_router"
+    assert routed.resolved.provider_model == "anthropic/claude-opus-4"
+    assert routed.reasoning.effort is ReasoningEffort.LOW
 
 
 def test_model_router_routes_token_count_request(settings):

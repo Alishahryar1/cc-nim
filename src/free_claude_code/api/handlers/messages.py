@@ -47,6 +47,7 @@ from free_claude_code.core.anthropic import (
 )
 from free_claude_code.core.diagnostics import safe_exception_message
 from free_claude_code.core.failures import ExecutionFailure, find_execution_failure
+from free_claude_code.core.reasoning import ReasoningControl, ReasoningPolicy
 from free_claude_code.core.trace import trace_event
 
 
@@ -271,7 +272,7 @@ class MessagesHandler:
     ) -> RoutedMessagesRequest:
         if not is_safety_classifier_request(routed.request):
             return routed
-        changed = routed.resolved.thinking_enabled
+        changed = routed.reasoning.control is not ReasoningControl.OFF
         trace_event(
             stage="routing",
             event="free_claude_code.api.optimization.safety_classifier_no_thinking",
@@ -281,10 +282,7 @@ class MessagesHandler:
         )
         if not changed:
             return routed
-        return RoutedMessagesRequest(
-            request=routed.request,
-            resolved=replace(routed.resolved, thinking_enabled=False),
-        )
+        return replace(routed, reasoning=ReasoningPolicy.off())
 
     def _run_message_intercepts(
         self, routed: RoutedMessagesRequest

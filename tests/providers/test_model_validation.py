@@ -16,6 +16,7 @@ from free_claude_code.config.provider_catalog import (
     WAFER_DEFAULT_BASE,
 )
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.deepseek import DeepSeekProvider
 from free_claude_code.providers.model_listing import ModelListResponseError
@@ -326,7 +327,10 @@ class FakeProvider(BaseProvider):
         self.cleaned = False
 
     def preflight_stream(
-        self, request: Any, *, thinking_enabled: bool | None = None
+        self,
+        request: Any,
+        *,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> None:
         return None
 
@@ -359,7 +363,7 @@ class FakeProvider(BaseProvider):
         input_tokens: int = 0,
         *,
         request_id: str | None = None,
-        thinking_enabled: bool | None = None,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> AsyncIterator[str]:
         if False:
             yield ""

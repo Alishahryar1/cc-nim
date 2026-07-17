@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from free_claude_code.config.provider_catalog import SAMBANOVA_DEFAULT_BASE
+from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.base import ProviderConfig
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter, profiled_provider
@@ -22,7 +23,6 @@ def sambanova_config():
         base_url=SAMBANOVA_DEFAULT_BASE,
         rate_limit=10,
         rate_window=60,
-        enable_thinking=True,
     )
 
 
@@ -79,6 +79,27 @@ def test_build_request_body_preserves_caller_extra_body(sambanova_provider):
     eb = body.get("extra_body")
     assert isinstance(eb, dict)
     assert eb.get("metadata") == {"user": "u1"}
+
+
+@pytest.mark.parametrize(
+    ("reasoning", "expected"),
+    (
+        (ReasoningPolicy.provider_default(), None),
+        (ReasoningPolicy.off(), None),
+        (ReasoningPolicy.on(effort=ReasoningEffort.LOW), "low"),
+        (ReasoningPolicy.on(effort=ReasoningEffort.XHIGH), "high"),
+        (ReasoningPolicy.on(), "medium"),
+    ),
+)
+def test_build_request_body_uses_only_documented_reasoning_efforts(
+    sambanova_provider, reasoning, expected
+):
+    body = sambanova_provider._build_request_body(
+        make_request(),
+        reasoning=reasoning,
+    )
+
+    assert body.get("reasoning_effort") == expected
 
 
 @pytest.mark.asyncio

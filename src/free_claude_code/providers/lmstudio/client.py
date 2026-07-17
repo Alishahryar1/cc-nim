@@ -17,22 +17,41 @@ import httpx
 from loguru import logger
 
 from free_claude_code.application.errors import InvalidRequestError
-from free_claude_code.core.anthropic import (
-    ReasoningReplayMode,
-    build_base_request_body,
-    get_token_count,
-)
-from free_claude_code.core.anthropic.conversion import OpenAIConversionError
+from free_claude_code.core.anthropic import ReasoningReplayMode, get_token_count
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.reasoning import (
+    DEFAULT_REASONING_POLICY,
+    ReasoningEffort,
+    ReasoningPolicy,
+)
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import (
+    NamedEffortReasoning,
     OpenAIChatProfile,
     OpenAIChatProvider,
     OpenAIChatRequestPolicy,
 )
 from free_claude_code.providers.rate_limit import ProviderRateLimiter
 
-_PROFILE = OpenAIChatProfile(OpenAIChatRequestPolicy(provider_name="LMSTUDIO"))
+_PROFILE = OpenAIChatProfile(
+    OpenAIChatRequestPolicy(
+        provider_name="LMSTUDIO",
+        reasoning_replay=ReasoningReplayMode.DISABLED,
+    ),
+    NamedEffortReasoning(
+        (
+            (ReasoningEffort.MINIMAL, "low"),
+            (ReasoningEffort.LOW, "low"),
+            (ReasoningEffort.MEDIUM, "medium"),
+            (ReasoningEffort.HIGH, "high"),
+            (ReasoningEffort.XHIGH, "high"),
+            (ReasoningEffort.MAX, "high"),
+        ),
+        disabled_value="none",
+        enabled_value="high",
+        budget_field="reasoning_tokens",
+    ),
+)
 
 
 class LMStudioProvider(OpenAIChatProvider):
@@ -53,28 +72,13 @@ class LMStudioProvider(OpenAIChatProvider):
         )
         self._loaded_context_cache: tuple[float, int | None] = (0.0, None)
 
-    def _build_request_body(
-        self, request: MessagesRequest, thinking_enabled: bool | None = None
-    ) -> dict:
-        """Build an OpenAI chat body from the Anthropic request.
-
-        Prior-turn thinking is never replayed: Mistral-family templates have
-        no assistant reasoning field, and replaying ``<think>`` text inflates
-        the local context for no benefit. New-response thinking still streams
-        back via ``reasoning_content``/``<think>`` parsing in the provider.
-        """
-        try:
-            return build_base_request_body(
-                request,
-                reasoning_replay=ReasoningReplayMode.DISABLED,
-            )
-        except OpenAIConversionError as exc:
-            raise InvalidRequestError(str(exc)) from exc
-
     def preflight_stream(
-        self, request: MessagesRequest, *, thinking_enabled: bool | None = None
+        self,
+        request: MessagesRequest,
+        *,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> None:
-        super().preflight_stream(request, thinking_enabled=thinking_enabled)
+        super().preflight_stream(request, reasoning=reasoning)
         self._preflight_context_budget(request)
 
     def _preflight_context_budget(self, request: MessagesRequest) -> None:

@@ -8,14 +8,17 @@ import openai
 import pytest
 from httpx import Request, Response
 
+from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
+from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import (
     OpenAIChatProfile,
     OpenAIChatProvider,
     OpenAIChatRequestPolicy,
 )
+from free_claude_code.providers.openai_chat.reasoning import NO_REASONING
 from free_claude_code.providers.openai_chat.usage import (
     clone_without_stream_usage,
     is_stream_usage_rejection,
@@ -36,13 +39,20 @@ class _UsageTestProvider(OpenAIChatProvider):
                 rate_window=60,
             ),
             profile=OpenAIChatProfile(
-                OpenAIChatRequestPolicy(provider_name="USAGE_TEST")
+                OpenAIChatRequestPolicy(
+                    provider_name="USAGE_TEST",
+                    reasoning_replay=ReasoningReplayMode.DISABLED,
+                ),
+                NO_REASONING,
             ),
             rate_limiter=passthrough_rate_limiter(),
         )
 
     def _build_request_body(
-        self, request: MessagesRequest, thinking_enabled: bool | None = None
+        self,
+        request: MessagesRequest,
+        *,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> dict:
         return {"model": request.model, "messages": [{"role": "user", "content": "x"}]}
 

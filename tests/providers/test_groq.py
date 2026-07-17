@@ -21,7 +21,6 @@ def groq_config():
         base_url=GROQ_DEFAULT_BASE,
         rate_limit=10,
         rate_window=60,
-        enable_thinking=True,
     )
 
 
@@ -67,7 +66,6 @@ def test_build_request_body_global_disable_blocks_reasoning_mapping():
             base_url=GROQ_DEFAULT_BASE,
             rate_limit=10,
             rate_window=60,
-            enable_thinking=False,
         ),
         rate_limiter=passthrough_rate_limiter(),
     )

@@ -13,7 +13,7 @@ import uvicorn
 from free_claude_code.cli.launchers.common import preflight_proxy
 from free_claude_code.cli.process_registry import kill_all_best_effort
 from free_claude_code.config.env_migrations import (
-    explicit_env_file_huggingface_warning,
+    explicit_env_file_migration_warning,
     migrate_owned_env_files,
 )
 from free_claude_code.config.env_template import load_env_template
@@ -148,6 +148,6 @@ def _migrate_config_env_keys() -> tuple[Path, ...]:
     """Apply dotenv key migrations before Settings loads config."""
 
     migrated = migrate_owned_env_files()
-    if warning := explicit_env_file_huggingface_warning(os.environ):
+    if warning := explicit_env_file_migration_warning(os.environ):
         print(warning, file=sys.stderr)
     return migrated

@@ -10,7 +10,12 @@ from free_claude_code.config.provider_catalog import FIREWORKS_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
-from tests.providers.support import passthrough_rate_limiter, profiled_provider
+from tests.providers.support import (
+    REASONING_OFF,
+    passthrough_rate_limiter,
+    profiled_provider,
+    reasoning_for,
+)
 
 
 @pytest.fixture
@@ -22,7 +27,6 @@ def fireworks_provider():
             base_url=FIREWORKS_DEFAULT_BASE,
             rate_limit=10,
             rate_window=60,
-            enable_thinking=True,
         ),
         rate_limiter=passthrough_rate_limiter(),
     )
@@ -46,7 +50,9 @@ def test_build_request_body_openai_chat_shape(fireworks_provider):
         system="System prompt",
     )
 
-    body = fireworks_provider._build_request_body(request)
+    body = fireworks_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     assert body["model"] == "accounts/fireworks/models/glm-5p1"
     assert body["max_tokens"] == 100
@@ -62,12 +68,14 @@ def test_build_request_body_default_max_tokens(fireworks_provider):
         messages=[Message(role="user", content="x")],
     )
 
-    body = fireworks_provider._build_request_body(request)
+    body = fireworks_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     assert body["max_tokens"] == ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 
 
-def test_build_request_body_global_disable_blocks_thinking():
+def test_replay_is_independent_of_current_turn_reasoning_control():
     provider = profiled_provider(
         "fireworks",
         ProviderConfig(
@@ -75,7 +83,6 @@ def test_build_request_body_global_disable_blocks_thinking():
             base_url=FIREWORKS_DEFAULT_BASE,
             rate_limit=1,
             rate_window=1,
-            enable_thinking=False,
         ),
         rate_limiter=passthrough_rate_limiter(),
     )
@@ -91,9 +98,10 @@ def test_build_request_body_global_disable_blocks_thinking():
         }
     )
 
-    body = provider._build_request_body(request)
+    body = provider._build_request_body(request, reasoning=REASONING_OFF)
 
-    assert "reasoning_content" not in body["messages"][0]
+    assert body["messages"][0]["reasoning_content"] == "hidden"
+    assert body["reasoning_effort"] == "none"
 
 
 def test_build_request_body_preserves_validated_extra_body(fireworks_provider):
@@ -105,7 +113,9 @@ def test_build_request_body_preserves_validated_extra_body(fireworks_provider):
         }
     )
 
-    body = fireworks_provider._build_request_body(request)
+    body = fireworks_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     assert body["extra_body"] == {"custom_param": "value"}
 
@@ -120,7 +130,9 @@ def test_build_request_body_rejects_reserved_extra_body_keys(fireworks_provider)
     )
 
     with pytest.raises(InvalidRequestError, match="extra_body must not override"):
-        fireworks_provider._build_request_body(request)
+        fireworks_provider._build_request_body(
+            request, reasoning=reasoning_for(request)
+        )
 
 
 @pytest.mark.asyncio

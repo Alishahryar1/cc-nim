@@ -312,9 +312,15 @@ Model routing configuration is tiered:
 
 - `MODEL` is the fallback provider-prefixed model ref.
 - `MODEL_FABLE`, `MODEL_OPUS`, `MODEL_SONNET`, and `MODEL_HAIKU` override Claude model tiers.
-- `ENABLE_MODEL_THINKING` is the global thinking switch.
-- `ENABLE_FABLE_THINKING`, `ENABLE_OPUS_THINKING`, `ENABLE_SONNET_THINKING`, and
-  `ENABLE_HAIKU_THINKING` optionally override thinking by tier.
+- `REASONING_POLICY` selects `off`, `client`, `low`, `medium`, `high`, `xhigh`,
+  or `max` for the fallback route.
+- `REASONING_FABLE`, `REASONING_OPUS`, `REASONING_SONNET`, and
+  `REASONING_HAIKU` accept the same values plus `inherit`.
+
+[config/reasoning.py](src/free_claude_code/config/reasoning.py) owns the typed
+configuration vocabulary. FCC-owned dotenv files receive a one-time rename and
+value migration from the retired boolean settings; explicit `FCC_ENV_FILE`
+files are never rewritten and instead receive an actionable startup warning.
 
 [config/model_refs.py](src/free_claude_code/config/model_refs.py) owns provider-prefixed model ref
 parsing and configured `MODEL*` inventory. API routing and provider validation
@@ -434,7 +440,7 @@ sequenceDiagram
     Route->>Manager: acquire current generation
     Manager-->>Route: Lease(settings, provider resolver)
     Route->>Handler: create message
-    Handler->>Router: resolve model and thinking
+    Handler->>Router: resolve model and reasoning intent
     Handler->>Handler: server tools or optimizations
     Handler->>Exec: stream routed request
     Exec->>Lease: resolve provider
@@ -465,10 +471,15 @@ If the incoming model is not direct, `ModelRouter` maps it by Claude tier. Names
 containing `fable`, `opus`, `sonnet`, or `haiku` use the matching tier override when set,
 otherwise they fall back to `MODEL`.
 
-The router also resolves thinking. Gateway model IDs can force thinking on or
-off; otherwise `ModelRouter` applies tier-specific thinking overrides or the
-global setting. `ResolvedModel` carries only the selected route and thinking
-decision; provider catalog metadata does not cross the application boundary.
+The router also selects the applicable reasoning preference. Direct provider
+refs use the root policy; Claude tier routes use a non-inherited tier override
+or the root fallback; the no-thinking gateway variant forces `off`.
+[application/reasoning.py](src/free_claude_code/application/reasoning.py) then
+combines that preference with the concrete client request exactly once. The
+resulting `ReasoningPolicy` preserves independent control, named effort, and an
+exact client token budget without guessing provider behavior. `ResolvedModel`
+owns the selected route and preference; `RoutedMessagesRequest` owns the final
+request-scoped policy passed to execution.
 
 `GET /v1/models` advertises:
 
@@ -480,9 +491,11 @@ decision; provider catalog metadata does not cross the application boundary.
 Provider model discovery and optional thinking metadata live in the
 application-level catalog owned by `ProviderRuntimeManager`.
 `ProviderModelInfo.supports_thinking` alone owns discovered per-model thinking
-support; provider-wide capabilities do not model thinking. The catalog is not
-part of an individual provider generation, so a hot replacement does not erase
-the last useful model list. Discovery failures retain prior entries.
+support for model-list presentation; it does not select request behavior.
+Provider adapters must never branch on upstream model names or versions to
+translate reasoning. The catalog is not part of an individual provider
+generation, so a hot replacement does not erase the last useful model list.
+Discovery failures retain prior entries.
 
 Codex-specific model picker shaping stays out of this route. `fcc-codex` fetches
 the same `/v1/models` response at launch, converts FCC gateway IDs into
@@ -536,7 +549,7 @@ compatibility layer.
 [providers/base.py](src/free_claude_code/providers/base.py) defines provider-internal construction and lifecycle contracts:
 
 - `ProviderConfig`: shared provider settings such as API key, base URL, rate
-  limits, timeouts, proxy, thinking, and logging flags. It is a frozen internal
+  limits, timeouts, proxy, and logging flags. It is a frozen internal
   value whose base URL has already been resolved from the catalog.
 - `BaseProvider`: the abstract implementation base for cleanup, model listing,
   explicit preflight, and `stream_response()`.
@@ -544,7 +557,8 @@ compatibility layer.
 There is one upstream provider family:
 [providers/openai_chat/](src/free_claude_code/providers/openai_chat/) implements the concrete
 `OpenAIChatProvider` used by every OpenAI-compatible `/chat/completions`
-upstream. `OpenAIChatProfile` contains immutable request policy, its standard
+upstream. `OpenAIChatProfile` contains immutable request policy, an explicit
+reasoning encoder, an explicit history replay mode, its standard
 streamed-reasoning field, postprocessors, and base-URL normalization for
 ordinary vendors. Configuration differences therefore remain data rather than
 empty subclasses. The package also
@@ -559,7 +573,7 @@ LM Studio composes the OpenAI-chat conversion first and its context-budget probe
 second; conversion failure therefore cannot open a stream or run the probe.
 
 Providers call the OpenAI request policy for Anthropic-to-OpenAI conversion,
-thinking replay selection, `extra_body`, and chat-completion field normalization.
+reasoning replay selection, `extra_body`, and chat-completion field normalization.
 Specialized provider packages remain only for true upstream quirks such as
 Gemini thought signatures, NIM tool-schema aliases, retry downgrades, and NVCF
 deployment-failure classification, or DeepSeek attachment/tool/thinking
@@ -585,10 +599,46 @@ the GLM Coding Plan provider and uses Z.ai's Coding Plan OpenAI base.
 Mistral La Plateforme keeps its native `reasoning_effort` and thinking-chunk
 request/stream mapping inside
 [providers/mistral/reasoning.py](src/free_claude_code/providers/mistral/reasoning.py), including its
-fallback retry when a selected Mistral model rejects reasoning fields.
+fallback retry when an upstream request rejects reasoning fields.
 NIM reasoning budget control is also treated as a provider-owned best-effort
 downgrade: if an upstream NIM deployment rejects explicit budget control, FCC
 retries without the budget while preserving thinking enablement.
+
+### Reasoning Ownership
+
+[core/reasoning.py](src/free_claude_code/core/reasoning.py) owns the immutable,
+provider-neutral `ReasoningPolicy`. It represents three distinct facts:
+
+- `control`: provider default, explicitly off, or explicitly on;
+- `effort`: the client's named effort when one was supplied;
+- `budget_tokens`: an exact positive client budget, never a derived value.
+
+The application layer resolves configuration and client input into this value;
+the API layer may replace it for a product policy such as the safety classifier;
+providers receive it unchanged. Provider adapters alone translate the subset
+their documented wire API can represent. The shared OpenAI-chat implementation
+uses small encoder objects for named effort, reasoning objects, thinking
+objects, chat-template booleans, exact llama.cpp budgets, and split reasoning
+output. Specialized providers keep only translations that cannot be expressed
+by those encoders.
+
+Reasoning history replay is a separate request-conversion decision. Every
+profile explicitly chooses native `reasoning_content`, native `reasoning`,
+`<think>` tags, provider-specific chunks, or no replay. Turning off computation
+for the next generation does not silently erase prior assistant state required
+for a valid continuation.
+
+The boundary has four hard rules:
+
+1. Never inspect an upstream model name or version to select reasoning behavior.
+2. Never convert a named effort into a fabricated token budget, or use the
+   output-token limit as a reasoning budget.
+3. Forward an exact token budget only where the provider documents one; otherwise
+   translate a supported named or boolean control and leave unsupported precision
+   to the provider.
+4. Provider-default intent emits no compute-control field. Explicit off requests
+   an upstream disable where supported and always suppresses reasoning output at
+   the FCC protocol boundary.
 
 Shared provider responsibilities include upstream rate limiting, model listing,
 SDK/HTTP failure classification, safe diagnostic construction, HTTP resource
@@ -755,10 +805,11 @@ tools with a single string `input` field, and restores `custom_tool_call`,
 Responses edge. Text or grammar format metadata is preserved as model guidance;
 FCC does not validate custom-tool grammars.
 
-Responses reasoning is handled as protocol conversion, not provider policy.
-`reasoning.effort = "none"` converts to a disabled Anthropic `thinking`
-request; any other explicit Responses reasoning request enables Anthropic
-thinking without translating OpenAI effort names into Anthropic token budgets.
+Responses reasoning is handled as lossless protocol conversion before provider
+policy. The adapter preserves `reasoning.effort` in Anthropic `output_config`;
+the application reasoning boundary then interprets `none` as off and preserves
+all other named efforts. It never translates OpenAI effort names into Anthropic
+token budgets.
 Prior Responses `reasoning` input items replay plaintext `reasoning_text`, or
 fallback `summary_text`, into assistant `reasoning_content`. Encrypted reasoning
 input is ignored because the proxy cannot decrypt it.
@@ -794,7 +845,7 @@ handling. Each optimization is controlled by settings flags.
 
 Claude Code auto-mode safety-classifier requests are a message-only routing
 policy, not a short-circuit response. After routing, the Messages handler detects the
-narrow classifier prompt shape and forces thinking off before provider execution
+narrow classifier prompt shape and forces reasoning off before provider execution
 so Claude Code receives a parser-readable `<block>yes</block>` or
 `<block>no</block>` verdict.
 
@@ -1321,7 +1372,7 @@ Update this file when a change adds or meaningfully changes:
 - startup, shutdown, or resource ownership;
 - configuration precedence or managed config behavior;
 - provider runtime, catalog, or upstream-adapter architecture;
-- model routing or thinking behavior;
+- model routing or reasoning behavior;
 - CLI adapter behavior;
 - messaging platform behavior;
 - protocol conversion or streaming contracts;

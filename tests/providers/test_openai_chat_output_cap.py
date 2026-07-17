@@ -119,7 +119,6 @@ def groq_provider():
             base_url=GROQ_DEFAULT_BASE,
             rate_limit=10,
             rate_window=60,
-            enable_thinking=False,
         ),
         rate_limiter=passthrough_rate_limiter(),
     )

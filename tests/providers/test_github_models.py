@@ -15,7 +15,7 @@ from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.github_models import GitHubModelsProvider
 from free_claude_code.providers.github_models.client import GITHUB_MODELS_CATALOG_URL
 from free_claude_code.providers.model_listing import ModelListResponseError
-from tests.providers.support import passthrough_rate_limiter
+from tests.providers.support import REASONING_ON, passthrough_rate_limiter
 
 
 @pytest.fixture
@@ -25,7 +25,6 @@ def github_models_config() -> ProviderConfig:
         base_url=GITHUB_MODELS_DEFAULT_BASE,
         rate_limit=10,
         rate_window=60,
-        enable_thinking=True,
     )
 
 
@@ -118,7 +117,7 @@ def test_build_request_body_uses_shared_openai_chat_policy(
 ) -> None:
     request = _request()
 
-    body = github_models_provider._build_request_body(request, thinking_enabled=True)
+    body = github_models_provider._build_request_body(request, reasoning=REASONING_ON)
 
     assert body["model"] == "openai/gpt-4.1"
     assert body["max_tokens"] == 100

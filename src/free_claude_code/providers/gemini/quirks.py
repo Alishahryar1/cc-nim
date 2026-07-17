@@ -4,6 +4,7 @@ from copy import deepcopy
 from typing import Any, cast
 
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.reasoning import ReasoningPolicy
 
 GEMINI_SKIP_THOUGHT_SIGNATURE_VALIDATOR = "skip_thought_signature_validator"
 
@@ -11,7 +12,7 @@ GEMINI_SKIP_THOUGHT_SIGNATURE_VALIDATOR = "skip_thought_signature_validator"
 def apply_gemini_request_quirks(
     body: dict[str, Any],
     request_data: MessagesRequest,
-    thinking_enabled: bool,
+    reasoning: ReasoningPolicy,
     *,
     tool_call_extra_content_by_id: dict[str, dict[str, Any]] | None = None,
 ) -> None:
@@ -21,10 +22,8 @@ def apply_gemini_request_quirks(
     if isinstance(request_extra, dict):
         extra_body.update(deepcopy(request_extra))
 
-    if thinking_enabled:
+    if reasoning.requests_reasoning:
         _apply_thinking_config(extra_body)
-    else:
-        body["reasoning_effort"] = "none"
 
     if extra_body:
         body["extra_body"] = extra_body
@@ -51,10 +50,6 @@ def _apply_thinking_config(extra_body: dict[str, Any]) -> None:
     google_section = _ensure_dict(literal_extra_body, "google")
     thinking_cfg = _ensure_dict(google_section, "thinking_config")
     thinking_cfg.setdefault("include_thoughts", True)
-
-
-def _is_gemini_3_model(model: Any) -> bool:
-    return "gemini-3" in str(model).lower()
 
 
 def _thought_signature_from_extra_content(extra_content: Any) -> str | None:
@@ -136,12 +131,7 @@ def _apply_cached_tool_call_signatures(
                 tool_call["extra_content"] = deepcopy(cached_extra_content)
 
 
-def _apply_gemini_3_missing_current_turn_signatures(
-    body: dict[str, Any], messages: list[Any]
-) -> None:
-    if not _is_gemini_3_model(body.get("model")):
-        return
-
+def _apply_missing_current_turn_signatures(messages: list[Any]) -> None:
     start_index = _current_turn_start_index(messages)
     for message in messages[start_index + 1 :]:
         if not isinstance(message, dict) or message.get("role") != "assistant":
@@ -168,4 +158,4 @@ def _apply_gemini_tool_call_signatures(
     if not isinstance(messages, list):
         return
     _apply_cached_tool_call_signatures(messages, tool_call_extra_content_by_id or {})
-    _apply_gemini_3_missing_current_turn_signatures(body, messages)
+    _apply_missing_current_turn_signatures(messages)

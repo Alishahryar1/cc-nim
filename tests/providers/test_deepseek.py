@@ -21,7 +21,12 @@ from free_claude_code.core.anthropic.models import (
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.deepseek import DeepSeekProvider
-from tests.providers.support import passthrough_rate_limiter
+from tests.providers.support import (
+    REASONING_OFF,
+    REASONING_ON,
+    passthrough_rate_limiter,
+    reasoning_for,
+)
 
 
 @pytest.fixture
@@ -31,7 +36,6 @@ def deepseek_config():
         base_url=DEEPSEEK_DEFAULT_BASE,
         rate_limit=10,
         rate_window=60,
-        enable_thinking=True,
     )
 
 
@@ -93,7 +97,9 @@ def test_build_request_body_openai_chat_shape(deepseek_provider):
         messages=[Message(role="user", content="Hello")],
         system="S",
     )
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
     assert body["model"] == "deepseek-v4-pro"
     assert "stream" not in body
     assert body["messages"][0] == {"role": "system", "content": "S"}
@@ -108,7 +114,9 @@ def test_build_request_body_default_max_tokens(deepseek_provider):
         model="m",
         messages=[Message(role="user", content="x")],
     )
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
     assert body["max_tokens"] == ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 
 
@@ -120,7 +128,9 @@ def test_build_request_body_thinking_enabled(deepseek_provider):
             "thinking": {"type": "enabled", "budget_tokens": 2000},
         }
     )
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
     assert body["extra_body"]["thinking"] == {"type": "enabled"}
 
 
@@ -140,7 +150,9 @@ def test_build_request_body_tool_list_keeps_thinking(deepseek_provider):
         }
     )
 
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     assert body["extra_body"]["thinking"] == {"type": "enabled"}
     assert body["tools"][0]["function"]["name"] == "Read"
@@ -156,7 +168,9 @@ def test_build_request_body_tool_choice_keeps_thinking(deepseek_provider):
         }
     )
 
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     assert body["extra_body"]["thinking"] == {"type": "enabled"}
     assert body["tool_choice"] == "auto"
@@ -181,20 +195,21 @@ def test_build_request_body_forced_tool_choice_downgrades_to_auto(
         }
     )
 
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     assert body["extra_body"]["thinking"] == {"type": "enabled"}
     assert body["tool_choice"] == "auto"
 
 
-def test_build_request_body_respects_global_thinking_disable():
+def test_build_request_body_encodes_reasoning_off():
     provider = DeepSeekProvider(
         ProviderConfig(
             api_key="k",
             base_url=DEEPSEEK_DEFAULT_BASE,
             rate_limit=1,
             rate_window=1,
-            enable_thinking=False,
         ),
         rate_limiter=passthrough_rate_limiter(),
     )
@@ -205,8 +220,8 @@ def test_build_request_body_respects_global_thinking_disable():
             "thinking": {"type": "enabled", "budget_tokens": 1},
         }
     )
-    body = provider._build_request_body(request)
-    assert "extra_body" not in body
+    body = provider._build_request_body(request, reasoning=REASONING_OFF)
+    assert body["extra_body"]["thinking"] == {"type": "disabled"}
     assert "stream_options" not in body
 
 
@@ -229,7 +244,9 @@ def test_non_tool_thinking_is_omitted_from_first_replay(deepseek_provider):
             ],
         }
     )
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
     assert body["messages"][0] == {"role": "assistant", "content": "out"}
 
 
@@ -248,7 +265,9 @@ def test_strip_redacted_thinking_when_thinking_on(deepseek_provider):
             ],
         }
     )
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
     assert body["messages"][0] == {"role": "assistant", "content": "out"}
 
 
@@ -293,9 +312,11 @@ def test_tool_history_with_replayable_thinking_preserves_thinking(deepseek_provi
         }
     )
 
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
-    assert body["extra_body"]["thinking"] == {"type": "enabled"}
+    assert body["reasoning_effort"] == "high"
     assert "context_management" not in body
     assert "output_config" not in body
     assistant = body["messages"][0]
@@ -342,7 +363,9 @@ def test_tool_history_with_unsigned_thinking_preserves_thinking(deepseek_provide
         }
     )
 
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     assert body["extra_body"]["thinking"] == {"type": "enabled"}
     assert body["messages"][0]["reasoning_content"] == "plain"
@@ -395,9 +418,11 @@ def test_tool_history_without_thinking_disables_thinking_and_hints(deepseek_prov
         }
     )
 
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
-    assert "extra_body" not in body
+    assert body["extra_body"]["thinking"] == {"type": "disabled"}
     assert "context_management" not in body
     assert "output_config" not in body
     assert body["tools"][0]["function"]["name"] == "Read"
@@ -438,7 +463,9 @@ def test_tool_history_with_empty_thinking_preserves_reasoning_state(deepseek_pro
         }
     )
 
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     assert body["extra_body"]["thinking"] == {"type": "enabled"}
     assert body["messages"][0]["reasoning_content"] == ""
@@ -479,7 +506,9 @@ def test_tool_history_with_empty_top_level_reasoning_preserves_reasoning_state(
         }
     )
 
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     assert body["extra_body"]["thinking"] == {"type": "enabled"}
     assert body["messages"][0]["reasoning_content"] == ""
@@ -493,7 +522,6 @@ def test_thinking_off_strips_thinking_history():
             base_url=DEEPSEEK_DEFAULT_BASE,
             rate_limit=1,
             rate_window=1,
-            enable_thinking=False,
         ),
         rate_limiter=passthrough_rate_limiter(),
     )
@@ -511,7 +539,7 @@ def test_thinking_off_strips_thinking_history():
             ],
         }
     )
-    body = provider._build_request_body(request)
+    body = provider._build_request_body(request, reasoning=REASONING_OFF)
     assert "reasoning_content" not in body["messages"][0]
     assert "sec" not in str(body["messages"])
 
@@ -523,7 +551,6 @@ def test_thinking_off_still_replays_required_tool_reasoning():
             base_url=DEEPSEEK_DEFAULT_BASE,
             rate_limit=1,
             rate_window=1,
-            enable_thinking=False,
         ),
         rate_limiter=passthrough_rate_limiter(),
     )
@@ -557,9 +584,9 @@ def test_thinking_off_still_replays_required_tool_reasoning():
         }
     )
 
-    body = provider._build_request_body(request)
+    body = provider._build_request_body(request, reasoning=REASONING_OFF)
 
-    assert "extra_body" not in body
+    assert body["extra_body"]["thinking"] == {"type": "disabled"}
     assert body["messages"][0]["reasoning_content"] == "required"
 
 
@@ -592,7 +619,9 @@ def test_passthrough_tool_use_and_result(deepseek_provider):
             ],
         }
     )
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
     assert body["messages"][0]["tool_calls"][0]["function"]["name"] == "n"
     assert body["messages"][1]["role"] == "tool"
 
@@ -627,8 +656,8 @@ def test_preflight_strips_user_image():
         rate_limiter=passthrough_rate_limiter(),
     )
     # Should not raise; image is stripped.
-    provider.preflight_stream(request, thinking_enabled=True)
-    body = provider._build_request_body(request)
+    provider.preflight_stream(request, reasoning=REASONING_ON)
+    body = provider._build_request_body(request, reasoning=reasoning_for(request))
     content = body["messages"][0]["content"]
     assert "attachment omitted" in content.lower()
     assert "image or document inputs" in content.lower()
@@ -720,7 +749,9 @@ def test_non_tool_top_level_reasoning_is_not_replayed(deepseek_provider):
             )
         ],
     )
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
     assert body["messages"][0] == {"role": "assistant", "content": "hi"}
 
 
@@ -755,7 +786,9 @@ def test_tool_call_top_level_reasoning_is_replayed(deepseek_provider):
         }
     )
 
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     assert body["messages"][0]["reasoning_content"] == "required"
 
@@ -831,7 +864,9 @@ async def test_wire_messages_keep_prefix_across_tool_thinking_fallback(
                 "thinking": {"type": "enabled"},
             }
         )
-        return deepseek_provider._build_request_body(request)
+        return deepseek_provider._build_request_body(
+            request, reasoning=reasoning_for(request)
+        )
 
     first_wire = await _capture_openai_wire_body(build(prefix_messages))
     continued_wire = await _capture_openai_wire_body(build(continued_messages))
@@ -845,7 +880,7 @@ async def test_wire_messages_keep_prefix_across_tool_thinking_fallback(
     assert "reasoning_content" not in assistant_messages[0]
     assert assistant_messages[1]["reasoning_content"] == "required tool reasoning"
     assert first_wire["thinking"] == {"type": "enabled"}
-    assert "thinking" not in continued_wire
+    assert continued_wire["thinking"] == {"type": "disabled"}
 
 
 @pytest.mark.asyncio
@@ -923,8 +958,8 @@ def test_preserves_extra_body_for_openai_chat_request(deepseek_provider):
         "extra_body": {"note": 1},
     }
     r = MessagesRequest.model_validate(raw)
-    body = deepseek_provider._build_request_body(r)
-    assert body["extra_body"] == {"note": 1, "thinking": {"type": "enabled"}}
+    body = deepseek_provider._build_request_body(r, reasoning=reasoning_for(r))
+    assert body["extra_body"] == {"note": 1}
 
 
 def test_normalizes_tool_result_content_array_to_string(deepseek_provider):
@@ -961,7 +996,9 @@ def test_normalizes_tool_result_content_array_to_string(deepseek_provider):
         }
     )
 
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     tool_result = body["messages"][1]
     assert tool_result["role"] == "tool"
@@ -995,7 +1032,9 @@ def test_strips_document_blocks_for_deepseek(deepseek_provider):
         }
     )
 
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     assert body["messages"][0] == {
         "role": "tool",
@@ -1028,7 +1067,9 @@ def test_strips_image_blocks_for_deepseek(deepseek_provider):
         }
     )
 
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     assert body["messages"][0] == {"role": "user", "content": "describe this"}
 
@@ -1064,7 +1105,9 @@ def test_normalizes_tool_result_content_dict_to_string(deepseek_provider):
         }
     )
 
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     tool_result = body["messages"][1]
     assert tool_result["role"] == "tool"
@@ -1114,7 +1157,9 @@ def test_strips_image_block_inside_tool_result(deepseek_provider):
         }
     )
 
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     tool_result = body["messages"][1]
     assert tool_result["role"] == "tool"
@@ -1165,7 +1210,9 @@ def test_image_only_tool_result_replaced_with_placeholder(deepseek_provider):
         }
     )
 
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     tool_result = body["messages"][1]
     assert tool_result["role"] == "tool"
@@ -1216,7 +1263,9 @@ def test_document_only_tool_result_replaced_with_generic_placeholder(
         }
     )
 
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     tool_result = body["messages"][1]
     assert tool_result["role"] == "tool"
@@ -1249,7 +1298,9 @@ def test_image_only_message_replaced_with_placeholder(deepseek_provider):
         }
     )
 
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     content = body["messages"][0]["content"]
     assert "attachment omitted" in content.lower()
@@ -1275,7 +1326,9 @@ def test_document_only_message_replaced_with_placeholder(deepseek_provider):
         }
     )
 
-    body = deepseek_provider._build_request_body(request)
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     content = body["messages"][0]["content"]
     assert "attachment omitted" in content.lower()
@@ -1337,7 +1390,7 @@ def test_warns_when_stripping_attachment_blocks(deepseek_provider, caplog):
     )
 
     with caplog.at_level(logging.WARNING):
-        deepseek_provider._build_request_body(request)
+        deepseek_provider._build_request_body(request, reasoning=reasoning_for(request))
 
     warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
     assert any("stripped unsupported attachment blocks" in r.message for r in warnings)
@@ -1353,7 +1406,7 @@ def test_no_warning_when_no_attachments(deepseek_provider, caplog):
     )
 
     with caplog.at_level(logging.WARNING):
-        deepseek_provider._build_request_body(request)
+        deepseek_provider._build_request_body(request, reasoning=reasoning_for(request))
 
     assert not any(
         "stripped unsupported attachment blocks" in r.message

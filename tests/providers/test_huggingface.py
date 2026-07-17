@@ -7,6 +7,7 @@ import pytest
 
 from free_claude_code.config.provider_catalog import HUGGINGFACE_DEFAULT_BASE
 from free_claude_code.core.anthropic import ReasoningReplayMode
+from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.base import ProviderConfig
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter, profiled_provider
@@ -23,7 +24,6 @@ def huggingface_config():
         base_url=HUGGINGFACE_DEFAULT_BASE,
         rate_limit=10,
         rate_window=60,
-        enable_thinking=True,
     )
 
 
@@ -93,6 +93,28 @@ def test_build_request_body_preserves_caller_extra_body(huggingface_provider):
     assert body["extra_body"] == extra_body
     assert body["extra_body"] is not extra_body
     assert body["extra_body"]["routing"] is not extra_body["routing"]
+
+
+@pytest.mark.parametrize(
+    "reasoning",
+    (
+        ReasoningPolicy.off(),
+        ReasoningPolicy.on(effort=ReasoningEffort.MAX),
+        ReasoningPolicy.on(budget_tokens=4096),
+    ),
+)
+def test_build_request_body_leaves_reasoning_control_to_selected_upstream(
+    huggingface_provider, reasoning
+):
+    body = huggingface_provider._build_request_body(
+        make_request(),
+        reasoning=reasoning,
+    )
+
+    assert "reasoning_effort" not in body
+    assert "reasoning" not in body
+    assert "thinking" not in body
+    assert "extra_body" not in body
 
 
 def test_build_request_body_does_not_replay_prior_thinking_blocks(

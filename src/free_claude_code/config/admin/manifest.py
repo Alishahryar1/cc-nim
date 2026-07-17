@@ -4,6 +4,11 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
 
+from free_claude_code.config.reasoning import (
+    ROOT_REASONING_PREFERENCES,
+    ROUTE_REASONING_PREFERENCES,
+    ReasoningPreference,
+)
 from free_claude_code.config.settings import Settings
 
 from .provider_manifest import provider_field_specs
@@ -13,7 +18,6 @@ FieldType = Literal[
     "secret",
     "number",
     "boolean",
-    "tri_boolean",
     "model",
     "optional_model",
     "select",
@@ -41,12 +45,39 @@ class ConfigFieldSpec:
     field_type: FieldType = "text"
     settings_attr: str | None = None
     default: str = ""
-    options: tuple[str, ...] = ()
+    options: tuple[str | ConfigOptionSpec, ...] = ()
     secret: bool = False
     advanced: bool = False
     restart_required: bool = False
     session_sensitive: bool = False
     description: str = ""
+
+
+@dataclass(frozen=True, slots=True)
+class ConfigOptionSpec:
+    """A persisted option value and its user-facing label."""
+
+    value: str
+    label: str
+
+
+def _reasoning_options(
+    preferences: tuple[ReasoningPreference, ...],
+) -> tuple[ConfigOptionSpec, ...]:
+    labels = {
+        ReasoningPreference.INHERIT: "Inherit",
+        ReasoningPreference.OFF: "Off",
+        ReasoningPreference.CLIENT: "From client",
+        ReasoningPreference.LOW: "Low",
+        ReasoningPreference.MEDIUM: "Medium",
+        ReasoningPreference.HIGH: "High",
+        ReasoningPreference.XHIGH: "X-High",
+        ReasoningPreference.MAX: "Max",
+    }
+    return tuple(
+        ConfigOptionSpec(preference.value, labels[preference])
+        for preference in preferences
+    )
 
 
 SECTIONS: tuple[ConfigSectionSpec, ...] = (
@@ -61,9 +92,9 @@ SECTIONS: tuple[ConfigSectionSpec, ...] = (
         "Search discovered provider models or enter a provider/model slug.",
     ),
     ConfigSectionSpec(
-        "thinking",
-        "Thinking",
-        "Global and tier-specific thinking behavior.",
+        "reasoning",
+        "Reasoning",
+        "Client reasoning policy and route-specific overrides.",
     ),
     ConfigSectionSpec(
         "runtime",
@@ -143,44 +174,53 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         description="Select None to use the Default Model for Haiku requests.",
     ),
     ConfigFieldSpec(
-        "ENABLE_MODEL_THINKING",
-        "Enable Thinking",
-        "thinking",
-        "boolean",
-        settings_attr="enable_model_thinking",
-        default="true",
+        "REASONING_POLICY",
+        "Reasoning Policy",
+        "reasoning",
+        "select",
+        settings_attr="reasoning_policy",
+        default="client",
+        options=_reasoning_options(ROOT_REASONING_PREFERENCES),
+        description=(
+            "From client preserves CLI effort. Providers translate only the controls "
+            "their API supports."
+        ),
     ),
     ConfigFieldSpec(
-        "ENABLE_FABLE_THINKING",
-        "Fable Thinking",
-        "thinking",
-        "tri_boolean",
-        settings_attr="enable_fable_thinking",
-        description="Blank inherits Enable Thinking.",
+        "REASONING_FABLE",
+        "Fable Reasoning",
+        "reasoning",
+        "select",
+        settings_attr="reasoning_fable",
+        default="inherit",
+        options=_reasoning_options(ROUTE_REASONING_PREFERENCES),
     ),
     ConfigFieldSpec(
-        "ENABLE_OPUS_THINKING",
-        "Opus Thinking",
-        "thinking",
-        "tri_boolean",
-        settings_attr="enable_opus_thinking",
-        description="Blank inherits Enable Thinking.",
+        "REASONING_OPUS",
+        "Opus Reasoning",
+        "reasoning",
+        "select",
+        settings_attr="reasoning_opus",
+        default="inherit",
+        options=_reasoning_options(ROUTE_REASONING_PREFERENCES),
     ),
     ConfigFieldSpec(
-        "ENABLE_SONNET_THINKING",
-        "Sonnet Thinking",
-        "thinking",
-        "tri_boolean",
-        settings_attr="enable_sonnet_thinking",
-        description="Blank inherits Enable Thinking.",
+        "REASONING_SONNET",
+        "Sonnet Reasoning",
+        "reasoning",
+        "select",
+        settings_attr="reasoning_sonnet",
+        default="inherit",
+        options=_reasoning_options(ROUTE_REASONING_PREFERENCES),
     ),
     ConfigFieldSpec(
-        "ENABLE_HAIKU_THINKING",
-        "Haiku Thinking",
-        "thinking",
-        "tri_boolean",
-        settings_attr="enable_haiku_thinking",
-        description="Blank inherits Enable Thinking.",
+        "REASONING_HAIKU",
+        "Haiku Reasoning",
+        "reasoning",
+        "select",
+        settings_attr="reasoning_haiku",
+        default="inherit",
+        options=_reasoning_options(ROUTE_REASONING_PREFERENCES),
     ),
     ConfigFieldSpec(
         "ANTHROPIC_AUTH_TOKEN",

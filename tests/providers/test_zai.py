@@ -10,7 +10,11 @@ from free_claude_code.config.provider_catalog import ZAI_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
-from tests.providers.support import passthrough_rate_limiter, profiled_provider
+from tests.providers.support import (
+    passthrough_rate_limiter,
+    profiled_provider,
+    reasoning_for,
+)
 
 
 @pytest.fixture
@@ -22,7 +26,6 @@ def zai_provider():
             base_url=ZAI_DEFAULT_BASE,
             rate_limit=10,
             rate_window=60,
-            enable_thinking=True,
         ),
         rate_limiter=passthrough_rate_limiter(),
     )
@@ -35,13 +38,16 @@ def test_init_uses_openai_chat_coding_endpoint(zai_provider):
 
 
 def test_build_request_body_openai_chat(zai_provider):
-    request = MessagesRequest(
-        model="glm-5.2",
-        max_tokens=100,
-        messages=[Message(role="user", content="Hello")],
+    request = MessagesRequest.model_validate(
+        {
+            "model": "glm-5.2",
+            "max_tokens": 100,
+            "messages": [Message(role="user", content="Hello")],
+            "thinking": {"type": "enabled"},
+        }
     )
 
-    body = zai_provider._build_request_body(request)
+    body = zai_provider._build_request_body(request, reasoning=reasoning_for(request))
 
     assert body["model"] == "glm-5.2"
     assert body["max_tokens"] == 100
@@ -58,7 +64,7 @@ def test_build_request_body_default_max_tokens(zai_provider):
         messages=[Message(role="user", content="x")],
     )
 
-    body = zai_provider._build_request_body(request)
+    body = zai_provider._build_request_body(request, reasoning=reasoning_for(request))
 
     assert body["max_tokens"] == ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 
@@ -73,7 +79,7 @@ def test_build_request_body_rejects_caller_extra_body(zai_provider):
     )
 
     with pytest.raises(InvalidRequestError, match=r"Z\.ai Chat Completions"):
-        zai_provider._build_request_body(request)
+        zai_provider._build_request_body(request, reasoning=reasoning_for(request))
 
 
 def test_build_request_body_disables_zai_thinking(zai_provider):
@@ -85,7 +91,7 @@ def test_build_request_body_disables_zai_thinking(zai_provider):
         }
     )
 
-    body = zai_provider._build_request_body(request)
+    body = zai_provider._build_request_body(request, reasoning=reasoning_for(request))
 
     assert body["extra_body"]["thinking"] == {"type": "disabled"}
 
@@ -104,13 +110,10 @@ def test_build_request_body_replays_prior_reasoning_content(zai_provider):
         }
     )
 
-    body = zai_provider._build_request_body(request)
+    body = zai_provider._build_request_body(request, reasoning=reasoning_for(request))
 
     assert body["messages"][0]["reasoning_content"] == "prior"
-    assert body["extra_body"]["thinking"] == {
-        "type": "enabled",
-        "clear_thinking": False,
-    }
+    assert "extra_body" not in body
 
 
 @pytest.mark.asyncio

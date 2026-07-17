@@ -97,7 +97,6 @@ def _make_settings(**overrides):
     mock.http_read_timeout = 300.0
     mock.http_write_timeout = 10.0
     mock.http_connect_timeout = 10.0
-    mock.enable_model_thinking = True
     mock.log_raw_sse_events = False
     mock.log_api_error_tracebacks = False
     mock.nim = NimSettings()

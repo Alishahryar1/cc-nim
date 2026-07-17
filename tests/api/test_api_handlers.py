@@ -21,6 +21,7 @@ from free_claude_code.core.anthropic.models import (
 from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
+from free_claude_code.core.reasoning import ReasoningPolicy
 
 _CLASSIFIER_SYSTEM = (
     "You are a security monitor. Respond with <block>yes</block> or <block>no</block>."
@@ -33,7 +34,7 @@ _CLASSIFIER_USER = (
 
 class FakeProvider:
     def __init__(self, events: list[str] | None = None) -> None:
-        self.preflight_calls: list[tuple[MessagesRequest, bool | None]] = []
+        self.preflight_calls: list[tuple[MessagesRequest, ReasoningPolicy]] = []
         self.requests: list[MessagesRequest] = []
         self.stream_kwargs: list[dict[str, Any]] = []
         self.events = events or [
@@ -42,9 +43,9 @@ class FakeProvider:
         ]
 
     def preflight_stream(
-        self, request: MessagesRequest, *, thinking_enabled: bool | None = None
+        self, request: MessagesRequest, *, reasoning: ReasoningPolicy
     ) -> None:
-        self.preflight_calls.append((request, thinking_enabled))
+        self.preflight_calls.append((request, reasoning))
 
     async def cleanup(self) -> None:
         return None
@@ -58,14 +59,14 @@ class FakeProvider:
         input_tokens: int = 0,
         *,
         request_id: str | None = None,
-        thinking_enabled: bool | None = None,
+        reasoning: ReasoningPolicy,
     ) -> AsyncIterator[str]:
         self.requests.append(request)
         self.stream_kwargs.append(
             {
                 "input_tokens": input_tokens,
                 "request_id": request_id,
-                "thinking_enabled": thinking_enabled,
+                "reasoning": reasoning,
             }
         )
         for event in self.events:
@@ -115,7 +116,7 @@ async def test_messages_handler_passes_routed_request_and_stream_metadata() -> N
     assert provider.requests[0].model == "test-model"
     assert provider.stream_kwargs[0]["input_tokens"] > 0
     assert provider.stream_kwargs[0]["request_id"].startswith("req_")
-    assert provider.stream_kwargs[0]["thinking_enabled"] is True
+    assert provider.stream_kwargs[0]["reasoning"] == ReasoningPolicy.provider_default()
     assert len(provider.preflight_calls) == 1
 
 
@@ -129,7 +130,7 @@ async def test_messages_handler_preflight_invalid_request_stays_http_error(
             self,
             request: MessagesRequest,
             *,
-            thinking_enabled: bool | None = None,
+            reasoning: ReasoningPolicy,
         ) -> None:
             raise InvalidRequestError("bad tool shape")
 
@@ -328,14 +329,14 @@ async def test_messages_handler_stream_false_provider_exception_keeps_status() -
             input_tokens: int = 0,
             *,
             request_id: str | None = None,
-            thinking_enabled: bool | None = None,
+            reasoning: ReasoningPolicy,
         ) -> AsyncIterator[str]:
             self.requests.append(request)
             self.stream_kwargs.append(
                 {
                     "input_tokens": input_tokens,
                     "request_id": request_id,
-                    "thinking_enabled": thinking_enabled,
+                    "reasoning": reasoning,
                 }
             )
             raise ExecutionFailure(
@@ -384,8 +385,8 @@ async def test_messages_handler_forces_no_thinking_for_safety_classifier() -> No
         assert isinstance(response, StreamingResponse)
         await _streaming_body_text(response)
 
-    assert provider.preflight_calls[0][1] is False
-    assert provider.stream_kwargs[0]["thinking_enabled"] is False
+    assert provider.preflight_calls[0][1] == ReasoningPolicy.off()
+    assert provider.stream_kwargs[0]["reasoning"] == ReasoningPolicy.off()
     assert provider.requests[0].model == "test-model"
     assert provider.requests[0].system == _CLASSIFIER_SYSTEM
     assert _trace_events(
@@ -426,8 +427,8 @@ async def test_messages_handler_preserves_thinking_for_non_classifier() -> None:
         assert isinstance(response, StreamingResponse)
         await _streaming_body_text(response)
 
-    assert provider.preflight_calls[0][1] is True
-    assert provider.stream_kwargs[0]["thinking_enabled"] is True
+    assert provider.preflight_calls[0][1] == ReasoningPolicy.provider_default()
+    assert provider.stream_kwargs[0]["reasoning"] == ReasoningPolicy.provider_default()
     assert (
         _trace_events(
             trace_mock,
@@ -454,8 +455,8 @@ async def test_messages_handler_keeps_existing_no_thinking_for_classifier() -> N
         assert isinstance(response, StreamingResponse)
         await _streaming_body_text(response)
 
-    assert provider.preflight_calls[0][1] is False
-    assert provider.stream_kwargs[0]["thinking_enabled"] is False
+    assert provider.preflight_calls[0][1] == ReasoningPolicy.off()
+    assert provider.stream_kwargs[0]["reasoning"] == ReasoningPolicy.off()
     assert _trace_events(
         trace_mock, "free_claude_code.api.optimization.safety_classifier_no_thinking"
     ) == [
@@ -530,8 +531,8 @@ async def test_responses_handler_does_not_apply_safety_classifier_policy() -> No
         assert isinstance(response, StreamingResponse)
         await _streaming_body_text(response)
 
-    assert provider.preflight_calls[0][1] is True
-    assert provider.stream_kwargs[0]["thinking_enabled"] is True
+    assert provider.preflight_calls[0][1] == ReasoningPolicy.provider_default()
+    assert provider.stream_kwargs[0]["reasoning"] == ReasoningPolicy.provider_default()
     assert (
         _trace_events(
             trace_mock,

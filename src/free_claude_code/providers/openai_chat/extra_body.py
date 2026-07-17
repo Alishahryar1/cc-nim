@@ -17,6 +17,21 @@ CANONICAL_OPENAI_CHAT_BODY_KEYS = frozenset(
         "stop",
         "stop_sequences",
         "stream_options",
+        "reasoning",
+        "reasoning_effort",
+        "reasoning_tokens",
+        "thinking",
+        "thinking_budget_tokens",
+    }
+)
+
+REASONING_OPENAI_CHAT_BODY_KEYS = frozenset(
+    {
+        "reasoning",
+        "reasoning_effort",
+        "reasoning_tokens",
+        "thinking",
+        "thinking_budget_tokens",
     }
 )
 
@@ -29,4 +44,16 @@ def validate_extra_body_does_not_override_canonical_fields(
     if bad:
         raise ValueError(
             f"extra_body must not override canonical request fields: {sorted(bad)}"
+        )
+
+
+def validate_extra_body_does_not_override_reasoning_fields(
+    extra: dict[str, Any],
+) -> None:
+    """Keep provider reasoning translation authoritative over caller extras."""
+
+    bad = REASONING_OPENAI_CHAT_BODY_KEYS & extra.keys()
+    if bad:
+        raise ValueError(
+            f"extra_body must not override reasoning fields: {sorted(bad)}"
         )

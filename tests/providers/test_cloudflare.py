@@ -16,7 +16,7 @@ from free_claude_code.providers.cloudflare import (
     CloudflareProvider,
     cloudflare_ai_base_url,
 )
-from tests.providers.support import passthrough_rate_limiter
+from tests.providers.support import passthrough_rate_limiter, reasoning_for
 
 _ACCOUNT_ID = "account-123"
 _BASE_URL = f"{CLOUDFLARE_AI_REST_ROOT}/accounts/{_ACCOUNT_ID}/ai/v1"
@@ -30,7 +30,6 @@ def cloudflare_config() -> ProviderConfig:
         base_url=CLOUDFLARE_AI_REST_ROOT,
         rate_limit=10,
         rate_window=60,
-        enable_thinking=True,
     )
 
 
@@ -122,7 +121,9 @@ def test_build_request_body_preserves_literal_cf_model_id_and_controls_thinking(
         }
     )
 
-    body = cloudflare_provider._build_request_body(request, thinking_enabled=True)
+    body = cloudflare_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     assert body["model"] == "@cf/moonshotai/kimi-k2.6"
     assert body["max_completion_tokens"] == 100
@@ -141,7 +142,9 @@ def test_build_request_body_disabled_thinking_sets_cloudflare_template_flag(
         }
     )
 
-    body = cloudflare_provider._build_request_body(request, thinking_enabled=True)
+    body = cloudflare_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     assert body["extra_body"]["chat_template_kwargs"]["thinking"] is False
 
@@ -157,7 +160,9 @@ def test_build_request_body_preserves_user_extra_body_without_overriding_thinkin
         }
     )
 
-    body = cloudflare_provider._build_request_body(request, thinking_enabled=True)
+    body = cloudflare_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     assert body["extra_body"]["chat_template_kwargs"]["thinking"] is False
 

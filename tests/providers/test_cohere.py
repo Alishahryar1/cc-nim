@@ -9,7 +9,11 @@ from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.provider_catalog import COHERE_DEFAULT_BASE
 from free_claude_code.providers.base import ProviderConfig
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter, profiled_provider
+from tests.providers.support import (
+    passthrough_rate_limiter,
+    profiled_provider,
+    reasoning_for,
+)
 
 
 def make_request(**overrides):
@@ -23,7 +27,6 @@ def cohere_config():
         base_url=COHERE_DEFAULT_BASE,
         rate_limit=10,
         rate_window=60,
-        enable_thinking=True,
     )
 
 
@@ -102,8 +105,11 @@ def test_build_request_body_sanitizes_documented_unsupported_fields(cohere_provi
         assert key not in body
 
 
-def test_build_request_body_maps_thinking_enabled_to_reasoning_high(cohere_provider):
-    body = cohere_provider._build_request_body(make_request())
+def test_build_request_body_maps_reasoning_on_to_high(cohere_provider):
+    request = make_request()
+    body = cohere_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
 
     assert body["reasoning_effort"] == "high"
 
@@ -123,7 +129,10 @@ def test_build_request_body_preserves_replayed_reasoning_content(cohere_provider
             ],
         }
 
-        body = cohere_provider._build_request_body(make_request())
+        request = make_request()
+        body = cohere_provider._build_request_body(
+            request, reasoning=reasoning_for(request)
+        )
 
     assert body["messages"] == [
         {
@@ -135,7 +144,7 @@ def test_build_request_body_preserves_replayed_reasoning_content(cohere_provider
     assert body["reasoning_effort"] == "high"
 
 
-def test_build_request_body_maps_thinking_disabled_to_reasoning_none():
+def test_build_request_body_maps_reasoning_off_to_none():
     provider = profiled_provider(
         "cohere",
         ProviderConfig(
@@ -143,12 +152,12 @@ def test_build_request_body_maps_thinking_disabled_to_reasoning_none():
             base_url=COHERE_DEFAULT_BASE,
             rate_limit=10,
             rate_window=60,
-            enable_thinking=False,
         ),
         rate_limiter=passthrough_rate_limiter(),
     )
 
-    body = provider._build_request_body(make_request())
+    request = make_request(thinking={"type": "disabled"})
+    body = provider._build_request_body(request, reasoning=reasoning_for(request))
 
     assert body["reasoning_effort"] == "none"
 
@@ -163,7 +172,7 @@ def test_build_request_body_promotes_allowed_extra_body(cohere_provider):
         }
     )
 
-    body = cohere_provider._build_request_body(req)
+    body = cohere_provider._build_request_body(req, reasoning=reasoning_for(req))
 
     assert body["frequency_penalty"] == 0.1
     assert body["presence_penalty"] == 0.2
@@ -176,7 +185,7 @@ def test_build_request_body_rejects_unsupported_extra_body(cohere_provider):
     req = make_request(extra_body={"documents": [{"text": "x"}]})
 
     with pytest.raises(InvalidRequestError, match="Unsupported"):
-        cohere_provider._build_request_body(req)
+        cohere_provider._build_request_body(req, reasoning=reasoning_for(req))
 
 
 @pytest.mark.asyncio

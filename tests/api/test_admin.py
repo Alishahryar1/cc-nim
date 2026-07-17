@@ -107,6 +107,15 @@ def test_admin_static_hides_managed_source_label():
     assert "sourceEl.textContent = source" in script
 
 
+def test_admin_static_places_reasoning_fields_in_model_config():
+    script = Path("src/free_claude_code/api/admin_static/admin.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'sections: ["models", "reasoning", "web_tools"]' in script
+    assert 'sections: ["models", "thinking", "web_tools"]' not in script
+
+
 def test_admin_static_model_combobox_owns_dropdown_and_search_behavior():
     script = Path("src/free_claude_code/api/admin_static/admin.js").read_text(
         encoding="utf-8"
@@ -159,7 +168,7 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     body = response.json()
     keys = {field["key"] for field in body["fields"]}
     assert "MODEL_FABLE" in keys
-    assert "ENABLE_FABLE_THINKING" in keys
+    assert "REASONING_FABLE" in keys
     assert "ANTHROPIC_AUTH_TOKEN" in keys
     assert "OPENROUTER_API_KEY" in keys
     assert "FIREWORKS_API_KEY" in keys
@@ -206,6 +215,28 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
         "MODEL_SONNET": "optional_model",
         "MODEL_HAIKU": "optional_model",
     }
+    reasoning_policy = next(
+        field for field in body["fields"] if field["key"] == "REASONING_POLICY"
+    )
+    assert reasoning_policy["section"] == "reasoning"
+    assert reasoning_policy["type"] == "select"
+    assert reasoning_policy["value"] == "client"
+    assert reasoning_policy["options"] == [
+        {"value": "off", "label": "Off"},
+        {"value": "client", "label": "From client"},
+        {"value": "low", "label": "Low"},
+        {"value": "medium", "label": "Medium"},
+        {"value": "high", "label": "High"},
+        {"value": "xhigh", "label": "X-High"},
+        {"value": "max", "label": "Max"},
+    ]
+    route_reasoning = next(
+        field for field in body["fields"] if field["key"] == "REASONING_FABLE"
+    )
+    assert route_reasoning["options"] == [
+        {"value": "inherit", "label": "Inherit"},
+        *reasoning_policy["options"],
+    ]
     restart_required = {
         field["key"] for field in body["fields"] if field["restart_required"] is True
     }

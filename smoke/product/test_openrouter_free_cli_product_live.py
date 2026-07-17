@@ -37,7 +37,7 @@ def test_openrouter_free_cli_matrix_e2e(
             env_overrides={
                 "MODEL": provider_model.full_model,
                 "MESSAGING_PLATFORM": "none",
-                "ENABLE_MODEL_THINKING": "true",
+                "REASONING_POLICY": "high",
                 "LOG_RAW_API_PAYLOADS": "true",
                 "LOG_RAW_SSE_EVENTS": "true",
             },

@@ -8,6 +8,11 @@ from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
+from free_claude_code.core.reasoning import (
+    ReasoningControl,
+    ReasoningEffort,
+    ReasoningPolicy,
+)
 from tests.api.support import create_test_app
 
 
@@ -590,16 +595,21 @@ def test_create_response_quarantines_malformed_prior_function_call() -> None:
 
 
 @pytest.mark.parametrize(
-    ("reasoning", "expected_type", "expected_enabled"),
+    ("reasoning", "expected_policy"),
     [
-        ({"effort": "none"}, "disabled", False),
-        ({"effort": "low"}, "enabled", True),
+        ({"effort": "none"}, ReasoningPolicy.off()),
+        (
+            {"effort": "low"},
+            ReasoningPolicy(
+                control=ReasoningControl.DEFAULT,
+                effort=ReasoningEffort.LOW,
+            ),
+        ),
     ],
 )
-def test_create_response_maps_reasoning_effort_to_thinking_request(
+def test_create_response_preserves_and_resolves_reasoning_effort(
     reasoning: dict[str, str],
-    expected_type: str,
-    expected_enabled: bool,
+    expected_policy: ReasoningPolicy,
 ) -> None:
     provider = FakeProvider(_anthropic_text_stream("done"))
     app = create_test_app()
@@ -618,9 +628,11 @@ def test_create_response_maps_reasoning_effort_to_thinking_request(
         )
 
     assert response.status_code == 200
-    thinking = provider.requests[0].thinking
-    assert thinking.type == expected_type
-    assert thinking.enabled is expected_enabled
+    routed = provider.requests[0]
+    assert routed.thinking is None
+    assert routed.output_config == reasoning
+    assert provider.stream_kwargs[0]["reasoning"] == expected_policy
+    assert provider.preflight_stream.call_args.kwargs["reasoning"] == expected_policy
 
 
 def test_create_response_maps_redacted_thinking_to_encrypted_reasoning() -> None:

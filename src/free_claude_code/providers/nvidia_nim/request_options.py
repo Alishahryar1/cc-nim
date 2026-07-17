@@ -1,10 +1,12 @@
 """NVIDIA NIM request option injection."""
 
+from copy import deepcopy
 from typing import Any
 
 from free_claude_code.config.nim import NimSettings
-from free_claude_code.core.anthropic import set_if_not_none
+from free_claude_code.core.anthropic import ReasoningReplayMode, set_if_not_none
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.reasoning import ReasoningControl, ReasoningPolicy
 from free_claude_code.providers.openai_chat import (
     OpenAIChatRequestPolicy,
     build_openai_chat_request_body,
@@ -12,22 +14,25 @@ from free_claude_code.providers.openai_chat import (
 
 from .tool_schema import sanitize_nim_tool_schemas
 
-_REQUEST_POLICY = OpenAIChatRequestPolicy(provider_name="NIM")
+NIM_REQUEST_POLICY = OpenAIChatRequestPolicy(
+    provider_name="NIM",
+    reasoning_replay=ReasoningReplayMode.REASONING_CONTENT,
+)
 
 
 def build_nim_request_body(
-    request_data: MessagesRequest, nim: NimSettings, *, thinking_enabled: bool
+    request_data: MessagesRequest, nim: NimSettings, *, reasoning: ReasoningPolicy
 ) -> dict[str, Any]:
     """Build OpenAI-format request body from Anthropic request plus NIM settings."""
     return build_openai_chat_request_body(
         request_data,
-        thinking_enabled=thinking_enabled,
-        policy=_REQUEST_POLICY,
+        reasoning=reasoning,
+        policy=NIM_REQUEST_POLICY,
         postprocessors=(
-            lambda body, request, enabled: apply_nim_request_options(
+            lambda body, request, policy: apply_nim_request_options(
                 body,
                 request,
-                enabled,
+                policy,
                 nim=nim,
             ),
         ),
@@ -37,7 +42,7 @@ def build_nim_request_body(
 def apply_nim_request_options(
     body: dict[str, Any],
     request_data: MessagesRequest,
-    thinking_enabled: bool,
+    reasoning: ReasoningPolicy,
     *,
     nim: NimSettings,
 ) -> None:
@@ -71,14 +76,30 @@ def apply_nim_request_options(
     extra_body: dict[str, Any] = {}
     request_extra = request_data.extra_body
     if request_extra:
-        extra_body.update(request_extra)
+        extra_body.update(deepcopy(request_extra))
+    for key in (
+        "reasoning",
+        "reasoning_effort",
+        "reasoning_tokens",
+        "thinking",
+        "thinking_budget_tokens",
+    ):
+        extra_body.pop(key, None)
+    request_template_kwargs = extra_body.get("chat_template_kwargs")
+    if isinstance(request_template_kwargs, dict):
+        for key in ("thinking", "enable_thinking", "reasoning_budget"):
+            request_template_kwargs.pop(key, None)
+        if not request_template_kwargs:
+            extra_body.pop("chat_template_kwargs", None)
 
-    if thinking_enabled:
-        chat_template_kwargs = extra_body.setdefault(
-            "chat_template_kwargs", {"thinking": True, "enable_thinking": True}
-        )
+    if reasoning.control is ReasoningControl.OFF or reasoning.requests_reasoning:
+        chat_template_kwargs = extra_body.setdefault("chat_template_kwargs", {})
         if isinstance(chat_template_kwargs, dict):
-            chat_template_kwargs.setdefault("reasoning_budget", max_tokens)
+            enabled = reasoning.control is not ReasoningControl.OFF
+            chat_template_kwargs["thinking"] = enabled
+            chat_template_kwargs["enable_thinking"] = enabled
+            if enabled and reasoning.budget_tokens is not None:
+                chat_template_kwargs["reasoning_budget"] = reasoning.budget_tokens
 
     req_top_k = request_data.top_k
     top_k = req_top_k if req_top_k is not None else nim.top_k

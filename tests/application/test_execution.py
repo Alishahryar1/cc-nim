@@ -7,13 +7,15 @@ import pytest
 
 from free_claude_code.application.execution import ProviderExecutor
 from free_claude_code.application.routing import ResolvedModel, RoutedMessagesRequest
+from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.core.async_iterators import AsyncCloseable
+from free_claude_code.core.reasoning import ReasoningPolicy
 
 
 class FakeProvider:
     def __init__(self) -> None:
-        self.preflight_calls: list[tuple[MessagesRequest, bool]] = []
+        self.preflight_calls: list[tuple[MessagesRequest, ReasoningPolicy]] = []
         self.stream_calls: list[dict[str, object]] = []
         self.stream_close_calls = 0
 
@@ -21,9 +23,9 @@ class FakeProvider:
         self,
         request: MessagesRequest,
         *,
-        thinking_enabled: bool,
+        reasoning: ReasoningPolicy,
     ) -> None:
-        self.preflight_calls.append((request, thinking_enabled))
+        self.preflight_calls.append((request, reasoning))
 
     async def stream_response(
         self,
@@ -31,14 +33,14 @@ class FakeProvider:
         input_tokens: int = 0,
         *,
         request_id: str | None = None,
-        thinking_enabled: bool | None = None,
+        reasoning: ReasoningPolicy,
     ) -> AsyncIterator[str]:
         self.stream_calls.append(
             {
                 "request": request,
                 "input_tokens": input_tokens,
                 "request_id": request_id,
-                "thinking_enabled": thinking_enabled,
+                "reasoning": reasoning,
             }
         )
         try:
@@ -52,7 +54,7 @@ class FailingPreflightProvider(FakeProvider):
         self,
         request: MessagesRequest,
         *,
-        thinking_enabled: bool,
+        reasoning: ReasoningPolicy,
     ) -> None:
         raise ValueError("invalid provider request")
 
@@ -64,7 +66,7 @@ class FailingStreamConstructionProvider(FakeProvider):
         input_tokens: int = 0,
         *,
         request_id: str | None = None,
-        thinking_enabled: bool | None = None,
+        reasoning: ReasoningPolicy,
     ) -> AsyncIterator[str]:
         raise RuntimeError("stream construction failed")
 
@@ -81,8 +83,9 @@ def _routed_request() -> RoutedMessagesRequest:
             provider_id="provider",
             provider_model="provider-model",
             provider_model_ref="provider/provider-model",
-            thinking_enabled=True,
+            reasoning_preference=ReasoningPreference.CLIENT,
         ),
+        reasoning=ReasoningPolicy.on(),
     )
 
 
@@ -104,14 +107,14 @@ async def test_executor_uses_structural_provider_port_and_preflights_eagerly() -
         request_id="req_application",
     )
 
-    assert provider.preflight_calls == [(request, True)]
+    assert provider.preflight_calls == [(request, ReasoningPolicy.on())]
     assert [chunk async for chunk in stream] == ["event: message_stop\ndata: {}\n\n"]
     assert provider.stream_calls == [
         {
             "request": request,
             "input_tokens": 17,
             "request_id": "req_application",
-            "thinking_enabled": True,
+            "reasoning": ReasoningPolicy.on(),
         }
     ]
     assert provider.stream_close_calls == 1

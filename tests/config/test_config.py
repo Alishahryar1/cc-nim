@@ -20,6 +20,7 @@ from free_claude_code.config.model_refs import (
 )
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.config.paths import messaging_state_dir_path
+from free_claude_code.config.reasoning import ReasoningPreference
 
 
 class TestSettings:
@@ -47,7 +48,7 @@ class TestSettings:
         assert isinstance(settings.provider_rate_window, int)
         assert isinstance(settings.nim.temperature, float)
         assert isinstance(settings.fast_prefix_detection, bool)
-        assert isinstance(settings.enable_model_thinking, bool)
+        assert settings.reasoning_policy is ReasoningPreference.CLIENT
         assert settings.http_read_timeout == 120.0
         assert settings.http_connect_timeout == HTTP_CONNECT_TIMEOUT_DEFAULT
         assert settings.enable_web_server_tools is False
@@ -287,13 +288,24 @@ class TestSettings:
         assert settings.http_connect_timeout == HTTP_CONNECT_TIMEOUT_DEFAULT
         assert HTTP_CONNECT_TIMEOUT_DEFAULT == 10.0
 
-    def test_enable_model_thinking_from_env(self, monkeypatch):
-        """ENABLE_MODEL_THINKING env var is loaded into settings."""
+    def test_reasoning_policy_from_env(self, monkeypatch):
+        """REASONING_POLICY is loaded as a typed preference."""
         from free_claude_code.config.settings import Settings
 
-        monkeypatch.setenv("ENABLE_MODEL_THINKING", "false")
+        monkeypatch.setenv("REASONING_POLICY", "off")
         settings = Settings()
-        assert settings.enable_model_thinking is False
+        assert settings.reasoning_policy is ReasoningPreference.OFF
+
+    def test_root_reasoning_policy_cannot_inherit(self, monkeypatch):
+        """Only route overrides may inherit."""
+        from pydantic import ValidationError
+
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.setenv("REASONING_POLICY", "inherit")
+
+        with pytest.raises(ValidationError, match="cannot inherit"):
+            Settings()
 
     def test_wafer_api_key_from_env(self, monkeypatch):
         """WAFER_API_KEY env var is loaded into settings."""
@@ -386,50 +398,65 @@ class TestSettings:
         assert settings.huggingface_api_key == ""
         assert not hasattr(settings, "hf_token")
 
-    def test_per_model_thinking_from_env(self, monkeypatch):
-        """Per-model thinking env vars are loaded into settings."""
+    def test_route_reasoning_from_env(self, monkeypatch):
+        """Route reasoning preferences are loaded into settings."""
         from free_claude_code.config.settings import Settings
 
-        monkeypatch.setenv("ENABLE_FABLE_THINKING", "true")
-        monkeypatch.setenv("ENABLE_OPUS_THINKING", "true")
-        monkeypatch.setenv("ENABLE_SONNET_THINKING", "false")
-        monkeypatch.setenv("ENABLE_HAIKU_THINKING", "false")
+        monkeypatch.setenv("REASONING_FABLE", "high")
+        monkeypatch.setenv("REASONING_OPUS", "max")
+        monkeypatch.setenv("REASONING_SONNET", "client")
+        monkeypatch.setenv("REASONING_HAIKU", "off")
         settings = Settings()
-        assert settings.enable_fable_thinking is True
-        assert settings.enable_opus_thinking is True
-        assert settings.enable_sonnet_thinking is False
-        assert settings.enable_haiku_thinking is False
+        assert settings.reasoning_fable is ReasoningPreference.HIGH
+        assert settings.reasoning_opus is ReasoningPreference.MAX
+        assert settings.reasoning_sonnet is ReasoningPreference.CLIENT
+        assert settings.reasoning_haiku is ReasoningPreference.OFF
 
-    def test_empty_per_model_thinking_inherits_model_default(self, monkeypatch):
-        """Blank per-model thinking env vars are treated as unset."""
+    def test_route_reasoning_inherits_root_policy(self, monkeypatch):
+        """Inherit defers route reasoning to the root preference."""
         from free_claude_code.application.routing import ModelRouter
         from free_claude_code.config.settings import Settings
 
-        monkeypatch.setenv("ENABLE_MODEL_THINKING", "false")
-        monkeypatch.setenv("ENABLE_OPUS_THINKING", "")
+        monkeypatch.setenv("REASONING_POLICY", "off")
+        monkeypatch.setenv("REASONING_OPUS", "inherit")
         settings = Settings()
-        assert settings.enable_opus_thinking is None
+        assert settings.reasoning_opus is ReasoningPreference.INHERIT
         assert (
-            ModelRouter(settings).resolve("claude-opus-4-20250514").thinking_enabled
-            is False
+            ModelRouter(settings).resolve("claude-opus-4-20250514").reasoning_preference
+            is ReasoningPreference.OFF
         )
 
-    def test_resolve_thinking_uses_model_tiers(self, monkeypatch):
-        """ModelRouter applies tier thinking override then fallback."""
+    def test_resolve_reasoning_uses_routes(self, monkeypatch):
+        """ModelRouter applies route preference then root fallback."""
         from free_claude_code.application.routing import ModelRouter
         from free_claude_code.config.settings import Settings
 
-        monkeypatch.setenv("ENABLE_MODEL_THINKING", "false")
-        monkeypatch.setenv("ENABLE_FABLE_THINKING", "true")
-        monkeypatch.setenv("ENABLE_OPUS_THINKING", "true")
-        monkeypatch.setenv("ENABLE_HAIKU_THINKING", "false")
+        monkeypatch.setenv("REASONING_POLICY", "off")
+        monkeypatch.setenv("REASONING_FABLE", "high")
+        monkeypatch.setenv("REASONING_OPUS", "max")
+        monkeypatch.setenv("REASONING_HAIKU", "off")
         settings = Settings()
         router = ModelRouter(settings)
-        assert router.resolve("claude-fable-5").thinking_enabled is True
-        assert router.resolve("claude-opus-4-20250514").thinking_enabled is True
-        assert router.resolve("claude-sonnet-4-20250514").thinking_enabled is False
-        assert router.resolve("claude-haiku-4-20250514").thinking_enabled is False
-        assert router.resolve("unknown-model").thinking_enabled is False
+        assert (
+            router.resolve("claude-fable-5").reasoning_preference
+            is ReasoningPreference.HIGH
+        )
+        assert (
+            router.resolve("claude-opus-4-20250514").reasoning_preference
+            is ReasoningPreference.MAX
+        )
+        assert (
+            router.resolve("claude-sonnet-4-20250514").reasoning_preference
+            is ReasoningPreference.OFF
+        )
+        assert (
+            router.resolve("claude-haiku-4-20250514").reasoning_preference
+            is ReasoningPreference.OFF
+        )
+        assert (
+            router.resolve("unknown-model").reasoning_preference
+            is ReasoningPreference.OFF
+        )
 
     def test_anthropic_auth_token_from_env_without_dotenv_key(self, monkeypatch):
         """ANTHROPIC_AUTH_TOKEN env var is loaded when dotenv does not define it."""
@@ -499,7 +526,7 @@ class TestSettings:
 
         settings = Settings()
 
-        assert settings.enable_model_thinking is True
+        assert settings.reasoning_policy is ReasoningPreference.CLIENT
 
     @pytest.mark.parametrize("removed_key", ["NIM_ENABLE_THINKING", "ENABLE_THINKING"])
     @pytest.mark.parametrize("value", ["false", ""])
@@ -516,7 +543,7 @@ class TestSettings:
 
         settings = Settings()
 
-        assert settings.enable_model_thinking is True
+        assert settings.reasoning_policy is ReasoningPreference.CLIENT
 
 
 # --- NimSettings Validation Tests ---

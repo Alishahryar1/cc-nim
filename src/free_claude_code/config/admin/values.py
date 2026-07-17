@@ -5,7 +5,13 @@ from typing import Any
 
 from free_claude_code.config.paths import managed_env_path
 
-from .manifest import FIELD_BY_KEY, FIELDS, SECTIONS, ConfigFieldSpec
+from .manifest import (
+    FIELD_BY_KEY,
+    FIELDS,
+    SECTIONS,
+    ConfigFieldSpec,
+    ConfigOptionSpec,
+)
 from .sources import (
     configured_env_files,
     dotenv_values_from_file,
@@ -88,7 +94,14 @@ def load_config_response() -> dict[str, Any]:
                 "advanced": field.advanced,
                 "restart_required": field.restart_required,
                 "session_sensitive": field.session_sensitive,
-                "options": list(field.options),
+                "options": [
+                    (
+                        {"value": option.value, "label": option.label}
+                        if isinstance(option, ConfigOptionSpec)
+                        else {"value": option, "label": option}
+                    )
+                    for option in field.options
+                ],
                 "description": field.description,
             }
         )

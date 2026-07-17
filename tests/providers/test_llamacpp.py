@@ -9,7 +9,12 @@ from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter, profiled_provider
+from tests.providers.support import (
+    REASONING_OFF,
+    passthrough_rate_limiter,
+    profiled_provider,
+    reasoning_for,
+)
 
 LLAMACPP_MODEL = "llamacpp-community/qwen2.5-7b-instruct"
 
@@ -73,7 +78,7 @@ def test_build_request_body_uses_openai_chat_shape(
 ) -> None:
     request = make_messages_request(LLAMACPP_MODEL, max_tokens=None)
 
-    body = provider._build_request_body(request)
+    body = provider._build_request_body(request, reasoning=reasoning_for(request))
 
     assert body["model"] == LLAMACPP_MODEL
     assert body["max_tokens"] == ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
@@ -81,7 +86,7 @@ def test_build_request_body_uses_openai_chat_shape(
     assert "thinking" not in body
 
 
-def test_disabled_thinking_does_not_replay_assistant_reasoning(
+def test_replay_is_independent_of_current_turn_reasoning_control(
     provider: OpenAIChatProvider,
 ) -> None:
     request = make_messages_request(
@@ -99,10 +104,10 @@ def test_disabled_thinking_does_not_replay_assistant_reasoning(
         ],
     )
 
-    body = provider._build_request_body(request, thinking_enabled=False)
+    body = provider._build_request_body(request, reasoning=REASONING_OFF)
 
-    assert "private" not in str(body)
-    assert "visible" in str(body)
+    assert body["messages"][1]["content"] == ("<think>\nprivate\n</think>\n\nvisible")
+    assert body["extra_body"]["thinking_budget_tokens"] == 0
 
 
 @pytest.mark.asyncio

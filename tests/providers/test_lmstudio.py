@@ -7,10 +7,15 @@ import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.provider_catalog import LMSTUDIO_DEFAULT_BASE
+from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.lmstudio import LMStudioProvider
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter
+from tests.providers.support import (
+    REASONING_OFF,
+    REASONING_ON,
+    passthrough_rate_limiter,
+)
 
 
 def make_request(**overrides):
@@ -58,9 +63,32 @@ def test_build_request_body_basic(lmstudio_provider):
     assert body["messages"][0]["role"] == "system"
 
 
+def test_adaptive_client_reasoning_uses_documented_named_effort(lmstudio_provider):
+    req = make_request()
+
+    body = lmstudio_provider._build_request_body(req, reasoning=REASONING_ON)
+
+    assert body["reasoning_effort"] == "high"
+
+
+def test_exact_client_budget_is_not_derived_from_output_tokens(lmstudio_provider):
+    req = make_request(max_tokens=8192)
+
+    body = lmstudio_provider._build_request_body(
+        req,
+        reasoning=ReasoningPolicy.on(
+            effort=ReasoningEffort.HIGH,
+            budget_tokens=1024,
+        ),
+    )
+
+    assert body["reasoning_tokens"] == 1024
+    assert body["max_tokens"] == 8192
+
+
 def test_build_request_body_never_replays_prior_thinking(lmstudio_provider):
     """Mistral-family templates have no assistant reasoning field; prior-turn
-    thinking must never be replayed regardless of the enable_thinking setting."""
+    thinking must never be replayed regardless of current-turn reasoning policy."""
     req = make_request(
         messages=[
             {"role": "user", "content": "hi"},
@@ -83,15 +111,15 @@ def test_build_request_body_never_replays_prior_thinking(lmstudio_provider):
     assert "prior reasoning" not in str(body)
 
 
-def test_preflight_builds_before_context_budget_and_preserves_false(
+def test_preflight_builds_before_context_budget_and_preserves_policy(
     lmstudio_provider,
 ):
     request = make_request()
     calls: list[tuple[str, object]] = []
 
-    def build(request_arg, thinking_enabled=None):
+    def build(request_arg, *, reasoning):
         assert request_arg is request
-        calls.append(("build", thinking_enabled))
+        calls.append(("build", reasoning))
         return {}
 
     def check_context(request_arg):
@@ -106,9 +134,9 @@ def test_preflight_builds_before_context_budget_and_preserves_false(
             side_effect=check_context,
         ),
     ):
-        lmstudio_provider.preflight_stream(request, thinking_enabled=False)
+        lmstudio_provider.preflight_stream(request, reasoning=REASONING_OFF)
 
-    assert calls == [("build", False), ("context", request)]
+    assert calls == [("build", REASONING_OFF), ("context", request)]
 
 
 def test_preflight_conversion_failure_skips_context_budget(lmstudio_provider):
@@ -124,7 +152,7 @@ def test_preflight_conversion_failure_skips_context_budget(lmstudio_provider):
         patch.object(lmstudio_provider, "_preflight_context_budget") as context,
         pytest.raises(InvalidRequestError, match="invalid request conversion"),
     ):
-        lmstudio_provider.preflight_stream(request, thinking_enabled=True)
+        lmstudio_provider.preflight_stream(request, reasoning=REASONING_ON)
 
     context.assert_not_called()
 

@@ -28,6 +28,7 @@ from free_claude_code.application.routing import (
     RoutedMessagesRequest,
 )
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
+from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic.models import Message, MessagesRequest, Tool
 from free_claude_code.core.anthropic.stream_contracts import (
@@ -35,6 +36,7 @@ from free_claude_code.core.anthropic.stream_contracts import (
     parse_sse_text,
     text_content,
 )
+from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.core.version import package_version
 from free_claude_code.messaging.event_parser import parse_cli_event
 
@@ -66,11 +68,15 @@ class FixedProviderModelRouter(ModelRouter):
             provider_id=self._fixed_provider_id,
             provider_model=request.model,
             provider_model_ref=f"{self._fixed_provider_id}/{request.model}",
-            thinking_enabled=False,
+            reasoning_preference=ReasoningPreference.OFF,
         )
         routed = request.model_copy(deep=True)
         routed.model = resolved.provider_model
-        return RoutedMessagesRequest(request=routed, resolved=resolved)
+        return RoutedMessagesRequest(
+            request=routed,
+            resolved=resolved,
+            reasoning=ReasoningPolicy.off(),
+        )
 
 
 def test_web_server_tool_not_detected_when_tool_only_listed():

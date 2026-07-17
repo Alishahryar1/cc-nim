@@ -20,7 +20,7 @@ const VIEW_GROUPS = [
     id: "model_config",
     label: "Model Config",
     title: "Model Config",
-    sections: ["models", "thinking", "web_tools"],
+    sections: ["models", "reasoning", "web_tools"],
     containerId: "modelConfigSections",
   },
   {
@@ -308,21 +308,12 @@ function inputForField(field) {
     return input;
   }
 
-  if (field.type === "tri_boolean") {
-    const select = document.createElement("select");
-    [
-      ["", "Inherit"],
-      ["true", "Enabled"],
-      ["false", "Disabled"],
-    ].forEach(([value, label]) => select.appendChild(option(value, label)));
-    select.value = field.value || "";
-    return select;
-  }
-
   if (field.type === "select") {
     const select = document.createElement("select");
-    field.options.forEach((value) => select.appendChild(option(value, value)));
-    select.value = field.value || field.options[0] || "";
+    field.options.forEach((item) =>
+      select.appendChild(option(item.value, item.label)),
+    );
+    select.value = field.value || field.options[0]?.value || "";
     return select;
   }
 

@@ -22,6 +22,7 @@ class EnvKeyMigration:
 
     old_key: str
     new_key: str
+    value_map: tuple[tuple[str, str], ...] = ()
 
 
 HUGGINGFACE_TOKEN_MIGRATION = EnvKeyMigration(
@@ -29,32 +30,67 @@ HUGGINGFACE_TOKEN_MIGRATION = EnvKeyMigration(
     new_key=HUGGINGFACE_API_KEY_ENV,
 )
 
+_LEGACY_TRUE_VALUES = ("1", "true", "t", "on", "yes", "y")
+_LEGACY_FALSE_VALUES = ("0", "false", "f", "off", "no", "n")
+_LEGACY_REASONING_BOOLEAN_MAP = (
+    *((value, "client") for value in _LEGACY_TRUE_VALUES),
+    *((value, "off") for value in _LEGACY_FALSE_VALUES),
+)
+
+REASONING_MIGRATIONS = (
+    EnvKeyMigration(
+        "ENABLE_MODEL_THINKING",
+        "REASONING_POLICY",
+        _LEGACY_REASONING_BOOLEAN_MAP,
+    ),
+    *(
+        EnvKeyMigration(
+            f"ENABLE_{route}_THINKING",
+            f"REASONING_{route}",
+            (("", "inherit"), *_LEGACY_REASONING_BOOLEAN_MAP),
+        )
+        for route in ("FABLE", "OPUS", "SONNET", "HAIKU")
+    ),
+)
+
+ENV_MIGRATIONS = (HUGGINGFACE_TOKEN_MIGRATION, *REASONING_MIGRATIONS)
+
 
 def migrate_owned_env_files() -> tuple[Path, ...]:
     """Apply key migrations to repo and managed dotenv files."""
 
-    return tuple(
-        path.resolve()
-        for path in _unique_paths((repo_env_path(), managed_env_path()))
-        if migrate_env_key_in_file(path, HUGGINGFACE_TOKEN_MIGRATION)
-    )
+    changed_paths: list[Path] = []
+    for path in _unique_paths((repo_env_path(), managed_env_path())):
+        changed = False
+        for migration in ENV_MIGRATIONS:
+            changed = migrate_env_key_in_file(path, migration) or changed
+        if changed:
+            changed_paths.append(path.resolve())
+    return tuple(changed_paths)
 
 
-def explicit_env_file_huggingface_warning(
+def explicit_env_file_migration_warning(
     env: Mapping[str, str] | None = None,
 ) -> str | None:
-    """Return a warning when an explicit env file still uses ``HF_TOKEN``."""
+    """Return a warning when an explicit env file uses a retired setting."""
 
     path = explicit_env_path(env)
     if path is None or not path.is_file():
         return None
     text = path.read_text(encoding="utf-8")
-    if not env_text_needs_migration(text, HUGGINGFACE_TOKEN_MIGRATION):
+    pending = tuple(
+        migration
+        for migration in ENV_MIGRATIONS
+        if env_text_needs_migration(text, migration)
+    )
+    if not pending:
         return None
+    renames = ", ".join(
+        f"{migration.old_key} to {migration.new_key}" for migration in pending
+    )
     return (
-        f"{LEGACY_HUGGINGFACE_TOKEN_ENV} is set in explicit FCC_ENV_FILE {path}. "
-        f"Rename it to {HUGGINGFACE_API_KEY_ENV}; explicit env files are not "
-        "rewritten automatically."
+        f"Explicit FCC_ENV_FILE {path} uses retired settings. Rename {renames}; "
+        "explicit env files are not rewritten automatically."
     )
 
 
@@ -86,9 +122,12 @@ def migrate_env_key_in_text(
         match = _DOTENV_ASSIGNMENT_RE.match(line)
         if match is None or match.group("key") != migration.old_key:
             continue
+        remainder = line[match.end() :]
+        if migration.value_map:
+            remainder = _mapped_value(remainder, migration.value_map)
         lines[index] = (
             f"{match.group('prefix')}{migration.new_key}{match.group('suffix')}"
-            f"{line[match.end() :]}"
+            f"{remainder}"
         )
         changed = True
     if not changed:
@@ -112,6 +151,20 @@ def _defines_key(text: str, key: str) -> bool:
         if match is not None and match.group("key") == key:
             return True
     return False
+
+
+def _mapped_value(value: str, mapping: tuple[tuple[str, str], ...]) -> str:
+    """Map a simple dotenv value while preserving comments and line endings."""
+
+    line = value.rstrip("\r\n")
+    newline = value[len(line) :]
+    raw_value, separator, comment = line.partition("#")
+    normalized = raw_value.strip().strip("'\"").lower()
+    replacement = dict(mapping).get(normalized)
+    if replacement is None:
+        return value
+    suffix = f" #{comment}" if separator else ""
+    return f"{replacement}{suffix}{newline}"
 
 
 def _unique_paths(paths: tuple[Path, ...]) -> tuple[Path, ...]:

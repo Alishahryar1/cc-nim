@@ -17,6 +17,7 @@ from free_claude_code.core.anthropic.streaming import (
     make_text_recovery_body,
 )
 from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.openai_chat.provider import (
@@ -32,7 +33,7 @@ from free_claude_code.providers.stream_recovery import (
     TruncatedProviderStreamError,
 )
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter
+from tests.providers.support import REASONING_OFF, passthrough_rate_limiter
 
 
 class AsyncStreamMock:
@@ -84,22 +85,6 @@ def _make_tool_assembler(provider: NvidiaNimProvider) -> OpenAIToolCallAssembler
     )
 
 
-def _make_provider_with_thinking_enabled(enabled: bool):
-    """Create a provider instance with thinking explicitly enabled or disabled."""
-    config = ProviderConfig(
-        api_key="test_key",
-        base_url="https://test.api.nvidia.com/v1",
-        rate_limit=10,
-        rate_window=60,
-        enable_thinking=enabled,
-    )
-    return NvidiaNimProvider(
-        config,
-        nim_settings=NimSettings(),
-        rate_limiter=passthrough_rate_limiter(),
-    )
-
-
 def _make_request(model: str = "test-model", stream: bool = True, **overrides: object):
     """Create a concrete request matching the original streaming-test defaults."""
     request_overrides: dict[str, object] = {
@@ -128,7 +113,7 @@ def _make_stream_runner(
         request=request or _make_request(),
         input_tokens=0,
         request_id=request_id,
-        thinking_enabled=None,
+        reasoning=DEFAULT_REASONING_POLICY,
     )
 
 
@@ -163,9 +148,14 @@ def _make_tool_calls_chunk(*, name: str, arguments: str, tool_id: str, index: in
     return _make_chunk(tool_calls=[tc])
 
 
-async def _collect_stream(provider, request):
+async def _collect_stream(
+    provider,
+    request,
+    *,
+    reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+):
     """Collect all SSE events from a stream."""
-    return [e async for e in provider.stream_response(request)]
+    return [e async for e in provider.stream_response(request, reasoning=reasoning)]
 
 
 async def _collect_stream_error(provider, request, **kwargs) -> ExecutionFailure:
@@ -422,7 +412,7 @@ class TestStreamingExceptionHandling:
         NIM / some templates may emit no main ``content``; a minimal text block matches
         the empty-body placeholder and helps clients that expect a text segment.
         """
-        provider = _make_provider_with_thinking_enabled(True)
+        provider = _make_provider()
         request = _make_request()
         chunk1 = _make_chunk(reasoning_content="reasoning only from provider")
         chunk2 = _make_chunk(finish_reason="stop")
@@ -556,7 +546,7 @@ class TestStreamingExceptionHandling:
     @pytest.mark.asyncio
     async def test_stream_with_reasoning_content_suppressed_when_disabled(self):
         """reasoning deltas are stripped while normal text still streams."""
-        provider = _make_provider_with_thinking_enabled(False)
+        provider = _make_provider()
         request = _make_request()
 
         chunk1 = _make_chunk(reasoning_content="I think...")
@@ -578,7 +568,7 @@ class TestStreamingExceptionHandling:
                 return_value=False,
             ),
         ):
-            events = await _collect_stream(provider, request)
+            events = await _collect_stream(provider, request, reasoning=REASONING_OFF)
 
         event_text = "".join(events)
         assert "thinking_delta" not in event_text
@@ -843,7 +833,7 @@ class TestStreamingExceptionHandling:
 
     @pytest.mark.asyncio
     async def test_disabled_thinking_recovery_discards_reasoning(self):
-        provider = _make_provider_with_thinking_enabled(False)
+        provider = _make_provider()
         request = _make_request()
         initial_stream = AsyncStreamMock([_make_chunk(content="hello")])
         recovery_stream = AsyncStreamMock(
@@ -860,7 +850,7 @@ class TestStreamingExceptionHandling:
             new_callable=AsyncMock,
             side_effect=[initial_stream, recovery_stream],
         ):
-            events = await _collect_stream(provider, request)
+            events = await _collect_stream(provider, request, reasoning=REASONING_OFF)
 
         parsed = parse_sse_text("".join(events))
         text = "".join(
@@ -996,7 +986,7 @@ class TestStreamingExceptionHandling:
                 ledger=ledger,
                 error=TimeoutError("cutoff"),
                 tool_argument_alias_buffers={},
-                thinking_enabled=True,
+                output_reasoning=True,
             )
 
         assert events is not None

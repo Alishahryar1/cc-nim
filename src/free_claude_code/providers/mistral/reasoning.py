@@ -8,6 +8,7 @@ from typing import Any
 
 import openai
 
+from free_claude_code.core.reasoning import ReasoningControl, ReasoningPolicy
 from free_claude_code.providers.http import maybe_await_aclose
 
 MISTRAL_REASONING_EFFORT = "high"
@@ -23,10 +24,12 @@ _REJECTION_WORDS = ("unsupported", "unknown", "invalid", "forbidden", "extra")
 
 
 def apply_mistral_reasoning_request_shape(
-    body: dict[str, Any], *, thinking_enabled: bool
+    body: dict[str, Any], *, reasoning: ReasoningPolicy
 ) -> None:
     """Apply Mistral's native reasoning request shape in-place."""
-    if thinking_enabled:
+    if reasoning.control is ReasoningControl.OFF:
+        body["reasoning_effort"] = "none"
+    elif reasoning.requests_reasoning:
         body["reasoning_effort"] = MISTRAL_REASONING_EFFORT
     else:
         body.pop("reasoning_effort", None)
@@ -38,13 +41,11 @@ def apply_mistral_reasoning_request_shape(
     for message in messages:
         if not isinstance(message, dict) or message.get("role") != "assistant":
             continue
-        reasoning = _clean_text(message.pop("reasoning_content", None))
-        if thinking_enabled and reasoning:
+        replayed_reasoning = _clean_text(message.pop("reasoning_content", None))
+        if replayed_reasoning:
             message["content"] = _content_with_prepended_thinking(
-                message.get("content"), reasoning
+                message.get("content"), replayed_reasoning
             )
-        elif not thinking_enabled:
-            message["content"] = _content_without_thinking(message.get("content"))
 
 
 def clone_body_without_mistral_reasoning(
@@ -176,11 +177,6 @@ def _content_with_prepended_thinking(
     chunks = [_thinking_chunk(reasoning)]
     chunks.extend(_content_to_mistral_text_chunks(content))
     return chunks
-
-
-def _content_without_thinking(content: Any) -> Any:
-    stripped, _ = _strip_mistral_thinking_content(content)
-    return stripped
 
 
 def _strip_mistral_thinking_content(content: Any) -> tuple[Any, bool]:

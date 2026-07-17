@@ -22,7 +22,6 @@ def vercel_config():
         base_url=VERCEL_AI_GATEWAY_DEFAULT_BASE,
         rate_limit=10,
         rate_window=60,
-        enable_thinking=True,
     )
 
 

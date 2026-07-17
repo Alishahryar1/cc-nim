@@ -10,7 +10,7 @@ from .models import OpenAIResponsesRequest
 from .reasoning import (
     combine_reasoning,
     reasoning_text_from_item,
-    responses_reasoning_to_thinking,
+    responses_reasoning_to_output_config,
 )
 from .tools import (
     call_id_from_item,
@@ -65,8 +65,8 @@ def convert_request_to_anthropic_payload(
     if request.metadata is not None:
         payload["metadata"] = request.metadata
 
-    if thinking := responses_reasoning_to_thinking(request.reasoning):
-        payload["thinking"] = thinking
+    if output_config := responses_reasoning_to_output_config(request.reasoning):
+        payload["output_config"] = output_config
 
     raw_tool_choice = request.tool_choice
     tools = convert_tools(request.tools)

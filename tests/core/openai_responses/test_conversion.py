@@ -37,6 +37,22 @@ def test_responses_string_input_converts_to_anthropic_message() -> None:
     assert payload["metadata"] == {"trace": "abc"}
 
 
+@pytest.mark.parametrize("effort", ["none", "low", "medium", "high", "xhigh"])
+def test_responses_reasoning_effort_is_preserved_for_application_policy(
+    effort: str,
+) -> None:
+    payload = _to_anthropic_payload(
+        {
+            "model": "nvidia_nim/test-model",
+            "input": "Hello",
+            "reasoning": {"effort": effort},
+        }
+    )
+
+    assert payload["output_config"] == {"effort": effort}
+    assert "thinking" not in payload
+
+
 def test_responses_messages_tools_and_tool_results_convert() -> None:
     payload = _to_anthropic_payload(
         {

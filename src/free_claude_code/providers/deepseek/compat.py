@@ -8,17 +8,24 @@ from loguru import logger
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from free_claude_code.core.anthropic import (
+    ReasoningReplayMode,
     dump_messages_request,
     serialize_tool_result_content,
 )
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.reasoning import (
+    ReasoningControl,
+    ReasoningEffort,
+    ReasoningPolicy,
+)
 from free_claude_code.providers.openai_chat import (
     OpenAIChatRequestPolicy,
     build_openai_chat_request_body,
 )
 
-_REQUEST_POLICY = OpenAIChatRequestPolicy(
+DEEPSEEK_REQUEST_POLICY = OpenAIChatRequestPolicy(
     provider_name="DEEPSEEK",
+    reasoning_replay=ReasoningReplayMode.REASONING_CONTENT,
     include_extra_body=True,
 )
 
@@ -39,7 +46,7 @@ _OMITTED_ATTACHMENT_BLOCK = {"type": "text", "text": _OMITTED_ATTACHMENT_TEXT}
 
 
 def build_deepseek_request_body(
-    request_data: MessagesRequest, *, thinking_enabled: bool
+    request_data: MessagesRequest, *, reasoning: ReasoningPolicy
 ) -> dict:
     """Build a DeepSeek Chat Completions body from an Anthropic request."""
     logger.debug(
@@ -57,8 +64,8 @@ def build_deepseek_request_body(
     has_tool_history = _has_tool_history(data)
     has_replayable_tool_thinking = _all_tool_calls_have_replayable_thinking(data)
     unsafe_tool_followup = has_tool_history and not has_replayable_tool_thinking
-    effective_thinking_enabled = thinking_enabled and not unsafe_tool_followup
-    if thinking_enabled:
+    effective_reasoning = reasoning
+    if reasoning.control is not ReasoningControl.OFF:
         if unsafe_tool_followup:
             logger.debug(
                 "DEEPSEEK_REQUEST: disabling thinking for tool follow-up without "
@@ -68,6 +75,7 @@ def build_deepseek_request_body(
                 len(data.get("tools", [])),
             )
             _remove_deepseek_thinking_hints(data)
+            effective_reasoning = ReasoningPolicy.off()
         elif has_tool_history:
             logger.debug(
                 "DEEPSEEK_REQUEST: keeping thinking for tool follow-up with "
@@ -93,9 +101,8 @@ def build_deepseek_request_body(
     sanitized_request = MessagesRequest.model_validate(data)
     body = build_openai_chat_request_body(
         sanitized_request,
-        thinking_enabled=effective_thinking_enabled,
-        reasoning_history_enabled=True,
-        policy=_REQUEST_POLICY,
+        reasoning=effective_reasoning,
+        policy=DEEPSEEK_REQUEST_POLICY,
         postprocessors=(_apply_deepseek_chat_extras,),
     )
     if "max_tokens" not in body or body.get("max_tokens") is None:
@@ -427,10 +434,17 @@ def _downgrade_forced_tool_choice(data: dict[str, Any]) -> None:
 
 
 def _apply_deepseek_chat_extras(
-    body: dict[str, Any], _request_data: MessagesRequest, thinking_enabled: bool
+    body: dict[str, Any], _request_data: MessagesRequest, policy: ReasoningPolicy
 ) -> None:
-    if not thinking_enabled or body.get("model") == "deepseek-reasoner":
-        return
     extra_body = body.setdefault("extra_body", {})
-    if isinstance(extra_body, dict):
-        extra_body.setdefault("thinking", {"type": "enabled"})
+    if not isinstance(extra_body, dict):
+        return
+    if policy.control is ReasoningControl.OFF:
+        extra_body["thinking"] = {"type": "disabled"}
+        return
+    if policy.effort in {ReasoningEffort.XHIGH, ReasoningEffort.MAX}:
+        body["reasoning_effort"] = "max"
+    elif policy.effort is not None:
+        body["reasoning_effort"] = "high"
+    elif policy.requests_reasoning:
+        extra_body["thinking"] = {"type": "enabled"}

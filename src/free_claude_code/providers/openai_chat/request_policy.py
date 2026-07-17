@@ -11,9 +11,12 @@ from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.core.anthropic import ReasoningReplayMode, build_base_request_body
 from free_claude_code.core.anthropic.conversion import OpenAIConversionError
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.reasoning import ReasoningPolicy
 
 MaxTokensField = Literal["max_tokens", "max_completion_tokens"]
-OpenAIChatPostprocessor = Callable[[dict[str, Any], MessagesRequest, bool], None]
+OpenAIChatPostprocessor = Callable[
+    [dict[str, Any], MessagesRequest, ReasoningPolicy], None
+]
 ExtraBodyValidator = Callable[[dict[str, Any]], None]
 
 
@@ -22,12 +25,12 @@ class OpenAIChatRequestPolicy:
     """Provider policy for Anthropic-to-OpenAI chat request conversion."""
 
     provider_name: str
+    reasoning_replay: ReasoningReplayMode
     include_extra_body: bool = False
     extra_body_validator: ExtraBodyValidator | None = None
     reject_extra_body_message: str | None = None
     default_max_tokens: int | None = None
     max_tokens_field: MaxTokensField = "max_tokens"
-    reasoning_replay: ReasoningReplayMode | None = None
     strip_message_names: bool = False
     unsupported_body_keys: frozenset[str] = field(default_factory=frozenset)
     normalize_n_to_one: bool = False
@@ -36,8 +39,7 @@ class OpenAIChatRequestPolicy:
 def build_openai_chat_request_body(
     request_data: MessagesRequest,
     *,
-    thinking_enabled: bool,
-    reasoning_history_enabled: bool | None = None,
+    reasoning: ReasoningPolicy,
     policy: OpenAIChatRequestPolicy,
     postprocessors: Iterable[OpenAIChatPostprocessor] = (),
 ) -> dict[str, Any]:
@@ -49,18 +51,10 @@ def build_openai_chat_request_body(
         len(request_data.messages),
     )
     try:
-        if reasoning_history_enabled is None:
-            reasoning_history_enabled = thinking_enabled
-        if not reasoning_history_enabled:
-            reasoning_replay = ReasoningReplayMode.DISABLED
-        else:
-            reasoning_replay = (
-                policy.reasoning_replay or ReasoningReplayMode.REASONING_CONTENT
-            )
         body = build_base_request_body(
             request_data,
             default_max_tokens=policy.default_max_tokens,
-            reasoning_replay=reasoning_replay,
+            reasoning_replay=policy.reasoning_replay,
         )
     except OpenAIConversionError as exc:
         raise InvalidRequestError(str(exc)) from exc
@@ -81,7 +75,7 @@ def build_openai_chat_request_body(
     _apply_common_openai_chat_policy(body, policy)
 
     for postprocess in postprocessors:
-        postprocess(body, request_data, thinking_enabled)
+        postprocess(body, request_data, reasoning)
 
     logger.debug(
         "{}_REQUEST: conversion done model={} msgs={} tools={}",

@@ -13,6 +13,7 @@ from free_claude_code.core.diagnostics import (
     exception_cause_types,
     redacted_exception_traceback,
 )
+from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.core.trace import trace_event
 from free_claude_code.providers.model_listing import model_infos_from_ids
 
@@ -33,7 +34,6 @@ class ProviderConfig:
     http_read_timeout: float = 300.0
     http_write_timeout: float = 10.0
     http_connect_timeout: float = HTTP_CONNECT_TIMEOUT_DEFAULT
-    enable_thinking: bool = True
     proxy: str = ""
     log_raw_sse_events: bool = False
     log_api_error_tracebacks: bool = False
@@ -45,27 +45,12 @@ class BaseProvider(ABC):
     def __init__(self, config: ProviderConfig):
         self._config = config
 
-    def _is_thinking_enabled(
-        self, request: MessagesRequest, thinking_enabled: bool | None = None
-    ) -> bool:
-        """Return whether thinking should be enabled for this request."""
-        thinking = request.thinking
-        config_enabled = (
-            self._config.enable_thinking
-            if thinking_enabled is None
-            else thinking_enabled
-        )
-        request_enabled = True
-        if thinking is not None:
-            if "enabled" in thinking.model_fields_set and thinking.enabled is not None:
-                request_enabled = thinking.enabled
-            if thinking.type == "disabled":
-                request_enabled = False
-        return config_enabled and request_enabled
-
     @abstractmethod
     def preflight_stream(
-        self, request: MessagesRequest, *, thinking_enabled: bool | None = None
+        self,
+        request: MessagesRequest,
+        *,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> None:
         """Validate the upstream request before opening an SSE stream."""
 
@@ -131,6 +116,6 @@ class BaseProvider(ABC):
         input_tokens: int = 0,
         *,
         request_id: str | None = None,
-        thinking_enabled: bool | None = None,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> AsyncIterator[str]:
         """Stream response in Anthropic SSE format."""

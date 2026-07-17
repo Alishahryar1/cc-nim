@@ -7,7 +7,12 @@ import pytest
 from free_claude_code.config.provider_catalog import CEREBRAS_DEFAULT_BASE
 from free_claude_code.providers.base import ProviderConfig
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter, profiled_provider
+from tests.providers.support import (
+    REASONING_OFF,
+    passthrough_rate_limiter,
+    profiled_provider,
+    reasoning_for,
+)
 
 
 def make_request(model="llama3.1-8b", **overrides):
@@ -53,7 +58,6 @@ def cerebras_config():
         base_url=CEREBRAS_DEFAULT_BASE,
         rate_limit=10,
         rate_window=60,
-        enable_thinking=True,
     )
 
 
@@ -84,7 +88,7 @@ def test_default_base_url_constant():
 def test_build_request_body_basic(cerebras_provider):
     """Basic request body conversion attaches system message from Claude request."""
     req = make_request()
-    body = cerebras_provider._build_request_body(req)
+    body = cerebras_provider._build_request_body(req, reasoning=reasoning_for(req))
 
     assert body["model"] == "llama3.1-8b"
     assert body["messages"][0]["role"] == "system"
@@ -112,7 +116,7 @@ def test_build_request_body_replays_reasoning_as_tagged_content(cerebras_provide
     )
 
 
-def test_build_request_body_global_disable_blocks_reasoning_mapping():
+def test_replay_is_independent_of_current_turn_reasoning_control():
     provider = profiled_provider(
         "cerebras",
         ProviderConfig(
@@ -120,23 +124,21 @@ def test_build_request_body_global_disable_blocks_reasoning_mapping():
             base_url=CEREBRAS_DEFAULT_BASE,
             rate_limit=10,
             rate_window=60,
-            enable_thinking=False,
         ),
         rate_limiter=passthrough_rate_limiter(),
     )
-    body = provider._build_request_body(make_reasoning_tool_history_request())
+    body = provider._build_request_body(
+        make_reasoning_tool_history_request(), reasoning=REASONING_OFF
+    )
 
     assistant = next(
         message for message in body["messages"] if message["role"] == "assistant"
     )
-    assert assistant["content"] == "I will inspect the file."
-    assert assistant["tool_calls"][0]["id"] == "toolu_1"
-    assert all(
-        "<think>" not in str(message.get("content", ""))
-        and "reasoning_content" not in message
-        and "reasoning" not in message
-        for message in body["messages"]
+    assert assistant["content"] == (
+        "<think>\nI need to read it first.\n</think>\n\nI will inspect the file."
     )
+    assert assistant["tool_calls"][0]["id"] == "toolu_1"
+    assert body["reasoning_effort"] == "none"
 
 
 def test_build_request_body_remaps_max_tokens_preserves_message_name(cerebras_provider):
@@ -150,7 +152,7 @@ def test_build_request_body_remaps_max_tokens_preserves_message_name(cerebras_pr
             "max_tokens": 42,
         }
         req = make_request()
-        body = cerebras_provider._build_request_body(req)
+        body = cerebras_provider._build_request_body(req, reasoning=reasoning_for(req))
 
     assert body["messages"][0].get("name") == "alice"
     assert body.get("max_tokens") is None
@@ -176,7 +178,7 @@ def test_build_request_body_prefers_existing_max_completion_tokens(cerebras_prov
 def test_build_request_body_preserves_caller_extra_body(cerebras_provider):
     req = make_request(extra_body={"clear_thinking": False})
 
-    body = cerebras_provider._build_request_body(req)
+    body = cerebras_provider._build_request_body(req, reasoning=reasoning_for(req))
 
     eb = body.get("extra_body")
     assert isinstance(eb, dict)

@@ -173,8 +173,21 @@ def _message_payload(*, stream: bool) -> dict[str, Any]:
 def _write_initial_managed_config(home: Path, upstream: FakeOpenAIUpstream) -> None:
     config_path = home / ".fcc" / ".env"
     config_path.parent.mkdir(parents=True, exist_ok=True)
+    template = "\n".join(
+        line
+        for line in load_env_template().splitlines()
+        if not line.startswith(
+            (
+                "REASONING_POLICY=",
+                "REASONING_FABLE=",
+                "REASONING_OPUS=",
+                "REASONING_SONNET=",
+                "REASONING_HAIKU=",
+            )
+        )
+    )
     config_path.write_text(
-        load_env_template()
+        template
         + "\n"
         + "\n".join(
             [
@@ -245,9 +258,18 @@ def test_provider_hot_swap_preserves_inflight_stream_e2e(
                     "MODEL_HAIKU",
                     "MODEL_OPUS",
                     "MODEL_SONNET",
+                    "REASONING_FABLE",
+                    "REASONING_HAIKU",
+                    "REASONING_OPUS",
+                    "REASONING_POLICY",
+                    "REASONING_SONNET",
                 },
             )
         )
+
+        managed_config = (home / ".fcc" / ".env").read_text(encoding="utf-8")
+        assert "REASONING_POLICY=off" in managed_config
+        assert "ENABLE_MODEL_THINKING" not in managed_config
 
         def consume_old_stream() -> None:
             try:

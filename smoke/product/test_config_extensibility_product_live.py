@@ -64,14 +64,14 @@ def test_removed_env_migration_e2e(smoke_config: SmokeConfig, tmp_path) -> None:
 
 
 @pytest.mark.smoke_target("config")
-def test_per_model_thinking_config_e2e(smoke_config: SmokeConfig, tmp_path) -> None:
+def test_route_reasoning_config_e2e(smoke_config: SmokeConfig, tmp_path) -> None:
     env_file = tmp_path / "thinking.env"
     env_file.write_text(
-        'ENABLE_MODEL_THINKING="false"\n'
-        'ENABLE_FABLE_THINKING="true"\n'
-        'ENABLE_OPUS_THINKING="true"\n'
-        "ENABLE_SONNET_THINKING=\n"
-        'ENABLE_HAIKU_THINKING="false"\n',
+        'REASONING_POLICY="off"\n'
+        'REASONING_FABLE="high"\n'
+        'REASONING_OPUS="client"\n'
+        'REASONING_SONNET="inherit"\n'
+        'REASONING_HAIKU="off"\n',
         encoding="utf-8",
     )
     env = os.environ.copy()
@@ -81,11 +81,11 @@ def test_per_model_thinking_config_e2e(smoke_config: SmokeConfig, tmp_path) -> N
         "from free_claude_code.config.settings import Settings; "
         "s=Settings(); "
         "r=ModelRouter(s); "
-        "print(r.resolve('claude-fable-5').thinking_enabled); "
-        "print(r.resolve('claude-opus-4-20250514').thinking_enabled); "
-        "print(r.resolve('claude-sonnet-4-20250514').thinking_enabled); "
-        "print(r.resolve('claude-haiku-4-20250514').thinking_enabled); "
-        "print(r.resolve('unknown-model').thinking_enabled)"
+        "print(r.resolve('claude-fable-5').reasoning_preference.value); "
+        "print(r.resolve('claude-opus-4-20250514').reasoning_preference.value); "
+        "print(r.resolve('claude-sonnet-4-20250514').reasoning_preference.value); "
+        "print(r.resolve('claude-haiku-4-20250514').reasoning_preference.value); "
+        "print(r.resolve('unknown-model').reasoning_preference.value)"
     )
     result = run_captured_text(
         cmd_python_c(script),
@@ -96,11 +96,11 @@ def test_per_model_thinking_config_e2e(smoke_config: SmokeConfig, tmp_path) -> N
     )
     assert result.returncode == 0, result.stderr
     assert result.stdout.splitlines() == [
-        "True",
-        "True",
-        "False",
-        "False",
-        "False",
+        "high",
+        "client",
+        "off",
+        "off",
+        "off",
     ]
 
 

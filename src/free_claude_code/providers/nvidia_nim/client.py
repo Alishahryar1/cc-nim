@@ -10,18 +10,19 @@ from loguru import logger
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.failure_policy import (
     overloaded_provider_failure,
 )
 from free_claude_code.providers.openai_chat import (
+    NO_REASONING,
     OpenAIChatProfile,
     OpenAIChatProvider,
-    OpenAIChatRequestPolicy,
 )
 from free_claude_code.providers.rate_limit import ProviderRateLimiter
 
-from .request_options import build_nim_request_body
+from .request_options import NIM_REQUEST_POLICY, build_nim_request_body
 from .retry import (
     clone_body_without_chat_template,
     clone_body_without_reasoning_budget,
@@ -33,7 +34,10 @@ from .tool_schema import (
 )
 
 _DEGRADED_FUNCTION_STATE = "degraded function cannot be invoked"
-_PROFILE = OpenAIChatProfile(OpenAIChatRequestPolicy(provider_name="NIM"))
+_PROFILE = OpenAIChatProfile(
+    NIM_REQUEST_POLICY,
+    NO_REASONING,
+)
 
 
 class NvidiaNimProvider(OpenAIChatProvider):
@@ -54,13 +58,16 @@ class NvidiaNimProvider(OpenAIChatProvider):
         self._nim_settings = nim_settings
 
     def _build_request_body(
-        self, request: MessagesRequest, thinking_enabled: bool | None = None
+        self,
+        request: MessagesRequest,
+        *,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> dict:
         """Internal helper for tests and shared building."""
         return build_nim_request_body(
             request,
             self._nim_settings,
-            thinking_enabled=self._is_thinking_enabled(request, thinking_enabled),
+            reasoning=reasoning,
         )
 
     def _prepare_create_body(self, body: dict[str, Any]) -> dict[str, Any]:

@@ -424,7 +424,7 @@ def test_serve_migrates_hf_token_before_loading_settings(
         patch.object(commands, "get_settings", get_settings),
         patch.object(commands, "_run_supervised_server", return_value=False),
         patch.object(commands, "kill_all_best_effort"),
-        patch.object(commands, "explicit_env_file_huggingface_warning"),
+        patch.object(commands, "explicit_env_file_migration_warning"),
     ):
         commands.serve()
 

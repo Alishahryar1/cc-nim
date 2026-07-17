@@ -201,6 +201,12 @@ Use the tag shown by `ollama list` with the `ollama/` prefix. `OLLAMA_BASE_URL` 
 
 For example, route Opus to `nvidia_nim/moonshotai/kimi-k2.6`, Sonnet to `open_router/openrouter/free`, Haiku to `lmstudio/qwen3.5-coder`, and keep `MODEL` on `zai/glm-5.2`.
 
+### Reasoning Control
+
+Open **Admin UI → Model Config → Reasoning** to choose how FCC handles client reasoning controls. The default **From client** option preserves reasoning effort sent by Claude Code, Codex, or Pi; when the client sends no control, the provider keeps its own default.
+
+You can instead select **Off**, **Low**, **Medium**, **High**, **X-High**, or **Max**. Fable, Opus, Sonnet, and Haiku each have the same choices plus **Inherit**, which uses the root policy. FCC translates each choice only into controls documented by that provider, so unsupported precision safely remains provider-defined.
+
 <a id="connect-your-client"></a>
 
 ## Connect Your Client

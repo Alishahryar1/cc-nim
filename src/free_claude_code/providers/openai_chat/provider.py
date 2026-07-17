@@ -27,6 +27,7 @@ from free_claude_code.core.anthropic.streaming import (
     tool_schemas_by_name,
 )
 from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.core.trace import provider_chat_body_snapshot, trace_event
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.failure_policy import classify_provider_failure
@@ -120,24 +121,30 @@ class OpenAIChatProvider(BaseProvider):
         return extract_openai_model_ids(payload, provider_name=self._provider_name)
 
     def _build_request_body(
-        self, request: MessagesRequest, thinking_enabled: bool | None = None
+        self,
+        request: MessagesRequest,
+        *,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> dict[str, Any]:
         """Build a provider request from the immutable profile."""
         return build_openai_chat_request_body(
             request,
-            thinking_enabled=self._is_thinking_enabled(request, thinking_enabled),
+            reasoning=reasoning,
             policy=self._profile.request_policy,
-            postprocessors=self._profile.postprocessors,
+            postprocessors=self._profile.request_postprocessors,
         )
 
     def preflight_stream(
-        self, request: MessagesRequest, *, thinking_enabled: bool | None = None
+        self,
+        request: MessagesRequest,
+        *,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> None:
         """Validate OpenAI-chat request conversion before streaming."""
-        self._build_request_body(request, thinking_enabled=thinking_enabled)
+        self._build_request_body(request, reasoning=reasoning)
 
     def _handle_extra_reasoning(
-        self, delta: Any, ledger: AnthropicStreamLedger, *, thinking_enabled: bool
+        self, delta: Any, ledger: AnthropicStreamLedger, *, output_reasoning: bool
     ) -> Iterator[str]:
         """Hook for provider-specific reasoning."""
         return iter(())
@@ -254,7 +261,7 @@ class OpenAIChatProvider(BaseProvider):
         input_tokens: int = 0,
         *,
         request_id: str | None = None,
-        thinking_enabled: bool | None = None,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> AsyncIterator[str]:
         """Stream response in Anthropic SSE format."""
         runner = _OpenAIChatStreamRunner(
@@ -262,7 +269,7 @@ class OpenAIChatProvider(BaseProvider):
             request=request,
             input_tokens=input_tokens,
             request_id=request_id,
-            thinking_enabled=thinking_enabled,
+            reasoning=reasoning,
         )
         return runner.run()
 
@@ -277,13 +284,13 @@ class _OpenAIChatStreamRunner:
         request: MessagesRequest,
         input_tokens: int,
         request_id: str | None,
-        thinking_enabled: bool | None,
+        reasoning: ReasoningPolicy,
     ) -> None:
         self._provider = provider
         self._request = request
         self._input_tokens = input_tokens
         self._request_id = request_id
-        self._thinking_enabled = thinking_enabled
+        self._reasoning = reasoning
         self._message_id = f"msg_{uuid.uuid4()}"
         self._tool_calls = OpenAIToolCallAssembler(
             record_extra_content=provider._record_tool_call_extra_content
@@ -307,12 +314,11 @@ class _OpenAIChatStreamRunner:
                 yield from hold_event(event)
 
         body = self._provider._build_request_body(
-            self._request, thinking_enabled=self._thinking_enabled
+            self._request,
+            reasoning=self._reasoning,
         )
         request_stream_usage(body)
-        thinking_enabled = self._provider._is_thinking_enabled(
-            self._request, self._thinking_enabled
-        )
+        output_reasoning = self._reasoning.output_enabled
         trace_event(
             stage="provider",
             event="provider.request.sent",
@@ -362,7 +368,7 @@ class _OpenAIChatStreamRunner:
                             logger.debug("{} finish_reason: {}", tag, finish_reason)
 
                         reasoning = self._provider._profile.reasoning_delta(delta)
-                        if thinking_enabled and reasoning is not None:
+                        if output_reasoning and reasoning is not None:
                             for event in hold_events(ledger.ensure_thinking_block()):
                                 yield event
                             if reasoning:
@@ -374,7 +380,7 @@ class _OpenAIChatStreamRunner:
                         for event in self._provider._handle_extra_reasoning(
                             delta,
                             ledger,
-                            thinking_enabled=thinking_enabled,
+                            output_reasoning=output_reasoning,
                         ):
                             for out_event in hold_event(event):
                                 yield out_event
@@ -382,7 +388,7 @@ class _OpenAIChatStreamRunner:
                         if delta.content:
                             for part in think_parser.feed(delta.content):
                                 if part.type == ContentType.THINKING:
-                                    if not thinking_enabled:
+                                    if not output_reasoning:
                                         continue
                                     for event in hold_events(
                                         ledger.ensure_thinking_block()
@@ -477,7 +483,7 @@ class _OpenAIChatStreamRunner:
                                 ledger=ledger,
                                 error=error,
                                 tool_argument_alias_buffers=tool_argument_alias_buffers,
-                                thinking_enabled=thinking_enabled,
+                                output_reasoning=output_reasoning,
                             )
                         except Exception as recovery_error:
                             trace_event(
@@ -550,7 +556,7 @@ class _OpenAIChatStreamRunner:
         remaining = think_parser.flush()
         if remaining:
             if remaining.type == ContentType.THINKING:
-                if not thinking_enabled:
+                if not output_reasoning:
                     remaining = None
                 else:
                     for event in hold_events(ledger.ensure_thinking_block()):
@@ -701,7 +707,7 @@ class _OpenAIChatStreamRunner:
         ledger: AnthropicStreamLedger,
         error: Exception,
         tool_argument_alias_buffers: dict[int, str],
-        thinking_enabled: bool,
+        output_reasoning: bool,
     ) -> list[str] | None:
         """Build terminal recovery events when the interrupted stream permits it."""
         if not is_retryable_stream_error(error):
@@ -743,7 +749,7 @@ class _OpenAIChatStreamRunner:
 
         recovery_body = make_text_recovery_body(body, partial_text, partial_thinking)
         text, thinking = await self._collect_recovery_text(
-            recovery_body, include_reasoning=thinking_enabled
+            recovery_body, include_reasoning=output_reasoning
         )
         text_suffix = continuation_suffix(partial_text, text)
         thinking_suffix = continuation_suffix(partial_thinking, thinking)

@@ -32,13 +32,13 @@ def combine_reasoning(existing: str | None, addition: str | None) -> str | None:
     return f"{existing}\n{addition}"
 
 
-def responses_reasoning_to_thinking(value: Any) -> dict[str, Any] | None:
+def responses_reasoning_to_output_config(value: Any) -> dict[str, Any] | None:
+    """Preserve the client's named effort for application-level resolution."""
     if not isinstance(value, Mapping):
         return None
-    if value.get("effort") == "none":
-        return {"type": "disabled", "enabled": False}
-    if any(item is not None for item in value.values()):
-        return {"type": "enabled", "enabled": True}
+    effort = value.get("effort")
+    if isinstance(effort, str) and effort.strip():
+        return {"effort": effort.strip().lower()}
     return None
 
 

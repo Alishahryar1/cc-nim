@@ -157,7 +157,7 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
             "test_provider_reasoning_tool_continuation_e2e",
             "test_gemini_thought_signature_tool_continuation_e2e",
             "test_claude_cli_adaptive_thinking_e2e",
-            "test_per_model_thinking_config_e2e",
+            "test_route_reasoning_config_e2e",
         ),
         ("providers", "cli", "config"),
         ("configured provider",),
