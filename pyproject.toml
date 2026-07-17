@@ -4,13 +4,13 @@ build-backend = "hatchling.build"
 
 [project]
 name = "free-claude-code"
-version = "4.8.4"
+version = "4.8.5"
 description = "Local proxy connecting coding agents to OpenAI-compatible AI providers"
 readme = "README.md"
 requires-python = ">=3.14.0"
 dependencies = [
     "fastapi[standard]>=0.139.2",
-    "uvicorn>=0.50.0",
+    "uvicorn>=0.51.0",
     "httpx[socks]>=0.28.1",
     "markdown-it-py>=4.2.0",
     "pydantic>=2.13.4",
@@ -19,7 +19,7 @@ dependencies = [
     "python-telegram-bot>=22.8",
     "discord.py>=2.7.1",
     "pydantic-settings>=2.14.2",
-    "openai>=2.44.0",
+    "openai>=2.46.0",
     "loguru>=0.7.0",
     "aiohttp>=3.14.1",
     "jsonschema>=4.25.0",
@@ -35,13 +35,13 @@ fcc-pi = "free_claude_code.cli.launchers.pi:launch"
 
 [project.optional-dependencies]
 voice = [
-    "grpcio>=1.81.1",
+    "grpcio>=1.82.1",
     "grpcio-tools>=1.81.1",
     "nvidia-riva-client>=2.26.0",
 ]
 voice_local = [
-    "torch>=2.12.1",
-    "transformers>=5.13.0",
+    "torch>=2.13.0",
+    "transformers>=5.14.1",
     "accelerate>=1.14.0",
     "librosa>=0.10.0",
 ]
@@ -68,8 +68,8 @@ dev = [
     "pytest>=9.1.1",
     "pytest-asyncio>=1.4.0",
     "pytest-cov>=7.1.0",
-    "ty>=0.0.56",
-    "ruff>=0.15.20",
+    "ty>=0.0.60",
+    "ruff>=0.15.22",
     "pytest-xdist>=3.8.0",
 ]
 
