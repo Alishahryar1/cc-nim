@@ -264,6 +264,8 @@ class SmokeConfig:
             return bool(self.settings.ollama_api_key.strip())
         if provider == "kimi":
             return bool(self.settings.kimi_api_key.strip())
+        if provider == "kimi_coding":
+            return bool(self.settings.kimi_coding_api_key.strip())
         if provider == "lmstudio":
             return bool(self.settings.lm_studio_base_url.strip())
         if provider == "llamacpp":

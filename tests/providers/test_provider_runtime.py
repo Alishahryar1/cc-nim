@@ -70,6 +70,8 @@ def _make_settings(**overrides):
     mock.codestral_proxy = ""
     mock.kimi_proxy = ""
     mock.kimi_api_key = "test_kimi_key"
+    mock.kimi_coding_proxy = ""
+    mock.kimi_coding_api_key = "test_kimi_coding_key"
     mock.wafer_proxy = ""
     mock.minimax_proxy = ""
     mock.opencode_proxy = ""
@@ -372,6 +374,7 @@ def test_create_provider_instantiates_each_builtin():
         "mistral_codestral": OpenAIChatProvider,
         "deepseek": DeepSeekProvider,
         "kimi": OpenAIChatProvider,
+        "kimi_coding": OpenAIChatProvider,
         "minimax": OpenAIChatProvider,
         "fireworks": OpenAIChatProvider,
         "cloudflare": CloudflareProvider,

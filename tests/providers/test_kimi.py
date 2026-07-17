@@ -7,7 +7,7 @@ import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
-from free_claude_code.config.provider_catalog import KIMI_DEFAULT_BASE
+from free_claude_code.config.provider_catalog import KIMI_CODING_DEFAULT_BASE, KIMI_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
@@ -110,3 +110,72 @@ async def test_cleanup_closes_openai_client(kimi_provider):
     await kimi_provider.cleanup()
 
     kimi_provider._client.close.assert_awaited_once()
+
+
+@pytest.fixture
+def kimi_coding_provider():
+    return profiled_provider(
+        "kimi_coding",
+        ProviderConfig(
+            api_key="test_kimi_coding_key",
+            base_url=KIMI_CODING_DEFAULT_BASE,
+            rate_limit=10,
+            rate_window=60,
+        ),
+        rate_limiter=passthrough_rate_limiter(),
+    )
+
+
+def test_init_uses_openai_chat_provider_kimi_coding(kimi_coding_provider):
+    assert isinstance(kimi_coding_provider, OpenAIChatProvider)
+    assert kimi_coding_provider._api_key == "test_kimi_coding_key"
+    assert kimi_coding_provider._base_url == "https://api.kimi.com/coding/v1"
+
+
+def test_build_request_body_openai_chat_kimi_coding(kimi_coding_provider):
+    request = MessagesRequest(
+        model="kimi-k2.5",
+        max_tokens=50,
+        messages=[Message(role="user", content="hi")],
+    )
+
+    body = kimi_coding_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
+
+    assert body["model"] == "kimi-k2.5"
+    assert body["max_tokens"] == 50
+    assert body["messages"] == [{"role": "user", "content": "hi"}]
+    assert "extra_body" not in body
+
+
+def test_build_request_body_rejects_caller_extra_body_kimi_coding(kimi_coding_provider):
+    request = MessagesRequest.model_validate(
+        {
+            "model": "m",
+            "messages": [{"role": "user", "content": "x"}],
+            "extra_body": {"x": 1},
+        }
+    )
+
+    with pytest.raises(InvalidRequestError, match="Kimi For Coding"):
+        kimi_coding_provider._build_request_body(
+            request, reasoning=reasoning_for(request)
+        )
+
+
+def test_build_request_body_does_not_inject_thinking_kimi_coding(kimi_coding_provider):
+    request = MessagesRequest.model_validate(
+        {
+            "model": "m",
+            "messages": [{"role": "user", "content": "x"}],
+            "thinking": {"type": "disabled"},
+        }
+    )
+
+    body = kimi_coding_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
+
+    assert "thinking" not in body
+    assert "extra_body" not in body

@@ -63,6 +63,13 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
         "label": "Fireworks API Key",
         "description": "Fireworks AI inference API key.",
     },
+    "KIMI_CODING_API_KEY": {
+        "label": "Kimi Coding API Key",
+        "description": (
+            "Kimi For Coding subscription API key. "
+            "Used for the OpenAI-compatible Chat Completions API at api.kimi.com/coding."
+        ),
+    },
     "MINIMAX_API_KEY": {
         "label": "MiniMax API Key",
         "description": (

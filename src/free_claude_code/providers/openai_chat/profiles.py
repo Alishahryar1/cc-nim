@@ -211,6 +211,17 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             disabled={"type": "disabled"},
         ),
     ),
+    "kimi_coding": OpenAIChatProfile(
+        _policy(
+            "KIMI_CODING",
+            ReasoningReplayMode.REASONING_CONTENT,
+            reject_extra_body_message=(
+                "Kimi For Coding API does not support caller extra_body on requests."
+            ),
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        NO_REASONING,
+    ),
     "minimax": OpenAIChatProfile(
         _policy(
             "MINIMAX",
