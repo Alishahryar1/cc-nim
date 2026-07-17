@@ -15,3 +15,5 @@ debug-*.log
 llama_cache
 .smoke-results
 .vscode
+# Local PowerShell analysis cache
+Microsoft/
