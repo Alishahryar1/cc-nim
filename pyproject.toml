@@ -32,6 +32,7 @@ fcc-init = "free_claude_code.cli.entrypoints:init"
 fcc-claude = "free_claude_code.cli.launchers.claude:launch"
 fcc-codex = "free_claude_code.cli.launchers.codex:launch"
 fcc-pi = "free_claude_code.cli.launchers.pi:launch"
+fcc-chatgpt-oauth-login = "free_claude_code.cli.entrypoints:chatgpt_oauth_login"
 
 [project.optional-dependencies]
 voice = [

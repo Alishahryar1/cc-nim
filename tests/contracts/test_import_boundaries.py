@@ -37,6 +37,27 @@ IMPORT_EXCEPTIONS: dict[tuple[str, str], str] = {
         "Owner: installed server command. "
         "Reason: the command delegates construction to the process composition root."
     ),
+    (
+        "free_claude_code.cli.commands",
+        "free_claude_code.providers.chatgpt_oauth",
+    ): (
+        "Owner: installed ChatGPT OAuth login command. "
+        "Reason: the command delegates to the provider's OAuth login utility."
+    ),
+    (
+        "free_claude_code.api.admin_routes",
+        "free_claude_code.providers.chatgpt_oauth.oauth_login",
+    ): (
+        "Owner: admin dashboard ChatGPT OAuth login API. "
+        "Reason: admin routes expose OAuth device-flow endpoints backed by the provider utility."
+    ),
+    (
+        "free_claude_code.api.admin_routes",
+        "free_claude_code.providers.chatgpt_oauth.credentials",
+    ): (
+        "Owner: admin dashboard ChatGPT OAuth import API. "
+        "Reason: admin routes expose the Codex CLI token import endpoint backed by the provider utility."
+    ),
 }
 
 FACADE_ONLY_BOUNDARIES = {

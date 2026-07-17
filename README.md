@@ -152,6 +152,7 @@ Enter the listed setting in the Admin UI, open **Model Config**, then search the
 | [Wafer](https://wafer.ai/) | `WAFER_API_KEY` | `wafer/DeepSeek-V4-Pro` |
 | [Kimi API](https://platform.moonshot.ai/console/api-keys) | `KIMI_API_KEY` | `kimi/kimi-k2.5` |
 | [Kimi Code](https://www.kimi.com/code/console) | `KIMI_CODE_API_KEY` | `kimi_code/k3` |
+| [ChatGPT OAuth](https://github.com/openai/codex) (experimental) | `CHATGPT_OAUTH_ACCESS_TOKEN` + `CHATGPT_OAUTH_BASE_URL` | `chatgpt_oauth/gpt-5` |
 | [MiniMax](https://platform.minimax.io/user-center/basic-information/interface-key) | `MINIMAX_API_KEY` | `minimax/MiniMax-M3` |
 | [Cerebras Inference](https://cloud.cerebras.ai/) | `CEREBRAS_API_KEY` | `cerebras/gpt-oss-120b` |
 | [Groq](https://console.groq.com/keys) | `GROQ_API_KEY` | `groq/llama-3.3-70b-versatile` |
@@ -172,6 +173,7 @@ Important provider notes:
   [Kimi's community guidelines](https://www.kimi.com/code/docs/en/kimi-code/community-guidelines.html).
 - OpenCode Zen and OpenCode Go share `OPENCODE_API_KEY` but use different model prefixes.
 - Cloudflare requires both its API token and account ID.
+- **ChatGPT OAuth is experimental and unsanctioned.** It is not an official OpenAI API product. The provider posts directly to `chatgpt.com/backend-api/codex/responses` using an OAuth access token. You can log in from the admin dashboard (Providers → ChatGPT OAuth Login), run `fcc-chatgpt-oauth-login` (headless device flow), or run `codex login`; leave `CHATGPT_OAUTH_ACCESS_TOKEN` empty so FCC reads `~/.codex/auth.json`. Supported models include `chatgpt_oauth/gpt-5.5`, `chatgpt_oauth/gpt-5.4`, `chatgpt_oauth/gpt-5.4-mini`, and `chatgpt_oauth/gpt-5.3-codex-spark`. The ChatGPT/Codex backend only exposes a limited set of built-in tools, so custom FCC tools may be rejected; use it at your own risk.
 - Ollama Cloud connects directly to `ollama.com`; use the exact model IDs shown
   by FCC's model picker. Local Ollama remains available through the separate
   `ollama/` prefix.

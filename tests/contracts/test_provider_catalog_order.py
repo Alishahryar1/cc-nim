@@ -21,6 +21,7 @@ _EXPECTED_PROVIDER_ORDER: tuple[str, ...] = (
     "wafer",
     "kimi",
     "kimi_code",
+    "chatgpt_oauth",
     "minimax",
     "cerebras",
     "groq",

@@ -48,8 +48,9 @@ def build_provider_config(
     )
     resolved_base_url = base_url or descriptor.default_base_url
     if not resolved_base_url:
-        raise AssertionError(
-            f"Provider {descriptor.provider_id!r} has no configured base URL."
+        raise ApplicationUnavailableError(
+            f"{descriptor.provider_id.upper()}_BASE_URL is not set. "
+            f"Configure the base URL for provider {descriptor.provider_id!r}."
         )
     proxy = string_setting(settings, descriptor.proxy_attr)
     return ProviderConfig(

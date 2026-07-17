@@ -12,6 +12,9 @@ NVIDIA_NIM_DEFAULT_BASE = "https://integrate.api.nvidia.com/v1"
 KIMI_DEFAULT_BASE = "https://api.moonshot.ai/v1"
 # Kimi Code subscription OpenAI-compatible Chat Completions API.
 KIMI_CODE_DEFAULT_BASE = "https://api.kimi.com/coding/v1"
+# ChatGPT OAuth (Codex) backend root. The provider posts to
+# /codex/responses using an OAuth access token.
+CHATGPT_OAUTH_DEFAULT_BASE = "https://chatgpt.com/backend-api"
 WAFER_DEFAULT_BASE = "https://pass.wafer.ai/v1"
 MINIMAX_DEFAULT_BASE = "https://api.minimax.io/v1"
 # DeepSeek Chat Completions API; cache usage is reported on this endpoint.
@@ -192,6 +195,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="kimi_code_api_key",
         default_base_url=KIMI_CODE_DEFAULT_BASE,
         proxy_attr="kimi_code_proxy",
+    ),
+    "chatgpt_oauth": ProviderDescriptor(
+        provider_id="chatgpt_oauth",
+        display_name="ChatGPT OAuth (experimental)",
+        credential_env="CHATGPT_OAUTH_ACCESS_TOKEN",
+        credential_attr="chatgpt_oauth_access_token",
+        default_base_url=CHATGPT_OAUTH_DEFAULT_BASE,
+        base_url_attr="chatgpt_oauth_base_url",
+        proxy_attr="chatgpt_oauth_proxy",
     ),
     "minimax": ProviderDescriptor(
         provider_id="minimax",

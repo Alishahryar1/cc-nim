@@ -403,6 +403,16 @@ textarea:focus-visible,
   color: var(--muted);
 }
 
+.oauth-login-control {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 12px;
+  background: var(--accent-muted);
+  border: 1px solid var(--accent-border);
+  border-radius: var(--radius-md);
+}
+
 .ghost-button {
   background: transparent;
   color: var(--muted);

@@ -63,6 +63,29 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
         "label": "Fireworks API Key",
         "description": "Fireworks AI inference API key.",
     },
+    "CHATGPT_OAUTH_ACCESS_TOKEN": {
+        "label": "ChatGPT OAuth Access Token",
+        "description": (
+            "Experimental/unsanctioned: OAuth access token for ChatGPT/Codex. "
+            "Leave empty to auto-load from ~/.codex/auth.json after running "
+            "'fcc-chatgpt-oauth-login' or 'codex login'. "
+            "Use at your own risk; this flow is not an official OpenAI API product."
+        ),
+    },
+    "CHATGPT_OAUTH_BASE_URL": {
+        "label": "ChatGPT OAuth Base URL",
+        "description": (
+            "Experimental/unsanctioned: ChatGPT/Codex backend root. Defaults to "
+            "https://chatgpt.com/backend-api. Only change this if you need to "
+            "route through a proxy or mirror."
+        ),
+    },
+    "CHATGPT_OAUTH_PROXY": {
+        "label": "ChatGPT OAuth Proxy",
+        "description": (
+            "Experimental/unsanctioned: optional HTTP proxy for ChatGPT/Codex requests."
+        ),
+    },
     "MINIMAX_API_KEY": {
         "label": "MiniMax API Key",
         "description": (
@@ -129,6 +152,8 @@ def provider_field_specs() -> tuple[dict[str, Any], ...]:
 
     return (
         *_credential_field_specs(),
+        *_chatgpt_oauth_login_field_specs(),
+        *_chatgpt_oauth_account_field_specs(),
         *_cloudflare_account_field_specs(),
         *_local_base_url_field_specs(),
         *_proxy_field_specs(),
@@ -172,6 +197,48 @@ def _local_base_url_field_specs() -> tuple[dict[str, Any], ...]:
             }
         )
     return tuple(specs)
+
+
+def _chatgpt_oauth_account_field_specs() -> tuple[dict[str, Any], ...]:
+    return (
+        {
+            "key": "CHATGPT_OAUTH_ACCOUNT_ID",
+            "label": "ChatGPT OAuth Account ID",
+            "section_id": "providers",
+            "settings_attr": "chatgpt_oauth_account_id",
+            "description": (
+                "Experimental/unsanctioned: ChatGPT account ID used for the "
+                "ChatGPT-Account-ID header. Optional when using a bridge; "
+                "auto-extracted from the access token JWT when empty."
+            ),
+        },
+    )
+
+
+def _chatgpt_oauth_login_field_specs() -> tuple[dict[str, Any], ...]:
+    return (
+        {
+            "key": "CHATGPT_OAUTH_LOGIN",
+            "label": "ChatGPT OAuth Login",
+            "section_id": "providers",
+            "field_type": "oauth_login",
+            "description": (
+                "Experimental/unsanctioned: click the button to log in to ChatGPT/Codex "
+                "via OAuth. Tokens are saved to ~/.codex/auth.json. "
+                "Use at your own risk; this is not an official OpenAI API product."
+            ),
+        },
+        {
+            "key": "CHATGPT_OAUTH_IMPORT_CODEX",
+            "label": "Import Codex CLI Tokens",
+            "section_id": "providers",
+            "field_type": "oauth_login",
+            "description": (
+                "Experimental/unsanctioned: if you have already run 'codex login', "
+                "click the button to import the existing tokens from ~/.codex/auth.json."
+            ),
+        },
+    )
 
 
 def _cloudflare_account_field_specs() -> tuple[dict[str, Any], ...]:
