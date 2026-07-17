@@ -455,6 +455,97 @@ def test_admin_apply_persists_open_browser_for_next_launch(monkeypatch, tmp_path
     assert "FCC_OPEN_BROWSER=false" in managed_env.read_text(encoding="utf-8")
 
 
+def test_credential_key_management_flow(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    client = _local_client(create_test_app())
+
+    response = client.post(
+        "/admin/api/config/apply",
+        json={"values": {"NVIDIA_NIM_API_KEY": "sk-first-key-1234"}},
+    )
+    assert response.status_code == 200
+    assert response.json()["applied"] is True
+
+    listed = client.get("/admin/api/credentials/NVIDIA_NIM_API_KEY/keys")
+    assert listed.status_code == 200
+    data = listed.json()
+    assert data["count"] == 1
+    assert data["locked"] is False
+    assert data["keys"] == ["sk-fir…1234"]
+    assert "sk-first-key-1234" not in str(data)
+
+    added = client.post(
+        "/admin/api/credentials/NVIDIA_NIM_API_KEY/keys",
+        json={"key": "sk-second-key-5678"},
+    )
+    assert added.status_code == 200
+    assert added.json()["count"] == 2
+
+    listed = client.get("/admin/api/credentials/NVIDIA_NIM_API_KEY/keys").json()
+    assert listed["count"] == 2
+    assert listed["keys"] == ["sk-fir…1234", "sk-sec…5678"]
+
+    removed = client.delete("/admin/api/credentials/NVIDIA_NIM_API_KEY/keys/0")
+    assert removed.status_code == 200
+    assert removed.json()["count"] == 1
+    assert removed.json()["removed"] == "sk-fir…1234"
+
+    managed_env = tmp_path / ".fcc" / ".env"
+    env_text = managed_env.read_text(encoding="utf-8")
+    assert "NVIDIA_NIM_API_KEY=sk-second-key-5678" in env_text
+
+    listed = client.get("/admin/api/credentials/NVIDIA_NIM_API_KEY/keys").json()
+    assert listed["count"] == 1
+    assert listed["keys"] == ["sk-sec…5678"]
+
+
+def test_credential_key_management_rejects_duplicates_and_bad_input(
+    monkeypatch, tmp_path
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    client = _local_client(create_test_app())
+
+    response = client.post(
+        "/admin/api/config/apply",
+        json={"values": {"NVIDIA_NIM_API_KEY": "sk-first-key-1234"}},
+    )
+    assert response.status_code == 200
+
+    duplicate = client.post(
+        "/admin/api/credentials/NVIDIA_NIM_API_KEY/keys",
+        json={"key": "sk-first-key-1234"},
+    )
+    assert duplicate.status_code == 409
+
+    with_comma = client.post(
+        "/admin/api/credentials/NVIDIA_NIM_API_KEY/keys",
+        json={"key": "one,two"},
+    )
+    assert with_comma.status_code == 400
+
+    empty = client.post(
+        "/admin/api/credentials/NVIDIA_NIM_API_KEY/keys",
+        json={"key": "   "},
+    )
+    assert empty.status_code == 400
+
+    unknown = client.get("/admin/api/credentials/NOT_A_CREDENTIAL/keys")
+    assert unknown.status_code == 404
+
+    missing = client.delete("/admin/api/credentials/NVIDIA_NIM_API_KEY/keys/5")
+    assert missing.status_code == 404
+
+
+def test_credential_key_management_masks_short_keys(monkeypatch, tmp_path):
+    from free_claude_code.api.admin_routes import _mask_credential_key
+
+    assert _mask_credential_key("ab") == "****"
+    assert _mask_credential_key("abcdef") == "ab…ef"
+    assert _mask_credential_key("abcdefghijklmnop") == "abcdef…mnop"
+
+
 def test_admin_apply_masks_telegram_proxy_credentials(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
