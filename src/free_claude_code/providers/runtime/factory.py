@@ -1,11 +1,13 @@
 """Provider construction from declarative profiles and exceptional adapters."""
 
+import dataclasses
 from collections.abc import Callable
 
 from free_claude_code.application.errors import UnknownProviderError
-from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
+from free_claude_code.config.provider_catalog import PROVIDER_CATALOG, ProviderDescriptor
 from free_claude_code.config.settings import Settings
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
+from free_claude_code.providers.credential_rotation import CredentialRotationState
 from free_claude_code.providers.openai_chat import (
     OPENAI_CHAT_PROFILES,
     create_openai_chat_provider,
@@ -13,6 +15,7 @@ from free_claude_code.providers.openai_chat import (
 from free_claude_code.providers.rate_limit import ProviderRateLimiter
 
 from .config import build_provider_config
+from .rotating import RotatingProvider
 
 ProviderFactory = Callable[
     [ProviderConfig, Settings, ProviderRateLimiter], BaseProvider
@@ -145,19 +148,51 @@ if _profiled_ids & _special_ids or _profiled_ids | _special_ids != set(
     )
 
 
-def create_provider(provider_id: str, settings: Settings) -> BaseProvider:
-    """Create a provider instance for a supported provider id."""
-    descriptor = PROVIDER_CATALOG.get(provider_id)
-    if descriptor is None:
-        raise UnknownProviderError.for_provider(provider_id, PROVIDER_CATALOG)
-
-    config = build_provider_config(descriptor, settings)
+def _create_single_provider(
+    descriptor: ProviderDescriptor,
+    config: ProviderConfig,
+    settings: Settings,
+) -> BaseProvider:
+    """Create one provider instance bound to a single credential."""
     rate_limiter = ProviderRateLimiter(
         rate_limit=config.rate_limit or 40,
         rate_window=config.rate_window or 60.0,
         max_concurrency=config.max_concurrency,
     )
-    factory = _SPECIAL_PROVIDER_FACTORIES.get(provider_id)
+    factory = _SPECIAL_PROVIDER_FACTORIES.get(descriptor.provider_id)
     if factory is not None:
         return factory(config, settings, rate_limiter)
-    return create_openai_chat_provider(provider_id, config, rate_limiter)
+    return create_openai_chat_provider(descriptor.provider_id, config, rate_limiter)
+
+
+def create_provider(provider_id: str, settings: Settings) -> BaseProvider:
+    """Create a provider instance for a supported provider id.
+
+    When multiple credentials are configured (comma-separated in the provider's
+    key env var), one sub-provider is built per key and wrapped in a
+    :class:`RotatingProvider` that applies the configured rotation policy.
+    """
+    descriptor = PROVIDER_CATALOG.get(provider_id)
+    if descriptor is None:
+        raise UnknownProviderError.for_provider(provider_id, PROVIDER_CATALOG)
+
+    config = build_provider_config(descriptor, settings)
+    keys = config.api_keys or ((config.api_key,) if config.api_key else ())
+    if len(keys) <= 1:
+        return _create_single_provider(descriptor, config, settings)
+
+    providers = [
+        _create_single_provider(
+            descriptor,
+            dataclasses.replace(
+                config,
+                api_key=key,
+                api_keys=(key,),
+                credential_rotation="single",
+            ),
+            settings,
+        )
+        for key in keys
+    ]
+    state = CredentialRotationState(len(providers), config.credential_rotation)
+    return RotatingProvider(config, providers, state)
