@@ -219,6 +219,55 @@ def _openai_user_image_part(block: Any) -> dict[str, Any]:
     return {"type": "image_url", "image_url": {"url": url}}
 
 
+def _openai_user_content_parts(content: Any) -> list[dict[str, Any]]:
+    """Return an owned content-part list for one converted user message."""
+    if isinstance(content, str):
+        return [{"type": "text", "text": content}]
+    if isinstance(content, list) and all(isinstance(part, dict) for part in content):
+        return deepcopy(content)
+    raise OpenAIConversionError(
+        "OpenAI chat conversion produced unsupported user message content."
+    )
+
+
+def _merge_openai_user_content(first: Any, second: Any) -> str | list[dict[str, Any]]:
+    """Combine adjacent user content while preserving multimodal part order."""
+    if isinstance(first, str) and isinstance(second, str):
+        return f"{first}\n\n{second}"
+
+    first_parts = _openai_user_content_parts(first)
+    second_parts = _openai_user_content_parts(second)
+    first_ends_in_text = bool(first_parts) and first_parts[-1].get("type") == "text"
+    second_starts_with_text = (
+        bool(second_parts) and second_parts[0].get("type") == "text"
+    )
+    if first_ends_in_text and second_starts_with_text:
+        first_text = first_parts[-1].get("text", "")
+        second_text = second_parts.pop(0).get("text", "")
+        first_parts[-1]["text"] = f"{first_text}\n\n{second_text}"
+    return [*first_parts, *second_parts]
+
+
+def _coalesce_openai_user_messages(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Combine adjacent user messages after transcript ordering is complete."""
+    result: list[dict[str, Any]] = []
+    for message in messages:
+        if (
+            message.get("role") == "user"
+            and result
+            and result[-1].get("role") == "user"
+        ):
+            previous = result[-1]
+            previous["content"] = _merge_openai_user_content(
+                previous.get("content"), message.get("content")
+            )
+            continue
+        result.append(message)
+    return result
+
+
 class _OpenAIChatHistoryLedger:
     """Assemble OpenAI chat history while respecting tool-result dependencies."""
 
@@ -382,7 +431,7 @@ class AnthropicToOpenAIConverter:
                 else:
                     ledger.add_tool_turn(segment)
 
-        return ledger.finish()
+        return _coalesce_openai_user_messages(ledger.finish())
 
     @staticmethod
     def _convert_message_to_segments(

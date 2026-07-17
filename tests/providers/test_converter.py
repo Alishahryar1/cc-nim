@@ -66,10 +66,11 @@ def test_openai_build_uses_only_top_level_system_role() -> None:
             "system": "Conversation-wide instructions",
             "messages": [
                 {"role": "user", "content": "First question"},
-                {"role": "assistant", "content": "First answer"},
                 {"role": "system", "content": "Instructions from this point"},
-                {"role": "user", "content": "Second question"},
                 {"role": "system", "content": "A second reminder"},
+                {"role": "assistant", "content": "First answer"},
+                {"role": "user", "content": "Second question"},
+                {"role": "system", "content": "A final reminder"},
             ],
         }
     )
@@ -78,11 +79,14 @@ def test_openai_build_uses_only_top_level_system_role() -> None:
 
     assert body["messages"] == [
         {"role": "system", "content": "Conversation-wide instructions"},
-        {"role": "user", "content": "First question"},
+        {
+            "role": "user",
+            "content": (
+                "First question\n\nInstructions from this point\n\nA second reminder"
+            ),
+        },
         {"role": "assistant", "content": "First answer"},
-        {"role": "user", "content": "Instructions from this point"},
-        {"role": "user", "content": "Second question"},
-        {"role": "user", "content": "A second reminder"},
+        {"role": "user", "content": "Second question\n\nA final reminder"},
     ]
 
 
@@ -99,7 +103,6 @@ def test_openai_build_demotes_inline_system_text_blocks_without_repositioning() 
                         {"type": "text", "text": "Second instruction"},
                     ],
                 },
-                {"role": "user", "content": "After"},
             ],
         }
     )
@@ -107,12 +110,10 @@ def test_openai_build_demotes_inline_system_text_blocks_without_repositioning() 
     body = build_base_request_body(request)
 
     assert body["messages"] == [
-        {"role": "user", "content": "Before"},
         {
             "role": "user",
-            "content": "First instruction\n\nSecond instruction",
-        },
-        {"role": "user", "content": "After"},
+            "content": "Before\n\nFirst instruction\n\nSecond instruction",
+        }
     ]
 
 
@@ -134,6 +135,7 @@ def test_inline_system_message_preserves_existing_openai_cache_prefix() -> None:
             "messages": [
                 {"role": "user", "content": "First question"},
                 {"role": "assistant", "content": "First answer"},
+                {"role": "user", "content": "Second question"},
                 {
                     "role": "system",
                     "content": (
@@ -141,7 +143,6 @@ def test_inline_system_message_preserves_existing_openai_cache_prefix() -> None:
                         "</system-reminder>"
                     ),
                 },
-                {"role": "user", "content": "Second question"},
             ],
         }
     )
@@ -154,10 +155,54 @@ def test_inline_system_message_preserves_existing_openai_cache_prefix() -> None:
         {
             "role": "user",
             "content": (
-                "<system-reminder>Instructions from this point</system-reminder>"
+                "Second question\n\n<system-reminder>Instructions from this point"
+                "</system-reminder>"
             ),
-        },
-        {"role": "user", "content": "Second question"},
+        }
+    ]
+
+
+def test_inline_system_message_coalesces_with_multimodal_user_content() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "model",
+            "messages": [
+                {"role": "user", "content": "Existing context."},
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "url",
+                                "url": "https://example.com/image.png",
+                            },
+                        },
+                        {"type": "text", "text": "Inspect this image."},
+                    ],
+                },
+                {"role": "system", "content": "Focus on correctness."},
+            ],
+        }
+    )
+
+    body = build_base_request_body(request)
+
+    assert body["messages"] == [
+        {
+            "role": "user",
+            "content": [
+                {"type": "text", "text": "Existing context."},
+                {
+                    "type": "image_url",
+                    "image_url": {"url": "https://example.com/image.png"},
+                },
+                {
+                    "type": "text",
+                    "text": "Inspect this image.\n\nFocus on correctness.",
+                },
+            ],
+        }
     ]
 
 
@@ -166,6 +211,7 @@ def test_inline_system_message_follows_completed_tool_result() -> None:
         {
             "model": "model",
             "messages": [
+                {"role": "user", "content": "Use the tool"},
                 {
                     "role": "assistant",
                     "content": [
@@ -195,10 +241,12 @@ def test_inline_system_message_follows_completed_tool_result() -> None:
     body = build_base_request_body(request)
 
     assert [message["role"] for message in body["messages"]] == [
+        "user",
         "assistant",
         "tool",
         "user",
     ]
+    assert body["messages"][-1]["content"] == "New instructions"
 
 
 def test_openai_build_rejects_non_text_inline_system_blocks() -> None:
