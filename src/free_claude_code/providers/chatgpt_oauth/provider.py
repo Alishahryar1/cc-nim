@@ -156,6 +156,33 @@ class ChatGPTOAuthProvider(BaseProvider):
         """Validate the upstream request before streaming."""
         build_chatgpt_oauth_request_body(request)
 
+    async def _send_stream_request(
+        self,
+        url: str,
+        headers: dict[str, str],
+        body: dict[str, Any],
+    ) -> httpx.Response:
+        """Build and send a streaming POST, raising on HTTP errors.
+
+        ``httpx.AsyncClient.stream`` returns an async context manager, which is
+        not awaitable and therefore cannot be passed directly to the retry
+        helper. We instead build the request and call ``send(..., stream=True)``,
+        which returns an awaitable ``Response`` while still keeping the body
+        stream open until we explicitly close it.
+        """
+        request = self._client.build_request("POST", url, headers=headers, json=body)
+        response = await self._client.send(request, stream=True)
+        if response.status_code >= 400:
+            error_body = await response.aread()
+            await response.aclose()
+            error_text = error_body.decode("utf-8", errors="replace")
+            raise httpx.HTTPStatusError(
+                f"ChatGPT OAuth API error {response.status_code}: {error_text[:1000]}",
+                request=request,
+                response=response,
+            )
+        return response
+
     def stream_response(
         self,
         request: MessagesRequest,
@@ -214,30 +241,28 @@ class ChatGPTOAuthProvider(BaseProvider):
             async with self._rate_limiter.concurrency_slot():
                 try:
                     response = await self._rate_limiter.execute_with_retry(
-                        self._client.stream,
+                        self._send_stream_request,
                         provider_failure_override=self._provider_failure_override,
-                        method="POST",
                         url=url,
                         headers=headers,
-                        json=body,
+                        body=body,
                     )
-                    async with response as stream:
-                        if stream.status_code >= 400:
-                            error_text = ""
-                            async for chunk in stream.aiter_text():
-                                error_text += chunk
+                    try:
+                        if response.status_code >= 400:
                             self._log_error(tag, req_tag, None, request_id)
                             raise ApplicationUnavailableError(
-                                f"ChatGPT OAuth API error {stream.status_code}: {error_text[:500]}"
+                                f"ChatGPT OAuth API error {response.status_code}"
                             )
 
                         yield ledger.message_start()
-                        async for event in iter_chatgpt_oauth_sse_events(stream.aiter_raw()):
+                        async for event in iter_chatgpt_oauth_sse_events(response.aiter_raw()):
                             for sse_event in converter.feed(event):
                                 yield sse_event
 
                         for sse_event in converter.finish():
                             yield sse_event
+                    finally:
+                        await response.aclose()
 
                 except ApplicationUnavailableError:
                     raise

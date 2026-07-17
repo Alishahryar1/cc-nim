@@ -404,3 +404,40 @@ def test_perform_chatgpt_oauth_login_writes_auth_file(tmp_path, monkeypatch):
     assert saved["tokens"]["access_token"] == access_token
     assert saved["tokens"]["refresh_token"] == "refresh_1"
     assert "expires_at" in saved["tokens"]
+
+
+@pytest.mark.asyncio
+async def test_stream_response_uses_send_not_stream_context_manager(chatgpt_oauth_provider):
+    """Regression: awaiting httpx.AsyncClient.stream() raises TypeError."""
+    from unittest.mock import MagicMock
+
+    request = MessagesRequest(
+        model="gpt-5",
+        messages=[Message(role="user", content="hi")],
+    )
+
+    async def _raw_stream():
+        yield b'data: {"type":"response.output_text.delta","delta":"hello"}\n\n'
+        yield b'data: {"type":"response.completed","response":{}}\n\n'
+
+    fake_response = MagicMock()
+    fake_response.status_code = 200
+    fake_response.aiter_raw = _raw_stream
+    fake_response.aclose = AsyncMock()
+
+    client = chatgpt_oauth_provider._client
+    client.build_request = MagicMock(return_value=MagicMock())
+    client.send = AsyncMock(return_value=fake_response)
+
+    chunks = [
+        chunk
+        async for chunk in chatgpt_oauth_provider.stream_response(
+            request, request_id="req_1"
+        )
+    ]
+
+    assert any("content_block_start" in chunk and "text" in chunk for chunk in chunks)
+    assert any("text_delta" in chunk and "hello" in chunk for chunk in chunks)
+    client.send.assert_awaited_once()
+    assert client.send.await_args.kwargs.get("stream") is True
+    fake_response.aclose.assert_awaited_once()
