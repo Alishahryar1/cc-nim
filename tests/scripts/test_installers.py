@@ -300,7 +300,7 @@ def test_install_sh_preserves_valid_existing_tools(
     posix_harness.add_client("claude")
     posix_harness.add_client("codex")
     posix_harness.add_client("pi")
-    posix_harness.add_uv("0.11.7")
+    posix_harness.add_uv("0.11.16")
 
     result = posix_harness.run()
 
@@ -315,7 +315,7 @@ def test_install_sh_replaces_unrelated_pi_command(
     posix_harness.add_client("claude")
     posix_harness.add_client("codex")
     posix_harness.add_unrelated_pi()
-    posix_harness.add_uv("0.11.7")
+    posix_harness.add_uv("0.11.16")
 
     result = posix_harness.run()
 
@@ -330,7 +330,7 @@ def test_install_sh_discovers_custom_pi_npm_prefix(
     posix_harness.add_client("claude")
     posix_harness.add_client("codex")
     posix_harness.add_npm_prefix(posix_harness.root / "custom-npm")
-    posix_harness.add_uv("0.11.7")
+    posix_harness.add_uv("0.11.16")
 
     result = posix_harness.run()
 
@@ -350,7 +350,7 @@ def test_install_sh_replaces_obsolete_uv(posix_harness: PosixHarness) -> None:
     result = posix_harness.run()
 
     assert result.returncode == 0, result.stderr
-    assert "uv 0.5.9 is below 0.11.0" in result.stdout
+    assert "uv 0.5.9 is below 0.11.16" in result.stdout
     assert "uv-install" in posix_harness.calls()
 
 
@@ -747,7 +747,7 @@ def test_install_ps1_preserves_valid_existing_tools(
     powershell_harness.add_client("claude")
     powershell_harness.add_client("codex")
     powershell_harness.add_client("pi")
-    powershell_harness.add_uv("0.11.7")
+    powershell_harness.add_uv("0.11.16")
 
     result = powershell_harness.run()
 
@@ -762,7 +762,7 @@ def test_install_ps1_replaces_unrelated_pi_command(
     powershell_harness.add_client("claude")
     powershell_harness.add_client("codex")
     powershell_harness.add_unrelated_pi()
-    powershell_harness.add_uv("0.11.7")
+    powershell_harness.add_uv("0.11.16")
 
     result = powershell_harness.run()
 
@@ -777,7 +777,7 @@ def test_install_ps1_discovers_custom_pi_npm_prefix(
     powershell_harness.add_client("claude")
     powershell_harness.add_client("codex")
     powershell_harness.add_npm_prefix(powershell_harness.root / "custom-npm")
-    powershell_harness.add_uv("0.11.7")
+    powershell_harness.add_uv("0.11.16")
 
     result = powershell_harness.run()
 
@@ -799,7 +799,7 @@ def test_install_ps1_replaces_obsolete_uv(
     result = powershell_harness.run()
 
     assert result.returncode == 0, result.stderr
-    assert "uv 0.5.9 is below 0.11.0" in result.stdout
+    assert "uv 0.5.9 is below 0.11.16" in result.stdout
     assert "uv-install" in powershell_harness.calls()
 
 

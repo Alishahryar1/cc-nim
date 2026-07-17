@@ -15,7 +15,7 @@ $ProgressPreference = "SilentlyContinue"
 
 $RepoArchiveUrl = "https://github.com/Alishahryar1/free-claude-code/archive/refs/heads/main.zip"
 $PythonVersion = "3.14.0"
-$MinUvVersion = "0.11.0"
+$MinUvVersion = "0.11.16"
 $ClaudeInstallUrl = "https://claude.ai/install.ps1"
 $CodexInstallUrl = "https://chatgpt.com/codex/install.ps1"
 $PiInstallUrl = "https://pi.dev/install.ps1"

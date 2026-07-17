@@ -5,6 +5,10 @@
 
 name: CI
 
+env:
+  UV_MALWARE_CHECK: "1"
+  UV_PREVIEW_FEATURES: "malware-check"
+
 on:
   push:
     branches: [main, master]
@@ -66,7 +70,7 @@ jobs:
       - name: Install uv
         uses: astral-sh/setup-uv@fac544c07dec837d0ccb6301d7b5580bf5edae39
         with:
-          version: "0.11.15"
+          version: "0.11.16"
           enable-cache: true
           cache-python: true
 

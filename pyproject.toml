@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "free-claude-code"
-version = "4.8.5"
+version = "4.8.6"
 description = "Local proxy connecting coding agents to OpenAI-compatible AI providers"
 readme = "README.md"
 requires-python = ">=3.14.0"
@@ -53,7 +53,7 @@ packages = ["src/free_claude_code"]
 ".env.example" = "free_claude_code/config/env.example"
 
 [tool.uv]
-required-version = ">=0.11.0"
+required-version = ">=0.11.16"
 
 [tool.uv.sources]
 torch = { index = "pytorch-cu130" }
