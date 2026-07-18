@@ -281,9 +281,13 @@ current_uv_version() {
     esac
 }
 
-version_ge() {
-    current=${1%%[-+]*}
-    minimum=${2%%[-+]*}
+uv_version_is_supported() {
+    case "$1" in
+        *-*) return 1 ;;
+    esac
+
+    current=${1%%+*}
+    minimum=${2%%+*}
 
     old_ifs=$IFS
     IFS=.
@@ -316,8 +320,8 @@ verify_uv() {
 
     command -v uv >/dev/null 2>&1 || fail "uv was installed, but it is not available on PATH."
     version=$(current_uv_version) || fail "uv is present, but 'uv --version' did not return a valid version."
-    if ! version_ge "$version" "$MIN_UV_VERSION"; then
-        fail "uv $MIN_UV_VERSION or newer is required; found uv $version after installation."
+    if ! uv_version_is_supported "$version" "$MIN_UV_VERSION"; then
+        fail "Stable uv $MIN_UV_VERSION or newer is required; found uv $version after installation."
     fi
 
     printf 'Verified uv %s.\n' "$version"
@@ -338,11 +342,11 @@ ensure_uv() {
 
     if command -v uv >/dev/null 2>&1; then
         version=$(current_uv_version) || fail "uv is present, but 'uv --version' did not return a valid version."
-        if version_ge "$version" "$MIN_UV_VERSION"; then
+        if uv_version_is_supported "$version" "$MIN_UV_VERSION"; then
             printf 'uv %s already satisfies >=%s; leaving it unchanged.\n' "$version" "$MIN_UV_VERSION"
             return 0
         fi
-        printf 'uv %s is below %s; installing the current standalone uv.\n' "$version" "$MIN_UV_VERSION"
+        printf 'uv %s does not satisfy stable >=%s; installing the current standalone uv.\n' "$version" "$MIN_UV_VERSION"
     else
         printf 'uv is not installed; installing the current standalone uv.\n'
     fi

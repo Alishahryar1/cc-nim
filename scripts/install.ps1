@@ -355,17 +355,23 @@ function Get-UvVersion {
     return $version
 }
 
-function Test-UvVersionAtLeast {
+function Test-SupportedUvVersion {
     param(
         [string] $Version,
         [string] $Minimum
     )
 
-    $normalizedVersion = (Convert-UvVersionOutput $Version) -replace '[-+].*$', ''
-    $normalizedMinimum = (Convert-UvVersionOutput $Minimum) -replace '[-+].*$', ''
-    if ([string]::IsNullOrWhiteSpace($normalizedVersion) -or [string]::IsNullOrWhiteSpace($normalizedMinimum)) {
+    $parsedVersion = Convert-UvVersionOutput $Version
+    $parsedMinimum = Convert-UvVersionOutput $Minimum
+    if ([string]::IsNullOrWhiteSpace($parsedVersion) -or [string]::IsNullOrWhiteSpace($parsedMinimum)) {
         throw "Unable to compare uv versions."
     }
+    if ($parsedVersion.Contains("-")) {
+        return $false
+    }
+
+    $normalizedVersion = $parsedVersion -replace '\+.*$', ''
+    $normalizedMinimum = $parsedMinimum -replace '\+.*$', ''
 
     return ([version] $normalizedVersion) -ge ([version] $normalizedMinimum)
 }
@@ -382,8 +388,8 @@ function Confirm-Uv {
     }
 
     $version = Get-UvVersion $uvCommand.Source
-    if (-not (Test-UvVersionAtLeast -Version $version -Minimum $MinUvVersion)) {
-        throw "uv $MinUvVersion or newer is required; found uv $version after installation."
+    if (-not (Test-SupportedUvVersion -Version $version -Minimum $MinUvVersion)) {
+        throw "Stable uv $MinUvVersion or newer is required; found uv $version after installation."
     }
     Write-Host "Verified uv $version."
 }
@@ -405,11 +411,11 @@ function Ensure-Uv {
     $uvCommand = Get-ApplicationCommand "uv"
     if ($uvCommand) {
         $version = Get-UvVersion $uvCommand.Source
-        if (Test-UvVersionAtLeast -Version $version -Minimum $MinUvVersion) {
+        if (Test-SupportedUvVersion -Version $version -Minimum $MinUvVersion) {
             Write-Host "uv $version already satisfies >=$MinUvVersion; leaving it unchanged."
             return
         }
-        Write-Host "uv $version is below $MinUvVersion; installing the current standalone uv."
+        Write-Host "uv $version does not satisfy stable >=$MinUvVersion; installing the current standalone uv."
     }
     else {
         Write-Host "uv is not installed; installing the current standalone uv."
