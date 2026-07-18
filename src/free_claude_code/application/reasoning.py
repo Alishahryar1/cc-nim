@@ -1,4 +1,4 @@
-"""Resolve client reasoning input and FCC configuration exactly once."""
+""" Extract the client's requested reasoning configuration without applying user preference overrides. """
 
 from collections.abc import Mapping
 from typing import Any
@@ -27,6 +27,32 @@ def resolve_reasoning_policy(
     return client_reasoning_policy(request)
 
 
+
+def _build_reasoning_policy(
+    thinking_control: ReasoningControl,
+    effort: ReasoningEffort | None,
+    budget_tokens: int | None,
+) -> ReasoningPolicy:
+    """Create the final reasoning policy from resolved client settings."""
+
+    if thinking_control is ReasoningControl.OFF:
+        return ReasoningPolicy(
+            control=ReasoningControl.OFF,
+            effort=effort,
+        )
+
+    if thinking_control is ReasoningControl.ON:
+        return ReasoningPolicy.on(
+            effort=effort,
+            budget_tokens=budget_tokens,
+        )
+
+    return ReasoningPolicy(
+        control=ReasoningControl.DEFAULT,
+        effort=effort,
+    )
+
+
 def client_reasoning_policy(request: MessagesRequest) -> ReasoningPolicy:
     """Return the lossless reasoning intent expressed by one client request."""
 
@@ -39,27 +65,18 @@ def client_reasoning_policy(request: MessagesRequest) -> ReasoningPolicy:
 
     if effort_disables:
         return ReasoningPolicy.off()
-    if thinking_control is ReasoningControl.OFF:
-        return ReasoningPolicy(
-            control=ReasoningControl.OFF,
-            effort=effort,
-        )
-    if thinking_control is ReasoningControl.ON or budget_tokens is not None:
-        return ReasoningPolicy.on(
-            effort=effort,
-            budget_tokens=budget_tokens,
-        )
-    return ReasoningPolicy(
-        control=ReasoningControl.DEFAULT,
-        effort=effort,
-    )
 
+    return _build_reasoning_policy(
+        thinking_control,
+        effort,
+        budget_tokens,
+    )
 
 def _thinking_control(
     thinking: ThinkingConfig | None,
     *,
     budget_tokens: int | None,
-) -> ReasoningControl:
+    ) -> ReasoningControl:
     if thinking is None:
         return ReasoningControl.DEFAULT
     if thinking.type == "disabled" or (
@@ -75,14 +92,15 @@ def _thinking_control(
     return ReasoningControl.DEFAULT
 
 
-def _output_effort(value: Any) -> tuple[ReasoningEffort | None, bool]:
+def _output_effort(...) -> OutputEffort:
+    OutputEffort = tuple[ReasoningEffort | None, bool] # to increase the readability
     if not isinstance(value, Mapping):
         return None, False
-    raw = value.get("effort")
-    if not isinstance(raw, str):
+    raw_effort = value.get("effort")
+    if not isinstance(raw_effort, str):
         return None, False
-    normalized = raw.strip().lower()
-    if normalized == "none":
+    normalized_effort = raw_effort.strip().lower()
+    if normalized_effort == "none":
         return None, True
     try:
         return ReasoningEffort(normalized), False
