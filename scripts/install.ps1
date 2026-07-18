@@ -20,6 +20,14 @@ $ClaudeInstallUrl = "https://claude.ai/install.ps1"
 $CodexInstallUrl = "https://chatgpt.com/codex/install.ps1"
 $PiInstallUrl = "https://pi.dev/install.ps1"
 $UvInstallUrl = "https://astral.sh/uv/install.ps1"
+$FccCommands = @(
+    "fcc-server",
+    "fcc-claude",
+    "fcc-codex",
+    "fcc-pi",
+    "fcc-init",
+    "free-claude-code"
+)
 
 function Show-Usage {
     @"
@@ -183,6 +191,20 @@ function Add-PiBinDirectories {
     }
     if ($LASTEXITCODE -eq 0 -and -not [string]::IsNullOrWhiteSpace($prefix)) {
         Add-PathEntry $prefix
+    }
+}
+
+function Assert-NoFccProcessesRunning {
+    $running = @()
+    foreach ($commandName in $FccCommands) {
+        $processes = @(Get-Process -Name $commandName -ErrorAction SilentlyContinue)
+        foreach ($process in $processes) {
+            $running += "$commandName (PID $($process.Id))"
+        }
+    }
+
+    if ($running.Count -gt 0) {
+        throw "Free Claude Code is still running ($($running -join ', ')). Stop those processes, then rerun the installer."
     }
 }
 
@@ -448,6 +470,7 @@ function Get-PackageSpec {
 }
 
 function Install-FreeClaudeCode {
+    Assert-NoFccProcessesRunning
     $packageSpec = Get-PackageSpec
     $arguments = @(
         "tool",
@@ -532,6 +555,9 @@ if ((-not [string]::IsNullOrWhiteSpace($TorchBackend)) -and (-not ($VoiceLocal -
 }
 
 Add-KnownBinDirectories
+
+Write-Step "Checking for running Free Claude Code processes"
+Assert-NoFccProcessesRunning
 
 Write-Step "Ensuring Claude Code is installed"
 Ensure-ClaudeCode

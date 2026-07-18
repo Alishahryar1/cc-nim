@@ -66,6 +66,22 @@ class PosixUninstallHarness:
         for name in FCC_COMMANDS:
             (self.tool_bin / name).unlink(missing_ok=True)
 
+    def use_process_list_fallback(self, process_line: str) -> None:
+        fallback_bin = self.home.parent / "fallback-bin"
+        fallback_bin.mkdir()
+        _write_executable(
+            fallback_bin / "ps",
+            """#!/bin/sh
+printf '%s\n' "$FCC_PS_OUTPUT"
+""",
+        )
+        awk = shutil.which("awk", path=self.env["PATH"])
+        if awk is None:
+            pytest.skip("awk is required for the POSIX process fallback scenario")
+        shutil.copy2(awk, fallback_bin / "awk")
+        self.env["FCC_PS_OUTPUT"] = process_line
+        self.env["PATH"] = str(fallback_bin)
+
 
 @pytest.fixture
 def posix_uninstall_harness(tmp_path: Path) -> PosixUninstallHarness:
@@ -235,6 +251,28 @@ def test_uninstall_sh_rejects_invalid_options_before_mutation(
     assert result.returncode != 0
     assert posix_uninstall_harness.fcc_home.exists()
     assert posix_uninstall_harness.calls() == []
+
+
+@pytest.mark.parametrize(
+    ("command_name", "process_args"),
+    (
+        ("free-claude-code", "/home/user/.local/bin/free-claude-code"),
+        ("fcc-server", "/usr/bin/python3 /home/user/.local/bin/fcc-server"),
+    ),
+)
+def test_uninstall_sh_process_fallback_reads_full_command_line(
+    posix_uninstall_harness: PosixUninstallHarness,
+    command_name: str,
+    process_args: str,
+) -> None:
+    posix_uninstall_harness.use_process_list_fallback(f"4242 {process_args}")
+
+    result = posix_uninstall_harness.run()
+
+    assert result.returncode != 0
+    assert posix_uninstall_harness.fcc_home.exists()
+    assert posix_uninstall_harness.calls() == []
+    assert command_name in result.stderr
 
 
 @dataclass

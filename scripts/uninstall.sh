@@ -91,20 +91,34 @@ add_known_uv_paths() {
     hash -r 2>/dev/null || true
 }
 
-is_fcc_command_running() {
+fcc_process_ids() {
     command_name=$1
 
     if command -v pgrep >/dev/null 2>&1; then
-        if pgrep -x "$command_name" >/dev/null 2>&1; then
-            return 0
-        fi
-        if pgrep -f "(^|/)${command_name}( |$)" >/dev/null 2>&1; then
-            return 0
-        fi
-        return 1
+        {
+            pgrep -x "$command_name" 2>/dev/null || true
+            pgrep -f "(^|/)${command_name}([[:space:]]|$)" 2>/dev/null || true
+        } | sort -nu
+        return 0
     fi
 
-    ps -A -o comm= 2>/dev/null | grep -qx "$command_name"
+    ps -A -o pid= -o args= 2>/dev/null |
+        awk -v command_name="$command_name" '
+            BEGIN {
+                pattern = "(^|/)" command_name "([[:space:]]|$)"
+            }
+            {
+                process_id = $1
+                sub(/^[[:space:]]*[0-9]+[[:space:]]+/, "")
+                if ($0 ~ pattern) {
+                    print process_id
+                }
+            }
+        ' || true
+}
+
+is_fcc_command_running() {
+    [ -n "$(fcc_process_ids "$1")" ]
 }
 
 assert_no_fcc_processes_running() {

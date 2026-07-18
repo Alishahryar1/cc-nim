@@ -8,6 +8,7 @@ CLAUDE_INSTALL_URL="https://claude.ai/install.sh"
 CODEX_INSTALL_URL="https://chatgpt.com/codex/install.sh"
 PI_INSTALL_URL="https://pi.dev/install.sh"
 UV_INSTALL_URL="https://astral.sh/uv/install.sh"
+FCC_COMMANDS="fcc-server fcc-claude fcc-codex fcc-pi fcc-init free-claude-code"
 
 dry_run=0
 voice_nim=0
@@ -120,6 +121,53 @@ add_pi_bin_directories() {
             export PATH
             hash -r 2>/dev/null || true
         fi
+    fi
+}
+
+fcc_process_ids() {
+    command_name=$1
+
+    if command -v pgrep >/dev/null 2>&1; then
+        {
+            pgrep -x "$command_name" 2>/dev/null || true
+            pgrep -f "(^|/)${command_name}([[:space:]]|$)" 2>/dev/null || true
+        } | sort -nu
+        return 0
+    fi
+
+    ps -A -o pid= -o args= 2>/dev/null |
+        awk -v command_name="$command_name" '
+            BEGIN {
+                pattern = "(^|/)" command_name "([[:space:]]|$)"
+            }
+            {
+                process_id = $1
+                sub(/^[[:space:]]*[0-9]+[[:space:]]+/, "")
+                if ($0 ~ pattern) {
+                    print process_id
+                }
+            }
+        ' || true
+}
+
+assert_no_fcc_processes_running() {
+    running=""
+    for command_name in $FCC_COMMANDS; do
+        process_ids=$(fcc_process_ids "$command_name")
+        [ -n "$process_ids" ] || continue
+
+        for process_id in $process_ids; do
+            process="$command_name (PID $process_id)"
+            if [ -n "$running" ]; then
+                running="$running, $process"
+            else
+                running=$process
+            fi
+        done
+    done
+
+    if [ -n "$running" ]; then
+        fail "Free Claude Code is still running ($running). Stop those processes, then rerun the installer."
     fi
 }
 
@@ -426,6 +474,7 @@ package_spec() {
 }
 
 install_free_claude_code() {
+    assert_no_fcc_processes_running
     spec=$(package_spec)
 
     if [ -n "$torch_backend" ]; then
@@ -468,6 +517,9 @@ configure_and_verify_free_claude_code() {
 parse_args "$@"
 validate_args
 add_known_bin_directories
+
+step "Checking for running Free Claude Code processes"
+assert_no_fcc_processes_running
 
 step "Checking installation prerequisites"
 require_command curl
