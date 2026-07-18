@@ -20,6 +20,7 @@ _EXPECTED_PROVIDER_ORDER: tuple[str, ...] = (
     "github_models",
     "wafer",
     "kimi",
+    "kimi_code",
     "minimax",
     "cerebras",
     "groq",

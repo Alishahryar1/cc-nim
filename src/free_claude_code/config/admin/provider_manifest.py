@@ -70,6 +70,13 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "free_claude_code.api.minimax.io/v1."
         ),
     },
+    "KIMI_CODE_API_KEY": {
+        "label": "Kimi Code API Key",
+        "description": (
+            "Personal Kimi Code subscription key from kimi.com/code/console; "
+            "separate from KIMI_API_KEY credits on the Kimi API platform."
+        ),
+    },
     "CLOUDFLARE_API_TOKEN": {
         "label": "Cloudflare API Token",
         "description": (

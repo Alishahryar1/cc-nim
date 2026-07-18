@@ -11,6 +11,7 @@ from free_claude_code.config.provider_catalog import (
     COHERE_DEFAULT_BASE,
     GITHUB_MODELS_DEFAULT_BASE,
     HUGGINGFACE_DEFAULT_BASE,
+    KIMI_CODE_DEFAULT_BASE,
     MINIMAX_DEFAULT_BASE,
     OLLAMA_CLOUD_DEFAULT_BASE,
     PROVIDER_CATALOG,
@@ -70,6 +71,8 @@ def _make_settings(**overrides):
     mock.codestral_proxy = ""
     mock.kimi_proxy = ""
     mock.kimi_api_key = "test_kimi_key"
+    mock.kimi_code_proxy = ""
+    mock.kimi_code_api_key = "test_kimi_code_key"
     mock.wafer_proxy = ""
     mock.minimax_proxy = ""
     mock.opencode_proxy = ""
@@ -206,6 +209,21 @@ def test_minimax_descriptor_uses_expected_endpoint_and_credential():
 
     assert descriptor.default_base_url == MINIMAX_DEFAULT_BASE
     assert descriptor.credential_env == "MINIMAX_API_KEY"
+
+
+def test_kimi_code_provider_config_uses_subscription_key_and_proxy() -> None:
+    descriptor = PROVIDER_CATALOG["kimi_code"]
+    settings = _make_settings(
+        kimi_code_api_key="subscription-token",
+        kimi_code_proxy="http://proxy.test:8080",
+    )
+
+    config = build_provider_config(descriptor, settings)
+
+    assert descriptor.credential_env == "KIMI_CODE_API_KEY"
+    assert config.api_key == "subscription-token"
+    assert config.base_url == KIMI_CODE_DEFAULT_BASE
+    assert config.proxy == "http://proxy.test:8080"
 
 
 def test_cloudflare_descriptor_uses_api_root_not_account_url():
@@ -360,6 +378,7 @@ def test_create_provider_instantiates_each_builtin():
         cohere_api_key="test_cohere_key",
         github_models_token="test_github_models_token",
         kimi_api_key="test_kimi_key",
+        kimi_code_api_key="test_kimi_code_key",
         provider_rate_limit=7,
         provider_rate_window=11,
         provider_max_concurrency=3,
@@ -372,6 +391,7 @@ def test_create_provider_instantiates_each_builtin():
         "mistral_codestral": OpenAIChatProvider,
         "deepseek": DeepSeekProvider,
         "kimi": OpenAIChatProvider,
+        "kimi_code": OpenAIChatProvider,
         "minimax": OpenAIChatProvider,
         "fireworks": OpenAIChatProvider,
         "cloudflare": CloudflareProvider,

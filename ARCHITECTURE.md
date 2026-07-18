@@ -593,9 +593,13 @@ account-scoped Workers AI OpenAI-compatible Chat Completions endpoint for
 `@cf/...` model IDs, while account ID composition, model search, and
 Cloudflare-specific reasoning deltas stay in the Cloudflare provider client.
 OpenRouter remains specialized for model filtering and reasoning-detail stream
-events. Wafer, Kimi, MiniMax, Fireworks, and Z.ai use ordinary declarative
-profiles for their thinking, token, and `extra_body` policy. Z.ai is treated as
-the GLM Coding Plan provider and uses Z.ai's Coding Plan OpenAI base.
+events. Wafer, Kimi API, Kimi Code, MiniMax, Fireworks, and Z.ai use ordinary
+declarative profiles for their thinking, token, and `extra_body` policy. Kimi
+Code remains distinct from Kimi API because its subscription key and base URL
+are a separate customer contract; its profile maps provider-neutral reasoning
+to Kimi's named efforts and identifies FCC through the upstream user agent.
+Z.ai is treated as the GLM Coding Plan provider and uses Z.ai's Coding Plan
+OpenAI base.
 Mistral La Plateforme keeps its native `reasoning_effort` and thinking-chunk
 request/stream mapping inside
 [providers/mistral/reasoning.py](src/free_claude_code/providers/mistral/reasoning.py), including its

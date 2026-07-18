@@ -10,6 +10,8 @@ from dataclasses import dataclass
 NVIDIA_NIM_DEFAULT_BASE = "https://integrate.api.nvidia.com/v1"
 # Moonshot Kimi OpenAI-compatible Chat Completions API.
 KIMI_DEFAULT_BASE = "https://api.moonshot.ai/v1"
+# Kimi Code subscription OpenAI-compatible Chat Completions API.
+KIMI_CODE_DEFAULT_BASE = "https://api.kimi.com/coding/v1"
 WAFER_DEFAULT_BASE = "https://pass.wafer.ai/v1"
 MINIMAX_DEFAULT_BASE = "https://api.minimax.io/v1"
 # DeepSeek Chat Completions API; cache usage is reported on this endpoint.
@@ -181,6 +183,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="kimi_api_key",
         default_base_url=KIMI_DEFAULT_BASE,
         proxy_attr="kimi_proxy",
+    ),
+    "kimi_code": ProviderDescriptor(
+        provider_id="kimi_code",
+        display_name="Kimi Code",
+        credential_env="KIMI_CODE_API_KEY",
+        credential_url="https://www.kimi.com/code/console",
+        credential_attr="kimi_code_api_key",
+        default_base_url=KIMI_CODE_DEFAULT_BASE,
+        proxy_attr="kimi_code_proxy",
     ),
     "minimax": ProviderDescriptor(
         provider_id="minimax",

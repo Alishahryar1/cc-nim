@@ -35,6 +35,9 @@ class Settings(BaseSettings):
     # ==================== Kimi Config ====================
     kimi_api_key: str = Field(default="", validation_alias="KIMI_API_KEY")
 
+    # ==================== Kimi Code Subscription ====================
+    kimi_code_api_key: str = Field(default="", validation_alias="KIMI_CODE_API_KEY")
+
     # ==================== Wafer Config ====================
     wafer_api_key: str = Field(default="", validation_alias="WAFER_API_KEY")
 
@@ -141,6 +144,7 @@ class Settings(BaseSettings):
     lmstudio_proxy: str = Field(default="", validation_alias="LMSTUDIO_PROXY")
     llamacpp_proxy: str = Field(default="", validation_alias="LLAMACPP_PROXY")
     kimi_proxy: str = Field(default="", validation_alias="KIMI_PROXY")
+    kimi_code_proxy: str = Field(default="", validation_alias="KIMI_CODE_PROXY")
     wafer_proxy: str = Field(default="", validation_alias="WAFER_PROXY")
     minimax_proxy: str = Field(default="", validation_alias="MINIMAX_PROXY")
     opencode_proxy: str = Field(default="", validation_alias="OPENCODE_PROXY")

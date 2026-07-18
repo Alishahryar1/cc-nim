@@ -34,6 +34,7 @@ def _settings(**overrides):
         "codestral_api_key": "",
         "deepseek_api_key": "",
         "kimi_api_key": "",
+        "kimi_code_api_key": "",
         "wafer_api_key": "",
         "minimax_api_key": "",
         "opencode_api_key": "",
@@ -168,6 +169,23 @@ def test_wafer_provider_configuration_uses_api_key(monkeypatch) -> None:
     models = config.provider_smoke_models()
     assert models[0].provider == "wafer"
     assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["wafer"]
+
+
+def test_kimi_code_provider_configuration_uses_subscription_key(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_KIMI_CODE", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            kimi_code_api_key="subscription-key",
+        )
+    )
+
+    assert config.has_provider_configuration("kimi_code")
+    models = config.provider_smoke_models()
+    assert [model.provider for model in models] == ["kimi_code"]
+    assert models[0].full_model == "kimi_code/k3"
+    assert models[0].source == "provider_default"
 
 
 def test_minimax_provider_configuration_uses_api_key(monkeypatch) -> None:

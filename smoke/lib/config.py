@@ -53,6 +53,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "lmstudio": "lmstudio/local-model",
     "llamacpp": "llamacpp/local-model",
     "ollama": "ollama/llama3.1",
+    "kimi_code": "kimi_code/k3",
     "wafer": "wafer/DeepSeek-V4-Pro",
     "minimax": "minimax/MiniMax-M3",
     "opencode": "opencode/gpt-5.3-codex",
@@ -264,6 +265,8 @@ class SmokeConfig:
             return bool(self.settings.ollama_api_key.strip())
         if provider == "kimi":
             return bool(self.settings.kimi_api_key.strip())
+        if provider == "kimi_code":
+            return bool(self.settings.kimi_code_api_key.strip())
         if provider == "lmstudio":
             return bool(self.settings.lm_studio_base_url.strip())
         if provider == "llamacpp":

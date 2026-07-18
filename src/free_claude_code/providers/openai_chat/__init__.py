@@ -30,6 +30,9 @@ def create_openai_chat_provider(
         config,
         profile=profile,
         rate_limiter=rate_limiter,
+        default_headers=(
+            {"User-Agent": profile.user_agent} if profile.user_agent else None
+        ),
     )
 
 

@@ -150,7 +150,8 @@ Enter the listed setting in the Admin UI, open **Model Config**, then search the
 | [Cohere](https://dashboard.cohere.com/api-keys) | `COHERE_API_KEY` | `cohere/command-a-plus-05-2026` |
 | [GitHub Models](https://github.com/marketplace?type=models) | `GITHUB_MODELS_TOKEN` | `github_models/openai/gpt-4.1` |
 | [Wafer](https://wafer.ai/) | `WAFER_API_KEY` | `wafer/DeepSeek-V4-Pro` |
-| [Kimi](https://platform.moonshot.ai/console/api-keys) | `KIMI_API_KEY` | `kimi/kimi-k2.5` |
+| [Kimi API](https://platform.moonshot.ai/console/api-keys) | `KIMI_API_KEY` | `kimi/kimi-k2.5` |
+| [Kimi Code](https://www.kimi.com/code/console) | `KIMI_CODE_API_KEY` | `kimi_code/k3` |
 | [MiniMax](https://platform.minimax.io/user-center/basic-information/interface-key) | `MINIMAX_API_KEY` | `minimax/MiniMax-M3` |
 | [Cerebras Inference](https://cloud.cerebras.ai/) | `CEREBRAS_API_KEY` | `cerebras/gpt-oss-120b` |
 | [Groq](https://console.groq.com/keys) | `GROQ_API_KEY` | `groq/llama-3.3-70b-versatile` |
@@ -166,6 +167,9 @@ Enter the listed setting in the Admin UI, open **Model Config**, then search the
 Important provider notes:
 
 - Mistral Codestral uses a separate key from Mistral La Plateforme.
+- Kimi Code subscription keys use `kimi_code/`; Kimi API credit keys use
+  `kimi/`. Kimi Code plans are for personal interactive coding-agent use under
+  [Kimi's community guidelines](https://www.kimi.com/code/docs/en/kimi-code/community-guidelines.html).
 - OpenCode Zen and OpenCode Go share `OPENCODE_API_KEY` but use different model prefixes.
 - Cloudflare requires both its API token and account ID.
 - Ollama Cloud connects directly to `ollama.com`; use the exact model IDs shown
