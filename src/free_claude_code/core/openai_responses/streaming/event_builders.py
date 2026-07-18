@@ -19,6 +19,13 @@ def response_completed(response: dict[str, Any]) -> str:
     )
 
 
+def response_incomplete(response: dict[str, Any]) -> str:
+    return format_response_sse_event(
+        "response.incomplete",
+        {"type": "response.incomplete", "response": response},
+    )
+
+
 def response_failed(response: dict[str, Any]) -> str:
     return format_response_sse_event(
         "response.failed",

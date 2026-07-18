@@ -42,6 +42,7 @@ class ResponsesStreamAssembler:
             on_invalid_function_call=self._fail_invalid_function_call,
         )
         self._started = False
+        self._stop_reason: str | None = None
         self._provisional_error: dict[str, Any] | None = None
         self.terminal = False
         self.final_response: dict[str, Any] | None = None
@@ -58,9 +59,9 @@ class ResponsesStreamAssembler:
         elif event.event == "content_block_stop":
             chunks.extend(self._handle_content_block_stop(event.data))
         elif event.event == "message_delta":
-            self._ledger.record_usage_delta(event.data)
+            self._record_message_delta(event.data)
         elif event.event == "message_stop":
-            chunks.extend(self.complete_response())
+            chunks.extend(self.finish_response())
         elif event.event == "error":
             chunks.extend(self.fail_response(event.data))
         return chunks
@@ -69,11 +70,15 @@ class ResponsesStreamAssembler:
         if self.terminal:
             return []
         chunks = self._ensure_started()
-        chunks.extend(self.complete_response())
+        chunks.extend(self.finish_response())
         return chunks
 
     def response_payload(
-        self, *, status: str, error: dict[str, Any] | None = None
+        self,
+        *,
+        status: str,
+        error: dict[str, Any] | None = None,
+        incomplete_details: dict[str, str] | None = None,
     ) -> dict[str, Any]:
         return {
             "id": self._response_id,
@@ -97,14 +102,18 @@ class ResponsesStreamAssembler:
             "max_output_tokens": self._request.max_output_tokens,
             "usage": self._ledger.usage(),
             "error": error,
+            "incomplete_details": incomplete_details,
         }
 
-    def complete_response(self) -> list[str]:
+    def finish_response(self) -> list[str]:
         chunks = self._flush_active_blocks()
         if self.terminal:
             return chunks
         if self._provisional_error is not None:
             chunks.extend(self._finish_failed_response(self._provisional_error))
+            return chunks
+        if self._stop_reason == "max_tokens":
+            chunks.extend(self._finish_incomplete_response())
             return chunks
         self.final_response = self.response_payload(status="completed")
         chunks.append(events.response_completed(self.final_response))
@@ -132,6 +141,14 @@ class ResponsesStreamAssembler:
         self.final_response = self.response_payload(status="failed", error=error)
         self.terminal = True
         return [events.response_failed(self.final_response)]
+
+    def _finish_incomplete_response(self) -> list[str]:
+        self.final_response = self.response_payload(
+            status="incomplete",
+            incomplete_details={"reason": "max_output_tokens"},
+        )
+        self.terminal = True
+        return [events.response_incomplete(self.final_response)]
 
     def _ensure_started(self) -> list[str]:
         if self._started:
@@ -220,6 +237,15 @@ class ResponsesStreamAssembler:
         if state is None:
             return []
         return self._completer.complete_block(state)
+
+    def _record_message_delta(self, data: Mapping[str, Any]) -> None:
+        self._ledger.record_usage_delta(data)
+        delta = data.get("delta")
+        if not isinstance(delta, Mapping):
+            return
+        stop_reason = delta.get("stop_reason")
+        if isinstance(stop_reason, str):
+            self._stop_reason = stop_reason
 
     def _start_text_block(self, index: int) -> tuple[list[str], TextBlockState | None]:
         chunks = self._complete_existing_block(index)

@@ -187,6 +187,63 @@ async def test_anthropic_text_stream_converts_to_responses_sse() -> None:
 
 
 @pytest.mark.asyncio
+async def test_max_tokens_stop_reason_converts_to_response_incomplete() -> None:
+    text = await _collect_sse(
+        _responses_sse(
+            _aiter(_anthropic_text_stream("partial output", stop_reason="max_tokens")),
+            {"model": "nvidia_nim/test-model", "stream": True},
+        )
+    )
+
+    events = parse_sse_text(text)
+    assert events[-1].event == "response.incomplete"
+    assert "response.completed" not in [event.event for event in events]
+    incomplete = events[-1].data["response"]
+    assert incomplete["id"] == events[0].data["response"]["id"]
+    assert incomplete["status"] == "incomplete"
+    assert incomplete["incomplete_details"] == {"reason": "max_output_tokens"}
+    assert incomplete["error"] is None
+    assert incomplete["output"][0]["content"][0]["text"] == "partial output"
+    assert incomplete["usage"] == {
+        "input_tokens": 3,
+        "output_tokens": 4,
+        "total_tokens": 7,
+    }
+
+
+@pytest.mark.asyncio
+async def test_max_tokens_without_visible_output_is_still_incomplete() -> None:
+    text = await _collect_sse(
+        _responses_sse(
+            _aiter(
+                [
+                    format_sse_event(
+                        "message_start", {"type": "message_start", "message": {}}
+                    ),
+                    format_sse_event(
+                        "message_delta",
+                        {
+                            "type": "message_delta",
+                            "delta": {"stop_reason": "max_tokens"},
+                            "usage": {"input_tokens": 3, "output_tokens": 64},
+                        },
+                    ),
+                    format_sse_event("message_stop", {"type": "message_stop"}),
+                ]
+            ),
+            {"model": "nvidia_nim/test-model", "stream": True},
+        )
+    )
+
+    incomplete = parse_sse_text(text)[-1]
+    assert incomplete.event == "response.incomplete"
+    assert incomplete.data["response"]["output"] == []
+    assert incomplete.data["response"]["incomplete_details"] == {
+        "reason": "max_output_tokens"
+    }
+
+
+@pytest.mark.asyncio
 async def test_response_payload_preserves_explicit_request_options() -> None:
     response = await _completed_response_from_sse(
         _aiter(_anthropic_text_stream("done")),
@@ -710,7 +767,7 @@ async def _aiter_then_raise(
     raise failure
 
 
-def _anthropic_text_stream(text: str) -> list[str]:
+def _anthropic_text_stream(text: str, *, stop_reason: str = "end_turn") -> list[str]:
     return [
         format_sse_event("message_start", {"type": "message_start", "message": {}}),
         format_sse_event(
@@ -737,7 +794,7 @@ def _anthropic_text_stream(text: str) -> list[str]:
             "message_delta",
             {
                 "type": "message_delta",
-                "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                "delta": {"stop_reason": stop_reason, "stop_sequence": None},
                 "usage": {"input_tokens": 3, "output_tokens": 4},
             },
         ),

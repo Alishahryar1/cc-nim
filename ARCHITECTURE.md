@@ -805,6 +805,11 @@ Post-start Responses failures are assembler-owned: the active
 `ResponsesStreamAssembler` emits `response.failed` so the terminal event keeps
 the same `response.id`, output ledger, and usage state as the earlier
 `response.created`.
+Provider completion reasons remain canonical until that same assembler chooses
+the Responses terminal event. Anthropic `max_tokens` becomes
+`response.incomplete` with `incomplete_details.reason=max_output_tokens` while
+preserving partial output and usage; normal terminal reasons remain
+`response.completed`.
 
 Responses custom tools are also boundary-owned. The adapter accepts native
 Responses `custom` tool declarations, represents them internally as Anthropic
