@@ -327,7 +327,7 @@ parsing and configured `MODEL*` inventory. API routing and provider validation
 depend on those helpers instead of adding behavior methods to Settings.
 
 [config/admin/](src/free_claude_code/config/admin/) owns the Admin UI config manifest and
-managed env writes. Provider credential, local URL, proxy, and display-name
+managed env writes. Provider credential, configurable base URL, proxy, and display-name
 metadata is generated from [config/provider_catalog.py](src/free_claude_code/config/provider_catalog.py);
 admin-only help text stays beside the admin manifest. The package splits source
 loading, value presentation, validation, persistence, and provider status into
@@ -593,7 +593,10 @@ account-scoped Workers AI OpenAI-compatible Chat Completions endpoint for
 `@cf/...` model IDs, while account ID composition, model search, and
 Cloudflare-specific reasoning deltas stay in the Cloudflare provider client.
 OpenRouter remains specialized for model filtering and reasoning-detail stream
-events. Wafer, Kimi API, Kimi Code, MiniMax, Fireworks, and Z.ai use ordinary
+events. Amazon Bedrock Mantle uses an ordinary profile with a region-specific,
+configurable OpenAI base URL and bearer API key; AWS SigV4 and native
+Converse/Invoke transports are outside that provider contract. Wafer, Kimi API,
+Kimi Code, MiniMax, Fireworks, and Z.ai use ordinary
 declarative profiles for their thinking, token, and `extra_body` policy. Kimi
 Code remains distinct from Kimi API because its subscription key and base URL
 are a separate customer contract; its profile maps provider-neutral reasoning
@@ -675,7 +678,7 @@ usage quirks such as DeepSeek prompt-cache counters.
 1. Add provider metadata to [config/provider_catalog.py](src/free_claude_code/config/provider_catalog.py).
 2. Add credentials and related settings to [config/settings.py](src/free_claude_code/config/settings.py)
    and [.env.example](.env.example) when user configurable.
-3. Let Admin UI provider credential, local URL, and proxy fields come from the
+3. Let Admin UI provider credential, configurable base URL, and proxy fields come from the
    catalog. Add admin-only help text or provider-specific fields under
    [config/admin/](src/free_claude_code/config/admin/) only when the generated manifest is
    insufficient.
@@ -1332,7 +1335,7 @@ when maintainers want branch-level assurance.
 1. Add or expose the setting in [config/settings.py](src/free_claude_code/config/settings.py).
 2. Add the template key to [.env.example](.env.example) if users configure it.
 3. Add a `ConfigFieldSpec` under [config/admin/](src/free_claude_code/config/admin/), or add
-   provider catalog metadata when the setting is provider credential, local URL,
+   provider catalog metadata when the setting is provider credential, configurable base URL,
    proxy, or display-name metadata.
 4. Mark `restart_required` or `session_sensitive` when runtime state cannot be
    updated in place.

@@ -146,6 +146,7 @@ Enter the listed setting in the Admin UI, open **Model Config**, then search the
 | [OpenCode Zen](https://opencode.ai/auth) | `OPENCODE_API_KEY` | `opencode/gpt-5.3-codex` |
 | [OpenCode Go](https://opencode.ai/auth) | `OPENCODE_API_KEY` | `opencode_go/minimax-m2.7` |
 | [Vercel AI Gateway](https://vercel.com/docs/ai-gateway/models-and-providers) | `AI_GATEWAY_API_KEY` | `vercel/openai/gpt-5.5` |
+| [Amazon Bedrock](https://console.aws.amazon.com/bedrock/) | `AWS_BEARER_TOKEN_BEDROCK` | `bedrock/openai.gpt-oss-120b` |
 | [Hugging Face Inference Providers](https://huggingface.co/settings/tokens) | `HUGGINGFACE_API_KEY` | `huggingface/Qwen/Qwen3-Coder-480B-A35B-Instruct:fastest` |
 | [Cohere](https://dashboard.cohere.com/api-keys) | `COHERE_API_KEY` | `cohere/command-a-plus-05-2026` |
 | [GitHub Models](https://github.com/marketplace?type=models) | `GITHUB_MODELS_TOKEN` | `github_models/openai/gpt-4.1` |
@@ -171,6 +172,9 @@ Important provider notes:
   `kimi/`. Kimi Code plans are for personal interactive coding-agent use under
   [Kimi's community guidelines](https://www.kimi.com/code/docs/en/kimi-code/community-guidelines.html).
 - OpenCode Zen and OpenCode Go share `OPENCODE_API_KEY` but use different model prefixes.
+- Amazon Bedrock uses its Mantle OpenAI-compatible endpoint. Set
+  `BEDROCK_BASE_URL` to the endpoint for the same region as the API key and
+  select one of the models returned by FCC's model picker.
 - Cloudflare requires both its API token and account ID.
 - Ollama Cloud connects directly to `ollama.com`; use the exact model IDs shown
   by FCC's model picker. Local Ollama remains available through the separate

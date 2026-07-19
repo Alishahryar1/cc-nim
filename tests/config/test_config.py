@@ -347,6 +347,23 @@ class TestSettings:
         assert settings.vercel_ai_gateway_api_key == "vercel-key"
         assert settings.vercel_ai_gateway_proxy == "http://proxy.test:8080"
 
+    def test_bedrock_settings_from_official_environment(self, monkeypatch):
+        """Bedrock key, regional base URL, and proxy load into settings."""
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.setenv("AWS_BEARER_TOKEN_BEDROCK", "bedrock-key")
+        monkeypatch.setenv(
+            "BEDROCK_BASE_URL", "https://bedrock-mantle.us-west-2.api.aws/v1"
+        )
+        monkeypatch.setenv("BEDROCK_PROXY", "http://proxy.test:8080")
+        settings = Settings()
+
+        assert settings.bedrock_api_key == "bedrock-key"
+        assert settings.bedrock_base_url == (
+            "https://bedrock-mantle.us-west-2.api.aws/v1"
+        )
+        assert settings.bedrock_proxy == "http://proxy.test:8080"
+
     def test_huggingface_settings_from_env(self, monkeypatch):
         """Hugging Face key and proxy env vars load into settings."""
         from free_claude_code.config.settings import Settings

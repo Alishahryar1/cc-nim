@@ -158,6 +158,11 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         ),
         ReasoningObject(_ALL_EFFORTS),
     ),
+    "bedrock": OpenAIChatProfile(
+        _policy("BEDROCK", ReasoningReplayMode.THINK_TAGS),
+        NO_REASONING,
+        normalize_base_url=True,
+    ),
     "huggingface": OpenAIChatProfile(
         _policy(
             "HUGGINGFACE",

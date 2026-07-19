@@ -15,6 +15,7 @@ _EXPECTED_PROVIDER_ORDER: tuple[str, ...] = (
     "opencode",
     "opencode_go",
     "vercel",
+    "bedrock",
     "huggingface",
     "cohere",
     "github_models",

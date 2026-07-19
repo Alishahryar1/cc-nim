@@ -8,6 +8,7 @@ import pytest
 from free_claude_code.application.errors import UnknownProviderError
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.config.provider_catalog import (
+    BEDROCK_DEFAULT_BASE,
     COHERE_DEFAULT_BASE,
     GITHUB_MODELS_DEFAULT_BASE,
     HUGGINGFACE_DEFAULT_BASE,
@@ -55,6 +56,8 @@ def _make_settings(**overrides):
     mock.minimax_api_key = "test_minimax_key"
     mock.opencode_api_key = "test_opencode_key"
     mock.vercel_ai_gateway_api_key = "test_vercel_key"
+    mock.bedrock_api_key = "test_bedrock_key"
+    mock.bedrock_base_url = BEDROCK_DEFAULT_BASE
     mock.huggingface_api_key = "test_huggingface_key"
     mock.cohere_api_key = "test_cohere_key"
     mock.github_models_token = "test_github_models_token"
@@ -78,6 +81,7 @@ def _make_settings(**overrides):
     mock.opencode_proxy = ""
     mock.opencode_go_proxy = ""
     mock.vercel_ai_gateway_proxy = ""
+    mock.bedrock_proxy = ""
     mock.huggingface_proxy = ""
     mock.cohere_proxy = ""
     mock.github_models_proxy = ""
@@ -159,6 +163,23 @@ def test_ollama_cloud_provider_config_uses_key_and_proxy():
 
     assert config.api_key == "ollama-cloud-token"
     assert config.base_url == OLLAMA_CLOUD_DEFAULT_BASE
+    assert config.proxy == "http://proxy.test:8080"
+
+
+def test_bedrock_provider_config_uses_regional_base_key_and_proxy() -> None:
+    descriptor = PROVIDER_CATALOG["bedrock"]
+    settings = _make_settings(
+        bedrock_api_key="bedrock-token",
+        bedrock_base_url="https://bedrock-mantle.eu-west-1.api.aws/v1",
+        bedrock_proxy="http://proxy.test:8080",
+    )
+
+    config = build_provider_config(descriptor, settings)
+
+    assert descriptor.credential_env == "AWS_BEARER_TOKEN_BEDROCK"
+    assert descriptor.default_base_url == BEDROCK_DEFAULT_BASE
+    assert config.api_key == "bedrock-token"
+    assert config.base_url == "https://bedrock-mantle.eu-west-1.api.aws/v1"
     assert config.proxy == "http://proxy.test:8080"
 
 
@@ -374,6 +395,7 @@ def test_create_provider_instantiates_each_builtin():
         cloudflare_api_token="test_cloudflare_token",
         cloudflare_account_id="test_cloudflare_account",
         vercel_ai_gateway_api_key="test_vercel_key",
+        bedrock_api_key="test_bedrock_key",
         huggingface_api_key="test_huggingface_key",
         cohere_api_key="test_cohere_key",
         github_models_token="test_github_models_token",
@@ -403,6 +425,7 @@ def test_create_provider_instantiates_each_builtin():
         "opencode": OpenAIChatProvider,
         "opencode_go": OpenAIChatProvider,
         "vercel": OpenAIChatProvider,
+        "bedrock": OpenAIChatProvider,
         "huggingface": OpenAIChatProvider,
         "cohere": OpenAIChatProvider,
         "github_models": GitHubModelsProvider,

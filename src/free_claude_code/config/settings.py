@@ -13,7 +13,7 @@ from .env_files import (
     settings_env_files,
 )
 from .nim import NimSettings
-from .provider_catalog import SUPPORTED_PROVIDER_IDS
+from .provider_catalog import BEDROCK_DEFAULT_BASE, SUPPORTED_PROVIDER_IDS
 from .reasoning import ReasoningPreference
 
 
@@ -51,6 +51,15 @@ class Settings(BaseSettings):
     # ==================== Vercel AI Gateway ====================
     vercel_ai_gateway_api_key: str = Field(
         default="", validation_alias="AI_GATEWAY_API_KEY"
+    )
+
+    # ==================== Amazon Bedrock Mantle ====================
+    bedrock_api_key: str = Field(
+        default="", validation_alias="AWS_BEARER_TOKEN_BEDROCK"
+    )
+    bedrock_base_url: str = Field(
+        default=BEDROCK_DEFAULT_BASE,
+        validation_alias="BEDROCK_BASE_URL",
     )
 
     # ==================== Hugging Face Inference Providers ====================
@@ -152,6 +161,7 @@ class Settings(BaseSettings):
     vercel_ai_gateway_proxy: str = Field(
         default="", validation_alias="VERCEL_AI_GATEWAY_PROXY"
     )
+    bedrock_proxy: str = Field(default="", validation_alias="BEDROCK_PROXY")
     huggingface_proxy: str = Field(default="", validation_alias="HUGGINGFACE_PROXY")
     cohere_proxy: str = Field(default="", validation_alias="COHERE_PROXY")
     github_models_proxy: str = Field(default="", validation_alias="GITHUB_MODELS_PROXY")

@@ -33,7 +33,7 @@ def test_provider_catalog_remote_credentials_in_admin_manifest() -> None:
     assert not missing and not wrong_attr, "\n".join(missing + wrong_attr)
 
 
-def test_provider_catalog_local_base_urls_in_admin_manifest() -> None:
+def test_provider_catalog_base_urls_in_admin_manifest() -> None:
     missing_key: list[str] = []
     wrong_attr: list[str] = []
 

@@ -39,6 +39,8 @@ def _settings(**overrides):
         "minimax_api_key": "",
         "opencode_api_key": "",
         "vercel_ai_gateway_api_key": "",
+        "bedrock_api_key": "",
+        "bedrock_base_url": "https://bedrock-mantle.us-east-1.api.aws/v1",
         "huggingface_api_key": "",
         "cohere_api_key": "",
         "github_models_token": "",
@@ -152,6 +154,23 @@ def test_openrouter_provider_smoke_uses_concrete_free_model(monkeypatch) -> None
 
     assert [model.provider for model in models] == ["open_router"]
     assert models[0].full_model == "open_router/moonshotai/kimi-k2.6:free"
+    assert models[0].source == "provider_default"
+
+
+def test_bedrock_provider_configuration_uses_official_api_key(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_BEDROCK", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            bedrock_api_key="bedrock-key",
+        )
+    )
+
+    assert config.has_provider_configuration("bedrock")
+    models = config.provider_smoke_models()
+    assert [model.provider for model in models] == ["bedrock"]
+    assert models[0].full_model == "bedrock/openai.gpt-oss-120b"
     assert models[0].source == "provider_default"
 
 

@@ -30,6 +30,9 @@ OLLAMA_CLOUD_DEFAULT_BASE = "https://ollama.com/v1"
 OPENCODE_DEFAULT_BASE = "https://opencode.ai/zen/v1"
 OPENCODE_GO_DEFAULT_BASE = "https://opencode.ai/zen/go/v1"
 VERCEL_AI_GATEWAY_DEFAULT_BASE = "https://ai-gateway.vercel.sh/v1"
+# Amazon Bedrock Mantle OpenAI-compatible endpoint. The base URL remains
+# configurable because API keys and model availability are region-scoped.
+BEDROCK_DEFAULT_BASE = "https://bedrock-mantle.us-east-1.api.aws/v1"
 HUGGINGFACE_DEFAULT_BASE = "https://router.huggingface.co/v1"
 COHERE_DEFAULT_BASE = "https://api.cohere.ai/compatibility/v1"
 GITHUB_MODELS_DEFAULT_BASE = "https://models.github.ai/inference"
@@ -138,6 +141,16 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="vercel_ai_gateway_api_key",
         default_base_url=VERCEL_AI_GATEWAY_DEFAULT_BASE,
         proxy_attr="vercel_ai_gateway_proxy",
+    ),
+    "bedrock": ProviderDescriptor(
+        provider_id="bedrock",
+        display_name="Amazon Bedrock",
+        credential_env="AWS_BEARER_TOKEN_BEDROCK",
+        credential_url="https://console.aws.amazon.com/bedrock/",
+        credential_attr="bedrock_api_key",
+        default_base_url=BEDROCK_DEFAULT_BASE,
+        base_url_attr="bedrock_base_url",
+        proxy_attr="bedrock_proxy",
     ),
     "huggingface": ProviderDescriptor(
         provider_id="huggingface",
