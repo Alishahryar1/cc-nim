@@ -3,7 +3,9 @@
 from __future__ import annotations
 
 from collections.abc import AsyncIterator, Sequence
+from typing import Any
 
+from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
@@ -87,6 +89,13 @@ class RotatingProvider(BaseProvider):
 
         while len(attempted) < len(self._providers):
             index = await self._state.acquire()
+            if index < 0:
+                # Every credential is benched (cooldown/circuit-open/lockout).
+                wait = await self._state.shortest_cooldown_remaining()
+                raise ApplicationUnavailableError(
+                    "All API keys for this provider are in cooldown. "
+                    f"Retry in {max(1, int(wait))}s."
+                )
             if index in attempted:
                 remaining = [
                     i for i in range(len(self._providers)) if i not in attempted
@@ -125,3 +134,7 @@ class RotatingProvider(BaseProvider):
 
         if last_error is not None:
             raise last_error
+
+    def key_health(self) -> list[dict[str, Any]]:
+        """Per-credential health snapshots (index-aligned with api_keys)."""
+        return self._state.get_metrics()

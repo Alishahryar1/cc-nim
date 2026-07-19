@@ -18,6 +18,7 @@ from free_claude_code.config.admin.values import load_config_response, load_valu
 from free_claude_code.config.model_refs import configured_chat_model_refs
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.providers.runtime.config import parse_credential_keys
+from free_claude_code.providers.runtime.rotating import RotatingProvider
 
 from .dependencies import get_services
 from .ports import ApiServices
@@ -186,17 +187,46 @@ def _require_unlocked_credential(entry: dict[str, Any]) -> None:
 
 
 @router.get("/admin/api/credentials/{env_key}/keys")
-async def list_credential_keys(env_key: str, request: Request):
+async def list_credential_keys(
+    env_key: str,
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
     """List the configured keys for one provider credential (masked)."""
     require_loopback_admin(request)
     entry = _credential_entry_or_404(env_key)
     keys = parse_credential_keys(str(entry["value"]))
+
+    # Best-effort live key health from the rotating provider, index-aligned
+    # with the configured key list.
+    health: list[dict[str, Any] | None] = [None] * len(keys)
+    provider_id = next(
+        (
+            descriptor.provider_id
+            for descriptor in PROVIDER_CATALOG.values()
+            if descriptor.credential_env == env_key
+        ),
+        None,
+    )
+    if provider_id is not None:
+        try:
+            async with services.requests.acquire() as lease:
+                if lease.is_provider_cached(provider_id):
+                    provider = lease.resolve_provider(provider_id)
+                    if isinstance(provider, RotatingProvider):
+                        snapshots = provider.key_health()
+                        for i in range(min(len(keys), len(snapshots))):
+                            health[i] = snapshots[i]
+        except Exception:
+            pass  # Health is informational only; never fail the listing.
+
     return {
         "env_key": env_key,
         "source": entry["source"],
         "locked": is_locked_source(entry["source"]),
         "count": len(keys),
         "keys": [_mask_credential_key(key) for key in keys],
+        "health": health,
     }
 
 

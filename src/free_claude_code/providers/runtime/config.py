@@ -8,7 +8,9 @@ from free_claude_code.config.provider_catalog import ProviderDescriptor
 from free_claude_code.config.settings import Settings
 from free_claude_code.providers.base import ProviderConfig
 
-CREDENTIAL_ROTATION_POLICIES = frozenset({"single", "round_robin", "on_error"})
+CREDENTIAL_ROTATION_POLICIES = frozenset(
+    {"single", "round_robin", "least_used", "failover", "on_error"}
+)
 DEFAULT_CREDENTIAL_ROTATION = "single"
 
 

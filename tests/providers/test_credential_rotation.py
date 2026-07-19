@@ -87,7 +87,7 @@ async def test_round_robin_state_advances():
 
 @pytest.mark.asyncio
 async def test_on_error_state_sticks_then_fails_over():
-    state = CredentialRotationState(2, "on_error", backoff_seconds=60.0)
+    state = CredentialRotationState(2, "on_error")
     assert await state.acquire() == 0
     assert await state.acquire() == 0
     rotate = await state.report_failure(0, _RetryableError())
@@ -97,10 +97,99 @@ async def test_on_error_state_sticks_then_fails_over():
 
 @pytest.mark.asyncio
 async def test_backed_off_keys_are_skipped_in_round_robin():
-    state = CredentialRotationState(3, "round_robin", backoff_seconds=60.0)
+    state = CredentialRotationState(3, "round_robin")
     await state.report_failure(1, _RetryableError())
     assert await state.acquire() == 0
     assert await state.acquire() == 2
+    assert await state.acquire() == 0
+
+
+@pytest.mark.asyncio
+async def test_least_used_picks_least_requested_healthy_key():
+    state = CredentialRotationState(3, "least_used")
+    assert await state.acquire() == 0
+    assert await state.acquire() == 1
+    assert await state.acquire() == 2
+    # All used once; key 0 was used longest ago
+    assert await state.acquire() == 0
+    # Bench key 0; least-used must skip it
+    await state.report_failure(0, _RetryableError())
+    assert await state.acquire() == 1
+
+
+@pytest.mark.asyncio
+async def test_failover_sticks_to_first_healthy_key():
+    state = CredentialRotationState(3, "failover")
+    assert await state.acquire() == 0
+    assert await state.acquire() == 0
+    await state.report_failure(0, _RetryableError())
+    assert await state.acquire() == 1
+    assert await state.acquire() == 1
+
+
+@pytest.mark.asyncio
+async def test_cooldown_tiers_escalate_on_repeated_failures():
+    state = CredentialRotationState(1, "failover")
+    await state.report_failure(0, _RetryableError())
+    metrics = state.get_metrics()[0]
+    assert metrics["state"] == "COOLDOWN"
+    assert metrics["tier"] == 1
+    first = metrics["cooldown_remaining"]
+    assert 9.0 < first <= 10.0
+
+    await state.report_failure(0, _RetryableError())
+    metrics = state.get_metrics()[0]
+    assert metrics["tier"] == 2
+    assert 29.0 < metrics["cooldown_remaining"] <= 30.0
+
+
+@pytest.mark.asyncio
+async def test_circuit_opens_after_three_consecutive_failures():
+    state = CredentialRotationState(1, "failover")
+    for _ in range(3):
+        await state.report_failure(0, Exception("boom"))
+    assert state.get_metrics()[0]["state"] == "CIRCUIT_OPEN"
+
+
+@pytest.mark.asyncio
+async def test_auth_failures_escalate_lockout_tiers():
+    state = CredentialRotationState(2, "failover")
+
+    class _AuthError(Exception):
+        status_code = 401
+
+    await state.report_failure(0, _AuthError())
+    metrics = state.get_metrics()[0]
+    assert metrics["state"] == "LOCKED_OUT"
+    assert 290.0 < metrics["lockout_remaining"] <= 300.0
+
+    await state.report_failure(0, _AuthError())
+    metrics = state.get_metrics()[0]
+    assert 3500.0 < metrics["lockout_remaining"] <= 3600.0
+
+    await state.report_failure(0, _AuthError())
+    metrics = state.get_metrics()[0]
+    assert 86300.0 < metrics["lockout_remaining"] <= 86400.0
+
+
+@pytest.mark.asyncio
+async def test_acquire_returns_minus_one_when_all_keys_benched():
+    state = CredentialRotationState(2, "round_robin")
+    await state.report_failure(0, _RetryableError())
+    await state.report_failure(1, _RetryableError())
+    assert await state.acquire() == -1
+    wait = await state.shortest_cooldown_remaining()
+    assert 0 < wait <= 10.0
+
+
+@pytest.mark.asyncio
+async def test_report_success_restores_health():
+    state = CredentialRotationState(1, "failover")
+    await state.report_failure(0, _RetryableError())
+    await state.report_success(0)
+    metrics = state.get_metrics()[0]
+    assert metrics["state"] == "HEALTHY"
+    assert metrics["tier"] == 0
     assert await state.acquire() == 0
 
 
@@ -228,5 +317,5 @@ def test_admin_manifest_exposes_rotation_select_for_nvidia_nim():
     field = FIELD_BY_KEY.get("NVIDIA_NIM_API_KEY_ROTATION")
     assert field is not None
     assert field.field_type == "select"
-    assert set(field.options) == {"single", "round_robin", "on_error"}
+    assert set(field.options) == {"single", "round_robin", "least_used", "failover"}
     assert field.restart_required is True

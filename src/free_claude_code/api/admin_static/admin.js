@@ -223,6 +223,12 @@ function renderSections(sections, fields) {
       sectionEl.className = "settings-section";
       sectionEl.id = `section-${section.id}`;
 
+      // Rotation selects are rendered inside the credential key manager
+      // instead of the generic grid.
+      const gridFields = sectionFields.filter(
+        (field) => !field.key.endsWith("_ROTATION"),
+      );
+
       const heading = document.createElement("div");
       heading.className = "section-heading";
       heading.innerHTML = `<div><h3>${section.label}</h3><p>${section.description}</p></div>`;
@@ -238,7 +244,7 @@ function renderSections(sections, fields) {
 
       const grid = document.createElement("div");
       grid.className = "field-grid";
-      sectionFields.forEach((field) => {
+      gridFields.forEach((field) => {
         grid.appendChild(renderField(field));
       });
       sectionEl.appendChild(grid);
@@ -323,10 +329,37 @@ function keyManagerForField(field) {
   const container = document.createElement("div");
   container.className = "key-manager";
 
+  const header = document.createElement("div");
+  header.className = "key-manager-header";
+
   const toggle = document.createElement("button");
   toggle.type = "button";
   toggle.className = "ghost-button key-manager-toggle";
   toggle.textContent = "Manage keys";
+  header.appendChild(toggle);
+
+  // Rotation policy select for this credential (participates in the normal
+  // dirty/apply flow via the shared input machinery).
+  const rotationField = state.fields.get(`${field.key}_ROTATION`);
+  if (rotationField) {
+    const rotationWrap = document.createElement("label");
+    rotationWrap.className = "key-manager-rotation";
+    const rotationLabel = document.createElement("span");
+    rotationLabel.textContent = "Rotation";
+    const rotationInput = inputForField(rotationField);
+    rotationInput.id = `field-${rotationField.key}`;
+    rotationInput.dataset.key = rotationField.key;
+    rotationInput.dataset.original = rotationField.value || "";
+    rotationInput.dataset.secret = "false";
+    rotationInput.dataset.configured = rotationField.configured ? "true" : "false";
+    rotationInput.dataset.fieldType = rotationField.type;
+    rotationInput.disabled = rotationField.locked;
+    rotationInput.addEventListener("input", updateDirtyState);
+    rotationInput.addEventListener("change", updateDirtyState);
+    rotationInput.title = rotationField.description || "Key rotation policy";
+    rotationWrap.append(rotationLabel, rotationInput);
+    header.appendChild(rotationWrap);
+  }
 
   const panel = document.createElement("div");
   panel.className = "key-manager-panel";
@@ -349,7 +382,7 @@ function keyManagerForField(field) {
     }
   });
 
-  container.append(toggle, panel);
+  container.append(header, panel);
 
   if (state.reopenKeyManager === field.key) {
     state.reopenKeyManager = null;
@@ -386,6 +419,13 @@ async function renderKeyManager(panel, field) {
     label.className = "key-manager-key";
     label.textContent = masked;
 
+    row.appendChild(label);
+
+    const health = Array.isArray(info.health) ? info.health[index] : null;
+    if (health && health.state) {
+      row.appendChild(keyHealthBadge(health));
+    }
+
     const remove = document.createElement("button");
     remove.type = "button";
     remove.className = "ghost-button key-manager-remove";
@@ -395,7 +435,7 @@ async function renderKeyManager(panel, field) {
       removeCredentialKey(field, index, remove),
     );
 
-    row.append(label, remove);
+    row.appendChild(remove);
     list.appendChild(row);
   });
   panel.appendChild(list);
@@ -432,6 +472,38 @@ async function renderKeyManager(panel, field) {
       "This credential comes from the process environment and is read-only here.";
     panel.appendChild(note);
   }
+}
+
+function formatSeconds(seconds) {
+  const s = Math.max(0, Math.round(seconds));
+  if (s < 60) return `${s}s`;
+  const m = Math.floor(s / 60);
+  const rem = s % 60;
+  if (m < 60) return rem ? `${m}m ${rem}s` : `${m}m`;
+  const h = Math.floor(m / 60);
+  const mrem = m % 60;
+  return mrem ? `${h}h ${mrem}m` : `${h}h`;
+}
+
+function keyHealthBadge(health) {
+  const state = String(health.state || "HEALTHY");
+  const badge = document.createElement("span");
+  badge.className = `key-health-badge key-health-${state.toLowerCase().replace(/_/g, "-")}`;
+
+  let backIn = "";
+  const remaining =
+    state === "LOCKED_OUT"
+      ? health.lockout_remaining || 0
+      : health.cooldown_remaining || 0;
+  if (remaining > 0 && state !== "HEALTHY") {
+    backIn = ` — back in ${formatSeconds(remaining)}`;
+  }
+  badge.textContent = state;
+
+  const requests = health.request_count || 0;
+  const failures = health.failure_count || 0;
+  badge.title = `${state}${backIn} — ${requests} requests, ${failures} failures`;
+  return badge;
 }
 
 async function reloadAndReopenKeyManager(field, message) {

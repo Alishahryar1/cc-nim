@@ -485,6 +485,57 @@ textarea:focus-visible,
   min-width: 0;
 }
 
+.key-manager-header {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.key-manager-rotation {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.85rem;
+  color: var(--muted);
+}
+
+.key-manager-rotation select {
+  max-width: 150px;
+}
+
+.key-health-badge {
+  flex-shrink: 0;
+  font-size: 0.7rem;
+  font-weight: 600;
+  letter-spacing: 0.03em;
+  padding: 2px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  color: var(--muted);
+}
+
+.key-health-healthy {
+  color: var(--ok, #34d399);
+  border-color: var(--ok, #34d399);
+}
+
+.key-health-cooldown {
+  color: var(--warn, #fbbf24);
+  border-color: var(--warn, #fbbf24);
+}
+
+.key-health-circuit-open,
+.key-health-locked-out {
+  color: var(--error, #f87171);
+  border-color: var(--error, #f87171);
+}
+
+.key-health-half-open {
+  color: var(--accent, #818cf8);
+  border-color: var(--accent, #818cf8);
+}
+
 /* Forms layout */
 .form-sections {
   display: grid;

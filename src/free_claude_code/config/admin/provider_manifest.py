@@ -177,15 +177,18 @@ def _rotation_field_specs() -> tuple[dict[str, Any], ...]:
                 "section_id": "providers",
                 "field_type": "select",
                 "default": "single",
-                "options": ("single", "round_robin", "on_error"),
+                "options": ("single", "round_robin", "least_used", "failover"),
                 "advanced": True,
                 "restart_required": True,
                 "description": (
                     "Rotation policy across a comma-separated list of keys in "
                     f"{descriptor.credential_env}. single = use the first key only; "
-                    "round_robin = spread requests across keys; "
-                    "on_error = stick to one key until it fails, then fail over. "
-                    "Requires restart."
+                    "round_robin = spread requests across healthy keys; "
+                    "least_used = least-used healthy key first; "
+                    "failover = stick to one key until it fails, then move on. "
+                    "Failing keys are benched automatically: tiered cooldowns "
+                    "(10s-120s), circuit breaker after 3 failures, escalating "
+                    "auth lockouts (5min-24h for 401/403). Requires restart."
                 ),
             }
         )

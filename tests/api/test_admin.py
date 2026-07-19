@@ -473,6 +473,8 @@ def test_credential_key_management_flow(monkeypatch, tmp_path):
     assert data["count"] == 1
     assert data["locked"] is False
     assert data["keys"] == ["sk-fir…1234"]
+    assert "health" in data
+    assert len(data["health"]) == 1
     assert "sk-first-key-1234" not in str(data)
 
     added = client.post(
