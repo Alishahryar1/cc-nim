@@ -26,7 +26,23 @@ TokenCounter = Callable[
     [list[Message], str | list[SystemContent] | None, list[Tool] | None],
     int,
 ]
-WireApi = Literal["messages", "responses"]
+WireApi = Literal["messages", "responses", "chat"]
+
+_INGRESS_EVENTS: dict[str, str] = {
+    "messages": "free_claude_code.api.request.received",
+    "responses": "free_claude_code.api.responses.request.received",
+    "chat": "free_claude_code.api.chat.request.received",
+}
+_STREAM_COMPLETE_EVENTS: dict[str, str] = {
+    "messages": "free_claude_code.api.response.stream_completed",
+    "responses": "free_claude_code.api.responses.stream_completed",
+    "chat": "free_claude_code.api.chat.stream_completed",
+}
+_STREAM_INTERRUPTED_EVENTS: dict[str, str] = {
+    "messages": "free_claude_code.api.response.stream_interrupted",
+    "responses": "free_claude_code.api.responses.stream_interrupted",
+    "chat": "free_claude_code.api.chat.stream_interrupted",
+}
 
 
 class ProviderExecutor:
@@ -78,19 +94,15 @@ class ProviderExecutor:
             ),
             "reasoning_budget_tokens": routed.reasoning.budget_tokens,
         }
-        if wire_api == "responses":
-            route_trace["wire_api"] = "responses"
+        if wire_api != "messages":
+            route_trace["wire_api"] = wire_api
         if self._generation_id is not None:
             route_trace["generation_id"] = self._generation_id
         trace_event(**route_trace)
 
         trace_event(
             stage="ingress",
-            event=(
-                "free_claude_code.api.responses.request.received"
-                if wire_api == "responses"
-                else "free_claude_code.api.request.received"
-            ),
+            event=_INGRESS_EVENTS[wire_api],
             source="api",
             message_count=len(routed.request.messages),
             snapshot=anthropic_request_snapshot(routed.request),
@@ -138,16 +150,8 @@ class ProviderExecutor:
             provider_body(),
             stage="egress",
             source="api",
-            complete_event=(
-                "free_claude_code.api.responses.stream_completed"
-                if wire_api == "responses"
-                else "free_claude_code.api.response.stream_completed"
-            ),
-            interrupted_event=(
-                "free_claude_code.api.responses.stream_interrupted"
-                if wire_api == "responses"
-                else "free_claude_code.api.response.stream_interrupted"
-            ),
+            complete_event=_STREAM_COMPLETE_EVENTS[wire_api],
+            interrupted_event=_STREAM_INTERRUPTED_EVENTS[wire_api],
             chunk_event=None,
             extra=stream_trace,
         )

@@ -351,6 +351,7 @@ and non-local origins.
 
 - `POST /v1/messages`: Anthropic Messages-compatible streaming requests.
 - `POST /v1/responses`: OpenAI Responses-compatible requests.
+- `POST /v1/chat/completions`: OpenAI Chat Completions-compatible requests.
 - `POST /v1/messages/count_tokens`: Anthropic token counting.
 - `GET /v1/models`: gateway and Claude-compatible model listing.
 - `GET /health`: health check.
@@ -860,6 +861,31 @@ does not synthesize reasoning summaries.
 Provider code should delegate protocol details to these modules. Avoid copying
 conversion code into individual providers, and avoid provider-to-provider imports
 for shared Anthropic behavior.
+
+[src/free_claude_code/core/openai_chat/](src/free_claude_code/core/openai_chat/) owns OpenAI Chat
+Completions support and mirrors the Responses dialect:
+
+- the permissive `OpenAIChatCompletionsRequest` ingress model used directly by
+  the FastAPI route and the protocol adapter;
+- the `OpenAIChatAdapter` facade used by the API layer;
+- both non-streaming and streaming `/v1/chat/completions` support;
+- Chat request conversion into Anthropic Messages payloads, covering
+  `system`/`user`/`assistant`/`tool` roles, `tool_calls` to `tool_use`,
+  `tool_choice`, multimodal `image_url` parts, and stop sequences;
+- non-streaming responses folded from the internal Anthropic SSE through the
+  shared `aggregate_anthropic_sse_to_message` and serialized as a single
+  `chat.completion`;
+- streaming responses assembled as `chat.completion.chunk` frames by
+  `streaming.py`, reusing the neutral Anthropic SSE parser under
+  `core/anthropic/`.
+
+Anthropic `stop_reason` maps to Chat `finish_reason` (`tool_use` to
+`tool_calls`, `max_tokens` to `length`, otherwise `stop`), and
+`stream_options.include_usage` appends a trailing usage-only chunk. The package
+reuses the OpenAI error envelope owned by `core/openai_responses`. Reasoning and
+thinking blocks are dropped from Chat Completions output because that dialect has
+no standard field for them; text and tool calls are unaffected. API code depends
+on the adapter, not on the internal module owners.
 
 ## Local Optimizations And Server Tools
 
@@ -1391,7 +1417,8 @@ when maintainers want branch-level assurance.
 
 1. Put shared Anthropic behavior under [src/free_claude_code/core/anthropic/](src/free_claude_code/core/anthropic/).
 2. Put OpenAI Responses behavior under
-   [src/free_claude_code/core/openai_responses/](src/free_claude_code/core/openai_responses/).
+   [src/free_claude_code/core/openai_responses/](src/free_claude_code/core/openai_responses/), and OpenAI
+   Chat Completions behavior under [src/free_claude_code/core/openai_chat/](src/free_claude_code/core/openai_chat/).
 3. Keep provider-specific request quirks inside the provider profile or specialized
    provider subclass.
 4. Add stream contract tests under [tests/contracts/](tests/contracts/) or

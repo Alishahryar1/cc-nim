@@ -31,7 +31,7 @@ PreStartErrorResponse = Callable[[BaseException], Response]
 TerminalFrameEmitter = Callable[[BaseException], str]
 TerminalFailureObserver = Callable[[BaseException], None]
 ReleaseResponseResource = Callable[[], Awaitable[None]]
-WireApi = Literal["messages", "responses"]
+WireApi = Literal["messages", "responses", "chat"]
 
 
 class EmptyStreamError(RuntimeError):
@@ -377,6 +377,26 @@ async def openai_responses_sse_streaming_response(
     pre_start_error_response: PreStartErrorResponse,
 ) -> Response:
     """Return a streaming response for OpenAI Responses-style SSE."""
+    return await _first_chunk_streaming_response(
+        body,
+        headers=headers,
+        pre_start_error_response=pre_start_error_response,
+        terminal_frame=None,
+        terminal_failure_observer=None,
+    )
+
+
+async def openai_chat_sse_streaming_response(
+    body: AsyncIterator[str],
+    *,
+    headers: Mapping[str, str],
+    pre_start_error_response: PreStartErrorResponse,
+) -> Response:
+    """Return a streaming response for OpenAI Chat Completions-style SSE.
+
+    The Chat adapter serializes its own terminal error frames into the body, so
+    no terminal frame emitter is bound here.
+    """
     return await _first_chunk_streaming_response(
         body,
         headers=headers,
