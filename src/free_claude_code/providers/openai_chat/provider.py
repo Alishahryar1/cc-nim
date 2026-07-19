@@ -3,7 +3,7 @@
 import asyncio
 import sys
 import uuid
-from collections.abc import AsyncIterator, Iterator, Mapping
+from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from typing import Any
 
 import httpx
@@ -63,6 +63,8 @@ from .usage import (
     usage_int,
 )
 
+OpenAIAsyncCredentialProvider = Callable[[], Awaitable[str]]
+
 
 class OpenAIChatProvider(BaseProvider):
     """OpenAI-compatible ``/chat/completions`` provider configured by a profile."""
@@ -74,6 +76,7 @@ class OpenAIChatProvider(BaseProvider):
         profile: OpenAIChatProfile,
         rate_limiter: ProviderRateLimiter,
         default_headers: Mapping[str, str] | None = None,
+        api_key_provider: OpenAIAsyncCredentialProvider | None = None,
     ):
         super().__init__(config)
         self._profile = profile
@@ -96,7 +99,7 @@ class OpenAIChatProvider(BaseProvider):
                 ),
             )
         self._client = AsyncOpenAI(
-            api_key=self._api_key,
+            api_key=api_key_provider or self._api_key,
             base_url=self._base_url,
             max_retries=0,
             default_headers=default_headers,

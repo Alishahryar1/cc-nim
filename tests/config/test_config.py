@@ -39,6 +39,7 @@ class TestSettings:
 
         monkeypatch.delenv("CLAUDE_WORKSPACE", raising=False)
         monkeypatch.delenv("MODEL", raising=False)
+        monkeypatch.delenv("VERTEX_LOCATION", raising=False)
         monkeypatch.delenv("HTTP_READ_TIMEOUT", raising=False)
         monkeypatch.delenv("HTTP_CONNECT_TIMEOUT", raising=False)
         monkeypatch.setitem(Settings.model_config, "env_file", ())
@@ -58,6 +59,7 @@ class TestSettings:
         assert settings.debug_subagent_stack is False
         assert settings.log_level == "INFO"
         assert settings.open_admin_browser is True
+        assert settings.vertex_location == "global"
 
     def test_open_admin_browser_loads_from_environment(self, monkeypatch):
         from free_claude_code.config.settings import Settings
@@ -336,6 +338,18 @@ class TestSettings:
         assert settings.cloudflare_api_token == "cf-token"
         assert settings.cloudflare_account_id == "cf-account"
         assert settings.cloudflare_proxy == "http://proxy.test:8080"
+
+    def test_vertex_settings_from_env(self, monkeypatch):
+        """Vertex project, location, and proxy env vars load into settings."""
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.setenv("VERTEX_PROJECT_ID", "vertex-project")
+        monkeypatch.setenv("VERTEX_LOCATION", "us-central1")
+        monkeypatch.setenv("VERTEX_PROXY", "http://proxy.test:8080")
+        settings = Settings()
+        assert settings.vertex_project_id == "vertex-project"
+        assert settings.vertex_location == "us-central1"
+        assert settings.vertex_proxy == "http://proxy.test:8080"
 
     def test_vercel_settings_from_env(self, monkeypatch):
         """Vercel AI Gateway key and proxy env vars load into settings."""

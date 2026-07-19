@@ -490,6 +490,10 @@ request-scoped policy passed to execution.
 
 Provider model discovery and optional thinking metadata live in the
 application-level catalog owned by `ProviderRuntimeManager`.
+Discovery is an adapter operation, not an assumption that every upstream has an
+OpenAI `/models` route. For example, Vertex translates that operation to
+Google's paginated `publishers/google/models` API and converts publisher resource
+names into the exact model IDs accepted by its OpenAI-compatible endpoint.
 `ProviderModelInfo.supports_thinking` alone owns discovered per-model thinking
 support for model-list presentation; it does not select request behavior.
 Provider adapters must never branch on upstream model names or versions to
@@ -508,8 +512,10 @@ passes it as `model_catalog_json`. Codex users open the native picker with
 Provider metadata is neutral and centralized in
 [config/provider_catalog.py](src/free_claude_code/config/provider_catalog.py). Each
 `ProviderDescriptor` declares provider ID, display name, locality, credential env
-var, default base URL, settings attribute names, and proxy support. It does not
-select a concrete adapter.
+var, default base URL, settings attribute names, configuration readiness, and
+proxy support. Readiness may require multiple ordinary settings or a non-secret
+project ID; it is not inferred exclusively from API-key presence. The catalog
+does not select a concrete adapter.
 
 [providers/runtime/](src/free_claude_code/providers/runtime/) owns construction details for one
 closable provider generation: construction policy, resolved provider
@@ -554,7 +560,7 @@ compatibility layer.
 - `BaseProvider`: the abstract implementation base for cleanup, model listing,
   explicit preflight, and `stream_response()`.
 
-There is one upstream provider family:
+There is one upstream transport family:
 [providers/openai_chat/](src/free_claude_code/providers/openai_chat/) implements the concrete
 `OpenAIChatProvider` used by every OpenAI-compatible `/chat/completions`
 upstream. `OpenAIChatProfile` contains immutable request policy, an explicit
@@ -565,6 +571,16 @@ empty subclasses. The package also
 owns the exactly typed private per-request runner, recovery operations, tool-call
 assembly, and streamed usage handling. No obsolete generic transport namespace
 or untyped provider backchannel remains.
+
+[providers/google_openai/](src/free_claude_code/providers/google_openai/) owns the
+Google-specific protocol behavior shared by AI Studio and Vertex AI: literal
+Google `extra_body` construction, thought-signature replay, and thinking-budget
+encoding. Neither concrete provider imports from the other. AI Studio owns its
+API-key endpoint; [providers/vertex/](src/free_claude_code/providers/vertex/)
+owns project/location endpoint composition, renewable Application Default
+Credentials, and translation of Google's native publisher-model catalog. The
+OpenAI transport receives a callable credential source, so access-token refresh
+does not require rebuilding provider generations or persisting ephemeral tokens.
 
 `OpenAIChatProvider` explicitly implements preflight by constructing the same
 upstream request body it will later stream. `BaseProvider` makes that operation

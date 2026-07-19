@@ -117,3 +117,32 @@ def test_cloudflare_account_id_is_admin_provider_field() -> None:
     assert entry.settings_attr == "cloudflare_account_id"
     assert entry.section_id == "providers"
     assert entry.secret is False
+
+
+def test_vertex_project_and_location_are_admin_provider_fields() -> None:
+    project = FIELD_BY_KEY["VERTEX_PROJECT_ID"]
+    location = FIELD_BY_KEY["VERTEX_LOCATION"]
+
+    assert project.settings_attr == "vertex_project_id"
+    assert project.section_id == "providers"
+    assert project.secret is False
+    assert location.settings_attr == "vertex_location"
+    assert location.default == "global"
+
+
+def test_vertex_admin_status_uses_project_configuration_not_an_api_key() -> None:
+    from free_claude_code.config.admin.status import provider_config_status
+
+    def vertex_status(project_id: str) -> dict[str, object]:
+        statuses = provider_config_status(
+            {
+                "VERTEX_PROJECT_ID": {"value": project_id},
+                "VERTEX_LOCATION": {"value": "global"},
+            }
+        )
+        return next(status for status in statuses if status["provider_id"] == "vertex")
+
+    assert vertex_status("")["status"] == "missing_config"
+    assert vertex_status("")["label"] == "Missing configuration"
+    assert vertex_status("")["configuration"] == "VERTEX_PROJECT_ID"
+    assert vertex_status("vertex-project")["status"] == "configured"

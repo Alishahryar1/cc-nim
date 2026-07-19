@@ -14,7 +14,7 @@ from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.settings import Settings
 from free_claude_code.providers.base import BaseProvider
 
-from .config import provider_credential
+from .config import has_provider_configuration
 from .model_cache import ProviderModelCache
 from .validation import provider_query_failure_reason
 
@@ -31,11 +31,7 @@ def model_cache_provider_ids_for_settings(settings: Settings) -> tuple[str, ...]
     return tuple(
         provider_id
         for provider_id, descriptor in PROVIDER_CATALOG.items()
-        if descriptor.local
-        or (
-            descriptor.credential_env is not None
-            and provider_credential(descriptor, settings).strip()
-        )
+        if has_provider_configuration(descriptor, settings)
     )
 
 

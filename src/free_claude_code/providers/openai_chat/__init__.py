@@ -6,7 +6,7 @@ from free_claude_code.providers.rate_limit import ProviderRateLimiter
 from .base_url import openai_v1_base_url
 from .extra_body import validate_extra_body_does_not_override_canonical_fields
 from .profiles import OPENAI_CHAT_PROFILES, OpenAIChatProfile
-from .provider import OpenAIChatProvider
+from .provider import OpenAIAsyncCredentialProvider, OpenAIChatProvider
 from .reasoning import (
     NO_REASONING,
     ChatTemplateReasoning,
@@ -41,6 +41,7 @@ __all__ = [
     "OPENAI_CHAT_PROFILES",
     "ChatTemplateReasoning",
     "NamedEffortReasoning",
+    "OpenAIAsyncCredentialProvider",
     "OpenAIChatProfile",
     "OpenAIChatProvider",
     "OpenAIChatRequestPolicy",

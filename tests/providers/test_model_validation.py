@@ -42,6 +42,7 @@ def _settings(
     wafer_api_key: str = "",
     opencode_api_key: str = "",
     zai_api_key: str = "",
+    vertex_project_id: str = "",
 ) -> Settings:
     return Settings.model_construct(
         model=model,
@@ -55,6 +56,7 @@ def _settings(
         wafer_api_key=wafer_api_key,
         opencode_api_key=opencode_api_key,
         zai_api_key=zai_api_key,
+        vertex_project_id=vertex_project_id,
         log_api_error_tracebacks=False,
     )
 
@@ -483,6 +485,28 @@ async def test_runtime_refresh_model_list_cache_uses_configured_remote_keys_and_
         "lmstudio": frozenset({"local-qwen"}),
     }
     assert result.refreshed_provider_ids == ("open_router", "lmstudio")
+    assert result.failed_provider_ids == ()
+
+
+@pytest.mark.asyncio
+async def test_runtime_refresh_model_list_cache_treats_vertex_project_as_configuration() -> (
+    None
+):
+    settings = _settings(
+        model="nvidia_nim/nim-model",
+        vertex_project_id="vertex-project",
+    )
+    runtime = _manager(
+        settings,
+        {"vertex": FakeProvider(frozenset({"google/gemini-3.5-flash"}))},
+    )
+
+    result = await runtime.refresh_model_list_cache()
+
+    assert runtime.cached_model_ids() == {
+        "vertex": frozenset({"google/gemini-3.5-flash"})
+    }
+    assert result.refreshed_provider_ids == ("vertex",)
     assert result.failed_provider_ids == ()
 
 

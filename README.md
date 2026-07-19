@@ -140,6 +140,7 @@ Enter the listed setting in the Admin UI, open **Model Config**, then search the
 | [NVIDIA NIM](https://build.nvidia.com/settings/api-keys) | `NVIDIA_NIM_API_KEY` | `nvidia_nim/nvidia/nemotron-3-super-120b-a12b` |
 | [OpenRouter](https://openrouter.ai/keys) | `OPENROUTER_API_KEY` | `open_router/openrouter/free` |
 | [Google AI Studio (Gemini)](https://aistudio.google.com/apikey) | `GEMINI_API_KEY` | `gemini/models/gemini-3.1-flash-lite` |
+| [Google Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/start/openai) | `VERTEX_PROJECT_ID` + ADC | `vertex/google/gemini-3.5-flash` |
 | [DeepSeek](https://platform.deepseek.com/api_keys) | `DEEPSEEK_API_KEY` | `deepseek/deepseek-chat` |
 | [Mistral La Plateforme](https://console.mistral.ai/) | `MISTRAL_API_KEY` | `mistral/devstral-small-latest` |
 | [Mistral Codestral](https://console.mistral.ai/) | `CODESTRAL_API_KEY` | `mistral_codestral/codestral-latest` |
@@ -175,6 +176,11 @@ Important provider notes:
 - Amazon Bedrock uses its Mantle OpenAI-compatible endpoint. Set
   `BEDROCK_BASE_URL` to the endpoint for the same region as the API key and
   select one of the models returned by FCC's model picker.
+- Vertex AI uses Google Application Default Credentials instead of an API key.
+  Locally, run `gcloud auth application-default login` once; service-account
+  files and attached service accounts also work. Set `VERTEX_PROJECT_ID`, and
+  optionally change `VERTEX_LOCATION` from its `global` default. FCC refreshes
+  expiring access tokens automatically.
 - Cloudflare requires both its API token and account ID.
 - Ollama Cloud connects directly to `ollama.com`; use the exact model IDs shown
   by FCC's model picker. Local Ollama remains available through the separate

@@ -11,6 +11,7 @@ from free_claude_code.config.provider_catalog import (
     SUPPORTED_PROVIDER_IDS,
 )
 from free_claude_code.config.settings import Settings, get_settings
+from free_claude_code.providers.runtime.config import has_provider_configuration
 
 DEFAULT_TARGETS = frozenset(
     {
@@ -65,6 +66,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "github_models": "github_models/openai/gpt-4.1",
     "zai": "zai/glm-5.2",
     "gemini": "gemini/models/gemini-3.1-flash-lite",
+    "vertex": "vertex/google/gemini-3.5-flash",
     "groq": "groq/llama-3.3-70b-versatile",
     "sambanova": "sambanova/Meta-Llama-3.3-70B-Instruct",
     "cerebras": "cerebras/llama3.1-8b",
@@ -252,21 +254,10 @@ class SmokeConfig:
         return bool(os.getenv(f"FCC_SMOKE_MODEL_{provider.upper()}"))
 
     def has_provider_configuration(self, provider: str) -> bool:
-        if provider == "cloudflare":
-            return bool(
-                self.settings.cloudflare_api_token.strip()
-                and self.settings.cloudflare_account_id.strip()
-            )
         descriptor = PROVIDER_CATALOG.get(provider)
         if descriptor is None:
             return False
-        if descriptor.credential_attr:
-            credential = getattr(self.settings, descriptor.credential_attr, "")
-            return isinstance(credential, str) and bool(credential.strip())
-        if descriptor.base_url_attr:
-            base_url = getattr(self.settings, descriptor.base_url_attr, "")
-            return isinstance(base_url, str) and bool(base_url.strip())
-        return descriptor.static_credential is not None
+        return has_provider_configuration(descriptor, self.settings)
 
 
 def _parse_csv(raw: str | None) -> frozenset[str]:

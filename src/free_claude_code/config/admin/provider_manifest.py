@@ -143,6 +143,7 @@ def provider_field_specs() -> tuple[dict[str, Any], ...]:
     return (
         *_credential_field_specs(),
         *_cloudflare_account_field_specs(),
+        *_vertex_field_specs(),
         *_base_url_field_specs(),
         *_proxy_field_specs(),
     )
@@ -197,6 +198,32 @@ def _cloudflare_account_field_specs() -> tuple[dict[str, Any], ...]:
             "settings_attr": "cloudflare_account_id",
             "description": (
                 "Cloudflare account ID used to build the /accounts/{id}/ai/v1 endpoint."
+            ),
+        },
+    )
+
+
+def _vertex_field_specs() -> tuple[dict[str, Any], ...]:
+    return (
+        {
+            "key": "VERTEX_PROJECT_ID",
+            "label": "Google Cloud Project ID",
+            "section_id": "providers",
+            "settings_attr": "vertex_project_id",
+            "description": (
+                "Google Cloud project used for Vertex AI. Authentication uses "
+                "Application Default Credentials (ADC)."
+            ),
+        },
+        {
+            "key": "VERTEX_LOCATION",
+            "label": "Vertex AI Location",
+            "section_id": "providers",
+            "settings_attr": "vertex_location",
+            "default": "global",
+            "description": (
+                "Use global for the global Vertex AI endpoint or a region such as "
+                "us-central1."
             ),
         },
     )

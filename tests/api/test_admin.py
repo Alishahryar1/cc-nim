@@ -152,6 +152,15 @@ def test_admin_api_fetches_bypass_browser_cache():
     assert 'cache: "no-store"' in script
 
 
+def test_admin_provider_cards_support_non_key_configuration():
+    script = Path("src/free_claude_code/api/admin_static/admin.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert '"missing_config"' in script
+    assert ": provider.configuration;" in script
+
+
 def test_admin_page_no_longer_renders_generated_env_panel(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     app = create_test_app()

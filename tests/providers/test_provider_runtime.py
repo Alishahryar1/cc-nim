@@ -38,6 +38,7 @@ from free_claude_code.providers.runtime import (
     build_provider_config,
     create_provider,
 )
+from free_claude_code.providers.vertex import VertexProvider
 
 
 def _make_settings(**overrides):
@@ -93,6 +94,9 @@ def _make_settings(**overrides):
     mock.cloudflare_proxy = ""
     mock.gemini_api_key = ""
     mock.gemini_proxy = ""
+    mock.vertex_project_id = "test-vertex-project"
+    mock.vertex_location = "global"
+    mock.vertex_proxy = ""
     mock.groq_api_key = ""
     mock.groq_proxy = ""
     mock.cerebras_api_key = ""
@@ -389,6 +393,7 @@ def test_create_provider_uses_openai_chat_openrouter_by_default():
 def test_create_provider_instantiates_each_builtin():
     settings = _make_settings(
         gemini_api_key="test_gemini_key",
+        vertex_project_id="test-vertex-project",
         groq_api_key="test_groq_key",
         cerebras_api_key="test_cerebras_key",
         fireworks_api_key="test_fireworks_key",
@@ -431,6 +436,7 @@ def test_create_provider_instantiates_each_builtin():
         "github_models": GitHubModelsProvider,
         "zai": OpenAIChatProvider,
         "gemini": GeminiProvider,
+        "vertex": VertexProvider,
         "groq": OpenAIChatProvider,
         "sambanova": OpenAIChatProvider,
         "cerebras": OpenAIChatProvider,

@@ -60,7 +60,7 @@ function sourceText(field) {
 
 function statusClass(status) {
   if (["configured", "reachable", "running"].includes(status)) return "ok";
-  if (["missing_key", "missing_url", "unknown"].includes(status)) return "warn";
+  if (["missing_key", "missing_config", "missing_url", "unknown"].includes(status)) return "warn";
   if (["offline", "error"].includes(status)) return "error";
   return "neutral";
 }
@@ -162,7 +162,7 @@ function renderProviders(providerStatus) {
     meta.textContent =
       provider.kind === "local"
         ? provider.base_url || "No local URL configured"
-        : provider.credential_env;
+        : provider.configuration;
 
     const button = document.createElement("button");
     button.type = "button";

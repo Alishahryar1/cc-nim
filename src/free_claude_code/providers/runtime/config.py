@@ -23,6 +23,16 @@ def provider_credential(descriptor: ProviderDescriptor, settings: Settings) -> s
     return ""
 
 
+def has_provider_configuration(
+    descriptor: ProviderDescriptor, settings: Settings
+) -> bool:
+    """Return whether all provider-defining settings are present."""
+    attrs = descriptor.configuration_attrs()
+    if attrs:
+        return all(string_setting(settings, attr).strip() for attr in attrs)
+    return descriptor.static_credential is not None
+
+
 def require_provider_credential(
     descriptor: ProviderDescriptor, credential: str
 ) -> None:

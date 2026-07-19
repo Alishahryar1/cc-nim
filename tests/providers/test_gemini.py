@@ -7,8 +7,8 @@ import pytest
 from free_claude_code.config.provider_catalog import GEMINI_DEFAULT_BASE
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.gemini import GeminiProvider
-from free_claude_code.providers.gemini.quirks import (
-    GEMINI_SKIP_THOUGHT_SIGNATURE_VALIDATOR,
+from free_claude_code.providers.google_openai import (
+    GOOGLE_SKIP_THOUGHT_SIGNATURE_VALIDATOR,
 )
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import passthrough_rate_limiter, reasoning_for
@@ -291,7 +291,7 @@ def test_build_request_body_adds_current_turn_fallback_signature(
 
     tool_calls = body["messages"][1]["tool_calls"]
     assert tool_calls[0]["extra_content"] == {
-        "google": {"thought_signature": GEMINI_SKIP_THOUGHT_SIGNATURE_VALIDATOR}
+        "google": {"thought_signature": GOOGLE_SKIP_THOUGHT_SIGNATURE_VALIDATOR}
     }
     assert "extra_content" not in tool_calls[1]
 

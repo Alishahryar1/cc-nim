@@ -16,6 +16,7 @@ from free_claude_code.providers.openai_chat import (
     OPENAI_CHAT_PROFILES,
     OpenAIChatProvider,
 )
+from free_claude_code.providers.vertex import VertexProvider
 from smoke.features import FEATURE_INVENTORY, README_FEATURES, feature_ids
 
 VALID_SOURCE = {"readme", "public_surface"}
@@ -98,6 +99,7 @@ def test_provider_and_platform_registries_include_advertised_builtins() -> None:
         "lmstudio": LMStudioProvider,
         "github_models": GitHubModelsProvider,
         "gemini": GeminiProvider,
+        "vertex": VertexProvider,
     }
     assert set(OPENAI_CHAT_PROFILES).isdisjoint(specialized_provider_classes)
     assert set(PROVIDER_CATALOG) == (

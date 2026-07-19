@@ -40,6 +40,8 @@ GITHUB_MODELS_DEFAULT_BASE = "https://models.github.ai/inference"
 ZAI_DEFAULT_BASE = "https://api.z.ai/api/coding/paas/v4"
 # Google AI Studio Gemini API OpenAI-compat layer (not Vertex AI).
 GEMINI_DEFAULT_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
+# Vertex AI API root. The provider owns project/location endpoint composition.
+VERTEX_AI_API_ROOT = "https://aiplatform.googleapis.com"
 GROQ_DEFAULT_BASE = "https://api.groq.com/openai/v1"
 CEREBRAS_DEFAULT_BASE = "https://api.cerebras.ai/v1"
 SAMBANOVA_DEFAULT_BASE = "https://api.sambanova.ai/v1"
@@ -59,6 +61,17 @@ class ProviderDescriptor:
     default_base_url: str | None = None
     base_url_attr: str | None = None
     proxy_attr: str | None = None
+    required_settings_attrs: tuple[str, ...] = ()
+
+    def configuration_attrs(self) -> tuple[str, ...]:
+        """Return settings fields whose non-empty values configure this provider."""
+        if self.required_settings_attrs:
+            return self.required_settings_attrs
+        if self.credential_attr is not None:
+            return (self.credential_attr,)
+        if self.base_url_attr is not None:
+            return (self.base_url_attr,)
+        return ()
 
 
 PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
@@ -88,6 +101,17 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="gemini_api_key",
         default_base_url=GEMINI_DEFAULT_BASE,
         proxy_attr="gemini_proxy",
+    ),
+    "vertex": ProviderDescriptor(
+        provider_id="vertex",
+        display_name="Google Vertex AI",
+        credential_url=(
+            "https://cloud.google.com/docs/authentication/"
+            "set-up-adc-local-dev-environment"
+        ),
+        default_base_url=VERTEX_AI_API_ROOT,
+        proxy_attr="vertex_proxy",
+        required_settings_attrs=("vertex_project_id",),
     ),
     "deepseek": ProviderDescriptor(
         provider_id="deepseek",
@@ -259,6 +283,10 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="cloudflare_api_token",
         default_base_url=CLOUDFLARE_AI_REST_ROOT,
         proxy_attr="cloudflare_proxy",
+        required_settings_attrs=(
+            "cloudflare_api_token",
+            "cloudflare_account_id",
+        ),
     ),
     "zai": ProviderDescriptor(
         provider_id="zai",

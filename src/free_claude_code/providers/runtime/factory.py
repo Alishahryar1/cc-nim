@@ -97,6 +97,21 @@ def _create_gemini(
     return GeminiProvider(config, rate_limiter=rate_limiter)
 
 
+def _create_vertex(
+    config: ProviderConfig,
+    settings: Settings,
+    rate_limiter: ProviderRateLimiter,
+) -> BaseProvider:
+    from free_claude_code.providers.vertex import VertexProvider
+
+    return VertexProvider(
+        config,
+        project_id=settings.vertex_project_id,
+        location=settings.vertex_location,
+        rate_limiter=rate_limiter,
+    )
+
+
 def _create_github_models(
     config: ProviderConfig,
     _settings: Settings,
@@ -115,6 +130,7 @@ _SPECIAL_PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "lmstudio": _create_lmstudio,
     "cloudflare": _create_cloudflare,
     "gemini": _create_gemini,
+    "vertex": _create_vertex,
     "github_models": _create_github_models,
 }
 

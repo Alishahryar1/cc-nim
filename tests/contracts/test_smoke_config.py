@@ -46,6 +46,8 @@ def _settings(**overrides):
         "github_models_token": "",
         "zai_api_key": "",
         "gemini_api_key": "",
+        "vertex_project_id": "",
+        "vertex_location": "global",
         "groq_api_key": "",
         "sambanova_api_key": "",
         "cerebras_api_key": "",
@@ -171,6 +173,23 @@ def test_bedrock_provider_configuration_uses_official_api_key(monkeypatch) -> No
     models = config.provider_smoke_models()
     assert [model.provider for model in models] == ["bedrock"]
     assert models[0].full_model == "bedrock/openai.gpt-oss-120b"
+    assert models[0].source == "provider_default"
+
+
+def test_vertex_provider_configuration_uses_project_id(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_VERTEX", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            vertex_project_id="vertex-project",
+        )
+    )
+
+    assert config.has_provider_configuration("vertex")
+    models = config.provider_smoke_models()
+    assert [model.provider for model in models] == ["vertex"]
+    assert models[0].full_model == "vertex/google/gemini-3.5-flash"
     assert models[0].source == "provider_default"
 
 
