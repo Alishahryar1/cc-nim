@@ -99,6 +99,34 @@ def test_build_request_body_sdk_wire_json_has_literal_extra_body(gemini_provider
     assert thinking_config.get("include_thoughts") is True
 
 
+def test_build_request_body_named_effort_omits_thinking_config(gemini_provider):
+    req = make_request(
+        thinking={"type": "enabled"},
+        output_config={"effort": "high"},
+    )
+
+    body = gemini_provider._build_request_body(req, reasoning=reasoning_for(req))
+    wire_json = _simulate_openai_sdk_wire_json(body)
+
+    assert body["reasoning_effort"] == "high"
+    assert wire_json["reasoning_effort"] == "high"
+    assert "extra_body" not in wire_json
+
+
+def test_build_request_body_budget_uses_thinking_config_only(gemini_provider):
+    req = make_request(thinking={"type": "enabled", "budget_tokens": 2048})
+
+    body = gemini_provider._build_request_body(req, reasoning=reasoning_for(req))
+    wire_json = _simulate_openai_sdk_wire_json(body)
+
+    assert "reasoning_effort" not in body
+    assert "reasoning_effort" not in wire_json
+    assert wire_json["extra_body"]["google"]["thinking_config"] == {
+        "include_thoughts": True,
+        "thinking_budget": 2048,
+    }
+
+
 def test_build_request_body_reasoning_off_sets_reasoning_none():
     """When thinking is off, Gemini uses reasoning_effort none (Gemini 2.5 convention)."""
     provider = GeminiProvider(

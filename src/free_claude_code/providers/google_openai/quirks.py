@@ -22,7 +22,7 @@ def apply_google_request_quirks(
     if isinstance(request_extra, dict):
         extra_body.update(deepcopy(request_extra))
 
-    if reasoning.requests_reasoning:
+    if reasoning.requests_reasoning and reasoning.effort is None:
         _thinking_config(extra_body).setdefault("include_thoughts", True)
 
     if extra_body:
@@ -38,6 +38,26 @@ def google_thinking_config(body: dict[str, Any]) -> dict[str, Any]:
     """Return Google's literal ``extra_body.google.thinking_config`` object."""
     extra_body = _ensure_dict(body, "extra_body")
     return _thinking_config(extra_body)
+
+
+def clear_google_thinking_config(body: dict[str, Any]) -> None:
+    """Drop thinking_config so it cannot coexist with reasoning_effort."""
+    extra_body = body.get("extra_body")
+    if not isinstance(extra_body, dict):
+        return
+    literal_extra_body = extra_body.get("extra_body")
+    if not isinstance(literal_extra_body, dict):
+        return
+    google = literal_extra_body.get("google")
+    if not isinstance(google, dict):
+        return
+    google.pop("thinking_config", None)
+    if not google:
+        literal_extra_body.pop("google", None)
+    if not literal_extra_body:
+        extra_body.pop("extra_body", None)
+    if not extra_body:
+        body.pop("extra_body", None)
 
 
 def _thinking_config(extra_body: dict[str, Any]) -> dict[str, Any]:
