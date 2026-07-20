@@ -9,9 +9,13 @@ from google.auth.credentials import Credentials
 from google.auth.exceptions import DefaultCredentialsError, TransportError
 from google.auth.transport.requests import Request
 
-from free_claude_code.application.errors import ApplicationUnavailableError
+from free_claude_code.application.errors import (
+    ApplicationUnavailableError,
+    InvalidRequestError,
+)
 from free_claude_code.config.provider_catalog import VERTEX_AI_API_ROOT
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
+from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.vertex import VertexProvider
@@ -88,6 +92,25 @@ def _provider(
         admission=immediate_admission(),
         access_token_provider=token_provider or _token_provider(),
     )
+
+
+def _simulate_openai_sdk_wire_json(body: dict) -> dict:
+    wire = {key: value for key, value in body.items() if key != "extra_body"}
+    sdk_extra = body.get("extra_body")
+    if isinstance(sdk_extra, dict):
+        wire.update(sdk_extra)
+    return wire
+
+
+def _google_thinking_config(wire: dict) -> dict | None:
+    literal_extra_body = wire.get("extra_body")
+    if not isinstance(literal_extra_body, dict):
+        return None
+    google = literal_extra_body.get("google")
+    if not isinstance(google, dict):
+        return None
+    thinking_config = google.get("thinking_config")
+    return thinking_config if isinstance(thinking_config, dict) else None
 
 
 @pytest.mark.parametrize(
@@ -243,6 +266,91 @@ def test_vertex_request_maps_reasoning_off_to_zero_budget() -> None:
         "thinking_budget": 0,
         "include_thoughts": False,
     }
+
+
+@pytest.mark.parametrize(
+    ("reasoning", "expected_thinking_config"),
+    [
+        (ReasoningPolicy.provider_default(), None),
+        (ReasoningPolicy.off(), {"thinking_budget": 0, "include_thoughts": False}),
+        (ReasoningPolicy.on(), {"include_thoughts": True}),
+        (
+            ReasoningPolicy.on(effort=ReasoningEffort.HIGH),
+            {"thinking_budget": 2048, "include_thoughts": True},
+        ),
+        (
+            ReasoningPolicy.on(budget_tokens=777),
+            {"thinking_budget": 777, "include_thoughts": True},
+        ),
+        (
+            ReasoningPolicy.on(
+                effort=ReasoningEffort.HIGH,
+                budget_tokens=777,
+            ),
+            {"thinking_budget": 777, "include_thoughts": True},
+        ),
+    ],
+)
+def test_vertex_reasoning_has_one_google_wire_owner(
+    reasoning: ReasoningPolicy,
+    expected_thinking_config: dict | None,
+) -> None:
+    provider = _provider()
+
+    body = provider._build_request_body(
+        make_messages_request("google/gemini", thinking=None),
+        reasoning=reasoning,
+    )
+    wire = _simulate_openai_sdk_wire_json(body)
+
+    assert "reasoning_effort" not in wire
+    assert _google_thinking_config(wire) == expected_thinking_config
+
+
+def test_vertex_preserves_caller_thinking_config_only_for_provider_default() -> None:
+    provider = _provider()
+    request = make_messages_request(
+        "google/gemini",
+        thinking=None,
+        extra_body={
+            "extra_body": {
+                "google": {
+                    "thinking_config": {
+                        "thinking_level": "low",
+                        "include_thoughts": False,
+                    }
+                }
+            }
+        },
+    )
+
+    body = provider._build_request_body(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+    wire = _simulate_openai_sdk_wire_json(body)
+
+    assert _google_thinking_config(wire) == {
+        "thinking_level": "low",
+        "include_thoughts": False,
+    }
+
+
+def test_vertex_rejects_caller_thinking_config_with_fcc_reasoning_control() -> None:
+    provider = _provider()
+    request = make_messages_request(
+        "google/gemini",
+        thinking=None,
+        extra_body={
+            "extra_body": {"google": {"thinking_config": {"thinking_level": "low"}}}
+        },
+    )
+
+    with pytest.raises(InvalidRequestError, match="thinking_config"):
+        provider._build_request_body(
+            request,
+            reasoning=ReasoningPolicy.on(effort=ReasoningEffort.HIGH),
+        )
 
 
 def test_vertex_model_page_translates_google_resource_names_generically() -> None:

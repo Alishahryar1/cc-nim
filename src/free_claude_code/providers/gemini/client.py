@@ -1,12 +1,14 @@
 """Google AI Studio Gemini provider (OpenAI-compatible chat completions)."""
 
 from free_claude_code.core.anthropic import ReasoningReplayMode
-from free_claude_code.core.reasoning import ReasoningEffort
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.google_openai import GoogleOpenAIProvider
+from free_claude_code.providers.google_openai import (
+    GeminiReasoningEncoder,
+    GoogleOpenAIProvider,
+    validate_google_extra_body,
+)
 from free_claude_code.providers.openai_chat import (
-    NamedEffortReasoning,
     OpenAIChatProfile,
     OpenAIChatRequestPolicy,
 )
@@ -14,20 +16,12 @@ from free_claude_code.providers.openai_chat import (
 _REQUEST_POLICY = OpenAIChatRequestPolicy(
     provider_name="GEMINI",
     reasoning_replay=ReasoningReplayMode.REASONING_CONTENT,
+    include_extra_body=True,
+    extra_body_validator=validate_google_extra_body,
 )
 _PROFILE = OpenAIChatProfile(
     _REQUEST_POLICY,
-    NamedEffortReasoning(
-        (
-            (ReasoningEffort.MINIMAL, "minimal"),
-            (ReasoningEffort.LOW, "low"),
-            (ReasoningEffort.MEDIUM, "medium"),
-            (ReasoningEffort.HIGH, "high"),
-            (ReasoningEffort.XHIGH, "high"),
-            (ReasoningEffort.MAX, "high"),
-        ),
-        disabled_value="none",
-    ),
+    GeminiReasoningEncoder(),
 )
 
 

@@ -590,8 +590,14 @@ or untyped provider backchannel remains.
 
 [providers/google_openai/](src/free_claude_code/providers/google_openai/) owns the
 Google-specific protocol behavior shared by AI Studio and Vertex AI: literal
-Google `extra_body` construction, thought-signature replay, and thinking-budget
-encoding. Neither concrete provider imports from the other. AI Studio owns its
+Google `extra_body` construction, exclusive reasoning serialization, and
+thought-signature replay. Each concrete profile selects one Google reasoning
+encoder, and that encoder is the sole writer of `reasoning_effort` or
+`extra_body.google.thinking_config` for its request. Caller-provided Google
+thinking configuration is preserved only for provider-default reasoning;
+combining it with FCC reasoning controls fails during deterministic preflight.
+Thought-signature replay is a separate component and never mutates reasoning
+controls. Neither concrete provider imports from the other. AI Studio owns its
 API-key endpoint; [providers/vertex/](src/free_claude_code/providers/vertex/)
 owns project/location endpoint composition, renewable Application Default
 Credentials, and translation of Google's native publisher-model catalog. The
@@ -671,7 +677,7 @@ profile explicitly chooses native `reasoning_content`, native `reasoning`,
 for the next generation does not silently erase prior assistant state required
 for a valid continuation.
 
-The boundary has four hard rules:
+The boundary has five hard rules:
 
 1. Never inspect an upstream model name or version to select reasoning behavior.
 2. Prefer a provider's named effort vocabulary; use FCC's documented numeric
@@ -682,6 +688,9 @@ The boundary has four hard rules:
 4. Provider-default intent emits no compute-control field. Explicit off requests
    an upstream disable where supported and always suppresses reasoning output at
    the FCC protocol boundary.
+5. Each provider profile has exactly one reasoning encoder. That encoder alone
+   writes the provider's computation and reasoning-output request fields;
+   unrelated request postprocessors never add, repair, or remove those fields.
 
 Shared provider responsibilities include upstream rate limiting, model listing,
 SDK/HTTP failure classification, safe diagnostic construction, HTTP resource

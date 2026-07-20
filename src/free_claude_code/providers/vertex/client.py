@@ -10,7 +10,8 @@ from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.google_openai import (
     GoogleOpenAIProvider,
-    GoogleThinkingBudgetReasoning,
+    VertexReasoningEncoder,
+    validate_google_extra_body,
 )
 from free_claude_code.providers.http import maybe_await_aclose
 from free_claude_code.providers.model_listing import ModelListResponseError
@@ -26,8 +27,10 @@ from .models import extract_vertex_model_page
 _REQUEST_POLICY = OpenAIChatRequestPolicy(
     provider_name="VERTEX",
     reasoning_replay=ReasoningReplayMode.REASONING_CONTENT,
+    include_extra_body=True,
+    extra_body_validator=validate_google_extra_body,
 )
-_PROFILE = OpenAIChatProfile(_REQUEST_POLICY, GoogleThinkingBudgetReasoning())
+_PROFILE = OpenAIChatProfile(_REQUEST_POLICY, VertexReasoningEncoder())
 
 
 class VertexProvider(GoogleOpenAIProvider):

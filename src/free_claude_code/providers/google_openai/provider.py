@@ -2,13 +2,11 @@
 
 from collections.abc import Mapping
 from copy import deepcopy
-from dataclasses import dataclass
 from typing import Any
 
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.reasoning import (
     DEFAULT_REASONING_POLICY,
-    ReasoningControl,
     ReasoningPolicy,
 )
 from free_claude_code.providers.admission import ProviderAdmissionController
@@ -20,27 +18,9 @@ from free_claude_code.providers.openai_chat import (
     build_openai_chat_request_body,
 )
 
-from .quirks import apply_google_request_quirks, google_thinking_config
+from .thought_signatures import apply_google_thought_signatures
 
 _MAX_TOOL_CALL_EXTRA_CONTENT_CACHE = 4096
-
-
-@dataclass(frozen=True, slots=True)
-class GoogleThinkingBudgetReasoning:
-    """Encode FCC reasoning intent in Google's model-neutral thinking budget."""
-
-    def encode(self, body: dict[str, Any], policy: ReasoningPolicy) -> None:
-        if policy.control is ReasoningControl.OFF:
-            thinking = google_thinking_config(body)
-            thinking["thinking_budget"] = 0
-            thinking["include_thoughts"] = False
-            return
-        budget = policy.numeric_budget_tokens
-        if budget is None:
-            return
-        thinking = google_thinking_config(body)
-        thinking.setdefault("thinking_budget", budget)
-        thinking.setdefault("include_thoughts", True)
 
 
 class GoogleOpenAIProvider(OpenAIChatProvider):
@@ -88,12 +68,10 @@ class GoogleOpenAIProvider(OpenAIChatProvider):
             reasoning=reasoning,
             policy=self._profile.request_policy,
             postprocessors=(
-                lambda body, request_data, policy: apply_google_request_quirks(
+                lambda body, _request_data, _policy: apply_google_thought_signatures(
                     body,
-                    request_data,
-                    policy,
                     tool_call_extra_content_by_id=(self._tool_call_extra_content_by_id),
                 ),
-                self._profile.apply_reasoning,
+                *self._profile.request_postprocessors,
             ),
         )

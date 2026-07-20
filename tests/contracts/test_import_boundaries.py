@@ -197,6 +197,35 @@ def test_openai_chat_collaborators_have_explicit_ownership_boundaries() -> None:
     assert _provider_backchannel_offenders(provider_root) == []
 
 
+def test_google_reasoning_wire_fields_have_one_owner() -> None:
+    owner = _PACKAGE_ROOT / "providers" / "google_openai" / "reasoning.py"
+    roots = [
+        _PACKAGE_ROOT / "providers" / "gemini",
+        _PACKAGE_ROOT / "providers" / "google_openai",
+        _PACKAGE_ROOT / "providers" / "vertex",
+    ]
+    owned_fields = {
+        "include_thoughts",
+        "reasoning_effort",
+        "thinking_budget",
+        "thinking_config",
+    }
+    offenders: list[str] = []
+
+    for root in roots:
+        for path in root.rglob("*.py"):
+            if path == owner:
+                continue
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            offenders.extend(
+                f"{path.relative_to(_REPO_ROOT).as_posix()}:{node.lineno}: {node.value}"
+                for node in ast.walk(tree)
+                if isinstance(node, ast.Constant) and node.value in owned_fields
+            )
+
+    assert sorted(offenders) == []
+
+
 def test_provider_backchannel_detector_reports_untyped_private_access(
     tmp_path: Path,
 ) -> None:
