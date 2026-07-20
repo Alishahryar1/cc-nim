@@ -30,7 +30,7 @@ jobs:
             });
             const fieldPattern = "^### FCC version\\r?\\n+\\s*([^\\r\\n]+)";
             const versionPattern = "(?:^|[^0-9A-Za-z_.])v?([0-9]+\\.[0-9]+\\.[0-9]+)(?![0-9A-Za-z_+-]|\\.[0-9A-Za-z_])";
-            const projectVersionPattern = "^\\s*version\\s*=\\s*\"([0-9]+\\.[0-9]+\\.[0-9]+)\"\\s*$";
+            const projectVersionPattern = "^\\s*version\\s*=\\s*([\"'])([0-9]+\\.[0-9]+\\.[0-9]+)\\1\\s*(?:#.*)?$";
             const match = (issue.body || "").match(new RegExp(fieldPattern, "m"));
             const fieldValue = match?.[1]?.trim() || "";
             const versionMatches = [...fieldValue.matchAll(new RegExp(versionPattern, "g"))];
@@ -49,13 +49,14 @@ jobs:
               (comment) => comment.user?.login === "github-actions[bot]"
                 && comment.body?.includes(marker),
             );
+            const invalidComment = managedComment(invalidMarker);
             const outdatedComment = managedComment(outdatedMarker);
 
-            const deleteOutdatedComment = async () => {
-              if (outdatedComment === undefined) return;
+            const deleteManagedComment = async (comment) => {
+              if (comment === undefined) return;
               await github.rest.issues.deleteComment({
                 ...repo,
-                comment_id: outdatedComment.id,
+                comment_id: comment.id,
               });
             };
 
@@ -80,13 +81,13 @@ jobs:
                 if (inProjectSection && stripped.startsWith("[")) return undefined;
                 if (!inProjectSection) continue;
                 const projectVersion = line.match(new RegExp(projectVersionPattern));
-                if (projectVersion !== null) return projectVersion[1];
+                if (projectVersion !== null) return projectVersion[2];
               }
               return undefined;
             };
 
             if (!valid) {
-              await deleteOutdatedComment();
+              await deleteManagedComment(outdatedComment);
               if (!labels.has(labelName)) {
                 try {
                   await github.rest.issues.getLabel({ ...repo, name: labelName });
@@ -109,7 +110,7 @@ jobs:
                   labels: [labelName],
                 });
               }
-              if (managedComment(invalidMarker) === undefined) {
+              if (invalidComment === undefined) {
                 await github.rest.issues.createComment({
                   ...repo,
                   issue_number,
@@ -126,9 +127,10 @@ jobs:
                 name: labelName,
               });
             }
+            await deleteManagedComment(invalidComment);
 
             if (reportedVersion === undefined) {
-              await deleteOutdatedComment();
+              await deleteManagedComment(outdatedComment);
               return;
             }
 
@@ -153,7 +155,7 @@ jobs:
             }
 
             if (!isOlderVersion(reportedVersion, latestVersion)) {
-              await deleteOutdatedComment();
+              await deleteManagedComment(outdatedComment);
               return;
             }
 

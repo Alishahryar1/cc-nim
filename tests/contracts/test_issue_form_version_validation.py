@@ -172,7 +172,10 @@ def test_workflow_reads_and_compares_the_default_branch_version() -> None:
     project_pattern = _workflow_pattern("projectVersionPattern")
     function = _javascript_function("projectVersionFromToml")
     scoped_project = (
-        '[tool.before]\nversion = "99.0.0"\n\n[project]\nversion = "1.2.3"\n'
+        "[tool.before]\nversion = \"99.0.0\"\n\n[project]\nversion = '1.2.3'\n"
+    )
+    commented_project = (
+        '[project]\nname = "demo"\nversion = "2.3.4" # current release\n'
     )
     missing_project_version = (
         '[project]\nname = "demo"\n\n[[tool.items]]\nversion = "99.0.0"\n'
@@ -183,11 +186,12 @@ def test_workflow_reads_and_compares_the_default_branch_version() -> None:
         "process.stdout.write(JSON.stringify(["
         f"projectVersionFromToml({json.dumps(pyproject)}),"
         f"projectVersionFromToml({json.dumps(scoped_project)}),"
+        f"projectVersionFromToml({json.dumps(commented_project)}),"
         f"projectVersionFromToml({json.dumps(missing_project_version)})"
         "]));"
     )
 
-    assert _run_javascript(script) == [expected, "1.2.3", None]
+    assert _run_javascript(script) == [expected, "1.2.3", "2.3.4", None]
     assert "contents: read" in workflow
     assert "github.rest.repos.getContent" in workflow
     assert 'path: "pyproject.toml"' in workflow
@@ -217,12 +221,18 @@ const github = {
       },
       getLabel: async (args) => record("getLabel", args),
       createLabel: async (args) => record("createLabel", args),
-      addLabels: async (args) => record("addLabels", args),
-      removeLabel: async (args) => record("removeLabel", args),
+      addLabels: async (args) => {
+        record("addLabels", args);
+        liveIssue.labels.push(...args.labels.map((name) => ({ name })));
+      },
+      removeLabel: async (args) => {
+        record("removeLabel", args);
+        liveIssue.labels = liveIssue.labels.filter((label) => label.name !== args.name);
+      },
       createComment: async (args) => {
         record("createComment", args);
         comments.push({
-          id: 101,
+          id: 100 + calls.filter((call) => call.name === "createComment").length,
           user: { login: "github-actions[bot]" },
           body: args.body,
         });
@@ -240,7 +250,7 @@ const github = {
     repos: {
       getContent: async (args) => {
         record("getContent", args);
-        const content = `[tool.before]\nversion = "99.0.0"\n\n[project]\nversion = "${latestVersion}"\n`;
+        const content = `[tool.before]\nversion = "99.0.0"\n\n[project]\nversion = '${latestVersion}' # current release\n`;
         return {
           data: {
             type: "file",
@@ -264,6 +274,8 @@ const context = {
 };
 const bodyFor = (value) => `### FCC version\n\n${value}\n\n### CLI\n\nClaude Code`;
 
+liveIssue.body = bodyFor("latest");
+await run(github, context);
 liveIssue.body = bodyFor("The version is 17.23.454");
 await run(github, context);
 await run(github, context);
@@ -291,17 +303,22 @@ process.stdout.write(JSON.stringify({ calls, comments }));
     names = [call["name"] for call in calls]
     content_reads = [call for call in calls if call["name"] == "getContent"]
 
-    assert names.count("createComment") == 1
+    assert names.count("createComment") == 2
     assert names.count("updateComment") == 1
-    assert names.count("deleteComment") == 2
+    assert names.count("deleteComment") == 3
     assert names.count("getContent") == 4
-    assert names.count("getIssue") == 5
-    assert names.count("removeLabel") == 1
-    assert not {"getLabel", "createLabel", "addLabels"} & set(names)
+    assert names.count("getIssue") == 6
+    assert names.count("getLabel") == 1
+    assert names.count("addLabels") == 1
+    assert names.count("removeLabel") == 2
+    assert "createLabel" not in names
     assert all(call["args"]["path"] == "pyproject.toml" for call in content_reads)
     assert all(call["args"]["ref"] == "main" for call in content_reads)
     assert "`17.23.454`" in next(
-        call["args"]["body"] for call in calls if call["name"] == "createComment"
+        call["args"]["body"]
+        for call in calls
+        if call["name"] == "createComment"
+        and "fcc-version-outdated" in call["args"]["body"]
     )
     assert "`17.23.455`" in next(
         call["args"]["body"] for call in calls if call["name"] == "updateComment"
