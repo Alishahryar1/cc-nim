@@ -8,6 +8,7 @@ class FailureKind(StrEnum):
     """Stable failure categories shared across execution and wire adapters."""
 
     INVALID_REQUEST = "invalid_request"
+    CONTEXT_WINDOW_EXCEEDED = "context_window_exceeded"
     AUTHENTICATION = "authentication"
     PERMISSION = "permission"
     RATE_LIMIT = "rate_limit"

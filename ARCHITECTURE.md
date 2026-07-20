@@ -609,6 +609,10 @@ upstream request body it will later stream. `BaseProvider` makes that operation
 abstract, so a new provider cannot silently omit the commit-boundary validation.
 LM Studio composes the OpenAI-chat conversion first and its context-budget probe
 second; conversion failure therefore cannot open a stream or run the probe.
+Provider classifiers and preflights report context exhaustion as the neutral
+`CONTEXT_WINDOW_EXCEEDED` execution failure. The Anthropic serializer alone adds
+Claude's `prompt is too long` compaction trigger; providers never encode a
+client-specific recovery phrase.
 
 Providers call the OpenAI request policy for Anthropic-to-OpenAI conversion,
 reasoning replay selection, `extra_body`, and chat-completion field normalization.

@@ -7,6 +7,7 @@ import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.provider_catalog import LMSTUDIO_DEFAULT_BASE
+from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.lmstudio import LMStudioProvider
@@ -219,9 +220,19 @@ def test_preflight_context_budget_rejects_request_over_90_percent(lmstudio_provi
             "free_claude_code.providers.lmstudio.client.get_token_count",
             return_value=901,
         ),
-        pytest.raises(InvalidRequestError, match="prompt is too long"),
+        pytest.raises(ExecutionFailure) as exc_info,
     ):
         lmstudio_provider._preflight_context_budget(make_request())
+
+    failure = exc_info.value
+    assert failure.kind is FailureKind.CONTEXT_WINDOW_EXCEEDED
+    assert failure.status_code == 400
+    assert failure.retryable is False
+    assert failure.message == (
+        "Estimated provider input (901 tokens) exceeds the safe LM Studio "
+        "context budget (900 tokens; 90% of loaded context 1000)."
+    )
+    assert "prompt is too long" not in failure.message
 
 
 def test_loaded_context_length_reads_max_across_loaded_models(lmstudio_provider):

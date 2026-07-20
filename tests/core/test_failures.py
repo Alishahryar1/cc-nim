@@ -14,6 +14,7 @@ from free_claude_code.core.failures import (
 def test_failure_kind_has_only_protocol_neutral_semantics() -> None:
     assert tuple(FailureKind) == (
         FailureKind.INVALID_REQUEST,
+        FailureKind.CONTEXT_WINDOW_EXCEEDED,
         FailureKind.AUTHENTICATION,
         FailureKind.PERMISSION,
         FailureKind.RATE_LIMIT,
@@ -24,6 +25,7 @@ def test_failure_kind_has_only_protocol_neutral_semantics() -> None:
     )
     assert tuple(kind.value for kind in FailureKind) == (
         "invalid_request",
+        "context_window_exceeded",
         "authentication",
         "permission",
         "rate_limit",

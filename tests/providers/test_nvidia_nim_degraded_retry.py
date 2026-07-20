@@ -70,6 +70,28 @@ def _bad_request(
     return openai.BadRequestError("Bad Request", response=response, body=body)
 
 
+def _context_window_error(
+    *,
+    message: str = (
+        "max_tokens must be at least 1, got -853. (parameter=max_tokens, value=-853)"
+    ),
+    param: str = "max_tokens",
+    nested: bool = False,
+) -> openai.BadRequestError:
+    request = httpx.Request(
+        "POST", "https://integrate.api.nvidia.com/v1/chat/completions"
+    )
+    response = httpx.Response(400, request=request)
+    error_body: dict[str, object] = {
+        "message": message,
+        "type": "BadRequestError",
+        "param": param,
+        "code": 400,
+    }
+    body = {"error": error_body} if nested else error_body
+    return openai.BadRequestError("Bad Request", response=response, body=body)
+
+
 def _successful_stream(text: str = "Recovered"):
     chunk = MagicMock()
     chunk.choices = [
@@ -172,6 +194,74 @@ async def test_degraded_function_exhaustion_is_detailed_redacted_overload() -> N
     assert error_traces[-1]["status_code"] == 529
     assert error_traces[-1]["provider_retryable"] is True
     assert "error_message" not in error_traces[-1]
+
+
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.asyncio
+async def test_negative_derived_max_tokens_is_context_window_failure(
+    nested: bool,
+) -> None:
+    provider = _nim(_admission())
+
+    with (
+        patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=_context_window_error(nested=nested),
+        ) as create,
+        pytest.raises(ExecutionFailure) as exc_info,
+    ):
+        [
+            event
+            async for event in provider.stream_response(
+                make_messages_request(), request_id="req_context"
+            )
+        ]
+
+    assert create.await_count == 1
+    failure = exc_info.value
+    assert failure.kind is FailureKind.CONTEXT_WINDOW_EXCEEDED
+    assert failure.status_code == 400
+    assert failure.retryable is False
+    assert "Mapped message: Provider input exceeds the model context window." in (
+        failure.message
+    )
+    assert "max_tokens must be at least 1, got -853" in failure.message
+    assert "Request ID: req_context" in failure.message
+    assert "prompt is too long" not in failure.message
+
+
+@pytest.mark.parametrize(
+    ("message", "param"),
+    [
+        ("max_tokens must be at least 1, got 0", "max_tokens"),
+        ("max_tokens must be at least 1, got -853", "temperature"),
+        ("max_tokens must be less than or equal to 8192", "max_tokens"),
+    ],
+)
+@pytest.mark.asyncio
+async def test_other_nim_max_token_errors_remain_invalid_requests(
+    message: str,
+    param: str,
+) -> None:
+    provider = _nim(_admission())
+
+    with (
+        patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=_context_window_error(message=message, param=param),
+        ) as create,
+        pytest.raises(ExecutionFailure) as exc_info,
+    ):
+        [event async for event in provider.stream_response(make_messages_request())]
+
+    assert create.await_count == 1
+    assert exc_info.value.kind is FailureKind.INVALID_REQUEST
+    assert exc_info.value.status_code == 400
+    assert exc_info.value.retryable is False
 
 
 @pytest.mark.parametrize(

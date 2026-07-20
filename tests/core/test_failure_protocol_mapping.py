@@ -17,6 +17,11 @@ from free_claude_code.core.openai_responses.errors import (
     ("kind", "anthropic_type", "openai_type"),
     [
         (FailureKind.INVALID_REQUEST, "invalid_request_error", "invalid_request_error"),
+        (
+            FailureKind.CONTEXT_WINDOW_EXCEEDED,
+            "invalid_request_error",
+            "invalid_request_error",
+        ),
         (FailureKind.AUTHENTICATION, "authentication_error", "authentication_error"),
         (FailureKind.PERMISSION, "permission_error", "permission_error"),
         (FailureKind.RATE_LIMIT, "rate_limit_error", "rate_limit_error"),
@@ -47,3 +52,31 @@ def test_finalized_status_502_timeout_keeps_existing_api_error_wire_type() -> No
 
     assert anthropic_failure_payload(failure)["error"]["type"] == "api_error"
     assert openai_failure_payload(failure)["error"]["type"] == "api_error"
+
+
+def test_only_anthropic_serialization_adds_the_client_compaction_trigger() -> None:
+    failure = ExecutionFailure(
+        kind=FailureKind.CONTEXT_WINDOW_EXCEEDED,
+        status_code=400,
+        message="Provider input exceeds its context window.\n\nRequest ID: req_context",
+        retryable=False,
+    )
+
+    anthropic_error = anthropic_failure_payload(failure)["error"]
+    openai_error = openai_failure_payload(failure)["error"]
+
+    assert anthropic_error == {
+        "type": "invalid_request_error",
+        "message": (
+            "prompt is too long\n\nProvider input exceeds its context window."
+            "\n\nRequest ID: req_context"
+        ),
+    }
+    assert openai_error == {
+        "message": (
+            "Provider input exceeds its context window.\n\nRequest ID: req_context"
+        ),
+        "type": "invalid_request_error",
+        "param": None,
+        "code": None,
+    }

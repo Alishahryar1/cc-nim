@@ -16,7 +16,6 @@ import time
 import httpx
 from loguru import logger
 
-from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.core.anthropic import ReasoningReplayMode, get_token_count
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.reasoning import (
@@ -26,6 +25,9 @@ from free_claude_code.core.reasoning import (
 )
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.failure_policy import (
+    context_window_exceeded_provider_failure,
+)
 from free_claude_code.providers.openai_chat import (
     NamedEffortReasoning,
     OpenAIChatProfile,
@@ -59,9 +61,8 @@ class LMStudioProvider(OpenAIChatProvider):
 
     # LM Studio truncates the stream silently (no terminal event) when the
     # prompt exceeds the loaded context. Refuse clearly over-budget prompts
-    # up front with the same "prompt is too long" invalid_request_error the
-    # real Anthropic API uses, so Claude Code can compact/retry instead of
-    # dying mid-stream.
+    # up front as a context-window failure so protocol adapters can tell their
+    # clients to compact/retry instead of letting the stream die silently.
     _CONTEXT_CACHE_TTL_S = 30.0
 
     def __init__(
@@ -98,9 +99,10 @@ class LMStudioProvider(OpenAIChatProvider):
         # fired, and letting it through risks a silent LM Studio truncation.
         budget = int(loaded_context * 0.9)
         if estimate > budget:
-            raise InvalidRequestError(
-                f"prompt is too long: {estimate} tokens > {budget} "
-                f"maximum (90% of loaded LM Studio context {loaded_context})"
+            raise context_window_exceeded_provider_failure(
+                f"Estimated provider input ({estimate} tokens) exceeds the safe "
+                f"LM Studio context budget ({budget} tokens; 90% of loaded "
+                f"context {loaded_context})."
             )
 
     def _loaded_context_length(self) -> int | None:

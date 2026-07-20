@@ -32,6 +32,7 @@ _INTERNAL_ERROR_MARKERS = frozenset({"internal_server_error", "internal server e
 _AUTHENTICATION_MESSAGE = "Provider authentication failed. Check API key."
 _RATE_LIMIT_MESSAGE = "Provider rate limit reached. Please retry shortly."
 _INVALID_REQUEST_MESSAGE = "Invalid request sent to provider."
+_CONTEXT_WINDOW_EXCEEDED_MESSAGE = "Provider input exceeds the model context window."
 _OVERLOADED_MESSAGE = "Provider is currently overloaded. Please retry."
 
 
@@ -87,6 +88,13 @@ def classify_provider_failure(
 def overloaded_provider_failure() -> ExecutionFailure:
     """Return the canonical provider-overload meaning and stable wording."""
     return _failure(FailureKind.OVERLOADED, 529, _OVERLOADED_MESSAGE, True)
+
+
+def context_window_exceeded_provider_failure(
+    message: str = _CONTEXT_WINDOW_EXCEEDED_MESSAGE,
+) -> ExecutionFailure:
+    """Return the canonical non-retryable provider context-window failure."""
+    return _failure(FailureKind.CONTEXT_WINDOW_EXCEEDED, 400, message, False)
 
 
 def retryable_transient_status(exc: BaseException) -> int | None:

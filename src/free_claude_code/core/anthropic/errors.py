@@ -20,6 +20,7 @@ _ANTHROPIC_ERROR_STATUS_CODES = {
 
 _FAILURE_ERROR_TYPES = {
     FailureKind.INVALID_REQUEST: "invalid_request_error",
+    FailureKind.CONTEXT_WINDOW_EXCEEDED: "invalid_request_error",
     FailureKind.AUTHENTICATION: "authentication_error",
     FailureKind.PERMISSION: "permission_error",
     FailureKind.RATE_LIMIT: "rate_limit_error",
@@ -77,9 +78,18 @@ def anthropic_failure_payload(
     """Serialize a canonical execution failure as an Anthropic JSON error."""
     return anthropic_error_payload(
         error_type=anthropic_error_type_for_failure(failure),
-        message=failure.message,
+        message=_anthropic_failure_message(failure),
         request_id=request_id,
     )
+
+
+def _anthropic_failure_message(failure: ExecutionFailure) -> str:
+    """Add client-recognized wording only at the Anthropic wire boundary."""
+    if failure.kind != FailureKind.CONTEXT_WINDOW_EXCEEDED:
+        return failure.message
+    if failure.message.lstrip().lower().startswith("prompt is too long"):
+        return failure.message
+    return f"prompt is too long\n\n{failure.message}"
 
 
 def anthropic_status_for_error_type(error_type: str) -> int:
