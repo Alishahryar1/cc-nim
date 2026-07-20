@@ -717,8 +717,8 @@ class TestStreamingExceptionHandling:
         )
 
     @pytest.mark.asyncio
-    async def test_precommit_openai_holdback_retries_without_leaking_partial(self):
-        """A retryable early cutoff before holdback commit is retried invisibly."""
+    async def test_precommit_retry_emits_one_unduplicated_downstream_lifecycle(self):
+        """An abandoned attempt contributes no frame to the successful replay."""
         provider = _make_provider()
         request = _make_request()
         first_stream = AsyncStreamMock(
@@ -743,15 +743,24 @@ class TestStreamingExceptionHandling:
         event_text = "".join(events)
         assert mock_create.await_count == 2
         assert "hidden" not in event_text
-        assert "visible" in event_text
         parsed = parse_sse_text(event_text)
-        assert parsed[0].event == "message_start"
+        text_deltas = [
+            event.data.get("delta", {}).get("text", "")
+            for event in parsed
+            if event.event == "content_block_delta"
+        ]
+        assert text_deltas == ["visible"]
         assert sum(event.event == "message_start" for event in parsed) == 1
+        assert sum(event.event == "content_block_start" for event in parsed) == 1
+        assert sum(event.event == "content_block_stop" for event in parsed) == 1
+        assert sum(event.event == "message_delta" for event in parsed) == 1
+        assert sum(event.event == "message_stop" for event in parsed) == 1
+        assert parsed[0].event == "message_start"
         assert parsed[-1].event == "message_stop"
 
     @pytest.mark.asyncio
     async def test_primary_replay_and_continuation_share_five_attempts(self):
-        """Transparent replay reserves the final execution attempt for recovery."""
+        """Four replays plus continuation emit one unduplicated response."""
         provider = _make_provider()
         request = _make_request()
         primary_streams = [
@@ -781,12 +790,16 @@ class TestStreamingExceptionHandling:
             create.await_args_list[4].kwargs["messages"]
             != (create.await_args_list[0].kwargs["messages"])
         )
+        parsed = parse_sse_text("".join(events))
         text = "".join(
             event.data.get("delta", {}).get("text", "")
-            for event in parse_sse_text("".join(events))
+            for event in parsed
             if event.event == "content_block_delta"
         )
         assert text == "hello world"
+        assert sum(event.event == "message_start" for event in parsed) == 1
+        assert sum(event.event == "message_delta" for event in parsed) == 1
+        assert sum(event.event == "message_stop" for event in parsed) == 1
 
     @pytest.mark.asyncio
     async def test_clean_eof_after_text_continues_with_overlap_trim(self):
@@ -819,6 +832,11 @@ class TestStreamingExceptionHandling:
         ]
         assert text_deltas == ["hello wor", "ld"]
         assert "".join(text_deltas) == "hello world"
+        assert sum(event.event == "message_start" for event in parsed) == 1
+        assert sum(event.event == "content_block_start" for event in parsed) == 1
+        assert sum(event.event == "content_block_stop" for event in parsed) == 1
+        assert sum(event.event == "message_delta" for event in parsed) == 1
+        assert sum(event.event == "message_stop" for event in parsed) == 1
         assert any(
             event.event == "message_delta"
             and event.data.get("delta", {}).get("stop_reason") == "end_turn"

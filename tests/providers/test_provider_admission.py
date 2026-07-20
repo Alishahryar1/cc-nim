@@ -384,6 +384,32 @@ async def test_one_leader_backs_off_while_followers_coalesce() -> None:
 
 
 @pytest.mark.asyncio
+async def test_cancelled_follower_leaves_recovery_episode() -> None:
+    controller = _controller(base_delay=1.0, max_delay=1.0)
+    leader_session = controller.new_retry_session()
+    follower_session = controller.new_retry_session()
+    leader = await controller.open_attempt(leader_session)
+    follower = await controller.open_attempt(follower_session)
+
+    assert await leader.retry(_status_error(503))
+    assert await follower.retry(_status_error(503))
+    await leader.aclose()
+    await follower.aclose()
+
+    follower_wait = asyncio.create_task(controller.open_attempt(follower_session))
+    await asyncio.sleep(0)
+    episode = controller._episode
+    assert episode is not None
+    assert follower_session in episode.waiters
+
+    follower_wait.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await follower_wait
+
+    assert follower_session not in episode.waiters
+
+
+@pytest.mark.asyncio
 async def test_cancelled_backoff_leader_transfers_to_a_waiter() -> None:
     controller = _controller(base_delay=2.0, max_delay=60.0)
     leader_session = controller.new_retry_session()
@@ -628,6 +654,34 @@ async def test_exhausted_waiter_cannot_join_a_later_recovery_generation() -> Non
 
     with pytest.raises(ProviderRecoveryExhausted) as exc_info:
         await controller.open_attempt(delayed_waiter_session)
+    assert exc_info.value.last_error is error
+
+
+@pytest.mark.asyncio
+async def test_late_in_flight_failure_keeps_exhausted_generation_outcome() -> None:
+    controller = _controller(
+        max_attempts=2,
+        base_delay=0.01,
+        max_delay=0.01,
+    )
+    leader_session = controller.new_retry_session()
+    stale_session = controller.new_retry_session()
+    leader = await controller.open_attempt(leader_session)
+    stale = await controller.open_attempt(stale_session)
+    error = _status_error(503)
+
+    assert await leader.retry(error)
+    await leader.aclose()
+    probe = await controller.open_attempt(leader_session)
+    assert not await probe.retry(error)
+    await probe.aclose()
+
+    assert await stale.retry(_status_error(503))
+    await stale.aclose()
+    await asyncio.sleep(0.02)
+
+    with pytest.raises(ProviderRecoveryExhausted) as exc_info:
+        await controller.open_attempt(stale_session)
     assert exc_info.value.last_error is error
 
 

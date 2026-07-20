@@ -340,7 +340,16 @@ class ProviderAdmissionController:
                         return self._probe_permit(session, episode)
                 else:
                     episode.waiters.add(session)
-                    await self._condition.wait()
+                    try:
+                        await self._condition.wait()
+                    except asyncio.CancelledError:
+                        current = self._episode
+                        if (
+                            current is not None
+                            and current.generation == episode.generation
+                        ):
+                            current.waiters.discard(session)
+                        raise
                     continue
 
             if sleep_delay is None or claimed_generation is None:
@@ -510,6 +519,8 @@ class ProviderAdmissionController:
                     episode.probe_active = False
                     episode.ready_at = time.monotonic() + delay
                     became_leader = True
+                elif episode.terminal_until is not None:
+                    session._fail_recovery(episode.last_error)
                 else:
                     episode.waiters.add(session)
                 self._condition.notify_all()
