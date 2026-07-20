@@ -938,6 +938,14 @@ otherwise the Messages handler rejects them before provider execution.
 
 ## CLI Launchers And Managed Claude
 
+[cli/local_http.py](src/free_claude_code/cli/local_http.py) owns the direct
+agent-to-FCC connection boundary. Launcher health checks and local model-catalog
+requests never inherit environment or operating-system forward proxies. Every
+spawned agent environment preserves the user's outbound proxy configuration but
+adds the configured FCC host and standard loopback names to both `NO_PROXY` and
+`no_proxy`. Provider-specific upstream proxies remain provider-owned and do not
+participate in this local boundary.
+
 [cli/proxy_auth.py](src/free_claude_code/cli/proxy_auth.py) owns the neutral
 proxy-auth token policy shared by client launchers. A blank configured token
 becomes the local-only `fcc-no-auth` sentinel so clients cross their login gates

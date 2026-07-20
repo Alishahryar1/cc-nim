@@ -4,8 +4,12 @@ import json
 import os
 import sys
 from collections.abc import Mapping, Sequence
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
+from free_claude_code.cli.local_http import (
+    open_local_request,
+    with_local_proxy_bypass,
+)
 from free_claude_code.cli.proxy_auth import proxy_auth_token
 from free_claude_code.config.paths import codex_model_catalog_path
 from free_claude_code.config.server_urls import local_proxy_root_url
@@ -71,6 +75,7 @@ def launch(argv: Sequence[str] | None = None) -> None:
             catalog_config_args=catalog_args,
         ),
         env=build_codex_launcher_env(
+            proxy_root_url=proxy_root_url,
             auth_token=settings.anthropic_auth_token,
             base_env=os.environ,
         ),
@@ -109,16 +114,20 @@ def build_codex_launcher_command(
 
 def build_codex_launcher_env(
     *,
+    proxy_root_url: str,
     auth_token: str,
     base_env: Mapping[str, str],
 ) -> dict[str, str]:
     """Return a Codex environment that targets the local proxy provider."""
 
-    env = {
-        key: value
-        for key, value in base_env.items()
-        if key not in _STRIPPED_CODEX_ENV_KEYS and not key.startswith("OPENAI_")
-    }
+    env = with_local_proxy_bypass(
+        {
+            key: value
+            for key, value in base_env.items()
+            if key not in _STRIPPED_CODEX_ENV_KEYS and not key.startswith("OPENAI_")
+        },
+        proxy_root_url=proxy_root_url,
+    )
     env[_CODEX_AUTH_ENV_KEY] = proxy_auth_token(auth_token)
     return env
 
@@ -165,7 +174,9 @@ def fetch_proxy_models_response(
         headers["Authorization"] = f"Bearer {token}"
 
     request = Request(url, headers=headers, method="GET")
-    with urlopen(request, timeout=PROXY_PREFLIGHT_TIMEOUT_SECONDS) as response:
+    with open_local_request(
+        request, timeout=PROXY_PREFLIGHT_TIMEOUT_SECONDS
+    ) as response:
         payload = json.loads(response.read().decode("utf-8"))
 
     if not isinstance(payload, dict):

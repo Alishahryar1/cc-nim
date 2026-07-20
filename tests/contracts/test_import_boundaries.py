@@ -226,6 +226,31 @@ def test_google_reasoning_wire_fields_have_one_owner() -> None:
     assert sorted(offenders) == []
 
 
+def test_cli_local_http_transport_has_one_owner() -> None:
+    cli_root = _PACKAGE_ROOT / "cli"
+    owner = cli_root / "local_http.py"
+    owned_urllib_names = {"ProxyHandler", "build_opener", "urlopen"}
+    owned_environment_keys = {"NO_PROXY", "no_proxy"}
+    offenders: list[str] = []
+
+    for path in cli_root.rglob("*.py"):
+        if path == owner:
+            continue
+        tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+        relative_path = path.relative_to(_REPO_ROOT).as_posix()
+        for node in ast.walk(tree):
+            if isinstance(node, ast.ImportFrom) and node.module == "urllib.request":
+                offenders.extend(
+                    f"{relative_path}:{node.lineno}: urllib.request.{alias.name}"
+                    for alias in node.names
+                    if alias.name in owned_urllib_names
+                )
+            if isinstance(node, ast.Constant) and node.value in owned_environment_keys:
+                offenders.append(f"{relative_path}:{node.lineno}: {node.value}")
+
+    assert sorted(offenders) == []
+
+
 def test_provider_backchannel_detector_reports_untyped_private_access(
     tmp_path: Path,
 ) -> None:

@@ -5,8 +5,9 @@ import subprocess
 import sys
 from collections.abc import Mapping
 from urllib.error import HTTPError, URLError
-from urllib.request import Request, urlopen
+from urllib.request import Request
 
+from free_claude_code.cli.local_http import open_local_request
 from free_claude_code.cli.process_registry import (
     kill_pid_tree_best_effort,
     register_pid,
@@ -23,7 +24,9 @@ def preflight_proxy(proxy_root_url: str) -> str | None:
     url = f"{proxy_root_url.rstrip('/')}{PROXY_PREFLIGHT_PATH}"
     request = Request(url, method="GET")
     try:
-        with urlopen(request, timeout=PROXY_PREFLIGHT_TIMEOUT_SECONDS) as response:
+        with open_local_request(
+            request, timeout=PROXY_PREFLIGHT_TIMEOUT_SECONDS
+        ) as response:
             status_code = response.getcode()
     except HTTPError as exc:
         return f"returned HTTP {exc.code}"

@@ -6,6 +6,7 @@ import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
 
+from free_claude_code.cli.local_http import with_local_proxy_bypass
 from free_claude_code.cli.proxy_auth import proxy_auth_token
 from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.config.settings import get_settings
@@ -114,9 +115,14 @@ def build_pi_launcher_env(
 ) -> dict[str, str]:
     """Return a Pi environment containing only FCC-owned proxy variables."""
 
-    env = {
-        key: value for key, value in base_env.items() if not key.startswith("FCC_PI_")
-    }
+    env = with_local_proxy_bypass(
+        {
+            key: value
+            for key, value in base_env.items()
+            if not key.startswith("FCC_PI_")
+        },
+        proxy_root_url=proxy_root_url,
+    )
     env[_BASE_URL_ENV] = proxy_root_url.rstrip("/")
     env[_API_KEY_ENV] = proxy_auth_token(auth_token)
     return env

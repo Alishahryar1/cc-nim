@@ -72,6 +72,8 @@ def test_managed_claude_builds_new_task_command_and_env() -> None:
     assert invocation.env["DISABLE_FEEDBACK_COMMAND"] == "1"
     assert invocation.env["DISABLE_ERROR_REPORTING"] == "1"
     assert invocation.env["DISABLE_TELEMETRY"] == "1"
+    assert invocation.env["NO_PROXY"] == "127.0.0.1,localhost,::1"
+    assert invocation.env["no_proxy"] == invocation.env["NO_PROXY"]
     assert "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" not in invocation.env
     assert "ANTHROPIC_API_URL" not in invocation.env
     assert "ANTHROPIC_API_KEY" not in invocation.env

@@ -503,6 +503,8 @@ def test_claude_child_env_targets_current_proxy_config() -> None:
     assert env["DISABLE_FEEDBACK_COMMAND"] == "1"
     assert env["DISABLE_ERROR_REPORTING"] == "1"
     assert env["DISABLE_TELEMETRY"] == "1"
+    assert env["NO_PROXY"] == "127.0.0.1,localhost,::1"
+    assert env["no_proxy"] == env["NO_PROXY"]
     assert "ANTHROPIC_API_URL" not in env
     assert "ANTHROPIC_API_KEY" not in env
     assert "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" not in env
@@ -567,6 +569,8 @@ def test_launch_claude_passes_args_and_child_env(
     assert child_env["DISABLE_FEEDBACK_COMMAND"] == "1"
     assert child_env["DISABLE_ERROR_REPORTING"] == "1"
     assert child_env["DISABLE_TELEMETRY"] == "1"
+    assert child_env["NO_PROXY"] == "127.0.0.1,localhost,::1"
+    assert child_env["no_proxy"] == child_env["NO_PROXY"]
     assert "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" not in child_env
     assert child_env["KEEP_ME"] == "yes"
     register_pid.assert_called_once_with(12345)
@@ -627,7 +631,10 @@ def test_launch_codex_passes_responses_config_and_child_env(
             "free_claude_code.cli.launchers.codex.codex_model_catalog_path",
             return_value=catalog_path,
         ),
-        patch("free_claude_code.cli.launchers.codex.urlopen", side_effect=fake_urlopen),
+        patch(
+            "free_claude_code.cli.launchers.codex.open_local_request",
+            side_effect=fake_urlopen,
+        ),
         patch("free_claude_code.cli.launchers.common.subprocess.Popen") as popen,
         patch("free_claude_code.cli.launchers.common.register_pid") as register_pid,
         patch("free_claude_code.cli.launchers.common.unregister_pid") as unregister_pid,
@@ -659,6 +666,8 @@ def test_launch_codex_passes_responses_config_and_child_env(
     child_env = popen.call_args.kwargs["env"]
     assert child_env["FCC_CODEX_API_KEY"] == "proxy-token"
     assert child_env["CODEX_HOME"] == "keep-home"
+    assert child_env["NO_PROXY"] == "127.0.0.1,localhost,::1"
+    assert child_env["no_proxy"] == child_env["NO_PROXY"]
     assert "CODEX_INTERNAL_ORIGINATOR_OVERRIDE" not in child_env
     assert "CODEX_PERMISSION_PROFILE" not in child_env
     assert "CODEX_SHELL" not in child_env
@@ -693,7 +702,8 @@ def test_launch_codex_catalog_failure_warns_and_continues(
             return_value=tmp_path / "codex-model-catalog.json",
         ),
         patch(
-            "free_claude_code.cli.launchers.codex.urlopen", side_effect=URLError("boom")
+            "free_claude_code.cli.launchers.codex.open_local_request",
+            side_effect=URLError("boom"),
         ),
         patch("free_claude_code.cli.launchers.common.subprocess.Popen") as popen,
         patch("free_claude_code.cli.launchers.common.register_pid"),
@@ -749,6 +759,8 @@ def test_pi_launcher_builds_scoped_session_command_and_proxy_env(
     assert env == {
         "PATH": "keep",
         "ANTHROPIC_API_KEY": "native-pi-credential",
+        "NO_PROXY": "127.0.0.1,localhost,::1",
+        "no_proxy": "127.0.0.1,localhost,::1",
         "FCC_PI_BASE_URL": "http://127.0.0.1:9191",
         "FCC_PI_API_KEY": "proxy-token",
     }
@@ -816,6 +828,8 @@ def test_launch_pi_registers_bundled_extension_for_sessions(
     child_env = popen.call_args.kwargs["env"]
     assert child_env["FCC_PI_BASE_URL"] == "http://127.0.0.1:9191"
     assert child_env["FCC_PI_API_KEY"] == "proxy-token"
+    assert child_env["NO_PROXY"] == "127.0.0.1,localhost,::1"
+    assert child_env["no_proxy"] == child_env["NO_PROXY"]
     assert child_env["KEEP_ME"] == "yes"
 
 
