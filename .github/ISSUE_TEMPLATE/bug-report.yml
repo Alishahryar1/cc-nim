@@ -1,6 +1,5 @@
 name: Bug report
 description: Report something that is not working in Free Claude Code.
-title: "[Bug]: "
 labels:
   - bug
 body:
