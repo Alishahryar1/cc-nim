@@ -18,7 +18,7 @@ from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     REASONING_OFF,
-    passthrough_rate_limiter,
+    immediate_admission,
     reasoning_for,
 )
 
@@ -52,7 +52,7 @@ def open_router_provider():
             rate_limit=10,
             rate_window=60,
         ),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
 
 

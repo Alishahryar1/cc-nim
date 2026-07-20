@@ -16,7 +16,6 @@ from free_claude_code.core.diagnostics import (
 )
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 
-MarkRateLimited = Callable[[float], None]
 ProviderFailureOverride = Callable[[Exception], ExecutionFailure | None]
 
 _RATE_LIMIT_MARKERS = frozenset({"rate_limit", "rate limit", "too many requests"})
@@ -36,16 +35,28 @@ _INVALID_REQUEST_MESSAGE = "Invalid request sent to provider."
 _OVERLOADED_MESSAGE = "Provider is currently overloaded. Please retry."
 
 
+class ProviderRecoveryExhausted(RuntimeError):
+    """A shared provider recovery episode exhausted its single probe budget."""
+
+    def __init__(self, last_error: Exception) -> None:
+        super().__init__("Provider recovery retry budget was exhausted.")
+        self.last_error = last_error
+
+
+class RetryableProviderProtocolError(RuntimeError):
+    """A malformed upstream protocol result eligible for provider retry."""
+
+
 def classify_provider_failure(
     exc: Exception,
     *,
     provider_name: str,
     read_timeout_s: float | None,
     request_id: str | None,
-    mark_rate_limited: MarkRateLimited,
     provider_failure_override: ProviderFailureOverride | None = None,
 ) -> ExecutionFailure:
     """Return one detailed canonical failure after provider retries are exhausted."""
+    exc = underlying_provider_error(exc)
     if isinstance(exc, ExecutionFailure):
         failure = exc
         message = failure.message
@@ -63,7 +74,6 @@ def classify_provider_failure(
         failure = _classify_provider_failure(
             exc,
             read_timeout_s=read_timeout_s,
-            mark_rate_limited=mark_rate_limited,
         )
     message = format_execution_failure_message(
         failure,
@@ -81,6 +91,8 @@ def overloaded_provider_failure() -> ExecutionFailure:
 
 def retryable_transient_status(exc: BaseException) -> int | None:
     """Infer a retryable HTTP-like status from one upstream exception."""
+    if isinstance(exc, ProviderRecoveryExhausted):
+        return None
     if isinstance(exc, ExecutionFailure):
         status = exc.status_code
         return status if exc.retryable and _is_retryable_status(status) else None
@@ -110,6 +122,8 @@ def retryable_transient_status(exc: BaseException) -> int | None:
 
 def is_transient_overload_error(exc: BaseException) -> bool:
     """Return whether an upstream exception reports overload or capacity pressure."""
+    if isinstance(exc, ProviderRecoveryExhausted):
+        return False
     if isinstance(exc, ExecutionFailure):
         return exc.kind == FailureKind.OVERLOADED
     return _has_marker(transient_error_text(exc), _OVERLOAD_MARKERS)
@@ -130,6 +144,8 @@ def transient_error_text(exc: BaseException) -> str:
 
 def is_retryable_provider_error(exc: BaseException) -> bool:
     """Return whether provider policy permits stream retry or recovery."""
+    if isinstance(exc, ProviderRecoveryExhausted):
+        return False
     if isinstance(exc, ExecutionFailure):
         return exc.retryable
     if isinstance(exc, openai.AuthenticationError | openai.BadRequestError):
@@ -148,6 +164,7 @@ def is_retryable_provider_error(exc: BaseException) -> bool:
             httpx.NetworkError,
             openai.APITimeoutError,
             openai.APIConnectionError,
+            RetryableProviderProtocolError,
         ),
     )
 
@@ -158,34 +175,14 @@ def retryable_upstream_status(exc: BaseException) -> int | None:
     return status if status is not None and _is_retryable_status(status) else None
 
 
-def retryable_upstream_transport_error(exc: BaseException) -> bool:
-    """Return whether a pre-response transport failure can be retried."""
-    if isinstance(exc, ExecutionFailure):
-        return exc.retryable and retryable_transient_status(exc) is None
-    if isinstance(exc, openai.AuthenticationError | openai.BadRequestError):
-        return False
-    return isinstance(
-        exc,
-        (
-            TimeoutError,
-            httpx.TimeoutException,
-            httpx.ConnectError,
-            httpx.ReadError,
-            httpx.WriteError,
-            httpx.RemoteProtocolError,
-            httpx.NetworkError,
-            openai.APITimeoutError,
-            openai.APIConnectionError,
-        ),
-    )
-
-
 def provider_error_message(
     exc: BaseException,
     *,
     read_timeout_s: float | None = None,
 ) -> str:
     """Map raw provider exception types to stable customer-facing wording."""
+    if isinstance(exc, Exception):
+        exc = underlying_provider_error(exc)
     if isinstance(exc, ExecutionFailure):
         return exc.message
     if isinstance(exc, httpx.ReadTimeout):
@@ -213,17 +210,13 @@ def _classify_provider_failure(
     exc: Exception,
     *,
     read_timeout_s: float | None,
-    mark_rate_limited: MarkRateLimited,
 ) -> ExecutionFailure:
     if isinstance(exc, ExecutionFailure):
-        if exc.kind == FailureKind.RATE_LIMIT:
-            mark_rate_limited(60)
         return exc
 
     if isinstance(exc, openai.AuthenticationError):
         return _failure(FailureKind.AUTHENTICATION, 401, _AUTHENTICATION_MESSAGE, False)
     if isinstance(exc, openai.RateLimitError):
-        mark_rate_limited(60)
         return _failure(FailureKind.RATE_LIMIT, 429, _RATE_LIMIT_MESSAGE, True)
     if isinstance(exc, openai.BadRequestError):
         return _failure(
@@ -248,7 +241,6 @@ def _classify_provider_failure(
     if isinstance(exc, openai.APIError):
         status = retryable_transient_status(exc)
         if status == 429:
-            mark_rate_limited(60)
             return _failure(FailureKind.RATE_LIMIT, 429, _RATE_LIMIT_MESSAGE, True)
         if is_transient_overload_error(exc):
             return overloaded_provider_failure()
@@ -269,7 +261,6 @@ def _classify_provider_failure(
                 FailureKind.AUTHENTICATION, 401, _AUTHENTICATION_MESSAGE, False
             )
         if status == 429:
-            mark_rate_limited(60)
             return _failure(FailureKind.RATE_LIMIT, 429, _RATE_LIMIT_MESSAGE, True)
         if status == 400:
             return _failure(
@@ -387,6 +378,13 @@ def _body_to_text(body: Any) -> str:
 
 def _has_marker(text: str, markers: frozenset[str]) -> bool:
     return any(marker in text for marker in markers)
+
+
+def underlying_provider_error(exc: Exception) -> Exception:
+    """Return the raw failure retained by an exhausted recovery wrapper."""
+    while isinstance(exc, ProviderRecoveryExhausted):
+        exc = exc.last_error
+    return exc
 
 
 def _is_retryable_status(status: int | None) -> bool:

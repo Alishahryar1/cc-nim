@@ -11,7 +11,7 @@ from free_claude_code.providers.google_openai import (
     GOOGLE_SKIP_THOUGHT_SIGNATURE_VALIDATOR,
 )
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter, reasoning_for
+from tests.providers.support import immediate_admission, reasoning_for
 
 
 def make_request(**overrides):
@@ -38,7 +38,7 @@ def gemini_config():
 
 @pytest.fixture
 def gemini_provider(gemini_config):
-    return GeminiProvider(gemini_config, rate_limiter=passthrough_rate_limiter())
+    return GeminiProvider(gemini_config, admission=immediate_admission())
 
 
 def test_init(gemini_config):
@@ -46,9 +46,7 @@ def test_init(gemini_config):
     with patch(
         "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as mock_openai:
-        provider = GeminiProvider(
-            gemini_config, rate_limiter=passthrough_rate_limiter()
-        )
+        provider = GeminiProvider(gemini_config, admission=immediate_admission())
         assert provider._api_key == "test_gemini_key"
         assert (
             provider._base_url
@@ -110,7 +108,7 @@ def test_build_request_body_reasoning_off_sets_reasoning_none():
             rate_limit=10,
             rate_window=60,
         ),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     req = make_request(thinking={"type": "disabled"})
     body = provider._build_request_body(req, reasoning=reasoning_for(req))

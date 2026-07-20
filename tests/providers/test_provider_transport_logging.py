@@ -1,7 +1,6 @@
 """Tests for credential-safe provider transport logging."""
 
 import logging
-from contextlib import asynccontextmanager
 from unittest.mock import AsyncMock, patch
 
 import httpx
@@ -13,7 +12,7 @@ from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter
+from tests.providers.support import immediate_admission
 
 
 def _provider(*, verbose: bool = False) -> NvidiaNimProvider:
@@ -24,13 +23,8 @@ def _provider(*, verbose: bool = False) -> NvidiaNimProvider:
             log_api_error_tracebacks=verbose,
         ),
         nim_settings=NimSettings(),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
-
-
-@asynccontextmanager
-async def _noop_slot():
-    yield
 
 
 @pytest.mark.asyncio
@@ -43,7 +37,6 @@ async def test_stream_failure_default_logs_exclude_exception_text(caplog) -> Non
             new_callable=AsyncMock,
             side_effect=RuntimeError("SECRET_OPENAI_COMPAT"),
         ),
-        patch.object(provider._rate_limiter, "concurrency_slot", _noop_slot),
         caplog.at_level(logging.ERROR),
         pytest.raises(ExecutionFailure),
     ):
@@ -68,7 +61,6 @@ async def test_stream_failure_default_logs_cause_types_only(caplog) -> None:
             new_callable=AsyncMock,
             side_effect=error,
         ),
-        patch.object(provider._rate_limiter, "concurrency_slot", _noop_slot),
         caplog.at_level(logging.ERROR),
         pytest.raises(ExecutionFailure),
     ):
@@ -92,7 +84,6 @@ async def test_stream_failure_verbose_traceback_redacts_credentials(caplog) -> N
                 "api_key=SECRET_OPENAI_COMPAT useful traceback detail"
             ),
         ),
-        patch.object(provider._rate_limiter, "concurrency_slot", _noop_slot),
         caplog.at_level(logging.ERROR),
         pytest.raises(ExecutionFailure),
     ):

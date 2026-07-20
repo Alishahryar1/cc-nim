@@ -356,7 +356,7 @@ async def test_bootstrap_constructs_isolated_runtime_resource_graphs() -> None:
 
         assert isinstance(first_provider, NvidiaNimProvider)
         assert isinstance(second_provider, NvidiaNimProvider)
-        assert first_provider._rate_limiter is not second_provider._rate_limiter
+        assert first_provider._admission is not second_provider._admission
         assert first.runtime._transcriber is not second.runtime._transcriber
     finally:
         await first_lease.release()

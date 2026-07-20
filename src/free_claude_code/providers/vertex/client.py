@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 
 from free_claude_code.core.anthropic import ReasoningReplayMode
+from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.google_openai import (
     GoogleOpenAIProvider,
@@ -17,7 +18,6 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProfile,
     OpenAIChatRequestPolicy,
 )
-from free_claude_code.providers.rate_limit import ProviderRateLimiter
 
 from .auth import GoogleAccessTokenProvider
 from .endpoint import vertex_openai_base_url, vertex_publisher_models_url
@@ -39,7 +39,7 @@ class VertexProvider(GoogleOpenAIProvider):
         *,
         project_id: str,
         location: str,
-        rate_limiter: ProviderRateLimiter,
+        admission: ProviderAdmissionController,
         access_token_provider: GoogleAccessTokenProvider | None = None,
     ) -> None:
         self._project_id = project_id.strip()
@@ -61,7 +61,7 @@ class VertexProvider(GoogleOpenAIProvider):
         super().__init__(
             replace(config, base_url=base_url),
             profile=_PROFILE,
-            rate_limiter=rate_limiter,
+            admission=admission,
             api_key_provider=self._access_token_provider,
             default_headers={"x-goog-user-project": self._project_id},
         )
@@ -114,7 +114,7 @@ class VertexProvider(GoogleOpenAIProvider):
                 raise
             return response
 
-        response = await self._rate_limiter.execute_with_retry(request)
+        response = await self._admission.run_with_retry(request)
         try:
             try:
                 return response.json()

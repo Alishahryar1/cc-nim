@@ -12,7 +12,7 @@ from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.support import (
     REASONING_OFF,
-    passthrough_rate_limiter,
+    immediate_admission,
     profiled_provider,
     reasoning_for,
 )
@@ -28,7 +28,7 @@ def fireworks_provider():
             rate_limit=10,
             rate_window=60,
         ),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
 
 
@@ -84,7 +84,7 @@ def test_replay_is_independent_of_current_turn_reasoning_control():
             rate_limit=1,
             rate_window=1,
         ),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     request = MessagesRequest.model_validate(
         {

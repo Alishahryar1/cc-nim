@@ -7,6 +7,7 @@ from loguru import logger
 from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
+from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import (
     NO_REASONING,
@@ -15,7 +16,6 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatRequestPolicy,
     build_openai_chat_request_body,
 )
-from free_claude_code.providers.rate_limit import ProviderRateLimiter
 
 from .reasoning import (
     apply_mistral_reasoning_request_shape,
@@ -34,11 +34,13 @@ _PROFILE = OpenAIChatProfile(_REQUEST_POLICY, NO_REASONING)
 class MistralProvider(OpenAIChatProvider):
     """Mistral API using ``https://api.mistral.ai/v1/chat/completions``."""
 
-    def __init__(self, config: ProviderConfig, *, rate_limiter: ProviderRateLimiter):
+    def __init__(
+        self, config: ProviderConfig, *, admission: ProviderAdmissionController
+    ):
         super().__init__(
             config,
             profile=_PROFILE,
-            rate_limiter=rate_limiter,
+            admission=admission,
         )
 
     def _build_request_body(
@@ -67,6 +69,5 @@ class MistralProvider(OpenAIChatProvider):
         )
         return retry_body
 
-    async def _create_stream(self, body: dict) -> tuple[Any, dict]:
-        stream, final_body = await super()._create_stream(body)
-        return normalize_mistral_stream(stream), final_body
+    def _normalize_stream(self, stream: Any) -> Any:
+        return normalize_mistral_stream(stream)

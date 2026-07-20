@@ -24,6 +24,7 @@ from free_claude_code.core.reasoning import (
     ReasoningEffort,
     ReasoningPolicy,
 )
+from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import (
     NamedEffortReasoning,
@@ -31,7 +32,6 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProvider,
     OpenAIChatRequestPolicy,
 )
-from free_claude_code.providers.rate_limit import ProviderRateLimiter
 
 _PROFILE = OpenAIChatProfile(
     OpenAIChatRequestPolicy(
@@ -64,11 +64,13 @@ class LMStudioProvider(OpenAIChatProvider):
     # dying mid-stream.
     _CONTEXT_CACHE_TTL_S = 30.0
 
-    def __init__(self, config: ProviderConfig, *, rate_limiter: ProviderRateLimiter):
+    def __init__(
+        self, config: ProviderConfig, *, admission: ProviderAdmissionController
+    ):
         super().__init__(
             config,
             profile=_PROFILE,
-            rate_limiter=rate_limiter,
+            admission=admission,
         )
         self._loaded_context_cache: tuple[float, int | None] = (0.0, None)
 

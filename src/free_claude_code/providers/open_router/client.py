@@ -10,6 +10,7 @@ from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.streaming import AnthropicStreamLedger
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
+from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.model_listing import (
     extract_openrouter_tool_model_ids,
@@ -22,7 +23,6 @@ from free_claude_code.providers.openai_chat import (
     ReasoningObject,
     validate_extra_body_does_not_override_canonical_fields,
 )
-from free_claude_code.providers.rate_limit import ProviderRateLimiter
 
 _REQUEST_POLICY = OpenAIChatRequestPolicy(
     provider_name="OPENROUTER",
@@ -36,25 +36,33 @@ _REQUEST_POLICY = OpenAIChatRequestPolicy(
 class OpenRouterProvider(OpenAIChatProvider):
     """OpenRouter provider using the OpenAI-compatible Chat Completions API."""
 
-    def __init__(self, config: ProviderConfig, *, rate_limiter: ProviderRateLimiter):
+    def __init__(
+        self, config: ProviderConfig, *, admission: ProviderAdmissionController
+    ):
         super().__init__(
             config,
             profile=_PROFILE,
-            rate_limiter=rate_limiter,
+            admission=admission,
         )
 
     async def list_model_ids(self) -> frozenset[str]:
         """Only advertise OpenRouter models that can run Claude Code tools."""
-        payload = await self._client.models.list()
+        payload = await self._list_models_payload()
         return extract_openrouter_tool_model_ids(
             payload, provider_name=self._provider_name
         )
 
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
         """Advertise OpenRouter tool models with reasoning capability metadata."""
-        payload = await self._client.models.list()
+        payload = await self._list_models_payload()
         return extract_openrouter_tool_model_infos(
             payload, provider_name=self._provider_name
+        )
+
+    async def _list_models_payload(self) -> Any:
+        return await self._admission.run_with_retry(
+            self._client.models.list,
+            provider_failure_override=self._provider_failure_override,
         )
 
     def _handle_extra_reasoning(

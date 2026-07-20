@@ -1,7 +1,7 @@
 """OpenAI-compatible provider family."""
 
+from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.rate_limit import ProviderRateLimiter
 
 from .base_url import openai_v1_base_url
 from .extra_body import validate_extra_body_does_not_override_canonical_fields
@@ -20,7 +20,7 @@ from .usage import usage_int
 def create_openai_chat_provider(
     provider_id: str,
     config: ProviderConfig,
-    rate_limiter: ProviderRateLimiter,
+    admission: ProviderAdmissionController,
 ) -> OpenAIChatProvider:
     """Construct one profile-driven provider."""
     profile = OPENAI_CHAT_PROFILES.get(provider_id)
@@ -29,7 +29,7 @@ def create_openai_chat_provider(
     return OpenAIChatProvider(
         config,
         profile=profile,
-        rate_limiter=rate_limiter,
+        admission=admission,
         default_headers=(
             {"User-Agent": profile.user_agent} if profile.user_agent else None
         ),

@@ -9,18 +9,14 @@ import httpx
 import openai
 
 from free_claude_code.core.failures import ExecutionFailure
-from free_claude_code.core.trace import trace_event
 
-from .failure_policy import retryable_transient_status
+from .failure_policy import RetryableProviderProtocolError, retryable_transient_status
 
-EARLY_TRANSPARENT_TOTAL_ATTEMPTS = 5
-EARLY_TRANSPARENT_MAX_RETRIES = EARLY_TRANSPARENT_TOTAL_ATTEMPTS - 1
-MIDSTREAM_RECOVERY_ATTEMPTS = 5
 EARLY_HOLDBACK_SECONDS = 0.75
 RECOVERY_BUFFER_MAX_BYTES = 65_536
 
 
-class TruncatedProviderStreamError(RuntimeError):
+class TruncatedProviderStreamError(RetryableProviderProtocolError):
     """An upstream stream ended without its required terminal marker."""
 
 
@@ -40,8 +36,6 @@ class RecoveryDecision:
     retryable: bool
     committed: bool
     has_buffered: bool
-    early_retry_attempt: int | None = None
-    midstream_recovery_attempt: int | None = None
 
 
 class RecoveryHoldbackBuffer:
@@ -97,14 +91,10 @@ class RecoveryHoldbackBuffer:
 
 
 class RecoveryController:
-    """Own holdback and retry counters for one provider stream lifecycle."""
+    """Own commit-boundary holdback for one provider stream lifecycle."""
 
-    def __init__(self, *, provider_name: str, request_id: str | None) -> None:
-        self._provider_name = provider_name
-        self._request_id = request_id
+    def __init__(self) -> None:
         self._holdback = RecoveryHoldbackBuffer()
-        self._early_retry_count = 0
-        self._midstream_recovery_count = 0
 
     @property
     def committed(self) -> bool:
@@ -113,14 +103,6 @@ class RecoveryController:
     @property
     def has_buffered(self) -> bool:
         return self._holdback.has_buffered
-
-    @property
-    def early_retries(self) -> int:
-        return self._early_retry_count
-
-    @property
-    def midstream_recoveries(self) -> int:
-        return self._midstream_recovery_count
 
     def push(self, event: str) -> list[str]:
         return self._holdback.push(event)
@@ -143,50 +125,46 @@ class RecoveryController:
         stream_opened: bool,
         generated_output: bool,
         complete_tool_salvageable: bool,
+        attempts_remaining: int,
+        retryable_override: bool | None = None,
     ) -> RecoveryDecision:
-        retryable = is_retryable_stream_error(error)
+        retryable = (
+            is_retryable_stream_error(error)
+            if retryable_override is None
+            else retryable_override
+        )
         committed = self._holdback.committed
         has_buffered = self._holdback.has_buffered
+        retry_available = attempts_remaining > 0
+        reserve_last_attempt_for_recovery = generated_output and attempts_remaining == 1
 
         if (
             retryable
+            and retry_available
             and stream_opened
             and not committed
             and not complete_tool_salvageable
-            and self._early_retry_count < EARLY_TRANSPARENT_MAX_RETRIES
+            and not reserve_last_attempt_for_recovery
         ):
-            self._early_retry_count += 1
             self._holdback.discard()
             self._holdback = RecoveryHoldbackBuffer()
-            trace_event(
-                stage="provider",
-                event="provider.recovery.early_retry",
-                source="provider",
-                provider=self._provider_name,
-                request_id=self._request_id,
-                retry_attempt=self._early_retry_count,
-                retryable=True,
-            )
             return RecoveryDecision(
                 action=RecoveryFailureAction.EARLY_RETRY,
                 retryable=True,
                 committed=False,
                 has_buffered=has_buffered,
-                early_retry_attempt=self._early_retry_count,
             )
 
         if (
             retryable
             and generated_output
-            and self._midstream_recovery_count < MIDSTREAM_RECOVERY_ATTEMPTS
+            and (retry_available or complete_tool_salvageable)
         ):
-            self._midstream_recovery_count += 1
             return RecoveryDecision(
                 action=RecoveryFailureAction.MIDSTREAM_RECOVERY,
                 retryable=True,
                 committed=committed,
                 has_buffered=has_buffered,
-                midstream_recovery_attempt=self._midstream_recovery_count,
             )
 
         return RecoveryDecision(

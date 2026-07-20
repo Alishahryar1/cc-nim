@@ -3,7 +3,7 @@
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
 from tests.providers.support import (
-    passthrough_rate_limiter,
+    immediate_admission,
     profiled_provider,
     reasoning_for,
 )
@@ -18,7 +18,7 @@ def test_build_request_body_omits_empty_reasoning_content() -> None:
             rate_limit=1,
             rate_window=1,
         ),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     request = MessagesRequest.model_validate(
         {

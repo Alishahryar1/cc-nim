@@ -16,7 +16,7 @@ from free_claude_code.providers.openai_chat.output_cap import (
     parse_output_token_cap,
 )
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter, profiled_provider
+from tests.providers.support import immediate_admission, profiled_provider
 
 
 class _BadRequest(Exception):
@@ -120,7 +120,7 @@ def groq_provider():
             rate_limit=10,
             rate_window=60,
         ),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
 
 
@@ -140,7 +140,11 @@ async def test_create_stream_clamps_and_learns_on_cap_rejection(groq_provider):
     create = AsyncMock(side_effect=[error, object()])
 
     with patch.object(groq_provider._client.chat.completions, "create", create):
-        _stream, used_body = await groq_provider._create_stream(body)
+        _stream, used_body, attempt = await groq_provider._create_stream(
+            body,
+            groq_provider._admission.new_retry_session(),
+        )
+        await attempt.aclose()
 
     assert create.call_count == 2
     assert create.call_args_list[1].kwargs["max_completion_tokens"] == 40960
@@ -162,7 +166,11 @@ async def test_learned_cap_clamps_next_request_without_a_400(groq_provider):
 
     create = AsyncMock(return_value=object())
     with patch.object(groq_provider._client.chat.completions, "create", create):
-        _stream, used_body = await groq_provider._create_stream(body)
+        _stream, used_body, attempt = await groq_provider._create_stream(
+            body,
+            groq_provider._admission.new_retry_session(),
+        )
+        await attempt.aclose()
 
     assert create.call_count == 1
     assert create.call_args.kwargs["max_completion_tokens"] == 40960
@@ -184,7 +192,10 @@ async def test_unrelated_400_is_not_clamped_and_propagates(groq_provider):
         patch.object(groq_provider._client.chat.completions, "create", create),
         pytest.raises(Exception, match="wizard"),
     ):
-        await groq_provider._create_stream(body)
+        await groq_provider._create_stream(
+            body,
+            groq_provider._admission.new_retry_session(),
+        )
 
     assert create.call_count == 1
     assert groq_provider._model_output_caps == {}

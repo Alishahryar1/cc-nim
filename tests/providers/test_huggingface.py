@@ -10,7 +10,7 @@ from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.base import ProviderConfig
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter, profiled_provider
+from tests.providers.support import immediate_admission, profiled_provider
 
 
 def make_request(**overrides):
@@ -30,7 +30,7 @@ def huggingface_config():
 @pytest.fixture
 def huggingface_provider(huggingface_config):
     return profiled_provider(
-        "huggingface", huggingface_config, rate_limiter=passthrough_rate_limiter()
+        "huggingface", huggingface_config, admission=immediate_admission()
     )
 
 
@@ -43,7 +43,7 @@ def test_init_uses_default_base_url_and_api_key(huggingface_config):
         "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as mock_openai:
         provider = profiled_provider(
-            "huggingface", huggingface_config, rate_limiter=passthrough_rate_limiter()
+            "huggingface", huggingface_config, admission=immediate_admission()
         )
 
     assert provider._api_key == "test_hf_key"
@@ -56,7 +56,7 @@ def test_init_strips_trailing_slash(huggingface_config):
 
     with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
         provider = profiled_provider(
-            "huggingface", config, rate_limiter=passthrough_rate_limiter()
+            "huggingface", config, admission=immediate_admission()
         )
 
     assert provider._base_url == HUGGINGFACE_DEFAULT_BASE

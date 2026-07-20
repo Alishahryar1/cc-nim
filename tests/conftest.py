@@ -8,7 +8,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from free_claude_code.config.settings import Settings
-from tests.providers.support import passthrough_rate_limiter
+from tests.providers.support import immediate_admission
 
 # Set mock environment BEFORE any imports that use Settings
 os.environ.setdefault("NVIDIA_NIM_API_KEY", "test_key")
@@ -49,7 +49,7 @@ def nim_provider(provider_config):
     return NvidiaNimProvider(
         provider_config,
         nim_settings=NimSettings(),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
 
 
@@ -57,7 +57,7 @@ def nim_provider(provider_config):
 def open_router_provider(provider_config):
     from free_claude_code.providers.open_router import OpenRouterProvider
 
-    return OpenRouterProvider(provider_config, rate_limiter=passthrough_rate_limiter())
+    return OpenRouterProvider(provider_config, admission=immediate_admission())
 
 
 @pytest.fixture
@@ -71,7 +71,7 @@ def lmstudio_provider(provider_config):
         rate_limit=provider_config.rate_limit,
         rate_window=provider_config.rate_window,
     )
-    return LMStudioProvider(lmstudio_config, rate_limiter=passthrough_rate_limiter())
+    return LMStudioProvider(lmstudio_config, admission=immediate_admission())
 
 
 @pytest.fixture
@@ -88,7 +88,7 @@ def llamacpp_provider(provider_config):
     return create_openai_chat_provider(
         "llamacpp",
         llamacpp_config,
-        passthrough_rate_limiter(),
+        immediate_admission(),
     )
 
 

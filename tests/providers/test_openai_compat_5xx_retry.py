@@ -12,7 +12,7 @@ from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import retrying_rate_limiter
+from tests.providers.support import immediate_admission
 
 
 def _internal_5xx(code: int) -> openai.InternalServerError:
@@ -46,7 +46,7 @@ async def test_nim_stream_retries_on_openai_5xx_then_streams(status_code):
     provider = NvidiaNimProvider(
         config,
         nim_settings=NimSettings(),
-        rate_limiter=retrying_rate_limiter(),
+        admission=immediate_admission(),
     )
     req = make_messages_request()
 
@@ -90,7 +90,7 @@ async def test_nim_stream_retries_on_pre_stream_connection_error_then_streams():
     provider = NvidiaNimProvider(
         config,
         nim_settings=NimSettings(),
-        rate_limiter=retrying_rate_limiter(),
+        admission=immediate_admission(),
     )
     req = make_messages_request()
 
@@ -134,7 +134,7 @@ async def test_nim_stream_connection_error_exhausted_emits_cause_chain():
     provider = NvidiaNimProvider(
         config,
         nim_settings=NimSettings(),
-        rate_limiter=retrying_rate_limiter(),
+        admission=immediate_admission(),
     )
     req = make_messages_request()
     error = _connection_error("upstream disconnected")
@@ -189,7 +189,7 @@ async def test_nim_stream_openai_5xx_exhausted_emits_user_message(
     provider = NvidiaNimProvider(
         config,
         nim_settings=NimSettings(),
-        rate_limiter=retrying_rate_limiter(),
+        admission=immediate_admission(),
     )
     req = make_messages_request()
 

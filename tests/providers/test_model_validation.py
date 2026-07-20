@@ -26,7 +26,7 @@ from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.providers.runtime.model_cache import ProviderModelCache
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
-from tests.providers.support import passthrough_rate_limiter, profiled_provider
+from tests.providers.support import immediate_admission, profiled_provider
 
 
 def _settings(
@@ -77,7 +77,7 @@ async def test_nim_lists_openai_compatible_model_ids() -> None:
     config = ProviderConfig(api_key="test-key", base_url=NVIDIA_NIM_DEFAULT_BASE)
     with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
         provider = NvidiaNimProvider(
-            config, nim_settings=NimSettings(), rate_limiter=passthrough_rate_limiter()
+            config, nim_settings=NimSettings(), admission=immediate_admission()
         )
 
     with patch.object(
@@ -96,12 +96,12 @@ async def test_nim_lists_openai_compatible_model_ids() -> None:
         profiled_provider(
             "llamacpp",
             ProviderConfig(api_key="llamacpp", base_url="http://localhost:8080/v1"),
-            rate_limiter=passthrough_rate_limiter(),
+            admission=immediate_admission(),
         ),
         profiled_provider(
             "ollama",
             ProviderConfig(api_key="ollama", base_url="http://localhost:11434"),
-            rate_limiter=passthrough_rate_limiter(),
+            admission=immediate_admission(),
         ),
     ],
 )
@@ -123,7 +123,7 @@ async def test_local_openai_chat_providers_list_model_ids(
 async def test_deepseek_lists_models_from_root_endpoint() -> None:
     provider = DeepSeekProvider(
         ProviderConfig(api_key="deepseek-key", base_url=DEEPSEEK_DEFAULT_BASE),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     with patch.object(
         provider._client.models,
@@ -141,7 +141,7 @@ async def test_wafer_lists_models_from_default_models_endpoint() -> None:
     provider = profiled_provider(
         "wafer",
         ProviderConfig(api_key="wafer-key", base_url=WAFER_DEFAULT_BASE),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     with patch.object(
         provider._client.models,
@@ -158,7 +158,7 @@ async def test_wafer_lists_models_from_default_models_endpoint() -> None:
 async def test_openrouter_lists_only_tool_capable_models() -> None:
     provider = OpenRouterProvider(
         ProviderConfig(api_key="open-router-key", base_url=OPENROUTER_DEFAULT_BASE),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     with patch.object(
         provider._client.models,
@@ -193,7 +193,7 @@ async def test_openrouter_lists_only_tool_capable_models() -> None:
 async def test_openrouter_lists_tool_metadata_with_thinking_support() -> None:
     provider = OpenRouterProvider(
         ProviderConfig(api_key="open-router-key", base_url=OPENROUTER_DEFAULT_BASE),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     with patch.object(
         provider._client.models,
@@ -234,7 +234,7 @@ async def test_openrouter_lists_tool_metadata_with_thinking_support() -> None:
 async def test_openrouter_lists_empty_set_when_no_tool_capable_models() -> None:
     provider = OpenRouterProvider(
         ProviderConfig(api_key="open-router-key", base_url=OPENROUTER_DEFAULT_BASE),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     with patch.object(
         provider._client.models,
@@ -254,7 +254,7 @@ async def test_openrouter_lists_empty_set_when_no_tool_capable_models() -> None:
 async def test_openrouter_model_metadata_rejects_malformed_ids() -> None:
     provider = OpenRouterProvider(
         ProviderConfig(api_key="open-router-key", base_url=OPENROUTER_DEFAULT_BASE),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     with (
         patch.object(
@@ -275,7 +275,7 @@ async def test_model_listing_rejects_malformed_payload() -> None:
     provider = profiled_provider(
         "llamacpp",
         ProviderConfig(api_key="llamacpp", base_url="http://localhost:8080/v1"),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     with (
         patch.object(
@@ -294,7 +294,7 @@ async def test_model_listing_propagates_upstream_errors() -> None:
     provider = profiled_provider(
         "llamacpp",
         ProviderConfig(api_key="llamacpp", base_url="http://localhost:8080/v1"),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     with (
         patch.object(

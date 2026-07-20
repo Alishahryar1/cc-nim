@@ -14,7 +14,7 @@ from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
-    passthrough_rate_limiter,
+    immediate_admission,
 )
 
 
@@ -34,7 +34,7 @@ def lmstudio_config():
 
 @pytest.fixture
 def lmstudio_provider(lmstudio_config):
-    return LMStudioProvider(lmstudio_config, rate_limiter=passthrough_rate_limiter())
+    return LMStudioProvider(lmstudio_config, admission=immediate_admission())
 
 
 def test_init(lmstudio_config):
@@ -42,9 +42,7 @@ def test_init(lmstudio_config):
     with patch(
         "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as mock_openai:
-        provider = LMStudioProvider(
-            lmstudio_config, rate_limiter=passthrough_rate_limiter()
-        )
+        provider = LMStudioProvider(lmstudio_config, admission=immediate_admission())
         assert provider._api_key == "lm-studio"
         assert provider._base_url == LMSTUDIO_DEFAULT_BASE
         assert provider._provider_name == "LMSTUDIO"

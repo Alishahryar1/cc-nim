@@ -23,7 +23,7 @@ from free_claude_code.providers.vertex.endpoint import (
 )
 from free_claude_code.providers.vertex.models import extract_vertex_model_page
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter, reasoning_for
+from tests.providers.support import immediate_admission, reasoning_for
 
 _PROJECT_ID = "my-project"
 _GLOBAL_OPENAI_BASE = (
@@ -85,7 +85,7 @@ def _provider(
         ProviderConfig(api_key="", base_url=VERTEX_AI_API_ROOT),
         project_id=_PROJECT_ID,
         location=location,
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
         access_token_provider=token_provider or _token_provider(),
     )
 

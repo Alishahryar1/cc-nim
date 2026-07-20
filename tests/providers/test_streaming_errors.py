@@ -18,6 +18,7 @@ from free_claude_code.core.anthropic.streaming import (
 )
 from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
+from free_claude_code.providers.admission import UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.openai_chat.provider import (
@@ -28,12 +29,9 @@ from free_claude_code.providers.openai_chat.tool_calls import (
     has_committed_sse_output,
     iter_heuristic_tool_use_sse,
 )
-from free_claude_code.providers.stream_recovery import (
-    MIDSTREAM_RECOVERY_ATTEMPTS,
-    TruncatedProviderStreamError,
-)
+from free_claude_code.providers.stream_recovery import TruncatedProviderStreamError
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import REASONING_OFF, passthrough_rate_limiter
+from tests.providers.support import REASONING_OFF, immediate_admission
 
 
 class AsyncStreamMock:
@@ -75,7 +73,7 @@ def _make_provider():
     return NvidiaNimProvider(
         config,
         nim_settings=NimSettings(),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
 
 
@@ -215,6 +213,30 @@ def _assert_error_not_in_text_deltas_after_tool(
 
 
 class TestStreamingExceptionHandling:
+    @pytest.mark.asyncio
+    async def test_stream_normalization_failure_closes_raw_stream(self):
+        provider = _make_provider()
+        stream = ClosableAsyncStreamMock([])
+        retry_session = provider._admission.new_retry_session()
+
+        with (
+            patch.object(
+                provider._client.chat.completions,
+                "create",
+                new_callable=AsyncMock,
+                return_value=stream,
+            ),
+            patch.object(
+                provider,
+                "_normalize_stream",
+                side_effect=ValueError("invalid stream wrapper"),
+            ),
+            pytest.raises(ValueError, match="invalid stream wrapper"),
+        ):
+            await provider._create_stream({"messages": []}, retry_session)
+
+        assert stream.closed
+
     """Tests for error paths during stream_response."""
 
     @pytest.mark.asyncio
@@ -229,12 +251,6 @@ class TestStreamingExceptionHandling:
                 "create",
                 new_callable=AsyncMock,
                 side_effect=RuntimeError("API failed"),
-            ),
-            patch.object(
-                provider._rate_limiter,
-                "wait_if_blocked",
-                new_callable=AsyncMock,
-                return_value=False,
             ),
         ):
             error = await _collect_stream_error(provider, request)
@@ -253,12 +269,6 @@ class TestStreamingExceptionHandling:
                 "create",
                 new_callable=AsyncMock,
                 side_effect=httpx.ReadTimeout(""),
-            ),
-            patch.object(
-                provider._rate_limiter,
-                "wait_if_blocked",
-                new_callable=AsyncMock,
-                return_value=False,
             ),
             patch("asyncio.sleep", new_callable=AsyncMock),
         ):
@@ -287,12 +297,6 @@ class TestStreamingExceptionHandling:
                 new_callable=AsyncMock,
                 return_value=stream_mock,
             ),
-            patch.object(
-                provider._rate_limiter,
-                "wait_if_blocked",
-                new_callable=AsyncMock,
-                return_value=False,
-            ),
         ):
             error = await _collect_stream_error(provider, request)
 
@@ -315,12 +319,6 @@ class TestStreamingExceptionHandling:
                 "create",
                 new_callable=AsyncMock,
                 return_value=stream_mock,
-            ),
-            patch.object(
-                provider._rate_limiter,
-                "wait_if_blocked",
-                new_callable=AsyncMock,
-                return_value=False,
             ),
         ):
             events, error = await _collect_stream_and_error(provider, request)
@@ -352,12 +350,6 @@ class TestStreamingExceptionHandling:
                 new_callable=AsyncMock,
                 return_value=stream_mock,
             ),
-            patch.object(
-                provider._rate_limiter,
-                "wait_if_blocked",
-                new_callable=AsyncMock,
-                return_value=False,
-            ),
         ):
             events = await _collect_stream(provider, request)
 
@@ -387,12 +379,6 @@ class TestStreamingExceptionHandling:
                 "create",
                 new_callable=AsyncMock,
                 return_value=stream_mock,
-            ),
-            patch.object(
-                provider._rate_limiter,
-                "wait_if_blocked",
-                new_callable=AsyncMock,
-                return_value=False,
             ),
         ):
             events = await _collect_stream(provider, request)
@@ -424,12 +410,6 @@ class TestStreamingExceptionHandling:
                 new_callable=AsyncMock,
                 return_value=stream_mock,
             ),
-            patch.object(
-                provider._rate_limiter,
-                "wait_if_blocked",
-                new_callable=AsyncMock,
-                return_value=False,
-            ),
         ):
             events = await _collect_stream(provider, request)
         event_text = "".join(events)
@@ -453,12 +433,6 @@ class TestStreamingExceptionHandling:
                 "create",
                 new_callable=AsyncMock,
                 return_value=stream_mock,
-            ),
-            patch.object(
-                provider._rate_limiter,
-                "wait_if_blocked",
-                new_callable=AsyncMock,
-                return_value=False,
             ),
         ):
             events = await _collect_stream(provider, request)
@@ -486,12 +460,6 @@ class TestStreamingExceptionHandling:
                 new_callable=AsyncMock,
                 return_value=stream_mock,
             ),
-            patch.object(
-                provider._rate_limiter,
-                "wait_if_blocked",
-                new_callable=AsyncMock,
-                return_value=False,
-            ),
         ):
             events = await _collect_stream(provider, request)
 
@@ -516,12 +484,6 @@ class TestStreamingExceptionHandling:
                 "create",
                 new_callable=AsyncMock,
                 return_value=stream_mock,
-            ),
-            patch.object(
-                provider._rate_limiter,
-                "wait_if_blocked",
-                new_callable=AsyncMock,
-                return_value=False,
             ),
         ):
             events = await _collect_stream(provider, request)
@@ -560,12 +522,6 @@ class TestStreamingExceptionHandling:
                 "create",
                 new_callable=AsyncMock,
                 return_value=stream_mock,
-            ),
-            patch.object(
-                provider._rate_limiter,
-                "wait_if_blocked",
-                new_callable=AsyncMock,
-                return_value=False,
             ),
         ):
             events = await _collect_stream(provider, request, reasoning=REASONING_OFF)
@@ -794,6 +750,45 @@ class TestStreamingExceptionHandling:
         assert parsed[-1].event == "message_stop"
 
     @pytest.mark.asyncio
+    async def test_primary_replay_and_continuation_share_five_attempts(self):
+        """Transparent replay reserves the final execution attempt for recovery."""
+        provider = _make_provider()
+        request = _make_request()
+        primary_streams = [
+            AsyncStreamMock([_make_chunk(content="hello")]) for _ in range(4)
+        ]
+        continuation = AsyncStreamMock(
+            [
+                _make_chunk(content="hello world"),
+                _make_chunk(finish_reason="stop"),
+            ]
+        )
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=[*primary_streams, continuation],
+        ) as create:
+            events = await _collect_stream(provider, request)
+
+        assert create.await_count == UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS
+        assert all(
+            call.kwargs["messages"] == create.await_args_list[0].kwargs["messages"]
+            for call in create.await_args_list[:4]
+        )
+        assert (
+            create.await_args_list[4].kwargs["messages"]
+            != (create.await_args_list[0].kwargs["messages"])
+        )
+        text = "".join(
+            event.data.get("delta", {}).get("text", "")
+            for event in parse_sse_text("".join(events))
+            if event.event == "content_block_delta"
+        )
+        assert text == "hello world"
+
+    @pytest.mark.asyncio
     async def test_clean_eof_after_text_continues_with_overlap_trim(self):
         """A truncated text stream is continued and duplicate overlap is trimmed."""
         provider = _make_provider()
@@ -870,21 +865,28 @@ class TestStreamingExceptionHandling:
         """Recovery collectors reject truncated OpenAI-chat continuation streams."""
         streams = [
             ClosableAsyncStreamMock([_make_chunk(content=f"world {index}")])
-            for index in range(MIDSTREAM_RECOVERY_ATTEMPTS)
+            for index in range(UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS)
         ]
-        create_stream = AsyncMock(side_effect=[(stream, {}) for stream in streams])
         provider = _make_provider()
         runner = _make_stream_runner(provider)
+        retry_session = provider._admission.new_retry_session()
 
         with (
-            patch.object(provider, "_create_stream", create_stream),
+            patch.object(
+                provider._client.chat.completions,
+                "create",
+                new_callable=AsyncMock,
+                side_effect=streams,
+            ) as create,
             pytest.raises(TruncatedProviderStreamError),
         ):
             await runner._collect_recovery_text(
-                {"messages": []}, include_reasoning=True
+                {"messages": []},
+                include_reasoning=True,
+                retry_session=retry_session,
             )
 
-        assert create_stream.await_count == MIDSTREAM_RECOVERY_ATTEMPTS
+        assert create.await_count == UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS
         assert all(stream.closed for stream in streams)
 
     @pytest.mark.asyncio
@@ -895,21 +897,28 @@ class TestStreamingExceptionHandling:
                 [_make_chunk(content=f"partial {index}")],
                 error=TimeoutError("recovery cutoff"),
             )
-            for index in range(MIDSTREAM_RECOVERY_ATTEMPTS)
+            for index in range(UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS)
         ]
-        create_stream = AsyncMock(side_effect=[(stream, {}) for stream in streams])
         provider = _make_provider()
         runner = _make_stream_runner(provider)
+        retry_session = provider._admission.new_retry_session()
 
         with (
-            patch.object(provider, "_create_stream", create_stream),
+            patch.object(
+                provider._client.chat.completions,
+                "create",
+                new_callable=AsyncMock,
+                side_effect=streams,
+            ) as create,
             pytest.raises(TimeoutError),
         ):
             await runner._collect_recovery_text(
-                {"messages": []}, include_reasoning=True
+                {"messages": []},
+                include_reasoning=True,
+                retry_session=retry_session,
             )
 
-        assert create_stream.await_count == MIDSTREAM_RECOVERY_ATTEMPTS
+        assert create.await_count == UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS
         assert all(stream.closed for stream in streams)
 
     @pytest.mark.asyncio
@@ -921,22 +930,68 @@ class TestStreamingExceptionHandling:
                 _make_chunk(finish_reason="stop"),
             ]
         )
-        create_stream = AsyncMock(
-            return_value=(
-                stream,
-                {},
-            )
-        )
         provider = _make_provider()
         runner = _make_stream_runner(provider)
+        retry_session = provider._admission.new_retry_session()
 
-        with patch.object(provider, "_create_stream", create_stream):
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            return_value=stream,
+        ):
             result = await runner._collect_recovery_text(
-                {"messages": []}, include_reasoning=True
+                {"messages": []},
+                include_reasoning=True,
+                retry_session=retry_session,
             )
 
         assert result == ("world", "")
         assert stream.closed is True
+
+    @pytest.mark.asyncio
+    async def test_recovery_collect_text_honors_provider_retry_classification(self):
+        """Provider semantics apply before the first recovery chunk as well."""
+        provider = _make_provider()
+        runner = _make_stream_runner(provider)
+        retry_session = provider._admission.new_retry_session()
+        request = httpx.Request(
+            "POST", "https://test.api.nvidia.com/v1/chat/completions"
+        )
+        degraded = openai.BadRequestError(
+            "Bad Request",
+            response=httpx.Response(400, request=request),
+            body={
+                "status": 400,
+                "detail": (
+                    "Function id 'test-function': DEGRADED function cannot be invoked"
+                ),
+            },
+        )
+        rejected = ClosableAsyncStreamMock([], error=degraded)
+        recovered = ClosableAsyncStreamMock(
+            [
+                _make_chunk(content="world"),
+                _make_chunk(finish_reason="stop"),
+            ]
+        )
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=[rejected, recovered],
+        ) as create:
+            result = await runner._collect_recovery_text(
+                {"messages": []},
+                include_reasoning=True,
+                retry_session=retry_session,
+            )
+
+        assert result == ("world", "")
+        assert create.await_count == 2
+        assert rejected.closed
+        assert recovered.closed
 
     def test_text_recovery_body_preserves_thinking_context(self):
         """Continuation prompts include emitted thinking without provider-specific fields."""
@@ -954,6 +1009,7 @@ class TestStreamingExceptionHandling:
 
         assert "tools" not in recovery_body
         assert "tool_choice" not in recovery_body
+        assert "stream" not in recovery_body
         assert recovery_body["messages"][-2] == {
             "role": "assistant",
             "content": "visible answer",
@@ -981,12 +1037,14 @@ class TestStreamingExceptionHandling:
             new_callable=AsyncMock,
             return_value=("visible answer done", "hidden reasoning more"),
         ) as mock_collect:
+            retry_session = runner._provider._admission.new_retry_session()
             events = await runner._recovery_events(
                 body={"messages": [{"role": "user", "content": "hello"}]},
                 ledger=ledger,
                 error=TimeoutError("cutoff"),
                 tool_argument_alias_buffers={},
                 output_reasoning=True,
+                retry_session=retry_session,
             )
 
         assert events is not None
@@ -1109,8 +1167,8 @@ class TestStreamingExceptionHandling:
         assert not any(event.event == "error" for event in parsed)
 
     @pytest.mark.asyncio
-    async def test_stream_rate_limited_retries_via_execute_with_retry(self):
-        """When rate limited, execute_with_retry handles retries transparently."""
+    async def test_stream_rate_limit_uses_the_execution_retry_session(self):
+        """A create-time 429 consumes one attempt before a successful retry."""
         provider = _make_provider()
         request = _make_request()
 
@@ -1118,25 +1176,28 @@ class TestStreamingExceptionHandling:
         chunk2 = _make_chunk(finish_reason="stop")
         stream_mock = AsyncStreamMock([chunk1, chunk2])
 
+        response = httpx.Response(
+            429,
+            request=httpx.Request(
+                "POST", "https://test.api.nvidia.com/v1/chat/completions"
+            ),
+        )
+        error = httpx.HTTPStatusError(
+            "rate limited",
+            request=response.request,
+            response=response,
+        )
+
         with patch.object(
             provider._client.chat.completions,
             "create",
             new_callable=AsyncMock,
-            return_value=stream_mock,
-        ):
-            # Mock execute_with_retry to pass through to the actual function
-            async def _passthrough(fn, *args, **kwargs):
-                return await fn(*args, **kwargs)
-
-            with patch.object(
-                provider._rate_limiter,
-                "execute_with_retry",
-                new_callable=AsyncMock,
-                side_effect=_passthrough,
-            ):
-                events = await _collect_stream(provider, request)
+            side_effect=[error, stream_mock],
+        ) as create:
+            events = await _collect_stream(provider, request)
 
         event_text = "".join(events)
+        assert create.await_count == 2
         assert "Response" in event_text
 
 
@@ -1382,12 +1443,6 @@ class TestStreamChunkEdgeCases:
                 new_callable=AsyncMock,
                 return_value=stream_mock,
             ),
-            patch.object(
-                provider._rate_limiter,
-                "wait_if_blocked",
-                new_callable=AsyncMock,
-                return_value=False,
-            ),
         ):
             events = await _collect_stream(provider, request)
 
@@ -1418,12 +1473,6 @@ class TestStreamChunkEdgeCases:
                 new_callable=AsyncMock,
                 return_value=stream_mock,
             ),
-            patch.object(
-                provider._rate_limiter,
-                "wait_if_blocked",
-                new_callable=AsyncMock,
-                return_value=False,
-            ),
         ):
             events = await _collect_stream(provider, request)
 
@@ -1448,12 +1497,6 @@ class TestStreamChunkEdgeCases:
                 "create",
                 new_callable=AsyncMock,
                 return_value=stream_mock,
-            ),
-            patch.object(
-                provider._rate_limiter,
-                "wait_if_blocked",
-                new_callable=AsyncMock,
-                return_value=False,
             ),
         ):
             error = await _collect_stream_error(provider, request)
@@ -1505,12 +1548,6 @@ async def test_openai_compat_stream_ends_with_contract_when_tool_name_never_arri
             "create",
             new_callable=AsyncMock,
             return_value=stream_mock,
-        ),
-        patch.object(
-            provider._rate_limiter,
-            "wait_if_blocked",
-            new_callable=AsyncMock,
-            return_value=False,
         ),
     ):
         error = await _collect_stream_error(provider, request)

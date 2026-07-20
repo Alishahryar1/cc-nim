@@ -17,7 +17,7 @@ from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     REASONING_OFF,
-    passthrough_rate_limiter,
+    immediate_admission,
     profiled_provider,
     reasoning_for,
 )
@@ -30,7 +30,7 @@ def _provider(base_url: str = OLLAMA_DEFAULT_BASE) -> OpenAIChatProvider:
     return profiled_provider(
         "ollama",
         ProviderConfig(api_key="ollama", base_url=base_url),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
 
 
@@ -41,7 +41,7 @@ def _cloud_provider() -> OpenAIChatProvider:
             api_key="ollama-cloud-key",
             base_url=OLLAMA_CLOUD_DEFAULT_BASE,
         ),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
 
 

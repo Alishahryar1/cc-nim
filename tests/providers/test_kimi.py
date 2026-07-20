@@ -12,7 +12,7 @@ from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.support import (
-    passthrough_rate_limiter,
+    immediate_admission,
     profiled_provider,
     reasoning_for,
 )
@@ -28,7 +28,7 @@ def kimi_provider():
             rate_limit=10,
             rate_window=60,
         ),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
 
 

@@ -9,7 +9,7 @@ from free_claude_code.config.provider_catalog import BEDROCK_DEFAULT_BASE
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter, profiled_provider
+from tests.providers.support import immediate_admission, profiled_provider
 
 BEDROCK_MODEL = "openai.gpt-oss-120b"
 
@@ -18,7 +18,7 @@ def _provider(base_url: str = BEDROCK_DEFAULT_BASE) -> OpenAIChatProvider:
     return profiled_provider(
         "bedrock",
         ProviderConfig(api_key="bedrock-key", base_url=base_url),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
 
 

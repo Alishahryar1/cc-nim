@@ -9,7 +9,7 @@ from free_claude_code.providers.base import ProviderConfig
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     REASONING_OFF,
-    passthrough_rate_limiter,
+    immediate_admission,
     profiled_provider,
     reasoning_for,
 )
@@ -64,7 +64,7 @@ def cerebras_config():
 @pytest.fixture
 def cerebras_provider(cerebras_config):
     return profiled_provider(
-        "cerebras", cerebras_config, rate_limiter=passthrough_rate_limiter()
+        "cerebras", cerebras_config, admission=immediate_admission()
     )
 
 
@@ -74,7 +74,7 @@ def test_init(cerebras_config):
         "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as mock_openai:
         provider = profiled_provider(
-            "cerebras", cerebras_config, rate_limiter=passthrough_rate_limiter()
+            "cerebras", cerebras_config, admission=immediate_admission()
         )
         assert provider._api_key == "test_cerebras_key"
         assert provider._base_url == CEREBRAS_DEFAULT_BASE
@@ -125,7 +125,7 @@ def test_replay_is_independent_of_current_turn_reasoning_control():
             rate_limit=10,
             rate_window=60,
         ),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     body = provider._build_request_body(
         make_reasoning_tool_history_request(), reasoning=REASONING_OFF

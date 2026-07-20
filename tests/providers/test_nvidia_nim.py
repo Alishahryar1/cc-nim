@@ -9,6 +9,7 @@ from free_claude_code.config.nim import NimSettings
 from free_claude_code.config.provider_catalog import NVIDIA_NIM_DEFAULT_BASE
 from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
+from free_claude_code.providers.admission import UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.nvidia_nim.tool_schema import (
     NIM_TOOL_ARGUMENT_ALIASES_KEY,
@@ -17,7 +18,7 @@ from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
-    passthrough_rate_limiter,
+    immediate_admission,
     reasoning_for,
 )
 
@@ -113,7 +114,7 @@ async def test_init(provider_config):
         provider = NvidiaNimProvider(
             provider_config,
             nim_settings=NimSettings(),
-            rate_limiter=passthrough_rate_limiter(),
+            admission=immediate_admission(),
         )
         assert provider._api_key == "test_key"
         assert provider._base_url == "https://test.api.nvidia.com/v1"
@@ -136,7 +137,7 @@ async def test_init_uses_configurable_timeouts():
         "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as mock_openai:
         NvidiaNimProvider(
-            config, nim_settings=NimSettings(), rate_limiter=passthrough_rate_limiter()
+            config, nim_settings=NimSettings(), admission=immediate_admission()
         )
         call_kwargs = mock_openai.call_args[1]
         timeout = call_kwargs["timeout"]
@@ -151,7 +152,7 @@ async def test_build_request_body(provider_config):
     provider = NvidiaNimProvider(
         provider_config,
         nim_settings=NimSettings(),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     req = make_request()
     body = provider._build_request_body(req, reasoning=reasoning_for(req))
@@ -177,7 +178,7 @@ async def test_build_request_body_encodes_explicit_reasoning_off(
     provider = NvidiaNimProvider(
         provider_config,
         nim_settings=NimSettings(),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     req = make_request()
     body = provider._build_request_body(req, reasoning=REASONING_OFF)
@@ -197,7 +198,7 @@ async def test_build_request_body_omits_reasoning_when_request_disables_thinking
     provider = NvidiaNimProvider(
         provider_config,
         nim_settings=NimSettings(),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     req = make_request()
     req.thinking.enabled = False
@@ -343,7 +344,7 @@ async def test_stream_response_suppresses_thinking_when_disabled(provider_config
     provider = NvidiaNimProvider(
         provider_config,
         nim_settings=NimSettings(),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     req = make_request()
 
@@ -388,7 +389,7 @@ async def test_stream_response_retries_without_chat_template(provider_config):
     provider = NvidiaNimProvider(
         provider_config,
         nim_settings=NimSettings(chat_template="custom_template"),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     req = make_request(model="mistralai/mixtral-8x7b-instruct-v0.1")
 
@@ -445,7 +446,7 @@ async def test_stream_response_retries_without_chat_template_kwargs_issue_993(
     provider = NvidiaNimProvider(
         provider_config,
         nim_settings=NimSettings(),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     req = make_request(model="mistralai/mistral-small-4-119b-2603")
 
@@ -498,7 +499,7 @@ async def test_stream_response_does_not_retry_unrelated_bad_request(provider_con
     provider = NvidiaNimProvider(
         provider_config,
         nim_settings=NimSettings(chat_template="custom_template"),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     req = make_request(model="mistralai/mixtral-8x7b-instruct-v0.1")
 
@@ -925,7 +926,11 @@ async def test_stream_response_unrelated_internal_error_does_not_downgrade(
         with pytest.raises(ExecutionFailure) as exc_info:
             [e async for e in nim_provider.stream_response(req)]
 
-    assert mock_create.await_count == 1
+    assert mock_create.await_count == UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS
+    assert all(
+        call.kwargs == mock_create.await_args_list[0].kwargs
+        for call in mock_create.await_args_list
+    )
     assert "Provider API request failed" in exc_info.value.message
 
 
@@ -946,5 +951,9 @@ async def test_stream_response_internal_reasoning_content_error_does_not_downgra
         with pytest.raises(ExecutionFailure) as exc_info:
             [e async for e in nim_provider.stream_response(req)]
 
-    assert mock_create.await_count == 1
+    assert mock_create.await_count == UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS
+    assert all(
+        call.kwargs == mock_create.await_args_list[0].kwargs
+        for call in mock_create.await_args_list
+    )
     assert "Provider API request failed" in exc_info.value.message

@@ -11,7 +11,7 @@ from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     REASONING_OFF,
-    passthrough_rate_limiter,
+    immediate_admission,
     profiled_provider,
     reasoning_for,
 )
@@ -24,7 +24,7 @@ def provider() -> OpenAIChatProvider:
     return profiled_provider(
         "llamacpp",
         ProviderConfig(api_key="llamacpp", base_url="http://localhost:8080/v1"),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
 
 
@@ -44,7 +44,7 @@ def test_init_normalizes_openai_base_url(configured: str, expected: str) -> None
         provider = profiled_provider(
             "llamacpp",
             ProviderConfig(api_key="llamacpp", base_url=configured),
-            rate_limiter=passthrough_rate_limiter(),
+            admission=immediate_admission(),
         )
 
     assert provider._base_url == expected
@@ -63,7 +63,7 @@ def test_init_uses_openai_chat_client() -> None:
         "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as openai_client:
         provider = profiled_provider(
-            "llamacpp", config, rate_limiter=passthrough_rate_limiter()
+            "llamacpp", config, admission=immediate_admission()
         )
 
     assert provider._provider_name == "LLAMACPP"

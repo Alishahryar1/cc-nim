@@ -14,7 +14,7 @@ from free_claude_code.providers.mistral import MistralProvider
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     REASONING_OFF,
-    passthrough_rate_limiter,
+    immediate_admission,
     reasoning_for,
 )
 
@@ -35,7 +35,7 @@ def mistral_config():
 
 @pytest.fixture
 def mistral_provider(mistral_config):
-    return MistralProvider(mistral_config, rate_limiter=passthrough_rate_limiter())
+    return MistralProvider(mistral_config, admission=immediate_admission())
 
 
 def test_init(mistral_config):
@@ -43,9 +43,7 @@ def test_init(mistral_config):
     with patch(
         "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as mock_openai:
-        provider = MistralProvider(
-            mistral_config, rate_limiter=passthrough_rate_limiter()
-        )
+        provider = MistralProvider(mistral_config, admission=immediate_admission())
         assert provider._api_key == "test_mistral_key"
         assert provider._base_url == MISTRAL_DEFAULT_BASE
         mock_openai.assert_called_once()
@@ -146,7 +144,7 @@ def test_build_request_body_reasoning_off_uses_native_none():
             rate_limit=10,
             rate_window=60,
         ),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     req = make_request()
     body = provider._build_request_body(req, reasoning=REASONING_OFF)
@@ -163,7 +161,7 @@ def test_reasoning_off_keeps_replay_separate_from_new_turn_compute():
             rate_limit=10,
             rate_window=60,
         ),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     req = make_request(
         system=None,

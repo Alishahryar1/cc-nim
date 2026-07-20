@@ -16,7 +16,7 @@ from free_claude_code.providers.cloudflare import (
     CloudflareProvider,
     cloudflare_ai_base_url,
 )
-from tests.providers.support import passthrough_rate_limiter, reasoning_for
+from tests.providers.support import immediate_admission, reasoning_for
 
 _ACCOUNT_ID = "account-123"
 _BASE_URL = f"{CLOUDFLARE_AI_REST_ROOT}/accounts/{_ACCOUNT_ID}/ai/v1"
@@ -38,7 +38,7 @@ def cloudflare_provider(cloudflare_config: ProviderConfig) -> CloudflareProvider
     return CloudflareProvider(
         cloudflare_config,
         account_id=_ACCOUNT_ID,
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
 
 
@@ -73,7 +73,7 @@ def test_missing_account_id_raises_authentication_error(
 ) -> None:
     with pytest.raises(ApplicationUnavailableError, match="CLOUDFLARE_ACCOUNT_ID"):
         CloudflareProvider(
-            cloudflare_config, account_id=" ", rate_limiter=passthrough_rate_limiter()
+            cloudflare_config, account_id=" ", admission=immediate_admission()
         )
 
 
@@ -89,7 +89,7 @@ def test_init_composes_account_scoped_openai_chat_base_url(
         provider = CloudflareProvider(
             cloudflare_config,
             account_id=_ACCOUNT_ID,
-            rate_limiter=passthrough_rate_limiter(),
+            admission=immediate_admission(),
         )
 
     assert provider._api_key == "test-cloudflare-token"

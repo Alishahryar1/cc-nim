@@ -1,15 +1,13 @@
-"""Provider-owned stream retry and holdback policy."""
+"""Provider stream commit-boundary and recovery policy."""
 
 import httpx
 import openai
 
 from free_claude_code.providers.stream_recovery import (
-    EARLY_TRANSPARENT_MAX_RETRIES,
-    EARLY_TRANSPARENT_TOTAL_ATTEMPTS,
-    MIDSTREAM_RECOVERY_ATTEMPTS,
     RecoveryController,
     RecoveryFailureAction,
     RecoveryHoldbackBuffer,
+    TruncatedProviderStreamError,
     is_retryable_stream_error,
 )
 
@@ -24,16 +22,10 @@ def _statusless_openai_api_error(
     )
 
 
-def test_early_transparent_retry_total_attempts_is_five() -> None:
-    assert EARLY_TRANSPARENT_TOTAL_ATTEMPTS == 5
-    assert EARLY_TRANSPARENT_MAX_RETRIES == 4
-
-
-def test_midstream_recovery_attempts_total_is_five() -> None:
-    assert MIDSTREAM_RECOVERY_ATTEMPTS == 5
-
-
-def test_retryable_stream_error_classifies_transport_and_http_status() -> None:
+def test_retryable_stream_error_classifies_protocol_transport_and_status() -> None:
+    assert is_retryable_stream_error(
+        TruncatedProviderStreamError("missing terminal marker")
+    )
     assert is_retryable_stream_error(httpx.ReadError("cut off"))
 
     request = httpx.Request("GET", "https://example.test")
@@ -98,8 +90,8 @@ def test_retryable_stream_error_does_not_retry_bad_request_status() -> None:
     )
 
 
-def test_recovery_controller_advances_early_retry_and_discards_holdback() -> None:
-    controller = RecoveryController(provider_name="TEST", request_id="REQ")
+def test_early_retry_discards_uncommitted_holdback() -> None:
+    controller = RecoveryController()
 
     assert controller.push("hidden") == []
     decision = controller.advance_failure(
@@ -107,20 +99,66 @@ def test_recovery_controller_advances_early_retry_and_discards_holdback() -> Non
         stream_opened=True,
         generated_output=True,
         complete_tool_salvageable=False,
+        attempts_remaining=2,
     )
 
     assert decision.action == RecoveryFailureAction.EARLY_RETRY
-    assert decision.early_retry_attempt == 1
-    assert controller.early_retries == 1
+    assert decision.retryable
+    assert decision.has_buffered
     assert not controller.committed
     assert not controller.has_buffered
     assert controller.flush() == []
 
 
-def test_recovery_controller_retries_statusless_transient_api_error() -> None:
-    controller = RecoveryController(provider_name="TEST", request_id="REQ")
+def test_early_retry_requires_remaining_execution_budget() -> None:
+    controller = RecoveryController()
+    assert controller.push("hidden") == []
 
     decision = controller.advance_failure(
+        httpx.ReadError("early cutoff"),
+        stream_opened=True,
+        generated_output=True,
+        complete_tool_salvageable=False,
+        attempts_remaining=0,
+    )
+
+    assert decision.action == RecoveryFailureAction.FINAL_ERROR
+    assert decision.retryable
+    assert controller.has_buffered
+
+
+def test_last_attempt_is_reserved_for_partial_output_recovery() -> None:
+    controller = RecoveryController()
+    assert controller.push("partial") == []
+
+    decision = controller.advance_failure(
+        httpx.ReadError("early cutoff"),
+        stream_opened=True,
+        generated_output=True,
+        complete_tool_salvageable=False,
+        attempts_remaining=1,
+    )
+
+    assert decision.action == RecoveryFailureAction.MIDSTREAM_RECOVERY
+    assert decision.has_buffered
+    assert controller.has_buffered
+
+
+def test_create_failure_is_owned_by_admission_not_stream_recovery() -> None:
+    decision = RecoveryController().advance_failure(
+        httpx.ConnectError("connect failed"),
+        stream_opened=False,
+        generated_output=False,
+        complete_tool_salvageable=False,
+        attempts_remaining=1,
+    )
+
+    assert decision.action == RecoveryFailureAction.FINAL_ERROR
+    assert decision.retryable
+
+
+def test_statusless_transient_api_error_allows_early_retry() -> None:
+    decision = RecoveryController().advance_failure(
         _statusless_openai_api_error(
             "ResourceExhausted: limit reached while generating response",
             {"error": {"message": "ResourceExhausted: limit reached"}},
@@ -128,39 +166,15 @@ def test_recovery_controller_retries_statusless_transient_api_error() -> None:
         stream_opened=True,
         generated_output=False,
         complete_tool_salvageable=False,
+        attempts_remaining=1,
     )
 
     assert decision.action == RecoveryFailureAction.EARLY_RETRY
     assert decision.retryable
-    assert decision.early_retry_attempt == 1
 
 
-def test_recovery_controller_respects_early_retry_limit() -> None:
-    controller = RecoveryController(provider_name="TEST", request_id=None)
-
-    for attempt in range(1, EARLY_TRANSPARENT_MAX_RETRIES + 1):
-        decision = controller.advance_failure(
-            httpx.ReadError("cutoff"),
-            stream_opened=True,
-            generated_output=False,
-            complete_tool_salvageable=False,
-        )
-        assert decision.action == RecoveryFailureAction.EARLY_RETRY
-        assert decision.early_retry_attempt == attempt
-
-    decision = controller.advance_failure(
-        httpx.ReadError("cutoff"),
-        stream_opened=True,
-        generated_output=False,
-        complete_tool_salvageable=False,
-    )
-
-    assert decision.action == RecoveryFailureAction.FINAL_ERROR
-    assert controller.early_retries == EARLY_TRANSPARENT_MAX_RETRIES
-
-
-def test_recovery_controller_classifies_midstream_recovery_after_commit() -> None:
-    controller = RecoveryController(provider_name="TEST", request_id=None)
+def test_committed_output_allows_midstream_recovery() -> None:
+    controller = RecoveryController()
 
     assert controller.push("event: content_block_delta\n\n") == []
     assert controller.flush() == ["event: content_block_delta\n\n"]
@@ -169,6 +183,7 @@ def test_recovery_controller_classifies_midstream_recovery_after_commit() -> Non
         stream_opened=True,
         generated_output=True,
         complete_tool_salvageable=False,
+        attempts_remaining=1,
     )
 
     assert decision.action == RecoveryFailureAction.MIDSTREAM_RECOVERY
@@ -177,8 +192,8 @@ def test_recovery_controller_classifies_midstream_recovery_after_commit() -> Non
     assert controller.flush_uncommitted(decision) == []
 
 
-def test_recovery_controller_flushes_uncommitted_midstream_decision() -> None:
-    controller = RecoveryController(provider_name="TEST", request_id=None)
+def test_uncommitted_complete_tool_can_be_salvaged() -> None:
+    controller = RecoveryController()
 
     assert controller.push("event: content_block_delta\n\n") == []
     decision = controller.advance_failure(
@@ -186,40 +201,35 @@ def test_recovery_controller_flushes_uncommitted_midstream_decision() -> None:
         stream_opened=True,
         generated_output=True,
         complete_tool_salvageable=True,
+        attempts_remaining=0,
     )
 
     assert decision.action == RecoveryFailureAction.MIDSTREAM_RECOVERY
     assert not decision.committed
     assert decision.has_buffered
-    assert not controller.committed
-    assert controller.has_buffered
-
     assert controller.flush_uncommitted(decision) == ["event: content_block_delta\n\n"]
-    assert not decision.committed
-    assert decision.has_buffered
     assert controller.committed
     assert not controller.has_buffered
 
 
-def test_recovery_controller_non_retryable_error_is_final() -> None:
+def test_non_retryable_error_is_final() -> None:
     request = httpx.Request("POST", "https://example.test/messages")
     error = httpx.HTTPStatusError(
         "bad request",
         request=request,
         response=httpx.Response(400, request=request),
     )
-    controller = RecoveryController(provider_name="TEST", request_id=None)
 
-    decision = controller.advance_failure(
+    decision = RecoveryController().advance_failure(
         error,
         stream_opened=True,
         generated_output=True,
         complete_tool_salvageable=False,
+        attempts_remaining=2,
     )
 
     assert decision.action == RecoveryFailureAction.FINAL_ERROR
     assert not decision.retryable
-    assert controller.early_retries == 0
 
 
 def test_holdback_buffers_until_delay_then_commits() -> None:
@@ -232,8 +242,7 @@ def test_holdback_buffers_until_delay_then_commits() -> None:
     assert not holdback.committed
 
     now[0] += 0.01
-    flushed = holdback.push("event: content_block_stop\n\n")
-    assert flushed == [
+    assert holdback.push("event: content_block_stop\n\n") == [
         "event: content_block_start\n\n",
         "event: content_block_delta\n\n",
         "event: content_block_stop\n\n",

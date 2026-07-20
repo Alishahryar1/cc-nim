@@ -26,7 +26,7 @@ from free_claude_code.providers.openai_chat.usage import (
     usage_int,
 )
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter
+from tests.providers.support import immediate_admission
 
 
 class _UsageTestProvider(OpenAIChatProvider):
@@ -45,7 +45,7 @@ class _UsageTestProvider(OpenAIChatProvider):
                 ),
                 NO_REASONING,
             ),
-            rate_limiter=passthrough_rate_limiter(),
+            admission=immediate_admission(),
         )
 
     def _build_request_body(
@@ -216,7 +216,11 @@ async def test_openai_chat_stream_retries_without_usage_when_option_is_rejected(
     )
 
     with patch.object(provider._client.chat.completions, "create", create):
-        _stream_obj, used_body = await provider._create_stream(body)
+        _stream_obj, used_body, attempt = await provider._create_stream(
+            body,
+            provider._admission.new_retry_session(),
+        )
+        await attempt.aclose()
 
     assert create.await_count == 2
     assert create.await_args_list[0].kwargs["stream_options"] == {"include_usage": True}

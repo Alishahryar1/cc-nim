@@ -10,7 +10,7 @@ from free_claude_code.config.provider_catalog import COHERE_DEFAULT_BASE
 from free_claude_code.providers.base import ProviderConfig
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
-    passthrough_rate_limiter,
+    immediate_admission,
     profiled_provider,
     reasoning_for,
 )
@@ -32,9 +32,7 @@ def cohere_config():
 
 @pytest.fixture
 def cohere_provider(cohere_config):
-    return profiled_provider(
-        "cohere", cohere_config, rate_limiter=passthrough_rate_limiter()
-    )
+    return profiled_provider("cohere", cohere_config, admission=immediate_admission())
 
 
 def test_default_base_url_constant():
@@ -46,7 +44,7 @@ def test_init_uses_default_base_url_and_api_key(cohere_config):
         "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as mock_openai:
         provider = profiled_provider(
-            "cohere", cohere_config, rate_limiter=passthrough_rate_limiter()
+            "cohere", cohere_config, admission=immediate_admission()
         )
 
     assert provider._api_key == "test_cohere_key"
@@ -58,9 +56,7 @@ def test_init_strips_trailing_slash(cohere_config):
     config = replace(cohere_config, base_url=f"{COHERE_DEFAULT_BASE}/")
 
     with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
-        provider = profiled_provider(
-            "cohere", config, rate_limiter=passthrough_rate_limiter()
-        )
+        provider = profiled_provider("cohere", config, admission=immediate_admission())
 
     assert provider._base_url == COHERE_DEFAULT_BASE
 
@@ -153,7 +149,7 @@ def test_build_request_body_maps_reasoning_off_to_none():
             rate_limit=10,
             rate_window=60,
         ),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
 
     request = make_request(thinking={"type": "disabled"})

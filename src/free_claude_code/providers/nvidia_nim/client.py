@@ -11,6 +11,7 @@ from free_claude_code.config.nim import NimSettings
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
+from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.failure_policy import (
     overloaded_provider_failure,
@@ -20,7 +21,6 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProfile,
     OpenAIChatProvider,
 )
-from free_claude_code.providers.rate_limit import ProviderRateLimiter
 
 from .request_options import NIM_REQUEST_POLICY, build_nim_request_body
 from .retry import (
@@ -48,12 +48,12 @@ class NvidiaNimProvider(OpenAIChatProvider):
         config: ProviderConfig,
         *,
         nim_settings: NimSettings,
-        rate_limiter: ProviderRateLimiter,
+        admission: ProviderAdmissionController,
     ):
         super().__init__(
             config,
             profile=_PROFILE,
-            rate_limiter=rate_limiter,
+            admission=admission,
         )
         self._nim_settings = nim_settings
 

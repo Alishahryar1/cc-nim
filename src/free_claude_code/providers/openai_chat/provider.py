@@ -29,16 +29,22 @@ from free_claude_code.core.anthropic.streaming import (
 from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.core.trace import provider_chat_body_snapshot, trace_event
+from free_claude_code.providers.admission import (
+    ProviderAdmissionController,
+    ProviderAttempt,
+    ProviderRetrySession,
+)
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
-from free_claude_code.providers.failure_policy import classify_provider_failure
+from free_claude_code.providers.failure_policy import (
+    classify_provider_failure,
+    underlying_provider_error,
+)
 from free_claude_code.providers.http import (
     close_provider_stream,
     maybe_await_aclose,
 )
 from free_claude_code.providers.model_listing import extract_openai_model_ids
-from free_claude_code.providers.rate_limit import ProviderRateLimiter
 from free_claude_code.providers.stream_recovery import (
-    MIDSTREAM_RECOVERY_ATTEMPTS,
     RecoveryController,
     RecoveryFailureAction,
     TruncatedProviderStreamError,
@@ -74,7 +80,7 @@ class OpenAIChatProvider(BaseProvider):
         config: ProviderConfig,
         *,
         profile: OpenAIChatProfile,
-        rate_limiter: ProviderRateLimiter,
+        admission: ProviderAdmissionController,
         default_headers: Mapping[str, str] | None = None,
         api_key_provider: OpenAIAsyncCredentialProvider | None = None,
     ):
@@ -86,7 +92,7 @@ class OpenAIChatProvider(BaseProvider):
         # Learned per-model output-token caps from upstream 400 rejections, so
         # later requests clamp proactively instead of paying the 400 each time.
         self._model_output_caps: dict[str, int] = {}
-        self._rate_limiter = rate_limiter
+        self._admission = admission
         http_client = None
         if config.proxy:
             http_client = httpx.AsyncClient(
@@ -120,7 +126,10 @@ class OpenAIChatProvider(BaseProvider):
 
     async def list_model_ids(self) -> frozenset[str]:
         """Return model ids from the provider's OpenAI-compatible models endpoint."""
-        payload = await self._client.models.list()
+        payload = await self._admission.run_with_retry(
+            self._client.models.list,
+            provider_failure_override=self._provider_failure_override,
+        )
         return extract_openai_model_ids(payload, provider_name=self._provider_name)
 
     def _build_request_body(
@@ -177,26 +186,58 @@ class OpenAIChatProvider(BaseProvider):
         """Return provider-specific Anthropic usage fields for final SSE usage."""
         return {}
 
-    async def _create_stream(self, body: dict) -> tuple[Any, dict]:
+    async def _create_stream(
+        self,
+        body: dict,
+        retry_session: ProviderRetrySession,
+    ) -> tuple[Any, dict, ProviderAttempt]:
         """Create a streaming chat completion with bounded request fallbacks."""
         body = self._apply_learned_output_cap(body)
         used_retry_kinds: set[str] = set()
 
-        while True:
+        while retry_session.can_attempt:
+            attempt = await self._admission.open_attempt(retry_session)
+            stream: Any | None = None
+            retain_attempt = False
             try:
                 create_body = self._prepare_create_body(body)
-                stream = await self._rate_limiter.execute_with_retry(
-                    self._client.chat.completions.create,
-                    provider_failure_override=self._provider_failure_override,
+                stream = await self._client.chat.completions.create(
                     **create_body,
                     stream=True,
                 )
-                return stream, body
+                stream = self._normalize_stream(stream)
+                retain_attempt = True
+                return stream, body, attempt
+            except asyncio.CancelledError:
+                raise
             except Exception as error:
                 retry_body = self._next_create_retry_body(error, body, used_retry_kinds)
-                if retry_body is None:
+                if retry_body is not None and retry_session.can_attempt:
+                    await attempt.retry_immediately()
+                    body = retry_body
+                    continue
+                should_retry = await attempt.retry(
+                    error,
+                    provider_failure_override=self._provider_failure_override,
+                )
+                if not should_retry:
                     raise
-                body = retry_body
+            finally:
+                if not retain_attempt:
+                    if stream is not None:
+                        await close_provider_stream(
+                            stream,
+                            active_error=sys.exception(),
+                            provider_name=self._provider_name,
+                            request_id=retry_session.request_id,
+                        )
+                    await attempt.aclose()
+
+        raise RuntimeError("provider retry session exhausted without a final error")
+
+    def _normalize_stream(self, stream: Any) -> Any:
+        """Return the provider-specific stream view consumed by the base runner."""
+        return stream
 
     def _next_create_retry_body(
         self,
@@ -304,9 +345,9 @@ class _OpenAIChatStreamRunner:
         tag = self._provider._provider_name
         req_tag = f" request_id={self._request_id}" if self._request_id else ""
         ledger = self._new_ledger()
-        recovery = RecoveryController(
-            provider_name=tag,
-            request_id=self._request_id,
+        recovery = RecoveryController()
+        retry_session = self._provider._admission.new_retry_session(
+            request_id=self._request_id
         )
 
         def hold_event(event: str) -> Iterator[str]:
@@ -342,219 +383,246 @@ class _OpenAIChatStreamRunner:
         tool_argument_aliases: dict[str, dict[str, str]] = {}
         tool_argument_alias_buffers: dict[int, str] = {}
 
-        async with self._provider._rate_limiter.concurrency_slot():
-            while True:
-                if not ledger.message_started:
-                    for event in hold_event(ledger.message_start()):
-                        yield event
-                stream: Any | None = None
-                stream_opened = False
-                try:
-                    stream, body = await self._provider._create_stream(body)
-                    stream_opened = True
-                    tool_argument_aliases = self._provider._tool_argument_aliases(body)
-                    async for chunk in stream:
-                        chunk_usage = getattr(chunk, "usage", None)
-                        if chunk_usage is not None:
-                            usage_info = chunk_usage
+        while True:
+            if not ledger.message_started:
+                for event in hold_event(ledger.message_start()):
+                    yield event
+            stream: Any | None = None
+            attempt: ProviderAttempt | None = None
+            stream_opened = False
+            try:
+                stream, body, attempt = await self._provider._create_stream(
+                    body,
+                    retry_session,
+                )
+                stream_opened = True
+                tool_argument_aliases = self._provider._tool_argument_aliases(body)
+                async for chunk in stream:
+                    if not attempt.accepted:
+                        await attempt.succeeded()
+                    chunk_usage = getattr(chunk, "usage", None)
+                    if chunk_usage is not None:
+                        usage_info = chunk_usage
 
-                        if not chunk.choices:
-                            continue
+                    if not chunk.choices:
+                        continue
 
-                        choice = chunk.choices[0]
-                        delta = choice.delta
-                        if delta is None:
-                            continue
+                    choice = chunk.choices[0]
+                    delta = choice.delta
+                    if delta is None:
+                        continue
 
-                        if choice.finish_reason:
-                            finish_reason = choice.finish_reason
-                            logger.debug("{} finish_reason: {}", tag, finish_reason)
+                    if choice.finish_reason:
+                        finish_reason = choice.finish_reason
+                        logger.debug("{} finish_reason: {}", tag, finish_reason)
 
-                        reasoning = self._provider._profile.reasoning_delta(delta)
-                        if output_reasoning and reasoning is not None:
-                            for event in hold_events(ledger.ensure_thinking_block()):
+                    reasoning = self._provider._profile.reasoning_delta(delta)
+                    if output_reasoning and reasoning is not None:
+                        for event in hold_events(ledger.ensure_thinking_block()):
+                            yield event
+                        if reasoning:
+                            for event in hold_event(
+                                ledger.emit_thinking_delta(reasoning)
+                            ):
                                 yield event
-                            if reasoning:
-                                for event in hold_event(
-                                    ledger.emit_thinking_delta(reasoning)
+
+                    for event in self._provider._handle_extra_reasoning(
+                        delta,
+                        ledger,
+                        output_reasoning=output_reasoning,
+                    ):
+                        for out_event in hold_event(event):
+                            yield out_event
+
+                    if delta.content:
+                        for part in think_parser.feed(delta.content):
+                            if part.type == ContentType.THINKING:
+                                if not output_reasoning:
+                                    continue
+                                for event in hold_events(
+                                    ledger.ensure_thinking_block()
                                 ):
                                     yield event
+                                for event in hold_event(
+                                    ledger.emit_thinking_delta(part.content)
+                                ):
+                                    yield event
+                            else:
+                                (
+                                    filtered_text,
+                                    detected_tools,
+                                ) = heuristic_parser.feed(part.content)
 
-                        for event in self._provider._handle_extra_reasoning(
-                            delta,
-                            ledger,
-                            output_reasoning=output_reasoning,
-                        ):
-                            for out_event in hold_event(event):
-                                yield out_event
-
-                        if delta.content:
-                            for part in think_parser.feed(delta.content):
-                                if part.type == ContentType.THINKING:
-                                    if not output_reasoning:
-                                        continue
+                                if filtered_text:
                                     for event in hold_events(
-                                        ledger.ensure_thinking_block()
+                                        ledger.ensure_text_block()
                                     ):
                                         yield event
                                     for event in hold_event(
-                                        ledger.emit_thinking_delta(part.content)
+                                        ledger.emit_text_delta(filtered_text)
                                     ):
                                         yield event
-                                else:
-                                    (
-                                        filtered_text,
-                                        detected_tools,
-                                    ) = heuristic_parser.feed(part.content)
 
-                                    if filtered_text:
-                                        for event in hold_events(
-                                            ledger.ensure_text_block()
-                                        ):
-                                            yield event
-                                        for event in hold_event(
-                                            ledger.emit_text_delta(filtered_text)
-                                        ):
-                                            yield event
+                                for tool_use in detected_tools:
+                                    for event in iter_heuristic_tool_use_sse(
+                                        ledger, tool_use
+                                    ):
+                                        for out_event in hold_event(event):
+                                            yield out_event
 
-                                    for tool_use in detected_tools:
-                                        for event in iter_heuristic_tool_use_sse(
-                                            ledger, tool_use
-                                        ):
-                                            for out_event in hold_event(event):
-                                                yield out_event
-
-                        if delta.tool_calls:
-                            for event in hold_events(ledger.close_content_blocks()):
-                                yield event
-                            for tool_call in delta.tool_calls:
-                                extra_content = tool_call_extra_content(tool_call)
-                                tool_call_info = {
-                                    "index": tool_call.index,
-                                    "id": tool_call.id,
-                                    "function": {
-                                        "name": tool_call.function.name,
-                                        "arguments": tool_call.function.arguments,
-                                    },
-                                }
-                                if extra_content:
-                                    tool_call_info["extra_content"] = extra_content
-                                for event in self._tool_calls.process_tool_call(
-                                    tool_call_info,
-                                    ledger,
-                                    tool_argument_aliases=tool_argument_aliases,
-                                    tool_argument_alias_buffers=tool_argument_alias_buffers,
-                                ):
-                                    for out_event in hold_event(event):
-                                        yield out_event
-
-                    if finish_reason is None:
-                        raise TruncatedProviderStreamError(
-                            "Provider stream ended without finish_reason."
-                        )
-                    break
-
-                except asyncio.CancelledError, GeneratorExit:
-                    raise
-                except Exception as error:
-                    generated_output = has_committed_sse_output(ledger)
-                    complete_tool_salvageable = (
-                        generated_output
-                        and ledger.has_emitted_tool_block()
-                        and all_emitted_tools_complete(ledger, self._request)
-                    )
-                    decision = recovery.advance_failure(
-                        error,
-                        stream_opened=stream_opened,
-                        generated_output=generated_output,
-                        complete_tool_salvageable=complete_tool_salvageable,
-                    )
-                    if decision.action == RecoveryFailureAction.EARLY_RETRY:
-                        ledger = self._new_ledger()
-                        think_parser = ThinkTagParser()
-                        heuristic_parser = HeuristicToolParser()
-                        finish_reason = None
-                        usage_info = None
-                        tool_argument_aliases = {}
-                        tool_argument_alias_buffers = {}
-                        continue
-
-                    if decision.action == RecoveryFailureAction.MIDSTREAM_RECOVERY:
-                        try:
-                            recovery_events = await self._recovery_events(
-                                body=body,
-                                ledger=ledger,
-                                error=error,
+                    if delta.tool_calls:
+                        for event in hold_events(ledger.close_content_blocks()):
+                            yield event
+                        for tool_call in delta.tool_calls:
+                            extra_content = tool_call_extra_content(tool_call)
+                            tool_call_info = {
+                                "index": tool_call.index,
+                                "id": tool_call.id,
+                                "function": {
+                                    "name": tool_call.function.name,
+                                    "arguments": tool_call.function.arguments,
+                                },
+                            }
+                            if extra_content:
+                                tool_call_info["extra_content"] = extra_content
+                            for event in self._tool_calls.process_tool_call(
+                                tool_call_info,
+                                ledger,
+                                tool_argument_aliases=tool_argument_aliases,
                                 tool_argument_alias_buffers=tool_argument_alias_buffers,
-                                output_reasoning=output_reasoning,
-                            )
-                        except Exception as recovery_error:
-                            trace_event(
-                                stage="provider",
-                                event="provider.recovery.failed",
-                                source="provider",
-                                provider=tag,
-                                request_id=self._request_id,
-                                exc_type=type(recovery_error).__name__,
-                            )
-                            recovery_events = None
-                        if recovery_events is not None:
-                            for event in recovery.flush_uncommitted(decision):
-                                yield event
-                            for event in recovery_events:
-                                yield event
-                            return
+                            ):
+                                for out_event in hold_event(event):
+                                    yield out_event
 
-                    self._provider._log_stream_transport_error(
-                        tag, req_tag, error, request_id=self._request_id
+                if finish_reason is None:
+                    raise TruncatedProviderStreamError(
+                        "Provider stream ended without finish_reason."
                     )
-                    failure = classify_provider_failure(
+                break
+
+            except asyncio.CancelledError, GeneratorExit:
+                raise
+            except Exception as error:
+                if attempt is not None and not attempt.accepted:
+                    await attempt.retry(
                         error,
-                        provider_name=tag,
-                        read_timeout_s=self._provider._config.http_read_timeout,
-                        request_id=self._request_id,
-                        mark_rate_limited=(
-                            self._provider._rate_limiter.extend_reactive_block
-                        ),
                         provider_failure_override=(
                             self._provider._provider_failure_override
                         ),
                     )
-                    error_trace: dict[str, Any] = {
-                        "stage": "provider",
-                        "event": "provider.response.error",
-                        "source": "provider",
-                        "provider": tag,
-                        "request_id": self._request_id,
-                        "exc_type": type(error).__name__,
-                        "failure_kind": failure.kind.value,
-                        "status_code": failure.status_code,
-                        "provider_retryable": failure.retryable,
-                    }
-                    if self._provider._config.log_api_error_tracebacks:
-                        error_trace["error_message"] = failure.message
-                    trace_event(**error_trace)
-                    if (
-                        not decision.committed
-                        and decision.has_buffered
-                        and complete_tool_salvageable
-                    ):
-                        for event in recovery.flush():
-                            yield event
-                    elif not decision.committed:
-                        recovery.discard()
-                        raise failure from error
-                    for event in ledger.close_unclosed_blocks():
-                        yield event
-                    raise failure from error
-                finally:
-                    if stream is not None:
-                        await close_provider_stream(
-                            stream,
-                            active_error=sys.exception(),
-                            provider_name=tag,
-                            request_id=self._request_id,
+                generated_output = has_committed_sse_output(ledger)
+                complete_tool_salvageable = (
+                    generated_output
+                    and ledger.has_emitted_tool_block()
+                    and all_emitted_tools_complete(ledger, self._request)
+                )
+                decision = recovery.advance_failure(
+                    error,
+                    stream_opened=stream_opened,
+                    generated_output=generated_output,
+                    complete_tool_salvageable=complete_tool_salvageable,
+                    attempts_remaining=retry_session.attempts_remaining,
+                    retryable_override=(
+                        attempt.failure_retryable if attempt is not None else None
+                    ),
+                )
+                if decision.action == RecoveryFailureAction.EARLY_RETRY:
+                    trace_event(
+                        stage="provider",
+                        event="provider.recovery.early_retry",
+                        source="provider",
+                        provider=tag,
+                        request_id=self._request_id,
+                        attempts_started=retry_session.attempts_started,
+                        max_attempts=retry_session.max_attempts,
+                        retryable=True,
+                    )
+                    ledger = self._new_ledger()
+                    think_parser = ThinkTagParser()
+                    heuristic_parser = HeuristicToolParser()
+                    finish_reason = None
+                    usage_info = None
+                    tool_argument_aliases = {}
+                    tool_argument_alias_buffers = {}
+                    continue
+
+                if decision.action == RecoveryFailureAction.MIDSTREAM_RECOVERY:
+                    try:
+                        recovery_events = await self._recovery_events(
+                            body=body,
+                            ledger=ledger,
+                            error=error,
+                            tool_argument_alias_buffers=tool_argument_alias_buffers,
+                            output_reasoning=output_reasoning,
+                            retry_session=retry_session,
                         )
+                    except Exception as recovery_error:
+                        trace_event(
+                            stage="provider",
+                            event="provider.recovery.failed",
+                            source="provider",
+                            provider=tag,
+                            request_id=self._request_id,
+                            exc_type=type(recovery_error).__name__,
+                        )
+                        recovery_events = None
+                    if recovery_events is not None:
+                        for event in recovery.flush_uncommitted(decision):
+                            yield event
+                        for event in recovery_events:
+                            yield event
+                        return
+
+                reported_error = underlying_provider_error(error)
+                self._provider._log_stream_transport_error(
+                    tag, req_tag, reported_error, request_id=self._request_id
+                )
+                failure = classify_provider_failure(
+                    reported_error,
+                    provider_name=tag,
+                    read_timeout_s=self._provider._config.http_read_timeout,
+                    request_id=self._request_id,
+                    provider_failure_override=(
+                        self._provider._provider_failure_override
+                    ),
+                )
+                error_trace: dict[str, Any] = {
+                    "stage": "provider",
+                    "event": "provider.response.error",
+                    "source": "provider",
+                    "provider": tag,
+                    "request_id": self._request_id,
+                    "exc_type": type(reported_error).__name__,
+                    "failure_kind": failure.kind.value,
+                    "status_code": failure.status_code,
+                    "provider_retryable": failure.retryable,
+                }
+                if self._provider._config.log_api_error_tracebacks:
+                    error_trace["error_message"] = failure.message
+                trace_event(**error_trace)
+                if (
+                    not decision.committed
+                    and decision.has_buffered
+                    and complete_tool_salvageable
+                ):
+                    for event in recovery.flush():
+                        yield event
+                elif not decision.committed:
+                    recovery.discard()
+                    raise failure from error
+                for event in ledger.close_unclosed_blocks():
+                    yield event
+                raise failure from error
+            finally:
+                if stream is not None:
+                    await close_provider_stream(
+                        stream,
+                        active_error=sys.exception(),
+                        provider_name=tag,
+                        request_id=self._request_id,
+                    )
+                if attempt is not None:
+                    await attempt.aclose()
 
         remaining = think_parser.flush()
         if remaining:
@@ -650,18 +718,28 @@ class _OpenAIChatStreamRunner:
             yield event
 
     async def _collect_recovery_text(
-        self, body: dict[str, Any], *, include_reasoning: bool
+        self,
+        body: dict[str, Any],
+        *,
+        include_reasoning: bool,
+        retry_session: ProviderRetrySession,
     ) -> tuple[str, str]:
         """Collect a complete text/reasoning continuation stream."""
         last_error: Exception | None = None
-        for attempt in range(MIDSTREAM_RECOVERY_ATTEMPTS):
+        while retry_session.can_attempt:
             stream: Any | None = None
+            attempt: ProviderAttempt | None = None
             try:
-                stream, _ = await self._provider._create_stream(body)
+                stream, _, attempt = await self._provider._create_stream(
+                    body,
+                    retry_session,
+                )
                 text_parts: list[str] = []
                 thinking_parts: list[str] = []
                 terminal_seen = False
                 async for chunk in stream:
+                    if not attempt.accepted:
+                        await attempt.succeeded()
                     if not getattr(chunk, "choices", None):
                         continue
                     choice = chunk.choices[0]
@@ -684,7 +762,17 @@ class _OpenAIChatStreamRunner:
                 return "".join(text_parts), "".join(thinking_parts)
             except Exception as error:
                 last_error = error
-                if not is_retryable_stream_error(error):
+                retryable = is_retryable_stream_error(error)
+                if attempt is not None and not attempt.accepted:
+                    await attempt.retry(
+                        error,
+                        provider_failure_override=(
+                            self._provider._provider_failure_override
+                        ),
+                    )
+                    if attempt.failure_retryable is not None:
+                        retryable = attempt.failure_retryable
+                if not retryable or not retry_session.can_attempt:
                     raise
                 trace_event(
                     stage="provider",
@@ -692,13 +780,15 @@ class _OpenAIChatStreamRunner:
                     source="provider",
                     provider=self._provider._provider_name,
                     recovery_kind="openai_text",
-                    attempt=attempt + 1,
-                    max_attempts=MIDSTREAM_RECOVERY_ATTEMPTS,
+                    attempts_started=retry_session.attempts_started,
+                    max_attempts=retry_session.max_attempts,
                     exc_type=type(error).__name__,
                 )
             finally:
                 if stream is not None:
                     await maybe_await_aclose(stream)
+                if attempt is not None:
+                    await attempt.aclose()
         if last_error is not None:
             raise last_error
         return "", ""
@@ -711,6 +801,7 @@ class _OpenAIChatStreamRunner:
         error: Exception,
         tool_argument_alias_buffers: dict[int, str],
         output_reasoning: bool,
+        retry_session: ProviderRetrySession,
     ) -> list[str] | None:
         """Build terminal recovery events when the interrupted stream permits it."""
         if not is_retryable_stream_error(error):
@@ -722,6 +813,7 @@ class _OpenAIChatStreamRunner:
                     body=body,
                     ledger=ledger,
                     tool_argument_alias_buffers=tool_argument_alias_buffers,
+                    retry_session=retry_session,
                 )
                 if repair_events is None:
                     return None
@@ -752,7 +844,9 @@ class _OpenAIChatStreamRunner:
 
         recovery_body = make_text_recovery_body(body, partial_text, partial_thinking)
         text, thinking = await self._collect_recovery_text(
-            recovery_body, include_reasoning=output_reasoning
+            recovery_body,
+            include_reasoning=output_reasoning,
+            retry_session=retry_session,
         )
         text_suffix = continuation_suffix(partial_text, text)
         thinking_suffix = continuation_suffix(partial_thinking, thinking)
@@ -787,6 +881,7 @@ class _OpenAIChatStreamRunner:
         body: dict[str, Any],
         ledger: AnthropicStreamLedger,
         tool_argument_alias_buffers: dict[int, str],
+        retry_session: ProviderRetrySession,
     ) -> list[str] | None:
         schemas = tool_schemas_by_name(self._request)
         events: list[str] = []
@@ -814,9 +909,13 @@ class _OpenAIChatStreamRunner:
                 input_schema=schema.input_schema if schema is not None else None,
             )
             accepted_suffix: str | None = None
-            for attempt in range(MIDSTREAM_RECOVERY_ATTEMPTS):
+            repair_attempt = 0
+            while retry_session.can_attempt:
+                repair_attempt += 1
                 text, _ = await self._collect_recovery_text(
-                    recovery_body, include_reasoning=False
+                    recovery_body,
+                    include_reasoning=False,
+                    retry_session=retry_session,
                 )
                 repair = accept_tool_json_repair(
                     repair_prefix,
@@ -832,7 +931,7 @@ class _OpenAIChatStreamRunner:
                         source="provider",
                         provider=self._provider._provider_name,
                         tool_name=state.name,
-                        attempt=attempt + 1,
+                        attempt=repair_attempt,
                     )
                     break
             if accepted_suffix is None:

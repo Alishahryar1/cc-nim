@@ -13,7 +13,7 @@ from free_claude_code.providers.openai_chat import (
 )
 from tests.providers.support import (
     REASONING_OFF,
-    passthrough_rate_limiter,
+    immediate_admission,
     profiled_provider,
     reasoning_for,
 )
@@ -34,7 +34,7 @@ def wafer_provider(wafer_config):
     return profiled_provider(
         "wafer",
         wafer_config,
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
 
 

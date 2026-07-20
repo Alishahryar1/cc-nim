@@ -20,6 +20,7 @@ from free_claude_code.config.provider_catalog import (
     VERCEL_AI_GATEWAY_DEFAULT_BASE,
     ZAI_DEFAULT_BASE,
 )
+from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.cloudflare import CloudflareProvider
 from free_claude_code.providers.deepseek import DeepSeekProvider
 from free_claude_code.providers.gemini import GeminiProvider
@@ -32,7 +33,6 @@ from free_claude_code.providers.openai_chat import (
     OPENAI_CHAT_PROFILES,
     OpenAIChatProvider,
 )
-from free_claude_code.providers.rate_limit import ProviderRateLimiter
 from free_claude_code.providers.runtime import (
     ProviderRuntime,
     build_provider_config,
@@ -441,27 +441,28 @@ def test_create_provider_instantiates_each_builtin():
         "sambanova": OpenAIChatProvider,
         "cerebras": OpenAIChatProvider,
     }
-    sentinel_limiter = MagicMock(spec=ProviderRateLimiter)
+    sentinel_admission = MagicMock(spec=ProviderAdmissionController)
 
     with (
         patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"),
         patch("httpx.AsyncClient"),
         patch(
-            "free_claude_code.providers.runtime.factory.ProviderRateLimiter",
-            return_value=sentinel_limiter,
-        ) as limiter_factory,
+            "free_claude_code.providers.runtime.factory.ProviderAdmissionController",
+            return_value=sentinel_admission,
+        ) as admission_factory,
     ):
         for provider_id, provider_cls in cases.items():
             provider = create_provider(provider_id, settings)
 
             assert isinstance(provider, provider_cls)
-            assert provider._rate_limiter is sentinel_limiter
-            limiter_factory.assert_called_once_with(
+            assert provider._admission is sentinel_admission
+            admission_factory.assert_called_once_with(
+                provider_name=provider_id,
                 rate_limit=7,
                 rate_window=11,
                 max_concurrency=3,
             )
-            limiter_factory.reset_mock()
+            admission_factory.reset_mock()
 
     assert set(cases) == set(PROVIDER_CATALOG)
 
@@ -476,7 +477,7 @@ def test_provider_runtime_caches_by_provider_id():
     assert first is second
 
 
-def test_provider_runtime_provider_owns_one_limiter() -> None:
+def test_provider_runtime_provider_owns_one_admission_controller() -> None:
     runtime = ProviderRuntime(_make_settings())
 
     with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
@@ -485,10 +486,10 @@ def test_provider_runtime_provider_owns_one_limiter() -> None:
 
     assert isinstance(first, NvidiaNimProvider)
     assert isinstance(second, NvidiaNimProvider)
-    assert first._rate_limiter is second._rate_limiter
+    assert first._admission is second._admission
 
 
-def test_separate_provider_runtimes_never_share_limiters() -> None:
+def test_separate_provider_runtimes_never_share_admission_controllers() -> None:
     first_runtime = ProviderRuntime(_make_settings())
     second_runtime = ProviderRuntime(_make_settings())
 
@@ -499,10 +500,10 @@ def test_separate_provider_runtimes_never_share_limiters() -> None:
     assert isinstance(first, NvidiaNimProvider)
     assert isinstance(second, NvidiaNimProvider)
     assert first is not second
-    assert first._rate_limiter is not second._rate_limiter
+    assert first._admission is not second._admission
 
 
-def test_different_providers_in_one_runtime_have_independent_limiters() -> None:
+def test_different_providers_have_independent_admission_controllers() -> None:
     runtime = ProviderRuntime(_make_settings())
 
     with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
@@ -511,7 +512,7 @@ def test_different_providers_in_one_runtime_have_independent_limiters() -> None:
 
     assert isinstance(nim, NvidiaNimProvider)
     assert isinstance(open_router, OpenRouterProvider)
-    assert nim._rate_limiter is not open_router._rate_limiter
+    assert nim._admission is not open_router._admission
 
 
 def test_unknown_provider_raises_unknown_provider_type_error():

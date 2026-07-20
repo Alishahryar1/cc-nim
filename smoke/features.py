@@ -198,7 +198,7 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         "Transient retries and disconnect cleanup preserve follow-up requests",
         "public_surface",
         (
-            "tests/providers/test_provider_rate_limit.py",
+            "tests/providers/test_provider_admission.py",
             "tests/providers/test_nvidia_nim_degraded_retry.py",
         ),
         ("test_client_disconnect_mid_stream_does_not_crash_server",),

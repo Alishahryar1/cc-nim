@@ -106,7 +106,7 @@ async def test_replacement_keeps_leased_generation_open_until_final_release() ->
 
 
 @pytest.mark.asyncio
-async def test_real_hot_replacement_owns_a_limiter_per_provider_generation() -> None:
+async def test_hot_replacement_owns_admission_per_provider_generation() -> None:
     first_settings = _settings("nvidia_nim/one")
     second_settings = _settings("nvidia_nim/two")
     clients: list[MagicMock] = []
@@ -135,7 +135,7 @@ async def test_real_hot_replacement_owns_a_limiter_per_provider_generation() -> 
             assert isinstance(old_provider, NvidiaNimProvider)
             assert isinstance(new_provider, NvidiaNimProvider)
             assert new_provider is not old_provider
-            assert new_provider._rate_limiter is not old_provider._rate_limiter
+            assert new_provider._admission is not old_provider._admission
             assert old_lease.resolve_provider("nvidia_nim") is old_provider
             clients[0].close.assert_not_awaited()
 

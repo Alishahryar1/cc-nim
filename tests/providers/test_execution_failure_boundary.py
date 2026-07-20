@@ -14,7 +14,7 @@ from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.http import close_provider_stream
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter
+from tests.providers.support import immediate_admission
 
 
 class _FailingStream:
@@ -60,7 +60,7 @@ def _provider() -> NvidiaNimProvider:
             rate_window=60,
         ),
         nim_settings=NimSettings(),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
 
 

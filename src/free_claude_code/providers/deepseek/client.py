@@ -4,6 +4,7 @@ from typing import Any
 
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
+from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import (
     NO_REASONING,
@@ -11,7 +12,6 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProvider,
     usage_int,
 )
-from free_claude_code.providers.rate_limit import ProviderRateLimiter
 
 from .compat import DEEPSEEK_REQUEST_POLICY, build_deepseek_request_body
 
@@ -24,11 +24,13 @@ _PROFILE = OpenAIChatProfile(
 class DeepSeekProvider(OpenAIChatProvider):
     """DeepSeek using ``https://api.deepseek.com`` Chat Completions."""
 
-    def __init__(self, config: ProviderConfig, *, rate_limiter: ProviderRateLimiter):
+    def __init__(
+        self, config: ProviderConfig, *, admission: ProviderAdmissionController
+    ):
         super().__init__(
             config,
             profile=_PROFILE,
-            rate_limiter=rate_limiter,
+            admission=admission,
         )
 
     def _build_request_body(

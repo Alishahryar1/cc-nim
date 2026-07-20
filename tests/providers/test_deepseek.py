@@ -24,7 +24,7 @@ from free_claude_code.providers.deepseek import DeepSeekProvider
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
-    passthrough_rate_limiter,
+    immediate_admission,
     reasoning_for,
 )
 
@@ -41,7 +41,7 @@ def deepseek_config():
 
 @pytest.fixture
 def deepseek_provider(deepseek_config):
-    return DeepSeekProvider(deepseek_config, rate_limiter=passthrough_rate_limiter())
+    return DeepSeekProvider(deepseek_config, admission=immediate_admission())
 
 
 async def _capture_openai_wire_body(body: dict) -> dict:
@@ -82,9 +82,7 @@ def test_init(deepseek_config):
     with patch(
         "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as mock_client:
-        provider = DeepSeekProvider(
-            deepseek_config, rate_limiter=passthrough_rate_limiter()
-        )
+        provider = DeepSeekProvider(deepseek_config, admission=immediate_admission())
     assert provider._api_key == "test_deepseek_key"
     assert provider._base_url == "https://api.deepseek.com"
     assert mock_client.called
@@ -211,7 +209,7 @@ def test_build_request_body_encodes_reasoning_off():
             rate_limit=1,
             rate_window=1,
         ),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     request = MessagesRequest.model_validate(
         {
@@ -523,7 +521,7 @@ def test_thinking_off_strips_thinking_history():
             rate_limit=1,
             rate_window=1,
         ),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     request = MessagesRequest.model_validate(
         {
@@ -552,7 +550,7 @@ def test_thinking_off_still_replays_required_tool_reasoning():
             rate_limit=1,
             rate_window=1,
         ),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     request = MessagesRequest.model_validate(
         {
@@ -653,7 +651,7 @@ def test_preflight_strips_user_image():
             rate_limit=1,
             rate_window=1,
         ),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     # Should not raise; image is stripped.
     provider.preflight_stream(request, reasoning=REASONING_ON)
@@ -676,7 +674,7 @@ def test_preflight_rejects_mcp_servers():
             rate_limit=1,
             rate_window=1,
         ),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     with pytest.raises(InvalidRequestError, match="mcp_servers"):
         provider.preflight_stream(request)
@@ -695,7 +693,7 @@ def test_preflight_rejects_listed_server_tools_in_tools_list():
             rate_limit=1,
             rate_window=1,
         ),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     with pytest.raises(InvalidRequestError, match="web_search"):
         provider.preflight_stream(request)
@@ -732,7 +730,7 @@ def test_preflight_rejects_server_tool_result_blocks():
             rate_limit=1,
             rate_window=1,
         ),
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
     with pytest.raises(InvalidRequestError, match=r"web_search_tool_result|server"):
         provider.preflight_stream(request)

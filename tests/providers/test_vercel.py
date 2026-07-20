@@ -8,7 +8,7 @@ import pytest
 from free_claude_code.config.provider_catalog import VERCEL_AI_GATEWAY_DEFAULT_BASE
 from free_claude_code.providers.base import ProviderConfig
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter, profiled_provider
+from tests.providers.support import immediate_admission, profiled_provider
 
 
 def make_request(**overrides):
@@ -30,7 +30,7 @@ def vercel_provider(vercel_config):
     return profiled_provider(
         "vercel",
         vercel_config,
-        rate_limiter=passthrough_rate_limiter(),
+        admission=immediate_admission(),
     )
 
 
@@ -45,7 +45,7 @@ def test_init_uses_default_base_url_and_api_key(vercel_config):
         provider = profiled_provider(
             "vercel",
             vercel_config,
-            rate_limiter=passthrough_rate_limiter(),
+            admission=immediate_admission(),
         )
 
     assert provider._api_key == "test_vercel_key"
@@ -60,7 +60,7 @@ def test_init_strips_trailing_slash(vercel_config):
         provider = profiled_provider(
             "vercel",
             config,
-            rate_limiter=passthrough_rate_limiter(),
+            admission=immediate_admission(),
         )
 
     assert provider._base_url == VERCEL_AI_GATEWAY_DEFAULT_BASE

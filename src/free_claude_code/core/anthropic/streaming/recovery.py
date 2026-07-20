@@ -129,7 +129,6 @@ def make_text_recovery_body(
     recovery = deepcopy(body)
     recovery.pop("tools", None)
     recovery.pop("tool_choice", None)
-    recovery["stream"] = True
     messages = _copied_messages(recovery)
     if partial_text:
         messages.append({"role": "assistant", "content": partial_text})
@@ -152,7 +151,6 @@ def make_tool_repair_body(
     recovery = deepcopy(body)
     recovery.pop("tools", None)
     recovery.pop("tool_choice", None)
-    recovery["stream"] = True
     messages = _copied_messages(recovery)
     messages.append(
         {

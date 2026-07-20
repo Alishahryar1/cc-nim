@@ -11,6 +11,7 @@ from free_claude_code.core.reasoning import (
     ReasoningControl,
     ReasoningPolicy,
 )
+from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import (
     OpenAIAsyncCredentialProvider,
@@ -18,7 +19,6 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProvider,
     build_openai_chat_request_body,
 )
-from free_claude_code.providers.rate_limit import ProviderRateLimiter
 
 from .quirks import apply_google_request_quirks, google_thinking_config
 
@@ -51,14 +51,14 @@ class GoogleOpenAIProvider(OpenAIChatProvider):
         config: ProviderConfig,
         *,
         profile: OpenAIChatProfile,
-        rate_limiter: ProviderRateLimiter,
+        admission: ProviderAdmissionController,
         api_key_provider: OpenAIAsyncCredentialProvider | None = None,
         default_headers: Mapping[str, str] | None = None,
     ) -> None:
         super().__init__(
             config,
             profile=profile,
-            rate_limiter=rate_limiter,
+            admission=admission,
             api_key_provider=api_key_provider,
             default_headers=default_headers,
         )

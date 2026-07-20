@@ -9,7 +9,7 @@ from free_claude_code.config.provider_catalog import SAMBANOVA_DEFAULT_BASE
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.base import ProviderConfig
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import passthrough_rate_limiter, profiled_provider
+from tests.providers.support import immediate_admission, profiled_provider
 
 
 def make_request(**overrides):
@@ -29,7 +29,7 @@ def sambanova_config():
 @pytest.fixture
 def sambanova_provider(sambanova_config):
     return profiled_provider(
-        "sambanova", sambanova_config, rate_limiter=passthrough_rate_limiter()
+        "sambanova", sambanova_config, admission=immediate_admission()
     )
 
 
@@ -42,7 +42,7 @@ def test_init_uses_default_base_url_and_api_key(sambanova_config):
         "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as mock_openai:
         provider = profiled_provider(
-            "sambanova", sambanova_config, rate_limiter=passthrough_rate_limiter()
+            "sambanova", sambanova_config, admission=immediate_admission()
         )
 
     assert provider._api_key == "test_sambanova_key"
@@ -55,7 +55,7 @@ def test_init_strips_trailing_slash(sambanova_config):
 
     with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
         provider = profiled_provider(
-            "sambanova", config, rate_limiter=passthrough_rate_limiter()
+            "sambanova", config, admission=immediate_admission()
         )
 
     assert provider._base_url == SAMBANOVA_DEFAULT_BASE

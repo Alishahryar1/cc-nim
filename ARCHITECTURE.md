@@ -519,27 +519,43 @@ does not select a concrete adapter.
 
 [providers/runtime/](src/free_claude_code/providers/runtime/) owns construction details for one
 closable provider generation: construction policy, resolved provider
-configuration, lazy provider instances, provider-owned rate limiters, and
+configuration, lazy provider instances, provider-owned admission controllers, and
 cleanup. [providers/runtime/factory.py](src/free_claude_code/providers/runtime/factory.py)
 constructs ordinary provider IDs from `OPENAI_CHAT_PROFILES` and keeps a sparse
 factory mapping only for adapters with real state or algorithms. The union of
 those two construction owners must exactly equal the neutral provider catalog.
-`ProviderRuntime` directly guarantees one provider and limiter per provider ID
-within a generation; there is no pass-through cache object, process singleton,
-or second limiter registry. Provider admission combines a strict proactive window with
-one reactive backoff deadline. Positive backoffs can only extend that deadline,
-and admission loops until proactive capacity and the final reactive check are
-simultaneously available. The proactive timestamp is recorded only when that
-check succeeds, so a concurrent 429/5xx cannot be missed, shortened, consume
-unused quota, or release queued requests as an expiry burst. Retired generations
-retain their own synchronization state until request leases drain, while new
-generations and separate server instances never reuse it. Hot replacement
-therefore begins with fresh quota state; an old and new generation enforce
-independent budgets while old request leases drain. Application-level generation
-publication, request leases, model metadata, discovery orchestration, and
-configured-model validation belong to `ProviderRuntimeManager` in the runtime
-package. This separates a single generation's resources from process-lifetime
-state.
+`ProviderRuntime` directly guarantees one provider and admission controller per
+provider ID within a generation; there is no pass-through cache object, process
+singleton, or second admission registry.
+
+[providers/admission.py](src/free_claude_code/providers/admission.py) owns the
+complete shared upstream-admission lifecycle for that provider generation. A
+strict sliding window admits each real attempt before a concurrency bulkhead;
+the bulkhead is held only while an upstream operation or stream is active, never
+during retry backoff. The first retryable failure before upstream acceptance
+opens one recovery episode and elects that logical execution as leader. The
+leader alone waits and sends half-open probes. Concurrent failures coalesce into
+the same episode, later callers wait, and already active streams continue. A
+stale in-flight success or failure cannot close or extend the episode, while
+leader cancellation transfers ownership to a waiter.
+
+A successful probe closes the episode and releases waiters through ordinary
+rate and concurrency admission. A non-retryable probe response also closes it
+because the provider has responded; only that request receives the rejection.
+If the leader exhausts its attempt budget, that terminal outcome stays attached
+to every coalesced logical execution, even if a later recovery generation starts.
+New work fails fast during the provider-directed cooldown; once it expires,
+exactly one new caller becomes the next probe. There is no background retry
+worker, copied request queue, or second scheduling system.
+
+Retired generations retain their own synchronization state until request leases
+drain, while new generations and separate server instances never reuse it. Hot
+replacement therefore begins with fresh quota and recovery state; an old and new
+generation enforce independent budgets while old request leases drain.
+Application-level generation publication, request leases, model metadata,
+discovery orchestration, and configured-model validation belong to
+`ProviderRuntimeManager` in the runtime package. This separates a single
+generation's resources from process-lifetime state.
 
 [application/model_metadata.py](src/free_claude_code/application/model_metadata.py) owns the immutable
 `ProviderModelInfo` value consumed by the application catalog. Provider-specific
@@ -767,19 +783,34 @@ construction for those failures.
 Concrete adapters may supply one narrow semantic override for an upstream quirk
 that the shared SDK cannot express correctly. The concrete adapter owns the
 exact upstream marker, while the shared failure policy owns its canonical
-meaning and wording. The limiter uses that meaning for retry qualification and
-its existing provider-wide reactive backoff while retaining the raw exception,
-so exhausted retries still receive the original HTTP status/body through the
-shared redaction and diagnostic path. For NVCF's function-scoped failure this
-deliberately keeps the simple one-limiter-per-provider policy; a degraded NIM
-function can therefore briefly delay other NIM models during backoff. No
-provider-specific marker enters `core/`, another provider, or an API adapter.
+meaning and wording. Admission uses that meaning for retry qualification while
+retaining the raw exception, so exhausted retries still receive the original
+HTTP status/body through the shared redaction and diagnostic path. For NVCF's
+function-scoped failure this deliberately keeps the simple
+one-controller-per-provider policy; a degraded NIM function can therefore
+briefly pause other NIM models during shared recovery. No provider-specific
+marker enters `core/`, another provider, or an API adapter.
+
 [providers/stream_recovery.py](src/free_claude_code/providers/stream_recovery.py)
-owns the 0.75-second/65,536-byte holdback, four transparent early retries after
-the first attempt, and five midstream recovery attempts. Provider opening keeps
-its existing five-attempt exponential-backoff budget. `ExecutionFailure.retryable`
-records provider-policy eligibility; it never tells the client to retry after FCC
-has finalized the failure.
+owns only the 0.75-second/65,536-byte commit holdback and the choice between
+transparent replay, request-local continuation/tool salvage, and final failure.
+`ProviderRetrySession` owns one five-attempt budget for the whole logical
+execution: initial opening, deterministic request-shape corrections, early
+replay, continuation, and tool repair all consume that same budget. There are no
+nested retry counters. Deterministic corrections retry immediately; transient
+failures use exponential backoff with jitter and honor `Retry-After` as a
+minimum. When partial output exists, the last available attempt is reserved for
+continuation or repair instead of replaying the full request again. Completed
+tool calls can be salvaged without an upstream attempt.
+
+For streams, upstream acceptance is the first received chunk. Retryable failure
+before that point participates in provider-wide coordinated recovery. Failure
+after that point remains request-local so one interrupted connection does not
+freeze healthy parallel streams, but any continuation still consumes the same
+execution budget. The OpenAI SDK's internal retries remain disabled so FCC is
+the only retry owner. `ExecutionFailure.retryable` records provider-policy
+eligibility; it never tells the client to retry after FCC has finalized the
+failure.
 
 The OpenAI-chat provider remains an upstream adapter: it converts OpenAI chat
 chunks into ledger operations. After retry, continuation, and tool salvage are
