@@ -4,7 +4,7 @@ set -eu
 PACKAGE_NAME="free-claude-code"
 FCC_HOME_DIRNAME=".fcc"
 # Include retired entry points so older installations are fully stopped and removed.
-FCC_COMMANDS="fcc-server fcc-claude fcc-codex fcc-pi fcc-init free-claude-code"
+FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-init free-claude-code"
 
 dry_run=0
 uv_tool_bin=""
@@ -200,6 +200,30 @@ verify_fcc_commands_removed() {
     fi
 }
 
+remove_macos_desktop_app() {
+    app_dir="$HOME/Applications/Free Claude Code.app"
+    desktop_link="$HOME/Desktop/Free Claude Code.app"
+
+    if [ "$dry_run" -eq 1 ]; then
+        print_command rm -f "$desktop_link"
+        print_command rm -rf "$app_dir"
+        return 0
+    fi
+
+    if [ -L "$desktop_link" ]; then
+        if [ "$(readlink "$desktop_link")" = "$app_dir" ]; then
+            run rm -f "$desktop_link"
+        else
+            printf 'A non-FCC link exists at %s; leaving it unchanged.\n' "$desktop_link"
+        fi
+    elif [ -e "$desktop_link" ]; then
+        printf 'A non-FCC item exists at %s; leaving it unchanged.\n' "$desktop_link"
+    fi
+    if [ -e "$app_dir" ]; then
+        run rm -rf "$app_dir"
+    fi
+}
+
 purge_fcc_home() {
     fcc_home="$HOME/$FCC_HOME_DIRNAME"
     if [ ! -e "$fcc_home" ]; then
@@ -246,6 +270,9 @@ uninstall_free_claude_code
 
 step "Verifying Free Claude Code entry points were removed"
 verify_fcc_commands_removed
+
+step "Removing the Free Claude Code desktop launcher"
+remove_macos_desktop_app
 
 step "Purging FCC config and data from ~/.fcc"
 purge_fcc_home

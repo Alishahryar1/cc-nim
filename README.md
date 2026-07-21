@@ -43,6 +43,7 @@ Run your coding agents with free, paid, or local models. Choose and validate pro
 ## What You Get
 
 - Launch Claude Code with `fcc-claude`, Codex with `fcc-codex`, or Pi with `fcc-pi`.
+- Run FCC in the background from a desktop launcher on Windows or macOS.
 - Switch among 25 cloud and local providers from the Admin UI.
 - Use each coding agent's native model picker.
 - Route Fable, Opus, Sonnet, Haiku, and fallback traffic to different models.
@@ -73,6 +74,14 @@ Re-run the same command whenever you want to update. You can review the installe
 
 ### 2. Start The Server
 
+On Windows, open **Free Claude Code** from the desktop or Start menu. On
+macOS, open **Free Claude Code** from the desktop or your Applications folder.
+FCC runs in the system tray or menu bar without a terminal window. Use its menu
+to open Admin, check server status, restart, or quit; on Windows, left-clicking
+the tray icon opens Admin directly.
+
+For Linux or terminal use, run:
+
 ```bash
 fcc-server
 ```
@@ -80,8 +89,8 @@ fcc-server
 To print the installed Free Claude Code version without starting the server,
 run `fcc-server --version`.
 
-Keep this process running. By default, the Admin UI opens in your browser once
-the server is healthy. Its address is always shown in the startup log:
+Keep this process running. In terminal mode, the Admin UI opens in your browser
+once the server is healthy by default. Its address is shown in the startup log:
 
 ```text
 INFO:     Admin UI: http://127.0.0.1:8082/admin (local-only)
@@ -417,7 +426,10 @@ Re-run the matching command from [Install Or Update](#install).
 
 ### Uninstall
 
-Stop every running FCC command first. The uninstaller removes the FCC uv tool, verifies every FCC command is gone, and then deletes `~/.fcc/`. It leaves uv, Python, Claude Code, Codex, Pi, and shared PATH entries intact.
+Stop every running FCC command first. The uninstaller removes the FCC desktop
+launcher and uv tool, verifies every FCC command is gone, and then deletes
+`~/.fcc/`. It leaves uv, Python, Claude Code, Codex, Pi, and shared PATH entries
+intact.
 
 macOS/Linux:
 

@@ -12,6 +12,7 @@ $PackageName = "free-claude-code"
 $FccHomeDirname = ".fcc"
 $FccCommands = @(
     # Include retired entry points so older installations are fully stopped and removed.
+    "fcc-desktop",
     "fcc-server",
     "fcc-claude",
     "fcc-codex",
@@ -210,6 +211,19 @@ function Confirm-FccCommandsRemoved {
     }
 }
 
+function Remove-FccDesktopShortcuts {
+    $shortcutPaths = @(
+        (Join-Path $env:USERPROFILE "Desktop\Free Claude Code.lnk"),
+        (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Free Claude Code.lnk")
+    )
+    foreach ($shortcutPath in $shortcutPaths) {
+        Write-Host "+ Remove-Item -LiteralPath $(Format-Argument $shortcutPath) -Force"
+        if ((-not $DryRun) -and (Test-Path -LiteralPath $shortcutPath)) {
+            Remove-Item -LiteralPath $shortcutPath -Force
+        }
+    }
+}
+
 function Purge-FccHome {
     $fccHome = Join-Path $env:USERPROFILE $FccHomeDirname
     if (-not (Test-Path -LiteralPath $fccHome)) {
@@ -258,6 +272,9 @@ Uninstall-FreeClaudeCode
 
 Write-Step "Verifying Free Claude Code entry points were removed"
 Confirm-FccCommandsRemoved
+
+Write-Step "Removing Free Claude Code desktop shortcuts"
+Remove-FccDesktopShortcuts
 
 Write-Step "Purging FCC config and data from ~/.fcc"
 Purge-FccHome

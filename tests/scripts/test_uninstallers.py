@@ -7,6 +7,7 @@ from pathlib import Path
 import pytest
 
 FCC_COMMANDS = (
+    "fcc-desktop",
     "fcc-server",
     "fcc-claude",
     "fcc-codex",
@@ -123,7 +124,7 @@ if [ "${1:-}" = "tool" ] && [ "${2:-}" = "uninstall" ]; then
         echo 'Tool `free-claude-code` is not installed' >&2
         exit 2
     fi
-    for name in fcc-server fcc-claude fcc-codex fcc-pi fcc-init free-claude-code; do
+    for name in fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-init free-claude-code; do
         /bin/rm -f "$FAKE_TOOL_BIN/$name"
     done
     echo "Uninstalled free-claude-code"
@@ -136,13 +137,19 @@ exit 43
         bin_dir / "rm",
         """#!/bin/sh
 echo "rm:$*" >> "$CALL_LOG"
-if [ "$FAIL_STEP" = "purge" ]; then
+if [ "$FAIL_STEP" = "purge" ] && [ "$*" = "-rf $HOME/.fcc" ]; then
     echo "simulated purge failure" >&2
     exit 44
 fi
 exec /bin/rm "$@"
 """,
     )
+
+    app = home / "Applications" / "Free Claude Code.app"
+    app.mkdir(parents=True)
+    desktop = home / "Desktop"
+    desktop.mkdir()
+    (desktop / "Free Claude Code.app").symlink_to(app, target_is_directory=True)
 
     env = os.environ.copy()
     env.update(
@@ -176,6 +183,8 @@ def test_uninstall_sh_removes_and_verifies_only_fcc(
     assert posix_uninstall_harness.calls() == [
         "uv:tool dir --bin",
         "uv:tool uninstall free-claude-code",
+        f"rm:-f {posix_uninstall_harness.home / 'Desktop' / 'Free Claude Code.app'}",
+        f"rm:-rf {posix_uninstall_harness.home / 'Applications' / 'Free Claude Code.app'}",
         f"rm:-rf {posix_uninstall_harness.fcc_home}",
     ]
 
@@ -190,6 +199,22 @@ def test_uninstall_sh_is_idempotent_when_tool_is_already_absent(
     assert result.returncode == 0, result.stderr
     assert not posix_uninstall_harness.fcc_home.exists()
     assert "already absent" in result.stdout
+
+
+def test_uninstall_sh_preserves_unrelated_macos_desktop_link(
+    posix_uninstall_harness: PosixUninstallHarness,
+) -> None:
+    desktop_link = posix_uninstall_harness.home / "Desktop" / "Free Claude Code.app"
+    desktop_link.unlink()
+    unrelated = posix_uninstall_harness.home / "Unrelated.app"
+    unrelated.mkdir()
+    desktop_link.symlink_to(unrelated, target_is_directory=True)
+
+    result = posix_uninstall_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "non-FCC link" in result.stdout
+    assert desktop_link.readlink() == unrelated
 
 
 @pytest.mark.parametrize("failure", ["tool-dir", "uninstall", "stale-entrypoint"])
@@ -341,8 +366,9 @@ def powershell_uninstall_harness(
     bin_dir = home / ".local" / "bin"
     tool_bin = tmp_path / "tool-bin"
     fcc_home = home / ".fcc"
+    app_data = tmp_path / "app-data"
     log = tmp_path / "calls.log"
-    for path in (bin_dir, tool_bin, fcc_home):
+    for path in (bin_dir, tool_bin, fcc_home, app_data):
         path.mkdir(parents=True)
     (fcc_home / "config.json").write_text("{}", encoding="utf-8")
     for name in FCC_COMMANDS:
@@ -386,7 +412,10 @@ function Remove-Item {
         [switch] $Force
     )
     Add-Content -LiteralPath $env:CALL_LOG -Value "remove:$LiteralPath"
-    if ($env:FAIL_STEP -eq "purge") {
+    if (
+        $env:FAIL_STEP -eq "purge" -and
+        $LiteralPath -eq (Join-Path $env:USERPROFILE ".fcc")
+    ) {
         throw "simulated purge failure"
     }
     Microsoft.PowerShell.Management\Remove-Item @PSBoundParameters
@@ -402,6 +431,19 @@ else {
         encoding="utf-8",
     )
 
+    desktop_shortcut = home / "Desktop" / "Free Claude Code.lnk"
+    start_shortcut = (
+        app_data
+        / "Microsoft"
+        / "Windows"
+        / "Start Menu"
+        / "Programs"
+        / "Free Claude Code.lnk"
+    )
+    for shortcut in (desktop_shortcut, start_shortcut):
+        shortcut.parent.mkdir(parents=True, exist_ok=True)
+        shortcut.write_bytes(b"shortcut")
+
     system_root = os.environ["SYSTEMROOT"]
     env = os.environ.copy()
     env.update(
@@ -412,6 +454,7 @@ else {
             "PATHEXT": ".COM;.EXE;.BAT;.CMD",
             "HOME": str(home),
             "USERPROFILE": str(home),
+            "APPDATA": str(app_data),
             "CALL_LOG": str(log),
             "FAKE_TOOL_BIN": str(tool_bin),
             "FCC_UNINSTALLER": str(_repo_root() / "scripts" / "uninstall.ps1"),
@@ -443,6 +486,8 @@ def test_uninstall_ps1_removes_and_verifies_only_fcc(
     assert powershell_uninstall_harness.calls() == [
         "uv:tool dir --bin",
         "uv:tool uninstall free-claude-code",
+        f"remove:{Path(powershell_uninstall_harness.env['USERPROFILE']) / 'Desktop' / 'Free Claude Code.lnk'}",
+        f"remove:{Path(powershell_uninstall_harness.env['APPDATA']) / 'Microsoft' / 'Windows' / 'Start Menu' / 'Programs' / 'Free Claude Code.lnk'}",
         f"remove:{powershell_uninstall_harness.fcc_home}",
     ]
 

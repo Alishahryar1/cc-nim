@@ -94,6 +94,9 @@ def test_cli_scripts_are_registered() -> None:
         "fcc-codex": "free_claude_code.cli.launchers.codex:launch",
         "fcc-pi": "free_claude_code.cli.launchers.pi:launch",
     }
+    assert pyproject["project"]["gui-scripts"] == {
+        "fcc-desktop": "free_claude_code.cli.desktop_entrypoint:launch",
+    }
 
 
 @pytest.mark.parametrize(
@@ -155,12 +158,13 @@ def test_schedule_open_admin_browser_opens_when_health_ready() -> None:
     opened_urls: list[str] = []
 
     class ImmediateThread:
-        def __init__(self, target=None, **_kwargs: object) -> None:
+        def __init__(self, target=None, args=(), **_kwargs: object) -> None:
             self._target = target
+            self._args = args
 
         def start(self) -> None:
             assert self._target is not None
-            self._target()
+            self._target(*self._args)
 
     with (
         patch.object(commands.threading, "Thread", ImmediateThread),
@@ -172,7 +176,7 @@ def test_schedule_open_admin_browser_opens_when_health_ready() -> None:
         ),
         patch.object(commands.time, "sleep"),
     ):
-        commands._schedule_open_admin_browser(settings)
+        commands.schedule_open_admin_browser(settings)
 
     assert opened_urls == [local_admin_url(settings)]
 
@@ -187,13 +191,17 @@ def test_serve_skips_admin_browser_when_setting_is_disabled() -> None:
     with (
         patch.object(commands, "get_settings", get_settings),
         patch.object(
-            commands, "_run_supervised_server", return_value=False
+            commands.ServerSupervisor, "_run_once", return_value=False
         ) as run_server,
         patch.object(commands, "kill_all_best_effort"),
     ):
         commands.serve()
 
-    run_server.assert_called_once_with(settings, open_admin_browser=False)
+    run_server.assert_called_once_with(
+        settings,
+        open_admin_browser=False,
+        restart_generation=0,
+    )
 
 
 def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
@@ -233,7 +241,7 @@ def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
         patch.object(commands.uvicorn, "Config", side_effect=fake_config),
         patch.object(commands.uvicorn, "Server", side_effect=FakeServer),
         patch.object(commands, "build_asgi_app", side_effect=build_asgi_app),
-        patch.object(commands, "_schedule_open_admin_browser") as schedule_open_admin,
+        patch.object(commands, "schedule_open_admin_browser") as schedule_open_admin,
         patch.object(commands, "kill_all_best_effort") as kill_all,
     ):
         commands.serve()
@@ -275,7 +283,7 @@ def test_serve_supervisor_refuses_restart_after_incomplete_shutdown() -> None:
         patch.object(commands.uvicorn, "Config", side_effect=fake_config),
         patch.object(commands.uvicorn, "Server", side_effect=FakeServer),
         patch.object(commands, "build_asgi_app", side_effect=build_asgi_app),
-        patch.object(commands, "_schedule_open_admin_browser"),
+        patch.object(commands, "schedule_open_admin_browser"),
         patch.object(commands, "kill_all_best_effort") as kill_all,
     ):
         commands.serve()
@@ -298,7 +306,7 @@ def test_serve_migrates_legacy_env_before_loading_settings(tmp_path: Path) -> No
     with (
         patch("pathlib.Path.home", return_value=tmp_path),
         patch.object(commands, "get_settings", get_settings),
-        patch.object(commands, "_run_supervised_server", return_value=False),
+        patch.object(commands.ServerSupervisor, "_run_once", return_value=False),
         patch.object(commands, "kill_all_best_effort"),
     ):
         commands.serve()
@@ -326,7 +334,7 @@ def test_serve_migrates_hf_token_before_loading_settings(
     with (
         patch("pathlib.Path.home", return_value=tmp_path),
         patch.object(commands, "get_settings", get_settings),
-        patch.object(commands, "_run_supervised_server", return_value=False),
+        patch.object(commands.ServerSupervisor, "_run_once", return_value=False),
         patch.object(commands, "kill_all_best_effort"),
         patch.object(commands, "explicit_env_file_migration_warning"),
     ):
@@ -365,8 +373,8 @@ def test_serve_handles_keyboard_interrupt_without_traceback() -> None:
     with (
         patch.object(commands, "get_settings", get_settings),
         patch.object(
-            commands,
-            "_run_supervised_server",
+            commands.ServerSupervisor,
+            "_run_once",
             side_effect=KeyboardInterrupt,
         ),
         patch.object(commands, "kill_all_best_effort") as kill_all,

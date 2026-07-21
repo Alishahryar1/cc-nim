@@ -147,8 +147,9 @@ FCC optimizes for installed user workflows, not internal compatibility. The
 behavior that must be preserved is that these user-facing surfaces run correctly
 for real prompts against supported providers:
 
-- `fcc-server` and the local Admin UI for configuring supported providers,
-  model routing, auth, server tools, messaging, and diagnostics.
+- `fcc-server`, the Windows/macOS FCC Desktop shell, and the local Admin UI for
+  configuring supported providers, model routing, auth, server tools, messaging,
+  and diagnostics.
 - `fcc-claude`, Claude Code, and the Anthropic-compatible proxy behavior Claude
   Code relies on, including streaming text, native/interleaved thinking, tool
   use/results, model discovery, token counting, retries/recovery, and supported
@@ -209,26 +210,41 @@ new places to add unrelated behavior:
 Console scripts are registered in [pyproject.toml](pyproject.toml):
 
 - `fcc-server` calls `free_claude_code.cli.entrypoints:serve`.
+- `fcc-desktop` is a GUI script calling
+  `free_claude_code.cli.desktop_entrypoint:launch` on Windows and macOS.
 - `fcc-claude` calls `free_claude_code.cli.launchers.claude:launch`.
 - `fcc-codex` calls `free_claude_code.cli.launchers.codex:launch`.
 - `fcc-pi` calls `free_claude_code.cli.launchers.pi:launch`.
 
 [scripts/install.sh](scripts/install.sh) and [scripts/install.ps1](scripts/install.ps1)
-install or update the uv tool plus optional voice extras. [scripts/uninstall.sh](scripts/uninstall.sh)
-and [scripts/uninstall.ps1](scripts/uninstall.ps1) remove only the FCC uv tool and always
-delete the managed `~/.fcc/` tree from [config/paths.py](src/free_claude_code/config/paths.py); they do not remove
+install or update the uv tool plus optional voice extras. On Windows the
+installer owns the FCC desktop and Start-menu shortcuts; on macOS it owns the
+per-user application bundle and desktop link. [scripts/uninstall.sh](scripts/uninstall.sh)
+and [scripts/uninstall.ps1](scripts/uninstall.ps1) remove those exact desktop
+artifacts, the FCC uv tool, and the managed `~/.fcc/` tree from
+[config/paths.py](src/free_claude_code/config/paths.py); they do not remove
 uv, Claude Code, Codex, Pi, or uv-managed Python runtimes. [scripts/ci.sh](scripts/ci.sh) and
 [scripts/ci.ps1](scripts/ci.ps1) mirror [.github/workflows/tests.yml](.github/workflows/tests.yml)
 for local pre-push verification.
 
 [cli/entrypoints.py](src/free_claude_code/cli/entrypoints.py) starts the FastAPI server with Uvicorn.
-`serve()` migrates legacy env files when needed, loads cached settings, runs a
-supervised server instance, and can restart the server after admin config changes.
+The shared `ServerSupervisor` migrates legacy env files when needed, loads cached
+settings, runs one server instance, and can restart it after Admin config changes.
 An Admin restart constructs the next instance only when the prior
 `ApplicationRuntime` reports that its complete ownership graph closed. An
 incomplete ASGI shutdown therefore exits the supervisor instead of overlapping
 old and replacement graphs. On final shutdown it best-effort kills registered
 child processes.
+
+[cli/desktop.py](src/free_claude_code/cli/desktop.py) owns the platform-neutral
+desktop lifecycle. An operating-system file lock admits one desktop host, the
+tray remains on the process main thread for native event-loop compatibility, and
+one worker runs the same in-process `ServerSupervisor` with console output and
+automatic browser launch disabled. A second desktop launch waits for health,
+opens the existing Admin page, and exits. Tray restart delegates to the canonical
+supervisor; tray quit requests the same graceful ASGI and application-runtime
+shutdown as `fcc-server`. [cli/desktop_tray.py](src/free_claude_code/cli/desktop_tray.py)
+owns only native status-area presentation and callbacks.
 
 [runtime/bootstrap.py](src/free_claude_code/runtime/bootstrap.py) is the single production composition function. The CLI
 supervisor supplies one settings snapshot and its restart callback; bootstrap
