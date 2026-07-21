@@ -72,25 +72,34 @@ Windows PowerShell:
 
 Re-run the same command whenever you want to update. You can review the installers before running them: [install.sh](scripts/install.sh) and [install.ps1](scripts/install.ps1).
 
-### 2. Start The Server
+### 2. Start FCC
 
-On Windows, open **Free Claude Code** from the desktop or Start menu. On
-macOS, open **Free Claude Code** from the desktop or your Applications folder.
-FCC runs in the system tray or menu bar without a terminal window. Use its menu
-to open Admin, check server status, restart, or quit; on Windows, left-clicking
-the tray icon opens Admin directly.
+#### Windows
 
-For Linux or terminal use, run:
+Open **Free Claude Code** from your desktop or Start menu.
+
+#### macOS
+
+Open **Free Claude Code** from your desktop or Applications folder.
+
+#### Linux
+
+Run:
 
 ```bash
 fcc-server
 ```
 
+On Windows and macOS, FCC runs in the system tray or menu bar without opening a
+terminal. Use its menu to open Admin, check server status, restart, or quit. On
+Windows, left-clicking the tray icon opens Admin directly.
+
 To print the installed Free Claude Code version without starting the server,
 run `fcc-server --version`.
 
-Keep this process running. In terminal mode, the Admin UI opens in your browser
-once the server is healthy by default. Its address is shown in the startup log:
+When using `fcc-server`, keep the terminal open. The Admin UI opens in your
+browser once the server is healthy by default. Its address is shown in the
+startup log:
 
 ```text
 INFO:     Admin UI: http://127.0.0.1:8082/admin (local-only)

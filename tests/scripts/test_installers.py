@@ -1292,7 +1292,7 @@ def test_installers_use_native_clients_and_single_python_selection() -> None:
 def test_readme_install_section_has_no_manual_git_prerequisite() -> None:
     readme = (_repo_root() / "README.md").read_text(encoding="utf-8")
     install_section = readme.split("### 1. Install Or Update", 1)[1].split(
-        "### 2. Start The Server", 1
+        "### 2. Start FCC", 1
     )[0]
 
     assert "Install Git" not in install_section
