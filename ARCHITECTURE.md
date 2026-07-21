@@ -491,10 +491,18 @@ request-scoped policy passed to execution.
 
 Provider model discovery and optional thinking metadata live in the
 application-level catalog owned by `ProviderRuntimeManager`.
+[providers/runtime/discovery.py](src/free_claude_code/providers/runtime/discovery.py)
+is the sole owner of provider model-list queries and cache population. Startup
+synchronously warms the providers referenced by model routing before clients can
+perform their one-time model fetch, then a background pass fills the remaining
+configured provider catalogs without querying successful warm-ups again.
 Discovery is an adapter operation, not an assumption that every upstream has an
 OpenAI `/models` route. For example, Vertex translates that operation to
 Google's paginated `publishers/google/models` API and converts publisher resource
 names into the exact model IDs accepted by its OpenAI-compatible endpoint.
+Catalog contents are discovery metadata, not execution validation; the provider
+request remains authoritative when an upstream accepts a model absent from its
+list or rejects a listed model.
 `ProviderModelInfo.supports_thinking` alone owns discovered per-model thinking
 support for model-list presentation; it does not select request behavior.
 Provider adapters must never branch on upstream model names or versions to
@@ -554,9 +562,9 @@ drain, while new generations and separate server instances never reuse it. Hot
 replacement therefore begins with fresh quota and recovery state; an old and new
 generation enforce independent budgets while old request leases drain.
 Application-level generation publication, request leases, model metadata,
-discovery orchestration, and configured-model validation belong to
-`ProviderRuntimeManager` in the runtime package. This separates a single
-generation's resources from process-lifetime state.
+and discovery orchestration belong to `ProviderRuntimeManager` in the runtime
+package. This separates a single generation's resources from process-lifetime
+state.
 
 [application/model_metadata.py](src/free_claude_code/application/model_metadata.py) owns the immutable
 `ProviderModelInfo` value consumed by the application catalog. Provider-specific

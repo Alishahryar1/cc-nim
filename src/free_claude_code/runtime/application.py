@@ -138,7 +138,7 @@ class ApplicationRuntime:
         logger.info("Starting Claude Code Proxy...")
         try:
             warn_if_process_auth_token(self.settings)
-            await self._validate_configured_models_best_effort()
+            await self.provider_manager.warm_referenced_model_cache()
             self.provider_manager.start_model_list_refresh()
             await self._start_messaging_if_configured()
             logging.getLogger("uvicorn.error").info(
@@ -285,17 +285,6 @@ class ApplicationRuntime:
             "admin_url": local_admin_url(settings) if automatic else None,
             "fields": list(fields),
         }
-
-    async def _validate_configured_models_best_effort(self) -> None:
-        try:
-            await self.provider_manager.validate_configured_models()
-        except ApplicationUnavailableError as exc:
-            logger.warning(
-                "Configured provider model validation failed during startup; "
-                "server will continue and requests will fail at provider resolution "
-                "when config is incomplete. {}",
-                exc.message,
-            )
 
     async def _start_messaging_if_configured(self) -> None:
         try:

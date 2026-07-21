@@ -1134,10 +1134,8 @@ class TestPerModelMapping:
         )
         assert parse_model_name("cerebras/llama3.1-8b") == "llama3.1-8b"
 
-    def test_configured_chat_model_refs_collects_unique_models_with_sources(
-        self, monkeypatch
-    ):
-        """Startup validation model collection is limited to configured chat refs."""
+    def test_configured_chat_model_refs_collects_unique_models(self, monkeypatch):
+        """Model discovery is limited to configured chat references."""
         from free_claude_code.config.settings import Settings
 
         monkeypatch.setenv("FCC_SMOKE_MODEL_NVIDIA_NIM", "nvidia_nim/smoke")
@@ -1158,10 +1156,7 @@ class TestPerModelMapping:
         ]
         assert refs[0].provider_id == "nvidia_nim"
         assert refs[0].model_id == "fallback"
-        assert refs[0].sources == ("MODEL", "MODEL_SONNET")
         assert refs[1].provider_id == "open_router"
         assert refs[1].model_id == "anthropic/claude-fable-5"
-        assert refs[1].sources == ("MODEL_FABLE",)
         assert refs[2].provider_id == "open_router"
         assert refs[2].model_id == "anthropic/claude-opus"
-        assert refs[2].sources == ("MODEL_OPUS",)

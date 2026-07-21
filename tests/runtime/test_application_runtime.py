@@ -636,7 +636,7 @@ async def test_startup_failure_closes_owned_transcriber() -> None:
     with (
         patch.object(
             manager,
-            "validate_configured_models",
+            "warm_referenced_model_cache",
             AsyncMock(side_effect=RuntimeError("startup failed")),
         ),
         pytest.raises(RuntimeError, match="startup failed"),
@@ -708,8 +708,8 @@ async def test_public_start_retries_transient_partial_messaging_cleanup() -> Non
 
     with (
         patch.object(
-            runtime,
-            "_validate_configured_models_best_effort",
+            manager,
+            "warm_referenced_model_cache",
             AsyncMock(),
         ),
         patch.object(manager, "start_model_list_refresh"),
@@ -770,8 +770,8 @@ async def test_public_start_retains_persistently_unclean_partial_messaging_graph
 
     with (
         patch.object(
-            runtime,
-            "_validate_configured_models_best_effort",
+            manager,
+            "warm_referenced_model_cache",
             AsyncMock(),
         ),
         patch.object(manager, "start_model_list_refresh"),

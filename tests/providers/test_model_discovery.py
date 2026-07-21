@@ -6,7 +6,6 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
-from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.config.provider_catalog import (
@@ -327,6 +326,7 @@ class FakeProvider(BaseProvider):
         self._started = started
         self._peer_started = peer_started
         self.cleaned = False
+        self.model_list_calls = 0
 
     def preflight_stream(
         self,
@@ -340,6 +340,7 @@ class FakeProvider(BaseProvider):
         self.cleaned = True
 
     async def _before_model_list(self) -> None:
+        self.model_list_calls += 1
         if self._started is not None:
             self._started.set()
         if self._peer_started is not None:
@@ -372,7 +373,54 @@ class FakeProvider(BaseProvider):
 
 
 @pytest.mark.asyncio
-async def test_runtime_validation_succeeds_for_all_configured_models() -> None:
+async def test_runtime_warm_caches_all_referenced_provider_models() -> None:
+    settings = _settings(
+        model_opus="open_router/anthropic/claude-opus",
+        nvidia_nim_api_key="nim-key",
+        open_router_api_key="open-router-key",
+    )
+    nim = FakeProvider(frozenset({"nim-model"}))
+    router = FakeProvider(frozenset({"anthropic/claude-opus"}))
+    runtime = _manager(
+        settings,
+        {
+            "nvidia_nim": nim,
+            "open_router": router,
+        },
+    )
+
+    result = await runtime.warm_referenced_model_cache()
+
+    assert result.refreshed_provider_ids == ("nvidia_nim", "open_router")
+    assert result.failed_provider_ids == ()
+    assert runtime.cached_model_ids() == {
+        "nvidia_nim": frozenset({"nim-model"}),
+        "open_router": frozenset({"anthropic/claude-opus"}),
+    }
+    assert nim.model_list_calls == 1
+    assert router.model_list_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_runtime_warm_treats_model_lists_as_discovery_metadata() -> None:
+    settings = _settings(
+        model_sonnet="nvidia_nim/nim-model",
+        nvidia_nim_api_key="nim-key",
+    )
+    runtime = _manager(
+        settings,
+        {"nvidia_nim": FakeProvider(frozenset({"different-model"}))},
+    )
+
+    result = await runtime.warm_referenced_model_cache()
+
+    assert result.refreshed_provider_ids == ("nvidia_nim",)
+    assert result.failed_provider_ids == ()
+    assert runtime.cached_model_ids() == {"nvidia_nim": frozenset({"different-model"})}
+
+
+@pytest.mark.asyncio
+async def test_runtime_warm_reports_query_failures_without_blocking() -> None:
     settings = _settings(
         model_opus="open_router/anthropic/claude-opus",
         nvidia_nim_api_key="nim-key",
@@ -382,63 +430,27 @@ async def test_runtime_validation_succeeds_for_all_configured_models() -> None:
         settings,
         {
             "nvidia_nim": FakeProvider(frozenset({"nim-model"})),
-            "open_router": FakeProvider(frozenset({"anthropic/claude-opus"})),
-        },
-    )
-
-    await runtime.validate_configured_models()
-
-    assert runtime.cached_model_ids() == {
-        "nvidia_nim": frozenset({"nim-model"}),
-        "open_router": frozenset({"anthropic/claude-opus"}),
-    }
-
-
-@pytest.mark.asyncio
-async def test_runtime_validation_reports_missing_model_with_sources() -> None:
-    settings = _settings(model_sonnet="nvidia_nim/nim-model")
-    runtime = _manager(
-        settings,
-        {"nvidia_nim": FakeProvider(frozenset({"different-model"}))},
-    )
-
-    with pytest.raises(ApplicationUnavailableError) as exc_info:
-        await runtime.validate_configured_models()
-
-    message = exc_info.value.message
-    assert "sources=MODEL,MODEL_SONNET" in message
-    assert "provider=nvidia_nim" in message
-    assert "model=nim-model" in message
-    assert "problem=missing model" in message
-
-
-@pytest.mark.asyncio
-async def test_runtime_validation_aggregates_multiple_failures() -> None:
-    settings = _settings(model_opus="open_router/anthropic/claude-opus")
-    runtime = _manager(
-        settings,
-        {
-            "nvidia_nim": FakeProvider(frozenset({"different-model"})),
             "open_router": FakeProvider(
                 error=ModelListResponseError("bad model-list shape")
             ),
         },
     )
 
-    with pytest.raises(ApplicationUnavailableError) as exc_info:
-        await runtime.validate_configured_models()
+    with patch(
+        "free_claude_code.providers.runtime.discovery.logger.warning"
+    ) as warning:
+        result = await runtime.warm_referenced_model_cache()
 
-    message = exc_info.value.message
-    assert "sources=MODEL provider=nvidia_nim model=nim-model" in message
-    assert "problem=missing model" in message
-    assert "sources=MODEL_OPUS provider=open_router model=anthropic/claude-opus" in (
-        message
-    )
-    assert "problem=malformed model-list response" in message
+    assert result.refreshed_provider_ids == ("nvidia_nim",)
+    assert result.failed_provider_ids == ("open_router",)
+    assert runtime.cached_model_ids() == {"nvidia_nim": frozenset({"nim-model"})}
+    logged = " ".join(str(arg) for call in warning.call_args_list for arg in call.args)
+    assert "open_router" in logged
+    assert "malformed model-list response: bad model-list shape" in logged
 
 
 @pytest.mark.asyncio
-async def test_runtime_validation_queries_providers_concurrently() -> None:
+async def test_runtime_warm_queries_referenced_providers_concurrently() -> None:
     nim_started = asyncio.Event()
     router_started = asyncio.Event()
     settings = _settings(model_opus="open_router/anthropic/claude-opus")
@@ -458,7 +470,51 @@ async def test_runtime_validation_queries_providers_concurrently() -> None:
         },
     )
 
-    await asyncio.wait_for(runtime.validate_configured_models(), timeout=1.0)
+    await asyncio.wait_for(runtime.warm_referenced_model_cache(), timeout=1.0)
+
+
+@pytest.mark.asyncio
+async def test_startup_discovery_queries_each_successful_provider_once() -> None:
+    settings = _settings(
+        nvidia_nim_api_key="nim-key",
+        open_router_api_key="open-router-key",
+    )
+    nim = FakeProvider(frozenset({"nim-model"}))
+    router = FakeProvider(frozenset({"anthropic/claude-sonnet"}))
+    runtime = _manager(
+        settings,
+        {"nvidia_nim": nim, "open_router": router},
+    )
+
+    await runtime.warm_referenced_model_cache()
+    runtime.start_model_list_refresh()
+    refresh_task = runtime._refresh_task
+    assert refresh_task is not None
+    await refresh_task
+
+    assert nim.model_list_calls == 1
+    assert router.model_list_calls == 1
+    assert runtime.cached_model_ids() == {
+        "nvidia_nim": frozenset({"nim-model"}),
+        "open_router": frozenset({"anthropic/claude-sonnet"}),
+    }
+
+
+@pytest.mark.asyncio
+async def test_failed_startup_warm_remains_eligible_for_background_refresh() -> None:
+    settings = _settings(nvidia_nim_api_key="nim-key")
+    nim = FakeProvider(error=RuntimeError("upstream unavailable"))
+    runtime = _manager(settings, {"nvidia_nim": nim})
+
+    warm_result = await runtime.warm_referenced_model_cache()
+    runtime.start_model_list_refresh()
+    refresh_task = runtime._refresh_task
+    assert refresh_task is not None
+    await refresh_task
+
+    assert warm_result.failed_provider_ids == ("nvidia_nim",)
+    assert nim.model_list_calls == 2
+    assert runtime.cached_model_ids() == {}
 
 
 @pytest.mark.asyncio

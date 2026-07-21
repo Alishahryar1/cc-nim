@@ -6,12 +6,11 @@ from typing import Protocol
 
 @dataclass(frozen=True, slots=True)
 class ConfiguredChatModelRef:
-    """A unique configured chat model reference and the env keys that set it."""
+    """A unique configured chat model reference."""
 
     model_ref: str
     provider_id: str
     model_id: str
-    sources: tuple[str, ...]
 
 
 class ChatModelConfig(Protocol):
@@ -37,27 +36,25 @@ def parse_model_name(model_ref: str) -> str:
 def configured_chat_model_refs(
     settings: ChatModelConfig,
 ) -> tuple[ConfiguredChatModelRef, ...]:
-    """Return unique configured chat provider/model refs with source env keys."""
+    """Return unique configured chat provider/model refs."""
 
-    candidates = (
-        ("MODEL", settings.model),
-        ("MODEL_FABLE", settings.model_fable),
-        ("MODEL_OPUS", settings.model_opus),
-        ("MODEL_SONNET", settings.model_sonnet),
-        ("MODEL_HAIKU", settings.model_haiku),
+    model_refs = dict.fromkeys(
+        model_ref
+        for model_ref in (
+            settings.model,
+            settings.model_fable,
+            settings.model_opus,
+            settings.model_sonnet,
+            settings.model_haiku,
+        )
+        if model_ref is not None
     )
-    sources_by_ref: dict[str, list[str]] = {}
-    for source, model_ref in candidates:
-        if model_ref is None:
-            continue
-        sources_by_ref.setdefault(model_ref, []).append(source)
 
     return tuple(
         ConfiguredChatModelRef(
             model_ref=model_ref,
             provider_id=parse_provider_type(model_ref),
             model_id=parse_model_name(model_ref),
-            sources=tuple(sources),
         )
-        for model_ref, sources in sources_by_ref.items()
+        for model_ref in model_refs
     )

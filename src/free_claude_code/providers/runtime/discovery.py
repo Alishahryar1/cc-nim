@@ -3,8 +3,10 @@
 import asyncio
 from collections.abc import Callable
 
+import httpx
 from loguru import logger
 
+from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.model_metadata import (
     ProviderModelInfo,
     ProviderModelRefreshResult,
@@ -12,18 +14,34 @@ from free_claude_code.application.model_metadata import (
 from free_claude_code.config.model_refs import configured_chat_model_refs
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.providers.base import BaseProvider
+from free_claude_code.providers.model_listing import ModelListResponseError
 
 from .config import has_provider_configuration
 from .model_cache import ProviderModelCache
-from .validation import provider_query_failure_reason
 
 ProviderResolver = Callable[[str], BaseProvider]
 
 
-def referenced_provider_ids(settings: Settings) -> frozenset[str]:
-    """Return provider ids referenced by configured chat model refs."""
-    return frozenset(ref.provider_id for ref in configured_chat_model_refs(settings))
+def _provider_query_failure_reason(exc: BaseException, settings: Settings) -> str:
+    """Return a concise model-list query failure reason for user-facing logs."""
+    if isinstance(exc, ModelListResponseError):
+        return f"malformed model-list response: {exc.message}"
+    if isinstance(exc, httpx.HTTPStatusError):
+        return f"query failure: HTTP {exc.response.status_code}"
+    if isinstance(exc, ApplicationUnavailableError):
+        return f"query failure: {exc.message}"
+    if isinstance(exc, ExecutionFailure) and settings.log_api_error_tracebacks:
+        return f"query failure: {exc.message}"
+    return f"query failure: {type(exc).__name__}"
+
+
+def referenced_provider_ids(settings: Settings) -> tuple[str, ...]:
+    """Return unique provider ids referenced by configured chat models."""
+    return tuple(
+        dict.fromkeys(ref.provider_id for ref in configured_chat_model_refs(settings))
+    )
 
 
 def model_cache_provider_ids_for_settings(settings: Settings) -> tuple[str, ...]:
@@ -57,6 +75,10 @@ class ProviderModelDiscovery:
         self._settings = settings
         self._provider_resolver = provider_resolver
         self._model_cache = model_cache
+
+    async def warm_referenced_model_cache(self) -> ProviderModelRefreshResult:
+        """Synchronously cache model metadata for routed providers."""
+        return await self._refresh_model_infos(referenced_provider_ids(self._settings))
 
     async def refresh_model_list_cache(
         self, *, only_missing: bool = False
@@ -114,5 +136,5 @@ class ProviderModelDiscovery:
         logger.warning(
             "Provider model discovery skipped: provider={} reason={}",
             provider_id,
-            provider_query_failure_reason(exc, self._settings),
+            _provider_query_failure_reason(exc, self._settings),
         )

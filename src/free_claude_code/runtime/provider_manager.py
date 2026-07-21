@@ -20,7 +20,6 @@ from free_claude_code.providers.runtime.discovery import (
     model_cache_provider_ids_for_settings,
 )
 from free_claude_code.providers.runtime.model_cache import ProviderModelCache
-from free_claude_code.providers.runtime.validation import ConfiguredModelValidator
 
 ProviderRuntimeFactory = Callable[[Settings], ProviderRuntime]
 CommitConfig = Callable[[], None]
@@ -141,15 +140,16 @@ class ProviderRuntimeManager:
     ) -> None:
         self._model_cache.cache_model_infos(provider_id, model_infos)
 
-    async def validate_configured_models(self) -> None:
+    async def warm_referenced_model_cache(self) -> ProviderModelRefreshResult:
+        """Warm routed provider catalogs before clients perform model discovery."""
         lease = await self.acquire()
         try:
-            validator = ConfiguredModelValidator(
+            discovery = ProviderModelDiscovery(
                 lease.settings,
                 lease.resolve_provider,
                 self._model_cache,
             )
-            await validator.validate_configured_models()
+            return await discovery.warm_referenced_model_cache()
         finally:
             await lease.release()
 
