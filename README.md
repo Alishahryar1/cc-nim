@@ -151,7 +151,11 @@ fcc-codex exec "hello"
 
 ## Choose A Provider
 
-Enter the listed setting in the Admin UI, open **Model Config**, then search the `MODEL` dropdown and select a model. FCC constructs each slug as `<provider-id>/<exact-provider-model-id>`; free-text entry remains available when a provider cannot list a model. Click **Validate** and **Apply**. Provider names link to their key, model, or setup pages.
+1. Open a provider link below for its key, models, or setup instructions.
+2. In the Admin UI, open **Model Config** and enter the listed setting.
+3. Search the `MODEL` dropdown and select a model. If the provider cannot list
+   models, enter `<provider-id>/<exact-provider-model-id>` manually.
+4. Click **Validate**, then **Apply**.
 
 | Provider | Admin UI setting | Example `MODEL` |
 | --- | --- | --- |
@@ -235,9 +239,16 @@ For example, route Opus to `nvidia_nim/moonshotai/kimi-k2.6`, Sonnet to `open_ro
 
 ### Reasoning Control
 
-Open **Admin UI → Model Config → Reasoning** to choose how FCC handles client reasoning controls. The default **From client** option preserves reasoning effort sent by Claude Code, Codex, or Pi; when the client sends no control, the provider keeps its own default.
+Open **Admin UI → Model Config → Reasoning** and select the behavior you want.
 
-You can instead select **Off**, **Low**, **Medium**, **High**, **X-High**, or **Max**. Fable, Opus, Sonnet, and Haiku each have the same choices plus **Inherit**, which uses the root policy. Providers with named effort receive those names; numeric-budget providers map **Low=512**, **Medium=1,024**, **High=2,048**, **X-High=4,096**, and **Max=8,192** reasoning tokens; boolean providers receive on or off. Unsupported controls safely remain provider-defined.
+| Selection | Behavior |
+| --- | --- |
+| **From client** (default) | Use the effort sent by Claude Code, Codex, or Pi. If none is sent, keep the provider default. |
+| **Off** | Request reasoning to be disabled. |
+| **Low**, **Medium**, **High**, **X-High**, or **Max** | Override the client with the selected reasoning level. |
+| **Inherit** (Fable, Opus, Sonnet, and Haiku only) | Use the root Reasoning selection. |
+
+Providers that do not support a selected control retain their own behavior.
 
 <a id="connect-your-client"></a>
 
@@ -435,10 +446,19 @@ Re-run the matching command from [Install Or Update](#install).
 
 ### Uninstall
 
-Stop every running FCC command first. The uninstaller removes the FCC desktop
-launcher and uv tool, verifies every FCC command is gone, and then deletes
-`~/.fcc/`. It leaves uv, Python, Claude Code, Codex, Pi, and shared PATH entries
-intact.
+Stop every running FCC command first. The uninstaller verifies every FCC command is gone
+before deleting its managed data.
+
+**Removes**
+
+- Free Claude Code, including its desktop launcher and commands
+- `~/.fcc/`
+
+**Keeps**
+
+- uv and Python
+- Claude Code, Codex, and Pi
+- Shared PATH entries
 
 macOS/Linux:
 
