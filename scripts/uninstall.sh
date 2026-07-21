@@ -3,6 +3,8 @@ set -eu
 
 PACKAGE_NAME="free-claude-code"
 FCC_HOME_DIRNAME=".fcc"
+FCC_MACOS_BUNDLE_ID="io.github.alishahryar1.free-claude-code"
+FCC_MACOS_OWNER_FILE=".free-claude-code-owner"
 # Include retired entry points so older installations are fully stopped and removed.
 FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-init free-claude-code"
 
@@ -200,13 +202,28 @@ verify_fcc_commands_removed() {
     fi
 }
 
+macos_app_is_fcc_owned() {
+    app_dir=$1
+    owner_file="$app_dir/Contents/$FCC_MACOS_OWNER_FILE"
+    [ -d "$app_dir" ] &&
+        [ ! -L "$app_dir" ] &&
+        [ -f "$owner_file" ] &&
+        [ "$(cat "$owner_file")" = "$FCC_MACOS_BUNDLE_ID" ]
+}
+
 remove_macos_desktop_app() {
+    [ "$(uname -s)" = "Darwin" ] || return 0
+
     app_dir="$HOME/Applications/Free Claude Code.app"
     desktop_link="$HOME/Desktop/Free Claude Code.app"
 
-    if [ "$dry_run" -eq 1 ]; then
-        print_command rm -f "$desktop_link"
-        print_command rm -rf "$app_dir"
+    if ! macos_app_is_fcc_owned "$app_dir"; then
+        if [ -e "$app_dir" ] || [ -L "$app_dir" ]; then
+            printf 'An app not managed by Free Claude Code exists at %s; leaving it unchanged.\n' "$app_dir"
+        fi
+        if [ -e "$desktop_link" ] || [ -L "$desktop_link" ]; then
+            printf 'The Free Claude Code desktop item cannot be verified; leaving it unchanged.\n'
+        fi
         return 0
     fi
 

@@ -32,6 +32,35 @@ def _powershells() -> tuple[str, ...]:
     return tuple(dict.fromkeys(path for path in candidates if path is not None))
 
 
+def _create_windows_shortcut(
+    powershell: str,
+    shortcut_path: Path,
+    target_path: Path,
+) -> None:
+    shortcut_path.parent.mkdir(parents=True, exist_ok=True)
+    env = os.environ | {
+        "FCC_TEST_SHORTCUT": str(shortcut_path),
+        "FCC_TEST_TARGET": str(target_path),
+    }
+    subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-Command",
+            (
+                "$shell = New-Object -ComObject WScript.Shell; "
+                "$shortcut = $shell.CreateShortcut($env:FCC_TEST_SHORTCUT); "
+                "$shortcut.TargetPath = $env:FCC_TEST_TARGET; "
+                "$shortcut.Save()"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
 @dataclass
 class PosixUninstallHarness:
     home: Path
@@ -144,9 +173,20 @@ fi
 exec /bin/rm "$@"
 """,
     )
+    _write_executable(
+        bin_dir / "uname",
+        """#!/bin/sh
+printf '%s\n' "$FAKE_UNAME"
+""",
+    )
 
     app = home / "Applications" / "Free Claude Code.app"
-    app.mkdir(parents=True)
+    contents = app / "Contents"
+    contents.mkdir(parents=True)
+    (contents / ".free-claude-code-owner").write_text(
+        "io.github.alishahryar1.free-claude-code\n",
+        encoding="utf-8",
+    )
     desktop = home / "Desktop"
     desktop.mkdir()
     (desktop / "Free Claude Code.app").symlink_to(app, target_is_directory=True)
@@ -158,6 +198,7 @@ exec /bin/rm "$@"
             "PATH": f"{bin_dir}:/usr/bin:/bin",
             "CALL_LOG": str(log),
             "FAKE_TOOL_BIN": str(tool_bin),
+            "FAKE_UNAME": "Darwin",
             "FAIL_STEP": "",
         }
     )
@@ -215,6 +256,38 @@ def test_uninstall_sh_preserves_unrelated_macos_desktop_link(
     assert result.returncode == 0, result.stderr
     assert "non-FCC link" in result.stdout
     assert desktop_link.readlink() == unrelated
+
+
+def test_uninstall_sh_preserves_unowned_macos_app_bundle(
+    posix_uninstall_harness: PosixUninstallHarness,
+) -> None:
+    app = posix_uninstall_harness.home / "Applications" / "Free Claude Code.app"
+    owner_file = app / "Contents" / ".free-claude-code-owner"
+    owner_file.unlink()
+    sentinel = app / "foreign.txt"
+    sentinel.write_text("keep", encoding="utf-8")
+    desktop_link = posix_uninstall_harness.home / "Desktop" / "Free Claude Code.app"
+
+    result = posix_uninstall_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "not managed by Free Claude Code" in result.stdout
+    assert sentinel.read_text(encoding="utf-8") == "keep"
+    assert desktop_link.is_symlink()
+
+
+def test_uninstall_sh_does_not_touch_macos_paths_on_linux(
+    posix_uninstall_harness: PosixUninstallHarness,
+) -> None:
+    posix_uninstall_harness.env["FAKE_UNAME"] = "Linux"
+    app = posix_uninstall_harness.home / "Applications" / "Free Claude Code.app"
+    desktop_link = posix_uninstall_harness.home / "Desktop" / "Free Claude Code.app"
+
+    result = posix_uninstall_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert app.is_dir()
+    assert desktop_link.is_symlink()
 
 
 @pytest.mark.parametrize("failure", ["tool-dir", "uninstall", "stale-entrypoint"])
@@ -441,8 +514,11 @@ else {
         / "Free Claude Code.lnk"
     )
     for shortcut in (desktop_shortcut, start_shortcut):
-        shortcut.parent.mkdir(parents=True, exist_ok=True)
-        shortcut.write_bytes(b"shortcut")
+        _create_windows_shortcut(
+            powershell,
+            shortcut,
+            tool_bin / "fcc-desktop.cmd",
+        )
 
     system_root = os.environ["SYSTEMROOT"]
     env = os.environ.copy()
@@ -490,6 +566,30 @@ def test_uninstall_ps1_removes_and_verifies_only_fcc(
         f"remove:{Path(powershell_uninstall_harness.env['APPDATA']) / 'Microsoft' / 'Windows' / 'Start Menu' / 'Programs' / 'Free Claude Code.lnk'}",
         f"remove:{powershell_uninstall_harness.fcc_home}",
     ]
+
+
+def test_uninstall_ps1_preserves_unowned_desktop_shortcut(
+    powershell_uninstall_harness: PowerShellUninstallHarness,
+) -> None:
+    desktop_shortcut = (
+        Path(powershell_uninstall_harness.env["USERPROFILE"])
+        / "Desktop"
+        / "Free Claude Code.lnk"
+    )
+    unrelated_target = powershell_uninstall_harness.home / "unrelated.cmd"
+    unrelated_target.write_text("@echo off\n", encoding="utf-8")
+    _create_windows_shortcut(
+        powershell_uninstall_harness.powershell,
+        desktop_shortcut,
+        unrelated_target,
+    )
+    original_shortcut = desktop_shortcut.read_bytes()
+
+    result = powershell_uninstall_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "not managed by Free Claude Code" in result.stdout
+    assert desktop_shortcut.read_bytes() == original_shortcut
 
 
 def test_uninstall_ps1_is_idempotent_when_tool_is_already_absent(

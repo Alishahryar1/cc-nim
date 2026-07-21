@@ -359,8 +359,12 @@ def test_install_sh_creates_native_macos_app_and_desktop_link(
     assert result.returncode == 0, result.stderr
     app = posix_harness.root / "home" / "Applications" / "Free Claude Code.app"
     plist = app / "Contents" / "Info.plist"
+    owner_file = app / "Contents" / ".free-claude-code-owner"
     launcher = app / "Contents" / "MacOS" / "fcc-desktop"
     desktop_link = posix_harness.root / "home" / "Desktop" / "Free Claude Code.app"
+    assert owner_file.read_text(encoding="utf-8").strip() == (
+        "io.github.alishahryar1.free-claude-code"
+    )
     assert "<key>LSUIElement</key>" in plist.read_text(encoding="utf-8")
     assert "<key>LSMultipleInstancesProhibited</key>" in plist.read_text(
         encoding="utf-8"
@@ -370,6 +374,24 @@ def test_install_sh_creates_native_macos_app_and_desktop_link(
     assert f"exec '{expected_command}'" in launcher.read_text(encoding="utf-8")
     assert desktop_link.is_symlink()
     assert desktop_link.readlink() == app
+
+
+def test_install_sh_rejects_unowned_macos_app_bundle(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.env["FAKE_UNAME"] = "Darwin"
+    app = posix_harness.root / "home" / "Applications" / "Free Claude Code.app"
+    contents = app / "Contents"
+    contents.mkdir(parents=True)
+    plist = contents / "Info.plist"
+    plist.write_text("foreign app", encoding="utf-8")
+
+    result = posix_harness.run()
+
+    assert result.returncode != 0
+    assert "not managed by Free Claude Code" in result.stderr
+    assert plist.read_text(encoding="utf-8") == "foreign app"
+    assert not (contents / ".free-claude-code-owner").exists()
 
 
 def test_install_sh_preserves_unrelated_macos_desktop_link(
@@ -643,6 +665,35 @@ def test_install_sh_process_fallback_reads_full_command_line(
 def _powershells() -> tuple[str, ...]:
     candidates = (shutil.which("pwsh"), shutil.which("powershell"))
     return tuple(dict.fromkeys(path for path in candidates if path is not None))
+
+
+def _create_windows_shortcut(
+    powershell: str,
+    shortcut_path: Path,
+    target_path: Path,
+) -> None:
+    shortcut_path.parent.mkdir(parents=True, exist_ok=True)
+    env = os.environ | {
+        "FCC_TEST_SHORTCUT": str(shortcut_path),
+        "FCC_TEST_TARGET": str(target_path),
+    }
+    subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-Command",
+            (
+                "$shell = New-Object -ComObject WScript.Shell; "
+                "$shortcut = $shell.CreateShortcut($env:FCC_TEST_SHORTCUT); "
+                "$shortcut.TargetPath = $env:FCC_TEST_TARGET; "
+                "$shortcut.Save()"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
 
 
 def _batch_client(name: str) -> str:
@@ -951,6 +1002,28 @@ def test_install_ps1_fresh_install_is_verified(
         / "Programs"
         / "Free Claude Code.lnk"
     ).is_file()
+
+
+def test_install_ps1_preserves_unowned_desktop_shortcut(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    desktop_shortcut = (
+        Path(powershell_harness.env["USERPROFILE"]) / "Desktop" / "Free Claude Code.lnk"
+    )
+    unrelated_target = powershell_harness.root / "unrelated.cmd"
+    unrelated_target.write_text("@echo off\n", encoding="utf-8")
+    _create_windows_shortcut(
+        powershell_harness.powershell,
+        desktop_shortcut,
+        unrelated_target,
+    )
+    original_shortcut = desktop_shortcut.read_bytes()
+
+    result = powershell_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "not managed by Free Claude Code" in result.stdout
+    assert desktop_shortcut.read_bytes() == original_shortcut
 
 
 @pytest.mark.parametrize("uv_version", ("0.11.16", "0.11.16+build.1"))

@@ -93,6 +93,70 @@ def test_desktop_controller_owns_server_thread_and_graceful_quit() -> None:
     assert opened.is_set()
 
 
+def test_restart_during_server_startup_does_not_wait_for_worker() -> None:
+    class StartupSupervisor:
+        def __init__(self) -> None:
+            self.status = ServerStatus.STARTING
+            self.worker_started = threading.Event()
+            self.release_worker = threading.Event()
+            self.restart_count = 0
+
+        def run(self, *, open_admin_browser: bool | None = None) -> None:
+            assert open_admin_browser is False
+            self.worker_started.set()
+            assert self.release_worker.wait(2)
+            self.status = ServerStatus.STOPPED
+
+        def request_restart(self) -> bool:
+            self.restart_count += 1
+            return False
+
+        def request_stop(self) -> None:
+            self.release_worker.set()
+
+    class WaitingTray:
+        def __init__(self, _controller: DesktopController) -> None:
+            self.started = threading.Event()
+            self.stopped = threading.Event()
+
+        def run(self) -> None:
+            self.started.set()
+            assert self.stopped.wait(2)
+
+        def stop(self) -> None:
+            self.stopped.set()
+
+    supervisor = StartupSupervisor()
+    tray: WaitingTray | None = None
+
+    def make_tray(controller: DesktopController) -> WaitingTray:
+        nonlocal tray
+        tray = WaitingTray(controller)
+        return tray
+
+    controller = DesktopController(supervisor, make_tray, MagicMock())
+    controller_thread = threading.Thread(target=controller.run)
+    controller_thread.start()
+    assert tray is not None
+    assert tray.started.wait(2)
+    assert supervisor.worker_started.wait(2)
+
+    restart_thread = threading.Thread(target=controller.restart_server)
+    restart_thread.start()
+    restart_thread.join(0.5)
+    restart_blocked = restart_thread.is_alive()
+
+    controller.quit()
+    supervisor.release_worker.set()
+    restart_thread.join(2)
+    controller_thread.join(2)
+
+    assert restart_blocked is False
+    assert supervisor.restart_count == 1
+    assert not restart_thread.is_alive()
+    assert not controller_thread.is_alive()
+
+
 def test_second_desktop_launch_opens_existing_admin_without_new_server() -> None:
     from free_claude_code.cli import desktop
 

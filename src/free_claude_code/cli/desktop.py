@@ -150,13 +150,11 @@ class DesktopController:
     def restart_server(self) -> None:
         """Restart an active server or relaunch one that exited unexpectedly."""
 
-        if self._supervisor.request_restart():
-            return
-
         with self._thread_lock:
             thread = self._server_thread
-        if thread is not None:
-            thread.join()
+        if thread is not None and thread.is_alive():
+            self._supervisor.request_restart()
+            return
         self._start_server()
 
     def quit(self) -> None:

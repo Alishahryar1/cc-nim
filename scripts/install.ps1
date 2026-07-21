@@ -544,6 +544,27 @@ function Configure-AndConfirmFreeClaudeCode {
     Install-FccDesktopShortcuts -DesktopCommand $installedCommands["fcc-desktop"]
 }
 
+function Test-EquivalentPath {
+    param(
+        [string] $Left,
+        [string] $Right
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Left) -or [string]::IsNullOrWhiteSpace($Right)) {
+        return $false
+    }
+    try {
+        return [string]::Equals(
+            [IO.Path]::GetFullPath($Left),
+            [IO.Path]::GetFullPath($Right),
+            [StringComparison]::OrdinalIgnoreCase
+        )
+    }
+    catch {
+        return $false
+    }
+}
+
 function Install-FccDesktopShortcuts {
     param([string] $DesktopCommand)
 
@@ -560,6 +581,19 @@ function Install-FccDesktopShortcuts {
 
     $shell = New-Object -ComObject WScript.Shell
     foreach ($shortcutPath in $shortcutPaths) {
+        if (Test-Path -LiteralPath $shortcutPath) {
+            try {
+                $existingShortcut = $shell.CreateShortcut($shortcutPath)
+                $isFccShortcut = Test-EquivalentPath -Left $existingShortcut.TargetPath -Right $DesktopCommand
+            }
+            catch {
+                $isFccShortcut = $false
+            }
+            if (-not $isFccShortcut) {
+                Write-Host "A shortcut not managed by Free Claude Code already exists at $shortcutPath; leaving it unchanged."
+                continue
+            }
+        }
         $parent = Split-Path -Parent $shortcutPath
         New-Item -ItemType Directory -Force -Path $parent | Out-Null
         $shortcut = $shell.CreateShortcut($shortcutPath)
