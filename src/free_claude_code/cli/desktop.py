@@ -71,6 +71,8 @@ class ServerOwner(Protocol):
     @property
     def status(self) -> ServerStatus: ...
 
+    def schedule_run(self) -> bool: ...
+
     def run(self, *, open_admin_browser: bool | None = None) -> None: ...
 
     def request_restart(self) -> bool: ...
@@ -166,6 +168,8 @@ class DesktopController:
     def _start_server(self) -> None:
         with self._thread_lock:
             if self._server_thread is not None and self._server_thread.is_alive():
+                return
+            if not self._supervisor.schedule_run():
                 return
             self._server_thread = threading.Thread(
                 target=self._run_server,

@@ -49,6 +49,7 @@ class ServerSupervisor:
         self._console_logging = console_logging
         self._lock = threading.Lock()
         self._server: uvicorn.Server | None = None
+        self._run_scheduled = False
         self._running = False
         self._stop_requested = False
         self._restart_generation = 0
@@ -56,6 +57,8 @@ class ServerSupervisor:
     @property
     def status(self) -> ServerStatus:
         with self._lock:
+            if self._run_scheduled:
+                return ServerStatus.STARTING
             if not self._running:
                 return ServerStatus.STOPPED
             if self._server is None:
@@ -66,10 +69,20 @@ class ServerSupervisor:
                 return ServerStatus.RUNNING
             return ServerStatus.STARTING
 
+    def schedule_run(self) -> bool:
+        """Reserve a worker run before its thread starts."""
+
+        with self._lock:
+            if self._stop_requested or self._run_scheduled or self._running:
+                return False
+            self._run_scheduled = True
+            return True
+
     def run(self, *, open_admin_browser: bool | None = None) -> None:
         """Block until stopped, applying only fully closed Admin restarts."""
 
         with self._lock:
+            self._run_scheduled = False
             if self._running:
                 raise RuntimeError("The FCC server supervisor is already running.")
             if self._stop_requested:
@@ -105,10 +118,15 @@ class ServerSupervisor:
             kill_all_best_effort()
 
     def request_restart(self) -> bool:
-        """Ask the active generation to close before loading fresh settings."""
+        """Reload an active generation or coalesce into a scheduled fresh run."""
 
         with self._lock:
-            if self._stop_requested or not self._running:
+            if self._stop_requested:
+                return False
+            if self._run_scheduled:
+                self._restart_generation += 1
+                return True
+            if not self._running:
                 return False
             self._restart_generation += 1
             if self._server is not None:
@@ -120,6 +138,7 @@ class ServerSupervisor:
 
         with self._lock:
             self._stop_requested = True
+            self._run_scheduled = False
             if self._server is not None:
                 self._server.should_exit = True
 

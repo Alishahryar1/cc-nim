@@ -4,7 +4,7 @@ import threading
 from pathlib import Path
 from unittest.mock import MagicMock, patch
 
-from free_claude_code.cli.commands import ServerStatus
+from free_claude_code.cli.commands import ServerStatus, ServerSupervisor
 from free_claude_code.cli.desktop import DesktopController, DesktopInstanceLock
 from free_claude_code.config.settings import Settings
 
@@ -28,6 +28,31 @@ def test_desktop_instance_lock_is_exclusive_and_reusable(tmp_path: Path) -> None
     second.release()
 
 
+def test_supervisor_accepts_restart_during_scheduled_startup() -> None:
+    supervisor = ServerSupervisor(console_logging=False)
+    settings = _settings()
+
+    with (
+        patch(
+            "free_claude_code.cli.commands.load_server_settings",
+            return_value=settings,
+        ),
+        patch.object(supervisor, "_run_once", return_value=False) as run_once,
+        patch("free_claude_code.cli.commands.kill_all_best_effort"),
+    ):
+        assert supervisor.schedule_run() is True
+        assert supervisor.status is ServerStatus.STARTING
+        assert supervisor.request_restart() is True
+        supervisor.run(open_admin_browser=False)
+
+    run_once.assert_called_once_with(
+        settings,
+        open_admin_browser=False,
+        restart_generation=1,
+    )
+    assert supervisor.status is ServerStatus.STOPPED
+
+
 def test_desktop_controller_owns_server_thread_and_graceful_quit() -> None:
     opened = threading.Event()
 
@@ -37,8 +62,13 @@ def test_desktop_controller_owns_server_thread_and_graceful_quit() -> None:
             self.started = threading.Event()
             self.stopped = threading.Event()
             self.run_arguments: list[bool | None] = []
+            self.schedule_count = 0
             self.restart_count = 0
             self.stop_count = 0
+
+        def schedule_run(self) -> bool:
+            self.schedule_count += 1
+            return True
 
         def run(self, *, open_admin_browser: bool | None = None) -> None:
             self.run_arguments.append(open_admin_browser)
@@ -87,28 +117,43 @@ def test_desktop_controller_owns_server_thread_and_graceful_quit() -> None:
     assert tray is not None
     assert tray.run_thread_id == main_thread_id
     assert supervisor.run_arguments == [False]
+    assert supervisor.schedule_count == 1
     assert supervisor.restart_count == 1
     assert supervisor.stop_count >= 1
     assert tray.stop_count >= 1
     assert opened.is_set()
 
 
-def test_restart_during_server_startup_does_not_wait_for_worker() -> None:
+def test_restart_during_server_startup_is_accepted_without_waiting() -> None:
     class StartupSupervisor:
         def __init__(self) -> None:
             self.status = ServerStatus.STARTING
+            self.run_called = threading.Event()
+            self.allow_run = threading.Event()
             self.worker_started = threading.Event()
             self.release_worker = threading.Event()
+            self.run_scheduled = False
             self.restart_count = 0
+            self.accepted_restart_count = 0
+
+        def schedule_run(self) -> bool:
+            self.run_scheduled = True
+            return True
 
         def run(self, *, open_admin_browser: bool | None = None) -> None:
             assert open_admin_browser is False
+            self.run_called.set()
+            assert self.allow_run.wait(2)
+            self.run_scheduled = False
             self.worker_started.set()
             assert self.release_worker.wait(2)
             self.status = ServerStatus.STOPPED
 
         def request_restart(self) -> bool:
             self.restart_count += 1
+            if self.run_scheduled:
+                self.accepted_restart_count += 1
+                return True
             return False
 
         def request_stop(self) -> None:
@@ -139,13 +184,15 @@ def test_restart_during_server_startup_does_not_wait_for_worker() -> None:
     controller_thread.start()
     assert tray is not None
     assert tray.started.wait(2)
-    assert supervisor.worker_started.wait(2)
+    assert supervisor.run_called.wait(2)
 
     restart_thread = threading.Thread(target=controller.restart_server)
     restart_thread.start()
     restart_thread.join(0.5)
     restart_blocked = restart_thread.is_alive()
 
+    supervisor.allow_run.set()
+    assert supervisor.worker_started.wait(2)
     controller.quit()
     supervisor.release_worker.set()
     restart_thread.join(2)
@@ -153,6 +200,7 @@ def test_restart_during_server_startup_does_not_wait_for_worker() -> None:
 
     assert restart_blocked is False
     assert supervisor.restart_count == 1
+    assert supervisor.accepted_restart_count == 1
     assert not restart_thread.is_alive()
     assert not controller_thread.is_alive()
 
