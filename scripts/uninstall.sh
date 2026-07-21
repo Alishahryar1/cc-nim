@@ -3,6 +3,7 @@ set -eu
 
 PACKAGE_NAME="free-claude-code"
 FCC_HOME_DIRNAME=".fcc"
+# Include retired entry points so older installations are fully stopped and removed.
 FCC_COMMANDS="fcc-server fcc-claude fcc-codex fcc-pi fcc-init free-claude-code"
 
 dry_run=0

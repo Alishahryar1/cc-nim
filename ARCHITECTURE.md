@@ -164,7 +164,7 @@ for real prompts against supported providers:
   reply-based conversation branches, status updates, transcript rendering,
   managed Claude/Codex task execution where configured, task stop/clear flows,
   persistence, and optional voice-note transcription.
-- Installation, update, init, and uninstall scripts insofar as they make the
+- Installation, update, and uninstall scripts insofar as they make the
   above workflows available on a user's machine.
 
 Internal modules, class designs, helper APIs, route implementations, and tests
@@ -208,8 +208,7 @@ new places to add unrelated behavior:
 
 Console scripts are registered in [pyproject.toml](pyproject.toml):
 
-- `fcc-server` and `free-claude-code` call `free_claude_code.cli.entrypoints:serve`.
-- `fcc-init` calls `free_claude_code.cli.entrypoints:init`.
+- `fcc-server` calls `free_claude_code.cli.entrypoints:serve`.
 - `fcc-claude` calls `free_claude_code.cli.launchers.claude:launch`.
 - `fcc-codex` calls `free_claude_code.cli.launchers.codex:launch`.
 - `fcc-pi` calls `free_claude_code.cli.launchers.pi:launch`.
@@ -338,9 +337,11 @@ atomically commits the managed env, and publishes a new provider generation.
 Restart-required changes preserve the existing supervisor restart flow and do
 not publish an in-process generation first.
 
-[.env.example](.env.example) is the single install/init/admin template source.
-It is packaged as a [src/free_claude_code/config/](src/free_claude_code/config/) resource for `fcc-init` and Admin UI
-template defaults; runtime settings do not read it as a live config file.
+[.env.example](.env.example) is the single Admin UI template source. It is
+packaged as a [src/free_claude_code/config/](src/free_claude_code/config/) resource for Admin UI defaults;
+runtime settings do not read it as a live config file. The Admin UI creates and
+atomically replaces `~/.fcc/.env` when configuration is applied; server startup
+only migrates legacy env files when the managed file is absent.
 
 Admin routes call `require_loopback_admin()`, which rejects non-loopback clients
 and non-local origins.

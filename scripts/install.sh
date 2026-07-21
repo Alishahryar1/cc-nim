@@ -8,6 +8,7 @@ CLAUDE_INSTALL_URL="https://claude.ai/install.sh"
 CODEX_INSTALL_URL="https://chatgpt.com/codex/install.sh"
 PI_INSTALL_URL="https://pi.dev/install.sh"
 UV_INSTALL_URL="https://astral.sh/uv/install.sh"
+# Include retired entry points so updates reject older FCC processes before replacement.
 FCC_COMMANDS="fcc-server fcc-claude fcc-codex fcc-pi fcc-init free-claude-code"
 
 dry_run=0

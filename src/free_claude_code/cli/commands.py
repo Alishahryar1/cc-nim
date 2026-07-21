@@ -16,9 +16,7 @@ from free_claude_code.config.env_migrations import (
     explicit_env_file_migration_warning,
     migrate_owned_env_files,
 )
-from free_claude_code.config.env_template import load_env_template
 from free_claude_code.config.paths import (
-    config_dir_path,
     legacy_env_paths,
     managed_env_path,
 )
@@ -98,32 +96,6 @@ def _run_supervised_server(settings: Settings, *, open_admin_browser: bool) -> b
         _schedule_open_admin_browser(settings)
     server.run()
     return restart_requested and asgi_app.runtime.is_closed
-
-
-def init() -> None:
-    """Scaffold config at ~/.fcc/.env."""
-    config_dir = config_dir_path()
-    env_file = managed_env_path()
-
-    migrated_from = _migrate_legacy_env_if_missing()
-    _migrate_config_env_keys()
-    if migrated_from is not None:
-        print(f"Config migrated from {migrated_from} to {env_file}")
-        print(
-            "Edit it to set your API keys and model preferences, then run: fcc-server"
-        )
-        return
-
-    if env_file.exists():
-        print(f"Config already exists at {env_file}")
-        print("Delete it first if you want to reset to defaults.")
-        return
-
-    config_dir.mkdir(parents=True, exist_ok=True)
-    template = load_env_template()
-    env_file.write_text(template, encoding="utf-8")
-    print(f"Config created at {env_file}")
-    print("Edit it to set your API keys and model preferences, then run: fcc-server")
 
 
 def _migrate_legacy_env_if_missing() -> Path | None:

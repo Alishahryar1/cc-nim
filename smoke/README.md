@@ -55,7 +55,7 @@ Default targets do not send real bot messages or load voice backends:
 | --- | --- | --- |
 | `api` | messages, count_tokens full payload, errors, `/stop`, optimizations | configured provider only for streaming messages |
 | `auth` | canonical bearer auth, conflicting legacy headers, invalid/missing auth | none; test sets an isolated token |
-| `cli` | `fcc-init`, server entrypoint, Claude CLI adaptive thinking, session cleanup | Claude CLI binary and provider only for real CLI |
+| `cli` | server entrypoint, Claude CLI adaptive thinking, session cleanup | Claude CLI binary and provider only for real CLI |
 | `clients` | VS Code and JetBrains protocol payloads | configured provider |
 | `config` | env precedence, removed-env migration, proxy/timeouts | none |
 | `extensibility` | provider runtime and platform factory construction | none |
@@ -161,7 +161,7 @@ uv run pytest smoke/product -n 0 -s --tb=short
 
 Run smoke the same way you run tests (`uv run pytest smoke` from the repo). Child
 processes use the **same Python interpreter** as the test runner, not nested
-`uv run`, so Windows does not try to replace `free-claude-code.exe` while it is
+`uv run`, so Windows does not try to replace `fcc-server.exe` while it is
 locked.
 
 ## Failure Classes

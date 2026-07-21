@@ -31,25 +31,6 @@ def _launcher_settings(
     )
 
 
-def _run_init(tmp_home: Path) -> tuple[str, Path]:
-    """Run init() with home directory redirected to tmp_home. Returns (printed output, env_file path)."""
-    from free_claude_code.cli.commands import init
-
-    env_file = tmp_home / ".fcc" / ".env"
-    printed: list[str] = []
-
-    with (
-        patch("pathlib.Path.home", return_value=tmp_home),
-        patch(
-            "builtins.print",
-            side_effect=lambda *a: printed.append(" ".join(str(x) for x in a)),
-        ),
-    ):
-        init()
-
-    return "\n".join(printed), env_file
-
-
 class _JsonResponse:
     def __init__(self, payload: dict[str, object]) -> None:
         self._payload = payload
@@ -64,47 +45,20 @@ class _JsonResponse:
         return json.dumps(self._payload).encode("utf-8")
 
 
-def test_init_creates_env_file(tmp_path: Path) -> None:
-    """init() creates .env from the bundled template when it doesn't exist yet."""
-    output, env_file = _run_init(tmp_path)
+def test_legacy_env_migration_supports_xdg_path(tmp_path: Path) -> None:
+    """Server startup preserves config from ~/.config/free-claude-code/.env."""
+    from free_claude_code.cli.commands import _migrate_legacy_env_if_missing
 
-    assert env_file.exists()
-    assert env_file.stat().st_size > 0
-    assert str(env_file) in output
-
-
-def test_init_copies_template_content(tmp_path: Path) -> None:
-    """init() writes the canonical root env.example content, not an empty file."""
-    template = (Path(__file__).resolve().parents[2] / ".env.example").read_text(
-        encoding="utf-8"
-    )
-    _, env_file = _run_init(tmp_path)
-
-    assert env_file.read_text("utf-8") == template
-
-
-def test_init_migrates_home_checkout_env_before_template(tmp_path: Path) -> None:
-    """init() preserves users who kept config in ~/free-claude-code/.env."""
-    legacy_env = tmp_path / "free-claude-code" / ".env"
-    legacy_env.parent.mkdir(parents=True)
-    legacy_env.write_text("MODEL=deepseek/deepseek-chat\n", encoding="utf-8")
-
-    output, env_file = _run_init(tmp_path)
-
-    assert env_file.read_text("utf-8") == "MODEL=deepseek/deepseek-chat\n"
-    assert f"Config migrated from {legacy_env}" in output
-
-
-def test_init_migrates_legacy_xdg_env_before_template(tmp_path: Path) -> None:
-    """init() preserves users who kept config in ~/.config/free-claude-code/.env."""
     legacy_env = tmp_path / ".config" / "free-claude-code" / ".env"
     legacy_env.parent.mkdir(parents=True)
     legacy_env.write_text("MODEL=open_router/free-model\n", encoding="utf-8")
 
-    output, env_file = _run_init(tmp_path)
+    with patch("pathlib.Path.home", return_value=tmp_path):
+        migrated_from = _migrate_legacy_env_if_missing()
 
+    env_file = tmp_path / ".fcc" / ".env"
+    assert migrated_from == legacy_env
     assert env_file.read_text("utf-8") == "MODEL=open_router/free-model\n"
-    assert f"Config migrated from {legacy_env}" in output
 
 
 def test_legacy_env_migration_does_not_overwrite_managed_env(
@@ -127,48 +81,6 @@ def test_legacy_env_migration_does_not_overwrite_managed_env(
     assert managed_env.read_text("utf-8") == "MODEL=nvidia_nim/current\n"
 
 
-def test_env_template_loader_uses_root_template_in_source_checkout() -> None:
-    """Source checkout fallback uses the root .env.example as the single source."""
-    from free_claude_code.config.env_template import load_env_template
-
-    template = (Path(__file__).resolve().parents[2] / ".env.example").read_text(
-        encoding="utf-8"
-    )
-
-    assert load_env_template() == template
-
-
-def test_init_creates_parent_directories(tmp_path: Path) -> None:
-    """init() creates ~/.fcc/ even if it doesn't exist."""
-    config_dir = tmp_path / ".fcc"
-    assert not config_dir.exists()
-
-    _run_init(tmp_path)
-
-    assert config_dir.is_dir()
-
-
-def test_init_skips_if_env_already_exists(tmp_path: Path) -> None:
-    """init() does not overwrite an existing .env and prints a warning."""
-    # Create it first
-    _run_init(tmp_path)
-
-    env_file = tmp_path / ".fcc" / ".env"
-    env_file.write_text("existing content", encoding="utf-8")
-
-    output, _ = _run_init(tmp_path)
-
-    assert env_file.read_text("utf-8") == "existing content"
-    assert "already exists" in output
-
-
-def test_init_prints_next_step_hint(tmp_path: Path) -> None:
-    """init() tells the user to run fcc-server after editing .env."""
-    output, _ = _run_init(tmp_path)
-
-    assert "fcc-server" in output
-
-
 def test_cli_scripts_are_registered() -> None:
     pyproject = tomllib.loads(
         (Path(__file__).resolve().parents[2] / "pyproject.toml").read_text(
@@ -176,42 +88,37 @@ def test_cli_scripts_are_registered() -> None:
         )
     )
 
-    scripts = pyproject["project"]["scripts"]
-    assert scripts["fcc-server"] == "free_claude_code.cli.entrypoints:serve"
-    assert scripts["free-claude-code"] == "free_claude_code.cli.entrypoints:serve"
-    assert scripts["fcc-claude"] == "free_claude_code.cli.launchers.claude:launch"
-    assert scripts["fcc-codex"] == "free_claude_code.cli.launchers.codex:launch"
-    assert scripts["fcc-pi"] == "free_claude_code.cli.launchers.pi:launch"
+    assert pyproject["project"]["scripts"] == {
+        "fcc-server": "free_claude_code.cli.entrypoints:serve",
+        "fcc-claude": "free_claude_code.cli.launchers.claude:launch",
+        "fcc-codex": "free_claude_code.cli.launchers.codex:launch",
+        "fcc-pi": "free_claude_code.cli.launchers.pi:launch",
+    }
 
 
-@pytest.mark.parametrize("entrypoint_name", ["serve", "init"])
 @pytest.mark.parametrize(
     "argv",
     [("--version",), ("--version", "--help"), ("--help", "--version")],
 )
-def test_fcc_owned_entrypoints_report_version_without_side_effects(
-    entrypoint_name: str,
+def test_fcc_server_reports_version_without_side_effects(
     argv: tuple[str, ...],
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from free_claude_code.cli import entrypoints
 
     with patch.object(entrypoints, "package_version", return_value="9.8.7"):
-        getattr(entrypoints, entrypoint_name)(argv)
+        entrypoints.serve(argv)
 
     assert capsys.readouterr() == ("free-claude-code 9.8.7\n", "")
 
 
-@pytest.mark.parametrize("entrypoint_name", ["serve", "init"])
-def test_version_entrypoints_do_not_import_command_runtime(
-    entrypoint_name: str,
-) -> None:
+def test_version_entrypoint_does_not_import_command_runtime() -> None:
     script = "\n".join(
         (
             "import json",
             "import sys",
-            f"from free_claude_code.cli.entrypoints import {entrypoint_name}",
-            f"{entrypoint_name}(['--version'])",
+            "from free_claude_code.cli.entrypoints import serve",
+            "serve(['--version'])",
             "forbidden = ('uvicorn', 'fastapi', 'openai', "
             "'free_claude_code.cli.commands', "
             "'free_claude_code.runtime.bootstrap')",
@@ -230,14 +137,11 @@ def test_version_entrypoints_do_not_import_command_runtime(
     assert json.loads(completed.stdout.splitlines()[-1]) == []
 
 
-@pytest.mark.parametrize("entrypoint_name", ["serve", "init"])
-def test_non_version_entrypoints_delegate_to_command_implementation(
-    entrypoint_name: str,
-) -> None:
+def test_non_version_entrypoint_delegates_to_server_command() -> None:
     from free_claude_code.cli import commands, entrypoints
 
-    with patch.object(commands, entrypoint_name) as command:
-        getattr(entrypoints, entrypoint_name)(())
+    with patch.object(commands, "serve") as command:
+        entrypoints.serve(())
 
     command.assert_called_once_with()
 

@@ -21,6 +21,7 @@ $CodexInstallUrl = "https://chatgpt.com/codex/install.ps1"
 $PiInstallUrl = "https://pi.dev/install.ps1"
 $UvInstallUrl = "https://astral.sh/uv/install.ps1"
 $FccCommands = @(
+    # Include retired entry points so updates reject older FCC processes before replacement.
     "fcc-server",
     "fcc-claude",
     "fcc-codex",

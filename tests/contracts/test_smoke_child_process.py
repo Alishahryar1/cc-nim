@@ -5,15 +5,15 @@ from free_claude_code.config.settings import Settings
 from smoke.lib import child_process
 from smoke.lib import server as smoke_server
 from smoke.lib.child_process import (
-    cmd_free_claude_code_serve,
+    cmd_fcc_server,
     cmd_python_c,
     run_captured_text,
 )
 from smoke.lib.config import SmokeConfig
 
 
-def test_free_claude_code_serve_command_uses_cli_entrypoint() -> None:
-    assert cmd_free_claude_code_serve() == [
+def test_fcc_server_command_uses_cli_entrypoint() -> None:
+    assert cmd_fcc_server() == [
         child_process.python_exe(),
         "-c",
         "from free_claude_code.cli.entrypoints import serve; serve()",

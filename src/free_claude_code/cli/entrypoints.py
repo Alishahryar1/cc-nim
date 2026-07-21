@@ -17,17 +17,6 @@ def serve(argv: Sequence[str] | None = None) -> None:
     run_server()
 
 
-def init(argv: Sequence[str] | None = None) -> None:
-    """Scaffold config at ~/.fcc/.env (registered as ``fcc-init``)."""
-    if _print_version_if_requested(argv):
-        return
-
-    # Config initialization shares command infrastructure with the server.
-    from free_claude_code.cli.commands import init as initialize_config
-
-    initialize_config()
-
-
 def _print_version_if_requested(argv: Sequence[str] | None) -> bool:
     args = sys.argv[1:] if argv is None else argv
     if "--version" not in args:
