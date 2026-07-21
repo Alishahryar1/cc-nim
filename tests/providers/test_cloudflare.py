@@ -8,6 +8,7 @@ import httpx
 import pytest
 
 from free_claude_code.application.errors import ApplicationUnavailableError
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_catalog import CLOUDFLARE_AI_REST_ROOT
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
@@ -188,10 +189,10 @@ async def test_lists_models_from_cloudflare_model_search_endpoint(
         new_callable=AsyncMock,
         return_value=response,
     ) as mock_get:
-        assert await cloudflare_provider.list_model_ids() == frozenset(
+        assert await cloudflare_provider.list_model_infos() == frozenset(
             {
-                "@cf/moonshotai/kimi-k2.6",
-                "@cf/meta/llama-4-scout-17b-16e-instruct",
+                ProviderModelInfo("@cf/moonshotai/kimi-k2.6"),
+                ProviderModelInfo("@cf/meta/llama-4-scout-17b-16e-instruct"),
             }
         )
 

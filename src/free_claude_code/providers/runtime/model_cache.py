@@ -4,7 +4,6 @@ from collections.abc import Iterable
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_catalog import SUPPORTED_PROVIDER_IDS
-from free_claude_code.providers.model_listing import model_infos_from_ids
 
 
 class ProviderModelCache:
@@ -16,10 +15,6 @@ class ProviderModelCache:
     ) -> None:
         self._available_provider_ids = frozenset(available_provider_ids)
         self._model_infos_by_provider: dict[str, dict[str, ProviderModelInfo]] = {}
-
-    def cache_model_ids(self, provider_id: str, model_ids: Iterable[str]) -> None:
-        """Store raw provider model ids with unknown capability metadata."""
-        self.cache_model_infos(provider_id, model_infos_from_ids(model_ids))
 
     def cache_model_infos(
         self, provider_id: str, model_infos: Iterable[ProviderModelInfo]
@@ -60,10 +55,6 @@ class ProviderModelCache:
         if info is None:
             return None
         return info.supports_thinking
-
-    def cached_prefixed_model_refs(self) -> tuple[str, ...]:
-        """Return cached provider models in user-selectable ``provider/model`` form."""
-        return tuple(info.model_id for info in self.cached_prefixed_model_infos())
 
     def cached_prefixed_model_infos(self) -> tuple[ProviderModelInfo, ...]:
         """Return cached provider models with user-selectable prefixed ids."""

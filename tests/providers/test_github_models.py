@@ -8,6 +8,7 @@ from unittest.mock import AsyncMock, patch
 import httpx
 import pytest
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_catalog import GITHUB_MODELS_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
@@ -147,8 +148,8 @@ async def test_lists_stream_tool_capable_models_only(
             ]
         ),
     ) as mock_get:
-        assert await github_models_provider.list_model_ids() == frozenset(
-            {"openai/gpt-4.1"}
+        assert await github_models_provider.list_model_infos() == frozenset(
+            {ProviderModelInfo("openai/gpt-4.1")}
         )
 
     mock_get.assert_awaited_once_with(
@@ -174,7 +175,7 @@ async def test_model_list_rejects_malformed_payload(
         ),
         pytest.raises(ModelListResponseError, match="top-level array"),
     ):
-        await github_models_provider.list_model_ids()
+        await github_models_provider.list_model_infos()
 
 
 @pytest.mark.asyncio
@@ -192,7 +193,7 @@ async def test_model_list_returns_empty_set_when_no_models_support_streaming_too
             ]
         ),
     ):
-        assert await github_models_provider.list_model_ids() == frozenset()
+        assert await github_models_provider.list_model_infos() == frozenset()
 
 
 @pytest.mark.asyncio

@@ -12,10 +12,7 @@ from free_claude_code.core.anthropic.streaming import AnthropicStreamLedger
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.model_listing import (
-    extract_openrouter_tool_model_ids,
-    extract_openrouter_tool_model_infos,
-)
+from free_claude_code.providers.model_listing import extract_openrouter_tool_model_infos
 from free_claude_code.providers.openai_chat import (
     OpenAIChatProfile,
     OpenAIChatProvider,
@@ -43,13 +40,6 @@ class OpenRouterProvider(OpenAIChatProvider):
             config,
             profile=_PROFILE,
             admission=admission,
-        )
-
-    async def list_model_ids(self) -> frozenset[str]:
-        """Only advertise OpenRouter models that can run Claude Code tools."""
-        payload = await self._list_models_payload()
-        return extract_openrouter_tool_model_ids(
-            payload, provider_name=self._provider_name
         )
 
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:

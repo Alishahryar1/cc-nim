@@ -4,6 +4,7 @@ from collections.abc import AsyncIterator
 
 import pytest
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
@@ -28,7 +29,7 @@ class ProviderWithoutPreflight(BaseProvider):
     async def cleanup(self) -> None:
         return None
 
-    async def list_model_ids(self) -> frozenset[str]:
+    async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
         return frozenset()
 
     async def stream_response(

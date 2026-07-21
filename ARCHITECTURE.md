@@ -582,8 +582,10 @@ compatibility layer.
 - `ProviderConfig`: shared provider settings such as API key, base URL, rate
   limits, timeouts, proxy, and logging flags. It is a frozen internal
   value whose base URL has already been resolved from the catalog.
-- `BaseProvider`: the abstract implementation base for cleanup, model listing,
-  explicit preflight, and `stream_response()`.
+- `BaseProvider`: the abstract implementation base for cleanup, explicit
+  preflight, `stream_response()`, and the sole provider catalog operation,
+  `list_model_infos()`. Providers return application-owned `ProviderModelInfo`
+  values directly; there is no parallel IDs-only catalog contract.
 
 There is one upstream transport family:
 [providers/openai_chat/](src/free_claude_code/providers/openai_chat/) implements the concrete

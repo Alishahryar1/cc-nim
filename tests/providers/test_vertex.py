@@ -13,6 +13,7 @@ from free_claude_code.application.errors import (
     ApplicationUnavailableError,
     InvalidRequestError,
 )
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_catalog import VERTEX_AI_API_ROOT
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
@@ -413,9 +414,14 @@ async def test_vertex_model_discovery_follows_native_pagination() -> None:
         new_callable=AsyncMock,
         side_effect=responses,
     ) as get:
-        model_ids = await provider.list_model_ids()
+        model_infos = await provider.list_model_infos()
 
-    assert model_ids == frozenset({"google/gemini-3.5-flash", "google/gemini-3.1-pro"})
+    assert model_infos == frozenset(
+        {
+            ProviderModelInfo("google/gemini-3.5-flash"),
+            ProviderModelInfo("google/gemini-3.1-pro"),
+        }
+    )
     assert get.await_args_list[0].kwargs == {
         "params": None,
         "headers": {
@@ -462,7 +468,7 @@ async def test_vertex_model_discovery_rejects_unusable_success_response(
         ),
         pytest.raises(ModelListResponseError, match="VERTEX model-list response"),
     ):
-        await provider.list_model_ids()
+        await provider.list_model_infos()
 
     assert response.is_closed
 
@@ -491,4 +497,4 @@ async def test_vertex_model_discovery_rejects_repeated_page_token() -> None:
         ),
         pytest.raises(ModelListResponseError, match="repeated nextPageToken"),
     ):
-        await provider.list_model_ids()
+        await provider.list_model_infos()

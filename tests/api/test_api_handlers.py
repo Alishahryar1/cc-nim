@@ -12,6 +12,7 @@ from free_claude_code.api.handlers import (
     TokenCountHandler,
 )
 from free_claude_code.application.errors import InvalidRequestError
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic.models import (
     Message,
@@ -50,8 +51,8 @@ class FakeProvider:
     async def cleanup(self) -> None:
         return None
 
-    async def list_model_ids(self) -> frozenset[str]:
-        return frozenset({"test-model"})
+    async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
+        return frozenset({ProviderModelInfo("test-model")})
 
     async def stream_response(
         self,

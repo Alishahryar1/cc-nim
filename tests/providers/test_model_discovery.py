@@ -71,8 +71,17 @@ def _manager(
     )
 
 
+def _infos(*model_ids: str) -> frozenset[ProviderModelInfo]:
+    return frozenset(ProviderModelInfo(model_id) for model_id in model_ids)
+
+
+def test_provider_catalog_contract_is_metadata_only() -> None:
+    assert not hasattr(BaseProvider, "list_model_ids")
+    assert getattr(BaseProvider.list_model_infos, "__isabstractmethod__", False)
+
+
 @pytest.mark.asyncio
-async def test_nim_lists_openai_compatible_model_ids() -> None:
+async def test_nim_lists_openai_compatible_model_infos() -> None:
     config = ProviderConfig(api_key="test-key", base_url=NVIDIA_NIM_DEFAULT_BASE)
     with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
         provider = NvidiaNimProvider(
@@ -85,7 +94,7 @@ async def test_nim_lists_openai_compatible_model_ids() -> None:
         new_callable=AsyncMock,
         return_value=SimpleNamespace(data=[SimpleNamespace(id="nvidia/model")]),
     ):
-        assert await provider.list_model_ids() == frozenset({"nvidia/model"})
+        assert await provider.list_model_infos() == _infos("nvidia/model")
 
 
 @pytest.mark.asyncio
@@ -104,7 +113,7 @@ async def test_nim_lists_openai_compatible_model_ids() -> None:
         ),
     ],
 )
-async def test_local_openai_chat_providers_list_model_ids(
+async def test_local_openai_chat_providers_list_model_infos(
     provider: OpenAIChatProvider,
 ) -> None:
     with patch.object(
@@ -113,7 +122,7 @@ async def test_local_openai_chat_providers_list_model_ids(
         new_callable=AsyncMock,
         return_value=SimpleNamespace(data=[SimpleNamespace(id="local/model")]),
     ) as mock_list:
-        assert await provider.list_model_ids() == frozenset({"local/model"})
+        assert await provider.list_model_infos() == _infos("local/model")
 
     mock_list.assert_awaited_once_with()
 
@@ -130,7 +139,7 @@ async def test_deepseek_lists_models_from_root_endpoint() -> None:
         new_callable=AsyncMock,
         return_value=SimpleNamespace(data=[SimpleNamespace(id="deepseek-chat")]),
     ) as mock_list:
-        assert await provider.list_model_ids() == frozenset({"deepseek-chat"})
+        assert await provider.list_model_infos() == _infos("deepseek-chat")
 
     mock_list.assert_awaited_once_with()
 
@@ -148,7 +157,7 @@ async def test_wafer_lists_models_from_default_models_endpoint() -> None:
         new_callable=AsyncMock,
         return_value=SimpleNamespace(data=[SimpleNamespace(id="DeepSeek-V4-Pro")]),
     ) as mock_list:
-        assert await provider.list_model_ids() == frozenset({"DeepSeek-V4-Pro"})
+        assert await provider.list_model_infos() == _infos("DeepSeek-V4-Pro")
 
     mock_list.assert_awaited_once_with()
 
@@ -181,8 +190,11 @@ async def test_openrouter_lists_only_tool_capable_models() -> None:
             ]
         ),
     ) as mock_list:
-        assert await provider.list_model_ids() == frozenset(
-            {"tool-model", "tool-choice-model"}
+        assert await provider.list_model_infos() == frozenset(
+            {
+                ProviderModelInfo("tool-model", supports_thinking=False),
+                ProviderModelInfo("tool-choice-model", supports_thinking=False),
+            }
         )
 
     mock_list.assert_awaited_once_with()
@@ -246,7 +258,7 @@ async def test_openrouter_lists_empty_set_when_no_tool_capable_models() -> None:
             ]
         ),
     ):
-        assert await provider.list_model_ids() == frozenset()
+        assert await provider.list_model_infos() == frozenset()
 
 
 @pytest.mark.asyncio
@@ -285,7 +297,7 @@ async def test_model_listing_rejects_malformed_payload() -> None:
         ),
         pytest.raises(ModelListResponseError, match="malformed"),
     ):
-        await provider.list_model_ids()
+        await provider.list_model_infos()
 
 
 @pytest.mark.asyncio
@@ -304,15 +316,14 @@ async def test_model_listing_propagates_upstream_errors() -> None:
         ),
         pytest.raises(RuntimeError, match="upstream unavailable"),
     ):
-        await provider.list_model_ids()
+        await provider.list_model_infos()
 
 
 class FakeProvider(BaseProvider):
     def __init__(
         self,
-        model_ids: frozenset[str] | None = None,
+        model_infos: frozenset[ProviderModelInfo] = frozenset(),
         *,
-        model_infos: frozenset[ProviderModelInfo] | None = None,
         error: BaseException | None = None,
         started: asyncio.Event | None = None,
         peer_started: asyncio.Event | None = None,
@@ -320,7 +331,6 @@ class FakeProvider(BaseProvider):
         super().__init__(
             ProviderConfig(api_key="test", base_url="https://test.invalid")
         )
-        self._model_ids = model_ids or frozenset()
         self._model_infos = model_infos
         self._error = error
         self._started = started
@@ -348,17 +358,9 @@ class FakeProvider(BaseProvider):
         if self._error is not None:
             raise self._error
 
-    async def list_model_ids(self) -> frozenset[str]:
-        await self._before_model_list()
-        if self._model_infos is not None:
-            return frozenset(info.model_id for info in self._model_infos)
-        return self._model_ids
-
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
         await self._before_model_list()
-        if self._model_infos is not None:
-            return self._model_infos
-        return frozenset(ProviderModelInfo(model_id) for model_id in self._model_ids)
+        return self._model_infos
 
     async def stream_response(
         self,
@@ -379,8 +381,8 @@ async def test_runtime_warm_caches_all_referenced_provider_models() -> None:
         nvidia_nim_api_key="nim-key",
         open_router_api_key="open-router-key",
     )
-    nim = FakeProvider(frozenset({"nim-model"}))
-    router = FakeProvider(frozenset({"anthropic/claude-opus"}))
+    nim = FakeProvider(_infos("nim-model"))
+    router = FakeProvider(_infos("anthropic/claude-opus"))
     runtime = _manager(
         settings,
         {
@@ -409,7 +411,7 @@ async def test_runtime_warm_treats_model_lists_as_discovery_metadata() -> None:
     )
     runtime = _manager(
         settings,
-        {"nvidia_nim": FakeProvider(frozenset({"different-model"}))},
+        {"nvidia_nim": FakeProvider(_infos("different-model"))},
     )
 
     result = await runtime.warm_referenced_model_cache()
@@ -429,7 +431,7 @@ async def test_runtime_warm_reports_query_failures_without_blocking() -> None:
     runtime = _manager(
         settings,
         {
-            "nvidia_nim": FakeProvider(frozenset({"nim-model"})),
+            "nvidia_nim": FakeProvider(_infos("nim-model")),
             "open_router": FakeProvider(
                 error=ModelListResponseError("bad model-list shape")
             ),
@@ -458,12 +460,12 @@ async def test_runtime_warm_queries_referenced_providers_concurrently() -> None:
         settings,
         {
             "nvidia_nim": FakeProvider(
-                frozenset({"nim-model"}),
+                _infos("nim-model"),
                 started=nim_started,
                 peer_started=router_started,
             ),
             "open_router": FakeProvider(
-                frozenset({"anthropic/claude-opus"}),
+                _infos("anthropic/claude-opus"),
                 started=router_started,
                 peer_started=nim_started,
             ),
@@ -479,8 +481,8 @@ async def test_startup_discovery_queries_each_successful_provider_once() -> None
         nvidia_nim_api_key="nim-key",
         open_router_api_key="open-router-key",
     )
-    nim = FakeProvider(frozenset({"nim-model"}))
-    router = FakeProvider(frozenset({"anthropic/claude-sonnet"}))
+    nim = FakeProvider(_infos("nim-model"))
+    router = FakeProvider(_infos("anthropic/claude-sonnet"))
     runtime = _manager(
         settings,
         {"nvidia_nim": nim, "open_router": router},
@@ -528,9 +530,9 @@ async def test_runtime_refresh_model_list_cache_uses_configured_remote_keys_and_
     runtime = _manager(
         settings,
         {
-            "open_router": FakeProvider(frozenset({"anthropic/claude-sonnet"})),
-            "lmstudio": FakeProvider(frozenset({"local-qwen"})),
-            "ollama": FakeProvider(frozenset({"llama3.1"})),
+            "open_router": FakeProvider(_infos("anthropic/claude-sonnet")),
+            "lmstudio": FakeProvider(_infos("local-qwen")),
+            "ollama": FakeProvider(_infos("llama3.1")),
         },
     )
 
@@ -554,7 +556,7 @@ async def test_runtime_refresh_model_list_cache_treats_vertex_project_as_configu
     )
     runtime = _manager(
         settings,
-        {"vertex": FakeProvider(frozenset({"google/gemini-3.5-flash"}))},
+        {"vertex": FakeProvider(_infos("google/gemini-3.5-flash"))},
     )
 
     result = await runtime.refresh_model_list_cache()
@@ -613,12 +615,12 @@ def test_runtime_metadata_cache_exposes_ids_and_prefixed_infos() -> None:
 
 def test_runtime_metadata_cache_enforces_replaced_provider_scope() -> None:
     cache = ProviderModelCache({"open_router", "lmstudio"})
-    cache.cache_model_ids("open_router", {"old-model"})
-    cache.cache_model_ids("lmstudio", {"local-model"})
+    cache.cache_model_infos("open_router", _infos("old-model"))
+    cache.cache_model_infos("lmstudio", _infos("local-model"))
 
     cache.set_available_providers({"deepseek", "lmstudio"})
-    cache.cache_model_ids("open_router", {"late-old-model"})
-    cache.cache_model_ids("deepseek", {"new-model"})
+    cache.cache_model_infos("open_router", _infos("late-old-model"))
+    cache.cache_model_infos("deepseek", _infos("new-model"))
 
     assert cache.cached_model_ids() == {
         "deepseek": frozenset({"new-model"}),
@@ -626,9 +628,9 @@ def test_runtime_metadata_cache_enforces_replaced_provider_scope() -> None:
     }
 
 
-def test_runtime_model_id_cache_keeps_unknown_thinking_support() -> None:
+def test_runtime_metadata_cache_keeps_unknown_thinking_support() -> None:
     cache = ProviderModelCache()
-    cache.cache_model_ids("open_router", {"plain-model"})
+    cache.cache_model_infos("open_router", _infos("plain-model"))
 
     assert cache.cached_model_ids() == {"open_router": frozenset({"plain-model"})}
     assert cache.cached_model_supports_thinking("open_router", "plain-model") is None
@@ -637,13 +639,13 @@ def test_runtime_model_id_cache_keeps_unknown_thinking_support() -> None:
     )
 
 
-def test_runtime_cached_prefixed_model_refs_are_deterministic() -> None:
+def test_runtime_cached_prefixed_model_infos_are_deterministic() -> None:
     cache = ProviderModelCache()
-    cache.cache_model_ids("deepseek", {"deepseek-chat"})
-    cache.cache_model_ids("open_router", {"z-model", "a-model"})
+    cache.cache_model_infos("deepseek", _infos("deepseek-chat"))
+    cache.cache_model_infos("open_router", _infos("z-model", "a-model"))
 
-    assert cache.cached_prefixed_model_refs() == (
-        "open_router/a-model",
-        "open_router/z-model",
-        "deepseek/deepseek-chat",
+    assert cache.cached_prefixed_model_infos() == (
+        ProviderModelInfo("open_router/a-model"),
+        ProviderModelInfo("open_router/z-model"),
+        ProviderModelInfo("deepseek/deepseek-chat"),
     )

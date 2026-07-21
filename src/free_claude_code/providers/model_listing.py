@@ -27,8 +27,10 @@ def model_infos_from_ids(
     )
 
 
-def extract_openai_model_ids(payload: Any, *, provider_name: str) -> frozenset[str]:
-    """Extract model ids from an OpenAI-compatible ``/models`` response."""
+def extract_openai_model_infos(
+    payload: Any, *, provider_name: str
+) -> frozenset[_ProviderModelInfo]:
+    """Extract model metadata from an OpenAI-compatible ``/models`` response."""
     data = _field(payload, "data")
     if not _is_sequence(data):
         raise _malformed(provider_name, "expected top-level data array")
@@ -42,19 +44,7 @@ def extract_openai_model_ids(payload: Any, *, provider_name: str) -> frozenset[s
 
     if not model_ids:
         raise _malformed(provider_name, "response did not include any model ids")
-    return frozenset(model_ids)
-
-
-def extract_openrouter_tool_model_ids(
-    payload: Any, *, provider_name: str
-) -> frozenset[str]:
-    """Extract OpenRouter model ids that advertise tool-use support."""
-    return frozenset(
-        info.model_id
-        for info in extract_openrouter_tool_model_infos(
-            payload, provider_name=provider_name
-        )
-    )
+    return model_infos_from_ids(model_ids)
 
 
 def extract_openrouter_tool_model_infos(

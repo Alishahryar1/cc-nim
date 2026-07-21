@@ -15,7 +15,6 @@ from free_claude_code.core.diagnostics import (
 )
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.core.trace import trace_event
-from free_claude_code.providers.model_listing import model_infos_from_ids
 
 
 @dataclass(frozen=True, slots=True)
@@ -102,12 +101,8 @@ class BaseProvider(ABC):
         """Release any resources held by this provider."""
 
     @abstractmethod
-    async def list_model_ids(self) -> frozenset[str]:
-        """Return the model ids currently advertised by this provider."""
-
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
-        """Return advertised model ids with optional provider capability metadata."""
-        return model_infos_from_ids(await self.list_model_ids())
+        """Return the model metadata currently advertised by this provider."""
 
     @abstractmethod
     def stream_response(

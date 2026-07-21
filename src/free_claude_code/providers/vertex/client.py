@@ -5,6 +5,7 @@ from typing import Any
 
 import httpx
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
@@ -14,7 +15,10 @@ from free_claude_code.providers.google_openai import (
     validate_google_extra_body,
 )
 from free_claude_code.providers.http import maybe_await_aclose
-from free_claude_code.providers.model_listing import ModelListResponseError
+from free_claude_code.providers.model_listing import (
+    ModelListResponseError,
+    model_infos_from_ids,
+)
 from free_claude_code.providers.openai_chat import (
     OpenAIChatProfile,
     OpenAIChatRequestPolicy,
@@ -76,7 +80,7 @@ class VertexProvider(GoogleOpenAIProvider):
         finally:
             await self._model_list_client.aclose()
 
-    async def list_model_ids(self) -> frozenset[str]:
+    async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
         """List Vertex publisher models and translate their resource names."""
         model_ids: set[str] = set()
         page_token: str | None = None
@@ -97,7 +101,7 @@ class VertexProvider(GoogleOpenAIProvider):
                 "VERTEX model-list response is malformed: response did not include "
                 "any model ids"
             )
-        return frozenset(model_ids)
+        return model_infos_from_ids(model_ids)
 
     async def _list_model_page(self, page_token: str | None) -> Any:
         async def request() -> httpx.Response:

@@ -10,6 +10,7 @@ import httpx
 from loguru import logger
 from openai import AsyncOpenAI
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic import (
     ContentType,
     HeuristicToolParser,
@@ -43,7 +44,7 @@ from free_claude_code.providers.http import (
     close_provider_stream,
     maybe_await_aclose,
 )
-from free_claude_code.providers.model_listing import extract_openai_model_ids
+from free_claude_code.providers.model_listing import extract_openai_model_infos
 from free_claude_code.providers.stream_recovery import (
     RecoveryController,
     RecoveryFailureAction,
@@ -124,13 +125,13 @@ class OpenAIChatProvider(BaseProvider):
         if client is not None:
             await client.close()
 
-    async def list_model_ids(self) -> frozenset[str]:
-        """Return model ids from the provider's OpenAI-compatible models endpoint."""
+    async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
+        """Return model metadata from the OpenAI-compatible models endpoint."""
         payload = await self._admission.run_with_retry(
             self._client.models.list,
             provider_failure_override=self._provider_failure_override,
         )
-        return extract_openai_model_ids(payload, provider_name=self._provider_name)
+        return extract_openai_model_infos(payload, provider_name=self._provider_name)
 
     def _build_request_body(
         self,
