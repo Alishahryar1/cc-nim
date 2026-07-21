@@ -257,6 +257,21 @@ Open **Admin UI → Model Config → Reasoning** and select the behavior you wan
 
 Providers that do not support a selected control retain their own behavior.
 
+## Free Model Labeling & Filtering
+
+Three environment variables control free model behavior in the `/v1/models` list:
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `SHOW_FREE_MODELS_FIRST` | `true` | Free models appear at the top of the list |
+| `ONLY_SHOW_FREE_MODELS` | `false` | Only free models are shown |
+| `FREE_MODELS_LIST` | (empty) | Comma-separated model refs to treat as free |
+
+Free models are auto-detected by suffix (`:free`, `-free`, `/free`) or by presence in `FREE_MODELS_LIST`. 
+Models are displayed with "(free)" appended to their display name.
+
+Configuration is also available in Admin UI → **Model Routing** section.
+
 <a id="connect-your-client"></a>
 
 ## Connect Your Client

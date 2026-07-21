@@ -264,13 +264,21 @@ class SmokeConfig:
 def _parse_csv(raw: str | None) -> frozenset[str]:
     if not raw:
         return frozenset()
-    return frozenset(part.strip() for part in raw.split(",") if part.strip())
+    # Split on both commas and newlines for textarea compatibility
+    parts = []
+    for line in raw.splitlines():
+        parts.extend(line.split(","))
+    return frozenset(part.strip() for part in parts if part.strip())
 
 
 def _parse_csv_ordered(raw: str | None) -> tuple[str, ...]:
     if not raw:
         return ()
-    return tuple(part.strip() for part in raw.split(",") if part.strip())
+    # Split on both commas and newlines for textarea compatibility
+    parts = []
+    for line in raw.splitlines():
+        parts.extend(line.split(","))
+    return tuple(part.strip() for part in parts if part.strip())
 
 
 def _parse_targets(raw: str | None) -> frozenset[str]:
