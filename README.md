@@ -477,6 +477,59 @@ Windows PowerShell:
 & ([scriptblock]::Create((irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/uninstall.ps1")))
 ```
 
+## Using Free Claude Code (FCC) locally (optional)
+
+FCC is a lightweight proxy that lets you point the Claude Code, Codex, or Pi CLI tools at any OpenAI-compatible LLM provider (e.g., NVIDIA NIM, OpenRouter, Gemini).
+
+### One-time setup
+
+```powershell
+# Install the UV tool (once)
+uv tool install --force --refresh-package free-claude-code --git https://github.com/Alishahryar1/free-claude-code.git
+```
+
+### Starting the proxy
+
+```powershell
+# Clear any env that could interfere (especially when using another agent framework)
+$env:VIRTUAL_ENV = $null
+$env:PYTHONPATH  = $null
+
+# Put your provider key here - never commit this value
+$env:NVIDIA_NIM_API_KEY = "***"   # replace with your actual key
+
+# Launch the server
+uv tool run free-claude-code fcc-server
+```
+
+The server listens on `http://127.0.0.1:8082`. Keep this window open while you work.
+
+### Using the wrapped CLIs
+
+In a **new** terminal (repeat the env-var block above, or source the same snippet):
+
+```powershell
+$env:VIRTUAL_ENV = $null
+$env:PYTHONPATH  = $null
+$env:NVIDIA_NIM_API_KEY = "***"
+$env:PATH = "$HOME\.local\bin;$env:PATH"
+
+# Examples
+fcc-claude "Explain how to reverse a string in Python."
+fcc-codex exec "ls -lt | head -5"
+fcc-pi --help
+```
+
+### Stopping the proxy
+
+Press **Ctrl+C** in the terminal where you ran `uv tool run ...`, or from another terminal:
+
+```powershell
+Get-Process | Where-Object { $_.Path -like "*fcc-server.exe" } | Stop-Process -Force
+```
+
+> **Security note:** Never commit your actual API key. If you prefer not to type it each time, create a `.env` file (added to `.gitignore`) and load it with `dotenv` or a similar method before launching the server.
+
 ## Project Links
 
 - [Report bugs or request features](https://github.com/Alishahryar1/free-claude-code/issues)
