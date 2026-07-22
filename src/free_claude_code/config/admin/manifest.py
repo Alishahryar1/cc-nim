@@ -4,6 +4,11 @@ from collections.abc import Iterable
 from dataclasses import dataclass
 from typing import Literal
 
+from free_claude_code.config.constants import (
+    PROVIDER_MAX_CONCURRENCY_DEFAULT,
+    PROVIDER_RATE_LIMIT_DEFAULT,
+    PROVIDER_RATE_WINDOW_DEFAULT,
+)
 from free_claude_code.config.reasoning import (
     ROOT_REASONING_PREFERENCES,
     ROUTE_REASONING_PREFERENCES,
@@ -239,7 +244,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "number",
         settings_attr="provider_rate_limit",
-        default="1",
+        default=str(PROVIDER_RATE_LIMIT_DEFAULT),
     ),
     ConfigFieldSpec(
         "PROVIDER_RATE_WINDOW",
@@ -247,7 +252,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "number",
         settings_attr="provider_rate_window",
-        default="3",
+        default=str(PROVIDER_RATE_WINDOW_DEFAULT),
     ),
     ConfigFieldSpec(
         "PROVIDER_MAX_CONCURRENCY",
@@ -255,7 +260,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "number",
         settings_attr="provider_max_concurrency",
-        default="5",
+        default=str(PROVIDER_MAX_CONCURRENCY_DEFAULT),
     ),
     ConfigFieldSpec(
         "HTTP_READ_TIMEOUT",

@@ -155,8 +155,8 @@ def create_provider(provider_id: str, settings: Settings) -> BaseProvider:
     config = build_provider_config(descriptor, settings)
     admission = ProviderAdmissionController(
         provider_name=provider_id,
-        rate_limit=config.rate_limit or 40,
-        rate_window=config.rate_window or 60.0,
+        rate_limit=config.rate_limit,
+        rate_window=config.rate_window,
         max_concurrency=config.max_concurrency,
     )
     factory = _SPECIAL_PROVIDER_FACTORIES.get(provider_id)

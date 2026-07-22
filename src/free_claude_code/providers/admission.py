@@ -12,6 +12,11 @@ from typing import TypeVar
 
 from loguru import logger
 
+from free_claude_code.config.constants import (
+    PROVIDER_MAX_CONCURRENCY_DEFAULT,
+    PROVIDER_RATE_LIMIT_DEFAULT,
+    PROVIDER_RATE_WINDOW_DEFAULT,
+)
 from free_claude_code.core.rate_limit import StrictSlidingWindowLimiter
 from free_claude_code.core.trace import trace_event
 from free_claude_code.providers.failure_policy import (
@@ -191,9 +196,9 @@ class ProviderAdmissionController:
         self,
         *,
         provider_name: str,
-        rate_limit: int = 40,
-        rate_window: float = 60.0,
-        max_concurrency: int = 5,
+        rate_limit: int = PROVIDER_RATE_LIMIT_DEFAULT,
+        rate_window: float = PROVIDER_RATE_WINDOW_DEFAULT,
+        max_concurrency: int = PROVIDER_MAX_CONCURRENCY_DEFAULT,
         max_attempts: int = UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS,
         base_delay: float = DEFAULT_UPSTREAM_BASE_DELAY,
         max_delay: float = DEFAULT_UPSTREAM_MAX_DELAY,

@@ -6,7 +6,12 @@ from typing import Any
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
-from .constants import HTTP_CONNECT_TIMEOUT_DEFAULT
+from .constants import (
+    HTTP_CONNECT_TIMEOUT_DEFAULT,
+    PROVIDER_MAX_CONCURRENCY_DEFAULT,
+    PROVIDER_RATE_LIMIT_DEFAULT,
+    PROVIDER_RATE_WINDOW_DEFAULT,
+)
 from .env_files import (
     ANTHROPIC_AUTH_TOKEN_ENV,
     env_file_override,
@@ -180,12 +185,17 @@ class Settings(BaseSettings):
     ollama_cloud_proxy: str = Field(default="", validation_alias="OLLAMA_CLOUD_PROXY")
 
     # ==================== Provider Rate Limiting ====================
-    provider_rate_limit: int = Field(default=40, validation_alias="PROVIDER_RATE_LIMIT")
+    provider_rate_limit: int = Field(
+        default=PROVIDER_RATE_LIMIT_DEFAULT,
+        validation_alias="PROVIDER_RATE_LIMIT",
+    )
     provider_rate_window: int = Field(
-        default=60, validation_alias="PROVIDER_RATE_WINDOW"
+        default=PROVIDER_RATE_WINDOW_DEFAULT,
+        validation_alias="PROVIDER_RATE_WINDOW",
     )
     provider_max_concurrency: int = Field(
-        default=5, validation_alias="PROVIDER_MAX_CONCURRENCY"
+        default=PROVIDER_MAX_CONCURRENCY_DEFAULT,
+        validation_alias="PROVIDER_MAX_CONCURRENCY",
     )
     reasoning_policy: ReasoningPreference = Field(
         default=ReasoningPreference.CLIENT,

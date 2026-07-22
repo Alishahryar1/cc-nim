@@ -7,7 +7,12 @@ from dataclasses import dataclass
 from loguru import logger
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
-from free_claude_code.config.constants import HTTP_CONNECT_TIMEOUT_DEFAULT
+from free_claude_code.config.constants import (
+    HTTP_CONNECT_TIMEOUT_DEFAULT,
+    PROVIDER_MAX_CONCURRENCY_DEFAULT,
+    PROVIDER_RATE_LIMIT_DEFAULT,
+    PROVIDER_RATE_WINDOW_DEFAULT,
+)
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.diagnostics import (
     exception_cause_types,
@@ -27,9 +32,9 @@ class ProviderConfig:
 
     api_key: str
     base_url: str
-    rate_limit: int | None = None
-    rate_window: int = 60
-    max_concurrency: int = 5
+    rate_limit: int = PROVIDER_RATE_LIMIT_DEFAULT
+    rate_window: int = PROVIDER_RATE_WINDOW_DEFAULT
+    max_concurrency: int = PROVIDER_MAX_CONCURRENCY_DEFAULT
     http_read_timeout: float = 300.0
     http_write_timeout: float = 10.0
     http_connect_timeout: float = HTTP_CONNECT_TIMEOUT_DEFAULT

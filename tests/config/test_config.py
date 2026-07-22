@@ -8,6 +8,9 @@ from pydantic import ValidationError
 from free_claude_code.config.constants import (
     ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
     HTTP_CONNECT_TIMEOUT_DEFAULT,
+    PROVIDER_MAX_CONCURRENCY_DEFAULT,
+    PROVIDER_RATE_LIMIT_DEFAULT,
+    PROVIDER_RATE_WINDOW_DEFAULT,
 )
 from free_claude_code.config.env_files import (
     ANTHROPIC_AUTH_TOKEN_ENV,
@@ -45,8 +48,11 @@ class TestSettings:
         monkeypatch.setitem(Settings.model_config, "env_file", ())
         settings = Settings()
         assert settings.model == "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
-        assert isinstance(settings.provider_rate_limit, int)
-        assert isinstance(settings.provider_rate_window, int)
+        assert settings.provider_rate_limit == PROVIDER_RATE_LIMIT_DEFAULT == 1
+        assert settings.provider_rate_window == PROVIDER_RATE_WINDOW_DEFAULT == 2
+        assert (
+            settings.provider_max_concurrency == PROVIDER_MAX_CONCURRENCY_DEFAULT == 2
+        )
         assert isinstance(settings.nim.temperature, float)
         assert isinstance(settings.fast_prefix_detection, bool)
         assert settings.reasoning_policy is ReasoningPreference.CLIENT
@@ -253,6 +259,14 @@ class TestSettings:
         monkeypatch.setenv("PROVIDER_RATE_WINDOW", "30")
         settings = Settings()
         assert settings.provider_rate_window == 30
+
+    def test_provider_max_concurrency_from_env(self, monkeypatch):
+        """PROVIDER_MAX_CONCURRENCY env var is loaded into settings."""
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.setenv("PROVIDER_MAX_CONCURRENCY", "7")
+        settings = Settings()
+        assert settings.provider_max_concurrency == 7
 
     def test_http_read_timeout_from_env(self, monkeypatch):
         """HTTP_READ_TIMEOUT env var is loaded into settings."""
