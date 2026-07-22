@@ -12,6 +12,7 @@ dependencies = [
     "fastapi[standard]>=0.136.1",
     "uvicorn>=0.46.0",
     "httpx[socks]>=0.28.1",
+    "certifi>=2024.2.2",
     "markdown-it-py>=3.0.0",
     "pydantic>=2.13.3",
     "python-dotenv>=1.2.2",

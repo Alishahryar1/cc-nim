@@ -8,6 +8,8 @@ __pycache__
 agent_workspace
 .env
 server.log
+server_err.log
+server_diag.log
 debug-*.log
 .coverage
 llama_cache

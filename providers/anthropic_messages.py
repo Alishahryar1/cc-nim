@@ -2,10 +2,13 @@
 
 from __future__ import annotations
 
+import asyncio
 import json
+import ssl
 from collections.abc import AsyncIterator, Iterator
 from typing import Any, Literal
 
+import certifi
 import httpx
 from loguru import logger
 
@@ -36,6 +39,23 @@ from providers.model_listing import (
 from providers.rate_limit import GlobalRateLimiter
 
 StreamChunkMode = Literal["line", "event"]
+
+
+def _build_relaxed_ssl_context() -> ssl.SSLContext:
+    """SSL context matching httpx's default, with X.509 strict-mode relaxed.
+
+    Some antivirus HTTPS-scanning proxies (observed with AVG) install a root
+    CA whose Basic Constraints extension isn't marked critical. Windows'
+    trust store accepts it, but OpenSSL's VERIFY_X509_STRICT flag (on by
+    default in ssl.create_default_context() since Python 3.13) rejects it,
+    surfacing as CERTIFICATE_VERIFY_FAILED and, mid-stream, as connections
+    that stall until read-timeout with no error ever raised. Hostname
+    verification and chain-of-trust checks stay fully enabled; only that one
+    RFC-5280-strictness check is relaxed.
+    """
+    context = ssl.create_default_context(cafile=certifi.where())
+    context.verify_flags &= ~ssl.VERIFY_X509_STRICT
+    return context
 
 
 def _model_list_json(response: httpx.Response, *, provider_name: str) -> Any:
@@ -73,6 +93,7 @@ class AnthropicMessagesTransport(BaseProvider):
         self._client = httpx.AsyncClient(
             base_url=self._base_url,
             proxy=config.proxy or None,
+            verify=_build_relaxed_ssl_context(),
             timeout=httpx.Timeout(
                 config.http_read_timeout,
                 connect=config.http_connect_timeout,
@@ -429,6 +450,23 @@ class AnthropicMessagesTransport(BaseProvider):
                     from core.thinking_cache import ThinkingCache
                     ThinkingCache.store(frozenset(_tool_ids), "".join(_thinking_parts))
 
+            except asyncio.CancelledError:
+                # Client disconnected or gave up waiting (e.g. its own request
+                # timeout fired) mid-stream. This must stay a bare re-raise:
+                # asyncio.CancelledError is BaseException, not Exception, and
+                # swallowing it here would break task cancellation semantics.
+                # We only add logging so silent stalls are visible in server.log
+                # instead of leaving zero trace of what happened to the request.
+                logger.warning(
+                    "{}_STREAM:{} cancelled (client disconnected or gave up) "
+                    "after receiving upstream data={}",
+                    tag,
+                    req_tag,
+                    sent_any_event,
+                )
+                if response is not None and not response.is_closed:
+                    await response.aclose()
+                raise
             except Exception as error:
                 if not isinstance(error, httpx.HTTPStatusError):
                     self._log_stream_transport_error(tag, req_tag, error)

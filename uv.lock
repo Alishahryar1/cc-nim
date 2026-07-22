@@ -561,6 +561,7 @@ version = "2.0.0"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
+    { name = "certifi" },
     { name = "discord-py" },
     { name = "fastapi", extra = ["standard"] },
     { name = "httpx", extra = ["socks"] },
@@ -602,6 +603,7 @@ dev = [
 requires-dist = [
     { name = "accelerate", marker = "extra == 'voice-local'", specifier = ">=1.13.0" },
     { name = "aiohttp", specifier = ">=3.13.4" },
+    { name = "certifi", specifier = ">=2024.2.2" },
     { name = "discord-py", specifier = ">=2.7.1" },
     { name = "fastapi", extras = ["standard"], specifier = ">=0.136.1" },
     { name = "grpcio", marker = "extra == 'voice'", specifier = ">=1.80.0" },
@@ -1310,6 +1312,7 @@ dependencies = [
 ]
 wheels = [
     { url = "https://files.pythonhosted.org/packages/2e/f9/85f0bf863deed9078f3a25938a9f06206f98bcc39a6541a48cc97143db10/nvidia_riva_client-2.25.1-1-py3-none-any.whl", hash = "sha256:bde1232a8de3fe1561cccf49d3d0e6fe06190b1f0df4ad0ba118b9f5ae5a06aa", size = 55383, upload-time = "2026-04-30T10:27:58.381Z" },
+    { url = "https://files.pythonhosted.org/packages/27/c6/eb4acc0cb884c06109ea123d1c7dbb28974c9dddd73a624b1765a89e023e/nvidia_riva_client-2.25.1-2-py3-none-any.whl", hash = "sha256:5657680ab238b5930c07ce9a4a50d642524f25bff4099c1f818baaa8baad94fe", size = 55462, upload-time = "2026-05-06T12:30:02.948Z" },
     { url = "https://files.pythonhosted.org/packages/08/3b/b267af66a49c2e80e673b85ccd5484059b141be8031e4a4bb84ea4bcf31f/nvidia_riva_client-2.25.1-py3-none-any.whl", hash = "sha256:07c48c9cc7f3ca04cd988ad6d2205b0bcf3f6f25bb97d76b397e87cc696acc9f", size = 55371, upload-time = "2026-03-25T13:05:57.425Z" },
 ]
 
