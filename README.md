@@ -270,8 +270,7 @@ Install the [Claude Code extension](https://marketplace.visualstudio.com/items?i
   { "name": "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "value": "190000" },
   { "name": "DISABLE_AUTOUPDATER", "value": "1" },
   { "name": "DISABLE_FEEDBACK_COMMAND", "value": "1" },
-  { "name": "DISABLE_ERROR_REPORTING", "value": "1" },
-  { "name": "DISABLE_TELEMETRY", "value": "1" }
+  { "name": "DISABLE_ERROR_REPORTING", "value": "1" }
 ]
 ```
 
@@ -317,8 +316,7 @@ Set the environment for `acp.registry.claude-acp`:
   "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "190000",
   "DISABLE_AUTOUPDATER": "1",
   "DISABLE_FEEDBACK_COMMAND": "1",
-  "DISABLE_ERROR_REPORTING": "1",
-  "DISABLE_TELEMETRY": "1"
+  "DISABLE_ERROR_REPORTING": "1"
 }
 ```
 
