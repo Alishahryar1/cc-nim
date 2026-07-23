@@ -176,7 +176,7 @@ fcc-codex exec "hello"
 | [Wafer](https://wafer.ai/) | `WAFER_API_KEY` | `wafer/DeepSeek-V4-Pro` |
 | [Kimi API](https://platform.moonshot.ai/console/api-keys) | `KIMI_API_KEY` | `kimi/kimi-k2.5` |
 | [Kimi Code](https://www.kimi.com/code/console) | `KIMI_CODE_API_KEY` | `kimi_code/k3` |
-| [MiniMax](https://platform.minimax.io/user-center/basic-information/interface-key) | `MINIMAX_API_KEY` | `minimax/MiniMax-M3` |
+| [MiniMax](https://platform.minimax.io/user-center/basic-information/interface-key) | `MINIMAX_API_KEY` + optional `MINIMAX_BASE_URL` | `minimax/MiniMax-M3` |
 | [Cerebras Inference](https://cloud.cerebras.ai/) | `CEREBRAS_API_KEY` | `cerebras/gpt-oss-120b` |
 | [Groq](https://console.groq.com/keys) | `GROQ_API_KEY` | `groq/llama-3.3-70b-versatile` |
 | [SambaNova](https://cloud.sambanova.ai/apis) | `SAMBANOVA_API_KEY` | `sambanova/Meta-Llama-3.3-70B-Instruct` |
@@ -198,6 +198,8 @@ Important provider notes:
 - Amazon Bedrock uses its Mantle OpenAI-compatible endpoint. Set
   `BEDROCK_BASE_URL` to the endpoint for the same region as the API key and
   select one of the models returned by FCC's model picker.
+- MiniMax uses `https://api.minimax.io/v1` by default. For China-region
+  OpenAI-compatible access, set `MINIMAX_BASE_URL=https://api.minimaxi.com/v1`.
 - Vertex AI uses Google Application Default Credentials instead of an API key.
   Locally, run `gcloud auth application-default login` once; service-account
   files and attached service accounts also work. Set `VERTEX_PROJECT_ID`, and

@@ -55,6 +55,7 @@ def _make_settings(**overrides):
     mock.deepseek_api_key = "test_deepseek_key"
     mock.wafer_api_key = "test_wafer_key"
     mock.minimax_api_key = "test_minimax_key"
+    mock.minimax_base_url = MINIMAX_DEFAULT_BASE
     mock.opencode_api_key = "test_opencode_key"
     mock.vercel_ai_gateway_api_key = "test_vercel_key"
     mock.bedrock_api_key = "test_bedrock_key"
@@ -233,7 +234,23 @@ def test_minimax_descriptor_uses_expected_endpoint_and_credential():
     descriptor = PROVIDER_CATALOG["minimax"]
 
     assert descriptor.default_base_url == MINIMAX_DEFAULT_BASE
+    assert descriptor.base_url_attr == "minimax_base_url"
     assert descriptor.credential_env == "MINIMAX_API_KEY"
+
+
+def test_minimax_provider_config_uses_configured_base_url():
+    descriptor = PROVIDER_CATALOG["minimax"]
+
+    config = build_provider_config(
+        descriptor,
+        _make_settings(
+            minimax_base_url="https://api.minimaxi.com/v1",
+            minimax_proxy="http://proxy.test:8080",
+        ),
+    )
+
+    assert config.base_url == "https://api.minimaxi.com/v1"
+    assert config.proxy == "http://proxy.test:8080"
 
 
 def test_kimi_code_provider_config_uses_subscription_key_and_proxy() -> None:
