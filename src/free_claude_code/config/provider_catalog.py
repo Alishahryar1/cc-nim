@@ -331,6 +331,14 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         base_url_attr="ollama_base_url",
         local=True,
     ),
+    "modal": ProviderDescriptor(
+        provider_id="modal",
+        display_name="Modal",
+        static_credential="modal",
+        default_base_url=OLLAMA_DEFAULT_BASE,
+        base_url_attr="ollama_base_url",
+        local=True,
+    )
 }
 
 # Key order:

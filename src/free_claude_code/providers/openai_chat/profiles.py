@@ -1,5 +1,5 @@
 """Declarative profiles for ordinary OpenAI-compatible providers."""
-import os
+
 from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
@@ -66,7 +66,6 @@ class OpenAIChatProfile:
         "reasoning_content"
     )
     user_agent: str | None = None
-
 
     @property
     def provider_name(self) -> str:
@@ -368,9 +367,9 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         normalize_base_url=True,
         reasoning_delta_field="reasoning",
     ),
-    "Modal": OpenAIChatProfile(
+    "modal": OpenAIChatProfile(
         _policy(
-            "Modal",
+            "MODAL",
             ReasoningReplayMode.REASONING,
             default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
         ),
@@ -381,8 +380,5 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         ),
         normalize_base_url=True,
         reasoning_delta_field="reasoning",
-        modal_key = os.getenv("MODEL_PROXY")
-
-    )
-
+    ),
 }

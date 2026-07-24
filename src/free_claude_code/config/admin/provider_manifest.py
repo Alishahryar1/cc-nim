@@ -146,6 +146,7 @@ def provider_field_specs() -> tuple[dict[str, Any], ...]:
         *_vertex_field_specs(),
         *_base_url_field_specs(),
         *_proxy_field_specs(),
+        *_modal_field_specs(),
     )
 
 
@@ -247,6 +248,33 @@ def _proxy_field_specs() -> tuple[dict[str, Any], ...]:
         )
     return tuple(specs)
 
+def _modal_field_specs() -> tuple[dict[str, Any], ...]:
+    return (
+        {
+            "key": "MODAL_PROXY_TOKEN_ID",
+            "label": "Modal Proxy Token ID",
+            "section_id": "providers",
+            "field_type": "secret",
+            "settings_attr": "modal_proxy_token_id",
+            "secret": True,
+            "description": (
+                "Modal proxy token ID used to authenticate requests to "
+                "Modal-hosted OpenAI-compatible endpoints."
+            ),
+        },
+        {
+            "key": "MODAL_PROXY_TOKEN_SECRET",
+            "label": "Modal Proxy Token Secret",
+            "section_id": "providers",
+            "field_type": "secret",
+            "settings_attr": "modal_proxy_token_secret",
+            "secret": True,
+            "description": (
+                "Modal proxy token secret used together with the "
+                "Modal proxy token ID."
+            ),
+        },
+    )
 
 def _settings_env_key(settings_attr: str) -> str:
     model_field = Settings.model_fields[settings_attr]

@@ -119,6 +119,14 @@ class Settings(BaseSettings):
     # ==================== NVIDIA NIM Config ====================
     nvidia_nim_api_key: str = ""
 
+    # ==================== Modal Proxy Authentication ====================
+    modal_proxy_token_id: str = Field(
+        default="", validation_alias="MODAL_PROXY_TOKEN_ID"
+    )
+    modal_proxy_token_secret: str = Field(
+        default="", validation_alias="MODAL_PROXY_TOKEN_SECRET"
+    )
+
     # ==================== LM Studio Config ====================
     lm_studio_base_url: str = Field(
         default="http://localhost:1234/v1",

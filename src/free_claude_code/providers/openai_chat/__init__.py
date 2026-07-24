@@ -29,13 +29,23 @@ def create_openai_chat_provider(
     profile = OPENAI_CHAT_PROFILES.get(provider_id)
     if profile is None:
         raise KeyError(f"No declarative OpenAI-chat profile for {provider_id!r}")
+
+    headers: dict[str, str] = {}
+
+    if profile.user_agent:
+        headers["User-Agent"] = profile.user_agent
+
+    if getattr(config, "modal_proxy_token_id", ""):
+        headers["Modal-Key"] = config.modal_proxy_token_id
+
+    if getattr(config, "modal_proxy_token_secret", ""):
+        headers["Modal-Secret"] = config.modal_proxy_token_secret
+
     return OpenAIChatProvider(
         config,
         profile=profile,
         admission=admission,
-        default_headers=(
-            {"User-Agent": profile.user_agent,} if profile.user_agent else None
-        ),
+        default_headers=headers or None,
     )
 
 
