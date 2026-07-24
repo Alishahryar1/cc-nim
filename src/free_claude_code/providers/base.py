@@ -36,7 +36,8 @@ class ProviderConfig:
     proxy: str = ""
     log_raw_sse_events: bool = False
     log_api_error_tracebacks: bool = False
-    modal_proxy_token_id:str = 
+    modal_proxy_token_id:str = ""
+    modal_proxy_token_secret:str = ""
 
 
 class BaseProvider(ABC):

@@ -74,4 +74,6 @@ def build_provider_config(
         proxy=proxy,
         log_raw_sse_events=settings.log_raw_sse_events,
         log_api_error_tracebacks=settings.log_api_error_tracebacks,
+        modal_proxy_token_id=settings.modal_proxy_token_id,
+        modal_proxy_token_secret=settings.modal_proxy_token_secret,
     )
