@@ -34,7 +34,7 @@ def create_openai_chat_provider(
         profile=profile,
         admission=admission,
         default_headers=(
-            {"User-Agent": profile.user_agent} if profile.user_agent else None
+            {"User-Agent": profile.user_agent,} if profile.user_agent else None
         ),
     )
 
