@@ -256,6 +256,8 @@ class RotatingOpenAIClient:
 def is_credential_fallback_error(error: BaseException) -> bool:
     """Return whether another key should be tried for this upstream failure."""
 
+    if not isinstance(error, Exception):
+        return False
     error = underlying_provider_error(error)
     return isinstance(error, openai.AuthenticationError) or is_retryable_provider_error(
         error
@@ -265,6 +267,8 @@ def is_credential_fallback_error(error: BaseException) -> bool:
 def _cooldown_seconds(error: BaseException, *, failures: int) -> float:
     """Compute a brief cooldown to avoid hammering a bad key."""
 
+    if not isinstance(error, Exception):
+        return 0.0
     error = underlying_provider_error(error)
     retry_after = _retry_after_seconds(error)
     if retry_after is not None:

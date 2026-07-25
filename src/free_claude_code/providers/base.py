@@ -48,6 +48,7 @@ class BaseProvider(ABC):
 
     def __init__(self, config: ProviderConfig):
         self._config = config
+        self._api_key: str
 
     @abstractmethod
     def preflight_stream(
