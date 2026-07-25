@@ -340,6 +340,7 @@ function Ensure-Codex {
 
 function Ensure-Pi {
     $script:PiAvailable = $false
+    Add-PiBinDirectories
     $existingPi = Get-ApplicationCommand "pi"
     if ($existingPi -and ($DryRun -or (Test-PiApplication $existingPi))) {
         Write-Host "Pi already found on PATH; verifying it."

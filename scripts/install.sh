@@ -301,6 +301,7 @@ ensure_codex() {
 
 ensure_pi() {
     pi_available=0
+    add_pi_bin_directories
     existing_pi_path=$(command -v pi 2>/dev/null || true)
 
     if [ "$dry_run" -eq 1 ] && command -v pi >/dev/null 2>&1; then

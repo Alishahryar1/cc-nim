@@ -493,6 +493,28 @@ def test_install_sh_continues_when_unrelated_pi_is_unchanged(
     assert "fcc-server:--version" in calls
 
 
+def test_install_sh_continues_when_pi_resolution_changes_to_unrelated_command(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.add_unrelated_pi()
+    npm_prefix = posix_harness.root / "custom-npm"
+    posix_harness.add_npm_prefix(npm_prefix)
+    _write_executable(
+        npm_prefix / "bin" / "pi",
+        _posix_command("other-unrelated-pi"),
+    )
+
+    result = posix_harness.run(fail_step="pi-skip")
+
+    assert result.returncode == 0, result.stderr
+    assert "Pi was not installed; continuing without it." in result.stdout
+    assert "Run Pi with: fcc-pi" not in result.stdout
+    calls = posix_harness.calls()
+    assert "other-unrelated-pi:--help" in calls
+    assert "other-unrelated-pi:--version" not in calls
+    assert "fcc-server:--version" in calls
+
+
 def test_install_sh_replaces_obsolete_uv(posix_harness: PosixHarness) -> None:
     posix_harness.add_client("claude")
     posix_harness.add_client("codex")
@@ -1139,6 +1161,28 @@ def test_install_ps1_continues_when_unrelated_pi_is_unchanged(
     calls = powershell_harness.calls()
     assert "unrelated-pi:--help" in calls
     assert "unrelated-pi:--version" not in calls
+    assert "fcc-server:--version" in calls
+
+
+def test_install_ps1_continues_when_pi_resolution_changes_to_unrelated_command(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    powershell_harness.add_unrelated_pi()
+    npm_prefix = powershell_harness.root / "custom-npm"
+    powershell_harness.add_npm_prefix(npm_prefix)
+    _write_executable(
+        npm_prefix / "pi.cmd",
+        _batch_client("other-unrelated-pi"),
+    )
+
+    result = powershell_harness.run(fail_step="pi-skip")
+
+    assert result.returncode == 0, result.stderr
+    assert "Pi was not installed; continuing without it." in result.stdout
+    assert "Run Pi with: fcc-pi" not in result.stdout
+    calls = powershell_harness.calls()
+    assert "other-unrelated-pi:--help" in calls
+    assert "other-unrelated-pi:--version" not in calls
     assert "fcc-server:--version" in calls
 
 
