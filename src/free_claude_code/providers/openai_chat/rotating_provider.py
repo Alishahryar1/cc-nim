@@ -1,7 +1,5 @@
 """OpenAI-compatible provider variant with rotating credential fallback."""
 
-from __future__ import annotations
-
 from collections.abc import Mapping
 
 from free_claude_code.providers.admission import ProviderAdmissionController
