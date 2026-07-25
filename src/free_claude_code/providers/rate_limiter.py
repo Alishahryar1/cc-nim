@@ -44,7 +44,7 @@ class CredentialCircuitBreaker:
             return True
         return False
 
-    def record_420(self) -> None:
+    def record_429(self) -> None:
         """Record a rate limit error."""
         self.state = CircuitState.OPEN
         self.last_429_at = time.time()
