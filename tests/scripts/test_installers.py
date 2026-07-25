@@ -258,6 +258,7 @@ chmod +x "$HOME/.local/bin/codex"
         """#!/bin/sh
 echo "pi-install" >> "$CALL_LOG"
 [ "$FAIL_STEP" = "pi-install" ] && exit 24
+[ "$FAIL_STEP" = "pi-skip" ] && exit 0
 if [ -n "${FAKE_NPM_PREFIX:-}" ]; then
     pi_bin="$FAKE_NPM_PREFIX/bin"
 else
@@ -459,6 +460,37 @@ def test_install_sh_discovers_custom_pi_npm_prefix(
     assert "npm:prefix -g" in calls
     assert "pi:--help" in calls
     assert "pi:--version" in calls
+
+
+def test_install_sh_continues_when_pi_is_not_installed(
+    posix_harness: PosixHarness,
+) -> None:
+    result = posix_harness.run(fail_step="pi-skip")
+
+    assert result.returncode == 0, result.stderr
+    assert "Pi was not installed; continuing without it." in result.stdout
+    assert "Run Pi with: fcc-pi" not in result.stdout
+    calls = posix_harness.calls()
+    assert "pi-install" in calls
+    assert not any(call.startswith("pi:") for call in calls)
+    assert "uv-install" in calls
+    assert "fcc-server:--version" in calls
+
+
+def test_install_sh_continues_when_unrelated_pi_is_unchanged(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.add_unrelated_pi()
+
+    result = posix_harness.run(fail_step="pi-skip")
+
+    assert result.returncode == 0, result.stderr
+    assert "Pi was not installed; continuing without it." in result.stdout
+    assert "Run Pi with: fcc-pi" not in result.stdout
+    calls = posix_harness.calls()
+    assert "unrelated-pi:--help" in calls
+    assert "unrelated-pi:--version" not in calls
+    assert "fcc-server:--version" in calls
 
 
 def test_install_sh_replaces_obsolete_uv(posix_harness: PosixHarness) -> None:
@@ -863,6 +895,10 @@ Add-Content -LiteralPath $env:CALL_LOG -Value "codex-install:$env:CODEX_NON_INTE
     )
     (fixtures / "pi-installer.ps1").write_text(
         r"""if ($env:FAIL_STEP -eq "pi-install") { exit 64 }
+if ($env:FAIL_STEP -eq "pi-skip") {
+    Add-Content -LiteralPath $env:CALL_LOG -Value "pi-install"
+    return
+}
 $bin = if ($env:FAKE_NPM_PREFIX) { $env:FAKE_NPM_PREFIX } else { Join-Path $env:APPDATA "npm" }
 New-Item -ItemType Directory -Force -Path $bin | Out-Null
 Copy-Item (Join-Path $env:FAKE_FIXTURES "pi-command.cmd") (Join-Path $bin "pi.cmd") -Force
@@ -1073,6 +1109,37 @@ def test_install_ps1_discovers_custom_pi_npm_prefix(
     assert "npm:prefix -g" in calls
     assert "pi:--help" in calls
     assert "pi:--version" in calls
+
+
+def test_install_ps1_continues_when_pi_is_not_installed(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    result = powershell_harness.run(fail_step="pi-skip")
+
+    assert result.returncode == 0, result.stderr
+    assert "Pi was not installed; continuing without it." in result.stdout
+    assert "Run Pi with: fcc-pi" not in result.stdout
+    calls = powershell_harness.calls()
+    assert "pi-install" in calls
+    assert not any(call.startswith("pi:") for call in calls)
+    assert "uv-install" in calls
+    assert "fcc-server:--version" in calls
+
+
+def test_install_ps1_continues_when_unrelated_pi_is_unchanged(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    powershell_harness.add_unrelated_pi()
+
+    result = powershell_harness.run(fail_step="pi-skip")
+
+    assert result.returncode == 0, result.stderr
+    assert "Pi was not installed; continuing without it." in result.stdout
+    assert "Run Pi with: fcc-pi" not in result.stdout
+    calls = powershell_harness.calls()
+    assert "unrelated-pi:--help" in calls
+    assert "unrelated-pi:--version" not in calls
+    assert "fcc-server:--version" in calls
 
 
 def test_install_ps1_replaces_obsolete_uv(

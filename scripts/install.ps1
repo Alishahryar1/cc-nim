@@ -20,6 +20,7 @@ $ClaudeInstallUrl = "https://claude.ai/install.ps1"
 $CodexInstallUrl = "https://chatgpt.com/codex/install.ps1"
 $PiInstallUrl = "https://pi.dev/install.ps1"
 $UvInstallUrl = "https://astral.sh/uv/install.ps1"
+$script:PiAvailable = $false
 $FccCommands = @(
     # Include retired entry points so updates reject older FCC processes before replacement.
     "fcc-desktop",
@@ -35,7 +36,7 @@ function Show-Usage {
     @"
 Usage: install.ps1 [options]
 
-Installs Claude Code, Codex, and Pi if missing, ensures a compatible uv, and installs or updates Free Claude Code.
+Installs Claude Code and Codex, offers to install Pi, ensures a compatible uv, and installs or updates Free Claude Code.
 
 Options:
   -VoiceNim              Install NVIDIA NIM voice transcription support.
@@ -338,6 +339,7 @@ function Ensure-Codex {
 }
 
 function Ensure-Pi {
+    $script:PiAvailable = $false
     $existingPi = Get-ApplicationCommand "pi"
     if ($existingPi -and ($DryRun -or (Test-PiApplication $existingPi))) {
         Write-Host "Pi already found on PATH; verifying it."
@@ -348,9 +350,24 @@ function Ensure-Pi {
         }
         Invoke-DownloadedPowerShellInstaller -Url $PiInstallUrl -Name "Pi"
         Add-PiBinDirectories
+
+        if (-not $DryRun) {
+            $currentPi = Get-ApplicationCommand "pi"
+            $unchangedIncompatiblePi = (
+                $currentPi -and
+                $existingPi -and
+                $currentPi.Source -eq $existingPi.Source -and
+                -not (Test-PiApplication $currentPi)
+            )
+            if ((-not $currentPi) -or $unchangedIncompatiblePi) {
+                Write-Host "Pi was not installed; continuing without it."
+                return
+            }
+        }
     }
 
     Confirm-PiApplication
+    $script:PiAvailable = $true
 }
 
 function Convert-UvVersionOutput {
@@ -630,7 +647,7 @@ Ensure-ClaudeCode
 Write-Step "Ensuring Codex is installed"
 Ensure-Codex
 
-Write-Step "Ensuring Pi is installed"
+Write-Step "Checking or installing Pi"
 Ensure-Pi
 
 Write-Step "Ensuring uv $MinUvVersion or newer is installed"
@@ -651,5 +668,7 @@ else {
     Write-Host "For terminal use, start the proxy with: fcc-server"
     Write-Host "Run Claude Code with: fcc-claude"
     Write-Host "Run Codex with: fcc-codex"
-    Write-Host "Run Pi with: fcc-pi"
+    if ($script:PiAvailable) {
+        Write-Host "Run Pi with: fcc-pi"
+    }
 }

@@ -20,12 +20,13 @@ voice_all=0
 torch_backend=""
 temporary_script=""
 tool_bin=""
+pi_available=0
 
 show_usage() {
     cat <<'USAGE'
 Usage: install.sh [options]
 
-Installs Claude Code, Codex, and Pi if missing, ensures a compatible uv, and installs or updates Free Claude Code.
+Installs Claude Code and Codex, offers to install Pi, ensures a compatible uv, and installs or updates Free Claude Code.
 
 Options:
   --voice-nim              Install NVIDIA NIM voice transcription support.
@@ -299,19 +300,34 @@ ensure_codex() {
 }
 
 ensure_pi() {
+    pi_available=0
+    existing_pi_path=$(command -v pi 2>/dev/null || true)
+
     if [ "$dry_run" -eq 1 ] && command -v pi >/dev/null 2>&1; then
         printf 'Pi already found on PATH; verifying it.\n'
     elif pi_command_is_compatible; then
         printf 'Pi already found on PATH; verifying it.\n'
     else
-        if existing_pi_path=$(command -v pi 2>/dev/null); then
+        if [ -n "$existing_pi_path" ]; then
             printf "The existing 'pi' command at %s is not Pi Coding Agent; installing Pi.\n" "$existing_pi_path"
         fi
         download_and_run "$PI_INSTALL_URL" sh "Pi"
         add_pi_bin_directories
+
+        if [ "$dry_run" -eq 0 ]; then
+            current_pi_path=$(command -v pi 2>/dev/null || true)
+            if [ -z "$current_pi_path" ] ||
+                { [ -n "$existing_pi_path" ] &&
+                    [ "$current_pi_path" = "$existing_pi_path" ] &&
+                    ! pi_command_is_compatible; }; then
+                printf 'Pi was not installed; continuing without it.\n'
+                return 0
+            fi
+        fi
     fi
 
     verify_pi_command
+    pi_available=1
 }
 
 current_uv_version() {
@@ -619,7 +635,7 @@ ensure_claude
 step "Ensuring Codex is installed"
 ensure_codex
 
-step "Ensuring Pi is installed"
+step "Checking or installing Pi"
 ensure_pi
 
 step "Ensuring uv $MIN_UV_VERSION or newer is installed"
@@ -647,5 +663,7 @@ else
     fi
     printf 'Run Claude Code with: fcc-claude\n'
     printf 'Run Codex with: fcc-codex\n'
-    printf 'Run Pi with: fcc-pi\n'
+    if [ "$pi_available" -eq 1 ]; then
+        printf 'Run Pi with: fcc-pi\n'
+    fi
 fi

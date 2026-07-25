@@ -72,6 +72,8 @@ Windows PowerShell:
 
 Re-run the same command whenever you want to update. You can review the installers before running them: [install.sh](scripts/install.sh) and [install.ps1](scripts/install.ps1).
 
+Pi is optional. If you decline Pi's installer, FCC continues installing with Claude Code and Codex.
+
 ### 2. Start FCC
 
 #### Windows
