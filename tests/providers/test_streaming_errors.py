@@ -14,6 +14,7 @@ from free_claude_code.core.anthropic.stream_contracts import (
 )
 from free_claude_code.core.anthropic.streaming import (
     AnthropicStreamLedger,
+    make_response_recovery_body,
     make_text_recovery_body,
 )
 from free_claude_code.core.failures import ExecutionFailure
@@ -49,6 +50,14 @@ class AsyncStreamMock:
             yield chunk
         if self._error:
             raise self._error
+
+
+def _recovery_output(
+    text: str = "",
+    thinking: str = "",
+    tool_calls: tuple[dict, ...] = (),
+) -> SimpleNamespace:
+    return SimpleNamespace(text=text, thinking=thinking, tool_calls=tool_calls)
 
 
 class ClosableAsyncStreamMock(AsyncStreamMock):
@@ -817,9 +826,9 @@ class TestStreamingExceptionHandling:
             ),
             patch.object(
                 _OpenAIChatStreamRunner,
-                "_collect_recovery_text",
+                "_collect_recovery_output",
                 new_callable=AsyncMock,
-                return_value=("world", ""),
+                return_value=_recovery_output(text="world"),
             ),
         ):
             events = await _collect_stream(provider, request)
@@ -898,7 +907,7 @@ class TestStreamingExceptionHandling:
             ) as create,
             pytest.raises(TruncatedProviderStreamError),
         ):
-            await runner._collect_recovery_text(
+            await runner._collect_recovery_output(
                 {"messages": []},
                 include_reasoning=True,
                 retry_session=retry_session,
@@ -930,7 +939,7 @@ class TestStreamingExceptionHandling:
             ) as create,
             pytest.raises(TimeoutError),
         ):
-            await runner._collect_recovery_text(
+            await runner._collect_recovery_output(
                 {"messages": []},
                 include_reasoning=True,
                 retry_session=retry_session,
@@ -958,13 +967,15 @@ class TestStreamingExceptionHandling:
             new_callable=AsyncMock,
             return_value=stream,
         ):
-            result = await runner._collect_recovery_text(
+            result = await runner._collect_recovery_output(
                 {"messages": []},
                 include_reasoning=True,
                 retry_session=retry_session,
             )
 
-        assert result == ("world", "")
+        assert result.text == "world"
+        assert result.thinking == ""
+        assert result.tool_calls == ()
         assert stream.closed is True
 
     @pytest.mark.asyncio
@@ -1000,13 +1011,15 @@ class TestStreamingExceptionHandling:
             new_callable=AsyncMock,
             side_effect=[rejected, recovered],
         ) as create:
-            result = await runner._collect_recovery_text(
+            result = await runner._collect_recovery_output(
                 {"messages": []},
                 include_reasoning=True,
                 retry_session=retry_session,
             )
 
-        assert result == ("world", "")
+        assert result.text == "world"
+        assert result.thinking == ""
+        assert result.tool_calls == ()
         assert create.await_count == 2
         assert rejected.closed
         assert recovered.closed
@@ -1037,6 +1050,22 @@ class TestStreamingExceptionHandling:
         assert "hidden reasoning" in recovery_prompt["content"]
         assert "reasoning_content" not in recovery_prompt
 
+    def test_tool_protocol_recovery_body_retains_tool_contract(self):
+        body = {
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [{"type": "function", "function": {"name": "Read"}}],
+            "tool_choice": {"type": "function", "function": {"name": "Read"}},
+        }
+
+        recovery_body = make_response_recovery_body(body, "visible answer")
+
+        assert recovery_body["tools"] == body["tools"]
+        assert recovery_body["tool_choice"] == body["tool_choice"]
+        assert recovery_body["messages"][-2] == {
+            "role": "assistant",
+            "content": "visible answer",
+        }
+
     @pytest.mark.asyncio
     async def test_openai_text_recovery_passes_thinking_context(self):
         """OpenAI-chat recovery call sites seed emitted thinking in the prompt."""
@@ -1051,9 +1080,12 @@ class TestStreamingExceptionHandling:
 
         with patch.object(
             runner,
-            "_collect_recovery_text",
+            "_collect_recovery_output",
             new_callable=AsyncMock,
-            return_value=("visible answer done", "hidden reasoning more"),
+            return_value=_recovery_output(
+                text="visible answer done",
+                thinking="hidden reasoning more",
+            ),
         ) as mock_collect:
             retry_session = runner._provider._admission.new_retry_session()
             events = await runner._recovery_events(
@@ -1109,7 +1141,7 @@ class TestStreamingExceptionHandling:
             ) as mock_create,
             patch.object(
                 _OpenAIChatStreamRunner,
-                "_collect_recovery_text",
+                "_collect_recovery_output",
                 new_callable=AsyncMock,
                 side_effect=TruncatedProviderStreamError(
                     "Recovery stream ended without finish_reason."
@@ -1167,9 +1199,9 @@ class TestStreamingExceptionHandling:
             ),
             patch.object(
                 _OpenAIChatStreamRunner,
-                "_collect_recovery_text",
+                "_collect_recovery_output",
                 new_callable=AsyncMock,
-                return_value=('"ok"}', ""),
+                return_value=_recovery_output(text='"ok"}'),
             ),
         ):
             events = await _collect_stream(provider, request)

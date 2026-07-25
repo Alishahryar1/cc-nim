@@ -78,6 +78,7 @@ NVIDIA_NIM_CLI_DEFAULT_MODELS: tuple[str, ...] = (
     "z-ai/glm-5.2",
     "moonshotai/kimi-k2.6",
     "minimaxai/minimax-m2.7",
+    "minimaxai/minimax-m3",
     "nvidia/nemotron-3-super-120b-a12b",
     "deepseek-ai/deepseek-v4-pro",
     "deepseek-ai/deepseek-v4-flash",
