@@ -1,45 +1,23 @@
-import re
-from enum import StrEnum
-from typing import Tuple
+"""Credential strategy definitions and helpers."""
 
-_KEY_SPLIT_RE = re.compile(r"[,;\s]+")
+from enum import Enum
 
 
-class CredentialStrategy(StrEnum):
-    """Strategy for selecting among multiple API keys."""
+class CredentialStrategy(str, Enum):
+    """Supported strategies for selecting API keys from the pool."""
 
-    SEQUENTIAL = "sequential"  # Prefer lowest-index key that is enabled and has quota
-    ROUND_ROBIN = "round_robin"  # Rotate among enabled keys
-    RANDOM = "random"  # Pick a random enabled key
-
-
-def parse_api_keys(raw: str | None) -> Tuple[str, ...]:
-    """Parse comma/semicolon/whitespace-separated API keys; trim and drop empty items.
-
-    Examples:
-    - "key1,key2" -> ("key1", "key2")
-    - "key1; key2" -> ("key1", "key2")
-    - "key1 key2" -> ("key1", "key2")
-    """
-    if not raw:
-        return ()
-    keys = tuple(k.strip() for k in _KEY_SPLIT_RE.split(raw) if k.strip())
-    return keys
+    SEQUENTIAL = "sequential"
+    ROUND_ROBIN = "round_robin"
+    RANDOM = "random"
 
 
-def get_credential_strategy(strategy_str: str | None) -> CredentialStrategy:
-    """Parse and validate a credential strategy string.
-    
-    Defaults to SEQUENTIAL if None or empty.
-    """
-    if not strategy_str or not strategy_str.strip():
-        return CredentialStrategy.SEQUENTIAL
-    
-    normalized = strategy_str.lower().strip()
-    try:
-        return CredentialStrategy(normalized)
-    except ValueError:
-        raise ValueError(
-            f"Invalid credential strategy: {strategy_str!r}. "
-            f"Must be one of: {', '.join(s.value for s in CredentialStrategy)}"
-        )
+def get_credential_strategy(strategy: str | CredentialStrategy | None) -> CredentialStrategy:
+    """Resolve a strategy configuration input into a valid CredentialStrategy enum."""
+    if isinstance(strategy, CredentialStrategy):
+        return strategy
+    if isinstance(strategy, str):
+        cleaned = strategy.strip().lower()
+        for member in CredentialStrategy:
+            if member.value == cleaned or member.name.lower() == cleaned:
+                return member
+    return CredentialStrategy.ROUND_ROBIN
