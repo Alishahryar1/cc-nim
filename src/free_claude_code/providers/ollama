@@ -1,4 +1,0 @@
-# src/free_claude_code/providers/ollama/__init__.py
-from .provider import OllamaProvider
-
-__all__ = ["OllamaProvider"]
