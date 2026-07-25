@@ -56,7 +56,7 @@ def get_credential_strategy_for_provider(
     descriptor: ProviderDescriptor, settings: Settings
 ) -> CredentialStrategy:
     """Get the credential rotation strategy for a provider.
-    
+
     Returns the configured strategy or defaults to SEQUENTIAL.
     Strategy can be set via {PROVIDER_ID}_CREDENTIAL_STRATEGY env var.
     """

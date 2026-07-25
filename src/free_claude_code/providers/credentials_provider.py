@@ -8,10 +8,10 @@ The implementation is synchronous and uses threading.Lock for concurrency safety
 callers should wrap calls with asyncio.to_thread when necessary.
 """
 
-import time
 import random
 import threading
-from typing import Sequence, Optional, Dict
+import time
+from collections.abc import Sequence
 
 
 class RotatingCredentialProvider:
@@ -41,7 +41,7 @@ class RotatingCredentialProvider:
         keys: Sequence[str],
         *,
         strategy: str = "sequential",
-        rate_limit: Optional[int] = None,
+        rate_limit: int | None = None,
         rate_window: int = 60,
         max_backoff: int = 3600,
         jitter_fraction: float = 0.1,
@@ -54,13 +54,13 @@ class RotatingCredentialProvider:
         self._lock = threading.Lock()
 
         # disabled_until: key -> unix timestamp until which the key is disabled
-        self._disabled_until: Dict[str, float] = {}
+        self._disabled_until: dict[str, float] = {}
         # failure counts to grow backoff per-key
-        self._fail_counts: Dict[str, int] = {}
+        self._fail_counts: dict[str, int] = {}
 
         # simple per-key request counters for rate limiting
         # map: key -> (count:int, window_start: float)
-        self._counters: Dict[str, tuple[int, float]] = {}
+        self._counters: dict[str, tuple[int, float]] = {}
         self._rate_limit = rate_limit
         self._rate_window = float(rate_window)
 
@@ -99,7 +99,7 @@ class RotatingCredentialProvider:
         self._disabled_until[key] = disable_until
         return False
 
-    def next_key(self) -> Optional[str]:
+    def next_key(self) -> str | None:
         """Return the next enabled key according to the configured strategy.
 
         This method atomically selects and reserves one request slot for the returned
@@ -109,7 +109,7 @@ class RotatingCredentialProvider:
             if not self._keys:
                 return None
 
-            now = self._now()
+            self._now()
 
             # helper: yield candidate keys in the order for the selected strategy
             def candidates():
@@ -138,7 +138,7 @@ class RotatingCredentialProvider:
                 # so next iteration will skip it.
             return None
 
-    def mark_failure(self, key: str, retry_after_seconds: Optional[int] = None) -> None:
+    def mark_failure(self, key: str, retry_after_seconds: int | None = None) -> None:
         """Mark a key as failed. If retry_after_seconds is None an exponential backoff is used."""
         with self._lock:
             count = self._fail_counts.get(key, 0) + 1
@@ -147,7 +147,9 @@ class RotatingCredentialProvider:
                 base = min(self._max_backoff, 2 ** min(count, 10))
                 jitter = random.uniform(0, base * self._jitter_fraction)
                 retry_after_seconds = int(base + jitter)
-            self._disabled_until[key] = self._now() + float(max(1, int(retry_after_seconds)))
+            self._disabled_until[key] = self._now() + float(
+                max(1, int(retry_after_seconds))
+            )
 
     def mark_success(self, key: str) -> None:
         with self._lock:
@@ -159,14 +161,22 @@ class RotatingCredentialProvider:
         """Return a snapshot list of keys that appear usable now (not guaranteed until reservation)."""
         with self._lock:
             now = self._now()
-            good = [k for k in self._keys if self._is_enabled(k) and (self._rate_limit is None or self._counters.get(k, (0, now))[0] < self._rate_limit)]
+            good = [
+                k
+                for k in self._keys
+                if self._is_enabled(k)
+                and (
+                    self._rate_limit is None
+                    or self._counters.get(k, (0, now))[0] < self._rate_limit
+                )
+            ]
             return good
 
     def stats(self) -> dict[str, dict[str, float]]:
         """Return diagnostic stats for each key (for telemetry/debugging)."""
         with self._lock:
             now = self._now()
-            out: Dict[str, dict[str, float]] = {}
+            out: dict[str, dict[str, float]] = {}
             for k in self._keys:
                 count, start = self._counters.get(k, (0, now))
                 disabled_until = self._disabled_until.get(k)

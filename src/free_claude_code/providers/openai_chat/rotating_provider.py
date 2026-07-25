@@ -5,9 +5,9 @@ from collections.abc import Mapping
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
 
-from .provider import OpenAIChatProvider
 from .key_rotation import RotatingOpenAIClient
 from .profiles import OpenAIChatProfile
+from .provider import OpenAIChatProvider
 
 
 class RotatingOpenAIChatProvider(OpenAIChatProvider):

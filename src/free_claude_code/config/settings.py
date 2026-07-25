@@ -184,9 +184,7 @@ class Settings(BaseSettings):
     model_sonnet: str | None = Field(default=None, validation_alias="MODEL_SONNET")
     model_haiku: str | None = Field(default=None, validation_alias="MODEL_HAIKU")
 
-    fallback_providers: str = Field(
-        default="", validation_alias="FALLBACK_PROVIDERS"
-    )
+    fallback_providers: str = Field(default="", validation_alias="FALLBACK_PROVIDERS")
 
     nvidia_nim_proxy: str = Field(default="", validation_alias="NVIDIA_NIM_PROXY")
     open_router_proxy: str = Field(default="", validation_alias="OPENROUTER_PROXY")
@@ -249,7 +247,9 @@ class Settings(BaseSettings):
     http_read_timeout: float = Field(
         default=120.0, validation_alias="HTTP_READ_TIMEOUT"
     )
-    http_write_timeout: float = Field(default=10.0, validation_alias="HTTP_WRITE_TIMEOUT")
+    http_write_timeout: float = Field(
+        default=10.0, validation_alias="HTTP_WRITE_TIMEOUT"
+    )
     http_connect_timeout: float = Field(
         default=HTTP_CONNECT_TIMEOUT_DEFAULT,
         validation_alias="HTTP_CONNECT_TIMEOUT",

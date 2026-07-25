@@ -15,7 +15,10 @@ import openai
 from loguru import logger
 from openai import AsyncOpenAI
 
-from free_claude_code.config.credentials import CredentialStrategy, get_credential_strategy
+from free_claude_code.config.credentials import (
+    CredentialStrategy,
+    get_credential_strategy,
+)
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.failure_policy import (
     is_retryable_provider_error,
@@ -100,7 +103,9 @@ class ProviderCredentialPool:
         with self._lock:
             state = self._states[index]
             state.failures += 1
-            state.cooldown_until = max(state.cooldown_until, time.monotonic() + cooldown)
+            state.cooldown_until = max(
+                state.cooldown_until, time.monotonic() + cooldown
+            )
 
     def _select_round_robin(self, healthy: list[int]) -> int:
         """Return the next healthy key in circular order."""
@@ -116,7 +121,7 @@ class ProviderCredentialPool:
 
 
 class _ModelsEndpoint:
-    def __init__(self, owner: "RotatingOpenAIClient") -> None:
+    def __init__(self, owner: RotatingOpenAIClient) -> None:
         self._owner = owner
 
     async def list(self, *args: Any, **kwargs: Any) -> Any:
@@ -127,7 +132,7 @@ class _ModelsEndpoint:
 
 
 class _ChatCompletionsEndpoint:
-    def __init__(self, owner: "RotatingOpenAIClient") -> None:
+    def __init__(self, owner: RotatingOpenAIClient) -> None:
         self._owner = owner
 
     async def create(self, *args: Any, **kwargs: Any) -> Any:
@@ -138,7 +143,7 @@ class _ChatCompletionsEndpoint:
 
 
 class _ChatEndpoint:
-    def __init__(self, owner: "RotatingOpenAIClient") -> None:
+    def __init__(self, owner: RotatingOpenAIClient) -> None:
         self.completions = _ChatCompletionsEndpoint(owner)
 
 
@@ -157,15 +162,17 @@ class RotatingOpenAIClient:
         self._config = config
         self._base_url = base_url.rstrip("/")
         self._default_headers = dict(default_headers) if default_headers else None
-        
+
         raw_keys = getattr(config, "api_keys", None)
         if not raw_keys:
             single = getattr(config, "api_key", None)
             raw_keys = [single] if single else []
-            
+
         self._pool = ProviderCredentialPool(
             raw_keys,
-            strategy=get_credential_strategy(getattr(config, "credential_strategy", "round_robin")),
+            strategy=get_credential_strategy(
+                getattr(config, "credential_strategy", "round_robin")
+            ),
         )
         self._clients: dict[str, AsyncOpenAI] = {}
         self._clients_lock = threading.Lock()
@@ -199,9 +206,7 @@ class RotatingOpenAIClient:
                 write=write_timeout,
             )
             http_client = (
-                httpx.AsyncClient(proxy=proxy, timeout=timeout)
-                if proxy
-                else None
+                httpx.AsyncClient(proxy=proxy, timeout=timeout) if proxy else None
             )
             client = AsyncOpenAI(
                 api_key=api_key,
@@ -285,15 +290,17 @@ def _retry_after_seconds(error: BaseException) -> float | None:
 
     try:
         return float(retry_after)
-    except (TypeError, ValueError):
+    except TypeError, ValueError:
         pass
 
     try:
         retry_after_dt = parsedate_to_datetime(retry_after)
-    except (TypeError, ValueError, OverflowError):
+    except TypeError, ValueError, OverflowError:
         return None
 
     if retry_after_dt.tzinfo is None:
-        retry_after_dt = retry_after_dt.replace(tzinfo=datetime.now().astimezone().tzinfo)
+        retry_after_dt = retry_after_dt.replace(
+            tzinfo=datetime.now().astimezone().tzinfo
+        )
     delta = retry_after_dt - datetime.now(retry_after_dt.tzinfo)
     return max(0.0, delta.total_seconds())

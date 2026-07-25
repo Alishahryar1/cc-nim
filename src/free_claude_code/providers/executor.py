@@ -1,6 +1,5 @@
 """Multi-provider executor with 429-driven fallback and credential rotation."""
 
-import asyncio
 from collections.abc import AsyncIterator
 from typing import Any
 
@@ -11,7 +10,10 @@ from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.core.trace import trace_event
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
-from free_claude_code.providers.rate_limiter import RotationState, should_disable_rate_limiting
+from free_claude_code.providers.rate_limiter import (
+    RotationState,
+    should_disable_rate_limiting,
+)
 
 
 class MultiProviderExecutor:
@@ -57,7 +59,7 @@ class MultiProviderExecutor:
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> AsyncIterator[str]:
         """Stream response with fallback on 429."""
-        
+
         providers_to_try = self._build_provider_chain()
         last_error = None
 
@@ -89,9 +91,7 @@ class MultiProviderExecutor:
 
             except Exception as e:
                 last_error = e
-                http_status = getattr(
-                    getattr(e, "response", None), "status_code", None
-                )
+                http_status = getattr(getattr(e, "response", None), "status_code", None)
 
                 if http_status == 429:
                     # Rate limited: mark and try next
@@ -99,9 +99,15 @@ class MultiProviderExecutor:
                         "Provider returned 429, rotating to next credential: "
                         "provider={} consecutive_failures={}",
                         config.base_url,
-                        self.rotation_state.circuit_breakers.get(
-                            config.api_key
-                        ).consecutive_failures
+                        (
+                            (
+                                cb := self.rotation_state.circuit_breakers.get(
+                                    config.api_key
+                                )
+                            )
+                            is not None
+                            and cb.consecutive_failures
+                        )
                         if config.api_key in self.rotation_state.circuit_breakers
                         else 0,
                     )
@@ -137,10 +143,9 @@ class MultiProviderExecutor:
         # All providers exhausted
         if last_error:
             logger.error(
-                "All providers exhausted after fallback chain. "
-                "Last error: {} ({})",
+                "All providers exhausted after fallback chain. Last error: {} ({})",
                 type(last_error).__name__,
-                getattr(last_error, "response", {}).status_code
+                getattr(getattr(last_error, "response", None), "status_code", None)
                 if hasattr(last_error, "response")
                 else "unknown",
             )

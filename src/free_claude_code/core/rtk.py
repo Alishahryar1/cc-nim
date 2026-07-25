@@ -121,13 +121,12 @@ class RTKCompressor:
     def _smart_diff_compress(self, output: str) -> str:
         """Keeps file headers, hunk indicators, and actual modifications, drops context bloat."""
         lines = output.splitlines()
-        compressed = []
-        for line in lines:
-            if line.startswith(("diff --git", "@@", "+", "-")) and not line.startswith(
-                ("+++ b/", "--- a/")
-            ):
-                compressed.append(line)
-
+        compressed = [
+            line
+            for line in lines
+            if line.startswith(("diff --git", "@@", "+", "-"))
+            and not line.startswith(("+++ b/", "--- a/"))
+        ]
         limit = 100 if self.aggressiveness == "high" else 250
         result = "\n".join(compressed[:limit])
         if len(compressed) > limit:

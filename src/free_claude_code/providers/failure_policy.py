@@ -64,7 +64,11 @@ def classify_provider_failure(
     provider_failure_override: ProviderFailureOverride | None = None,
 ) -> ExecutionFailure:
     """Return one detailed canonical failure after provider retries are exhausted."""
-    exc = underlying_provider_error(exc)
+    res_exc = underlying_provider_error(exc)
+    assert isinstance(res_exc, Exception)
+    exc = res_exc
+    assert isinstance(res_exc, Exception)
+    exc = res_exc
     if isinstance(exc, ExecutionFailure):
         failure = exc
         message = failure.message
@@ -202,7 +206,9 @@ def provider_error_message(
 ) -> str:
     """Map raw provider exception types to stable customer-facing wording."""
     if isinstance(exc, Exception):
-        exc = underlying_provider_error(exc)
+        res_exc = underlying_provider_error(exc)
+    assert isinstance(res_exc, Exception)
+    exc = res_exc
     if isinstance(exc, ExecutionFailure):
         return exc.message
     if isinstance(exc, httpx.ReadTimeout):
@@ -412,7 +418,9 @@ def _has_marker(text: str, markers: frozenset[str]) -> bool:
     return any(marker in text for marker in markers)
 
 
-def underlying_provider_error(exc: Exception) -> Exception:
+def underlying_provider_error(
+    exc: Exception | BaseException,
+) -> Exception | BaseException:
     """Return the raw failure retained by a recovery wrapper or exception chain."""
     current = exc
     visited = set()
@@ -426,7 +434,7 @@ def underlying_provider_error(exc: Exception) -> Exception:
             current = current.__context__
         else:
             break
-    return current
+    return current if isinstance(current, Exception) else RuntimeError(str(current))
 
 
 def _is_retryable_status(status: int | None) -> bool:

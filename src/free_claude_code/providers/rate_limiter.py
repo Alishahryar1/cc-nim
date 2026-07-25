@@ -50,9 +50,7 @@ class CredentialCircuitBreaker:
         self.last_429_at = time.time()
         self.consecutive_failures += 1
         # Exponential backoff: 5s, 10s, 20s, 40s, 80s
-        self.backoff_seconds = min(
-            5.0 * (2 ** (self.consecutive_failures - 1)), 300.0
-        )
+        self.backoff_seconds = min(5.0 * (2 ** (self.consecutive_failures - 1)), 300.0)
 
     def record_success(self) -> None:
         """Record a successful request."""
@@ -70,9 +68,7 @@ class RotationState:
     """Mutable state for credential/provider rotation."""
 
     current_index: int = 0
-    circuit_breakers: dict[str, CredentialCircuitBreaker] = field(
-        default_factory=dict
-    )
+    circuit_breakers: dict[str, CredentialCircuitBreaker] = field(default_factory=dict)
     last_rotation_at: float = 0.0
 
     def should_rotate_on_429(
