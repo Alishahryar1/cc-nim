@@ -1,7 +1,5 @@
 """Model capability metadata and a small in-memory registry."""
 
-from __future__ import annotations
-from free_claude_code.routers.admin import router as admin_credentials_router
 from dataclasses import dataclass, replace
 from datetime import UTC, datetime
 from threading import RLock
