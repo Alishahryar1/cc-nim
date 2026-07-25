@@ -1,7 +1,6 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="1220" height="300" viewBox="0 0 1220 300" role="img" aria-labelledby="title">
   <title id="title">Free Claude Code</title>
   <g transform="translate(16 38) scale(.22)">
-    <rect x="32" y="32" width="960" height="960" rx="216" fill="#080b12"/>
     <g fill="none" stroke="#f97316" stroke-linecap="round" stroke-linejoin="round" stroke-width="56">
       <path d="M220 300h170c24 0 38 9 52 28l130 162c12 15 22 22 46 22h48"/>
       <path d="M220 512h446"/>
