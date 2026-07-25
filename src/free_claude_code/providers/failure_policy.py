@@ -30,6 +30,9 @@ _OVERLOAD_MARKERS = frozenset(
 )
 _INTERNAL_ERROR_MARKERS = frozenset({"internal_server_error", "internal server error"})
 _AUTHENTICATION_MESSAGE = "Provider authentication failed. Check API key."
+_PERMISSION_MESSAGE = (
+    "Provider denied access. Check credential permissions and model access."
+)
 _RATE_LIMIT_MESSAGE = "Provider rate limit reached. Please retry shortly."
 _INVALID_REQUEST_MESSAGE = "Invalid request sent to provider."
 _CONTEXT_WINDOW_EXCEEDED_MESSAGE = "Provider input exceeds the model context window."
@@ -160,7 +163,12 @@ def is_retryable_provider_error(exc: BaseException) -> bool:
         return False
     if isinstance(exc, ExecutionFailure):
         return exc.retryable
-    if isinstance(exc, openai.AuthenticationError | openai.BadRequestError):
+    if isinstance(
+        exc,
+        openai.AuthenticationError
+        | openai.PermissionDeniedError
+        | openai.BadRequestError,
+    ):
         return False
     if retryable_transient_status(exc) is not None:
         return True
@@ -213,6 +221,8 @@ def provider_error_message(
         return _RATE_LIMIT_MESSAGE
     if isinstance(exc, openai.AuthenticationError):
         return _AUTHENTICATION_MESSAGE
+    if isinstance(exc, openai.PermissionDeniedError):
+        return _PERMISSION_MESSAGE
     if isinstance(exc, openai.BadRequestError):
         return _INVALID_REQUEST_MESSAGE
     return safe_exception_message(exc)
@@ -228,6 +238,8 @@ def _classify_provider_failure(
 
     if isinstance(exc, openai.AuthenticationError):
         return _failure(FailureKind.AUTHENTICATION, 401, _AUTHENTICATION_MESSAGE, False)
+    if isinstance(exc, openai.PermissionDeniedError):
+        return _failure(FailureKind.PERMISSION, 403, _PERMISSION_MESSAGE, False)
     if isinstance(exc, openai.RateLimitError):
         return _failure(FailureKind.RATE_LIMIT, 429, _RATE_LIMIT_MESSAGE, True)
     if isinstance(exc, openai.BadRequestError):
@@ -259,6 +271,12 @@ def _classify_provider_failure(
         effective_status = status or getattr(exc, "status_code", None)
         if not isinstance(effective_status, int):
             effective_status = 500
+        if effective_status == 401:
+            return _failure(
+                FailureKind.AUTHENTICATION, 401, _AUTHENTICATION_MESSAGE, False
+            )
+        if effective_status == 403:
+            return _failure(FailureKind.PERMISSION, 403, _PERMISSION_MESSAGE, False)
         return _failure(
             FailureKind.UPSTREAM,
             effective_status,
@@ -268,10 +286,12 @@ def _classify_provider_failure(
 
     if isinstance(exc, httpx.HTTPStatusError):
         status = exc.response.status_code
-        if status in (401, 403):
+        if status == 401:
             return _failure(
                 FailureKind.AUTHENTICATION, 401, _AUTHENTICATION_MESSAGE, False
             )
+        if status == 403:
+            return _failure(FailureKind.PERMISSION, 403, _PERMISSION_MESSAGE, False)
         if status == 429:
             return _failure(FailureKind.RATE_LIMIT, 429, _RATE_LIMIT_MESSAGE, True)
         if status == 400:
