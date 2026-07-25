@@ -518,12 +518,19 @@ function Install-FreeClaudeCode {
 }
 
 function Configure-AndConfirmFreeClaudeCode {
+    $iconPath = Join-Path $env:USERPROFILE ".fcc\app-icon.ico"
     if ($DryRun) {
         Write-Host "+ uv tool update-shell"
         Write-Host "+ uv tool dir --bin"
         Write-Host "+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, and fcc-pi in the uv tool bin directory"
         Write-Host "+ fcc-server --version"
-        Install-FccDesktopShortcuts -DesktopCommand "<uv-tool-bin>\fcc-desktop.exe"
+        Invoke-NativeCommand -FilePath "<uv-tool-bin>\fcc-desktop.exe" -Arguments @(
+            "--export-icon",
+            $iconPath
+        )
+        Install-FccDesktopShortcuts `
+            -DesktopCommand "<uv-tool-bin>\fcc-desktop.exe" `
+            -IconPath $iconPath
         return
     }
 
@@ -559,7 +566,16 @@ function Configure-AndConfirmFreeClaudeCode {
     }
 
     Invoke-NativeCommand -FilePath $installedCommands["fcc-server"] -Arguments @("--version")
-    Install-FccDesktopShortcuts -DesktopCommand $installedCommands["fcc-desktop"]
+    Invoke-NativeCommand -FilePath $installedCommands["fcc-desktop"] -Arguments @(
+        "--export-icon",
+        $iconPath
+    )
+    if (-not (Test-Path -LiteralPath $iconPath -PathType Leaf)) {
+        throw "Free Claude Code did not export its Windows app icon to '$iconPath'."
+    }
+    Install-FccDesktopShortcuts `
+        -DesktopCommand $installedCommands["fcc-desktop"] `
+        -IconPath $iconPath
 }
 
 function Test-EquivalentPath {
@@ -584,7 +600,10 @@ function Test-EquivalentPath {
 }
 
 function Install-FccDesktopShortcuts {
-    param([string] $DesktopCommand)
+    param(
+        [string] $DesktopCommand,
+        [string] $IconPath
+    )
 
     $shortcutPaths = @(
         (Join-Path $env:USERPROFILE "Desktop\Free Claude Code.lnk"),
@@ -617,7 +636,7 @@ function Install-FccDesktopShortcuts {
         $shortcut = $shell.CreateShortcut($shortcutPath)
         $shortcut.TargetPath = $DesktopCommand
         $shortcut.WorkingDirectory = $env:USERPROFILE
-        $shortcut.IconLocation = "$DesktopCommand,0"
+        $shortcut.IconLocation = "$IconPath,0"
         $shortcut.Description = "Run Free Claude Code in the background"
         $shortcut.Save()
     }

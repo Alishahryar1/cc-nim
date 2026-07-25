@@ -557,6 +557,8 @@ install_macos_desktop_app() {
     owner_file="$contents_dir/$FCC_MACOS_OWNER_FILE"
     executable_dir="$contents_dir/MacOS"
     executable_path="$executable_dir/fcc-desktop"
+    resources_dir="$contents_dir/Resources"
+    icon_path="$resources_dir/AppIcon.icns"
     desktop_dir="$HOME/Desktop"
     desktop_link="$desktop_dir/Free Claude Code.app"
 
@@ -566,13 +568,16 @@ install_macos_desktop_app() {
     fi
 
     if [ "$dry_run" -eq 1 ]; then
-        print_command mkdir -p "$executable_dir" "$desktop_dir"
+        print_command mkdir -p "$executable_dir" "$resources_dir" "$desktop_dir"
+        print_command fcc-desktop --export-icon "$icon_path"
         printf '+ write %s, %s, and %s\n' "$owner_file" "$contents_dir/Info.plist" "$executable_path"
         print_command ln -s "$app_dir" "$desktop_link"
         return 0
     fi
 
-    mkdir -p "$executable_dir" "$desktop_dir"
+    mkdir -p "$executable_dir" "$resources_dir" "$desktop_dir"
+    run "$tool_bin/fcc-desktop" --export-icon "$icon_path"
+    [ -f "$icon_path" ] || fail "Free Claude Code did not export its macOS app icon to $icon_path."
     printf '%s\n' "$FCC_MACOS_BUNDLE_ID" > "$owner_file"
     cat > "$contents_dir/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -585,6 +590,8 @@ install_macos_desktop_app() {
     <string>fcc-desktop</string>
     <key>CFBundleIdentifier</key>
     <string>io.github.alishahryar1.free-claude-code</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleName</key>
     <string>Free Claude Code</string>
     <key>CFBundlePackageType</key>

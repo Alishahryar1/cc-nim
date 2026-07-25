@@ -291,6 +291,11 @@ echo "$name:$*" >> "$CALL_LOG"
 if [ "$FAIL_STEP" = "fcc-verify" ]; then
     exit 36
 fi
+if [ "$name" = "fcc-desktop" ] && [ "${1:-}" = "--export-icon" ]; then
+    [ "$FAIL_STEP" = "desktop-icon-export" ] && exit 37
+    mkdir -p "$(dirname "$2")"
+    printf 'fake icon\n' > "$2"
+fi
 if [ "$name" = "fcc-server" ] && [ "${1:-}" = "--version" ]; then
     echo "free-claude-code 3.5.18"
 fi
@@ -362,19 +367,39 @@ def test_install_sh_creates_native_macos_app_and_desktop_link(
     plist = app / "Contents" / "Info.plist"
     owner_file = app / "Contents" / ".free-claude-code-owner"
     launcher = app / "Contents" / "MacOS" / "fcc-desktop"
+    icon = app / "Contents" / "Resources" / "AppIcon.icns"
     desktop_link = posix_harness.root / "home" / "Desktop" / "Free Claude Code.app"
     assert owner_file.read_text(encoding="utf-8").strip() == (
         "io.github.alishahryar1.free-claude-code"
     )
-    assert "<key>LSUIElement</key>" in plist.read_text(encoding="utf-8")
-    assert "<key>LSMultipleInstancesProhibited</key>" in plist.read_text(
-        encoding="utf-8"
-    )
+    plist_text = plist.read_text(encoding="utf-8")
+    assert "<key>CFBundleIconFile</key>" in plist_text
+    assert "<string>AppIcon</string>" in plist_text
+    assert "<key>LSUIElement</key>" in plist_text
+    assert "<key>LSMultipleInstancesProhibited</key>" in plist_text
+    assert icon.read_bytes() == b"fake icon\n"
     assert launcher.stat().st_mode & 0o111
     expected_command = str(tool_bin / "fcc-desktop").replace("'", "'\\''")
     assert f"exec '{expected_command}'" in launcher.read_text(encoding="utf-8")
     assert desktop_link.is_symlink()
     assert desktop_link.readlink() == app
+    assert any(
+        call == f"fcc-desktop:--export-icon {icon}" for call in posix_harness.calls()
+    )
+
+
+def test_install_sh_stops_if_macos_icon_export_fails(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.env["FAKE_UNAME"] = "Darwin"
+
+    result = posix_harness.run(fail_step="desktop-icon-export")
+
+    assert result.returncode != 0
+    assert "Command failed with exit code 37" in result.stderr
+    assert not (
+        posix_harness.root / "home" / "Desktop" / "Free Claude Code.app"
+    ).exists()
 
 
 def test_install_sh_rejects_unowned_macos_app_bundle(
@@ -750,6 +775,27 @@ def _create_windows_shortcut(
     )
 
 
+def _windows_shortcut_icon(powershell: str, shortcut_path: Path) -> str:
+    env = os.environ | {"FCC_TEST_SHORTCUT": str(shortcut_path)}
+    completed = subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-Command",
+            (
+                "$shell = New-Object -ComObject WScript.Shell; "
+                "$shortcut = $shell.CreateShortcut($env:FCC_TEST_SHORTCUT); "
+                "[Console]::Out.Write($shortcut.IconLocation)"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    return completed.stdout
+
+
 def _batch_client(name: str) -> str:
     help_output = (
         "echo   --extension, -e ^<path^>  Load an extension\n"
@@ -892,6 +938,11 @@ def powershell_harness(
 for %%I in ("%~f0") do set "FCC_NAME=%%~nI"
 echo %FCC_NAME%:%*>>"%CALL_LOG%"
 if "%FAIL_STEP%"=="fcc-verify" exit /b 55
+if "%FCC_NAME%"=="fcc-desktop" if "%1"=="--export-icon" if "%FAIL_STEP%"=="desktop-icon-export" exit /b 56
+if "%FCC_NAME%"=="fcc-desktop" if "%1"=="--export-icon" (
+    if not exist "%~dp2" mkdir "%~dp2"
+    echo fake icon>"%~2"
+)
 if "%FCC_NAME%"=="fcc-server" if "%1"=="--version" echo free-claude-code 3.5.18
 exit /b 0
 """,
@@ -1044,14 +1095,25 @@ def test_install_ps1_fresh_install_is_verified(
         for call in calls
     )
     assert not any(call.startswith("git:") for call in calls)
-    assert calls[-3:] == [
+    assert calls[-4:-1] == [
         "uv:tool update-shell",
         "uv:tool dir --bin",
         "fcc-server:--version",
     ]
     home = Path(powershell_harness.env["USERPROFILE"])
     app_data = Path(powershell_harness.env["APPDATA"])
-    assert (home / "Desktop" / "Free Claude Code.lnk").is_file()
+    icon = home / ".fcc" / "app-icon.ico"
+    assert icon.read_text(encoding="utf-8").strip() == "fake icon"
+    assert calls[-1] == f"fcc-desktop:--export-icon {icon}"
+    desktop_shortcut = home / "Desktop" / "Free Claude Code.lnk"
+    assert desktop_shortcut.is_file()
+    assert (
+        _windows_shortcut_icon(
+            powershell_harness.powershell,
+            desktop_shortcut,
+        )
+        == f"{icon},0"
+    )
     assert (
         app_data
         / "Microsoft"
@@ -1060,6 +1122,17 @@ def test_install_ps1_fresh_install_is_verified(
         / "Programs"
         / "Free Claude Code.lnk"
     ).is_file()
+
+
+def test_install_ps1_stops_if_windows_icon_export_fails(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    result = powershell_harness.run(fail_step="desktop-icon-export")
+
+    assert result.returncode != 0
+    assert "Command failed with exit code 56" in result.stderr
+    home = Path(powershell_harness.env["USERPROFILE"])
+    assert not (home / "Desktop" / "Free Claude Code.lnk").exists()
 
 
 def test_install_ps1_preserves_unowned_desktop_shortcut(
