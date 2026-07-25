@@ -17,7 +17,6 @@ from .extra_body import (
     validate_extra_body_does_not_override_reasoning_fields,
 )
 from .reasoning import (
-    LLAMACPP_REASONING,
     NO_REASONING,
     SPLIT_REASONING_OUTPUT,
     NamedEffortReasoning,
