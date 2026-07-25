@@ -393,10 +393,20 @@ def _has_marker(text: str, markers: frozenset[str]) -> bool:
 
 
 def underlying_provider_error(exc: Exception) -> Exception:
-    """Return the raw failure retained by an exhausted recovery wrapper."""
-    while isinstance(exc, ProviderRecoveryExhausted):
-        exc = exc.last_error
-    return exc
+    """Return the raw failure retained by a recovery wrapper or exception chain."""
+    current = exc
+    visited = set()
+    while current not in visited:
+        visited.add(current)
+        if isinstance(current, ProviderRecoveryExhausted):
+            current = current.last_error
+        elif current.__cause__ is not None:
+            current = current.__cause__
+        elif current.__context__ is not None:
+            current = current.__context__
+        else:
+            break
+    return current
 
 
 def _is_retryable_status(status: int | None) -> bool:
