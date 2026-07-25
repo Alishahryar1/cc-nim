@@ -24,6 +24,7 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProvider,
 )
 
+from .native_tool_stream import normalize_nim_native_tool_stream
 from .request_options import NIM_REQUEST_POLICY, build_nim_request_body
 from .retry import (
     clone_body_without_chat_template,
@@ -79,6 +80,10 @@ class NvidiaNimProvider(OpenAIChatProvider):
     def _prepare_create_body(self, body: dict[str, Any]) -> dict[str, Any]:
         """Strip private request metadata before calling NVIDIA NIM."""
         return body_without_nim_tool_argument_aliases(body)
+
+    def _normalize_stream(self, stream: Any, _body: Mapping[str, Any]) -> Any:
+        """Repair model-native MiniMax tool markup leaked by NVIDIA NIM."""
+        return normalize_nim_native_tool_stream(stream, _body)
 
     def _tool_argument_aliases(self, body: dict[str, Any]) -> dict[str, dict[str, str]]:
         """Return NIM tool argument aliases captured while building this request."""
