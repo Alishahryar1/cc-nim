@@ -486,4 +486,3 @@ Windows PowerShell:
 ## License
 
 MIT License. See [LICENSE](LICENSE) for details.
-H
