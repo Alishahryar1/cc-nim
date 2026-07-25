@@ -1,6 +1,7 @@
 import os
 import shutil
 import subprocess
+import sys
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -746,6 +747,77 @@ def _powershells() -> tuple[str, ...]:
     return tuple(dict.fromkeys(path for path in candidates if path is not None))
 
 
+def test_install_ps1_waits_for_gui_icon_export() -> None:
+    installer = (_repo_root() / "scripts" / "install.ps1").read_text(encoding="utf-8")
+    body = _braced_body(installer, "function Export-FccDesktopIcon")
+
+    assert "Start-Process" in body
+    assert "-WindowStyle Hidden" in body
+    assert "-Wait" in body
+    assert "-PassThru" in body
+    assert "$process.ExitCode" in body
+
+
+@pytest.mark.parametrize(
+    "powershell",
+    _powershells() or (None,),
+    ids=lambda path: Path(path).name if path is not None else "unavailable",
+)
+def test_install_ps1_gui_icon_export_completes_before_returning(
+    powershell: str | None,
+    tmp_path: Path,
+) -> None:
+    if powershell is None or os.name != "nt":
+        pytest.skip("PowerShell GUI process behavior runs on Windows hosts")
+
+    installer = (_repo_root() / "scripts" / "install.ps1").read_text(encoding="utf-8")
+    function_declarations = (
+        "function Format-Argument",
+        "function Format-Command",
+        "function Export-FccDesktopIcon",
+    )
+    functions = "\n".join(
+        f"{declaration} {{{_braced_body(installer, declaration)}}}"
+        for declaration in function_declarations
+    )
+    installed_desktop_command = Path(sys.executable).with_name("fcc-desktop.exe")
+    desktop_command = tmp_path / "icon-exporter.exe"
+    shutil.copy2(installed_desktop_command, desktop_command)
+    destination = tmp_path / "profile with spaces" / ".fcc" / "app-icon.ico"
+    env = os.environ | {
+        "FCC_TEST_DESKTOP_COMMAND": str(desktop_command),
+        "FCC_TEST_ICON_PATH": str(destination),
+    }
+    script = "\n".join(
+        (
+            '$ErrorActionPreference = "Stop"',
+            "$DryRun = $false",
+            functions,
+            (
+                "Export-FccDesktopIcon "
+                "-DesktopCommand $env:FCC_TEST_DESKTOP_COMMAND "
+                "-IconPath $env:FCC_TEST_ICON_PATH"
+            ),
+        )
+    )
+
+    completed = subprocess.run(
+        [powershell, "-NoProfile", "-Command", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert (
+        destination.read_bytes()
+        == (
+            _repo_root() / "src" / "free_claude_code" / "assets" / "app-icon.ico"
+        ).read_bytes()
+    )
+
+
 def _create_windows_shortcut(
     powershell: str,
     shortcut_path: Path,
@@ -1104,7 +1176,7 @@ def test_install_ps1_fresh_install_is_verified(
     app_data = Path(powershell_harness.env["APPDATA"])
     icon = home / ".fcc" / "app-icon.ico"
     assert icon.read_text(encoding="utf-8").strip() == "fake icon"
-    assert calls[-1] == f"fcc-desktop:--export-icon {icon}"
+    assert calls[-1] == f'fcc-desktop:--export-icon "{icon}"'
     desktop_shortcut = home / "Desktop" / "Free Claude Code.lnk"
     assert desktop_shortcut.is_file()
     assert (

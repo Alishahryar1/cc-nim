@@ -517,6 +517,40 @@ function Install-FreeClaudeCode {
     Invoke-NativeCommand -FilePath $uvPath -Arguments $arguments
 }
 
+function Export-FccDesktopIcon {
+    param(
+        [string] $DesktopCommand,
+        [string] $IconPath
+    )
+
+    $arguments = @("--export-icon", $IconPath)
+    $commandText = Format-Command -FilePath $DesktopCommand -Arguments $arguments
+    Write-Host "+ $commandText"
+    if ($DryRun) {
+        return
+    }
+
+    # PowerShell does not wait when directly invoking a Windows GUI executable.
+    $process = Start-Process `
+        -FilePath $DesktopCommand `
+        -ArgumentList @("--export-icon", ('"' + $IconPath + '"')) `
+        -WindowStyle Hidden `
+        -Wait `
+        -PassThru
+    try {
+        $exitCode = $process.ExitCode
+    }
+    finally {
+        $process.Dispose()
+    }
+    if ($exitCode -ne 0) {
+        throw "Command failed with exit code ${exitCode}: $commandText"
+    }
+    if (-not (Test-Path -LiteralPath $IconPath -PathType Leaf)) {
+        throw "Free Claude Code did not export its Windows app icon to '$IconPath'."
+    }
+}
+
 function Configure-AndConfirmFreeClaudeCode {
     $iconPath = Join-Path $env:USERPROFILE ".fcc\app-icon.ico"
     if ($DryRun) {
@@ -524,10 +558,9 @@ function Configure-AndConfirmFreeClaudeCode {
         Write-Host "+ uv tool dir --bin"
         Write-Host "+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, and fcc-pi in the uv tool bin directory"
         Write-Host "+ fcc-server --version"
-        Invoke-NativeCommand -FilePath "<uv-tool-bin>\fcc-desktop.exe" -Arguments @(
-            "--export-icon",
-            $iconPath
-        )
+        Export-FccDesktopIcon `
+            -DesktopCommand "<uv-tool-bin>\fcc-desktop.exe" `
+            -IconPath $iconPath
         Install-FccDesktopShortcuts `
             -DesktopCommand "<uv-tool-bin>\fcc-desktop.exe" `
             -IconPath $iconPath
@@ -566,13 +599,9 @@ function Configure-AndConfirmFreeClaudeCode {
     }
 
     Invoke-NativeCommand -FilePath $installedCommands["fcc-server"] -Arguments @("--version")
-    Invoke-NativeCommand -FilePath $installedCommands["fcc-desktop"] -Arguments @(
-        "--export-icon",
-        $iconPath
-    )
-    if (-not (Test-Path -LiteralPath $iconPath -PathType Leaf)) {
-        throw "Free Claude Code did not export its Windows app icon to '$iconPath'."
-    }
+    Export-FccDesktopIcon `
+        -DesktopCommand $installedCommands["fcc-desktop"] `
+        -IconPath $iconPath
     Install-FccDesktopShortcuts `
         -DesktopCommand $installedCommands["fcc-desktop"] `
         -IconPath $iconPath
