@@ -715,7 +715,9 @@ async def test_malformed_native_minimax_tool_call_retries_without_leaking(
 
 
 @pytest.mark.asyncio
-async def test_midstream_native_tool_failure_recovers_with_tool_use(nim_provider):
+async def test_midstream_native_tool_suffix_failure_recovers_without_duplication(
+    nim_provider,
+):
     req = make_request(
         tools=[
             tool(
@@ -732,9 +734,11 @@ async def test_midstream_native_tool_failure_recovers_with_tool_use(nim_provider
     namespace = "]<]minimax[>["
     malformed = (
         f"{namespace}<tool_call>"
-        f'{namespace}<invoke name="">'
+        f'{namespace}<invoke name="Read">'
+        f"{namespace}<file_path>IGNORED.md{namespace}</file_path>"
         f"{namespace}</invoke>"
         f"{namespace}</tool_call>"
+        "unexpected trailing content"
     )
     recovered = (
         f"{namespace}<tool_call>"

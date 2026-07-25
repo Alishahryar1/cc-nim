@@ -21,6 +21,8 @@ _INVOKE_END = f"{_NAMESPACE}</invoke>"
 _ELEMENT_START = f"{_NAMESPACE}<"
 _ELEMENT_END_START = f"{_NAMESPACE}</"
 _MIXED_TEXT_FIELD = "$text"
+_MAX_NATIVE_TOOL_BLOCK_CHARS = 4 * 1024 * 1024
+_MAX_NATIVE_ARGUMENT_DEPTH = 64
 
 
 class NimNativeToolProtocolError(RetryableToolProtocolError):
@@ -44,7 +46,8 @@ class _NativeToolCall:
 class _FramingMode(StrEnum):
     TEXT = "text"
     TOOL_BLOCK = "tool_block"
-    DONE = "done"
+    AFTER_TOOL_BLOCK = "after_tool_block"
+    FINISHED = "finished"
 
 
 class _MiniMaxM3ToolFramer:
@@ -53,22 +56,25 @@ class _MiniMaxM3ToolFramer:
     def __init__(self) -> None:
         self._mode = _FramingMode.TEXT
         self._text_tail = ""
+        self._tool_tail = ""
         self._tool_parts: list[str] = []
+        self._tool_length = 0
         self._tool_block: str | None = None
-        self._finished = False
 
     @property
     def tool_block(self) -> str | None:
         return self._tool_block
 
     def feed(self, text: str) -> str:
-        if self._finished:
+        if self._mode is _FramingMode.FINISHED:
             raise RuntimeError("MiniMax-M3 tool framer is already finished")
-        if not text or self._mode is _FramingMode.DONE:
+        if not text:
             return ""
         if self._mode is _FramingMode.TOOL_BLOCK:
-            self._tool_parts.append(text)
-            self._finish_tool_block_if_complete()
+            self._feed_tool_block(text)
+            return ""
+        if self._mode is _FramingMode.AFTER_TOOL_BLOCK:
+            self._validate_trailing_text(text)
             return ""
 
         candidate = "".join((self._text_tail, text))
@@ -77,8 +83,7 @@ class _MiniMaxM3ToolFramer:
             visible = candidate[:marker_index]
             self._text_tail = ""
             self._mode = _FramingMode.TOOL_BLOCK
-            self._tool_parts.append(candidate[marker_index + len(_TOOL_BLOCK_START) :])
-            self._finish_tool_block_if_complete()
+            self._feed_tool_block(candidate[marker_index + len(_TOOL_BLOCK_START) :])
             return visible
 
         held_length = _partial_marker_suffix_length(candidate, _TOOL_BLOCK_START)
@@ -91,28 +96,59 @@ class _MiniMaxM3ToolFramer:
         return candidate
 
     def finish(self, *, require_complete: bool) -> str:
-        if self._finished:
+        if self._mode is _FramingMode.FINISHED:
             return ""
-        self._finished = True
         if self._mode is _FramingMode.TEXT:
             tail = self._text_tail
             self._text_tail = ""
+            self._mode = _FramingMode.FINISHED
             return tail
         if self._mode is _FramingMode.TOOL_BLOCK and require_complete:
+            self._mode = _FramingMode.FINISHED
             raise NimNativeToolProtocolError(
                 "NVIDIA NIM returned an incomplete native MiniMax tool call."
             )
         self._tool_parts.clear()
+        self._tool_tail = ""
+        self._mode = _FramingMode.FINISHED
         return ""
 
-    def _finish_tool_block_if_complete(self) -> None:
-        raw = "".join(self._tool_parts)
-        marker_index = raw.find(_TOOL_BLOCK_END)
+    def _feed_tool_block(self, text: str) -> None:
+        candidate = "".join((self._tool_tail, text))
+        marker_index = candidate.find(_TOOL_BLOCK_END)
         if marker_index < 0:
+            held_length = _partial_marker_suffix_length(candidate, _TOOL_BLOCK_END)
+            if held_length:
+                self._append_tool_fragment(candidate[:-held_length])
+                self._tool_tail = candidate[-held_length:]
+            else:
+                self._append_tool_fragment(candidate)
+                self._tool_tail = ""
             return
-        self._tool_block = raw[:marker_index]
+
+        self._append_tool_fragment(candidate[:marker_index])
+        self._tool_block = "".join(self._tool_parts)
         self._tool_parts.clear()
-        self._mode = _FramingMode.DONE
+        self._tool_tail = ""
+        self._mode = _FramingMode.AFTER_TOOL_BLOCK
+        self._validate_trailing_text(candidate[marker_index + len(_TOOL_BLOCK_END) :])
+
+    def _append_tool_fragment(self, fragment: str) -> None:
+        if not fragment:
+            return
+        self._tool_length += len(fragment)
+        if self._tool_length > _MAX_NATIVE_TOOL_BLOCK_CHARS:
+            raise NimNativeToolProtocolError(
+                "NVIDIA NIM returned an oversized native MiniMax tool call."
+            )
+        self._tool_parts.append(fragment)
+
+    @staticmethod
+    def _validate_trailing_text(text: str) -> None:
+        if text.strip():
+            raise NimNativeToolProtocolError(
+                "NVIDIA NIM returned content after a native MiniMax tool call."
+            )
 
 
 def normalize_nim_native_tool_stream(
@@ -379,12 +415,16 @@ def _parse_arguments(body: str, schema: dict[str, Any]) -> dict[str, Any]:
         cursor = _skip_whitespace(body, cursor)
         if cursor == len(body):
             break
-        element, cursor = _parse_element(body, cursor)
+        element, cursor = _parse_element(body, cursor, depth=1)
         elements.append(element)
     return _elements_to_object(elements, schema)
 
 
-def _parse_element(text: str, cursor: int) -> tuple[_Element, int]:
+def _parse_element(text: str, cursor: int, *, depth: int) -> tuple[_Element, int]:
+    if depth > _MAX_NATIVE_ARGUMENT_DEPTH:
+        raise NimNativeToolProtocolError(
+            "NVIDIA NIM returned excessively nested native MiniMax tool arguments."
+        )
     if not text.startswith(_ELEMENT_START, cursor) or text.startswith(
         _ELEMENT_END_START, cursor
     ):
@@ -424,7 +464,7 @@ def _parse_element(text: str, cursor: int) -> tuple[_Element, int]:
         if text.startswith(_ELEMENT_START, marker) and not text.startswith(
             _ELEMENT_END_START, marker
         ):
-            child, cursor = _parse_element(text, marker)
+            child, cursor = _parse_element(text, marker, depth=depth + 1)
             children.append(child)
             continue
         raise NimNativeToolProtocolError(

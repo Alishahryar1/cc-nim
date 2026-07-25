@@ -3,6 +3,7 @@ from types import SimpleNamespace
 
 import pytest
 
+from free_claude_code.providers.nvidia_nim import native_tool_stream
 from free_claude_code.providers.nvidia_nim.native_tool_stream import (
     NimNativeToolProtocolError,
     normalize_nim_native_tool_stream,
@@ -106,6 +107,20 @@ def _tool_calls(chunks: list[SimpleNamespace]) -> list[SimpleNamespace]:
         if isinstance(value, list):
             calls.extend(call for call in value if isinstance(call, SimpleNamespace))
     return calls
+
+
+def _nested_argument(depth: int) -> tuple[str, dict]:
+    value = "leaf"
+    schema: dict = {"type": "string"}
+    for index in reversed(range(depth)):
+        name = f"level_{index}"
+        value = _element(name, value)
+        schema = {
+            "type": "object",
+            "properties": {name: schema},
+            "required": [name],
+        }
+    return value, schema
 
 
 @pytest.mark.asyncio
@@ -307,3 +322,154 @@ async def test_normalizer_rejects_incomplete_or_invalid_native_calls(raw: str) -
 
     with pytest.raises(NimNativeToolProtocolError):
         await _normalize([_chunk(content=raw, finish_reason="stop")], body)
+
+
+@pytest.mark.asyncio
+async def test_normalizer_enforces_native_tool_block_size(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    invoke = _invoke("Read", _element("file_path", "README.md"))
+    block_body = f"\n{invoke}\n"
+    body = _body(
+        _function(
+            "Read",
+            {"file_path": {"type": "string"}},
+            ["file_path"],
+        )
+    )
+    monkeypatch.setattr(
+        native_tool_stream,
+        "_MAX_NATIVE_TOOL_BLOCK_CHARS",
+        len(block_body),
+    )
+
+    normalized = await _normalize(
+        [
+            _chunk(
+                content=f"{TOOL_START}{block_body}{TOOL_END}",
+                finish_reason="tool_calls",
+            )
+        ],
+        body,
+    )
+
+    assert len(_tool_calls(normalized)) == 1
+    with pytest.raises(NimNativeToolProtocolError, match="oversized"):
+        await _normalize(
+            [
+                _chunk(
+                    content=f"{TOOL_START}{block_body}x{TOOL_END}",
+                    finish_reason="tool_calls",
+                )
+            ],
+            body,
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("split_suffix", [False, True])
+async def test_normalizer_accepts_whitespace_after_native_tool_block(
+    split_suffix: bool,
+) -> None:
+    raw = _tool_block(_invoke("Read", _element("file_path", "README.md")))
+    body = _body(
+        _function(
+            "Read",
+            {"file_path": {"type": "string"}},
+            ["file_path"],
+        )
+    )
+    suffix = "\n \t"
+    chunks = (
+        [_chunk(content=raw), _chunk(content=suffix, finish_reason="tool_calls")]
+        if split_suffix
+        else [_chunk(content=f"{raw}{suffix}", finish_reason="tool_calls")]
+    )
+
+    normalized = await _normalize(chunks, body)
+
+    assert len(_tool_calls(normalized)) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("split_suffix", [False, True])
+@pytest.mark.parametrize(
+    "suffix",
+    [
+        "unexpected",
+        _tool_block(_invoke("Read", _element("file_path", "SECOND.md"))),
+    ],
+)
+async def test_normalizer_rejects_content_after_native_tool_block(
+    suffix: str,
+    split_suffix: bool,
+) -> None:
+    raw = _tool_block(_invoke("Read", _element("file_path", "README.md")))
+    body = _body(
+        _function(
+            "Read",
+            {"file_path": {"type": "string"}},
+            ["file_path"],
+        )
+    )
+    chunks = (
+        [_chunk(content=raw), _chunk(content=suffix, finish_reason="tool_calls")]
+        if split_suffix
+        else [_chunk(content=f"{raw}{suffix}", finish_reason="tool_calls")]
+    )
+
+    with pytest.raises(NimNativeToolProtocolError, match="content after"):
+        await _normalize(chunks, body)
+
+
+@pytest.mark.asyncio
+async def test_normalizer_accepts_native_argument_nesting_at_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    depth = 3
+    arguments, parameters = _nested_argument(depth)
+    monkeypatch.setattr(
+        native_tool_stream,
+        "_MAX_NATIVE_ARGUMENT_DEPTH",
+        depth,
+    )
+    raw = _tool_block(_invoke("deep_tool", arguments))
+    body = _body(
+        {
+            "name": "deep_tool",
+            "parameters": parameters,
+        }
+    )
+
+    normalized = await _normalize(
+        [_chunk(content=raw, finish_reason="tool_calls")],
+        body,
+    )
+
+    assert len(_tool_calls(normalized)) == 1
+
+
+@pytest.mark.asyncio
+async def test_normalizer_rejects_native_argument_nesting_above_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    limit = 3
+    arguments, parameters = _nested_argument(limit + 1)
+    monkeypatch.setattr(
+        native_tool_stream,
+        "_MAX_NATIVE_ARGUMENT_DEPTH",
+        limit,
+    )
+    raw = _tool_block(_invoke("deep_tool", arguments))
+    body = _body(
+        {
+            "name": "deep_tool",
+            "parameters": parameters,
+        }
+    )
+
+    with pytest.raises(NimNativeToolProtocolError, match="excessively nested"):
+        await _normalize(
+            [_chunk(content=raw, finish_reason="tool_calls")],
+            body,
+        )
