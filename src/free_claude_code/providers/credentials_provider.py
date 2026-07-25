@@ -7,7 +7,6 @@ so we can proactively avoid hitting provider RPM limits and fall back when a key
 The implementation is synchronous and uses threading.Lock for concurrency safety. Async
 callers should wrap calls with asyncio.to_thread when necessary.
 """
-from __future__ import annotations
 
 import time
 import random
