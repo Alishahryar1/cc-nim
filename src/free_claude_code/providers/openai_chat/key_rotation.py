@@ -1,7 +1,5 @@
 """Key rotation and fallback for OpenAI-compatible providers."""
 
-from __future__ import annotations
-
 import asyncio
 import random
 import threading
@@ -159,10 +157,15 @@ class RotatingOpenAIClient:
         self._config = config
         self._base_url = base_url.rstrip("/")
         self._default_headers = dict(default_headers) if default_headers else None
-        api_keys = config.api_keys or ((config.api_key,) if config.api_key else ())
+        
+        raw_keys = getattr(config, "api_keys", None)
+        if not raw_keys:
+            single = getattr(config, "api_key", None)
+            raw_keys = [single] if single else []
+            
         self._pool = ProviderCredentialPool(
-            api_keys,
-            strategy=get_credential_strategy(config.credential_strategy),
+            raw_keys,
+            strategy=get_credential_strategy(getattr(config, "credential_strategy", "round_robin")),
         )
         self._clients: dict[str, AsyncOpenAI] = {}
         self._clients_lock = threading.Lock()
@@ -184,15 +187,20 @@ class RotatingOpenAIClient:
             if client is not None:
                 return client
 
+            read_timeout = getattr(self._config, "http_read_timeout", 60.0)
+            connect_timeout = getattr(self._config, "http_connect_timeout", 10.0)
+            write_timeout = getattr(self._config, "http_write_timeout", 60.0)
+            proxy = getattr(self._config, "proxy", None)
+
             timeout = httpx.Timeout(
-                self._config.http_read_timeout,
-                connect=self._config.http_connect_timeout,
-                read=self._config.http_read_timeout,
-                write=self._config.http_write_timeout,
+                read_timeout,
+                connect=connect_timeout,
+                read=read_timeout,
+                write=write_timeout,
             )
             http_client = (
-                httpx.AsyncClient(proxy=self._config.proxy, timeout=timeout)
-                if self._config.proxy
+                httpx.AsyncClient(proxy=proxy, timeout=timeout)
+                if proxy
                 else None
             )
             client = AsyncOpenAI(
@@ -261,7 +269,6 @@ def _cooldown_seconds(error: BaseException, *, failures: int) -> float:
         return 300.0
 
     if is_retryable_provider_error(error):
-        # Gentle exponential backoff with a small cap.
         return min(60.0, max(1.0, 2.0 ** max(0, failures - 1)))
 
     return 5.0
