@@ -2,6 +2,11 @@
 
 # 🤖 Free Claude Code
 
+<picture>
+  <source media="(prefers-color-scheme: light)" srcset="assets/free-claude-code-wordmark-light.svg">
+  <img src="assets/free-claude-code-wordmark-dark.svg" alt="Free Claude Code" width="610">
+</picture>
+
 Use Claude Code, Codex, Pi, or their IDE extensions through your own provider-backed proxy.
 
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg?style=for-the-badge)](https://opensource.org/licenses/MIT)
