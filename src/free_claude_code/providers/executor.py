@@ -77,6 +77,11 @@ class MultiProviderExecutor:
                     attempt_index=len(providers_to_try),
                 )
 
+                # Ensure the provider gets the updated configuration and key per iteration
+                provider._config = config
+                if hasattr(provider, "_api_key"):
+                    object.__setattr__(provider, "_api_key", config.api_key)
+
                 async for chunk in provider.stream_response(
                     request,
                     input_tokens=input_tokens,
@@ -145,7 +150,7 @@ class MultiProviderExecutor:
             logger.error(
                 "All providers exhausted after fallback chain. Last error: {} ({})",
                 type(last_error).__name__,
-                getattr(getattr(last_error, "response", None), "status_code", None)
+                getattr(getattr(last_error, "response", None), "status_code", "unknown")
                 if hasattr(last_error, "response")
                 else "unknown",
             )
