@@ -619,6 +619,89 @@ async def test_native_minimax_tool_markup_becomes_anthropic_tool_use(nim_provide
 
 
 @pytest.mark.asyncio
+async def test_native_minimax_reasoning_markup_becomes_anthropic_tool_use(
+    nim_provider,
+):
+    req = make_request(
+        tools=[
+            tool(
+                "Write",
+                "Write one file",
+                {
+                    "type": "object",
+                    "properties": {"file_path": {"type": "string"}},
+                    "required": ["file_path"],
+                },
+            )
+        ]
+    )
+    namespace = "]<]minimax[>["
+    raw = (
+        f"{namespace}<tool_call>"
+        f'{namespace}<invoke name="Write">'
+        f"{namespace}<file_path>output.md{namespace}</file_path>"
+        f"{namespace}</invoke>"
+        f"{namespace}</tool_call>"
+    )
+
+    async def mock_stream():
+        yield _content_chunk(
+            None,
+            reasoning_content=raw,
+            finish_reason="tool_calls",
+        )
+
+    with patch.object(
+        nim_provider._client.chat.completions, "create", new_callable=AsyncMock
+    ) as mock_create:
+        mock_create.return_value = mock_stream()
+
+        events = [event async for event in nim_provider.stream_response(req)]
+
+    event_text = "".join(events)
+    assert namespace not in event_text
+    assert '"type": "tool_use"' in event_text
+    assert '"name": "Write"' in event_text
+    assert json.loads(_input_json_deltas(events)[0]) == {"file_path": "output.md"}
+
+
+@pytest.mark.asyncio
+async def test_native_minimax_markup_without_tools_retries_without_leaking(
+    nim_provider,
+):
+    req = make_request(tools=None)
+    namespace = "]<]minimax[>["
+    raw = (
+        f"{namespace}<tool_call>"
+        f'{namespace}<invoke name="Write">'
+        f"{namespace}<file_path>output.md{namespace}</file_path>"
+        f"{namespace}</invoke>"
+        f"{namespace}</tool_call>"
+    )
+
+    async def native_stream():
+        yield _content_chunk(raw, finish_reason="tool_calls")
+
+    async def recovered_stream():
+        yield _content_chunk("Recovered safely.", finish_reason="stop")
+
+    attempts = [native_stream() for _ in range(UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS - 1)]
+    attempts.append(recovered_stream())
+    with patch.object(
+        nim_provider._client.chat.completions, "create", new_callable=AsyncMock
+    ) as mock_create:
+        mock_create.side_effect = attempts
+
+        events = [event async for event in nim_provider.stream_response(req)]
+
+    event_text = "".join(events)
+    assert mock_create.await_count == UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS
+    assert namespace not in event_text
+    assert event_text.count("Recovered safely.") == 1
+    assert '"type": "tool_use"' not in event_text
+
+
+@pytest.mark.asyncio
 async def test_native_minimax_tool_markup_restores_nim_argument_aliases(nim_provider):
     req = make_request(
         tools=[

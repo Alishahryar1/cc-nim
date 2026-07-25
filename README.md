@@ -1,6 +1,11 @@
 <div align="center">
 
-# 🤖 Free Claude Code
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="assets/free-claude-code-wordmark-light.svg">
+    <img src="assets/free-claude-code-wordmark-dark.svg" alt="Free Claude Code" width="610">
+  </picture>
+</h1>
 
 Use Claude Code, Codex, Pi, or their IDE extensions through your own provider-backed proxy.
 
@@ -71,6 +76,8 @@ Windows PowerShell:
 ```
 
 Re-run the same command whenever you want to update. You can review the installers before running them: [install.sh](scripts/install.sh) and [install.ps1](scripts/install.ps1).
+
+Pi is optional. If you decline Pi's installer, FCC continues installing with Claude Code and Codex.
 
 ### 2. Start FCC
 

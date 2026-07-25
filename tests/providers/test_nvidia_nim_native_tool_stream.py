@@ -30,6 +30,7 @@ def _tool_block(*invokes: str) -> str:
 def _chunk(
     *,
     content: str | None = None,
+    reasoning_content: str | None = None,
     tool_calls: list[object] | None = None,
     finish_reason: str | None = None,
 ) -> SimpleNamespace:
@@ -38,7 +39,7 @@ def _chunk(
             SimpleNamespace(
                 delta=SimpleNamespace(
                     content=content,
-                    reasoning_content=None,
+                    reasoning_content=reasoning_content,
                     tool_calls=tool_calls,
                 ),
                 finish_reason=finish_reason,
@@ -100,6 +101,21 @@ def _content(chunks: list[SimpleNamespace]) -> str:
     )
 
 
+def _reasoning(chunks: list[SimpleNamespace]) -> str:
+    return "".join(
+        reasoning
+        for chunk in chunks
+        if (
+            reasoning := getattr(
+                chunk.choices[0].delta,
+                "reasoning_content",
+                None,
+            )
+        )
+        is not None
+    )
+
+
 def _tool_calls(chunks: list[SimpleNamespace]) -> list[SimpleNamespace]:
     calls: list[SimpleNamespace] = []
     for chunk in chunks:
@@ -135,6 +151,118 @@ async def test_normalizer_preserves_ordinary_text_incrementally() -> None:
     assert _content(normalized) == "Hello world"
     assert not _tool_calls(normalized)
     assert normalized[-1].choices[0].finish_reason == "stop"
+
+
+@pytest.mark.asyncio
+async def test_normalizer_preserves_ordinary_stream_without_tool_schemas() -> None:
+    source = _chunk(
+        content="Answer",
+        reasoning_content="Thinking",
+        finish_reason="stop",
+    )
+
+    normalized = await _normalize([source], {})
+
+    assert normalized == [source]
+    assert normalized[0] is source
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["content", "reasoning_content"])
+async def test_normalizer_decodes_tool_block_from_each_text_field(field: str) -> None:
+    raw = "Preparing. " + _tool_block(
+        _invoke("Read", _element("file_path", "README.md"))
+    )
+    body = _body(
+        _function(
+            "Read",
+            {"file_path": {"type": "string"}},
+            ["file_path"],
+        )
+    )
+
+    normalized = await _normalize(
+        [
+            _chunk(
+                content=raw if field == "content" else None,
+                reasoning_content=raw if field == "reasoning_content" else None,
+                finish_reason="tool_calls",
+            )
+        ],
+        body,
+    )
+
+    assert NS not in _content(normalized)
+    assert NS not in _reasoning(normalized)
+    assert (_content(normalized) if field == "content" else _reasoning(normalized)) == (
+        "Preparing. "
+    )
+    calls = _tool_calls(normalized)
+    assert len(calls) == 1
+    assert calls[0].function.name == "Read"
+    assert json.loads(calls[0].function.arguments) == {"file_path": "README.md"}
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["content", "reasoning_content"])
+async def test_normalizer_rejects_native_calls_without_tool_schemas(
+    field: str,
+) -> None:
+    raw = _tool_block(_invoke("Write", _element("file_path", "output.md")))
+
+    with pytest.raises(NimNativeToolProtocolError, match="undeclared tool"):
+        await _normalize(
+            [
+                _chunk(
+                    content=raw if field == "content" else None,
+                    reasoning_content=raw if field == "reasoning_content" else None,
+                    finish_reason="tool_calls",
+                )
+            ],
+            {},
+        )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("field", ["content", "reasoning_content"])
+async def test_normalizer_rejects_unframed_native_namespace(field: str) -> None:
+    raw = f'{NS}<invoke name="Write">'
+
+    with pytest.raises(NimNativeToolProtocolError, match="malformed"):
+        await _normalize(
+            [
+                _chunk(
+                    content=raw if field == "content" else None,
+                    reasoning_content=raw if field == "reasoning_content" else None,
+                    finish_reason="stop",
+                )
+            ],
+            {},
+        )
+
+
+@pytest.mark.asyncio
+async def test_normalizer_rejects_native_calls_in_multiple_text_fields() -> None:
+    raw = _tool_block(_invoke("Read", _element("file_path", "README.md")))
+    body = _body(
+        _function(
+            "Read",
+            {"file_path": {"type": "string"}},
+            ["file_path"],
+        )
+    )
+
+    with pytest.raises(NimNativeToolProtocolError, match="multiple output fields"):
+        await _normalize(
+            [
+                _chunk(
+                    content=raw,
+                    reasoning_content=raw,
+                    finish_reason="tool_calls",
+                )
+            ],
+            body,
+        )
 
 
 @pytest.mark.asyncio
@@ -247,9 +375,10 @@ async def test_normalizer_decodes_parallel_recursive_arguments_in_order() -> Non
 
 
 @pytest.mark.asyncio
-async def test_normalizer_prefers_structured_calls_and_only_strips_raw_duplicate() -> (
-    None
-):
+@pytest.mark.parametrize("field", ["content", "reasoning_content"])
+async def test_normalizer_prefers_structured_calls_and_strips_raw_duplicate(
+    field: str,
+) -> None:
     raw = "Checking. " + _tool_block(f'{NS}<invoke name="">{INVOKE_END}')
     structured = _structured_call("Read", '{"file_path":"README.md"}')
     body = _body(
@@ -262,15 +391,22 @@ async def test_normalizer_prefers_structured_calls_and_only_strips_raw_duplicate
 
     normalized = await _normalize(
         [
-            _chunk(content=raw, tool_calls=[structured]),
+            _chunk(
+                content=raw if field == "content" else None,
+                reasoning_content=raw if field == "reasoning_content" else None,
+                tool_calls=[structured],
+            ),
             _chunk(finish_reason="tool_calls"),
         ],
         body,
     )
 
-    assert _content(normalized) == "Checking. "
+    assert (_content(normalized) if field == "content" else _reasoning(normalized)) == (
+        "Checking. "
+    )
     assert _tool_calls(normalized) == [structured]
     assert NS not in _content(normalized)
+    assert NS not in _reasoning(normalized)
 
 
 @pytest.mark.asyncio

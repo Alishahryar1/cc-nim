@@ -29,6 +29,30 @@ class NimNativeToolProtocolError(RetryableToolProtocolError):
     """NIM exposed malformed model-native tool markup instead of tool deltas."""
 
 
+class _NormalizedNativeToolStream(AsyncIterator[Any]):
+    """Expose normalized chunks while retaining the raw stream's close contract."""
+
+    def __init__(self, iterator: AsyncIterator[Any], source: Any) -> None:
+        self._iterator = iterator
+        self._source = source
+        self._closed = False
+
+    def __aiter__(self) -> _NormalizedNativeToolStream:
+        return self
+
+    async def __anext__(self) -> Any:
+        if self._closed:
+            raise StopAsyncIteration
+        return await anext(self._iterator)
+
+    async def aclose(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        await maybe_await_aclose(self._iterator)
+        await maybe_await_aclose(self._source)
+
+
 @dataclass(frozen=True, slots=True)
 class _Element:
     name: str
@@ -79,6 +103,19 @@ class _MiniMaxM3ToolFramer:
 
         candidate = "".join((self._text_tail, text))
         marker_index = candidate.find(_TOOL_BLOCK_START)
+        held_length = _partial_marker_suffix_length(candidate, _TOOL_BLOCK_START)
+        protected_namespace_index = (
+            marker_index
+            if marker_index >= 0
+            else len(candidate) - held_length
+            if held_length
+            else -1
+        )
+        namespace_index = candidate.find(_NAMESPACE)
+        if namespace_index >= 0 and namespace_index != protected_namespace_index:
+            raise NimNativeToolProtocolError(
+                "NVIDIA NIM returned malformed native MiniMax tool markup."
+            )
         if marker_index >= 0:
             visible = candidate[:marker_index]
             self._text_tail = ""
@@ -86,7 +123,6 @@ class _MiniMaxM3ToolFramer:
             self._feed_tool_block(candidate[marker_index + len(_TOOL_BLOCK_START) :])
             return visible
 
-        held_length = _partial_marker_suffix_length(candidate, _TOOL_BLOCK_START)
         if held_length:
             visible = candidate[:-held_length]
             self._text_tail = candidate[-held_length:]
@@ -102,6 +138,12 @@ class _MiniMaxM3ToolFramer:
             tail = self._text_tail
             self._text_tail = ""
             self._mode = _FramingMode.FINISHED
+            if _NAMESPACE in tail:
+                if require_complete:
+                    raise NimNativeToolProtocolError(
+                        "NVIDIA NIM returned an incomplete native MiniMax tool marker."
+                    )
+                return ""
             return tail
         if self._mode is _FramingMode.TOOL_BLOCK and require_complete:
             self._mode = _FramingMode.FINISHED
@@ -157,77 +199,84 @@ def normalize_nim_native_tool_stream(
 ) -> AsyncIterator[Any]:
     """Convert leaked MiniMax-M3 markup into ordinary OpenAI tool-call chunks."""
     schemas = _openai_tool_schemas(body)
-    if not schemas:
-        return stream
 
     async def _iter() -> AsyncIterator[Any]:
-        framer = _MiniMaxM3ToolFramer()
+        content_framer = _MiniMaxM3ToolFramer()
+        reasoning_framer = _MiniMaxM3ToolFramer()
         structured_tool_calls_seen = False
         finalized = False
 
-        try:
-            async for chunk in stream:
-                choices = getattr(chunk, "choices", None)
-                if not choices:
-                    yield chunk
-                    continue
+        async for chunk in stream:
+            choices = getattr(chunk, "choices", None)
+            if not choices:
+                yield chunk
+                continue
 
-                choice = choices[0]
-                delta = getattr(choice, "delta", None)
-                if delta is None:
-                    yield chunk
-                    continue
+            choice = choices[0]
+            delta = getattr(choice, "delta", None)
+            if delta is None:
+                yield chunk
+                continue
 
-                native_tool_calls = getattr(delta, "tool_calls", None)
-                if _has_structured_tool_calls(native_tool_calls):
-                    structured_tool_calls_seen = True
+            native_tool_calls = getattr(delta, "tool_calls", None)
+            if _has_structured_tool_calls(native_tool_calls):
+                structured_tool_calls_seen = True
 
-                content = getattr(delta, "content", None)
-                safe_content = (
-                    framer.feed(content) if isinstance(content, str) else content
-                )
-                finish_reason = getattr(choice, "finish_reason", None)
-                generated_calls: tuple[_NativeToolCall, ...] = ()
-                if finish_reason is not None:
-                    tail = framer.finish(
-                        require_complete=not structured_tool_calls_seen
+            content = getattr(delta, "content", None)
+            safe_content = (
+                content_framer.feed(content) if isinstance(content, str) else content
+            )
+            reasoning = getattr(delta, "reasoning_content", None)
+            safe_reasoning = (
+                reasoning_framer.feed(reasoning)
+                if isinstance(reasoning, str)
+                else reasoning
+            )
+            finish_reason = getattr(choice, "finish_reason", None)
+            generated_calls: tuple[_NativeToolCall, ...] = ()
+            if finish_reason is not None:
+                safe_content, safe_reasoning, generated_calls = (
+                    _finish_native_tool_framers(
+                        content_framer,
+                        reasoning_framer,
+                        content=safe_content,
+                        reasoning_content=safe_reasoning,
+                        schemas=schemas,
+                        structured_tool_calls_seen=structured_tool_calls_seen,
                     )
-                    finalized = True
-                    safe_content = _join_optional_text(safe_content, tail)
-                    if not structured_tool_calls_seen and framer.tool_block is not None:
-                        generated_calls = _parse_tool_block(
-                            framer.tool_block,
-                            schemas,
-                        )
-
-                normalized = _normalized_chunks(
-                    chunk,
-                    choice,
-                    delta,
-                    content=safe_content,
-                    generated_calls=generated_calls,
-                    terminal=finish_reason is not None,
                 )
-                for normalized_chunk in normalized:
+                finalized = True
+
+            normalized = _normalized_chunks(
+                chunk,
+                choice,
+                delta,
+                content=safe_content,
+                reasoning_content=safe_reasoning,
+                generated_calls=generated_calls,
+                terminal=finish_reason is not None,
+            )
+            for normalized_chunk in normalized:
+                yield normalized_chunk
+
+        if not finalized:
+            content, reasoning, generated_calls = _finish_native_tool_framers(
+                content_framer,
+                reasoning_framer,
+                content=None,
+                reasoning_content=None,
+                schemas=schemas,
+                structured_tool_calls_seen=structured_tool_calls_seen,
+            )
+            if content or reasoning or generated_calls:
+                for normalized_chunk in _synthetic_chunks(
+                    content=content,
+                    reasoning_content=reasoning,
+                    generated_calls=generated_calls,
+                ):
                     yield normalized_chunk
 
-            if not finalized:
-                tail = framer.finish(require_complete=not structured_tool_calls_seen)
-                generated_calls = (
-                    ()
-                    if structured_tool_calls_seen or framer.tool_block is None
-                    else _parse_tool_block(framer.tool_block, schemas)
-                )
-                if tail or generated_calls:
-                    for normalized_chunk in _synthetic_chunks(
-                        content=tail or None,
-                        generated_calls=generated_calls,
-                    ):
-                        yield normalized_chunk
-        finally:
-            await maybe_await_aclose(stream)
-
-    return _iter()
+    return _NormalizedNativeToolStream(_iter(), stream)
 
 
 def _normalized_chunks(
@@ -236,23 +285,34 @@ def _normalized_chunks(
     source_delta: Any,
     *,
     content: Any,
+    reasoning_content: Any,
     generated_calls: tuple[_NativeToolCall, ...],
     terminal: bool,
 ) -> list[Any]:
-    reasoning = getattr(source_delta, "reasoning_content", None)
+    source_content = getattr(source_delta, "content", None)
+    source_reasoning = getattr(source_delta, "reasoning_content", None)
     structured_calls = getattr(source_delta, "tool_calls", None)
     source_finish_reason = getattr(source_choice, "finish_reason", None)
     source_usage = getattr(source_chunk, "usage", None)
 
+    if (
+        not generated_calls
+        and content == source_content
+        and reasoning_content == source_reasoning
+    ):
+        return [source_chunk]
+
     chunks: list[Any] = []
     has_source_payload = (
-        bool(content) or bool(reasoning) or _has_structured_tool_calls(structured_calls)
+        bool(content)
+        or bool(reasoning_content)
+        or _has_structured_tool_calls(structured_calls)
     )
     if has_source_payload or not generated_calls:
         chunks.append(
             _chunk(
                 content=content,
-                reasoning_content=reasoning,
+                reasoning_content=reasoning_content,
                 tool_calls=structured_calls,
             )
         )
@@ -271,11 +331,50 @@ def _normalized_chunks(
 def _synthetic_chunks(
     *,
     content: str | None,
+    reasoning_content: str | None,
     generated_calls: tuple[_NativeToolCall, ...],
 ) -> list[Any]:
-    chunks = [_chunk(content=content)] if content else []
+    chunks = (
+        [_chunk(content=content, reasoning_content=reasoning_content)]
+        if content or reasoning_content
+        else []
+    )
     chunks.extend(_tool_call_chunk(call) for call in generated_calls)
     return chunks
+
+
+def _finish_native_tool_framers(
+    content_framer: _MiniMaxM3ToolFramer,
+    reasoning_framer: _MiniMaxM3ToolFramer,
+    *,
+    content: Any,
+    reasoning_content: Any,
+    schemas: Mapping[str, dict[str, Any]],
+    structured_tool_calls_seen: bool,
+) -> tuple[Any, Any, tuple[_NativeToolCall, ...]]:
+    require_complete = not structured_tool_calls_seen
+    content = _join_optional_text(
+        content,
+        content_framer.finish(require_complete=require_complete),
+    )
+    reasoning_content = _join_optional_text(
+        reasoning_content,
+        reasoning_framer.finish(require_complete=require_complete),
+    )
+    if structured_tool_calls_seen:
+        return content, reasoning_content, ()
+
+    blocks = tuple(
+        block
+        for block in (content_framer.tool_block, reasoning_framer.tool_block)
+        if block is not None
+    )
+    if len(blocks) > 1:
+        raise NimNativeToolProtocolError(
+            "NVIDIA NIM returned native MiniMax tool calls in multiple output fields."
+        )
+    generated_calls = _parse_tool_block(blocks[0], schemas) if blocks else ()
+    return content, reasoning_content, generated_calls
 
 
 def _chunk(

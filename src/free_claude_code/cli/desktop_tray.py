@@ -1,9 +1,12 @@
 """pystray adapter for the Windows tray and macOS menu bar."""
 
-from PIL import Image, ImageDraw
+from io import BytesIO
+
+from PIL import Image
 from pystray import Icon, Menu, MenuItem
 
 from free_claude_code.cli.desktop import DesktopController, launch_desktop
+from free_claude_code.cli.desktop_assets import app_icon_bytes
 
 
 class PystrayDesktopTray:
@@ -47,16 +50,10 @@ class PystrayDesktopTray:
 
 
 def _create_icon() -> Image.Image:
-    """Build a crisp scalable tray glyph without a packaged binary asset."""
+    """Load the same branded artwork used by native desktop launchers."""
 
-    image = Image.new("RGBA", (64, 64), (0, 0, 0, 0))
-    draw = ImageDraw.Draw(image)
-    draw.rounded_rectangle((4, 4, 60, 60), radius=14, fill="#111827")
-    color = "#60A5FA"
-    draw.line((19, 17, 19, 48), fill=color, width=7)
-    draw.line((19, 18, 46, 18), fill=color, width=7)
-    draw.line((19, 32, 40, 32), fill=color, width=7)
-    return image
+    with Image.open(BytesIO(app_icon_bytes(".png"))) as image:
+        return image.convert("RGBA")
 
 
 def launch() -> None:

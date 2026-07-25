@@ -20,6 +20,7 @@ $ClaudeInstallUrl = "https://claude.ai/install.ps1"
 $CodexInstallUrl = "https://chatgpt.com/codex/install.ps1"
 $PiInstallUrl = "https://pi.dev/install.ps1"
 $UvInstallUrl = "https://astral.sh/uv/install.ps1"
+$script:PiAvailable = $false
 $FccCommands = @(
     # Include retired entry points so updates reject older FCC processes before replacement.
     "fcc-desktop",
@@ -35,7 +36,7 @@ function Show-Usage {
     @"
 Usage: install.ps1 [options]
 
-Installs Claude Code, Codex, and Pi if missing, ensures a compatible uv, and installs or updates Free Claude Code.
+Installs Claude Code and Codex, offers to install Pi, ensures a compatible uv, and installs or updates Free Claude Code.
 
 Options:
   -VoiceNim              Install NVIDIA NIM voice transcription support.
@@ -338,6 +339,8 @@ function Ensure-Codex {
 }
 
 function Ensure-Pi {
+    $script:PiAvailable = $false
+    Add-PiBinDirectories
     $existingPi = Get-ApplicationCommand "pi"
     if ($existingPi -and ($DryRun -or (Test-PiApplication $existingPi))) {
         Write-Host "Pi already found on PATH; verifying it."
@@ -348,9 +351,24 @@ function Ensure-Pi {
         }
         Invoke-DownloadedPowerShellInstaller -Url $PiInstallUrl -Name "Pi"
         Add-PiBinDirectories
+
+        if (-not $DryRun) {
+            $currentPi = Get-ApplicationCommand "pi"
+            $unchangedIncompatiblePi = (
+                $currentPi -and
+                $existingPi -and
+                $currentPi.Source -eq $existingPi.Source -and
+                -not (Test-PiApplication $currentPi)
+            )
+            if ((-not $currentPi) -or $unchangedIncompatiblePi) {
+                Write-Host "Pi was not installed; continuing without it."
+                return
+            }
+        }
     }
 
     Confirm-PiApplication
+    $script:PiAvailable = $true
 }
 
 function Convert-UvVersionOutput {
@@ -499,13 +517,53 @@ function Install-FreeClaudeCode {
     Invoke-NativeCommand -FilePath $uvPath -Arguments $arguments
 }
 
+function Export-FccDesktopIcon {
+    param(
+        [string] $DesktopCommand,
+        [string] $IconPath
+    )
+
+    $arguments = @("--export-icon", $IconPath)
+    $commandText = Format-Command -FilePath $DesktopCommand -Arguments $arguments
+    Write-Host "+ $commandText"
+    if ($DryRun) {
+        return
+    }
+
+    # PowerShell does not wait when directly invoking a Windows GUI executable.
+    $process = Start-Process `
+        -FilePath $DesktopCommand `
+        -ArgumentList @("--export-icon", ('"' + $IconPath + '"')) `
+        -WindowStyle Hidden `
+        -Wait `
+        -PassThru
+    try {
+        $exitCode = $process.ExitCode
+    }
+    finally {
+        $process.Dispose()
+    }
+    if ($exitCode -ne 0) {
+        throw "Command failed with exit code ${exitCode}: $commandText"
+    }
+    if (-not (Test-Path -LiteralPath $IconPath -PathType Leaf)) {
+        throw "Free Claude Code did not export its Windows app icon to '$IconPath'."
+    }
+}
+
 function Configure-AndConfirmFreeClaudeCode {
+    $iconPath = Join-Path $env:USERPROFILE ".fcc\app-icon.ico"
     if ($DryRun) {
         Write-Host "+ uv tool update-shell"
         Write-Host "+ uv tool dir --bin"
         Write-Host "+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, and fcc-pi in the uv tool bin directory"
         Write-Host "+ fcc-server --version"
-        Install-FccDesktopShortcuts -DesktopCommand "<uv-tool-bin>\fcc-desktop.exe"
+        Export-FccDesktopIcon `
+            -DesktopCommand "<uv-tool-bin>\fcc-desktop.exe" `
+            -IconPath $iconPath
+        Install-FccDesktopShortcuts `
+            -DesktopCommand "<uv-tool-bin>\fcc-desktop.exe" `
+            -IconPath $iconPath
         return
     }
 
@@ -541,7 +599,12 @@ function Configure-AndConfirmFreeClaudeCode {
     }
 
     Invoke-NativeCommand -FilePath $installedCommands["fcc-server"] -Arguments @("--version")
-    Install-FccDesktopShortcuts -DesktopCommand $installedCommands["fcc-desktop"]
+    Export-FccDesktopIcon `
+        -DesktopCommand $installedCommands["fcc-desktop"] `
+        -IconPath $iconPath
+    Install-FccDesktopShortcuts `
+        -DesktopCommand $installedCommands["fcc-desktop"] `
+        -IconPath $iconPath
 }
 
 function Test-EquivalentPath {
@@ -566,7 +629,10 @@ function Test-EquivalentPath {
 }
 
 function Install-FccDesktopShortcuts {
-    param([string] $DesktopCommand)
+    param(
+        [string] $DesktopCommand,
+        [string] $IconPath
+    )
 
     $shortcutPaths = @(
         (Join-Path $env:USERPROFILE "Desktop\Free Claude Code.lnk"),
@@ -599,7 +665,7 @@ function Install-FccDesktopShortcuts {
         $shortcut = $shell.CreateShortcut($shortcutPath)
         $shortcut.TargetPath = $DesktopCommand
         $shortcut.WorkingDirectory = $env:USERPROFILE
-        $shortcut.IconLocation = "$DesktopCommand,0"
+        $shortcut.IconLocation = "$IconPath,0"
         $shortcut.Description = "Run Free Claude Code in the background"
         $shortcut.Save()
     }
@@ -630,7 +696,7 @@ Ensure-ClaudeCode
 Write-Step "Ensuring Codex is installed"
 Ensure-Codex
 
-Write-Step "Ensuring Pi is installed"
+Write-Step "Checking or installing Pi"
 Ensure-Pi
 
 Write-Step "Ensuring uv $MinUvVersion or newer is installed"
@@ -651,5 +717,7 @@ else {
     Write-Host "For terminal use, start the proxy with: fcc-server"
     Write-Host "Run Claude Code with: fcc-claude"
     Write-Host "Run Codex with: fcc-codex"
-    Write-Host "Run Pi with: fcc-pi"
+    if ($script:PiAvailable) {
+        Write-Host "Run Pi with: fcc-pi"
+    }
 }
