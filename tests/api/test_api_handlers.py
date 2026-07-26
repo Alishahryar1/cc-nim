@@ -1,5 +1,6 @@
 import json
 from collections.abc import AsyncIterator
+from types import SimpleNamespace
 from typing import Any
 from unittest.mock import MagicMock, patch
 
@@ -17,6 +18,7 @@ from free_claude_code.core.anthropic.models import (
     Message,
     MessagesRequest,
     TokenCountRequest,
+    Tool,
 )
 from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
@@ -620,3 +622,99 @@ def test_token_count_handler_skips_exact_counter_without_api_key() -> None:
 
     assert response.input_tokens == 42
     exact_counter.assert_not_called()
+
+
+def test_token_count_handler_treats_whitespace_only_api_key_as_unset() -> None:
+    """A whitespace-only ANTHROPIC_API_KEY is stripped and treated as absent."""
+    exact_counter = MagicMock(return_value=17)
+    handler = TokenCountHandler(
+        Settings(ANTHROPIC_API_KEY="   "),
+        token_counter=lambda messages, system, tools: 42,
+        exact_token_counter=exact_counter,
+    )
+
+    response = handler.count(
+        TokenCountRequest(
+            model="nvidia_nim/test-model",
+            messages=[Message(role="user", content="hi")],
+        )
+    )
+
+    assert response.input_tokens == 42
+    exact_counter.assert_not_called()
+
+
+def test_token_count_handler_exact_counter_receives_original_request_fields() -> None:
+    """The exact counter is called with the raw request's system/tools/messages."""
+    exact_counter = MagicMock(return_value=5)
+    handler = TokenCountHandler(
+        Settings(ANTHROPIC_API_KEY="sk-test"),
+        token_counter=lambda messages, system, tools: 999,
+        exact_token_counter=exact_counter,
+    )
+    messages = [Message(role="user", content="hi")]
+    tools = [Tool(name="lookup", input_schema={"type": "object"})]
+
+    handler.count(
+        TokenCountRequest(
+            model="nvidia_nim/test-model",
+            messages=messages,
+            system="Be concise.",
+            tools=tools,
+        )
+    )
+
+    exact_counter.assert_called_once()
+    call_kwargs = exact_counter.call_args.kwargs
+    assert call_kwargs["messages"] == messages
+    assert call_kwargs["system"] == "Be concise."
+    assert call_kwargs["tools"] == tools
+    assert call_kwargs["timeout"] == Settings().http_read_timeout
+
+
+def test_token_count_handler_default_wiring_calls_real_anthropic_api() -> None:
+    """Without an override, the handler calls the real Anthropic SDK client."""
+    handler = TokenCountHandler(Settings(ANTHROPIC_API_KEY="sk-test"))
+
+    with patch(
+        "free_claude_code.providers.anthropic_tokens.anthropic.Anthropic"
+    ) as mock_anthropic:
+        mock_client = MagicMock()
+        mock_client.messages.count_tokens.return_value = SimpleNamespace(
+            input_tokens=7
+        )
+        mock_anthropic.return_value = mock_client
+
+        response = handler.count(
+            TokenCountRequest(
+                model="nvidia_nim/test-model",
+                messages=[Message(role="user", content="hi")],
+            )
+        )
+
+    assert response.input_tokens == 7
+    mock_anthropic.assert_called_once_with(
+        api_key="sk-test", timeout=Settings().http_read_timeout
+    )
+
+
+def test_token_count_handler_logs_warning_when_exact_counter_fails() -> None:
+    """A failed exact count is logged (without raising) before falling back."""
+    exact_counter = MagicMock(side_effect=RuntimeError("upstream unavailable"))
+    handler = TokenCountHandler(
+        Settings(ANTHROPIC_API_KEY="sk-test"),
+        token_counter=lambda messages, system, tools: 42,
+        exact_token_counter=exact_counter,
+    )
+
+    with patch("free_claude_code.api.handlers.token_count.logger") as logger_mock:
+        response = handler.count(
+            TokenCountRequest(
+                model="nvidia_nim/test-model",
+                messages=[Message(role="user", content="hi")],
+            )
+        )
+
+    assert response.input_tokens == 42
+    logger_mock.warning.assert_called_once()
+    assert "upstream unavailable" in logger_mock.warning.call_args.args[1]

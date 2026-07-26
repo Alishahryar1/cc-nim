@@ -238,6 +238,31 @@ class TestSettings:
 
         assert Settings().ollama_api_key == "ollama-cloud-key"
 
+    def test_anthropic_api_key_defaults_empty(self, monkeypatch):
+        """ANTHROPIC_API_KEY is optional and defaults to an empty string."""
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
+        monkeypatch.setitem(Settings.model_config, "env_file", ())
+
+        assert Settings().anthropic_api_key == ""
+
+    def test_anthropic_api_key_from_env(self, monkeypatch):
+        """ANTHROPIC_API_KEY env var is loaded into settings."""
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.setenv("ANTHROPIC_API_KEY", "sk-ant-test-key")
+
+        assert Settings().anthropic_api_key == "sk-ant-test-key"
+
+    def test_anthropic_api_key_from_constructor_kwarg(self):
+        """ANTHROPIC_API_KEY can be set directly via the constructor (as tests do)."""
+        from free_claude_code.config.settings import Settings
+
+        assert Settings(ANTHROPIC_API_KEY="sk-ant-ctor").anthropic_api_key == (
+            "sk-ant-ctor"
+        )
+
     def test_provider_rate_limit_from_env(self, monkeypatch):
         """PROVIDER_RATE_LIMIT env var is loaded into settings."""
         from free_claude_code.config.settings import Settings
