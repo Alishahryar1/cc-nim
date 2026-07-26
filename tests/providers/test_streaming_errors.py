@@ -120,6 +120,7 @@ def _make_stream_runner(
         request=request or _make_request(),
         input_tokens=0,
         request_id=request_id,
+        response_model=None,
         reasoning=DEFAULT_REASONING_POLICY,
     )
 

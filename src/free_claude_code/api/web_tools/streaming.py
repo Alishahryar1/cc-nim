@@ -40,6 +40,7 @@ async def stream_web_server_tool_response(
     input_tokens: int,
     *,
     web_fetch_egress: WebFetchEgressPolicy,
+    response_model: str | None = None,
     verbose_client_errors: bool = False,
 ) -> AsyncIterator[str]:
     """Stream a minimal Anthropic-shaped turn for forced `web_search` / `web_fetch` (local fallback).
@@ -71,6 +72,7 @@ async def stream_web_server_tool_response(
         "web_fetch": WEB_FETCH_TOOL_ERROR,
     }
 
+    wire_model = request.model if response_model is None else response_model
     yield format_sse_event(
         "message_start",
         {
@@ -80,7 +82,7 @@ async def stream_web_server_tool_response(
                 "type": "message",
                 "role": "assistant",
                 "content": [],
-                "model": request.model,
+                "model": wire_model,
                 "stop_reason": None,
                 "stop_sequence": None,
                 "usage": {"input_tokens": input_tokens, "output_tokens": 1},

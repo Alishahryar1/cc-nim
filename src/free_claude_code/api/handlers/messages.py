@@ -277,7 +277,7 @@ class MessagesHandler:
             stage="routing",
             event="free_claude_code.api.optimization.safety_classifier_no_thinking",
             source="api",
-            model=routed.request.model,
+            model=routed.resolved.original_model,
             changed=changed,
         )
         if not changed:
@@ -308,7 +308,7 @@ class MessagesHandler:
             stage="routing",
             event="free_claude_code.api.optimization.web_server_tool",
             source="api",
-            model=routed.request.model,
+            model=routed.resolved.original_model,
         )
         egress = WebFetchEgressPolicy(
             allow_private_network_targets=self._settings.web_fetch_allow_private_networks,
@@ -321,6 +321,7 @@ class MessagesHandler:
                 routed.request,
                 input_tokens=input_tokens,
                 web_fetch_egress=egress,
+                response_model=routed.resolved.original_model,
                 verbose_client_errors=self._settings.log_api_error_tracebacks,
             ),
         )
@@ -328,14 +329,18 @@ class MessagesHandler:
     def _intercept_local_optimization(
         self, routed: RoutedMessagesRequest
     ) -> _MessagesResult | None:
-        optimized = try_optimizations(routed.request, self._settings)
+        optimized = try_optimizations(
+            routed.request,
+            self._settings,
+            response_model=routed.resolved.original_model,
+        )
         if optimized is None:
             return None
         trace_event(
             stage="routing",
             event="free_claude_code.api.optimization.short_circuit",
             source="api",
-            model=routed.request.model,
+            model=routed.resolved.original_model,
         )
         return _MessagesCompleteResult(optimized)
 

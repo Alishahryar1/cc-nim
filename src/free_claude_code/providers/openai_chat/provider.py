@@ -317,6 +317,7 @@ class OpenAIChatProvider(BaseProvider):
         input_tokens: int = 0,
         *,
         request_id: str | None = None,
+        response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> AsyncIterator[str]:
         """Stream response in Anthropic SSE format."""
@@ -325,6 +326,7 @@ class OpenAIChatProvider(BaseProvider):
             request=request,
             input_tokens=input_tokens,
             request_id=request_id,
+            response_model=response_model,
             reasoning=reasoning,
         )
         return runner.run()
@@ -340,12 +342,16 @@ class _OpenAIChatStreamRunner:
         request: MessagesRequest,
         input_tokens: int,
         request_id: str | None,
+        response_model: str | None,
         reasoning: ReasoningPolicy,
     ) -> None:
         self._provider = provider
         self._request = request
         self._input_tokens = input_tokens
         self._request_id = request_id
+        self._response_model = (
+            request.model if response_model is None else response_model
+        )
         self._reasoning = reasoning
         self._message_id = f"msg_{uuid.uuid4()}"
         self._tool_calls = OpenAIToolCallAssembler(
@@ -381,7 +387,7 @@ class _OpenAIChatStreamRunner:
             source="provider",
             provider=tag,
             request_id=self._request_id,
-            gateway_model=self._request.model,
+            gateway_model=self._response_model,
             downstream_model=body.get("model"),
             message_count=len(body.get("messages", [])),
             tool_count=len(body.get("tools", [])),
@@ -995,7 +1001,7 @@ class _OpenAIChatStreamRunner:
     def _new_ledger(self) -> AnthropicStreamLedger:
         return AnthropicStreamLedger(
             self._message_id,
-            self._request.model,
+            self._response_model,
             self._input_tokens,
             log_raw_events=self._provider._config.log_raw_sse_events,
         )

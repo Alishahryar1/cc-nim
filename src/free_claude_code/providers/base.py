@@ -111,6 +111,7 @@ class BaseProvider(ABC):
         input_tokens: int = 0,
         *,
         request_id: str | None = None,
+        response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> AsyncIterator[str]:
         """Stream response in Anthropic SSE format."""
