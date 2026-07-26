@@ -1,0 +1,102 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@import url('https://fonts.googleapis.com/css2?family=Poppins:wght@300;400;500;600;700;800&family=Playfair+Display:wght@700;800;900&family=Inter:wght@300;400;500;600;700&display=swap');
+
+:root {
+  --font-poppins: 'Poppins', sans-serif;
+  --font-playfair: 'Playfair Display', serif;
+  --font-inter: 'Inter', sans-serif;
+  --color-dark: #0f0f0f;
+  --color-dark-secondary: #1a1a1a;
+  --color-dark-tertiary: #2a2a2a;
+  --color-accent: #ff6b35;
+  --color-accent-light: #ff8c5a;
+}
+
+* {
+  margin: 0;
+  padding: 0;
+  box-sizing: border-box;
+}
+
+html {
+  scroll-behavior: smooth;
+}
+
+body {
+  background-color: var(--color-dark);
+  color: #ffffff;
+  font-family: var(--font-poppins);
+  overflow-x: hidden;
+}
+
+/* Custom scrollbar */
+::-webkit-scrollbar {
+  width: 10px;
+}
+
+::-webkit-scrollbar-track {
+  background: var(--color-dark-secondary);
+}
+
+::-webkit-scrollbar-thumb {
+  background: var(--color-accent);
+  border-radius: 5px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: var(--color-accent-light);
+}
+
+/* Utility classes */
+.container-custom {
+  max-width: 1400px;
+  margin: 0 auto;
+  padding: 0 24px;
+}
+
+.gradient-text {
+  background: linear-gradient(135deg, #ff6b35 0%, #ff8c5a 100%);
+  -webkit-background-clip: text;
+  -webkit-text-fill-color: transparent;
+  background-clip: text;
+}
+
+.gradient-accent {
+  background: linear-gradient(135deg, rgba(255, 107, 53, 0.1) 0%, rgba(255, 140, 90, 0.1) 100%);
+}
+
+.glass-effect {
+  background: rgba(255, 255, 255, 0.05);
+  backdrop-filter: blur(10px);
+  border: 1px solid rgba(255, 255, 255, 0.1);
+}
+
+/* Animations */
+@keyframes float {
+  0%, 100% {
+    transform: translateY(0px);
+  }
+  50% {
+    transform: translateY(-20px);
+  }
+}
+
+@keyframes glow-pulse {
+  0%, 100% {
+    box-shadow: 0 0 20px rgba(255, 107, 53, 0.3);
+  }
+  50% {
+    box-shadow: 0 0 40px rgba(255, 107, 53, 0.6);
+  }
+}
+
+.animate-float {
+  animation: float 3s ease-in-out infinite;
+}
+
+.animate-glow-pulse {
+  animation: glow-pulse 2s ease-in-out infinite;
+}
