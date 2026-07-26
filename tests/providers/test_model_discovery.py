@@ -98,23 +98,30 @@ async def test_nim_lists_openai_compatible_model_infos() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "provider_id,base_url,expected_model",
+    "provider_id,expected_model",
     [
-        ("llamacpp", "http://localhost:8080/v1", "default"),
-        ("ollama", "http://localhost:11434", "llama3.1"),
+        ("llamacpp", "default"),
+        ("ollama", "llama3.1"),
     ],
 )
 async def test_local_special_providers_list_model_infos(
-    provider_id: str, base_url: str, expected_model: str
+    provider_id: str, expected_model: str
 ) -> None:
-    from free_claude_code.config.settings import Settings
+    from free_claude_code.providers.openai_chat import OpenAIChatProvider
     from free_claude_code.providers.runtime.factory import create_provider
 
     settings = Settings()
     provider = create_provider(provider_id, settings)
-    infos = await provider.list_model_infos()
-    assert len(infos) == 1
-    assert next(iter(infos)).model_id == expected_model
+    assert isinstance(provider, OpenAIChatProvider)
+    with patch.object(
+        provider._client.models,
+        "list",
+        new_callable=AsyncMock,
+        return_value=SimpleNamespace(data=[SimpleNamespace(id=expected_model)]),
+    ):
+        infos = await provider.list_model_infos()
+        assert len(infos) == 1
+        assert next(iter(infos)).model_id == expected_model
 
 
 @pytest.mark.asyncio

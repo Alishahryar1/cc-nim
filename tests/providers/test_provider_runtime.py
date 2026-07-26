@@ -410,6 +410,7 @@ def test_create_provider_instantiates_each_builtin():
         provider_rate_window=11,
         provider_max_concurrency=3,
         sambanova_api_key="test_sambanova_key",
+        siliconflow_api_key="test_siliconflow_key",
     )
     cases = {
         "nvidia_nim": NvidiaNimProvider,
@@ -422,6 +423,7 @@ def test_create_provider_instantiates_each_builtin():
         "minimax": OpenAIChatProvider,
         "fireworks": OpenAIChatProvider,
         "cloudflare": CloudflareProvider,
+        "siliconflow": OpenAIChatProvider,
         "lmstudio": LMStudioProvider,
         "llamacpp": OpenAIChatProvider,
         "ollama": OpenAIChatProvider,
