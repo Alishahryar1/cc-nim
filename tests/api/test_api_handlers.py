@@ -561,3 +561,62 @@ def test_token_count_handler_routes_and_counts_tokens() -> None:
     assert all(
         call.kwargs["request_id"] == "req_ingress" for call in trace.call_args_list
     )
+
+
+def test_token_count_handler_uses_exact_counter_when_api_key_set() -> None:
+    exact_counter = MagicMock(return_value=17)
+    handler = TokenCountHandler(
+        Settings(ANTHROPIC_API_KEY="sk-test"),
+        token_counter=lambda messages, system, tools: 999,
+        exact_token_counter=exact_counter,
+    )
+
+    response = handler.count(
+        TokenCountRequest(
+            model="nvidia_nim/test-model",
+            messages=[Message(role="user", content="hi")],
+        )
+    )
+
+    assert response.input_tokens == 17
+    exact_counter.assert_called_once()
+    assert exact_counter.call_args.kwargs["api_key"] == "sk-test"
+    assert exact_counter.call_args.kwargs["model"] == "claude-sonnet-4-5-20250929"
+
+
+def test_token_count_handler_falls_back_when_exact_counter_fails() -> None:
+    exact_counter = MagicMock(side_effect=RuntimeError("upstream unavailable"))
+    handler = TokenCountHandler(
+        Settings(ANTHROPIC_API_KEY="sk-test"),
+        token_counter=lambda messages, system, tools: 42,
+        exact_token_counter=exact_counter,
+    )
+
+    response = handler.count(
+        TokenCountRequest(
+            model="nvidia_nim/test-model",
+            messages=[Message(role="user", content="hi")],
+        )
+    )
+
+    assert response.input_tokens == 42
+    exact_counter.assert_called_once()
+
+
+def test_token_count_handler_skips_exact_counter_without_api_key() -> None:
+    exact_counter = MagicMock(return_value=17)
+    handler = TokenCountHandler(
+        Settings(),
+        token_counter=lambda messages, system, tools: 42,
+        exact_token_counter=exact_counter,
+    )
+
+    response = handler.count(
+        TokenCountRequest(
+            model="nvidia_nim/test-model",
+            messages=[Message(role="user", content="hi")],
+        )
+    )
+
+    assert response.input_tokens == 42
+    exact_counter.assert_not_called()
