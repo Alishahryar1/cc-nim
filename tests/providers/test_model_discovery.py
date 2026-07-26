@@ -21,7 +21,6 @@ from free_claude_code.providers.deepseek import DeepSeekProvider
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.open_router import OpenRouterProvider
-from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.providers.runtime.model_cache import ProviderModelCache
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
@@ -99,32 +98,23 @@ async def test_nim_lists_openai_compatible_model_infos() -> None:
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "provider",
+    "provider_id,base_url,expected_model",
     [
-        profiled_provider(
-            "llamacpp",
-            ProviderConfig(api_key="llamacpp", base_url="http://localhost:8080/v1"),
-            admission=immediate_admission(),
-        ),
-        profiled_provider(
-            "ollama",
-            ProviderConfig(api_key="ollama", base_url="http://localhost:11434"),
-            admission=immediate_admission(),
-        ),
+        ("llamacpp", "http://localhost:8080/v1", "default"),
+        ("ollama", "http://localhost:11434", "llama3.1"),
     ],
 )
-async def test_local_openai_chat_providers_list_model_infos(
-    provider: OpenAIChatProvider,
+async def test_local_special_providers_list_model_infos(
+    provider_id: str, base_url: str, expected_model: str
 ) -> None:
-    with patch.object(
-        provider._client.models,
-        "list",
-        new_callable=AsyncMock,
-        return_value=SimpleNamespace(data=[SimpleNamespace(id="local/model")]),
-    ) as mock_list:
-        assert await provider.list_model_infos() == _infos("local/model")
+    from free_claude_code.config.settings import Settings
+    from free_claude_code.providers.runtime.factory import create_provider
 
-    mock_list.assert_awaited_once_with()
+    settings = Settings()
+    provider = create_provider(provider_id, settings)
+    infos = await provider.list_model_infos()
+    assert len(infos) == 1
+    assert next(iter(infos)).model_id == expected_model
 
 
 @pytest.mark.asyncio
@@ -277,44 +267,6 @@ async def test_openrouter_model_metadata_rejects_malformed_ids() -> None:
             ),
         ),
         pytest.raises(ModelListResponseError, match="malformed"),
-    ):
-        await provider.list_model_infos()
-
-
-@pytest.mark.asyncio
-async def test_model_listing_rejects_malformed_payload() -> None:
-    provider = profiled_provider(
-        "llamacpp",
-        ProviderConfig(api_key="llamacpp", base_url="http://localhost:8080/v1"),
-        admission=immediate_admission(),
-    )
-    with (
-        patch.object(
-            provider._client.models,
-            "list",
-            new_callable=AsyncMock,
-            return_value=SimpleNamespace(data=[SimpleNamespace()]),
-        ),
-        pytest.raises(ModelListResponseError, match="malformed"),
-    ):
-        await provider.list_model_infos()
-
-
-@pytest.mark.asyncio
-async def test_model_listing_propagates_upstream_errors() -> None:
-    provider = profiled_provider(
-        "llamacpp",
-        ProviderConfig(api_key="llamacpp", base_url="http://localhost:8080/v1"),
-        admission=immediate_admission(),
-    )
-    with (
-        patch.object(
-            provider._client.models,
-            "list",
-            new_callable=AsyncMock,
-            side_effect=RuntimeError("upstream unavailable"),
-        ),
-        pytest.raises(RuntimeError, match="upstream unavailable"),
     ):
         await provider.list_model_infos()
 

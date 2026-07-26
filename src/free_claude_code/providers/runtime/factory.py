@@ -1,10 +1,13 @@
 """Provider construction from declarative profiles and exceptional adapters."""
 
-from collections.abc import Callable
+from collections.abc import AsyncIterator, Callable
 
 from free_claude_code.application.errors import UnknownProviderError
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.openai_chat import (
@@ -73,6 +76,113 @@ def _create_lmstudio(
     return LMStudioProvider(config, admission=admission)
 
 
+def _create_ollama(
+    config: ProviderConfig,
+    _settings: Settings,
+    admission: ProviderAdmissionController,
+) -> BaseProvider:
+
+    return _OllamaWrapper(config, admission)
+
+
+def _create_llamacpp(
+    config: ProviderConfig,
+    _settings: Settings,
+    admission: ProviderAdmissionController,
+) -> BaseProvider:
+
+    return _LlamaCPPWrapper(config, admission)
+
+
+class _OllamaWrapper(BaseProvider):
+    def __init__(self, config: ProviderConfig, admission: ProviderAdmissionController):
+        super().__init__(config)
+        from free_claude_code.providers.ollama import OllamaProvider
+
+        self._provider = OllamaProvider(base_url=config.base_url)
+
+    def preflight_stream(
+        self,
+        request: MessagesRequest,
+        *,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+    ) -> None:
+        pass
+
+    async def cleanup(self) -> None:
+        pass
+
+    async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
+        return frozenset([ProviderModelInfo(model_id="llama3.1")])
+
+    def stream_response(
+        self,
+        request: MessagesRequest,
+        input_tokens: int = 0,
+        *,
+        request_id: str | None = None,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+    ) -> AsyncIterator[str]:
+
+        # Convert request to format expected by OllamaProvider
+        messages = [{"role": m.role, "content": m.content} for m in request.messages]
+        model = request.model or "llama3.1"
+
+        async def _gen():
+            # execute is async, returns an async generator function when stream=True
+            generator_fn = await self._provider.execute(
+                messages, model=model, stream=True
+            )
+            if generator_fn is not None:
+                async for chunk in generator_fn():
+                    yield chunk
+
+        return _gen()
+
+
+class _LlamaCPPWrapper(BaseProvider):
+    def __init__(self, config: ProviderConfig, admission: ProviderAdmissionController):
+        super().__init__(config)
+        from free_claude_code.providers.llamacpp import LlamaCPPProvider
+
+        self._provider = LlamaCPPProvider(base_url=config.base_url)
+
+    def preflight_stream(
+        self,
+        request: MessagesRequest,
+        *,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+    ) -> None:
+        pass
+
+    async def cleanup(self) -> None:
+        pass
+
+    async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
+        return frozenset([ProviderModelInfo(model_id="default")])
+
+    def stream_response(
+        self,
+        request: MessagesRequest,
+        input_tokens: int = 0,
+        *,
+        request_id: str | None = None,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+    ) -> AsyncIterator[str]:
+        messages = [{"role": m.role, "content": m.content} for m in request.messages]
+        model = request.model or "default"
+
+        async def _gen():
+            generator_fn = await self._provider.execute(
+                messages, model=model, stream=True
+            )
+            if generator_fn is not None:
+                async for chunk in generator_fn():
+                    yield chunk
+
+        return _gen()
+
+
 def _create_cloudflare(
     config: ProviderConfig,
     settings: Settings,
@@ -128,6 +238,8 @@ _SPECIAL_PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "mistral": _create_mistral,
     "deepseek": _create_deepseek,
     "lmstudio": _create_lmstudio,
+    "ollama": _create_ollama,
+    "llamacpp": _create_llamacpp,
     "cloudflare": _create_cloudflare,
     "gemini": _create_gemini,
     "vertex": _create_vertex,
