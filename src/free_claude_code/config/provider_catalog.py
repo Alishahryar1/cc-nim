@@ -232,6 +232,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         default_base_url=KIMI_CODE_DEFAULT_BASE,
         proxy_attr="kimi_code_proxy",
     ),
+    "kilo": ProviderDescriptor(
+        provider_id="kilo",
+        display_name="Kilo.ai",
+        credential_env="KILO_API_KEY",
+        credential_url="https://app.kilo.ai",
+        credential_attr="kilo_api_key",
+        default_base_url=KILO_DEFAULT_BASE,
+        proxy_attr="kilo_proxy",
+    ),
     "minimax": ProviderDescriptor(
         provider_id="minimax",
         display_name="MiniMax",
@@ -267,15 +276,6 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="sambanova_api_key",
         default_base_url=SAMBANOVA_DEFAULT_BASE,
         proxy_attr="sambanova_proxy",
-    ),
-    "kilo": ProviderDescriptor(
-        provider_id="kilo",
-        display_name="Kilo.ai",
-        credential_env="KILO_API_KEY",
-        credential_url="https://app.kilo.ai",
-        credential_attr="kilo_api_key",
-        default_base_url=KILO_DEFAULT_BASE,
-        proxy_attr="kilo_proxy",
     ),
     "fireworks": ProviderDescriptor(
         provider_id="fireworks",
