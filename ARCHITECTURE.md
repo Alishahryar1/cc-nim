@@ -804,10 +804,12 @@ Top-level `system` content stays distinct from inline `system` messages.
 Target-protocol conversion owns their representation: neutral OpenAI Chat
 conversion emits top-level `system` content as the sole leading system message
 and maps inline `system` content into ordered `user` turns. After tool-result
-dependencies are ordered, adjacent user content is coalesced into one turn so
-strict chat templates do not receive consecutive user roles. Conversion
-preserves content order and rejects unrepresentable blocks instead of dropping
-them. Provider policies do not reinterpret this role mapping.
+dependencies are ordered, a neutral whitespace-only assistant boundary closes
+any completed tool round before subsequent user input. Adjacent user content
+is then coalesced into one turn so strict chat templates receive neither
+`tool → user` nor consecutive user roles. Conversion preserves content order
+and rejects unrepresentable blocks instead of dropping them. Provider policies
+do not reinterpret this role mapping.
 
 User image conversion is a pure protocol operation. Core maps Anthropic base64
 and URL image sources to ordered OpenAI `image_url` content parts without

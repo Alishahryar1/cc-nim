@@ -6,7 +6,10 @@ from typing import Any
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
-from free_claude_code.core.anthropic import ReasoningReplayMode
+from free_claude_code.core.anthropic import (
+    ReasoningReplayMode,
+    is_synthetic_openai_tool_turn_boundary,
+)
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.streaming import AnthropicStreamLedger
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
@@ -78,7 +81,11 @@ def _apply_openrouter_reasoning_details_replay(
     for details in assistant_details:
         for index in range(cursor, len(messages)):
             message = messages[index]
-            if not isinstance(message, dict) or message.get("role") != "assistant":
+            if (
+                not isinstance(message, dict)
+                or message.get("role") != "assistant"
+                or is_synthetic_openai_tool_turn_boundary(message)
+            ):
                 continue
             existing = message.get("reasoning_details")
             if isinstance(existing, list):

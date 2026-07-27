@@ -6,6 +6,7 @@ from .conversion import (
     OpenAIConversionError,
     ReasoningReplayMode,
     build_base_request_body,
+    is_synthetic_openai_tool_turn_boundary,
 )
 from .errors import (
     anthropic_error_payload,
@@ -92,6 +93,7 @@ __all__ = [
     "get_block_attr",
     "get_block_type",
     "get_token_count",
+    "is_synthetic_openai_tool_turn_boundary",
     "map_stop_reason",
     "serialize_tool_result_content",
     "set_if_not_none",
