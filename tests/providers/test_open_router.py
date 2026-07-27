@@ -234,6 +234,71 @@ def test_reasoning_details_skip_neutral_tool_turn_boundary(open_router_provider)
     assert assistants[2]["reasoning_details"] == [second_detail]
 
 
+def test_reasoning_details_preserve_redacted_only_assistant_after_tool(
+    open_router_provider,
+):
+    first_detail = {"type": "reasoning.encrypted", "data": "first"}
+    second_detail = {"type": "reasoning.encrypted", "data": "second"}
+    request = MessagesRequest.model_validate(
+        {
+            "model": "m",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "redacted_thinking",
+                            "data": json.dumps(first_detail),
+                        },
+                        {
+                            "type": "tool_use",
+                            "id": "call_read",
+                            "name": "Read",
+                            "input": {},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_read",
+                            "content": "contents",
+                        }
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "redacted_thinking",
+                            "data": json.dumps(second_detail),
+                        }
+                    ],
+                },
+                {"role": "user", "content": "continue"},
+                {"role": "assistant", "content": "done"},
+            ],
+        }
+    )
+
+    body = open_router_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
+
+    assistants = [
+        message for message in body["messages"] if message["role"] == "assistant"
+    ]
+    assert assistants[0]["reasoning_details"] == [first_detail]
+    assert assistants[1] == {
+        "role": "assistant",
+        "content": " ",
+        "reasoning_details": [second_detail],
+    }
+    assert "reasoning_details" not in assistants[2]
+
+
 @pytest.mark.asyncio
 async def test_stream_maps_reasoning_content_and_details(open_router_provider):
     redacted = {"type": "reasoning.encrypted", "data": "opaque"}

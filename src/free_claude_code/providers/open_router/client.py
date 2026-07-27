@@ -6,7 +6,10 @@ from typing import Any
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
-from free_claude_code.core.anthropic import ReasoningReplayMode
+from free_claude_code.core.anthropic import (
+    ReasoningReplayMode,
+    is_synthetic_openai_tool_turn_boundary,
+)
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.streaming import AnthropicStreamLedger
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
@@ -81,7 +84,7 @@ def _apply_openrouter_reasoning_details_replay(
             if (
                 not isinstance(message, dict)
                 or message.get("role") != "assistant"
-                or _is_tool_turn_boundary(messages, index)
+                or is_synthetic_openai_tool_turn_boundary(message)
             ):
                 continue
             existing = message.get("reasoning_details")
@@ -91,22 +94,6 @@ def _apply_openrouter_reasoning_details_replay(
                 message["reasoning_details"] = list(details)
             cursor = index + 1
             break
-
-
-def _is_tool_turn_boundary(messages: list[Any], index: int) -> bool:
-    message = messages[index]
-    return (
-        isinstance(message, dict)
-        and message.get("role") == "assistant"
-        and message.get("content") == " "
-        and "tool_calls" not in message
-        and index > 0
-        and isinstance(messages[index - 1], dict)
-        and messages[index - 1].get("role") == "tool"
-        and index + 1 < len(messages)
-        and isinstance(messages[index + 1], dict)
-        and messages[index + 1].get("role") == "user"
-    )
 
 
 _PROFILE = OpenAIChatProfile(

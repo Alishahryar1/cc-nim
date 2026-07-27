@@ -7,6 +7,7 @@ from free_claude_code.core.anthropic import (
     OpenAIConversionError,
     ReasoningReplayMode,
     build_base_request_body,
+    is_synthetic_openai_tool_turn_boundary,
 )
 from free_claude_code.core.anthropic.models import MessagesRequest
 
@@ -1208,6 +1209,11 @@ def test_user_after_completed_tool_result_gets_neutral_assistant_boundary():
         "user",
     ]
     assert result[3] == {"role": "assistant", "content": " "}
+    assert is_synthetic_openai_tool_turn_boundary(result[3])
+    assert json.loads(json.dumps(result[3])) == {
+        "role": "assistant",
+        "content": " ",
+    }
     assert result[4]["content"] == "Please summarize it."
 
 

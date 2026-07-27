@@ -268,6 +268,17 @@ def _coalesce_openai_user_messages(
     return result
 
 
+class _SyntheticOpenAIToolTurnBoundary(dict[str, Any]):
+    """Identify an FCC-inserted assistant boundary until wire serialization."""
+
+    __slots__ = ()
+
+
+def is_synthetic_openai_tool_turn_boundary(message: object) -> bool:
+    """Return whether FCC inserted this message to close an OpenAI tool turn."""
+    return isinstance(message, _SyntheticOpenAIToolTurnBoundary)
+
+
 def _close_openai_tool_result_turns(
     messages: list[dict[str, Any]],
 ) -> list[dict[str, Any]]:
@@ -282,7 +293,9 @@ def _close_openai_tool_result_turns(
             # Some OpenAI-compatible chat templates reject a user role directly
             # after tool output. Non-empty whitespace closes the assistant turn
             # without inventing model content.
-            result.append({"role": "assistant", "content": " "})
+            result.append(
+                _SyntheticOpenAIToolTurnBoundary(role="assistant", content=" ")
+            )
         result.append(message)
     return result
 
