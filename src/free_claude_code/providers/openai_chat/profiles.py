@@ -295,6 +295,15 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             enabled_value="medium",
         ),
     ),
+    "kilo": OpenAIChatProfile(
+        _policy(
+            "KILO",
+            ReasoningReplayMode.REASONING_CONTENT,
+            include_extra_body=True,
+            extra_body_validator=validate_extra_body_does_not_override_reasoning_fields,
+        ),
+        ReasoningObject(_ALL_EFFORTS),
+    ),
     "fireworks": OpenAIChatProfile(
         _policy(
             "FIREWORKS",
