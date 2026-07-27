@@ -78,7 +78,11 @@ def _apply_openrouter_reasoning_details_replay(
     for details in assistant_details:
         for index in range(cursor, len(messages)):
             message = messages[index]
-            if not isinstance(message, dict) or message.get("role") != "assistant":
+            if (
+                not isinstance(message, dict)
+                or message.get("role") != "assistant"
+                or _is_tool_turn_boundary(messages, index)
+            ):
                 continue
             existing = message.get("reasoning_details")
             if isinstance(existing, list):
@@ -87,6 +91,22 @@ def _apply_openrouter_reasoning_details_replay(
                 message["reasoning_details"] = list(details)
             cursor = index + 1
             break
+
+
+def _is_tool_turn_boundary(messages: list[Any], index: int) -> bool:
+    message = messages[index]
+    return (
+        isinstance(message, dict)
+        and message.get("role") == "assistant"
+        and message.get("content") == " "
+        and "tool_calls" not in message
+        and index > 0
+        and isinstance(messages[index - 1], dict)
+        and messages[index - 1].get("role") == "tool"
+        and index + 1 < len(messages)
+        and isinstance(messages[index + 1], dict)
+        and messages[index + 1].get("role") == "user"
+    )
 
 
 _PROFILE = OpenAIChatProfile(

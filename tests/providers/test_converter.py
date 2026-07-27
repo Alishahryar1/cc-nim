@@ -244,8 +244,10 @@ def test_inline_system_message_follows_completed_tool_result() -> None:
         "user",
         "assistant",
         "tool",
+        "assistant",
         "user",
     ]
+    assert body["messages"][3] == {"role": "assistant", "content": " "}
     assert body["messages"][-1]["content"] == "New instructions"
 
 
@@ -1137,7 +1139,26 @@ def test_convert_assistant_text_after_tool_use_inserts_after_tool_results():
     assert result[2] == {"role": "assistant", "content": "Post-tool commentary"}
 
 
-def test_unrelated_user_text_before_tool_result_is_buffered_until_after_tool_result():
+def _completed_single_tool_turn(*, user_text=None):
+    result_blocks = [
+        MockBlock(
+            type="tool_result",
+            tool_use_id="call_z",
+            content="file contents",
+        )
+    ]
+    if user_text is not None:
+        result_blocks.append(MockBlock(type="text", text=user_text))
+    return [
+        MockMessage(
+            "assistant",
+            [MockBlock(type="tool_use", id="call_z", name="Read", input={})],
+        ),
+        MockMessage("user", result_blocks),
+    ]
+
+
+def test_unrelated_user_text_before_tool_result_is_buffered_after_closed_tool_turn():
     messages = [
         MockMessage(
             "assistant",
@@ -1158,10 +1179,121 @@ def test_unrelated_user_text_before_tool_result_is_buffered_until_after_tool_res
 
     result = AnthropicToOpenAIConverter.convert_messages(messages)
 
-    assert [message["role"] for message in result] == ["assistant", "tool", "user"]
+    assert [message["role"] for message in result] == [
+        "assistant",
+        "tool",
+        "assistant",
+        "user",
+    ]
     assert result[0]["tool_calls"][0]["id"] == "call_z"
     assert result[1]["tool_call_id"] == "call_z"
-    assert result[2]["content"] == "Please also summarize it."
+    assert result[2] == {"role": "assistant", "content": " "}
+    assert result[3]["content"] == "Please also summarize it."
+
+
+def test_user_after_completed_tool_result_gets_neutral_assistant_boundary():
+    messages = [
+        MockMessage("user", "Read the file."),
+        *_completed_single_tool_turn(),
+        MockMessage("user", "Please summarize it."),
+    ]
+
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert [message["role"] for message in result] == [
+        "user",
+        "assistant",
+        "tool",
+        "assistant",
+        "user",
+    ]
+    assert result[3] == {"role": "assistant", "content": " "}
+    assert result[4]["content"] == "Please summarize it."
+
+
+def test_user_text_beside_tool_result_follows_neutral_assistant_boundary():
+    messages = _completed_single_tool_turn(user_text="Please summarize it.")
+
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert [message["role"] for message in result] == [
+        "assistant",
+        "tool",
+        "assistant",
+        "user",
+    ]
+    assert result[2] == {"role": "assistant", "content": " "}
+    assert result[3]["content"] == "Please summarize it."
+
+
+def test_multiple_tool_results_get_one_assistant_boundary_before_user():
+    messages = [
+        MockMessage(
+            "assistant",
+            [
+                MockBlock(type="tool_use", id="call_a", name="ReadA", input={}),
+                MockBlock(type="tool_use", id="call_b", name="ReadB", input={}),
+            ],
+        ),
+        MockMessage(
+            "user",
+            [
+                MockBlock(
+                    type="tool_result",
+                    tool_use_id="call_b",
+                    content="result b",
+                ),
+                MockBlock(
+                    type="tool_result",
+                    tool_use_id="call_a",
+                    content="result a",
+                ),
+            ],
+        ),
+        MockMessage("user", "Compare both results."),
+    ]
+
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert [message["role"] for message in result] == [
+        "assistant",
+        "tool",
+        "tool",
+        "assistant",
+        "user",
+    ]
+    assert [message["tool_call_id"] for message in result[1:3]] == [
+        "call_a",
+        "call_b",
+    ]
+    assert result[3] == {"role": "assistant", "content": " "}
+    assert result[4]["content"] == "Compare both results."
+
+
+def test_terminal_tool_result_does_not_get_assistant_boundary():
+    messages = _completed_single_tool_turn()
+
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert [message["role"] for message in result] == ["assistant", "tool"]
+
+
+def test_existing_assistant_completion_prevents_extra_tool_turn_boundary():
+    messages = [
+        *_completed_single_tool_turn(),
+        MockMessage("assistant", "The file contains useful information."),
+        MockMessage("user", "Please summarize it."),
+    ]
+
+    result = AnthropicToOpenAIConverter.convert_messages(messages)
+
+    assert [message["role"] for message in result] == [
+        "assistant",
+        "tool",
+        "assistant",
+        "user",
+    ]
+    assert result[2]["content"] == "The file contains useful information."
 
 
 def test_unrelated_assistant_text_before_tool_result_is_buffered_until_after_tool_result():

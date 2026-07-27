@@ -268,6 +268,25 @@ def _coalesce_openai_user_messages(
     return result
 
 
+def _close_openai_tool_result_turns(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Close completed tool rounds before subsequent user input."""
+    result: list[dict[str, Any]] = []
+    for message in messages:
+        if (
+            message.get("role") == "user"
+            and result
+            and result[-1].get("role") == "tool"
+        ):
+            # Some OpenAI-compatible chat templates reject a user role directly
+            # after tool output. Non-empty whitespace closes the assistant turn
+            # without inventing model content.
+            result.append({"role": "assistant", "content": " "})
+        result.append(message)
+    return result
+
+
 class _OpenAIChatHistoryLedger:
     """Assemble OpenAI chat history while respecting tool-result dependencies."""
 
@@ -431,7 +450,9 @@ class AnthropicToOpenAIConverter:
                 else:
                     ledger.add_tool_turn(segment)
 
-        return _coalesce_openai_user_messages(ledger.finish())
+        ordered_messages = ledger.finish()
+        closed_messages = _close_openai_tool_result_turns(ordered_messages)
+        return _coalesce_openai_user_messages(closed_messages)
 
     @staticmethod
     def _convert_message_to_segments(
