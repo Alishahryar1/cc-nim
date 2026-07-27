@@ -498,6 +498,13 @@ exact client token budget without guessing provider behavior. `ResolvedModel`
 owns the selected route and preference; `RoutedMessagesRequest` owns the final
 request-scoped policy passed to execution.
 
+Routing keeps model identity split at the application boundary. The routed
+request carries the provider model sent upstream, while
+`ResolvedModel.original_model` remains the stable gateway model exposed in
+Anthropic responses and traces. `ProviderExecutor` passes both identities
+explicitly; providers, local optimizations, and local server tools must never
+publish the private upstream model as the response model.
+
 `GET /v1/models` advertises:
 
 - configured provider model refs;

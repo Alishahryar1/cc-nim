@@ -233,3 +233,23 @@ class TestTryOptimizations:
         settings.enable_filepath_extraction_mock = False
         req = _make_request("random user message")
         assert try_optimizations(req, settings) is None
+
+    def test_response_uses_gateway_model_without_changing_routed_request(self):
+        settings = Settings()
+        settings.enable_network_probe_mock = True
+        req = _make_request("quota", max_tokens=1)
+        req.model = "upstream-model"
+
+        with patch(
+            "free_claude_code.api.optimization_handlers.is_quota_check_request",
+            return_value=True,
+        ):
+            result = try_optimizations(
+                req,
+                settings,
+                response_model="anthropic/provider/upstream-model",
+            )
+
+        assert result is not None
+        assert result.model == "anthropic/provider/upstream-model"
+        assert req.model == "upstream-model"
