@@ -1,6 +1,11 @@
 """Provider configuration construction from neutral catalog metadata."""
 
 from free_claude_code.application.errors import ApplicationUnavailableError
+from free_claude_code.config.credentials import (
+    CredentialStrategy,
+    get_credential_strategy,
+    parse_api_keys,
+)
 from free_claude_code.config.provider_catalog import ProviderDescriptor
 from free_claude_code.config.settings import Settings
 from free_claude_code.providers.base import ProviderConfig
@@ -47,12 +52,28 @@ def require_provider_credential(
     raise ApplicationUnavailableError(message)
 
 
+def get_credential_strategy_for_provider(
+    descriptor: ProviderDescriptor, settings: Settings
+) -> CredentialStrategy:
+    """Get the credential rotation strategy for a provider.
+
+    Returns the configured strategy or defaults to SEQUENTIAL.
+    Strategy can be set via {PROVIDER_ID}_CREDENTIAL_STRATEGY env var.
+    """
+    strategy_attr = f"{descriptor.provider_id.replace('-', '_')}_credential_strategy"
+    strategy_str = string_setting(settings, strategy_attr)
+    return get_credential_strategy(strategy_str)
+
+
 def build_provider_config(
     descriptor: ProviderDescriptor, settings: Settings
 ) -> ProviderConfig:
     """Build shared provider configuration for one provider descriptor."""
     credential = provider_credential(descriptor, settings)
     require_provider_credential(descriptor, credential)
+    # parse multiple keys (comma/semicolon/space separated) but keep the original
+    # credential string for compatibility.
+    api_keys = parse_api_keys(credential)
     base_url = string_setting(
         settings, descriptor.base_url_attr, descriptor.default_base_url or ""
     )
@@ -62,8 +83,13 @@ def build_provider_config(
             f"Provider {descriptor.provider_id!r} has no configured base URL."
         )
     proxy = string_setting(settings, descriptor.proxy_attr)
+    # choose primary key for backward compatibility
+    primary = api_keys[0] if api_keys else credential
+    strategy = get_credential_strategy_for_provider(descriptor, settings)
     return ProviderConfig(
-        api_key=credential,
+        api_key=primary,
+        api_keys=api_keys,
+        credential_strategy=strategy.value,
         base_url=resolved_base_url,
         rate_limit=settings.provider_rate_limit,
         rate_window=settings.provider_rate_window,

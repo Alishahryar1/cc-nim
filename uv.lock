@@ -640,7 +640,7 @@ dependencies = [
     { name = "python-telegram-bot" },
     { name = "requests", extra = ["socks"] },
     { name = "tiktoken" },
-    { name = "uvicorn" },
+    { name = "uvicorn", extra = ["standard"] },
 ]
 
 [package.optional-dependencies]
@@ -692,7 +692,7 @@ requires-dist = [
     { name = "tiktoken", specifier = ">=0.13.0" },
     { name = "torch", marker = "extra == 'voice-local'", specifier = ">=2.13.0", index = "https://download.pytorch.org/whl/cu130" },
     { name = "transformers", marker = "extra == 'voice-local'", specifier = ">=5.14.1" },
-    { name = "uvicorn", specifier = ">=0.51.0" },
+    { name = "uvicorn", extras = ["standard"], specifier = ">=0.51.0" },
 ]
 provides-extras = ["voice", "voice-local"]
 

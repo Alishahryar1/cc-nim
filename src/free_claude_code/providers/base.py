@@ -25,8 +25,13 @@ class ProviderConfig:
     (e.g. NIM temperature, top_p) are passed by the provider constructor.
     """
 
+    # primary api_key kept for backward compatibility with older providers
     api_key: str
-    base_url: str
+    # allow multiple API keys for fallback/rotation
+    api_keys: tuple[str, ...] = ()
+    # credential selection strategy: sequential, round_robin, or random
+    credential_strategy: str = "sequential"
+    base_url: str = ""
     rate_limit: int | None = None
     rate_window: int = 60
     max_concurrency: int = 5
@@ -43,6 +48,7 @@ class BaseProvider(ABC):
 
     def __init__(self, config: ProviderConfig):
         self._config = config
+        self._api_key: str
 
     @abstractmethod
     def preflight_stream(

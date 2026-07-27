@@ -7,11 +7,7 @@ from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 from .constants import HTTP_CONNECT_TIMEOUT_DEFAULT
-from .env_files import (
-    ANTHROPIC_AUTH_TOKEN_ENV,
-    env_file_override,
-    settings_env_files,
-)
+from .env_files import env_file_override, settings_env_files
 from .nim import NimSettings
 from .provider_catalog import BEDROCK_DEFAULT_BASE, SUPPORTED_PROVIDER_IDS
 from .reasoning import ReasoningPreference
@@ -20,40 +16,58 @@ from .reasoning import ReasoningPreference
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
-    # ==================== OpenRouter Config ====================
     open_router_api_key: str = Field(default="", validation_alias="OPENROUTER_API_KEY")
+    open_router_credential_strategy: str = Field(
+        default="sequential", validation_alias="OPENROUTER_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== Mistral La Plateforme ====================
     mistral_api_key: str = Field(default="", validation_alias="MISTRAL_API_KEY")
+    mistral_credential_strategy: str = Field(
+        default="sequential", validation_alias="MISTRAL_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== Mistral Codestral (codestral.mistral.ai) ====================
     codestral_api_key: str = Field(default="", validation_alias="CODESTRAL_API_KEY")
+    codestral_credential_strategy: str = Field(
+        default="sequential", validation_alias="CODESTRAL_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== DeepSeek Config ====================
     deepseek_api_key: str = Field(default="", validation_alias="DEEPSEEK_API_KEY")
+    deepseek_credential_strategy: str = Field(
+        default="sequential", validation_alias="DEEPSEEK_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== Kimi Config ====================
     kimi_api_key: str = Field(default="", validation_alias="KIMI_API_KEY")
+    kimi_credential_strategy: str = Field(
+        default="sequential", validation_alias="KIMI_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== Kimi Code Subscription ====================
     kimi_code_api_key: str = Field(default="", validation_alias="KIMI_CODE_API_KEY")
+    kimi_code_credential_strategy: str = Field(
+        default="sequential", validation_alias="KIMI_CODE_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== Wafer Config ====================
     wafer_api_key: str = Field(default="", validation_alias="WAFER_API_KEY")
+    wafer_credential_strategy: str = Field(
+        default="sequential", validation_alias="WAFER_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== MiniMax Config ====================
     minimax_api_key: str = Field(default="", validation_alias="MINIMAX_API_KEY")
+    minimax_credential_strategy: str = Field(
+        default="sequential", validation_alias="MINIMAX_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== OpenCode Zen / OpenCode Go ====================
-    # Same key from opencode.ai/auth; zen uses prefix ``opencode/``, Go uses ``opencode_go/``.
     opencode_api_key: str = Field(default="", validation_alias="OPENCODE_API_KEY")
+    opencode_credential_strategy: str = Field(
+        default="sequential", validation_alias="OPENCODE_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== Vercel AI Gateway ====================
     vercel_ai_gateway_api_key: str = Field(
         default="", validation_alias="AI_GATEWAY_API_KEY"
     )
+    vercel_ai_gateway_credential_strategy: str = Field(
+        default="sequential", validation_alias="VERCEL_AI_GATEWAY_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== Amazon Bedrock Mantle ====================
     bedrock_api_key: str = Field(
         default="", validation_alias="AWS_BEARER_TOKEN_BEDROCK"
     )
@@ -61,51 +75,81 @@ class Settings(BaseSettings):
         default=BEDROCK_DEFAULT_BASE,
         validation_alias="BEDROCK_BASE_URL",
     )
+    bedrock_credential_strategy: str = Field(
+        default="sequential", validation_alias="BEDROCK_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== Hugging Face Inference Providers ====================
     huggingface_api_key: str = Field(default="", validation_alias="HUGGINGFACE_API_KEY")
+    huggingface_credential_strategy: str = Field(
+        default="sequential", validation_alias="HUGGINGFACE_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== Cohere Compatibility API ====================
     cohere_api_key: str = Field(default="", validation_alias="COHERE_API_KEY")
+    cohere_credential_strategy: str = Field(
+        default="sequential", validation_alias="COHERE_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== GitHub Models ====================
     github_models_token: str = Field(default="", validation_alias="GITHUB_MODELS_TOKEN")
+    github_models_credential_strategy: str = Field(
+        default="sequential", validation_alias="GITHUB_MODELS_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== SambaNova Cloud ====================
     sambanova_api_key: str = Field(default="", validation_alias="SAMBANOVA_API_KEY")
+    sambanova_credential_strategy: str = Field(
+        default="sequential", validation_alias="SAMBANOVA_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== Z.ai Config ====================
     zai_api_key: str = Field(default="", validation_alias="ZAI_API_KEY")
+    zai_credential_strategy: str = Field(
+        default="sequential", validation_alias="ZAI_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== Fireworks AI Config ====================
     fireworks_api_key: str = Field(default="", validation_alias="FIREWORKS_API_KEY")
+    fireworks_credential_strategy: str = Field(
+        default="sequential", validation_alias="FIREWORKS_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== Cloudflare Workers AI Config ====================
     cloudflare_api_token: str = Field(
         default="", validation_alias="CLOUDFLARE_API_TOKEN"
     )
     cloudflare_account_id: str = Field(
         default="", validation_alias="CLOUDFLARE_ACCOUNT_ID"
     )
+    cloudflare_credential_strategy: str = Field(
+        default="sequential", validation_alias="CLOUDFLARE_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== Google Gemini (Google AI Studio) ====================
     gemini_api_key: str = Field(default="", validation_alias="GEMINI_API_KEY")
+    gemini_credential_strategy: str = Field(
+        default="sequential", validation_alias="GEMINI_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== Google Vertex AI ====================
     vertex_project_id: str = Field(default="", validation_alias="VERTEX_PROJECT_ID")
     vertex_location: str = Field(default="global", validation_alias="VERTEX_LOCATION")
+    vertex_credential_strategy: str = Field(
+        default="sequential", validation_alias="VERTEX_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== Groq (OpenAI-compatible) ====================
     groq_api_key: str = Field(default="", validation_alias="GROQ_API_KEY")
+    groq_credential_strategy: str = Field(
+        default="sequential", validation_alias="GROQ_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== Cerebras Inference (OpenAI-compatible) ====================
     cerebras_api_key: str = Field(default="", validation_alias="CEREBRAS_API_KEY")
+    cerebras_credential_strategy: str = Field(
+        default="sequential", validation_alias="CEREBRAS_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== Ollama Cloud ====================
     ollama_api_key: str = Field(default="", validation_alias="OLLAMA_API_KEY")
+    ollama_credential_strategy: str = Field(
+        default="sequential", validation_alias="OLLAMA_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== Messaging Platform Selection ====================
-    # Valid: "telegram" | "discord" | "none"
+    siliconflow_api_key: str = Field(default="", validation_alias="SILICONFLOW_API_KEY")
+    siliconflow_credential_strategy: str = Field(
+        default="sequential", validation_alias="SILICONFLOW_CREDENTIAL_STRATEGY"
+    )
+
     messaging_platform: str = Field(
         default="discord", validation_alias="MESSAGING_PLATFORM"
     )
@@ -116,40 +160,32 @@ class Settings(BaseSettings):
         default=1.0, validation_alias="MESSAGING_RATE_WINDOW"
     )
 
-    # ==================== NVIDIA NIM Config ====================
     nvidia_nim_api_key: str = ""
+    nvidia_nim_credential_strategy: str = Field(
+        default="sequential", validation_alias="NVIDIA_NIM_CREDENTIAL_STRATEGY"
+    )
 
-    # ==================== LM Studio Config ====================
     lm_studio_base_url: str = Field(
         default="http://localhost:1234/v1",
         validation_alias="LM_STUDIO_BASE_URL",
     )
-
-    # ==================== Llama.cpp Config ====================
     llamacpp_base_url: str = Field(
         default="http://localhost:8080/v1",
         validation_alias="LLAMACPP_BASE_URL",
     )
-
-    # ==================== Ollama Config ====================
     ollama_base_url: str = Field(
         default="http://localhost:11434",
         validation_alias="OLLAMA_BASE_URL",
     )
 
-    # ==================== Model ====================
-    # All Claude model requests are mapped to this single model (fallback)
-    # Format: provider_type/model/name
     model: str = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
-
-    # Per-model overrides (optional, falls back to MODEL)
-    # Each can use a different provider
     model_fable: str | None = Field(default=None, validation_alias="MODEL_FABLE")
     model_opus: str | None = Field(default=None, validation_alias="MODEL_OPUS")
     model_sonnet: str | None = Field(default=None, validation_alias="MODEL_SONNET")
     model_haiku: str | None = Field(default=None, validation_alias="MODEL_HAIKU")
 
-    # ==================== Per-Provider Proxy ====================
+    fallback_providers: str = Field(default="", validation_alias="FALLBACK_PROVIDERS")
+
     nvidia_nim_proxy: str = Field(default="", validation_alias="NVIDIA_NIM_PROXY")
     open_router_proxy: str = Field(default="", validation_alias="OPENROUTER_PROXY")
     mistral_proxy: str = Field(default="", validation_alias="MISTRAL_PROXY")
@@ -178,8 +214,8 @@ class Settings(BaseSettings):
     groq_proxy: str = Field(default="", validation_alias="GROQ_PROXY")
     cerebras_proxy: str = Field(default="", validation_alias="CEREBRAS_PROXY")
     ollama_cloud_proxy: str = Field(default="", validation_alias="OLLAMA_CLOUD_PROXY")
+    siliconflow_proxy: str = Field(default="", validation_alias="SILICONFLOW_PROXY")
 
-    # ==================== Provider Rate Limiting ====================
     provider_rate_limit: int = Field(default=40, validation_alias="PROVIDER_RATE_LIMIT")
     provider_rate_window: int = Field(
         default=60, validation_alias="PROVIDER_RATE_WINDOW"
@@ -208,7 +244,6 @@ class Settings(BaseSettings):
         validation_alias="REASONING_HAIKU",
     )
 
-    # ==================== HTTP Client Timeouts ====================
     http_read_timeout: float = Field(
         default=120.0, validation_alias="HTTP_READ_TIMEOUT"
     )
@@ -220,52 +255,39 @@ class Settings(BaseSettings):
         validation_alias="HTTP_CONNECT_TIMEOUT",
     )
 
-    # ==================== Fast Prefix Detection ====================
     fast_prefix_detection: bool = True
 
-    # ==================== Optimizations ====================
     enable_network_probe_mock: bool = True
     enable_title_generation_skip: bool = True
     enable_suggestion_mode_skip: bool = True
     enable_filepath_extraction_mock: bool = True
 
-    # ==================== Local web server tools (web_search / web_fetch) ====================
-    # Off by default: these tools perform outbound HTTP from the proxy (SSRF risk).
     enable_web_server_tools: bool = Field(
         default=False, validation_alias="ENABLE_WEB_SERVER_TOOLS"
     )
-    # Comma-separated URL schemes allowed for web_fetch (default: http,https).
     web_fetch_allowed_schemes: str = Field(
         default="http,https", validation_alias="WEB_FETCH_ALLOWED_SCHEMES"
     )
-    # When true, skip private/loopback/link-local IP blocking for web_fetch (lab only).
     web_fetch_allow_private_networks: bool = Field(
         default=False, validation_alias="WEB_FETCH_ALLOW_PRIVATE_NETWORKS"
     )
 
-    # ==================== Debug / diagnostic logging (avoid sensitive content) ====================
-    # Minimum log level for the JSON file sink (DEBUG, INFO, WARNING, ERROR, CRITICAL).
     log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
-    # When false (default), API and SSE helpers log only metadata (counts, lengths, ids).
     log_raw_api_payloads: bool = Field(
         default=False, validation_alias="LOG_RAW_API_PAYLOADS"
     )
     log_raw_sse_events: bool = Field(
         default=False, validation_alias="LOG_RAW_SSE_EVENTS"
     )
-    # When false (default), unhandled exceptions log only type + route metadata (no message/traceback).
     log_api_error_tracebacks: bool = Field(
         default=False, validation_alias="LOG_API_ERROR_TRACEBACKS"
     )
-    # When false (default), messaging logs omit text/transcription previews (metadata only).
     log_raw_messaging_content: bool = Field(
         default=False, validation_alias="LOG_RAW_MESSAGING_CONTENT"
     )
-    # When true, log full Claude CLI stderr, non-JSON lines, and parser error text.
     log_raw_cli_diagnostics: bool = Field(
         default=False, validation_alias="LOG_RAW_CLI_DIAGNOSTICS"
     )
-    # When true, log exception text / CLI error strings in messaging (may leak user content).
     log_messaging_error_details: bool = Field(
         default=False, validation_alias="LOG_MESSAGING_ERROR_DETAILS"
     )
@@ -276,22 +298,14 @@ class Settings(BaseSettings):
         default=False, validation_alias="DEBUG_SUBAGENT_STACK"
     )
 
-    # ==================== NIM Settings ====================
     nim: NimSettings = Field(default_factory=NimSettings)
 
-    # ==================== Voice Note Transcription ====================
     voice_note_enabled: bool = Field(
         default=True, validation_alias="VOICE_NOTE_ENABLED"
     )
-    # Device: "cpu" | "cuda" | "nvidia_nim"
-    # - "cpu"/"cuda": local Whisper (requires voice_local extra: uv sync --extra voice_local)
-    # - "nvidia_nim": NVIDIA NIM Whisper API (requires voice extra: uv sync --extra voice)
     whisper_device: str = Field(default="cpu", validation_alias="WHISPER_DEVICE")
-    # Whisper model ID or short name (for local Whisper) or NVIDIA NIM model (for nvidia_nim)
-    # Local Whisper: "tiny", "base", "small", "medium", "large-v2", "large-v3", "large-v3-turbo"
-    # NVIDIA NIM: "nvidia/parakeet-ctc-1.1b-asr", "openai/whisper-large-v3", etc.
     whisper_model: str = Field(default="base", validation_alias="WHISPER_MODEL")
-    # ==================== Bot Wrapper Config ====================
+
     telegram_bot_token: str | None = None
     allowed_telegram_user_id: str | None = None
     telegram_proxy_url: str = Field(default="", validation_alias="TELEGRAM_PROXY_URL")
@@ -306,17 +320,13 @@ class Settings(BaseSettings):
         default=None, validation_alias="MAX_MESSAGE_LOG_ENTRIES_PER_CHAT"
     )
 
-    # ==================== Server ====================
     host: str = "0.0.0.0"
     port: int = 8082
     open_admin_browser: bool = Field(default=True, validation_alias="FCC_OPEN_BROWSER")
-    # Optional proxy bearer token protecting public API endpoints.
-    # Set via env `ANTHROPIC_AUTH_TOKEN`. When empty, no auth is required.
     anthropic_auth_token: str = Field(
         default="", validation_alias="ANTHROPIC_AUTH_TOKEN"
     )
 
-    # Handle empty strings for optional string fields
     @field_validator(
         "telegram_bot_token",
         "allowed_telegram_user_id",
@@ -413,9 +423,7 @@ class Settings(BaseSettings):
             return None
         if "/" not in v:
             raise ValueError(
-                f"Model must be prefixed with provider type. "
-                f"Valid providers: {', '.join(SUPPORTED_PROVIDER_IDS)}. "
-                f"Format: provider_type/model/name"
+                f"Model must be prefixed with provider type. Valid providers: {', '.join(SUPPORTED_PROVIDER_IDS)}. Format: provider_type/model/name"
             )
         provider = v.split("/", 1)[0]
         if provider not in SUPPORTED_PROVIDER_IDS:
@@ -431,15 +439,14 @@ class Settings(BaseSettings):
             and not self.nvidia_nim_api_key.strip()
         ):
             raise ValueError(
-                "NVIDIA_NIM_API_KEY is required when WHISPER_DEVICE is 'nvidia_nim'. "
-                "Set it in your .env file."
+                "NVIDIA_NIM_API_KEY is required when WHISPER_DEVICE is 'nvidia_nim'. Set it in your .env file."
             )
         return self
 
     @model_validator(mode="after")
     def prefer_dotenv_anthropic_auth_token(self) -> Settings:
         """Let explicit .env auth config override stale shell/client tokens."""
-        dotenv_value = env_file_override(self.model_config, ANTHROPIC_AUTH_TOKEN_ENV)
+        dotenv_value = env_file_override(self.model_config, "ANTHROPIC_AUTH_TOKEN")
         if dotenv_value is not None:
             self.anthropic_auth_token = dotenv_value
         return self

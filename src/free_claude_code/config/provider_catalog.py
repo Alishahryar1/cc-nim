@@ -20,6 +20,7 @@ FIREWORKS_DEFAULT_BASE = "https://api.fireworks.ai/inference/v1"
 # Cloudflare account-scoped AI REST root; provider appends /accounts/{id}/ai/v1.
 CLOUDFLARE_AI_REST_ROOT = "https://api.cloudflare.com/client/v4"
 OPENROUTER_DEFAULT_BASE = "https://openrouter.ai/api/v1"
+SILICONFLOW_DEFAULT_BASE = "https://api.siliconflow.cn/v1"
 MISTRAL_DEFAULT_BASE = "https://api.mistral.ai/v1"
 # Codestral IDE/personal endpoint (distinct from La Plateforme ``api.mistral.ai`` keys).
 CODESTRAL_DEFAULT_BASE = "https://codestral.mistral.ai/v1"
@@ -304,6 +305,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="ollama_api_key",
         default_base_url=OLLAMA_CLOUD_DEFAULT_BASE,
         proxy_attr="ollama_cloud_proxy",
+    ),
+    "siliconflow": ProviderDescriptor(
+        provider_id="siliconflow",
+        display_name="SiliconFlow",
+        credential_env="SILICONFLOW_API_KEY",
+        credential_url="https://cloud.siliconflow.cn/account/ak",
+        credential_attr="siliconflow_api_key",
+        default_base_url=SILICONFLOW_DEFAULT_BASE,
+        proxy_attr="siliconflow_proxy",
     ),
     "lmstudio": ProviderDescriptor(
         provider_id="lmstudio",

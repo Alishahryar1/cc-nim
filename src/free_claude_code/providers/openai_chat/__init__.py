@@ -17,6 +17,7 @@ from .reasoning import (
     ReasoningObject,
 )
 from .request_policy import OpenAIChatRequestPolicy, build_openai_chat_request_body
+from .rotating_provider import RotatingOpenAIChatProvider
 from .usage import usage_int
 
 
@@ -29,7 +30,7 @@ def create_openai_chat_provider(
     profile = OPENAI_CHAT_PROFILES.get(provider_id)
     if profile is None:
         raise KeyError(f"No declarative OpenAI-chat profile for {provider_id!r}")
-    return OpenAIChatProvider(
+    return RotatingOpenAIChatProvider(
         config,
         profile=profile,
         admission=admission,

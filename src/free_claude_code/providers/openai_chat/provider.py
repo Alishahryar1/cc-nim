@@ -592,6 +592,7 @@ class _OpenAIChatStreamRunner:
                         return
 
                 reported_error = underlying_provider_error(error)
+                assert isinstance(reported_error, Exception)
                 self._provider._log_stream_transport_error(
                     tag, req_tag, reported_error, request_id=self._request_id
                 )
