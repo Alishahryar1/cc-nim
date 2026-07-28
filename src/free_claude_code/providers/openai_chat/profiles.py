@@ -378,7 +378,7 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             disabled_value="none",
             enabled_value="high",
         ),
-        normalize_base_url=False,
+        normalize_base_url=True,
         reasoning_delta_field="reasoning",
     ),
 }

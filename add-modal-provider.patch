@@ -1,0 +1,485 @@
+diff --git a/.env.example b/.env.example
+index 3c6f074..113138d 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1,10 +1,6 @@
+ # NVIDIA NIM Config
+ NVIDIA_NIM_API_KEY=""
+ 
+-#Modal Proxy Authentication (for Modal-hosted OpenAI-compatible endpoints)
+-MODAL_PROXY_TOKEN_ID=""
+-MODAL_PROXY_TOKEN_SECRET=""
+-
+ 
+ # OpenRouter Config
+ OPENROUTER_API_KEY=""
+@@ -102,6 +98,13 @@ CEREBRAS_API_KEY=""
+ OLLAMA_API_KEY=""
+ 
+ 
++# Modal (your own OpenAI-compatible Web Function deployment; create a Proxy
++# Auth Token at modal.com/settings/proxy-auth-tokens)
++MODAL_BASE_URL=""
++MODAL_PROXY_TOKEN_ID=""
++MODAL_PROXY_TOKEN_SECRET=""
++
++
+ # LM Studio Config (local provider, no API key required)
+ LM_STUDIO_BASE_URL="http://localhost:1234/v1"
+ 
+@@ -116,7 +119,7 @@ OLLAMA_BASE_URL="http://localhost:11434"
+ 
+ # All Claude model requests are mapped to these models, plain model is fallback
+ # Format: provider_type/model/name
+-# Valid providers: "nvidia_nim" | "open_router" | "gemini" | "vertex" | "deepseek" | "mistral" | "mistral_codestral" | "opencode" | "opencode_go" | "vercel" | "bedrock" | "huggingface" | "cohere" | "github_models" | "wafer" | "kimi" | "kimi_code" | "minimax" | "cerebras" | "groq" | "sambanova" | "fireworks" | "cloudflare" | "zai" | "ollama_cloud" | "lmstudio" | "llamacpp" | "ollama"
++# Valid providers: "nvidia_nim" | "open_router" | "gemini" | "vertex" | "deepseek" | "mistral" | "mistral_codestral" | "opencode" | "opencode_go" | "vercel" | "bedrock" | "huggingface" | "cohere" | "github_models" | "wafer" | "kimi" | "kimi_code" | "minimax" | "cerebras" | "groq" | "sambanova" | "fireworks" | "cloudflare" | "zai" | "ollama_cloud" | "modal" | "lmstudio" | "llamacpp" | "ollama"
+ MODEL_FABLE=
+ MODEL_OPUS=
+ MODEL_SONNET=
+@@ -133,6 +136,7 @@ FCC_SMOKE_MODEL_MISTRAL_REASONING=
+ FCC_SMOKE_MODEL_MISTRAL_CODESTRAL=
+ FCC_SMOKE_MODEL_DEEPSEEK=
+ FCC_SMOKE_MODEL_OLLAMA_CLOUD=
++FCC_SMOKE_MODEL_MODAL=
+ FCC_SMOKE_MODEL_LMSTUDIO=
+ FCC_SMOKE_MODEL_LLAMACPP=
+ FCC_SMOKE_MODEL_OLLAMA=
+@@ -200,6 +204,7 @@ GROQ_PROXY=""
+ SAMBANOVA_PROXY=""
+ CEREBRAS_PROXY=""
+ OLLAMA_CLOUD_PROXY=""
++MODAL_PROXY=""
+ 
+ PROVIDER_RATE_LIMIT=1
+ PROVIDER_RATE_WINDOW=3
+diff --git a/README.md b/README.md
+index 6dc9a86..82f7c04 100644
+--- a/README.md
++++ b/README.md
+@@ -184,6 +184,7 @@ fcc-codex exec "hello"
+ | [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/) | `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` | `cloudflare/@cf/moonshotai/kimi-k2.6` |
+ | [Z.ai](https://z.ai/manage-apikey/apikey-list) | `ZAI_API_KEY` | `zai/glm-5.2` |
+ | [Ollama Cloud](https://ollama.com/settings/keys) | `OLLAMA_API_KEY` | `ollama_cloud/qwen3-coder:480b` |
++| [Modal](https://modal.com/docs/guide/webhook-proxy-auth) | `MODAL_BASE_URL` + `MODAL_PROXY_TOKEN_ID` + `MODAL_PROXY_TOKEN_SECRET` | `modal/<your-model-id>` |
+ | [LM Studio](https://lmstudio.ai/) | `LM_STUDIO_BASE_URL` | `lmstudio/<model-id>` |
+ | [llama.cpp](https://github.com/ggml-org/llama.cpp) | `LLAMACPP_BASE_URL` | `llamacpp/<model-id>` |
+ | [Ollama](https://ollama.com/) | `OLLAMA_BASE_URL` | `ollama/<model-tag>` |
+@@ -207,6 +208,13 @@ Important provider notes:
+ - Ollama Cloud connects directly to `ollama.com`; use the exact model IDs shown
+   by FCC's model picker. Local Ollama remains available through the separate
+   `ollama/` prefix.
++- Modal has no shared default endpoint: set `MODAL_BASE_URL` to your own
++  deployment's OpenAI-compatible URL (for example
++  `https://<workspace>--<app>.modal.direct/v1`), and set both
++  `MODAL_PROXY_TOKEN_ID` and `MODAL_PROXY_TOKEN_SECRET` from a
++  [Proxy Auth Token](https://modal.com/settings/proxy-auth-tokens) for that
++  workspace. Enter the model exactly as your deployment serves it, for example
++  `modal/thinkingmachines/Inkling-NVFP4`.
+ - Prefer tool-capable models for coding agents. Local models also need enough context for the agent's system prompt and tool definitions.
+ 
+ <details>
+diff --git a/src/free_claude_code/config/admin/provider_manifest.py b/src/free_claude_code/config/admin/provider_manifest.py
+index 7e2f0c3..a89a577 100644
+--- a/src/free_claude_code/config/admin/provider_manifest.py
++++ b/src/free_claude_code/config/admin/provider_manifest.py
+@@ -134,6 +134,22 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
+             "Ollama API key for direct OpenAI-compatible Cloud access at ollama.com/v1."
+         ),
+     },
++    "MODAL_PROXY_TOKEN_ID": {
++        "label": "Modal Proxy Token ID",
++        "description": (
++            "Modal proxy token ID (Token ID, prefixed wk-) from a Modal Proxy "
++            "Auth Token pair; create one at modal.com/settings/proxy-auth-tokens. "
++            "Used with MODAL_PROXY_TOKEN_SECRET to authenticate requests to a "
++            "Modal-hosted OpenAI-compatible endpoint."
++        ),
++    },
++    "MODAL_BASE_URL": {
++        "description": (
++            "Full OpenAI-compatible base URL for your Modal deployment (for "
++            "example https://<workspace>--<app>.modal.direct/v1). Modal "
++            "endpoints are deployment-specific, so there is no shared default."
++        ),
++    },
+ }
+ 
+ 
+@@ -249,19 +265,10 @@ def _proxy_field_specs() -> tuple[dict[str, Any], ...]:
+     return tuple(specs)
+ 
+ def _modal_field_specs() -> tuple[dict[str, Any], ...]:
++    """Modal's secondary token field; the primary credential and base URL are
++    generated from the catalog by ``_credential_field_specs`` and
++    ``_base_url_field_specs`` since Modal is a regular catalog entry."""
+     return (
+-        {
+-            "key": "MODAL_PROXY_TOKEN_ID",
+-            "label": "Modal Proxy Token ID",
+-            "section_id": "providers",
+-            "field_type": "secret",
+-            "settings_attr": "modal_proxy_token_id",
+-            "secret": True,
+-            "description": (
+-                "Modal proxy token ID used to authenticate requests to "
+-                "Modal-hosted OpenAI-compatible endpoints."
+-            ),
+-        },
+         {
+             "key": "MODAL_PROXY_TOKEN_SECRET",
+             "label": "Modal Proxy Token Secret",
+@@ -270,8 +277,8 @@ def _modal_field_specs() -> tuple[dict[str, Any], ...]:
+             "settings_attr": "modal_proxy_token_secret",
+             "secret": True,
+             "description": (
+-                "Modal proxy token secret used together with the "
+-                "Modal proxy token ID."
++                "Modal proxy token secret (Token Secret, prefixed ws-) paired "
++                "with MODAL_PROXY_TOKEN_ID."
+             ),
+         },
+     )
+diff --git a/src/free_claude_code/config/provider_catalog.py b/src/free_claude_code/config/provider_catalog.py
+index 4df7724..a78500d 100644
+--- a/src/free_claude_code/config/provider_catalog.py
++++ b/src/free_claude_code/config/provider_catalog.py
+@@ -305,6 +305,20 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
+         default_base_url=OLLAMA_CLOUD_DEFAULT_BASE,
+         proxy_attr="ollama_cloud_proxy",
+     ),
++    "modal": ProviderDescriptor(
++        provider_id="modal",
++        display_name="Modal",
++        credential_env="MODAL_PROXY_TOKEN_ID",
++        credential_url="https://modal.com/docs/guide/webhook-proxy-auth",
++        credential_attr="modal_proxy_token_id",
++        base_url_attr="modal_base_url",
++        proxy_attr="modal_proxy",
++        required_settings_attrs=(
++            "modal_base_url",
++            "modal_proxy_token_id",
++            "modal_proxy_token_secret",
++        ),
++    ),
+     "lmstudio": ProviderDescriptor(
+         provider_id="lmstudio",
+         display_name="LM Studio",
+@@ -331,20 +345,13 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
+         base_url_attr="ollama_base_url",
+         local=True,
+     ),
+-    "modal": ProviderDescriptor(
+-        provider_id="modal",
+-        display_name="Modal",
+-        static_credential="modal",
+-        default_base_url=OLLAMA_DEFAULT_BASE,
+-        base_url_attr="ollama_base_url",
+-        local=True,
+-    )
+ }
+ 
+ # Key order:
+ # NVIDIA NIM first (README default), DeepSeek fourth, OpenCode gateways adjacent,
+ # Vercel / Hugging Face / Cohere / GitHub Models follow gateway-style remotes,
+-# then cloud gateways, Ollama Cloud, and local providers per project plan
++# then cloud gateways, Ollama Cloud, Modal (remote but user-deployed, so it sits
++# with Ollama Cloud just ahead of the local trio), and local providers per project plan
+ # (github.com/cheahjs/free-llm-api-resources Free Providers TOC as rough guide
+ # beyond fixed slots).
+ # ``SUPPORTED_PROVIDER_IDS`` inherits this insertion order for UI and error-message listing.
+diff --git a/src/free_claude_code/config/settings.py b/src/free_claude_code/config/settings.py
+index cb75f38..bb0bf5a 100644
+--- a/src/free_claude_code/config/settings.py
++++ b/src/free_claude_code/config/settings.py
+@@ -119,7 +119,10 @@ class Settings(BaseSettings):
+     # ==================== NVIDIA NIM Config ====================
+     nvidia_nim_api_key: str = ""
+ 
+-    # ==================== Modal Proxy Authentication ====================
++    # ==================== Modal Config ====================
++    # Modal-hosted OpenAI-compatible endpoint (e.g. an app deployed with
++    # modal.com); base URL is deployment-specific so there is no shared default.
++    modal_base_url: str = Field(default="", validation_alias="MODAL_BASE_URL")
+     modal_proxy_token_id: str = Field(
+         default="", validation_alias="MODAL_PROXY_TOKEN_ID"
+     )
+@@ -186,6 +189,7 @@ class Settings(BaseSettings):
+     groq_proxy: str = Field(default="", validation_alias="GROQ_PROXY")
+     cerebras_proxy: str = Field(default="", validation_alias="CEREBRAS_PROXY")
+     ollama_cloud_proxy: str = Field(default="", validation_alias="OLLAMA_CLOUD_PROXY")
++    modal_proxy: str = Field(default="", validation_alias="MODAL_PROXY")
+ 
+     # ==================== Provider Rate Limiting ====================
+     provider_rate_limit: int = Field(default=40, validation_alias="PROVIDER_RATE_LIMIT")
+diff --git a/src/free_claude_code/providers/openai_chat/__init__.py b/src/free_claude_code/providers/openai_chat/__init__.py
+index ac10b10..1ee23d0 100644
+--- a/src/free_claude_code/providers/openai_chat/__init__.py
++++ b/src/free_claude_code/providers/openai_chat/__init__.py
+@@ -35,11 +35,12 @@ def create_openai_chat_provider(
+     if profile.user_agent:
+         headers["User-Agent"] = profile.user_agent
+ 
+-    if getattr(config, "modal_proxy_token_id", ""):
+-        headers["Modal-Key"] = config.modal_proxy_token_id
++    if provider_id == "modal":
++        if getattr(config, "modal_proxy_token_id", ""):
++            headers["Modal-Key"] = config.modal_proxy_token_id
+ 
+-    if getattr(config, "modal_proxy_token_secret", ""):
+-        headers["Modal-Secret"] = config.modal_proxy_token_secret
++        if getattr(config, "modal_proxy_token_secret", ""):
++            headers["Modal-Secret"] = config.modal_proxy_token_secret
+ 
+     return OpenAIChatProvider(
+         config,
+diff --git a/src/free_claude_code/providers/openai_chat/profiles.py b/src/free_claude_code/providers/openai_chat/profiles.py
+index 5e83596..6e1060c 100644
+--- a/src/free_claude_code/providers/openai_chat/profiles.py
++++ b/src/free_claude_code/providers/openai_chat/profiles.py
+@@ -378,7 +378,7 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
+             disabled_value="none",
+             enabled_value="high",
+         ),
+-        normalize_base_url=False,
++        normalize_base_url=True,
+         reasoning_delta_field="reasoning",
+     ),
+ }
+diff --git a/src/free_claude_code/providers/runtime/config.py b/src/free_claude_code/providers/runtime/config.py
+index a84ce0e..0dca783 100644
+--- a/src/free_claude_code/providers/runtime/config.py
++++ b/src/free_claude_code/providers/runtime/config.py
+@@ -14,6 +14,12 @@ def string_setting(settings: Settings, attr_name: str | None, default: str = "")
+     return value if isinstance(value, str) else default
+ 
+ 
++def _env_key_for_attr(attr_name: str) -> str:
++    """Return the env var key backing a Settings attribute, for error messages."""
++    alias = Settings.model_fields[attr_name].validation_alias
++    return str(alias) if alias is not None else attr_name
++
++
+ def provider_credential(descriptor: ProviderDescriptor, settings: Settings) -> str:
+     """Return the configured credential for a provider descriptor."""
+     if descriptor.static_credential is not None:
+@@ -58,6 +64,11 @@ def build_provider_config(
+     )
+     resolved_base_url = base_url or descriptor.default_base_url
+     if not resolved_base_url:
++        if descriptor.base_url_attr is not None:
++            env_key = _env_key_for_attr(descriptor.base_url_attr)
++            raise ApplicationUnavailableError(
++                f"{env_key} is not set. Add it to your .env file."
++            )
+         raise AssertionError(
+             f"Provider {descriptor.provider_id!r} has no configured base URL."
+         )
+diff --git a/tests/config/test_provider_catalog.py b/tests/config/test_provider_catalog.py
+index 0719881..e192489 100644
+--- a/tests/config/test_provider_catalog.py
++++ b/tests/config/test_provider_catalog.py
+@@ -50,6 +50,19 @@ def test_provider_configuration_attrs_cover_multi_field_and_adc_providers() -> N
+         "cloudflare_account_id",
+     )
+     assert PROVIDER_CATALOG["vertex"].configuration_attrs() == ("vertex_project_id",)
++    assert PROVIDER_CATALOG["modal"].configuration_attrs() == (
++        "modal_base_url",
++        "modal_proxy_token_id",
++        "modal_proxy_token_secret",
++    )
++
++
++def test_modal_is_remote_with_no_shared_default_base_url() -> None:
++    modal = PROVIDER_CATALOG["modal"]
++
++    assert modal.local is False
++    assert modal.default_base_url is None
++    assert modal.base_url_attr == "modal_base_url"
+ 
+ 
+ def test_every_provider_declares_its_configuration_boundary() -> None:
+diff --git a/tests/contracts/test_provider_catalog_order.py b/tests/contracts/test_provider_catalog_order.py
+index 4ff9edb..d0fd8e1 100644
+--- a/tests/contracts/test_provider_catalog_order.py
++++ b/tests/contracts/test_provider_catalog_order.py
+@@ -31,6 +31,7 @@ _EXPECTED_PROVIDER_ORDER: tuple[str, ...] = (
+     "cloudflare",
+     "zai",
+     "ollama_cloud",
++    "modal",
+     "lmstudio",
+     "llamacpp",
+     "ollama",
+diff --git a/tests/providers/test_modal.py b/tests/providers/test_modal.py
+new file mode 100644
+index 0000000..463ad30
+--- /dev/null
++++ b/tests/providers/test_modal.py
+@@ -0,0 +1,87 @@
++"""Tests for the Modal OpenAI-compatible provider (user-deployed Web Functions)."""
++
++from dataclasses import replace
++
++import pytest
++from unittest.mock import patch
++
++from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
++from free_claude_code.providers.base import ProviderConfig
++from free_claude_code.providers.openai_chat import OpenAIChatProvider
++from tests.providers.support import profiled_provider
++
++MODAL_BASE_URL = "https://acme--inkling-nvfp4-server.us-west.modal.direct/v1"
++
++
++@pytest.fixture
++def modal_config() -> ProviderConfig:
++    return ProviderConfig(
++        api_key="wk-test-token-id",
++        base_url=MODAL_BASE_URL,
++        rate_limit=10,
++        rate_window=60,
++        modal_proxy_token_id="wk-test-token-id",
++        modal_proxy_token_secret="ws-test-token-secret",
++    )
++
++
++def test_modal_descriptor_has_no_shared_default_and_requires_all_three_fields() -> None:
++    descriptor = PROVIDER_CATALOG["modal"]
++
++    assert descriptor.default_base_url is None
++    assert descriptor.local is False
++    assert descriptor.credential_env == "MODAL_PROXY_TOKEN_ID"
++    assert descriptor.base_url_attr == "modal_base_url"
++    assert descriptor.configuration_attrs() == (
++        "modal_base_url",
++        "modal_proxy_token_id",
++        "modal_proxy_token_secret",
++    )
++
++
++def test_modal_provider_sends_proxy_auth_headers(modal_config: ProviderConfig) -> None:
++    with patch(
++        "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
++    ) as mock_openai:
++        provider = profiled_provider("modal", modal_config)
++
++    assert isinstance(provider, OpenAIChatProvider)
++    assert mock_openai.call_args.kwargs["base_url"] == MODAL_BASE_URL
++    assert mock_openai.call_args.kwargs["default_headers"] == {
++        "Modal-Key": "wk-test-token-id",
++        "Modal-Secret": "ws-test-token-secret",
++    }
++
++
++def test_modal_provider_normalizes_base_url_missing_v1_suffix(
++    modal_config: ProviderConfig,
++) -> None:
++    config = replace(
++        modal_config,
++        base_url="https://acme--inkling-nvfp4-server.us-west.modal.direct",
++    )
++    with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
++        provider = profiled_provider("modal", config)
++
++    assert provider._base_url == MODAL_BASE_URL
++
++
++def test_other_openai_chat_providers_never_receive_modal_proxy_headers(
++    modal_config: ProviderConfig,
++) -> None:
++    """Regression test: Modal-Key/Modal-Secret must stay scoped to the modal
++    provider and must not leak onto other OpenAI-compatible providers just
++    because Modal proxy tokens happen to be set in the shared settings."""
++    other_config = replace(
++        modal_config,
++        api_key="other-provider-key",
++        base_url="https://api.groq.com/openai/v1",
++    )
++    with patch(
++        "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
++    ) as mock_openai:
++        profiled_provider("groq", other_config)
++
++    headers = mock_openai.call_args.kwargs["default_headers"]
++    assert headers is None or "Modal-Key" not in headers
++    assert headers is None or "Modal-Secret" not in headers
+diff --git a/tests/providers/test_provider_runtime.py b/tests/providers/test_provider_runtime.py
+index b84833f..6bffdd8 100644
+--- a/tests/providers/test_provider_runtime.py
++++ b/tests/providers/test_provider_runtime.py
+@@ -67,6 +67,10 @@ def _make_settings(**overrides):
+     mock.llamacpp_base_url = "http://localhost:8080/v1"
+     mock.ollama_base_url = "http://localhost:11434"
+     mock.ollama_api_key = "test_ollama_cloud_key"
++    mock.modal_base_url = "https://acme--inkling-nvfp4-server.us-west.modal.direct/v1"
++    mock.modal_proxy_token_id = "test_modal_token_id"
++    mock.modal_proxy_token_secret = "test_modal_token_secret"
++    mock.modal_proxy = ""
+     mock.nvidia_nim_proxy = ""
+     mock.open_router_proxy = ""
+     mock.lmstudio_proxy = ""
+@@ -187,6 +191,56 @@ def test_bedrock_provider_config_uses_regional_base_key_and_proxy() -> None:
+     assert config.proxy == "http://proxy.test:8080"
+ 
+ 
++def test_modal_provider_config_uses_base_url_key_and_proxy() -> None:
++    descriptor = PROVIDER_CATALOG["modal"]
++    settings = _make_settings(
++        modal_base_url="https://acme--inkling-nvfp4-server.us-west.modal.direct/v1",
++        modal_proxy_token_id="wk-token-id",
++        modal_proxy_token_secret="ws-token-secret",
++        modal_proxy="http://proxy.test:8080",
++    )
++
++    config = build_provider_config(descriptor, settings)
++
++    assert descriptor.credential_env == "MODAL_PROXY_TOKEN_ID"
++    assert config.api_key == "wk-token-id"
++    assert (
++        config.base_url
++        == "https://acme--inkling-nvfp4-server.us-west.modal.direct/v1"
++    )
++    assert config.proxy == "http://proxy.test:8080"
++    assert config.modal_proxy_token_id == "wk-token-id"
++    assert config.modal_proxy_token_secret == "ws-token-secret"
++
++
++def test_modal_provider_config_raises_friendly_error_when_base_url_missing() -> None:
++    from free_claude_code.application.errors import ApplicationUnavailableError
++
++    descriptor = PROVIDER_CATALOG["modal"]
++    settings = _make_settings(
++        modal_base_url="",
++        modal_proxy_token_id="wk-token-id",
++        modal_proxy_token_secret="ws-token-secret",
++    )
++
++    with pytest.raises(ApplicationUnavailableError, match="MODAL_BASE_URL"):
++        build_provider_config(descriptor, settings)
++
++
++def test_modal_provider_config_raises_friendly_error_when_token_id_missing() -> None:
++    from free_claude_code.application.errors import ApplicationUnavailableError
++
++    descriptor = PROVIDER_CATALOG["modal"]
++    settings = _make_settings(
++        modal_base_url="https://acme--inkling-nvfp4-server.us-west.modal.direct/v1",
++        modal_proxy_token_id="",
++        modal_proxy_token_secret="ws-token-secret",
++    )
++
++    with pytest.raises(ApplicationUnavailableError, match="MODAL_PROXY_TOKEN_ID"):
++        build_provider_config(descriptor, settings)
++
++
+ @pytest.mark.parametrize(
+     ("provider_id", "expected_api_key"),
+     [
+@@ -426,6 +480,7 @@ def test_create_provider_instantiates_each_builtin():
+         "llamacpp": OpenAIChatProvider,
+         "ollama": OpenAIChatProvider,
+         "ollama_cloud": OpenAIChatProvider,
++        "modal": OpenAIChatProvider,
+         "wafer": OpenAIChatProvider,
+         "opencode": OpenAIChatProvider,
+         "opencode_go": OpenAIChatProvider,

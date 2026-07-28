@@ -119,7 +119,10 @@ class Settings(BaseSettings):
     # ==================== NVIDIA NIM Config ====================
     nvidia_nim_api_key: str = ""
 
-    # ==================== Modal Proxy Authentication ====================
+    # ==================== Modal Config ====================
+    # Modal-hosted OpenAI-compatible endpoint (e.g. an app deployed with
+    # modal.com); base URL is deployment-specific so there is no shared default.
+    modal_base_url: str = Field(default="", validation_alias="MODAL_BASE_URL")
     modal_proxy_token_id: str = Field(
         default="", validation_alias="MODAL_PROXY_TOKEN_ID"
     )
@@ -186,6 +189,7 @@ class Settings(BaseSettings):
     groq_proxy: str = Field(default="", validation_alias="GROQ_PROXY")
     cerebras_proxy: str = Field(default="", validation_alias="CEREBRAS_PROXY")
     ollama_cloud_proxy: str = Field(default="", validation_alias="OLLAMA_CLOUD_PROXY")
+    modal_proxy: str = Field(default="", validation_alias="MODAL_PROXY")
 
     # ==================== Provider Rate Limiting ====================
     provider_rate_limit: int = Field(default=40, validation_alias="PROVIDER_RATE_LIMIT")

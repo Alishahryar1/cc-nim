@@ -229,8 +229,10 @@ class ApplicationRuntime:
         lease = await self.provider_manager.acquire()
         try:
             provider = lease.resolve_provider(provider_id)
+            print(provider)
             infos = await provider.list_model_infos()
         except Exception as exc:
+            print(exc.with_traceback(None))
             return {
                 "provider_id": provider_id,
                 "ok": False,

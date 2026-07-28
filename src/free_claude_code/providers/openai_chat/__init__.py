@@ -35,11 +35,12 @@ def create_openai_chat_provider(
     if profile.user_agent:
         headers["User-Agent"] = profile.user_agent
 
-    if getattr(config, "modal_proxy_token_id", ""):
-        headers["Modal-Key"] = config.modal_proxy_token_id
+    if provider_id == "modal":
+        if getattr(config, "modal_proxy_token_id", ""):
+            headers["Modal-Key"] = config.modal_proxy_token_id
 
-    if getattr(config, "modal_proxy_token_secret", ""):
-        headers["Modal-Secret"] = config.modal_proxy_token_secret
+        if getattr(config, "modal_proxy_token_secret", ""):
+            headers["Modal-Secret"] = config.modal_proxy_token_secret
 
     return OpenAIChatProvider(
         config,

@@ -134,6 +134,22 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "Ollama API key for direct OpenAI-compatible Cloud access at ollama.com/v1."
         ),
     },
+    "MODAL_PROXY_TOKEN_ID": {
+        "label": "Modal Proxy Token ID",
+        "description": (
+            "Modal proxy token ID (Token ID, prefixed wk-) from a Modal Proxy "
+            "Auth Token pair; create one at modal.com/settings/proxy-auth-tokens. "
+            "Used with MODAL_PROXY_TOKEN_SECRET to authenticate requests to a "
+            "Modal-hosted OpenAI-compatible endpoint."
+        ),
+    },
+    "MODAL_BASE_URL": {
+        "description": (
+            "Full OpenAI-compatible base URL for your Modal deployment (for "
+            "example https://<workspace>--<app>.modal.direct/v1). Modal "
+            "endpoints are deployment-specific, so there is no shared default."
+        ),
+    },
 }
 
 
@@ -249,19 +265,10 @@ def _proxy_field_specs() -> tuple[dict[str, Any], ...]:
     return tuple(specs)
 
 def _modal_field_specs() -> tuple[dict[str, Any], ...]:
+    """Modal's secondary token field; the primary credential and base URL are
+    generated from the catalog by ``_credential_field_specs`` and
+    ``_base_url_field_specs`` since Modal is a regular catalog entry."""
     return (
-        {
-            "key": "MODAL_PROXY_TOKEN_ID",
-            "label": "Modal Proxy Token ID",
-            "section_id": "providers",
-            "field_type": "secret",
-            "settings_attr": "modal_proxy_token_id",
-            "secret": True,
-            "description": (
-                "Modal proxy token ID used to authenticate requests to "
-                "Modal-hosted OpenAI-compatible endpoints."
-            ),
-        },
         {
             "key": "MODAL_PROXY_TOKEN_SECRET",
             "label": "Modal Proxy Token Secret",
@@ -270,8 +277,8 @@ def _modal_field_specs() -> tuple[dict[str, Any], ...]:
             "settings_attr": "modal_proxy_token_secret",
             "secret": True,
             "description": (
-                "Modal proxy token secret used together with the "
-                "Modal proxy token ID."
+                "Modal proxy token secret (Token Secret, prefixed ws-) paired "
+                "with MODAL_PROXY_TOKEN_ID."
             ),
         },
     )

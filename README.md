@@ -184,6 +184,7 @@ fcc-codex exec "hello"
 | [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/) | `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` | `cloudflare/@cf/moonshotai/kimi-k2.6` |
 | [Z.ai](https://z.ai/manage-apikey/apikey-list) | `ZAI_API_KEY` | `zai/glm-5.2` |
 | [Ollama Cloud](https://ollama.com/settings/keys) | `OLLAMA_API_KEY` | `ollama_cloud/qwen3-coder:480b` |
+| [Modal](https://modal.com/docs/guide/webhook-proxy-auth) | `MODAL_BASE_URL` + `MODAL_PROXY_TOKEN_ID` + `MODAL_PROXY_TOKEN_SECRET` | `modal/<your-model-id>` |
 | [LM Studio](https://lmstudio.ai/) | `LM_STUDIO_BASE_URL` | `lmstudio/<model-id>` |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | `LLAMACPP_BASE_URL` | `llamacpp/<model-id>` |
 | [Ollama](https://ollama.com/) | `OLLAMA_BASE_URL` | `ollama/<model-tag>` |
@@ -207,6 +208,13 @@ Important provider notes:
 - Ollama Cloud connects directly to `ollama.com`; use the exact model IDs shown
   by FCC's model picker. Local Ollama remains available through the separate
   `ollama/` prefix.
+- Modal has no shared default endpoint: set `MODAL_BASE_URL` to your own
+  deployment's OpenAI-compatible URL (for example
+  `https://<workspace>--<app>.modal.direct/v1`), and set both
+  `MODAL_PROXY_TOKEN_ID` and `MODAL_PROXY_TOKEN_SECRET` from a
+  [Proxy Auth Token](https://modal.com/settings/proxy-auth-tokens) for that
+  workspace. Enter the model exactly as your deployment serves it, for example
+  `modal/thinkingmachines/Inkling-NVFP4`.
 - Prefer tool-capable models for coding agents. Local models also need enough context for the agent's system prompt and tool definitions.
 
 <details>
