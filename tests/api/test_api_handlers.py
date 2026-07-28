@@ -22,6 +22,7 @@ from free_claude_code.core.anthropic.models import (
 )
 from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
+from free_claude_code.providers.anthropic_tokens import AnthropicTokenCountUnavailable
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import ReasoningPolicy
 
@@ -587,7 +588,7 @@ def test_token_count_handler_uses_exact_counter_when_api_key_set() -> None:
 
 
 def test_token_count_handler_falls_back_when_exact_counter_fails() -> None:
-    exact_counter = MagicMock(side_effect=RuntimeError("upstream unavailable"))
+    exact_counter = MagicMock(side_effect=AnthropicTokenCountUnavailable("upstream unavailable"))
     handler = TokenCountHandler(
         Settings(ANTHROPIC_API_KEY="sk-test"),
         token_counter=lambda messages, system, tools: 42,
@@ -677,10 +678,13 @@ def test_token_count_handler_default_wiring_calls_real_anthropic_api() -> None:
     handler = TokenCountHandler(Settings(ANTHROPIC_API_KEY="sk-test"))
 
     with patch(
-        "free_claude_code.providers.anthropic_tokens.anthropic.Anthropic"
+        "free_claude_code.providers.anthropic_tokens.httpx.Client"
     ) as mock_anthropic:
         mock_client = MagicMock()
-        mock_client.messages.count_tokens.return_value = SimpleNamespace(input_tokens=7)
+        mock_client.__enter__.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"input_tokens": 7}
+        mock_client.post.return_value = mock_response
         mock_anthropic.return_value = mock_client
 
         response = handler.count(
@@ -692,13 +696,13 @@ def test_token_count_handler_default_wiring_calls_real_anthropic_api() -> None:
 
     assert response.input_tokens == 7
     mock_anthropic.assert_called_once_with(
-        api_key="sk-test", timeout=Settings().http_read_timeout
+        proxy=None, timeout=Settings().http_read_timeout
     )
 
 
 def test_token_count_handler_logs_warning_when_exact_counter_fails() -> None:
     """A failed exact count is logged (without raising) before falling back."""
-    exact_counter = MagicMock(side_effect=RuntimeError("upstream unavailable"))
+    exact_counter = MagicMock(side_effect=AnthropicTokenCountUnavailable("upstream unavailable"))
     handler = TokenCountHandler(
         Settings(ANTHROPIC_API_KEY="sk-test"),
         token_counter=lambda messages, system, tools: 42,
@@ -716,3 +720,21 @@ def test_token_count_handler_logs_warning_when_exact_counter_fails() -> None:
     assert response.input_tokens == 42
     logger_mock.warning.assert_called_once()
     assert "upstream unavailable" in logger_mock.warning.call_args.args[1]
+
+
+
+def test_token_count_handler_does_not_hide_unexpected_exact_counter_error() -> None:
+    exact_counter = MagicMock(side_effect=RuntimeError("programming error"))
+    handler = TokenCountHandler(
+        Settings(ANTHROPIC_API_KEY="sk-test"),
+        token_counter=lambda messages, system, tools: 42,
+        exact_token_counter=exact_counter,
+    )
+
+    with pytest.raises(RuntimeError, match="programming error"):
+        handler.count(
+            TokenCountRequest(
+                model="claude-sonnet-4-5-20250929",
+                messages=[Message(role="user", content="hi")],
+            )
+        )
