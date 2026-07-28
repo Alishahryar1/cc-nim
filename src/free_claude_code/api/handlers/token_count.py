@@ -23,7 +23,10 @@ from free_claude_code.core.anthropic import (
 )
 from free_claude_code.core.diagnostics import safe_exception_message
 from free_claude_code.core.trace import trace_event
-from free_claude_code.providers.anthropic_tokens import count_tokens_via_anthropic_api
+from free_claude_code.providers.anthropic_tokens import (
+    AnthropicTokenCountUnavailable,
+    count_tokens_via_anthropic_api,
+)
 
 ExactTokenCounter = Callable[..., int]
 
@@ -105,8 +108,9 @@ class TokenCountHandler:
                     system=request_data.system,
                     tools=request_data.tools,
                     timeout=self._settings.http_read_timeout,
+                    proxy=self._settings.anthropic_proxy,
                 )
-            except Exception as exc:
+            except AnthropicTokenCountUnavailable as exc:
                 logger.warning(
                     "Exact Anthropic token count unavailable, using estimate: {}",
                     safe_exception_message(exc),
