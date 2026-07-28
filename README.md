@@ -1,6 +1,11 @@
 <div align="center">
 
-# 🤖 Free Claude Code
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="assets/free-claude-code-wordmark-light.svg">
+    <img src="assets/free-claude-code-wordmark-dark.svg" alt="Free Claude Code" width="610">
+  </picture>
+</h1>
 
 Use Claude Code, Codex, Pi, or their IDE extensions through your own provider-backed proxy.
 
@@ -44,7 +49,7 @@ Run your coding agents with free, paid, or local models. Choose and validate pro
 
 - Launch Claude Code with `fcc-claude`, Codex with `fcc-codex`, or Pi with `fcc-pi`.
 - Run FCC in the background from a desktop launcher on Windows or macOS.
-- Switch among 25 cloud and local providers from the Admin UI.
+- Switch among 29 cloud and local providers from the Admin UI.
 - Use each coding agent's native model picker.
 - Route Fable, Opus, Sonnet, Haiku, and fallback traffic to different models.
 - Keep streaming, tool use, reasoning, and image input across compatible models.
@@ -71,6 +76,8 @@ Windows PowerShell:
 ```
 
 Re-run the same command whenever you want to update. You can review the installers before running them: [install.sh](scripts/install.sh) and [install.ps1](scripts/install.ps1).
+
+Pi is optional. If you decline Pi's installer, FCC continues installing with Claude Code and Codex.
 
 ### 2. Start FCC
 
@@ -180,6 +187,7 @@ fcc-codex exec "hello"
 | [Cerebras Inference](https://cloud.cerebras.ai/) | `CEREBRAS_API_KEY` | `cerebras/gpt-oss-120b` |
 | [Groq](https://console.groq.com/keys) | `GROQ_API_KEY` | `groq/llama-3.3-70b-versatile` |
 | [SambaNova](https://cloud.sambanova.ai/apis) | `SAMBANOVA_API_KEY` | `sambanova/Meta-Llama-3.3-70B-Instruct` |
+| [Kilo.ai](https://kilo.ai) | `KILO_API_KEY` | `kilo/kilo-auto/free` |
 | [Fireworks AI](https://fireworks.ai/account/api-keys) | `FIREWORKS_API_KEY` | `fireworks/accounts/fireworks/models/llama-v3p3-70b-instruct` |
 | [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/) | `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` | `cloudflare/@cf/moonshotai/kimi-k2.6` |
 | [Z.ai](https://z.ai/manage-apikey/apikey-list) | `ZAI_API_KEY` | `zai/glm-5.2` |
@@ -278,8 +286,7 @@ Install the [Claude Code extension](https://marketplace.visualstudio.com/items?i
   { "name": "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "value": "190000" },
   { "name": "DISABLE_AUTOUPDATER", "value": "1" },
   { "name": "DISABLE_FEEDBACK_COMMAND", "value": "1" },
-  { "name": "DISABLE_ERROR_REPORTING", "value": "1" },
-  { "name": "DISABLE_TELEMETRY", "value": "1" }
+  { "name": "DISABLE_ERROR_REPORTING", "value": "1" }
 ]
 ```
 
@@ -325,8 +332,7 @@ Set the environment for `acp.registry.claude-acp`:
   "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "190000",
   "DISABLE_AUTOUPDATER": "1",
   "DISABLE_FEEDBACK_COMMAND": "1",
-  "DISABLE_ERROR_REPORTING": "1",
-  "DISABLE_TELEMETRY": "1"
+  "DISABLE_ERROR_REPORTING": "1"
 }
 ```
 

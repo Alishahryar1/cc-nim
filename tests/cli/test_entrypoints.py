@@ -414,7 +414,7 @@ def test_claude_child_env_targets_current_proxy_config() -> None:
     assert env["DISABLE_AUTOUPDATER"] == "1"
     assert env["DISABLE_FEEDBACK_COMMAND"] == "1"
     assert env["DISABLE_ERROR_REPORTING"] == "1"
-    assert env["DISABLE_TELEMETRY"] == "1"
+    assert env["DISABLE_TELEMETRY"] == "0"
     assert env["NO_PROXY"] == "127.0.0.1,localhost,::1"
     assert env["no_proxy"] == env["NO_PROXY"]
     assert "ANTHROPIC_API_URL" not in env
@@ -446,6 +446,7 @@ def test_launch_claude_passes_args_and_child_env(
     monkeypatch.setenv("ANTHROPIC_BASE_URL", "https://api.anthropic.com")
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "old-token")
     monkeypatch.setenv("KEEP_ME", "yes")
+    monkeypatch.delenv("DISABLE_TELEMETRY", raising=False)
     settings = _launcher_settings(port=9191, token="proxy-token")
 
     with (
@@ -480,7 +481,7 @@ def test_launch_claude_passes_args_and_child_env(
     assert child_env["DISABLE_AUTOUPDATER"] == "1"
     assert child_env["DISABLE_FEEDBACK_COMMAND"] == "1"
     assert child_env["DISABLE_ERROR_REPORTING"] == "1"
-    assert child_env["DISABLE_TELEMETRY"] == "1"
+    assert "DISABLE_TELEMETRY" not in child_env
     assert child_env["NO_PROXY"] == "127.0.0.1,localhost,::1"
     assert child_env["no_proxy"] == child_env["NO_PROXY"]
     assert "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" not in child_env

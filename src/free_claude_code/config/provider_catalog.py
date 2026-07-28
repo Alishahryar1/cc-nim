@@ -45,6 +45,8 @@ VERTEX_AI_API_ROOT = "https://aiplatform.googleapis.com"
 GROQ_DEFAULT_BASE = "https://api.groq.com/openai/v1"
 CEREBRAS_DEFAULT_BASE = "https://api.cerebras.ai/v1"
 SAMBANOVA_DEFAULT_BASE = "https://api.sambanova.ai/v1"
+# Kilo.ai gateway OpenAI-compatible Chat Completions API.
+KILO_DEFAULT_BASE = "https://api.kilo.ai/api/gateway"
 
 
 @dataclass(frozen=True, slots=True)
@@ -229,6 +231,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="kimi_code_api_key",
         default_base_url=KIMI_CODE_DEFAULT_BASE,
         proxy_attr="kimi_code_proxy",
+    ),
+    "kilo": ProviderDescriptor(
+        provider_id="kilo",
+        display_name="Kilo.ai",
+        credential_env="KILO_API_KEY",
+        credential_url="https://app.kilo.ai",
+        credential_attr="kilo_api_key",
+        default_base_url=KILO_DEFAULT_BASE,
+        proxy_attr="kilo_proxy",
     ),
     "minimax": ProviderDescriptor(
         provider_id="minimax",

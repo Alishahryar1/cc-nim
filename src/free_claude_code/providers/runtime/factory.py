@@ -53,6 +53,16 @@ def _create_mistral(
     return MistralProvider(config, admission=admission)
 
 
+def _create_kilo(
+    config: ProviderConfig,
+    _settings: Settings,
+    admission: ProviderAdmissionController,
+) -> BaseProvider:
+    from free_claude_code.providers.kilo import KiloProvider
+
+    return KiloProvider(config, admission=admission)
+
+
 def _create_deepseek(
     config: ProviderConfig,
     _settings: Settings,
@@ -126,6 +136,7 @@ _SPECIAL_PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "nvidia_nim": _create_nvidia_nim,
     "open_router": _create_open_router,
     "mistral": _create_mistral,
+    "kilo": _create_kilo,
     "deepseek": _create_deepseek,
     "lmstudio": _create_lmstudio,
     "cloudflare": _create_cloudflare,
