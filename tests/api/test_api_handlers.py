@@ -583,7 +583,7 @@ def test_token_count_handler_uses_exact_counter_when_api_key_set() -> None:
     assert response.input_tokens == 17
     exact_counter.assert_called_once()
     assert exact_counter.call_args.kwargs["api_key"] == "sk-test"
-    assert exact_counter.call_args.kwargs["model"] == "claude-sonnet-4-5-20250929"
+    assert exact_counter.call_args.kwargs["model"] == "nvidia_nim/test-model"
 
 
 def test_token_count_handler_falls_back_when_exact_counter_fails() -> None:
