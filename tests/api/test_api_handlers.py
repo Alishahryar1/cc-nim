@@ -680,9 +680,7 @@ def test_token_count_handler_default_wiring_calls_real_anthropic_api() -> None:
         "free_claude_code.providers.anthropic_tokens.anthropic.Anthropic"
     ) as mock_anthropic:
         mock_client = MagicMock()
-        mock_client.messages.count_tokens.return_value = SimpleNamespace(
-            input_tokens=7
-        )
+        mock_client.messages.count_tokens.return_value = SimpleNamespace(input_tokens=7)
         mock_anthropic.return_value = mock_client
 
         response = handler.count(

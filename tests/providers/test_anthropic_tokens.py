@@ -137,19 +137,21 @@ def test_count_tokens_via_anthropic_api_error_message_is_preserved():
     )
     client.messages.count_tokens.side_effect = sdk_error
 
-    with patch(
-        "free_claude_code.providers.anthropic_tokens.anthropic.Anthropic",
-        return_value=client,
+    with (
+        patch(
+            "free_claude_code.providers.anthropic_tokens.anthropic.Anthropic",
+            return_value=client,
+        ),
+        pytest.raises(AnthropicTokenCountUnavailable) as exc_info,
     ):
-        with pytest.raises(AnthropicTokenCountUnavailable) as exc_info:
-            count_tokens_via_anthropic_api(
-                api_key="sk-test",
-                model="claude-sonnet-4-5-20250929",
-                messages=[Message(role="user", content="hi")],
-                system=None,
-                tools=None,
-                timeout=30.0,
-            )
+        count_tokens_via_anthropic_api(
+            api_key="sk-test",
+            model="claude-sonnet-4-5-20250929",
+            messages=[Message(role="user", content="hi")],
+            system=None,
+            tools=None,
+            timeout=30.0,
+        )
 
     assert str(exc_info.value)
     assert exc_info.value.__cause__ is sdk_error
@@ -160,19 +162,21 @@ def test_count_tokens_via_anthropic_api_non_api_error_propagates_unwrapped():
     client = MagicMock()
     client.messages.count_tokens.side_effect = ValueError("boom")
 
-    with patch(
-        "free_claude_code.providers.anthropic_tokens.anthropic.Anthropic",
-        return_value=client,
+    with (
+        patch(
+            "free_claude_code.providers.anthropic_tokens.anthropic.Anthropic",
+            return_value=client,
+        ),
+        pytest.raises(ValueError, match="boom"),
     ):
-        with pytest.raises(ValueError, match="boom"):
-            count_tokens_via_anthropic_api(
-                api_key="sk-test",
-                model="claude-sonnet-4-5-20250929",
-                messages=[Message(role="user", content="hi")],
-                system=None,
-                tools=None,
-                timeout=30.0,
-            )
+        count_tokens_via_anthropic_api(
+            api_key="sk-test",
+            model="claude-sonnet-4-5-20250929",
+            messages=[Message(role="user", content="hi")],
+            system=None,
+            tools=None,
+            timeout=30.0,
+        )
 
 
 def test_count_tokens_via_anthropic_api_empty_tools_list_is_omitted():
