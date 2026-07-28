@@ -53,11 +53,12 @@ def collect_message_stream(
     headers: dict[str, str] | None = None,
 ) -> list[SSEEvent]:
     request_headers = headers or auth_headers()
+    stream_payload = {**payload, "stream": True}
     with httpx.stream(
         "POST",
         f"{server.base_url}/v1/messages",
         headers=request_headers,
-        json=payload,
+        json=stream_payload,
         timeout=config.timeout_s,
     ) as response:
         if response.status_code != 200:

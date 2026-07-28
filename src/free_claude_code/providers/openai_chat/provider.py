@@ -138,11 +138,16 @@ class OpenAIChatProvider(BaseProvider):
 
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
         """Return model metadata from the OpenAI-compatible models endpoint."""
+        payload = await self._list_models_payload()
+        return extract_openai_model_infos(payload, provider_name=self._provider_name)
+
+    async def _list_models_payload(self) -> Any:
+        """Fetch one OpenAI-compatible model-list payload with shared retries."""
         payload = await self._admission.run_with_retry(
             self._client.models.list,
             provider_failure_override=self._provider_failure_override,
         )
-        return extract_openai_model_infos(payload, provider_name=self._provider_name)
+        return payload
 
     def _build_request_body(
         self,

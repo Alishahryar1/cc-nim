@@ -1,16 +1,14 @@
-"""OpenRouter provider implementation."""
+"""Kilo.ai provider implementation."""
 
 from collections.abc import Iterator
 from typing import Any
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
-from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.anthropic.streaming import AnthropicStreamLedger
 from free_claude_code.core.reasoning import ReasoningEffort
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
-from free_claude_code.providers.model_listing import extract_tool_capable_model_infos
 from free_claude_code.providers.openai_chat import (
     OpenAIChatProfile,
     OpenAIChatProvider,
@@ -21,38 +19,41 @@ from free_claude_code.providers.openai_chat import (
     validate_extra_body_does_not_override_canonical_fields,
 )
 
-_REQUEST_POLICY = OpenAIChatRequestPolicy(
-    provider_name="OPENROUTER",
-    reasoning_replay=ReasoningReplayMode.REASONING_CONTENT,
-    include_extra_body=True,
-    extra_body_validator=validate_extra_body_does_not_override_canonical_fields,
-    default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+from .models import extract_kilo_model_infos
+
+_PROFILE = OpenAIChatProfile(
+    OpenAIChatRequestPolicy(
+        provider_name="KILO",
+        reasoning_replay=ReasoningReplayMode.REASONING_CONTENT,
+        include_extra_body=True,
+        extra_body_validator=validate_extra_body_does_not_override_canonical_fields,
+    ),
+    ReasoningObject(tuple((effort, effort.value) for effort in ReasoningEffort)),
+    postprocessors=(apply_reasoning_details_replay,),
+    reasoning_delta_field="reasoning",
 )
 
 
-class OpenRouterProvider(OpenAIChatProvider):
-    """OpenRouter provider using the OpenAI-compatible Chat Completions API."""
+class KiloProvider(OpenAIChatProvider):
+    """Kilo gateway adapter with capability-aware discovery and reasoning."""
 
     def __init__(
         self, config: ProviderConfig, *, admission: ProviderAdmissionController
-    ):
-        super().__init__(
-            config,
-            profile=_PROFILE,
-            admission=admission,
-        )
+    ) -> None:
+        super().__init__(config, profile=_PROFILE, admission=admission)
 
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
-        """Advertise OpenRouter tool models with reasoning capability metadata."""
+        """Advertise Kilo chat models that can execute FCC agent requests."""
         payload = await self._list_models_payload()
-        return extract_tool_capable_model_infos(
-            payload, provider_name=self._provider_name
+        return extract_kilo_model_infos(
+            payload,
+            provider_name=self._provider_name,
         )
 
     def _handle_extra_reasoning(
         self, delta: Any, ledger: AnthropicStreamLedger, *, output_reasoning: bool
     ) -> Iterator[str]:
-        """Map OpenRouter reasoning details onto Anthropic thinking blocks."""
+        """Map Kilo structured reasoning details onto Anthropic blocks."""
         if not output_reasoning:
             return iter(())
         return iter_reasoning_detail_events(
@@ -60,10 +61,3 @@ class OpenRouterProvider(OpenAIChatProvider):
             ledger,
             native_reasoning=self._profile.reasoning_delta(delta),
         )
-
-
-_PROFILE = OpenAIChatProfile(
-    _REQUEST_POLICY,
-    ReasoningObject(tuple((effort, effort.value) for effort in ReasoningEffort)),
-    postprocessors=(apply_reasoning_details_replay,),
-)

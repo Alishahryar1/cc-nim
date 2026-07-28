@@ -16,6 +16,10 @@ from .reasoning import (
     NamedEffortReasoning,
     ReasoningObject,
 )
+from .reasoning_details import (
+    apply_reasoning_details_replay,
+    iter_reasoning_detail_events,
+)
 from .request_policy import OpenAIChatRequestPolicy, build_openai_chat_request_body
 from .usage import usage_int
 
@@ -49,8 +53,10 @@ __all__ = [
     "OpenAIChatProvider",
     "OpenAIChatRequestPolicy",
     "ReasoningObject",
+    "apply_reasoning_details_replay",
     "build_openai_chat_request_body",
     "create_openai_chat_provider",
+    "iter_reasoning_detail_events",
     "openai_v1_base_url",
     "usage_int",
     "validate_extra_body_does_not_override_canonical_fields",

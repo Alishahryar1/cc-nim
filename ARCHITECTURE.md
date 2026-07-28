@@ -668,8 +668,10 @@ Cloudflare uses its
 account-scoped Workers AI OpenAI-compatible Chat Completions endpoint for
 `@cf/...` model IDs, while account ID composition, model search, and
 Cloudflare-specific reasoning deltas stay in the Cloudflare provider client.
-OpenRouter remains specialized for model filtering and reasoning-detail stream
-events. Amazon Bedrock Mantle uses an ordinary profile with a region-specific,
+OpenRouter and Kilo remain specialized for capability-aware model filtering and
+structured reasoning-detail stream events. Kilo excludes image-output and
+Responses-only models from Chat Completions discovery while keeping direct model
+execution upstream-authoritative. Amazon Bedrock Mantle uses an ordinary profile with a region-specific,
 configurable OpenAI base URL and bearer API key; AWS SigV4 and native
 Converse/Invoke transports are outside that provider contract. Wafer, Kimi API,
 Kimi Code, MiniMax, Fireworks, and Z.ai use ordinary

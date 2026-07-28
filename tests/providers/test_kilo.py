@@ -1,17 +1,27 @@
 """Tests for the Kilo.ai OpenAI-chat provider."""
 
-from unittest.mock import AsyncMock, MagicMock
+import json
+from types import SimpleNamespace
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_catalog import KILO_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
+from free_claude_code.core.anthropic.stream_contracts import (
+    parse_sse_text,
+    text_content,
+    thinking_content,
+)
+from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.kilo import KiloProvider
+from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.support import (
     immediate_admission,
-    profiled_provider,
     reasoning_for,
 )
 
@@ -28,18 +38,52 @@ def kilo_config():
 
 @pytest.fixture
 def kilo_provider(kilo_config):
-    return profiled_provider(
-        "kilo",
+    return KiloProvider(
         kilo_config,
-        admission=immediate_admission(),
+        admission=immediate_admission(provider_name="kilo"),
     )
+
+
+class AsyncStream:
+    def __init__(self, chunks):
+        self._chunks = chunks
+        self.closed = False
+
+    def __aiter__(self):
+        return self._iter()
+
+    async def _iter(self):
+        for chunk in self._chunks:
+            yield chunk
+
+    async def aclose(self):
+        self.closed = True
+
+
+def _chunk(
+    *,
+    content: str | None = None,
+    reasoning: str | None = None,
+    reasoning_details: list[dict] | None = None,
+    finish_reason: str | None = None,
+):
+    delta = SimpleNamespace(
+        content=content,
+        reasoning=reasoning,
+        tool_calls=None,
+    )
+    if reasoning_details is not None:
+        delta.reasoning_details = reasoning_details
+    choice = SimpleNamespace(delta=delta, finish_reason=finish_reason)
+    return SimpleNamespace(choices=[choice], usage=None)
 
 
 def test_default_base_url():
     assert KILO_DEFAULT_BASE == "https://api.kilo.ai/api/gateway"
 
 
-def test_init_uses_openai_chat_provider(kilo_provider):
+def test_init_uses_specialized_openai_chat_provider(kilo_provider):
+    assert isinstance(kilo_provider, KiloProvider)
     assert isinstance(kilo_provider, OpenAIChatProvider)
     assert kilo_provider._api_key == "test_kilo_key"
     assert kilo_provider._base_url == KILO_DEFAULT_BASE
@@ -76,6 +120,30 @@ def test_build_request_body_forwards_caller_extra_body(kilo_provider):
     assert body.get("extra_body", {}).get("custom_field") == "value"
 
 
+@pytest.mark.parametrize(
+    "field",
+    [
+        "model",
+        "messages",
+        "tools",
+        "stream",
+        "max_tokens",
+        "reasoning",
+    ],
+)
+def test_extra_body_cannot_override_canonical_request_fields(kilo_provider, field):
+    request = MessagesRequest.model_validate(
+        {
+            "model": "m",
+            "messages": [{"role": "user", "content": "hi"}],
+            "extra_body": {field: "hijack"},
+        }
+    )
+
+    with pytest.raises(InvalidRequestError, match=field):
+        kilo_provider._build_request_body(request, reasoning=reasoning_for(request))
+
+
 def test_build_request_body_sends_reasoning_object(kilo_provider):
     request = MessagesRequest.model_validate(
         {
@@ -91,8 +159,6 @@ def test_build_request_body_sends_reasoning_object(kilo_provider):
 
 
 def test_build_request_body_sends_reasoning_disabled(kilo_provider):
-    from free_claude_code.core.reasoning import ReasoningControl, ReasoningPolicy
-
     request = MessagesRequest.model_validate(
         {
             "model": "m",
@@ -102,31 +168,176 @@ def test_build_request_body_sends_reasoning_disabled(kilo_provider):
 
     body = kilo_provider._build_request_body(
         request,
-        reasoning=ReasoningPolicy(control=ReasoningControl.OFF),
+        reasoning=ReasoningPolicy.off(),
     )
 
     assert body["extra_body"]["reasoning"] == {"enabled": False}
 
 
+def test_build_request_body_replays_opaque_reasoning_details_on_tool_turn(
+    kilo_provider,
+):
+    detail = {
+        "type": "reasoning.opaque",
+        "data": {"signature": "opaque-value"},
+    }
+    request = MessagesRequest.model_validate(
+        {
+            "model": "m",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "redacted_thinking",
+                            "data": json.dumps(detail),
+                        },
+                        {
+                            "type": "tool_use",
+                            "id": "call_read",
+                            "name": "Read",
+                            "input": {},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_read",
+                            "content": "contents",
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+
+    body = kilo_provider._build_request_body(
+        request,
+        reasoning=reasoning_for(request),
+    )
+
+    assistant = next(msg for msg in body["messages"] if msg["role"] == "assistant")
+    assert assistant["reasoning_details"] == [detail]
+
+
 @pytest.mark.asyncio
-async def test_model_list_uses_openai_client_models_endpoint(kilo_provider):
+async def test_stream_uses_reasoning_field_without_duplicating_plain_details(
+    kilo_provider,
+):
+    encrypted = {"type": "reasoning.encrypted", "data": "opaque"}
+    stream = AsyncStream(
+        [
+            _chunk(
+                reasoning="plan ",
+                reasoning_details=[{"type": "reasoning.text", "text": "plan "}],
+            ),
+            _chunk(reasoning_details=[encrypted]),
+            _chunk(content="done", finish_reason="stop"),
+        ]
+    )
+    request = MessagesRequest.model_validate(
+        {
+            "model": "kilo-auto/free",
+            "messages": [{"role": "user", "content": "Hello"}],
+        }
+    )
+    with patch.object(
+        kilo_provider._client.chat.completions,
+        "create",
+        new_callable=AsyncMock,
+        return_value=stream,
+    ):
+        event_text = "".join(
+            [event async for event in kilo_provider.stream_response(request)]
+        )
+
+    events = parse_sse_text(event_text)
+    assert thinking_content(events) == "plan "
+    assert text_content(events) == "done"
+    redacted_blocks = [
+        event.data["content_block"]
+        for event in events
+        if event.event == "content_block_start"
+        and event.data.get("content_block", {}).get("type") == "redacted_thinking"
+    ]
+    assert len(redacted_blocks) == 1
+    assert json.loads(redacted_blocks[0]["data"]) == encrypted
+    assert stream.closed
+
+
+@pytest.mark.asyncio
+async def test_model_list_filters_to_chat_tool_models_with_capabilities(kilo_provider):
     kilo_provider._client.models.list = AsyncMock(
-        return_value=MagicMock(
+        return_value=SimpleNamespace(
             data=[
-                MagicMock(id="anthropic/claude-sonnet-4.5"),
-                MagicMock(id="openai/gpt-5.4"),
+                {
+                    "id": "anthropic/tool-reasoning",
+                    "supported_parameters": ["tools", "reasoning"],
+                    "architecture": {"output_modalities": ["text"]},
+                    "opencode": {"ai_sdk_provider": "anthropic"},
+                },
+                {
+                    "id": "plain-tool",
+                    "supported_parameters": ["tool_choice"],
+                    "architecture": {"output_modalities": ["text"]},
+                    "opencode": {},
+                },
+                {
+                    "id": "missing-optional-metadata",
+                    "supported_parameters": ["tools"],
+                },
+                {
+                    "id": "chat-only",
+                    "supported_parameters": ["reasoning"],
+                },
+                {
+                    "id": "image-output",
+                    "supported_parameters": ["tools"],
+                    "architecture": {"output_modalities": ["text", "image"]},
+                },
+                {
+                    "id": "responses-only",
+                    "supported_parameters": ["tools", "reasoning"],
+                    "opencode": {"ai_sdk_provider": "openai"},
+                },
+                {
+                    "id": "missing-tool-metadata",
+                    "supported_parameters": None,
+                },
             ]
         )
     )
 
     assert await kilo_provider.list_model_infos() == frozenset(
         {
-            ProviderModelInfo("anthropic/claude-sonnet-4.5"),
-            ProviderModelInfo("openai/gpt-5.4"),
+            ProviderModelInfo("anthropic/tool-reasoning", supports_thinking=True),
+            ProviderModelInfo("plain-tool", supports_thinking=False),
+            ProviderModelInfo(
+                "missing-optional-metadata",
+                supports_thinking=False,
+            ),
         }
     )
 
     kilo_provider._client.models.list.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "payload",
+    [
+        SimpleNamespace(data="not-an-array"),
+        SimpleNamespace(data=[SimpleNamespace(id="", supported_parameters=["tools"])]),
+    ],
+)
+async def test_model_list_rejects_malformed_payload(kilo_provider, payload):
+    kilo_provider._client.models.list = AsyncMock(return_value=payload)
+
+    with pytest.raises(ModelListResponseError, match="KILO model-list"):
+        await kilo_provider.list_model_infos()
 
 
 @pytest.mark.asyncio
