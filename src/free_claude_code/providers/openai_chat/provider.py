@@ -118,7 +118,6 @@ class OpenAIChatProvider(BaseProvider):
                 ),
             )
         logger.info("Base URL: {}", self._base_url)
-        logger.info("Default headers: {}", default_headers)
         self._client = AsyncOpenAI(
             api_key=api_key_provider or self._api_key,
             base_url=self._base_url,
