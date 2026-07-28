@@ -458,8 +458,6 @@ def test_count_tokens_endpoint(client: TestClient):
 def test_count_tokens_endpoint_uses_exact_anthropic_api_when_key_configured():
     """When ANTHROPIC_API_KEY is set, the route calls the real Anthropic SDK
     (offloaded via asyncio.to_thread) and returns its exact count."""
-    from types import SimpleNamespace
-
     from free_claude_code.config.settings import Settings
 
     app_with_key = create_test_app(settings=Settings(ANTHROPIC_API_KEY="sk-test"))
