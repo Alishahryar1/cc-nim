@@ -320,6 +320,8 @@ class Settings(BaseSettings):
         default=None, validation_alias="MAX_MESSAGE_LOG_ENTRIES_PER_CHAT"
     )
 
+    token_saver_mode: str = Field(default="none", validation_alias="TOKEN_SAVER_MODE")
+
     host: str = "0.0.0.0"
     port: int = 8082
     open_admin_browser: bool = Field(default=True, validation_alias="FCC_OPEN_BROWSER")

@@ -358,7 +358,11 @@ class _OpenAIChatHistoryLedger:
             self.add_plain(AnthropicToOpenAIConverter._convert_user_message([block]))
             return
         tool_content = get_block_attr(block, "content", "")
-        serialized = serialize_tool_result_content(tool_content)
+        tool_name = get_block_attr(block, "name", "")
+        is_error = bool(get_block_attr(block, "is_error", False))
+        serialized = serialize_tool_result_content(
+            tool_content, tool_name=tool_name, is_error=is_error
+        )
         tool_message = {
             "role": "tool",
             "tool_call_id": tuid,
@@ -678,7 +682,11 @@ class AnthropicToOpenAIConverter:
             elif block_type == "tool_result":
                 flush_content()
                 tool_content = get_block_attr(block, "content", "")
-                serialized = serialize_tool_result_content(tool_content)
+                tool_name = get_block_attr(block, "name", "")
+                is_error = bool(get_block_attr(block, "is_error", False))
+                serialized = serialize_tool_result_content(
+                    tool_content, tool_name=tool_name, is_error=is_error
+                )
                 result.append(
                     {
                         "role": "tool",

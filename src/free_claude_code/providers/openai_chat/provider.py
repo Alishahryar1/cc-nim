@@ -594,10 +594,10 @@ class _OpenAIChatStreamRunner:
                 reported_error = underlying_provider_error(error)
                 assert isinstance(reported_error, Exception)
                 self._provider._log_stream_transport_error(
-                    tag, req_tag, reported_error, request_id=self._request_id
+                    tag, req_tag, error, request_id=self._request_id
                 )
                 failure = classify_provider_failure(
-                    reported_error,
+                    error,
                     provider_name=tag,
                     read_timeout_s=self._provider._config.http_read_timeout,
                     request_id=self._request_id,
@@ -611,7 +611,7 @@ class _OpenAIChatStreamRunner:
                     "source": "provider",
                     "provider": tag,
                     "request_id": self._request_id,
-                    "exc_type": type(reported_error).__name__,
+                    "exc_type": type(error).__name__,
                     "failure_kind": failure.kind.value,
                     "status_code": failure.status_code,
                     "provider_retryable": failure.retryable,

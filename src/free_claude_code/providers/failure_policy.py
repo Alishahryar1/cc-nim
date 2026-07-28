@@ -66,8 +66,8 @@ def classify_provider_failure(
     """Return one detailed canonical failure after provider retries are exhausted."""
     res_exc = underlying_provider_error(exc)
     assert isinstance(res_exc, Exception)
-    exc = res_exc
-    assert isinstance(res_exc, Exception)
+    # Preserve original exception for cause-chain diagnostics
+    original_exc = exc
     exc = res_exc
     if isinstance(exc, ExecutionFailure):
         failure = exc
@@ -89,7 +89,7 @@ def classify_provider_failure(
         )
     message = format_execution_failure_message(
         failure,
-        extract_upstream_error_detail(exc),
+        extract_upstream_error_detail(original_exc),
         upstream_name=provider_name,
         request_id=request_id,
     )

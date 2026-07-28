@@ -3,6 +3,9 @@
 import json
 from typing import Any
 
+from free_claude_code.config.settings import get_settings
+from free_claude_code.core.token_saver import TokenSaver
+
 from .models import MessagesRequest
 
 _MESSAGES_REQUEST_FIELDS = (
@@ -36,15 +39,20 @@ def dump_messages_request(request: MessagesRequest) -> dict[str, Any]:
     }
 
 
-def serialize_tool_result_content(content: Any) -> str:
+def serialize_tool_result_content(
+    content: Any,
+    *,
+    tool_name: str = "",
+    is_error: bool = False,
+) -> str:
     """Serialize Anthropic ``tool_result.content`` into provider-safe text."""
     if content is None:
         return ""
     if isinstance(content, str):
-        return content
-    if isinstance(content, dict):
-        return json.dumps(content, ensure_ascii=False)
-    if isinstance(content, list):
+        serialized = content
+    elif isinstance(content, dict):
+        serialized = json.dumps(content, ensure_ascii=False)
+    elif isinstance(content, list):
         parts: list[str] = []
         for item in content:
             if isinstance(item, dict) and item.get("type") == "text":
@@ -53,5 +61,14 @@ def serialize_tool_result_content(content: Any) -> str:
                 parts.append(json.dumps(item, ensure_ascii=False))
             else:
                 parts.append(str(item))
-        return "\n".join(parts)
-    return str(content)
+        serialized = "\n".join(parts)
+    else:
+        serialized = str(content)
+
+    settings = get_settings()
+    if settings.token_saver_mode != "none":
+        saver = TokenSaver.singleton(settings.token_saver_mode)
+        serialized = saver.save_result(
+            serialized, tool_name=tool_name, is_error=is_error
+        )
+    return serialized

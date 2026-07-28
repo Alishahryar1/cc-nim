@@ -404,7 +404,9 @@ def _normalize_tool_result_content(messages: Any) -> Any:
             if block.get("type") == "tool_result":
                 normalized_block = dict(block)
                 normalized_block["content"] = serialize_tool_result_content(
-                    block.get("content")
+                    block.get("content"),
+                    tool_name="",
+                    is_error=bool(block.get("is_error", False)),
                 )
                 new_content.append(normalized_block)
             else:
