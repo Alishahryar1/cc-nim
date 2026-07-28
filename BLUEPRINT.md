@@ -113,14 +113,33 @@ Local-only (loopback guard), served at `/admin`.
 
 ---
 
-## EvoMetaClaw (the moat)
+## The Moat: EvoMetaClaw × EvoForge × SkillOpt
 
-Trajectory-based fine-tuning corpus + skill-aware routing. What OpenClaw can copy in a day: the provider registry, the admin UI, the deploy pipeline. What they can't copy: **months of real usage trajectories** and the SkillOpt-derived per-skill routing that comes from training on them.
+OpenClaw and every other proxy can copy the provider registry, the admin UI, and the deploy pipeline in a weekend. They cannot copy **months of real usage trajectories**, the **skill-conditioned routing policies** derived from them, or the **evaluation curriculum** that keeps those policies honest. That is this project's three-stage flywheel:
+
+```
+       online (this repo)                            offline (planned)
+┌──────────────────────────────┐                ┌─────────────────────────┐
+│  EvoMetaClaw  ── capture ─── │ trajectories/  │  EvoForge  ── process ──│
+│  gateway + trajectory logger │────────────▶───│  cluster · dedupe ·     │
+│  (api/trajectory.py)         │  jsonl corpus  │  score · eval bench     │
+└──────────────────────────────┘                └────────┬────────────────┘
+              ▲                                          │
+              │      per-skill routing policy JSON       │
+              └──────────────── SkillOpt  ◀──────────────┘
+                                (per-skill optimizer)
+```
+
+The gateway keeps working the same day one — SkillOpt policies are additive. When enabled they simply narrow provider selection *per skill* based on the trajectory evidence. When absent, routing falls back to `MODEL_*` env vars exactly like today.
+
+### Stage 1 — EvoMetaClaw (shipped, v2.1.0)
+
+Capture surface. Every completed proxy request emits one JSONL row with the metadata SkillOpt needs to train against.
 
 | Component | File | Role |
 |---|---|---|
-| Trajectory logger | `api/trajectory.py` | Opt-in JSONL append with byte-cap rotation. Records `{request_id, provider, model, skill, thinking, tokens, latency, cost, status}` for every proxied request. Serverless-safe: read-only FS → auto-disable. |
-| Skill inference | `api/trajectory.py::infer_skill` | Heuristic classifier over messages + tools: `probe`, `edit`, `plan`, `question`, `chat`. Cheap, deterministic, adequate for SkillOpt bucketing. |
+| Trajectory logger | `api/trajectory.py` | Opt-in JSONL append with byte-cap rotation. Records `{request_id, provider, model, skill, thinking, tokens, latency, cost, status}` per request. Serverless-safe: read-only FS → auto-disable. |
+| Skill inference | `api/trajectory.py::infer_skill` | Cheap heuristic classifier over messages + tools: `probe`, `edit`, `plan`, `question`, `chat`. Deterministic, adequate for SkillOpt bucketing; upgradeable to a learned classifier once the corpus is large enough. |
 | Pricing catalog | `api/pricing.py` | Vendor rate cards (USD / 1M tokens). Prefixed lookup wins over bare model id. Zero-cost default for unknown models — never overstates spend. |
 | Admin surface | `GET /admin/api/trajectory` | Loopback-only rollup: total, per-skill mix, per-provider mix, tokens, cost, log path. |
 | UI callout | `admin_static/admin.js::renderEvoMetaClaw` | "Recording / Disabled" pill + skill chips on the Metrics tab. |
@@ -131,6 +150,58 @@ TRAJECTORY_LOG_ENABLED=1
 TRAJECTORY_LOG_MAX_BYTES=5000000    # optional, default 5 MB
 FCC_CACHE_DIR=/var/lib/fcc          # optional, default ~/.fcc-cache
 ```
+
+### Stage 2 — EvoForge (planned)
+
+Offline processing pipeline that turns raw JSONL trajectories into a versioned, evaluable **skill corpus**. Deliberately separated from the online gateway so it can run on a schedule (nightly cron / GitHub Action / local batch) without touching request latency.
+
+**Input:** `${FCC_CACHE_DIR}/trajectories.jsonl(.1)` — the newline-delimited stream EvoMetaClaw produced.
+
+**Stages (in order):**
+1. **Ingest** — read + validate rows, drop malformed / partial-write records.
+2. **Cluster** — bucket by `(skill, thinking_enabled)`; produce provider/model performance matrices per bucket.
+3. **Score** — compose a utility score per `(provider, model, skill)` from cost, latency (p50/p95), completion status, and (when available) user-signaled quality feedback. Reward: `-λ_cost · cost - λ_latency · p95 + λ_success · ok_rate`.
+4. **Evaluate** — replay a held-out slice against candidate policies before publishing (guards against overfitting to the last week of noise).
+5. **Publish** — emit `${FCC_CACHE_DIR}/skillopt_policy.json` — the artefact SkillOpt reads at runtime. Includes a schema version so gateway rollout can safely stay one version ahead of any policy revision.
+
+**Ownership boundary:** the gateway never writes into the forge, and the forge never reads live traffic. The only shared surface is the JSONL corpus (write-only from gateway) and the policy JSON (read-only from gateway). This keeps the gateway single-binary-deployable while EvoForge evolves independently.
+
+### Stage 3 — SkillOpt (planned)
+
+Runtime consumer of the EvoForge policy. Reads `skillopt_policy.json` on startup + on-change (file mtime watch), and, when present, narrows `ModelRouter` per skill.
+
+**Policy shape (illustrative):**
+```json
+{
+  "version": 1,
+  "generated_ts": 1720000000,
+  "policies": {
+    "edit":     { "primary": "deepseek/deepseek-chat", "fallbacks": ["openai/gpt-4o"] },
+    "plan":     { "primary": "openai/gpt-4o",          "fallbacks": ["gemini/gemini-2.5-flash"] },
+    "probe":    { "primary": "groq/llama-3.3-70b-versatile" },
+    "question": { "primary": "openai/gpt-4o-mini" },
+    "chat":     { "primary": "MODEL" }
+  }
+}
+```
+
+**Runtime contract:**
+- If a policy for the request's skill exists, use `policies[skill].primary`; on `AuthenticationError`/`ServiceUnavailableError` walk the `fallbacks` list (this is what closes today's single-provider SPOF).
+- If no policy applies (skill missing, policy file absent, feature disabled), fall through to today's `MODEL_*` behavior unchanged.
+- The SkillOpt lookup happens **after** direct-slug routing (`provider/model` requests still go where the caller asked). It only affects Claude-tier-mapped traffic.
+
+**Kill switch:** `SKILLOPT_ENABLED=0` (default) — SkillOpt is off unless explicitly enabled, so the flywheel spins up incrementally without ever regressing a working install.
+
+### Why this stack, not "just fine-tune"
+
+Full-parameter fine-tuning is expensive, tied to one base model, and freezes the policy at training time. This stack:
+
+1. **Doesn't fine-tune the model** — it optimises *routing*. Cheap, provider-agnostic, hot-swappable.
+2. **Improves monotonically** — every request adds one trajectory; the policy only gets richer.
+3. **Leaves the model choice open** — when a better base model ships next week, SkillOpt re-scores against it in the next EvoForge run instead of paying to re-train.
+4. **Is legible** — the policy JSON is human-readable; an operator can override a bucket by hand without touching gateway code.
+
+Fine-tuning is not ruled out — it's a *future consumer* of the same trajectory corpus. EvoMetaClaw's records include the fields (`skill`, `thinking`, cost, tokens) needed for both.
 
 ---
 
@@ -190,12 +261,17 @@ All enforced in `.github/workflows/tests.yml` on push/PR to `main`/`master`:
 - [x] **One-click API key validation** — `POST /admin/api/providers/{id}/validate`; `validate_credentials()` on BaseProvider; OpenAI-compat override adds 1-token completion check; "Validate key" button per non-local provider card
 
 ### Planned 🔲
-- [ ] Provider fallback chain — `MODEL_FALLBACK_CHAIN=a,b,c` for auto-retry when primary provider fails (removes single-provider SPOF)
-- [ ] SkillOpt fine-tuning pipeline — offline consumer of `trajectories.jsonl` that produces per-skill routing rules
+- [ ] **EvoForge** — offline pipeline: ingest → cluster → score → evaluate → publish `skillopt_policy.json`. Scheduled batch, no online-latency impact.
+- [ ] **SkillOpt runtime** — `ModelRouter` extension that reads `skillopt_policy.json` and narrows routing per skill; `fallbacks[]` per policy closes the single-provider SPOF. Kill switch: `SKILLOPT_ENABLED=0` (default off).
+- [ ] Learned skill classifier — replace heuristic `infer_skill` once the corpus exceeds ~10k rows across 3+ skills.
 
 ---
 
 ## Changelog
+
+### v2.1.0 — 2026-07-11 (blueprint: three-pillar moat)
+- **Blueprint restructured**: "EvoMetaClaw (the moat)" replaced with the three-pillar architecture — **EvoMetaClaw** (capture, shipped), **EvoForge** (offline processing, planned), **SkillOpt** (runtime optimizer, planned). Adds ASCII flywheel diagram, per-stage responsibilities table, sample `skillopt_policy.json`, runtime contract with kill-switch, and a "why this stack, not just fine-tune" rationale.
+- **Roadmap sharpened**: EvoForge and SkillOpt now called out as the next two milestones; provider-fallback SPOF removal folded into SkillOpt's `fallbacks[]` (single implementation covers both).
 
 ### v2.1.0 — 2026-07-11 (EvoMetaClaw + cost)
 - **EvoMetaClaw trajectory logger** (`api/trajectory.py`): opt-in JSONL append with byte-cap rotation, in-memory summary, skill inference. `TRAJECTORY_LOG_ENABLED=1` to enable; serverless-safe (read-only FS → auto-disable, same pattern as `configure_logging` / `health_history`).
