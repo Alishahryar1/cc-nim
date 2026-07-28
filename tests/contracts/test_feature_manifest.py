@@ -38,6 +38,7 @@ def test_readme_provider_table_covers_full_catalog() -> None:
     provider_section = readme.split("## Choose A Provider", 1)[1].split("\n## ", 1)[0]
     rows = [line for line in provider_section.splitlines() if line.startswith("| [")]
 
+    assert f"Switch among {len(PROVIDER_CATALOG)} cloud and local providers" in readme
     prefixes: list[str] = []
     for row in rows:
         example_cell = row.split("|")[3]

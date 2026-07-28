@@ -49,7 +49,7 @@ Run your coding agents with free, paid, or local models. Choose and validate pro
 
 - Launch Claude Code with `fcc-claude`, Codex with `fcc-codex`, or Pi with `fcc-pi`.
 - Run FCC in the background from a desktop launcher on Windows or macOS.
-- Switch among 25 cloud and local providers from the Admin UI.
+- Switch among 29 cloud and local providers from the Admin UI.
 - Use each coding agent's native model picker.
 - Route Fable, Opus, Sonnet, Haiku, and fallback traffic to different models.
 - Keep streaming, tool use, reasoning, and image input across compatible models.

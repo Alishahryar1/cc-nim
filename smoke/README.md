@@ -126,20 +126,10 @@ uv run pytest smoke/product -n 0 -s --tb=short
 - `FCC_ALLOW_NO_PROVIDER_SMOKE=1`: permits no-provider live smoke for harness work.
 - `FCC_SMOKE_TARGETS`: comma-separated targets, or `all`.
 - `FCC_SMOKE_PROVIDER_MATRIX`: comma-separated provider prefixes to require.
-- `FCC_SMOKE_MODEL_NVIDIA_NIM`, `FCC_SMOKE_MODEL_OPEN_ROUTER`,
-  `FCC_SMOKE_MODEL_MISTRAL`, `FCC_SMOKE_MODEL_MISTRAL_REASONING`,
-  `FCC_SMOKE_MODEL_MISTRAL_CODESTRAL`,
-  `FCC_SMOKE_MODEL_DEEPSEEK`, `FCC_SMOKE_MODEL_KIMI`,
-  `FCC_SMOKE_MODEL_KIMI_CODE`,
-  `FCC_SMOKE_MODEL_WAFER`, `FCC_SMOKE_MODEL_MINIMAX`,
-  `FCC_SMOKE_MODEL_OPENCODE`, `FCC_SMOKE_MODEL_OPENCODE_GO`,
-  `FCC_SMOKE_MODEL_BEDROCK`,
-  `FCC_SMOKE_MODEL_ZAI`, `FCC_SMOKE_MODEL_FIREWORKS`, `FCC_SMOKE_MODEL_CLOUDFLARE`,
-  `FCC_SMOKE_MODEL_GEMINI`, `FCC_SMOKE_MODEL_GROQ`, `FCC_SMOKE_MODEL_CEREBRAS`,
-  `FCC_SMOKE_MODEL_OLLAMA_CLOUD`, `FCC_SMOKE_MODEL_LMSTUDIO`,
-  `FCC_SMOKE_MODEL_LLAMACPP`, `FCC_SMOKE_MODEL_OLLAMA`: optional per-provider
-  smoke model overrides. Values may include the provider prefix or just the model
-  name for that provider.
+- `FCC_SMOKE_MODEL_<PROVIDER>`: optional per-provider smoke model override.
+  Use the uppercase provider ID, such as `FCC_SMOKE_MODEL_KILO`; the complete
+  variable inventory is in [.env.example](../.env.example). Values may include
+  the provider prefix or just the model name for that provider.
 - `FCC_SMOKE_MODEL_MISTRAL_REASONING`: optional override for the dedicated
   Mistral native reasoning smoke, default `mistral/mistral-medium-3-5`.
 - `FCC_SMOKE_NIM_MODELS`: optional comma-separated NVIDIA NIM CLI matrix models
