@@ -1190,3 +1190,9 @@ class TestPerModelMapping:
         assert refs[2].provider_id == "open_router"
         assert refs[2].model_id == "anthropic/claude-opus"
         assert refs[2].sources == ("MODEL_OPUS",)
+
+
+
+def test_anthropic_proxy_setting() -> None:
+    settings = Settings(ANTHROPIC_PROXY="socks5://127.0.0.1:1080")
+    assert settings.anthropic_proxy == "socks5://127.0.0.1:1080"
