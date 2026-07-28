@@ -1,11 +1,8 @@
-"""Exact token counting via the real Anthropic API.
+"""Exact token counting via the Anthropic HTTP API."""
 
-Owns Anthropic SDK failure classification per the failure-ownership
-convention: callers only ever see ``AnthropicTokenCountUnavailable`` or an
-``int`` result, never a raw SDK/HTTP exception.
-"""
+from typing import Any
 
-import anthropic
+import httpx
 from loguru import logger
 
 from free_claude_code.core.anthropic.models import Message, SystemContent, Tool
@@ -14,9 +11,12 @@ from free_claude_code.core.diagnostics import (
     safe_exception_message,
 )
 
+_COUNT_TOKENS_URL = "https://api.anthropic.com/v1/messages/count_tokens"
+_ANTHROPIC_VERSION = "2023-06-01"
+
 
 class AnthropicTokenCountUnavailable(Exception):
-    """Raised when the real Anthropic count_tokens API could not be reached."""
+    """Raised when the exact Anthropic token count is unavailable."""
 
 
 def count_tokens_via_anthropic_api(
@@ -27,30 +27,46 @@ def count_tokens_via_anthropic_api(
     system: str | list[SystemContent] | None,
     tools: list[Tool] | None,
     timeout: float,
+    proxy: str = "",
 ) -> int:
-    """Return an exact input token count from the real Anthropic API."""
-    client = anthropic.Anthropic(api_key=api_key, timeout=timeout)
-    messages_payload = [m.model_dump(mode="json", exclude_none=True) for m in messages]
-    system_payload = (
-        [s.model_dump(mode="json", exclude_none=True) for s in system]
-        if isinstance(system, list)
-        else system
-    )
-    tools_payload = (
-        [t.model_dump(mode="json", exclude_none=True) for t in tools] if tools else None
-    )
+    """Return an exact input-token count from Anthropic."""
+    payload: dict[str, Any] = {
+        "model": model,
+        "messages": [
+            message.model_dump(mode="json", exclude_none=True) for message in messages
+        ],
+    }
+    if system is not None:
+        payload["system"] = (
+            [block.model_dump(mode="json", exclude_none=True) for block in system]
+            if isinstance(system, list)
+            else system
+        )
+    if tools:
+        payload["tools"] = [
+            tool.model_dump(mode="json", exclude_none=True) for tool in tools
+        ]
 
     try:
-        result = client.messages.count_tokens(
-            model=model,
-            messages=messages_payload,
-            system=system_payload if system_payload is not None else anthropic.omit,
-            tools=tools_payload if tools_payload is not None else anthropic.omit,
-        )
-    except anthropic.APIError as exc:
+        with httpx.Client(proxy=proxy.strip() or None, timeout=timeout) as client:
+            response = client.post(
+                _COUNT_TOKENS_URL,
+                headers={
+                    "x-api-key": api_key,
+                    "anthropic-version": _ANTHROPIC_VERSION,
+                    "content-type": "application/json",
+                },
+                json=payload,
+            )
+            response.raise_for_status()
+            result = response.json()
+        input_tokens = result["input_tokens"]
+        if not isinstance(input_tokens, int) or isinstance(input_tokens, bool):
+            raise TypeError("Anthropic input_tokens must be an integer")
+        return input_tokens
+    except (httpx.HTTPError, KeyError, TypeError, ValueError) as exc:
         logger.debug(
             "Anthropic count_tokens API unavailable, causes={}",
             exception_cause_types(exc),
         )
         raise AnthropicTokenCountUnavailable(safe_exception_message(exc)) from exc
-    return result.input_tokens
