@@ -466,14 +466,15 @@ def test_count_tokens_endpoint_uses_exact_anthropic_api_when_key_configured():
 
     with (
         patch(
-            "free_claude_code.providers.anthropic_tokens.anthropic.Anthropic"
+            "free_claude_code.providers.anthropic_tokens.httpx.Client"
         ) as mock_anthropic,
         TestClient(app_with_key) as test_client,
     ):
         mock_client = MagicMock()
-        mock_client.messages.count_tokens.return_value = SimpleNamespace(
-            input_tokens=123
-        )
+        mock_client.__enter__.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"input_tokens": 123}
+        mock_client.post.return_value = mock_response
         mock_anthropic.return_value = mock_client
 
         response = test_client.post(
@@ -489,23 +490,23 @@ def test_count_tokens_endpoint_uses_exact_anthropic_api_when_key_configured():
 def test_count_tokens_endpoint_falls_back_when_anthropic_api_errors():
     """A failing Anthropic API call still returns a 200 with an estimated count."""
     import httpx
-    from anthropic import APIConnectionError
-
     from free_claude_code.config.settings import Settings
 
     app_with_key = create_test_app(settings=Settings(ANTHROPIC_API_KEY="sk-test"))
 
     with (
         patch(
-            "free_claude_code.providers.anthropic_tokens.anthropic.Anthropic"
+            "free_claude_code.providers.anthropic_tokens.httpx.Client"
         ) as mock_anthropic,
         TestClient(app_with_key) as test_client,
     ):
         mock_client = MagicMock()
-        mock_client.messages.count_tokens.side_effect = APIConnectionError(
+        mock_client.__enter__.return_value = mock_client
+        mock_client.post.side_effect = httpx.ConnectError(
+            "connection refused",
             request=httpx.Request(
                 "POST", "https://api.anthropic.com/v1/messages/count_tokens"
-            )
+            ),
         )
         mock_anthropic.return_value = mock_client
 
@@ -524,7 +525,7 @@ def test_count_tokens_endpoint_without_api_key_never_touches_anthropic_sdk(
 ):
     """Without ANTHROPIC_API_KEY, the route never constructs an Anthropic client."""
     with patch(
-        "free_claude_code.providers.anthropic_tokens.anthropic.Anthropic"
+        "free_claude_code.providers.anthropic_tokens.httpx.Client"
     ) as mock_anthropic:
         response = client.post(
             "/v1/messages/count_tokens",
