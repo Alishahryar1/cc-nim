@@ -1,11 +1,7 @@
 """Kilo.ai provider implementation."""
 
-from collections.abc import Iterator
-from typing import Any
-
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic import ReasoningReplayMode
-from free_claude_code.core.anthropic.streaming import AnthropicStreamLedger
 from free_claude_code.core.reasoning import ReasoningEffort
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
@@ -15,7 +11,6 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatRequestPolicy,
     ReasoningObject,
     apply_reasoning_details_replay,
-    iter_reasoning_detail_events,
     validate_extra_body_does_not_override_canonical_fields,
 )
 
@@ -31,6 +26,7 @@ _PROFILE = OpenAIChatProfile(
     ReasoningObject(tuple((effort, effort.value) for effort in ReasoningEffort)),
     postprocessors=(apply_reasoning_details_replay,),
     reasoning_delta_field="reasoning",
+    structured_reasoning_details=True,
 )
 
 
@@ -48,16 +44,4 @@ class KiloProvider(OpenAIChatProvider):
         return extract_kilo_model_infos(
             payload,
             provider_name=self._provider_name,
-        )
-
-    def _handle_extra_reasoning(
-        self, delta: Any, ledger: AnthropicStreamLedger, *, output_reasoning: bool
-    ) -> Iterator[str]:
-        """Map Kilo structured reasoning details onto Anthropic blocks."""
-        if not output_reasoning:
-            return iter(())
-        return iter_reasoning_detail_events(
-            delta,
-            ledger,
-            native_reasoning=self._profile.reasoning_delta(delta),
         )

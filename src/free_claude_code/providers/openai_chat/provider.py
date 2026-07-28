@@ -57,6 +57,7 @@ from free_claude_code.providers.stream_recovery import (
 
 from .output_cap import clamp_output_tokens, parse_output_token_cap
 from .profiles import OpenAIChatProfile
+from .reasoning_details import StructuredReasoningStream
 from .request_policy import build_openai_chat_request_body
 from .tool_calls import (
     OpenAIToolCallAssembler,
@@ -407,6 +408,11 @@ class _OpenAIChatStreamRunner:
         tool_argument_alias_buffers: dict[int, str] = {}
 
         while True:
+            structured_reasoning = (
+                StructuredReasoningStream()
+                if self._provider._profile.structured_reasoning_details
+                else None
+            )
             if not ledger.message_started:
                 for event in hold_event(ledger.message_start()):
                     yield event
@@ -440,14 +446,23 @@ class _OpenAIChatStreamRunner:
                         logger.debug("{} finish_reason: {}", tag, finish_reason)
 
                     reasoning = self._provider._profile.reasoning_delta(delta)
-                    if output_reasoning and reasoning is not None:
-                        for event in hold_events(ledger.ensure_thinking_block()):
-                            yield event
-                        if reasoning:
-                            for event in hold_event(
-                                ledger.emit_thinking_delta(reasoning)
+                    if output_reasoning:
+                        if structured_reasoning is not None:
+                            for event in structured_reasoning.events(
+                                delta,
+                                ledger,
+                                native_reasoning=reasoning,
                             ):
+                                for out_event in hold_event(event):
+                                    yield out_event
+                        elif reasoning is not None:
+                            for event in hold_events(ledger.ensure_thinking_block()):
                                 yield event
+                            if reasoning:
+                                for event in hold_event(
+                                    ledger.emit_thinking_delta(reasoning)
+                                ):
+                                    yield event
 
                     for event in self._provider._handle_extra_reasoning(
                         delta,

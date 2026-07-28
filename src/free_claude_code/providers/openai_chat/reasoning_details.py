@@ -2,7 +2,7 @@
 
 import json
 from collections.abc import Iterator, Mapping, Sequence
-from typing import Any
+from typing import Any, Literal
 
 from free_claude_code.core.anthropic import (
     is_synthetic_openai_tool_turn_boundary,
@@ -42,36 +42,59 @@ def apply_reasoning_details_replay(
             break
 
 
-def iter_reasoning_detail_events(
-    delta: Any,
-    ledger: AnthropicStreamLedger,
-    *,
-    native_reasoning: str | None,
-) -> Iterator[str]:
-    """Convert structured reasoning details without duplicating native text."""
+class StructuredReasoningStream:
+    """Reconcile alternate plaintext reasoning representations for one stream."""
+
+    def __init__(self) -> None:
+        self._text_source: Literal["native", "details"] | None = None
+
+    def events(
+        self,
+        delta: Any,
+        ledger: AnthropicStreamLedger,
+        *,
+        native_reasoning: str | None,
+    ) -> Iterator[str]:
+        """Emit plaintext once while preserving every opaque reasoning detail."""
+        details = _reasoning_details(delta)
+        if self._text_source is None:
+            if native_reasoning:
+                self._text_source = "native"
+            elif any(_reasoning_detail_text(detail) for detail in details):
+                self._text_source = "details"
+
+        if self._text_source == "native" and native_reasoning:
+            yield from ledger.ensure_thinking_block()
+            yield ledger.emit_thinking_delta(native_reasoning)
+
+        for detail in details:
+            preserved = _preserved_reasoning_detail(detail)
+            if preserved:
+                yield from ledger.close_content_blocks()
+                index = ledger.blocks.allocate_index()
+                yield ledger.content_block_start(
+                    index,
+                    "redacted_thinking",
+                    data=preserved,
+                )
+                yield ledger.content_block_stop(index)
+                continue
+            if self._text_source != "details":
+                continue
+            text = _reasoning_detail_text(detail)
+            if not text:
+                continue
+            yield from ledger.ensure_thinking_block()
+            yield ledger.emit_thinking_delta(text)
+
+
+def _reasoning_details(delta: Any) -> Sequence[Any]:
     details = _field(delta, "reasoning_details")
     if details is None:
         extra = _field(delta, "model_extra")
         if isinstance(extra, Mapping):
             details = extra.get("reasoning_details")
-    if not _is_sequence(details):
-        return
-
-    for detail in details:
-        preserved = _preserved_reasoning_detail(detail)
-        if preserved:
-            yield from ledger.close_content_blocks()
-            index = ledger.blocks.allocate_index()
-            yield ledger.content_block_start(index, "redacted_thinking", data=preserved)
-            yield ledger.content_block_stop(index)
-            continue
-        if native_reasoning:
-            continue
-        text = _reasoning_detail_text(detail)
-        if not text:
-            continue
-        yield from ledger.ensure_thinking_block()
-        yield ledger.emit_thinking_delta(text)
+    return details if _is_sequence(details) else ()
 
 
 def _assistant_reasoning_details(messages: Any) -> list[list[dict[str, Any]]]:

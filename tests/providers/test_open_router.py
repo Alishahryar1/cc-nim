@@ -12,6 +12,7 @@ from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import (
     parse_sse_text,
     text_content,
+    thinking_content,
 )
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.open_router import OpenRouterProvider
@@ -304,6 +305,7 @@ async def test_stream_maps_reasoning_content_and_details(open_router_provider):
     redacted = {"type": "reasoning.encrypted", "data": "opaque"}
     stream = AsyncStream(
         [
+            _chunk(reasoning_details=[{"type": "reasoning.text", "text": "plan "}]),
             _chunk(reasoning_content="plan "),
             _chunk(reasoning_details=[redacted]),
             _chunk(content="done", finish_reason="stop"),
@@ -321,11 +323,11 @@ async def test_stream_maps_reasoning_content_and_details(open_router_provider):
         ]
 
     event_text = "".join(events)
-    assert "thinking_delta" in event_text
-    assert "plan " in event_text
+    parsed = parse_sse_text(event_text)
+    assert thinking_content(parsed) == "plan "
     assert "redacted_thinking" in event_text
     assert "opaque" in event_text
-    assert "done" in text_content(parse_sse_text(event_text))
+    assert text_content(parsed) == "done"
     assert stream.closed
 
 

@@ -224,16 +224,30 @@ def test_build_request_body_replays_opaque_reasoning_details_on_tool_turn(
 
 
 @pytest.mark.asyncio
-async def test_stream_uses_reasoning_field_without_duplicating_plain_details(
-    kilo_provider,
-):
-    encrypted = {"type": "reasoning.encrypted", "data": "opaque"}
-    stream = AsyncStream(
+@pytest.mark.parametrize(
+    "reasoning_chunks",
+    [
         [
             _chunk(
                 reasoning="plan ",
                 reasoning_details=[{"type": "reasoning.text", "text": "plan "}],
-            ),
+            )
+        ],
+        [
+            _chunk(reasoning="plan "),
+            _chunk(reasoning_details=[{"type": "reasoning.text", "text": "plan "}]),
+        ],
+    ],
+    ids=["same-delta", "cross-delta"],
+)
+async def test_stream_uses_reasoning_field_without_duplicating_plain_details(
+    kilo_provider,
+    reasoning_chunks,
+):
+    encrypted = {"type": "reasoning.encrypted", "data": "opaque"}
+    stream = AsyncStream(
+        [
+            *reasoning_chunks,
             _chunk(reasoning_details=[encrypted]),
             _chunk(content="done", finish_reason="stop"),
         ]
@@ -265,6 +279,90 @@ async def test_stream_uses_reasoning_field_without_duplicating_plain_details(
     ]
     assert len(redacted_blocks) == 1
     assert json.loads(redacted_blocks[0]["data"]) == encrypted
+    assert stream.closed
+
+
+@pytest.mark.asyncio
+async def test_stream_restarts_reasoning_reconciliation_after_early_retry(
+    kilo_provider,
+):
+    abandoned = AsyncStream([_chunk(reasoning="discarded ")])
+    recovered = AsyncStream(
+        [
+            _chunk(reasoning_details=[{"type": "reasoning.text", "text": "plan "}]),
+            _chunk(content="done", finish_reason="stop"),
+        ]
+    )
+    request = MessagesRequest.model_validate(
+        {
+            "model": "kilo-auto/free",
+            "messages": [{"role": "user", "content": "Hello"}],
+        }
+    )
+    with patch.object(
+        kilo_provider._client.chat.completions,
+        "create",
+        new_callable=AsyncMock,
+        side_effect=[abandoned, recovered],
+    ) as create:
+        event_text = "".join(
+            [event async for event in kilo_provider.stream_response(request)]
+        )
+
+    events = parse_sse_text(event_text)
+    assert thinking_content(events) == "plan "
+    assert text_content(events) == "done"
+    assert create.await_count == 2
+    assert abandoned.closed
+    assert recovered.closed
+
+
+@pytest.mark.asyncio
+async def test_stream_omits_all_reasoning_representations_when_disabled(
+    kilo_provider,
+):
+    stream = AsyncStream(
+        [
+            _chunk(
+                reasoning="plan ",
+                reasoning_details=[
+                    {"type": "reasoning.text", "text": "plan "},
+                    {"type": "reasoning.encrypted", "data": "opaque"},
+                ],
+            ),
+            _chunk(content="done", finish_reason="stop"),
+        ]
+    )
+    request = MessagesRequest.model_validate(
+        {
+            "model": "kilo-auto/free",
+            "messages": [{"role": "user", "content": "Hello"}],
+        }
+    )
+    with patch.object(
+        kilo_provider._client.chat.completions,
+        "create",
+        new_callable=AsyncMock,
+        return_value=stream,
+    ):
+        event_text = "".join(
+            [
+                event
+                async for event in kilo_provider.stream_response(
+                    request,
+                    reasoning=ReasoningPolicy.off(),
+                )
+            ]
+        )
+
+    events = parse_sse_text(event_text)
+    assert thinking_content(events) == ""
+    assert text_content(events) == "done"
+    assert all(
+        event.data.get("content_block", {}).get("type") != "redacted_thinking"
+        for event in events
+        if event.event == "content_block_start"
+    )
     assert stream.closed
 
 

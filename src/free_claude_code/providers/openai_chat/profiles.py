@@ -65,6 +65,7 @@ class OpenAIChatProfile:
     reasoning_delta_field: Literal["reasoning_content", "reasoning"] = (
         "reasoning_content"
     )
+    structured_reasoning_details: bool = False
     user_agent: str | None = None
 
     @property
