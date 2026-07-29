@@ -498,6 +498,13 @@ exact client token budget without guessing provider behavior. `ResolvedModel`
 owns the selected route and preference; `RoutedMessagesRequest` owns the final
 request-scoped policy passed to execution.
 
+Routing keeps model identity split at the application boundary. The routed
+request carries the provider model sent upstream, while
+`ResolvedModel.original_model` remains the stable gateway model exposed in
+Anthropic responses and traces. `ProviderExecutor` passes both identities
+explicitly; providers, local optimizations, and local server tools must never
+publish the private upstream model as the response model.
+
 `GET /v1/models` advertises:
 
 - configured provider model refs;
@@ -661,8 +668,10 @@ Cloudflare uses its
 account-scoped Workers AI OpenAI-compatible Chat Completions endpoint for
 `@cf/...` model IDs, while account ID composition, model search, and
 Cloudflare-specific reasoning deltas stay in the Cloudflare provider client.
-OpenRouter remains specialized for model filtering and reasoning-detail stream
-events. Amazon Bedrock Mantle uses an ordinary profile with a region-specific,
+OpenRouter and Kilo remain specialized for capability-aware model filtering and
+structured reasoning-detail stream events. Kilo excludes image-output and
+Responses-only models from Chat Completions discovery while keeping direct model
+execution upstream-authoritative. Amazon Bedrock Mantle uses an ordinary profile with a region-specific,
 configurable OpenAI base URL and bearer API key; AWS SigV4 and native
 Converse/Invoke transports are outside that provider contract. Wafer, Kimi API,
 Kimi Code, MiniMax, Fireworks, and Z.ai use ordinary
@@ -679,6 +688,14 @@ fallback retry when an upstream request rejects reasoning fields.
 NIM reasoning budget control is also treated as a provider-owned best-effort
 downgrade: if an upstream NIM deployment rejects explicit budget control, FCC
 retries without the budget while preserving thinking enablement.
+NIM also owns response normalization for model-native tool markup exposed in
+chat-completion text. The normalizer recognizes the native protocol signature
+only when tools are declared, validates one complete tool block against the
+request schemas, and converts it into ordinary OpenAI tool-call deltas before
+the shared stream runner can commit visible text. Native structured tool-call
+deltas remain authoritative when both forms appear; incomplete or invalid
+native markup is a retryable upstream protocol failure rather than user-visible
+assistant text.
 
 ### Reasoning Ownership
 
@@ -789,10 +806,12 @@ Top-level `system` content stays distinct from inline `system` messages.
 Target-protocol conversion owns their representation: neutral OpenAI Chat
 conversion emits top-level `system` content as the sole leading system message
 and maps inline `system` content into ordered `user` turns. After tool-result
-dependencies are ordered, adjacent user content is coalesced into one turn so
-strict chat templates do not receive consecutive user roles. Conversion
-preserves content order and rejects unrepresentable blocks instead of dropping
-them. Provider policies do not reinterpret this role mapping.
+dependencies are ordered, a neutral whitespace-only assistant boundary closes
+any completed tool round before subsequent user input. Adjacent user content
+is then coalesced into one turn so strict chat templates receive neither
+`tool → user` nor consecutive user roles. Conversion preserves content order
+and rejects unrepresentable blocks instead of dropping them. Provider policies
+do not reinterpret this role mapping.
 
 User image conversion is a pure protocol operation. Core maps Anthropic base64
 and URL image sources to ordered OpenAI `image_url` content parts without

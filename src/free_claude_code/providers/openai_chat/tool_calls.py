@@ -3,15 +3,101 @@
 import json
 import uuid
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from typing import Any
 
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.streaming import (
     AnthropicStreamLedger,
+    parse_complete_tool_input,
     tool_schemas_by_name,
 )
 
 RecordToolExtraContent = Callable[[str, dict[str, Any]], None]
+
+
+@dataclass(slots=True)
+class _CollectedToolCall:
+    index: int
+    tool_id: str | None = None
+    name: str = ""
+    argument_parts: list[str] = field(default_factory=list)
+    extra_content: dict[str, Any] | None = None
+
+
+class OpenAIToolCallCollector:
+    """Collect and validate one buffered OpenAI tool-call response."""
+
+    def __init__(self) -> None:
+        self._calls: dict[int, _CollectedToolCall] = {}
+
+    @property
+    def has_calls(self) -> bool:
+        return bool(self._calls)
+
+    def add(self, tool_call: Any) -> None:
+        """Add one SDK tool-call delta without emitting downstream state."""
+        raw_index = getattr(tool_call, "index", 0)
+        index = raw_index if isinstance(raw_index, int) and raw_index >= 0 else 0
+        state = self._calls.setdefault(index, _CollectedToolCall(index=index))
+
+        tool_id = getattr(tool_call, "id", None)
+        if tool_id:
+            state.tool_id = str(tool_id)
+
+        function = getattr(tool_call, "function", None)
+        incoming_name = getattr(function, "name", None)
+        if isinstance(incoming_name, str) and incoming_name:
+            state.name = _merge_tool_name(state.name, incoming_name)
+
+        arguments = getattr(function, "arguments", None)
+        if isinstance(arguments, str) and arguments:
+            state.argument_parts.append(arguments)
+
+        extra_content = tool_call_extra_content(tool_call)
+        if extra_content:
+            state.extra_content = extra_content
+
+    def completed_calls(
+        self,
+        request: MessagesRequest,
+        *,
+        tool_argument_aliases: dict[str, dict[str, str]] | None = None,
+    ) -> tuple[dict[str, Any], ...] | None:
+        """Return complete schema-valid calls, or None when output is incomplete."""
+        schemas = tool_schemas_by_name(request)
+        completed: list[dict[str, Any]] = []
+        for index in sorted(self._calls):
+            state = self._calls[index]
+            name = state.name.strip()
+            if not name or name not in schemas:
+                return None
+            arguments = "".join(state.argument_parts)
+            aliases = (
+                tool_argument_aliases.get(name, {})
+                if tool_argument_aliases is not None
+                else {}
+            )
+            if aliases:
+                restored = restore_tool_argument_aliases(arguments, aliases)
+                if restored is None:
+                    return None
+                arguments = restored
+            if parse_complete_tool_input(arguments, name, schemas) is None:
+                return None
+
+            call: dict[str, Any] = {
+                "index": index,
+                "id": state.tool_id,
+                "function": {
+                    "name": name,
+                    "arguments": arguments,
+                },
+            }
+            if state.extra_content:
+                call["extra_content"] = state.extra_content
+            completed.append(call)
+        return tuple(completed)
 
 
 def iter_heuristic_tool_use_sse(
@@ -252,34 +338,46 @@ class OpenAIToolCallAssembler:
     def _restore_aliased_tool_arguments(
         self, argument_json: str, aliases: dict[str, str]
     ) -> str | None:
-        try:
-            parsed = json.loads(argument_json)
-        except json.JSONDecodeError:
-            return None
-        if not isinstance(parsed, dict):
-            return argument_json
-        restored = self._restore_aliased_tool_argument_value(parsed, aliases)
-        return json.dumps(restored)
-
-    def _restore_aliased_tool_argument_value(
-        self, value: Any, aliases: dict[str, str]
-    ) -> Any:
-        if isinstance(value, dict):
-            return {
-                aliases.get(key, key): self._restore_aliased_tool_argument_value(
-                    item, aliases
-                )
-                for key, item in value.items()
-            }
-        if isinstance(value, list):
-            return [
-                self._restore_aliased_tool_argument_value(item, aliases)
-                for item in value
-            ]
-        return value
+        return restore_tool_argument_aliases(argument_json, aliases)
 
     def _record_tool_call_extra_content(
         self, tool_call_id: str, extra_content: dict[str, Any]
     ) -> None:
         if self._record_extra_content is not None:
             self._record_extra_content(tool_call_id, extra_content)
+
+
+def restore_tool_argument_aliases(
+    argument_json: str,
+    aliases: dict[str, str],
+) -> str | None:
+    """Restore provider-private argument aliases in one complete JSON object."""
+    try:
+        parsed = json.loads(argument_json)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return argument_json
+    return json.dumps(_restore_tool_argument_alias_value(parsed, aliases))
+
+
+def _restore_tool_argument_alias_value(
+    value: Any,
+    aliases: dict[str, str],
+) -> Any:
+    if isinstance(value, dict):
+        return {
+            aliases.get(key, key): _restore_tool_argument_alias_value(item, aliases)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_restore_tool_argument_alias_value(item, aliases) for item in value]
+    return value
+
+
+def _merge_tool_name(existing: str, incoming: str) -> str:
+    if not existing or incoming.startswith(existing):
+        return incoming
+    if existing.startswith(incoming):
+        return existing
+    return "".join((existing, incoming))

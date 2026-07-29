@@ -20,12 +20,13 @@ voice_all=0
 torch_backend=""
 temporary_script=""
 tool_bin=""
+pi_available=0
 
 show_usage() {
     cat <<'USAGE'
 Usage: install.sh [options]
 
-Installs Claude Code, Codex, and Pi if missing, ensures a compatible uv, and installs or updates Free Claude Code.
+Installs Claude Code and Codex, offers to install Pi, ensures a compatible uv, and installs or updates Free Claude Code.
 
 Options:
   --voice-nim              Install NVIDIA NIM voice transcription support.
@@ -299,19 +300,35 @@ ensure_codex() {
 }
 
 ensure_pi() {
+    pi_available=0
+    add_pi_bin_directories
+    existing_pi_path=$(command -v pi 2>/dev/null || true)
+
     if [ "$dry_run" -eq 1 ] && command -v pi >/dev/null 2>&1; then
         printf 'Pi already found on PATH; verifying it.\n'
     elif pi_command_is_compatible; then
         printf 'Pi already found on PATH; verifying it.\n'
     else
-        if existing_pi_path=$(command -v pi 2>/dev/null); then
+        if [ -n "$existing_pi_path" ]; then
             printf "The existing 'pi' command at %s is not Pi Coding Agent; installing Pi.\n" "$existing_pi_path"
         fi
         download_and_run "$PI_INSTALL_URL" sh "Pi"
         add_pi_bin_directories
+
+        if [ "$dry_run" -eq 0 ]; then
+            current_pi_path=$(command -v pi 2>/dev/null || true)
+            if [ -z "$current_pi_path" ] ||
+                { [ -n "$existing_pi_path" ] &&
+                    [ "$current_pi_path" = "$existing_pi_path" ] &&
+                    ! pi_command_is_compatible; }; then
+                printf 'Pi was not installed; continuing without it.\n'
+                return 0
+            fi
+        fi
     fi
 
     verify_pi_command
+    pi_available=1
 }
 
 current_uv_version() {
@@ -540,6 +557,8 @@ install_macos_desktop_app() {
     owner_file="$contents_dir/$FCC_MACOS_OWNER_FILE"
     executable_dir="$contents_dir/MacOS"
     executable_path="$executable_dir/fcc-desktop"
+    resources_dir="$contents_dir/Resources"
+    icon_path="$resources_dir/AppIcon.icns"
     desktop_dir="$HOME/Desktop"
     desktop_link="$desktop_dir/Free Claude Code.app"
 
@@ -549,13 +568,16 @@ install_macos_desktop_app() {
     fi
 
     if [ "$dry_run" -eq 1 ]; then
-        print_command mkdir -p "$executable_dir" "$desktop_dir"
+        print_command mkdir -p "$executable_dir" "$resources_dir" "$desktop_dir"
+        print_command fcc-desktop --export-icon "$icon_path"
         printf '+ write %s, %s, and %s\n' "$owner_file" "$contents_dir/Info.plist" "$executable_path"
         print_command ln -s "$app_dir" "$desktop_link"
         return 0
     fi
 
-    mkdir -p "$executable_dir" "$desktop_dir"
+    mkdir -p "$executable_dir" "$resources_dir" "$desktop_dir"
+    run "$tool_bin/fcc-desktop" --export-icon "$icon_path"
+    [ -f "$icon_path" ] || fail "Free Claude Code did not export its macOS app icon to $icon_path."
     printf '%s\n' "$FCC_MACOS_BUNDLE_ID" > "$owner_file"
     cat > "$contents_dir/Info.plist" <<'PLIST'
 <?xml version="1.0" encoding="UTF-8"?>
@@ -568,6 +590,8 @@ install_macos_desktop_app() {
     <string>fcc-desktop</string>
     <key>CFBundleIdentifier</key>
     <string>io.github.alishahryar1.free-claude-code</string>
+    <key>CFBundleIconFile</key>
+    <string>AppIcon</string>
     <key>CFBundleName</key>
     <string>Free Claude Code</string>
     <key>CFBundlePackageType</key>
@@ -619,7 +643,7 @@ ensure_claude
 step "Ensuring Codex is installed"
 ensure_codex
 
-step "Ensuring Pi is installed"
+step "Checking or installing Pi"
 ensure_pi
 
 step "Ensuring uv $MIN_UV_VERSION or newer is installed"
@@ -647,5 +671,7 @@ else
     fi
     printf 'Run Claude Code with: fcc-claude\n'
     printf 'Run Codex with: fcc-codex\n'
-    printf 'Run Pi with: fcc-pi\n'
+    if [ "$pi_available" -eq 1 ]; then
+        printf 'Run Pi with: fcc-pi\n'
+    fi
 fi

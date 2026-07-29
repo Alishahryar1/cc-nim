@@ -25,6 +25,7 @@ from free_claude_code.providers.cloudflare import CloudflareProvider
 from free_claude_code.providers.deepseek import DeepSeekProvider
 from free_claude_code.providers.gemini import GeminiProvider
 from free_claude_code.providers.github_models import GitHubModelsProvider
+from free_claude_code.providers.kilo import KiloProvider
 from free_claude_code.providers.lmstudio import LMStudioProvider
 from free_claude_code.providers.mistral import MistralProvider
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
@@ -106,6 +107,8 @@ def _make_settings(**overrides):
     mock.cerebras_api_key = ""
     mock.cerebras_proxy = ""
     mock.ollama_cloud_proxy = ""
+    mock.kilo_api_key = "test_kilo_key"
+    mock.kilo_proxy = ""
     mock.provider_rate_limit = 40
     mock.provider_rate_window = 60
     mock.provider_max_concurrency = 5
@@ -494,6 +497,7 @@ def test_create_provider_instantiates_each_builtin():
         "vertex": VertexProvider,
         "groq": OpenAIChatProvider,
         "sambanova": OpenAIChatProvider,
+        "kilo": KiloProvider,
         "cerebras": OpenAIChatProvider,
     }
     sentinel_admission = MagicMock(spec=ProviderAdmissionController)

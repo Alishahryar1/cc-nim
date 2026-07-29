@@ -201,6 +201,38 @@ async def test_openai_chat_stream_requests_usage_and_uses_provider_prompt_tokens
 
 
 @pytest.mark.asyncio
+async def test_openai_chat_stream_keeps_response_model_separate_from_upstream_model():
+    provider = _UsageTestProvider()
+    request = make_messages_request(model="upstream/model")
+    create = AsyncMock(
+        return_value=_stream(
+            [
+                _chunk(content="hello"),
+                _chunk(finish_reason="stop"),
+            ]
+        )
+    )
+
+    with patch.object(provider._client.chat.completions, "create", create):
+        events = [
+            event
+            async for event in provider.stream_response(
+                request,
+                response_model="anthropic/test/upstream/model",
+            )
+        ]
+
+    assert create.await_args is not None
+    assert create.await_args.kwargs["model"] == "upstream/model"
+    message_start = next(
+        event.data["message"]
+        for event in parse_sse_text("".join(events))
+        if event.event == "message_start"
+    )
+    assert message_start["model"] == "anthropic/test/upstream/model"
+
+
+@pytest.mark.asyncio
 async def test_openai_chat_stream_retries_without_usage_when_option_is_rejected():
     provider = _UsageTestProvider()
     body = {"model": "m", "messages": [{"role": "user", "content": "x"}]}

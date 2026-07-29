@@ -33,6 +33,7 @@ class FakeProvider:
         input_tokens: int = 0,
         *,
         request_id: str | None = None,
+        response_model: str | None = None,
         reasoning: ReasoningPolicy,
     ) -> AsyncIterator[str]:
         self.stream_calls.append(
@@ -40,6 +41,7 @@ class FakeProvider:
                 "request": request,
                 "input_tokens": input_tokens,
                 "request_id": request_id,
+                "response_model": response_model,
                 "reasoning": reasoning,
             }
         )
@@ -66,6 +68,7 @@ class FailingStreamConstructionProvider(FakeProvider):
         input_tokens: int = 0,
         *,
         request_id: str | None = None,
+        response_model: str | None = None,
         reasoning: ReasoningPolicy,
     ) -> AsyncIterator[str]:
         raise RuntimeError("stream construction failed")
@@ -114,6 +117,7 @@ async def test_executor_uses_structural_provider_port_and_preflights_eagerly() -
             "request": request,
             "input_tokens": 17,
             "request_id": "req_application",
+            "response_model": "gateway-model",
             "reasoning": ReasoningPolicy.on(),
         }
     ]

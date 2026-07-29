@@ -268,6 +268,38 @@ def _coalesce_openai_user_messages(
     return result
 
 
+class _SyntheticOpenAIToolTurnBoundary(dict[str, Any]):
+    """Identify an FCC-inserted assistant boundary until wire serialization."""
+
+    __slots__ = ()
+
+
+def is_synthetic_openai_tool_turn_boundary(message: object) -> bool:
+    """Return whether FCC inserted this message to close an OpenAI tool turn."""
+    return isinstance(message, _SyntheticOpenAIToolTurnBoundary)
+
+
+def _close_openai_tool_result_turns(
+    messages: list[dict[str, Any]],
+) -> list[dict[str, Any]]:
+    """Close completed tool rounds before subsequent user input."""
+    result: list[dict[str, Any]] = []
+    for message in messages:
+        if (
+            message.get("role") == "user"
+            and result
+            and result[-1].get("role") == "tool"
+        ):
+            # Some OpenAI-compatible chat templates reject a user role directly
+            # after tool output. Non-empty whitespace closes the assistant turn
+            # without inventing model content.
+            result.append(
+                _SyntheticOpenAIToolTurnBoundary(role="assistant", content=" ")
+            )
+        result.append(message)
+    return result
+
+
 class _OpenAIChatHistoryLedger:
     """Assemble OpenAI chat history while respecting tool-result dependencies."""
 
@@ -431,7 +463,9 @@ class AnthropicToOpenAIConverter:
                 else:
                     ledger.add_tool_turn(segment)
 
-        return _coalesce_openai_user_messages(ledger.finish())
+        ordered_messages = ledger.finish()
+        closed_messages = _close_openai_tool_result_turns(ordered_messages)
+        return _coalesce_openai_user_messages(closed_messages)
 
     @staticmethod
     def _convert_message_to_segments(

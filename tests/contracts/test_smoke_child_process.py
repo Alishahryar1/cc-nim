@@ -1,8 +1,11 @@
 import subprocess
 from pathlib import Path
+from unittest.mock import MagicMock
 
 from free_claude_code.config.settings import Settings
 from smoke.lib import child_process
+from smoke.lib import e2e as smoke_e2e
+from smoke.lib import http as smoke_http
 from smoke.lib import server as smoke_server
 from smoke.lib.child_process import (
     cmd_fcc_server,
@@ -10,6 +13,9 @@ from smoke.lib.child_process import (
     run_captured_text,
 )
 from smoke.lib.config import SmokeConfig
+from smoke.lib.e2e import ConversationDriver
+from smoke.lib.http import collect_message_stream
+from smoke.lib.server import RunningServer
 
 
 def test_fcc_server_command_uses_cli_entrypoint() -> None:
@@ -63,6 +69,53 @@ def test_start_server_disables_cli_admin_browser(monkeypatch, tmp_path: Path) ->
     assert env["PORT"] == "4567"
 
 
+def test_collect_message_stream_explicitly_requests_sse(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_stream(_method: str, _url: str, **kwargs: object):
+        captured.update(kwargs)
+        return _FakeStreamResponse()
+
+    monkeypatch.setattr(smoke_http.httpx, "stream", fake_stream)
+    payload = {"model": "m", "messages": [], "stream": False}
+
+    events = collect_message_stream(
+        _running_server(tmp_path),
+        payload,
+        _smoke_config(tmp_path),
+        headers={"authorization": "Bearer test"},
+    )
+
+    assert captured["json"] == {**payload, "stream": True}
+    assert payload["stream"] is False
+    assert events[-1].event == "message_stop"
+
+
+def test_conversation_driver_explicitly_requests_sse(
+    monkeypatch, tmp_path: Path
+) -> None:
+    captured: dict[str, object] = {}
+
+    def fake_stream(_method: str, _url: str, **kwargs: object):
+        captured.update(kwargs)
+        return _FakeStreamResponse()
+
+    monkeypatch.setattr(smoke_e2e.httpx, "stream", fake_stream)
+    payload = {"model": "m", "messages": [], "stream": False}
+
+    turn = ConversationDriver(
+        _running_server(tmp_path),
+        _smoke_config(tmp_path),
+    ).stream(payload, headers={"authorization": "Bearer test"})
+
+    assert captured["json"] == {**payload, "stream": True}
+    assert payload["stream"] is False
+    assert turn.request["stream"] is True
+    assert turn.events[-1].event == "message_stop"
+
+
 def test_run_captured_text_uses_utf8_replacement(monkeypatch, tmp_path: Path) -> None:
     calls: dict[str, object] = {}
 
@@ -114,3 +167,61 @@ def test_run_captured_text_replaces_invalid_utf8_bytes(tmp_path: Path) -> None:
     assert result.returncode == 0
     assert result.stdout == "\ufffd"
     assert result.stderr == "\ufffd"
+
+
+class _FakeStreamResponse:
+    status_code = 200
+
+    def __enter__(self) -> _FakeStreamResponse:
+        return self
+
+    def __exit__(self, *_args: object) -> None:
+        return
+
+    def iter_lines(self):
+        return iter(
+            (
+                "event: message_start",
+                'data: {"type":"message_start","message":{}}',
+                "",
+                "event: content_block_start",
+                'data: {"type":"content_block_start","index":0,'
+                '"content_block":{"type":"text","text":""}}',
+                "",
+                "event: content_block_delta",
+                'data: {"type":"content_block_delta","index":0,'
+                '"delta":{"type":"text_delta","text":"ok"}}',
+                "",
+                "event: content_block_stop",
+                'data: {"type":"content_block_stop","index":0}',
+                "",
+                "event: message_stop",
+                'data: {"type":"message_stop"}',
+                "",
+            )
+        )
+
+
+def _smoke_config(tmp_path: Path) -> SmokeConfig:
+    return SmokeConfig(
+        root=tmp_path,
+        results_dir=tmp_path / "results",
+        live=False,
+        interactive=False,
+        targets=frozenset(),
+        provider_matrix=frozenset(),
+        timeout_s=1.0,
+        prompt="",
+        claude_bin="claude",
+        worker_id="test",
+        settings=Settings(),
+    )
+
+
+def _running_server(tmp_path: Path) -> RunningServer:
+    return RunningServer(
+        base_url="http://127.0.0.1:1234",
+        port=1234,
+        log_path=tmp_path / "server.log",
+        process=MagicMock(spec=subprocess.Popen),
+    )

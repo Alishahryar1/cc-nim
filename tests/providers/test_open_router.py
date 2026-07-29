@@ -1,5 +1,6 @@
 """Tests for the OpenRouter OpenAI-chat provider."""
 
+import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,6 +12,7 @@ from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import (
     parse_sse_text,
     text_content,
+    thinking_content,
 )
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.open_router import OpenRouterProvider
@@ -174,11 +176,136 @@ def test_build_request_body_replays_openrouter_reasoning_details(
     assert assistant["reasoning_details"] == [detail]
 
 
+def test_reasoning_details_skip_neutral_tool_turn_boundary(open_router_provider):
+    first_detail = {"type": "reasoning.encrypted", "data": "first"}
+    second_detail = {"type": "reasoning.encrypted", "data": "second"}
+    request = MessagesRequest.model_validate(
+        {
+            "model": "m",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "redacted_thinking",
+                            "data": json.dumps(first_detail),
+                        },
+                        {
+                            "type": "tool_use",
+                            "id": "call_read",
+                            "name": "Read",
+                            "input": {},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_read",
+                            "content": "contents",
+                        }
+                    ],
+                },
+                {"role": "user", "content": "continue"},
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "redacted_thinking",
+                            "data": json.dumps(second_detail),
+                        },
+                        {"type": "text", "text": "done"},
+                    ],
+                },
+            ],
+        }
+    )
+
+    body = open_router_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
+
+    assistants = [
+        message for message in body["messages"] if message["role"] == "assistant"
+    ]
+    assert assistants[0]["reasoning_details"] == [first_detail]
+    assert assistants[1] == {"role": "assistant", "content": " "}
+    assert assistants[2]["reasoning_details"] == [second_detail]
+
+
+def test_reasoning_details_preserve_redacted_only_assistant_after_tool(
+    open_router_provider,
+):
+    first_detail = {"type": "reasoning.encrypted", "data": "first"}
+    second_detail = {"type": "reasoning.encrypted", "data": "second"}
+    request = MessagesRequest.model_validate(
+        {
+            "model": "m",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "redacted_thinking",
+                            "data": json.dumps(first_detail),
+                        },
+                        {
+                            "type": "tool_use",
+                            "id": "call_read",
+                            "name": "Read",
+                            "input": {},
+                        },
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_read",
+                            "content": "contents",
+                        }
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "redacted_thinking",
+                            "data": json.dumps(second_detail),
+                        }
+                    ],
+                },
+                {"role": "user", "content": "continue"},
+                {"role": "assistant", "content": "done"},
+            ],
+        }
+    )
+
+    body = open_router_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
+
+    assistants = [
+        message for message in body["messages"] if message["role"] == "assistant"
+    ]
+    assert assistants[0]["reasoning_details"] == [first_detail]
+    assert assistants[1] == {
+        "role": "assistant",
+        "content": " ",
+        "reasoning_details": [second_detail],
+    }
+    assert "reasoning_details" not in assistants[2]
+
+
 @pytest.mark.asyncio
 async def test_stream_maps_reasoning_content_and_details(open_router_provider):
     redacted = {"type": "reasoning.encrypted", "data": "opaque"}
     stream = AsyncStream(
         [
+            _chunk(reasoning_details=[{"type": "reasoning.text", "text": "plan "}]),
             _chunk(reasoning_content="plan "),
             _chunk(reasoning_details=[redacted]),
             _chunk(content="done", finish_reason="stop"),
@@ -196,11 +323,11 @@ async def test_stream_maps_reasoning_content_and_details(open_router_provider):
         ]
 
     event_text = "".join(events)
-    assert "thinking_delta" in event_text
-    assert "plan " in event_text
+    parsed = parse_sse_text(event_text)
+    assert thinking_content(parsed) == "plan "
     assert "redacted_thinking" in event_text
     assert "opaque" in event_text
-    assert "done" in text_content(parse_sse_text(event_text))
+    assert text_content(parsed) == "done"
     assert stream.closed
 
 

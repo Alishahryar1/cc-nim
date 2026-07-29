@@ -265,6 +265,51 @@ def test_messages_pre_start_execution_failure_is_correlated_terminal_json() -> N
     assert provider.stream_kwargs[0]["request_id"] == request_id
 
 
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    [
+        ("/v1/messages", _messages_payload(stream=True)),
+        ("/v1/responses", _responses_payload()),
+    ],
+)
+def test_pre_start_permission_failure_preserves_403_without_client_retry(
+    path: str,
+    payload: dict[str, object],
+) -> None:
+    provider = CanonicalFailureProvider(
+        [],
+        kind=FailureKind.PERMISSION,
+        status_code=403,
+        message="Provider denied access.",
+        retryable=False,
+    )
+    resolver_patch, client = _client_for(provider)
+
+    with (
+        resolver_patch,
+        patch("free_claude_code.api.response_streams.trace_event") as trace_mock,
+        client,
+    ):
+        response = client.post(path, json=payload)
+
+    request_id = response.headers["request-id"]
+    error = response.json()["error"]
+    assert response.status_code == 403
+    assert response.headers["x-should-retry"] == "false"
+    assert error["type"] == "permission_error"
+    assert error["message"] == f"Provider denied access.\n\nRequest ID: {request_id}"
+    if path == "/v1/messages":
+        assert response.json()["request_id"] == request_id
+        assert "x-request-id" not in response.headers
+    else:
+        assert response.headers["x-request-id"] == request_id
+    trace = _terminal_trace(trace_mock)
+    assert trace["failure_kind"] == "permission"
+    assert trace["status_code"] == 403
+    assert trace["error_type"] == "permission_error"
+    assert trace["provider_retryable"] is False
+
+
 def test_messages_context_window_failure_triggers_client_compaction() -> None:
     provider = CanonicalFailureProvider(
         [],
