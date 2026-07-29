@@ -1,11 +1,12 @@
 """Explicit test composition for the API adapter."""
 
-from collections.abc import MutableMapping
+from collections.abc import Mapping, MutableMapping
 
 from fastapi import FastAPI
 
 from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
+from free_claude_code.application.connected_accounts import ConnectedAccountPort
 from free_claude_code.config.settings import Settings
 from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.runtime import ProviderRuntime
@@ -18,11 +19,24 @@ def create_test_app(
     *,
     providers: MutableMapping[str, BaseProvider] | None = None,
     restart_callback: RestartCallback | None = None,
+    connected_accounts: Mapping[str, ConnectedAccountPort] | None = None,
 ) -> FastAPI:
     """Build an API app with explicit in-memory runtime services."""
     settings = settings or Settings()
+    connected_accounts = dict(connected_accounts or {})
+
+    def connected_provider_ids() -> tuple[str, ...]:
+        return tuple(
+            provider_id
+            for provider_id, account in connected_accounts.items()
+            if account.is_connected()
+        )
+
     if providers is None:
-        manager = ProviderRuntimeManager(settings)
+        manager = ProviderRuntimeManager(
+            settings,
+            connected_provider_ids=connected_provider_ids,
+        )
     else:
         manager = ProviderRuntimeManager(
             settings,
@@ -30,11 +44,13 @@ def create_test_app(
                 snapshot,
                 dict(providers),
             ),
+            connected_provider_ids=connected_provider_ids,
         )
     runtime = ApplicationRuntime(
         manager,
         transcriber=None,
         restart_callback=restart_callback,
+        connected_accounts=connected_accounts,
     )
     return create_app(
         ApiServices(

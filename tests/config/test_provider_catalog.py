@@ -4,6 +4,7 @@ import pytest
 
 from free_claude_code.config.provider_catalog import (
     PROVIDER_CATALOG,
+    ProviderAuthKind,
     ProviderDescriptor,
 )
 
@@ -54,6 +55,17 @@ def test_provider_configuration_attrs_cover_multi_field_and_adc_providers() -> N
 
 def test_every_provider_declares_its_configuration_boundary() -> None:
     assert all(
-        descriptor.configuration_attrs() or descriptor.static_credential is not None
+        descriptor.configuration_attrs()
+        or descriptor.static_credential is not None
+        or descriptor.auth_kind is ProviderAuthKind.CONNECTED_ACCOUNT
         for descriptor in PROVIDER_CATALOG.values()
     )
+
+
+def test_openai_is_a_connected_account_without_api_key_configuration() -> None:
+    descriptor = PROVIDER_CATALOG["openai"]
+
+    assert descriptor.auth_kind is ProviderAuthKind.CONNECTED_ACCOUNT
+    assert descriptor.credential_env is None
+    assert descriptor.configuration_attrs() == ()
+    assert descriptor.default_base_url == "https://chatgpt.com/backend-api/codex"

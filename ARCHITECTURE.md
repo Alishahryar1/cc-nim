@@ -263,9 +263,11 @@ not read global settings or construct runtime resources.
 
 [runtime/application.py](src/free_claude_code/runtime/application.py) owns process startup and shutdown, optional messaging,
 the selected transcriber, the managed CLI session manager, Admin pending state,
-and the injected restart callback. Shutdown is serialized and ordered: quiesce
+connected-account use cases, and the injected restart callback. Shutdown is
+serialized and ordered: quiesce
 messaging ingress, cancel and drain workflow/CLI work, flush persistence, close
-delivery, close transcription, then close providers. An owner reference is
+delivery, close transcription, close providers, then close connected-account
+login and HTTP resources. An owner reference is
 released only after its cleanup succeeds; cancellation or failure leaves the
 incomplete graph retryable. Teardown stops at a failed dependency gate rather
 than closing resources that still-live upstream work may need, and the ASGI
@@ -295,6 +297,10 @@ every owned runtime closes.
 
 The manager also owns one application-lifetime provider model catalog and its
 single best-effort discovery task. The catalog survives provider replacement.
+Settings-configured providers and currently connected accounts contribute to
+the same availability set. Account connect/disconnect performs a targeted model
+refresh or eviction; it does not mutate settings or replace a provider
+generation.
 This keeps the server model inventory stable without extra synchronization;
 Claude clients may independently retain the list they fetched at startup.
 
@@ -543,7 +549,7 @@ passes it as `model_catalog_json`. Codex users open the native picker with
 
 Provider metadata is neutral and centralized in
 [config/provider_catalog.py](src/free_claude_code/config/provider_catalog.py). Each
-`ProviderDescriptor` declares provider ID, display name, locality, credential env
+`ProviderDescriptor` declares provider ID, display name, authentication kind, locality, credential env
 var, default base URL, settings attribute names, configuration readiness, and
 proxy support. Readiness may require multiple ordinary settings or a non-secret
 project ID; it is not inferred exclusively from API-key presence. The catalog
@@ -553,9 +559,11 @@ does not select a concrete adapter.
 closable provider generation: construction policy, resolved provider
 configuration, lazy provider instances, provider-owned admission controllers, and
 cleanup. [providers/runtime/factory.py](src/free_claude_code/providers/runtime/factory.py)
-constructs ordinary provider IDs from `OPENAI_CHAT_PROFILES` and keeps a sparse
-factory mapping only for adapters with real state or algorithms. The union of
-those two construction owners must exactly equal the neutral provider catalog.
+constructs ordinary provider IDs from `OPENAI_CHAT_PROFILES`, keeps a sparse
+factory mapping for adapters with real state or algorithms, and accepts explicit
+composition-root factories for providers with process-lifetime dependencies.
+The union of those construction owners must exactly equal the neutral provider
+catalog.
 `ProviderRuntime` directly guarantees one provider and admission controller per
 provider ID within a generation; there is no pass-through cache object, process
 singleton, or second admission registry.
@@ -610,7 +618,7 @@ compatibility layer.
   `list_model_infos()`. Providers return application-owned `ProviderModelInfo`
   values directly; there is no parallel IDs-only catalog contract.
 
-There is one upstream transport family:
+There are two upstream transport families:
 [providers/openai_chat/](src/free_claude_code/providers/openai_chat/) implements the concrete
 `OpenAIChatProvider` used by every OpenAI-compatible `/chat/completions`
 upstream. `OpenAIChatProfile` contains immutable request policy, an explicit
@@ -621,6 +629,18 @@ empty subclasses. The package also
 owns the exactly typed private per-request runner, recovery operations, tool-call
 assembly, and streamed usage handling. No obsolete generic transport namespace
 or untyped provider backchannel remains.
+
+[providers/openai_codex/](src/free_claude_code/providers/openai_codex/) owns
+ChatGPT subscription authentication and the Codex backend's OpenAI Responses
+transport. Its process-lifetime auth manager owns FCC's credential file,
+browser/device authorization, refresh, and revocation; provider generations
+borrow it and resolve fresh headers for each operation. The provider owns HTTP
+failure classification, model discovery, admission, and commit-boundary retry.
+Neutral Anthropic-to-Responses input and Responses-to-Anthropic stream
+conversion remain in
+[core/openai_responses/](src/free_claude_code/core/openai_responses/), which
+never imports OAuth, account IDs, or provider endpoints. The Admin API exposes
+only safe connected-account state and never serializes token objects.
 
 [providers/google_openai/](src/free_claude_code/providers/google_openai/) owns the
 Google-specific protocol behavior shared by AI Studio and Vertex AI: literal

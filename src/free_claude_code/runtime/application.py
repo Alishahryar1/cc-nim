@@ -6,6 +6,7 @@ import logging
 import os
 import traceback
 from collections.abc import Awaitable, Callable, Mapping
+from dataclasses import replace
 from typing import Any
 
 from loguru import logger
@@ -13,6 +14,11 @@ from loguru import logger
 import free_claude_code.cli.managed as cli_managed
 import free_claude_code.messaging.session as messaging_session
 import free_claude_code.messaging.workflow as messaging_workflow_module
+from free_claude_code.application.connected_accounts import (
+    ConnectedAccountLoginMode,
+    ConnectedAccountPort,
+    ConnectedAccountStatus,
+)
 from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.model_metadata import ProviderModelRefreshResult
 from free_claude_code.application.ports import StopResult
@@ -107,10 +113,16 @@ class ApplicationRuntime:
         *,
         transcriber: Transcriber | None,
         restart_callback: RestartCallback | None = None,
+        connected_accounts: Mapping[str, ConnectedAccountPort] | None = None,
     ) -> None:
         self.provider_manager = provider_manager
         self._transcriber = transcriber
         self._restart_callback = restart_callback
+        self._connected_accounts = dict(connected_accounts or {})
+        self._connected_account_revisions = {
+            provider_id: manager.status().revision
+            for provider_id, manager in self._connected_accounts.items()
+        }
         self._config_lock = asyncio.Lock()
         self._pending_fields: list[str] = []
         self._messaging_runtime: MessagingRuntime | None = None
@@ -121,6 +133,7 @@ class ApplicationRuntime:
         self._started = False
         self._closed = False
         self._provider_manager_closed = False
+        self._connected_accounts_closed = False
         self._close_lock = asyncio.Lock()
 
     @property
@@ -247,6 +260,50 @@ class ApplicationRuntime:
 
     async def refresh_models(self) -> ProviderModelRefreshResult:
         return await self.provider_manager.refresh_model_list_cache()
+
+    async def connected_account_status(
+        self, provider_id: str
+    ) -> ConnectedAccountStatus:
+        """Return safe account state and synchronize model availability."""
+
+        manager = self._connected_account(provider_id)
+        status = manager.status()
+        previous_revision = self._connected_account_revisions.get(provider_id)
+        if status.revision != previous_revision:
+            await self.provider_manager.connected_provider_changed(
+                provider_id, connected=status.connected
+            )
+            self._connected_account_revisions[provider_id] = status.revision
+        model_count = len(self.provider_manager.cached_model_ids().get(provider_id, ()))
+        return replace(status, model_count=model_count)
+
+    async def start_connected_account_login(
+        self,
+        provider_id: str,
+        mode: ConnectedAccountLoginMode,
+    ) -> ConnectedAccountStatus:
+        """Start one provider-owned interactive login."""
+
+        return await self._connected_account(provider_id).start_login(mode)
+
+    async def cancel_connected_account_login(
+        self, provider_id: str
+    ) -> ConnectedAccountStatus:
+        """Cancel one pending provider login."""
+
+        return await self._connected_account(provider_id).cancel_login()
+
+    async def disconnect_connected_account(
+        self, provider_id: str
+    ) -> ConnectedAccountStatus:
+        """Disconnect an account and evict only that provider's models."""
+
+        status = await self._connected_account(provider_id).disconnect()
+        await self.provider_manager.connected_provider_changed(
+            provider_id, connected=False
+        )
+        self._connected_account_revisions[provider_id] = status.revision
+        return status
 
     async def request_restart(self) -> None:
         callback = self._restart_callback
@@ -387,15 +444,37 @@ class ApplicationRuntime:
             return False
         if not await self._cleanup_transcriber():
             return False
-        if self._provider_manager_closed:
-            return True
         verbose = self.settings.log_api_error_tracebacks
-        self._provider_manager_closed = await best_effort(
-            "provider_manager.close",
-            self.provider_manager.close(),
-            log_verbose_errors=verbose,
+        if not self._provider_manager_closed:
+            self._provider_manager_closed = await best_effort(
+                "provider_manager.close",
+                self.provider_manager.close(),
+                log_verbose_errors=verbose,
+            )
+            if not self._provider_manager_closed:
+                return False
+        if self._connected_accounts_closed:
+            return True
+        results = await asyncio.gather(
+            *(
+                best_effort(
+                    f"connected_account.{provider_id}.close",
+                    manager.close(),
+                    log_verbose_errors=verbose,
+                )
+                for provider_id, manager in self._connected_accounts.items()
+            )
         )
-        return self._provider_manager_closed
+        self._connected_accounts_closed = all(results)
+        return self._connected_accounts_closed
+
+    def _connected_account(self, provider_id: str) -> ConnectedAccountPort:
+        manager = self._connected_accounts.get(provider_id)
+        if manager is None:
+            raise ApplicationUnavailableError(
+                f"Provider {provider_id!r} does not support connected-account login."
+            )
+        return manager
 
     async def _cleanup_messaging(self) -> bool:
         verbose = self.settings.log_api_error_tracebacks

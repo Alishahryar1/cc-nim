@@ -6,6 +6,13 @@ from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.settings import Settings
 
 _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
+    "OPENAI_PROXY": {
+        "description": (
+            "Optional proxy used for OpenAI sign-in and ChatGPT Codex requests. "
+            "Changing it restarts FCC."
+        ),
+        "restart_required": True,
+    },
     "NVIDIA_NIM_API_KEY": {
         "label": "NVIDIA NIM API Key",
         "description": "Used by NVIDIA NIM chat and optional NIM voice transcription.",

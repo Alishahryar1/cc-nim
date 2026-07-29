@@ -29,6 +29,20 @@
 
         <div id="adminViews" class="admin-views">
           <section id="view-providers" class="admin-view active" data-view="providers">
+            <section
+              id="connectedAccountsSection"
+              class="provider-strip"
+              aria-label="Connected accounts"
+              hidden
+            >
+              <div class="strip-header">
+                <div>
+                  <h3>Connected accounts</h3>
+                  <p>Use an existing subscription without storing credentials in .env.</p>
+                </div>
+              </div>
+              <div id="connectedAccountGrid" class="provider-grid"></div>
+            </section>
             <section class="provider-strip" aria-label="Provider status">
               <div class="strip-header">
                 <h3>Providers</h3>

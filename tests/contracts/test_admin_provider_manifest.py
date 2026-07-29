@@ -1,7 +1,10 @@
 """Ensure admin UI manifest exposes every catalog credential/proxy binding."""
 
 from free_claude_code.config.admin.manifest import FIELD_BY_KEY
-from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
+from free_claude_code.config.provider_catalog import (
+    PROVIDER_CATALOG,
+    ProviderAuthKind,
+)
 from free_claude_code.config.settings import Settings
 
 
@@ -107,7 +110,13 @@ def test_provider_catalog_display_names_are_admin_status_source() -> None:
     assert set(status_by_provider) == set(PROVIDER_CATALOG)
     for provider_id, desc in PROVIDER_CATALOG.items():
         assert status_by_provider[provider_id]["display_name"] == desc.display_name
-        expected_kind = "local" if desc.local else "remote"
+        expected_kind = (
+            "connected_account"
+            if desc.auth_kind is ProviderAuthKind.CONNECTED_ACCOUNT
+            else "local"
+            if desc.local
+            else "remote"
+        )
         assert status_by_provider[provider_id]["kind"] == expected_kind
 
 

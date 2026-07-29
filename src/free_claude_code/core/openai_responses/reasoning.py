@@ -20,6 +20,12 @@ def reasoning_text_from_item(item: Mapping[str, Any]) -> str | None:
     return None
 
 
+def encrypted_reasoning_from_item(item: Mapping[str, Any]) -> str | None:
+    """Return opaque reasoning content without interpreting it."""
+
+    return optional_str(item.get("encrypted_content"))
+
+
 def combine_reasoning(existing: str | None, addition: str | None) -> str | None:
     if addition is None:
         return existing

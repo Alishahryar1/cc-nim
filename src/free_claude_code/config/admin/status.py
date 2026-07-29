@@ -3,7 +3,10 @@
 from collections.abc import Mapping
 from typing import Any
 
-from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
+from free_claude_code.config.provider_catalog import (
+    PROVIDER_CATALOG,
+    ProviderAuthKind,
+)
 
 from .manifest import FIELDS
 
@@ -14,6 +17,17 @@ def provider_config_status(
     """Return provider configuration status without making network calls."""
     statuses: list[dict[str, Any]] = []
     for provider_id, descriptor in PROVIDER_CATALOG.items():
+        if descriptor.auth_kind is ProviderAuthKind.CONNECTED_ACCOUNT:
+            statuses.append(
+                {
+                    "provider_id": provider_id,
+                    "display_name": descriptor.display_name,
+                    "kind": "connected_account",
+                    "status": "disconnected",
+                    "label": "Not connected",
+                }
+            )
+            continue
         if descriptor.local:
             base_url = ""
             if descriptor.base_url_attr is not None:

@@ -34,6 +34,7 @@ from free_claude_code.providers.openai_chat import (
     OPENAI_CHAT_PROFILES,
     OpenAIChatProvider,
 )
+from free_claude_code.providers.openai_codex import OpenAICodexProvider
 from free_claude_code.providers.runtime import (
     ProviderRuntime,
     build_provider_config,
@@ -105,6 +106,7 @@ def _make_settings(**overrides):
     mock.ollama_cloud_proxy = ""
     mock.kilo_api_key = "test_kilo_key"
     mock.kilo_proxy = ""
+    mock.openai_proxy = ""
     mock.provider_rate_limit = 40
     mock.provider_rate_window = 60
     mock.provider_max_concurrency = 5
@@ -416,6 +418,7 @@ def test_create_provider_instantiates_each_builtin():
     )
     cases = {
         "nvidia_nim": NvidiaNimProvider,
+        "openai": OpenAICodexProvider,
         "open_router": OpenRouterProvider,
         "mistral": MistralProvider,
         "mistral_codestral": OpenAIChatProvider,
@@ -446,6 +449,14 @@ def test_create_provider_instantiates_each_builtin():
         "cerebras": OpenAIChatProvider,
     }
     sentinel_admission = MagicMock(spec=ProviderAdmissionController)
+    auth = MagicMock()
+    injected_factories = {
+        "openai": lambda config, _settings, admission: OpenAICodexProvider(
+            config,
+            auth=auth,
+            admission=admission,
+        )
+    }
 
     with (
         patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"),
@@ -456,7 +467,11 @@ def test_create_provider_instantiates_each_builtin():
         ) as admission_factory,
     ):
         for provider_id, provider_cls in cases.items():
-            provider = create_provider(provider_id, settings)
+            provider = create_provider(
+                provider_id,
+                settings,
+                injected_factories=injected_factories,
+            )
 
             assert isinstance(provider, provider_cls)
             assert provider._admission is sentinel_admission
