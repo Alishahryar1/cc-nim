@@ -261,8 +261,10 @@ class OpenAICodexProvider(BaseProvider):
                     request_id=request_id,
                 )
                 return
-            except asyncio.CancelledError, GeneratorExit:
+            except asyncio.CancelledError:
                 raise
+            except GeneratorExit:
+                return
             except Exception as raw_error:
                 error = _effective_error(raw_error)
                 if attempt is not None and not attempt.accepted:

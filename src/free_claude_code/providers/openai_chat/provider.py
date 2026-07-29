@@ -538,8 +538,10 @@ class _OpenAIChatStreamRunner:
                     )
                 break
 
-            except asyncio.CancelledError, GeneratorExit:
+            except asyncio.CancelledError:
                 raise
+            except GeneratorExit:
+                return
             except Exception as error:
                 if attempt is not None and not attempt.accepted:
                     await attempt.retry(
