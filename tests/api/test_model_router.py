@@ -200,3 +200,72 @@ def test_model_router_logs_mapping(settings):
     assert "MODEL MAPPING" in args[0]
     assert args[1] == "claude-2.1"
     assert args[2] == "fallback-model"
+
+
+def test_model_router_skill_hint_ignored_when_skillopt_disabled(
+    settings, monkeypatch, tmp_path
+):
+    """With SkillOpt off (the default), skill hints must not change routing."""
+    monkeypatch.delenv("SKILLOPT_ENABLED", raising=False)
+    monkeypatch.setenv("FCC_CACHE_DIR", str(tmp_path))
+    from api import skillopt
+
+    skillopt.invalidate_cache()
+
+    resolved = ModelRouter(settings).resolve("claude-3-opus", skill="edit")
+
+    # Falls through to settings.model — SkillOpt did not override.
+    assert resolved.provider_model_ref == "nvidia_nim/fallback-model"
+
+
+def test_model_router_skill_hint_overrides_when_skillopt_enabled(
+    settings, monkeypatch, tmp_path
+):
+    import json
+
+    monkeypatch.setenv("SKILLOPT_ENABLED", "1")
+    monkeypatch.setenv("FCC_CACHE_DIR", str(tmp_path))
+    policy = {
+        "version": 1,
+        "policies": {
+            "edit": {"primary": "open_router/deepseek/r1", "fallbacks": []}
+        },
+    }
+    (tmp_path / "skillopt_policy.json").write_text(
+        json.dumps(policy), encoding="utf-8"
+    )
+    from api import skillopt
+
+    skillopt.invalidate_cache()
+
+    resolved = ModelRouter(settings).resolve("claude-3-opus", skill="edit")
+
+    assert resolved.provider_id == "open_router"
+    assert resolved.provider_model == "deepseek/r1"
+    assert resolved.provider_model_ref == "open_router/deepseek/r1"
+
+
+def test_model_router_skill_hint_falls_through_for_unknown_provider(
+    settings, monkeypatch, tmp_path
+):
+    """Policies pointing at an unsupported provider get ignored, not raised."""
+    import json
+
+    monkeypatch.setenv("SKILLOPT_ENABLED", "1")
+    monkeypatch.setenv("FCC_CACHE_DIR", str(tmp_path))
+    (tmp_path / "skillopt_policy.json").write_text(
+        json.dumps(
+            {
+                "version": 1,
+                "policies": {"edit": {"primary": "bogus/model", "fallbacks": []}},
+            }
+        ),
+        encoding="utf-8",
+    )
+    from api import skillopt
+
+    skillopt.invalidate_cache()
+
+    resolved = ModelRouter(settings).resolve("claude-3-opus", skill="edit")
+
+    assert resolved.provider_model_ref == "nvidia_nim/fallback-model"

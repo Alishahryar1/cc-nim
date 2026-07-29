@@ -9,6 +9,7 @@ from loguru import logger
 from config.provider_ids import SUPPORTED_PROVIDER_IDS
 from config.settings import Settings
 
+from . import skillopt
 from .gateway_model_ids import decode_gateway_model_id
 from .models.anthropic import MessagesRequest, TokenCountRequest
 
@@ -40,7 +41,9 @@ class ModelRouter:
     def __init__(self, settings: Settings):
         self._settings = settings
 
-    def resolve(self, claude_model_name: str) -> ResolvedModel:
+    def resolve(
+        self, claude_model_name: str, *, skill: str | None = None
+    ) -> ResolvedModel:
         (
             direct_provider_id,
             direct_provider_model,
@@ -67,7 +70,10 @@ class ModelRouter:
                 thinking_enabled=thinking_enabled,
             )
 
-        provider_model_ref = self._settings.resolve_model(claude_model_name)
+        skill_ref = self._skill_policy_ref(skill)
+        provider_model_ref = skill_ref or self._settings.resolve_model(
+            claude_model_name
+        )
         thinking_enabled = self._settings.resolve_thinking(claude_model_name)
         provider_id = Settings.parse_provider_type(provider_model_ref)
         provider_model = Settings.parse_model_name(provider_model_ref)
@@ -82,6 +88,22 @@ class ModelRouter:
             provider_model_ref=provider_model_ref,
             thinking_enabled=thinking_enabled,
         )
+
+    def _skill_policy_ref(self, skill: str | None) -> str | None:
+        """Return the SkillOpt primary ref when its provider is supported."""
+        policy = skillopt.lookup(skill)
+        if policy is None:
+            return None
+        provider_id = Settings.parse_provider_type(policy.primary)
+        if provider_id not in SUPPORTED_PROVIDER_IDS:
+            logger.warning(
+                "SkillOpt skipped: skill='{}' primary='{}' unsupported",
+                skill,
+                policy.primary,
+            )
+            return None
+        logger.debug("SKILLOPT ROUTE: skill='{}' -> '{}'", skill, policy.primary)
+        return policy.primary
 
     def _direct_provider_model(
         self, model_name: str
@@ -106,10 +128,10 @@ class ModelRouter:
         return provider_id, provider_model, None
 
     def resolve_messages_request(
-        self, request: MessagesRequest
+        self, request: MessagesRequest, *, skill: str | None = None
     ) -> RoutedMessagesRequest:
         """Return an internal routed request context."""
-        resolved = self.resolve(request.model)
+        resolved = self.resolve(request.model, skill=skill)
         routed = request.model_copy(deep=True)
         routed.model = resolved.provider_model
         return RoutedMessagesRequest(request=routed, resolved=resolved)

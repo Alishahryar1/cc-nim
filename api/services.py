@@ -166,7 +166,12 @@ class ClaudeProxyService:
         try:
             _require_non_empty_messages(request_data.messages)
 
-            routed = self._model_router.resolve_messages_request(request_data)
+            skill = trajectory.infer_skill(
+                request_data.messages, request_data.tools
+            )
+            routed = self._model_router.resolve_messages_request(
+                request_data, skill=skill
+            )
             if routed.resolved.provider_id in _OPENAI_CHAT_UPSTREAM_IDS:
                 tool_err = openai_chat_upstream_server_tool_error(
                     routed.request,
@@ -266,11 +271,6 @@ class ClaudeProxyService:
                         "provider_id": routed.resolved.provider_id,
                         "gateway_model": routed.request.model,
                     },
-                )
-                skill = trajectory.infer_skill(
-                    routed.request.messages,
-                    routed.request.tools,
-                    input_tokens,
                 )
                 metered = _metered_stream(
                     streamed,

@@ -21,6 +21,7 @@ from providers.registry import ProviderRegistry
 from . import health_history as _health_history
 from . import metrics as _metrics
 from . import pricing as _pricing
+from . import skillopt as _skillopt
 from . import trajectory as _trajectory
 from .admin_config import (
     FIELD_BY_KEY,
@@ -190,6 +191,13 @@ async def get_trajectory_summary(request: Request):
     """Return the EvoMetaClaw trajectory rollup (loopback-only, non-sensitive)."""
     require_loopback_admin(request)
     return _trajectory.summary()
+
+
+@router.get("/admin/api/skillopt")
+async def get_skillopt_policy(request: Request):
+    """Return the currently loaded SkillOpt policy snapshot."""
+    require_loopback_admin(request)
+    return _skillopt.snapshot()
 
 
 @router.get("/admin/api/providers/local-status")

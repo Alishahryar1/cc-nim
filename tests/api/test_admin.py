@@ -558,6 +558,31 @@ def test_admin_trajectory_endpoint_is_loopback_only(monkeypatch, tmp_path):
     assert remote_client.get("/admin/api/trajectory").status_code == 403
 
 
+def test_admin_skillopt_endpoint_returns_disabled_snapshot(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    monkeypatch.delenv("SKILLOPT_ENABLED", raising=False)
+    monkeypatch.setenv("FCC_CACHE_DIR", str(tmp_path))
+    from api import skillopt
+
+    skillopt.invalidate_cache()
+    app = create_app(lifespan_enabled=False)
+
+    response = _local_client(app).get("/admin/api/skillopt")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["enabled"] is False
+    assert body["loaded"] is False
+
+
+def test_admin_skillopt_endpoint_is_loopback_only(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    app = create_app(lifespan_enabled=False)
+
+    remote_client = TestClient(app, client=("203.0.113.10", 50000))
+    assert remote_client.get("/admin/api/skillopt").status_code == 403
+
+
 def test_admin_metrics_endpoint_is_loopback_only(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     app = create_app(lifespan_enabled=False)

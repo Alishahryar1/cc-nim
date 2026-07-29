@@ -58,10 +58,18 @@ def is_enabled() -> bool:
 def infer_skill(
     messages: list[Any] | None,
     tools: list[Any] | None,
-    input_tokens: int,
+    input_tokens: int | None = None,
 ) -> str:
-    """Cheap skill-tag heuristic. Precise enough for SkillOpt bucketing."""
-    if input_tokens <= 128 and not tools:
+    """Cheap skill-tag heuristic. Precise enough for SkillOpt bucketing.
+
+    ``input_tokens`` is optional — when unknown (pre-routing), the "probe"
+    short-circuit uses the raw text length instead. The remaining branches
+    only look at messages + tools.
+    """
+    approx_tokens = (
+        input_tokens if input_tokens is not None else _approx_tokens(messages)
+    )
+    if approx_tokens <= 128 and not tools:
         return "probe"
     if tools:
         tool_names = _tool_names(tools)
@@ -77,6 +85,24 @@ def infer_skill(
     if text.endswith("?") or text.startswith(("why ", "how ", "what ", "when ")):
         return "question"
     return "chat"
+
+
+def _approx_tokens(messages: list[Any] | None) -> int:
+    """Rough char/4 estimate — good enough for the probe threshold."""
+    if not messages:
+        return 0
+    total_chars = 0
+    for m in messages:
+        if isinstance(m, dict):
+            content = m.get("content")
+        else:
+            content = getattr(m, "content", None)
+        if isinstance(content, str):
+            total_chars += len(content)
+        elif isinstance(content, list):
+            for block in content:
+                total_chars += len(_block_text(block))
+    return total_chars // 4
 
 
 _EDIT_TOOL_NAMES = frozenset(
@@ -103,18 +129,31 @@ def _first_user_text(messages: list[Any] | None) -> str:
     if not messages:
         return ""
     first = messages[0]
-    content = first.get("content") if isinstance(first, dict) else getattr(
-        first, "content", None
-    )
+    if isinstance(first, dict):
+        content = first.get("content")
+    else:
+        content = getattr(first, "content", None)
     if isinstance(content, str):
         return content[:512]
     if isinstance(content, list):
         for block in content:
-            if isinstance(block, dict) and block.get("type") == "text":
-                text = block.get("text", "")
-                if isinstance(text, str):
-                    return text[:512]
+            text = _block_text(block)
+            if text:
+                return text[:512]
     return ""
+
+
+def _block_text(block: Any) -> str:
+    """Return the text of a content block whether it's a dict or Pydantic model."""
+    if isinstance(block, dict):
+        if block.get("type") != "text":
+            return ""
+        text = block.get("text", "")
+        return text if isinstance(text, str) else ""
+    if getattr(block, "type", None) != "text":
+        return ""
+    text = getattr(block, "text", "")
+    return text if isinstance(text, str) else ""
 
 
 def record(
