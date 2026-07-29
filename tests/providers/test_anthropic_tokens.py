@@ -1,3 +1,4 @@
+from typing import Any
 from unittest.mock import MagicMock, patch
 
 import httpx
@@ -16,8 +17,8 @@ def _response(input_tokens: object = 42) -> MagicMock:
     return response
 
 
-def _call(**overrides: object) -> int:
-    kwargs = {
+def _call(**overrides: Any) -> int:
+    kwargs: dict[str, Any] = {
         "api_key": "sk-test",
         "model": "claude-sonnet-4-5-20250929",
         "messages": [Message(role="user", content="hi")],
@@ -27,7 +28,7 @@ def _call(**overrides: object) -> int:
         "proxy": "",
     }
     kwargs.update(overrides)
-    return count_tokens_via_anthropic_api(**kwargs)  # type: ignore[arg-type]
+    return count_tokens_via_anthropic_api(**kwargs)
 
 
 def test_returns_exact_count_and_builds_expected_request() -> None:
@@ -78,9 +79,7 @@ def test_serializes_optional_system_and_tools() -> None:
         )
     payload = client.post.call_args.kwargs["json"]
     assert payload["system"] == [{"type": "text", "text": "Be concise."}]
-    assert payload["tools"] == [
-        {"name": "lookup", "input_schema": {"type": "object"}}
-    ]
+    assert payload["tools"] == [{"name": "lookup", "input_schema": {"type": "object"}}]
 
 
 def test_omits_absent_optional_fields() -> None:

@@ -488,6 +488,7 @@ def test_count_tokens_endpoint_uses_exact_anthropic_api_when_key_configured():
 def test_count_tokens_endpoint_falls_back_when_anthropic_api_errors():
     """A failing Anthropic API call still returns a 200 with an estimated count."""
     import httpx
+
     from free_claude_code.config.settings import Settings
 
     app_with_key = create_test_app(settings=Settings(ANTHROPIC_API_KEY="sk-test"))

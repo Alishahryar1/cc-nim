@@ -4,6 +4,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from free_claude_code.api.handlers import (
@@ -21,9 +22,9 @@ from free_claude_code.core.anthropic.models import (
 )
 from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
-from free_claude_code.providers.anthropic_tokens import AnthropicTokenCountUnavailable
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import ReasoningPolicy
+from free_claude_code.providers.anthropic_tokens import AnthropicTokenCountUnavailable
 
 _CLASSIFIER_SYSTEM = (
     "You are a security monitor. Respond with <block>yes</block> or <block>no</block>."
@@ -587,7 +588,9 @@ def test_token_count_handler_uses_exact_counter_when_api_key_set() -> None:
 
 
 def test_token_count_handler_falls_back_when_exact_counter_fails() -> None:
-    exact_counter = MagicMock(side_effect=AnthropicTokenCountUnavailable("upstream unavailable"))
+    exact_counter = MagicMock(
+        side_effect=AnthropicTokenCountUnavailable("upstream unavailable")
+    )
     handler = TokenCountHandler(
         Settings(ANTHROPIC_API_KEY="sk-test"),
         token_counter=lambda messages, system, tools: 42,
@@ -701,7 +704,9 @@ def test_token_count_handler_default_wiring_calls_real_anthropic_api() -> None:
 
 def test_token_count_handler_logs_warning_when_exact_counter_fails() -> None:
     """A failed exact count is logged (without raising) before falling back."""
-    exact_counter = MagicMock(side_effect=AnthropicTokenCountUnavailable("upstream unavailable"))
+    exact_counter = MagicMock(
+        side_effect=AnthropicTokenCountUnavailable("upstream unavailable")
+    )
     handler = TokenCountHandler(
         Settings(ANTHROPIC_API_KEY="sk-test"),
         token_counter=lambda messages, system, tools: 42,
@@ -721,8 +726,10 @@ def test_token_count_handler_logs_warning_when_exact_counter_fails() -> None:
     assert "upstream unavailable" in logger_mock.warning.call_args.args[1]
 
 
-
 def test_token_count_handler_does_not_hide_unexpected_exact_counter_error() -> None:
+    """An unexpected (non-AnthropicTokenCountUnavailable) error surfaces as a
+    500, per the handler's existing catch-all — it is not silently swallowed
+    into a fallback token count."""
     exact_counter = MagicMock(side_effect=RuntimeError("programming error"))
     handler = TokenCountHandler(
         Settings(ANTHROPIC_API_KEY="sk-test"),
@@ -730,10 +737,13 @@ def test_token_count_handler_does_not_hide_unexpected_exact_counter_error() -> N
         exact_token_counter=exact_counter,
     )
 
-    with pytest.raises(RuntimeError, match="programming error"):
+    with pytest.raises(HTTPException) as exc_info:
         handler.count(
             TokenCountRequest(
                 model="claude-sonnet-4-5-20250929",
                 messages=[Message(role="user", content="hi")],
             )
         )
+
+    assert exc_info.value.status_code == 500
+    assert "programming error" in exc_info.value.detail

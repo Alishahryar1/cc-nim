@@ -1192,7 +1192,8 @@ class TestPerModelMapping:
         assert refs[2].sources == ("MODEL_OPUS",)
 
 
-
 def test_anthropic_proxy_setting() -> None:
+    from free_claude_code.config.settings import Settings
+
     settings = Settings(ANTHROPIC_PROXY="socks5://127.0.0.1:1080")
     assert settings.anthropic_proxy == "socks5://127.0.0.1:1080"
