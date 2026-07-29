@@ -659,7 +659,7 @@ def _coerce_leaf(
             if isinstance(parsed, dict):
                 return parsed
             raise ValueError
-    except json.JSONDecodeError, ValueError:
+    except (json.JSONDecodeError, ValueError):
         raise NimNativeToolProtocolError(
             "NVIDIA NIM returned a native MiniMax argument with the wrong type."
         ) from None
