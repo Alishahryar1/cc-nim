@@ -24,6 +24,7 @@ OPENAI_DEVICE_USER_CODE_URL = f"{OPENAI_AUTH_ISSUER}/api/accounts/deviceauth/use
 OPENAI_DEVICE_TOKEN_URL = f"{OPENAI_AUTH_ISSUER}/api/accounts/deviceauth/token"
 OPENAI_DEVICE_VERIFICATION_URL = f"{OPENAI_AUTH_ISSUER}/codex/device"
 OPENAI_DEVICE_REDIRECT_URI = f"{OPENAI_AUTH_ISSUER}/deviceauth/callback"
+OPENAI_CALLBACK_HOST = "localhost"
 LOGIN_LIFETIME_SECONDS = 15 * 60
 
 
@@ -80,7 +81,9 @@ class BrowserAuthorization:
         runner: web.AppRunner | None = None
         redirect_uri = ""
         for candidate in (1455, 1457):
-            candidate_redirect_uri = f"http://localhost:{candidate}/auth/callback"
+            candidate_redirect_uri = (
+                f"http://{OPENAI_CALLBACK_HOST}:{candidate}/auth/callback"
+            )
             app = web.Application()
 
             async def callback(
@@ -115,7 +118,11 @@ class BrowserAuthorization:
             candidate_runner = web.AppRunner(app, access_log=None)
             await candidate_runner.setup()
             try:
-                candidate_site = web.TCPSite(candidate_runner, "127.0.0.1", candidate)
+                candidate_site = web.TCPSite(
+                    candidate_runner,
+                    OPENAI_CALLBACK_HOST,
+                    candidate,
+                )
                 await candidate_site.start()
             except OSError:
                 await candidate_runner.cleanup()

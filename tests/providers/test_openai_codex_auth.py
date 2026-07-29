@@ -13,6 +13,7 @@ import pytest
 from free_claude_code.application.connected_accounts import (
     ConnectedAccountLoginMode,
 )
+from free_claude_code.providers.openai_codex import login as openai_login
 from free_claude_code.providers.openai_codex.auth import (
     OpenAIAuthManager,
     OpenAIReconnectRequired,
@@ -243,7 +244,17 @@ async def test_disconnect_revokes_refresh_token_and_always_deletes_credentials(
 
 
 @pytest.mark.asyncio
-async def test_browser_authorization_validates_state_and_returns_pkce_grant() -> None:
+async def test_browser_authorization_validates_state_and_returns_pkce_grant(
+    monkeypatch,
+) -> None:
+    callback_hosts: list[str] = []
+    tcp_site = openai_login.web.TCPSite
+
+    def recording_site(runner, host: str, port: int):
+        callback_hosts.append(host)
+        return tcp_site(runner, host, port)
+
+    monkeypatch.setattr(openai_login.web, "TCPSite", recording_site)
     browser = await BrowserAuthorization.start()
     query = parse_qs(urlparse(browser.auth_url).query)
     redirect_uri = query["redirect_uri"][0]
@@ -266,6 +277,8 @@ async def test_browser_authorization_validates_state_and_returns_pkce_grant() ->
     assert grant.code == "authorization_code"
     assert grant.redirect_uri == redirect_uri
     assert grant.code_verifier
+    assert urlparse(redirect_uri).hostname == "localhost"
+    assert callback_hosts and set(callback_hosts) == {"localhost"}
     assert query["code_challenge_method"] == ["S256"]
     assert query["originator"] == ["codex_cli_rs"]
     assert "window.close()" in response.text
