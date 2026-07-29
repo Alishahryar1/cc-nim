@@ -15,3 +15,5 @@ debug-*.log
 llama_cache
 .smoke-results
 .vscode
+# Artefactos del grafo (graphify) — generados, no versionar
+graphify-out/
