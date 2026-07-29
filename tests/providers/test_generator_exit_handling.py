@@ -56,23 +56,6 @@ def _admission():
     )
 
 
-def _complete_stream(text: str = "hello"):
-    """A complete OpenAI Chat stream with a finish_reason."""
-    chunk = MagicMock()
-    chunk.choices = [
-        MagicMock(
-            delta=MagicMock(content=text, reasoning_content=""),
-            finish_reason="stop",
-        )
-    ]
-    chunk.usage = None
-
-    async def stream():
-        yield chunk
-
-    return stream()
-
-
 def _stream_that_raises_cancelled_error():
     """Simulate a stream that raises CancelledError mid-iteration."""
 
@@ -89,42 +72,6 @@ def _stream_that_raises_cancelled_error():
         raise asyncio.CancelledError()
 
     return stream()
-
-
-def _stream_raises_generator_exit_on_close():
-    """A complete stream that raises GeneratorExit when aclose() is called.
-
-    This simulates what happens when the upstream connection is severed mid-
-    stream: the stream object's cleanup raises GeneratorExit into the caller.
-    """
-
-    async def stream():
-        chunk = MagicMock()
-        chunk.choices = [
-            MagicMock(
-                delta=MagicMock(content="partial", reasoning_content=""),
-                finish_reason="stop",
-            )
-        ]
-        chunk.usage = None
-        yield chunk
-        # When aclose() is called on this generator, Python throws GeneratorExit
-        # into it.  Since we don't catch it here, it propagates up to the caller
-        # (the provider's run() method).
-        yield  # unreachable but makes this a valid generator
-
-    async def controlled_stream():
-        gen = stream()
-        try:
-            while True:
-                try:
-                    yield await gen.__anext__()
-                except StopAsyncIteration:
-                    break
-        finally:
-            await gen.aclose()
-
-    return controlled_stream()
 
 
 class _FakeCodexAuth(OpenAIAuthManager):
@@ -208,20 +155,32 @@ async def test_openrouter_generator_exit_closes_cleanly() -> None:
         _config("https://openrouter.ai/api/v1"), admission=admission
     )
 
+    async def multi_chunk_stream(**_kwargs):
+        for text in ["a", "b", "c"]:
+            chunk = MagicMock()
+            chunk.choices = [
+                MagicMock(
+                    delta=MagicMock(content=text, reasoning_content=""),
+                    finish_reason="stop" if text == "c" else None,
+                )
+            ]
+            chunk.usage = None
+            yield chunk
+
     with patch.object(
         provider._client.chat.completions,
         "create",
         new_callable=AsyncMock,
-        return_value=_complete_stream("hello"),
+        side_effect=multi_chunk_stream,
     ):
         gen = cast(
             AsyncGenerator[str],
             provider.stream_response(make_messages_request(), request_id="req_genexit"),
         )
-        # Consume the stream to completion (quick — single chunk)
-        body = await _collect(gen)
-        assert "event: message_start" in body
-        assert "hello" in body
+        first = await gen.__anext__()
+        assert "event: message_start" in first
+        # Close mid-stream — triggers GeneratorExit inside run()
+        await gen.aclose()
 
 
 @pytest.mark.asyncio
