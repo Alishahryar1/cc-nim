@@ -540,18 +540,16 @@ configure_and_verify_free_claude_code() {
 configure_claude_desktop_app() {
     # Best-effort: write the FCC 3P-gateway block into the user's
     # ``claude_desktop_config.json`` so Claude Desktop's model picker
-    # discovers every NIM/OpenRouter model exposed by FCC. Delegate JSON
-    # parsing to the Python helper installed by ``uv tool install`` so the
-    # script doesn't depend on ``jq``.
+    # discovers every NIM/OpenRouter model exposed by FCC. Invoke the
+    # installed console script (not python3) so it works even when the
+    # uv tool bin dir lacks an interpreter.
     if [ "$dry_run" -eq 1 ]; then
-        print_command "$tool_bin/python3" -m \
-            free_claude_code.cli.launchers.claude_desktop --configure
+        print_command "$tool_bin/fcc-claude-desktop" --configure
         return 0
     fi
 
     configure_status=0
-    "$tool_bin/python3" -m \
-        free_claude_code.cli.launchers.claude_desktop --configure \
+    "$tool_bin/fcc-claude-desktop" --configure \
         || configure_status=$?
     if [ "$configure_status" -ne 0 ]; then
         printf 'warning: Failed to auto-configure Claude Desktop (exit code %d). Run `fcc-claude-desktop --configure` manually.\n' "$configure_status" >&2

@@ -26,6 +26,15 @@ from pathlib import Path
 
 from loguru import logger
 
+
+class MalformedConfigError(ValueError):
+    """Raised when the Claude Desktop config file exists but cannot be parsed as a JSON object."""
+
+    def __init__(self, path: Path, reason: str) -> None:
+        self.path = path
+        super().__init__(f"Claude Desktop config at {path} is malformed: {reason}")
+
+
 CLAUDE_DESKTOP_BINARY = "claude-desktop"
 _CONFIG_FILENAME = "claude_desktop_config.json"
 
@@ -67,20 +76,25 @@ def _config_path() -> Path:
 
 
 def load_existing_config(path: Path) -> dict[str, object]:
-    """Read existing JSON config or return ``{}`` when the file is missing/malformed."""
+    """Read existing JSON config as a dict.
+
+    Raises:
+        FileNotFoundError: If the config file does not exist.
+        MalformedConfigError: If the file exists but is not valid JSON or is not a JSON object.
+    """
 
     if not path.exists():
-        return {}
+        raise FileNotFoundError(f"Claude Desktop config not found: {path}")
+
     try:
         loaded = json.loads(path.read_text(encoding="utf-8"))
     except json.JSONDecodeError as exc:
-        logger.warning(
-            "Malformed Claude Desktop config at {}: {} — treating as empty",
-            path,
-            exc,
-        )
-        return {}
-    return loaded if isinstance(loaded, dict) else {}
+        raise MalformedConfigError(path, f"invalid JSON: {exc}") from exc
+
+    if not isinstance(loaded, dict):
+        raise MalformedConfigError(path, "root element is not a JSON object")
+
+    return loaded
 
 
 def _save_config(path: Path, data: dict[str, object]) -> None:
@@ -99,10 +113,26 @@ def _inference_matches_fcc_block(block: dict[str, object]) -> bool:
 
 
 def configure_claude_desktop_config(path: Path | None = None) -> bool:
-    """Merge the FCC routing block into ``path``. Returns whether anything changed."""
+    """Merge the FCC routing block into ``path``. Returns whether anything changed.
+
+    Returns ``False`` and aborts without writing when the existing config is
+    malformed (invalid JSON or non-object root). Creates a new config when
+    the file does not exist.
+    """
 
     config_path = path or _config_path()
-    data = load_existing_config(config_path)
+    try:
+        data = load_existing_config(config_path)
+    except FileNotFoundError:
+        data = {}
+    except MalformedConfigError as exc:
+        logger.warning(
+            "Skipping FCC config merge: malformed config at {}: {}",
+            exc.path,
+            exc.reason,
+        )
+        return False
+
     changed = False
 
     if data.get(_DISCOVERY_KEY) is not True:
@@ -128,12 +158,26 @@ def configure_claude_desktop_config(path: Path | None = None) -> bool:
 
 
 def unconfigure_claude_desktop_config(path: Path | None = None) -> bool:
-    """Reverse the merge. Preserves every key outside the FCC-managed surface."""
+    """Reverse the merge. Preserves every key outside the FCC-managed surface.
+
+    Returns ``False`` and aborts without writing when the existing config is
+    malformed (invalid JSON or non-object root). Returns ``False`` silently
+    when the file does not exist.
+    """
 
     config_path = path or _config_path()
     if not config_path.exists():
         return False
-    data = load_existing_config(config_path)
+    try:
+        data = load_existing_config(config_path)
+    except MalformedConfigError as exc:
+        logger.warning(
+            "Skipping FCC config unmerge: malformed config at {}: {}",
+            exc.path,
+            exc.reason,
+        )
+        return False
+
     changed = False
 
     if _DISCOVERY_KEY in data:

@@ -634,24 +634,24 @@ function Test-EquivalentPath {
 function Configure-ClaudeDesktopApp {
     param([string] $ToolBin)
 
-    # Delegate JSON merging to the Python helper installed by `uv tool
-    # install` so the script does not depend on jq/ConvertTo-Json parsing.
+    # Delegate JSON merging to the installed console script so it works even
+    # when the uv tool bin dir lacks an interpreter.
     # Best-effort: a non-zero exit is logged but does not fail the install.
-    $pythonExe = Join-Path $ToolBin "python3"
-    if (-not (Test-Path $pythonExe)) {
-        $pythonExe = Join-Path $ToolBin "python.exe"
+    $scriptExe = Join-Path $ToolBin "fcc-claude-desktop"
+    if (-not (Test-Path $scriptExe)) {
+        $scriptExe = Join-Path $ToolBin "fcc-claude-desktop.exe"
     }
-    if (-not (Test-Path $pythonExe)) {
-        Write-Warning "Could not locate python inside the uv tool bin; skipping Claude Desktop auto-configure."
+    if (-not (Test-Path $scriptExe)) {
+        Write-Warning "Could not locate fcc-claude-desktop in $ToolBin; skipping Claude Desktop auto-configure."
         return
     }
 
     if ($script:DryRun) {
-        Print-Command $pythonExe @("-m", "free_claude_code.cli.launchers.claude_desktop", "--configure")
+        Print-Command $scriptExe @("--configure")
         return
     }
 
-    & $pythonExe -m free_claude_code.cli.launchers.claude_desktop --configure
+    & $scriptExe --configure
     if ($LASTEXITCODE -ne 0) {
         Write-Warning "Failed to auto-configure Claude Desktop (exit code $LASTEXITCODE). Run `fcc-claude-desktop --configure` manually."
     }

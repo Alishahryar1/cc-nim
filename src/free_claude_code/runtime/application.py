@@ -248,7 +248,9 @@ class ApplicationRuntime:
         }
 
     async def refresh_models(self) -> ProviderModelRefreshResult:
-        return await self.provider_manager.refresh_model_list_cache()
+        result = await self.provider_manager.refresh_model_list_cache()
+        self._seed_picker_aliases_from_cache()
+        return result
 
     async def request_restart(self) -> None:
         callback = self._restart_callback

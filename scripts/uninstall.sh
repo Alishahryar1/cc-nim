@@ -245,24 +245,22 @@ unconfigure_claude_desktop_config() {
     # Reverse the merge applied by the installer so Claude Desktop stops
     # forwarding requests to FCC after this tool is gone. Best-effort: a
     # non-zero exit is logged but does not fail the uninstall.
-    python_bin="$uv_tool_bin/python3"
+    script_bin="$uv_tool_bin/fcc-claude-desktop"
     if [ "$dry_run" -eq 1 ]; then
-        if [ -x "$python_bin" ]; then
-            print_command "$python_bin" -m \
-                free_claude_code.cli.launchers.claude_desktop --unconfigure
+        if [ -x "$script_bin" ]; then
+            print_command "$script_bin" --unconfigure
         else
             printf '+ skip Claude Desktop --unconfigure (uv tool bin already gone)\n'
         fi
         return 0
     fi
 
-    if [ ! -x "$python_bin" ]; then
+    if [ ! -x "$script_bin" ]; then
         # Tool already removed; helper no longer reachable.
         return 0
     fi
 
-    if ! "$python_bin" -m \
-            free_claude_code.cli.launchers.claude_desktop --unconfigure 2>/dev/null; then
+    if ! "$script_bin" --unconfigure 2>/dev/null; then
         printf 'warning: Failed to auto-unconfigure Claude Desktop (exit code %d). Run `fcc-claude-desktop --unconfigure` manually.\n' "$?" >&2
     fi
 }
