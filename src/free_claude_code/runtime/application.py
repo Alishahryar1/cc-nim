@@ -37,7 +37,10 @@ from free_claude_code.config.model_refs import parse_provider_type
 from free_claude_code.config.paths import messaging_state_dir_path
 from free_claude_code.config.server_urls import local_admin_url, local_proxy_root_url
 from free_claude_code.config.settings import Settings, get_settings
-from free_claude_code.core.gateway_model_ids import seed_picker_aliases
+from free_claude_code.core.gateway_model_ids import (
+    extend_picker_aliases,
+    seed_picker_aliases,
+)
 from free_claude_code.messaging.platforms import factory as messaging_platform_factory
 from free_claude_code.messaging.platforms.factory import MessagingPlatformOptions
 from free_claude_code.messaging.platforms.ports import (
@@ -262,7 +265,9 @@ class ApplicationRuntime:
 
     async def refresh_models(self) -> ProviderModelRefreshResult:
         result = await self.provider_manager.refresh_model_list_cache()
-        self._seed_picker_aliases_from_cache()
+        extend_picker_aliases(
+            info.model_id for info in self.provider_manager.cached_prefixed_model_infos()
+        )
         return result
 
     async def connected_account_status(

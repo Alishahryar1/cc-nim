@@ -78,28 +78,47 @@ def seed_picker_aliases(provider_model_refs: Iterable[str]) -> None:
     Maps stay empty when the iterable is empty so a cold-start ``/v1/models``
     request still falls back to the canonical ``gateway_model_id`` wrappers.
     """
+    _seed_picker_aliases_internal(provider_model_refs, append=False)
+
+
+def extend_picker_aliases(provider_model_refs: Iterable[str]) -> None:
+    """Add aliases for new refs only; preserve existing alias assignments.
+
+    Used by ``refresh_models`` to append newly discovered models without
+    remapping aliases that Claude Desktop may have already cached.
+    """
+    _seed_picker_aliases_internal(provider_model_refs, append=True)
+
+
+def _seed_picker_aliases_internal(
+    provider_model_refs: Iterable[str], *, append: bool
+) -> None:
+    """Internal helper for both seed and extend modes."""
     global _picker_alias_to_ref, _picker_alias_to_ref_no_thinking
     global _picker_ref_to_alias, _picker_ref_to_alias_no_thinking
 
-    thinking_aliases: dict[str, str] = {}
-    no_thinking_aliases: dict[str, str] = {}
-    ref_to_thinking: dict[str, str] = {}
-    ref_to_no_thinking: dict[str, str] = {}
+    if not append:
+        _picker_alias_to_ref = {}
+        _picker_alias_to_ref_no_thinking = {}
+        _picker_ref_to_alias = {}
+        _picker_ref_to_alias_no_thinking = {}
 
-    for index, ref in enumerate(sorted(provider_model_refs), start=1):
+    # Determine next counter value from existing maps
+    next_index = len(_picker_ref_to_alias) + 1
+
+    for ref in sorted(provider_model_refs):
         if not ref:
             continue
-        alias = _format_picker_alias(index, no_thinking=False)
-        no_thinking_alias = _format_picker_alias(index, no_thinking=True)
-        thinking_aliases[alias] = ref
-        no_thinking_aliases[no_thinking_alias] = ref
-        ref_to_thinking[ref] = alias
-        ref_to_no_thinking[ref] = no_thinking_alias
-
-    _picker_alias_to_ref = thinking_aliases
-    _picker_alias_to_ref_no_thinking = no_thinking_aliases
-    _picker_ref_to_alias = ref_to_thinking
-    _picker_ref_to_alias_no_thinking = ref_to_no_thinking
+        # Skip if already has an alias assigned
+        if ref in _picker_ref_to_alias:
+            continue
+        alias = _format_picker_alias(next_index, no_thinking=False)
+        no_thinking_alias = _format_picker_alias(next_index, no_thinking=True)
+        _picker_alias_to_ref[alias] = ref
+        _picker_alias_to_ref_no_thinking[no_thinking_alias] = ref
+        _picker_ref_to_alias[ref] = alias
+        _picker_ref_to_alias_no_thinking[ref] = no_thinking_alias
+        next_index += 1
 
 
 def picker_alias_for(
