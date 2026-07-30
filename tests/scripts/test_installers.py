@@ -1161,7 +1161,8 @@ def test_install_ps1_fresh_install_is_verified(
     assert any(
         call.startswith(
             "uv:tool install --force --refresh-package free-claude-code "
-            '--python 3.14.0 "free-claude-code @ '
+            "--python cpython-3.14.0-windows-x86_64-none "
+            '"free-claude-code @ '
             'https://github.com/Alishahryar1/free-claude-code/archive/refs/heads/main.zip"'
         )
         for call in calls
@@ -1543,6 +1544,12 @@ def test_installers_use_native_clients_and_single_python_selection() -> None:
 
     assert "https://pi.dev/install.sh" in shell
     assert "https://pi.dev/install.ps1" in powershell
+
+
+def test_install_ps1_uses_x64_python_for_windows_arm_compatibility() -> None:
+    powershell = (_repo_root() / "scripts" / "install.ps1").read_text(encoding="utf-8")
+
+    assert '$PythonRequest = "cpython-3.14.0-windows-x86_64-none"' in powershell
 
 
 def test_readme_install_section_has_no_manual_git_prerequisite() -> None:
