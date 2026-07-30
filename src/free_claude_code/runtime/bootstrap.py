@@ -1,6 +1,7 @@
 """Single production composition root for the FCC server."""
 
 import os
+from functools import partial
 from pathlib import Path
 
 from free_claude_code.api.app import create_app
@@ -10,7 +11,15 @@ from free_claude_code.config.paths import server_log_path
 from free_claude_code.config.settings import Settings
 from free_claude_code.messaging.transcription import TranscriptionService
 from free_claude_code.messaging.voice import Transcriber
+from free_claude_code.providers.admission import ProviderAdmissionController
+from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.nvidia_nim.voice import NvidiaNimTranscriber
+from free_claude_code.providers.openai_codex import (
+    OpenAIAuthManager,
+    OpenAICodexProvider,
+)
+from free_claude_code.providers.runtime import ProviderRuntime
+from free_claude_code.providers.runtime.factory import create_provider
 
 from .application import ApplicationRuntime, RestartCallback
 from .asgi import RuntimeASGIApp
@@ -28,11 +37,26 @@ def build_asgi_app(
         level=settings.log_level,
         verbose_third_party=settings.log_raw_api_payloads,
     )
-    provider_manager = ProviderRuntimeManager(settings)
+    openai_auth = OpenAIAuthManager(proxy=settings.openai_proxy)
+    openai_factory = partial(_create_openai_provider, auth=openai_auth)
+    provider_constructor = partial(
+        create_provider,
+        injected_factories={"openai": openai_factory},
+    )
+    runtime_factory = partial(
+        ProviderRuntime,
+        provider_constructor=provider_constructor,
+    )
+    provider_manager = ProviderRuntimeManager(
+        settings,
+        runtime_factory=runtime_factory,
+        connected_provider_ids=openai_auth.connected_provider_ids,
+    )
     runtime = ApplicationRuntime(
         provider_manager,
         transcriber=_create_transcriber(settings),
         restart_callback=restart_callback,
+        connected_accounts={"openai": openai_auth},
     )
     services = ApiServices(
         requests=provider_manager,
@@ -40,6 +64,16 @@ def build_asgi_app(
         tasks=runtime,
     )
     return RuntimeASGIApp(create_app(services), runtime)
+
+
+def _create_openai_provider(
+    config: ProviderConfig,
+    _settings: Settings,
+    admission: ProviderAdmissionController,
+    *,
+    auth: OpenAIAuthManager,
+) -> BaseProvider:
+    return OpenAICodexProvider(config, auth=auth, admission=admission)
 
 
 def _create_transcriber(settings: Settings) -> Transcriber | None:

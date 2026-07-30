@@ -36,6 +36,17 @@ class ProviderModelCache:
             if provider_id in self._available_provider_ids
         }
 
+    def add_provider(self, provider_id: str) -> None:
+        """Make one dynamically authenticated provider cacheable."""
+
+        self._available_provider_ids = self._available_provider_ids | {provider_id}
+
+    def remove_provider(self, provider_id: str) -> None:
+        """Evict one provider and stop accepting its discovered metadata."""
+
+        self._available_provider_ids = self._available_provider_ids - {provider_id}
+        self._model_infos_by_provider.pop(provider_id, None)
+
     def cached_model_ids(self) -> dict[str, frozenset[str]]:
         """Return cached raw provider model ids by provider."""
         return {

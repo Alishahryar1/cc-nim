@@ -10,6 +10,9 @@ MESSAGING_STATE_DIRNAME = "agent_workspace"
 FCC_LOGS_DIRNAME = "logs"
 SERVER_LOG_FILENAME = "server.log"
 CODEX_MODEL_CATALOG_FILENAME = "codex-model-catalog.json"
+AUTH_DIRNAME = "auth"
+OPENAI_AUTH_FILENAME = "openai.json"
+OPENAI_AUTH_LOCK_FILENAME = "openai.lock"
 
 
 def config_dir_path() -> Path:
@@ -50,3 +53,15 @@ def codex_model_catalog_path() -> Path:
     """Return the generated Codex model catalog path."""
 
     return config_dir_path() / CODEX_MODEL_CATALOG_FILENAME
+
+
+def openai_auth_path() -> Path:
+    """Return FCC's private ChatGPT credential file path."""
+
+    return config_dir_path() / AUTH_DIRNAME / OPENAI_AUTH_FILENAME
+
+
+def openai_auth_lock_path() -> Path:
+    """Return the cross-process lock path for ChatGPT credentials."""
+
+    return config_dir_path() / AUTH_DIRNAME / OPENAI_AUTH_LOCK_FILENAME

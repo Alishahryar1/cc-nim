@@ -5,8 +5,9 @@ from pathlib import Path
 from unittest.mock import MagicMock, patch
 
 from free_claude_code.cli.commands import ServerStatus, ServerSupervisor
-from free_claude_code.cli.desktop import DesktopController, DesktopInstanceLock
+from free_claude_code.cli.desktop import DesktopController
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.interprocess_lock import InterprocessFileLock
 
 
 def _settings() -> Settings:
@@ -15,8 +16,8 @@ def _settings() -> Settings:
 
 def test_desktop_instance_lock_is_exclusive_and_reusable(tmp_path: Path) -> None:
     lock_path = tmp_path / "desktop.lock"
-    first = DesktopInstanceLock(lock_path)
-    second = DesktopInstanceLock(lock_path)
+    first = InterprocessFileLock(lock_path)
+    second = InterprocessFileLock(lock_path)
 
     assert first.acquire() is True
     assert first.acquire() is True
@@ -214,7 +215,7 @@ def test_second_desktop_launch_opens_existing_admin_without_new_server() -> None
 
     with (
         patch.object(desktop, "load_server_settings", return_value=settings),
-        patch.object(desktop, "DesktopInstanceLock", return_value=instance_lock),
+        patch.object(desktop, "InterprocessFileLock", return_value=instance_lock),
         patch.object(desktop, "open_admin_when_ready", return_value=True) as open_admin,
         patch.object(desktop, "ServerSupervisor") as supervisor,
     ):
@@ -234,7 +235,7 @@ def test_desktop_attaches_to_terminal_server_instead_of_binding_twice() -> None:
 
     with (
         patch.object(desktop, "load_server_settings", return_value=settings),
-        patch.object(desktop, "DesktopInstanceLock", return_value=instance_lock),
+        patch.object(desktop, "InterprocessFileLock", return_value=instance_lock),
         patch.object(desktop, "preflight_proxy", return_value=None),
         patch.object(desktop, "open_admin_when_ready", return_value=True) as open_admin,
         patch.object(desktop, "ServerSupervisor") as supervisor,
@@ -257,7 +258,7 @@ def test_fresh_desktop_launch_disables_console_and_automatic_browser() -> None:
 
     with (
         patch.object(desktop, "load_server_settings", return_value=settings),
-        patch.object(desktop, "DesktopInstanceLock", return_value=instance_lock),
+        patch.object(desktop, "InterprocessFileLock", return_value=instance_lock),
         patch.object(desktop, "preflight_proxy", return_value="connection refused"),
         patch.object(desktop, "ServerSupervisor", return_value=supervisor) as owner,
         patch.object(desktop, "DesktopController", return_value=controller) as shell,
