@@ -18,6 +18,7 @@ $FccCommands = @(
     "fcc-codex",
     "fcc-pi",
     "fcc-init",
+    "fcc-claude-desktop",
     "free-claude-code"
 )
 $script:UvPath = ""
@@ -190,6 +191,32 @@ function Uninstall-FreeClaudeCode {
     throw "uv tool uninstall $PackageName failed with exit code $($result.ExitCode); ~/.fcc was not deleted."
 }
 
+function Unconfigure-ClaudeDesktopApp {
+    param([string] $ToolBin)
+
+    # Delegate JSON un-merging to the Python helper installed by `uv tool
+    # install` so the script does not depend on jq/ConvertTo-Json parsing.
+    # Best-effort: a non-zero exit is logged but does not fail the uninstall.
+    $pythonExe = Join-Path $ToolBin "python3"
+    if (-not (Test-Path $pythonExe)) {
+        $pythonExe = Join-Path $ToolBin "python.exe"
+    }
+    if (-not (Test-Path $pythonExe)) {
+        Write-Warning "Could not locate python inside the uv tool bin; skipping Claude Desktop auto-unconfigure."
+        return
+    }
+
+    if ($DryRun) {
+        Write-Host "+ $pythonExe -m free_claude_code.cli.launchers.claude_desktop --unconfigure"
+        return
+    }
+
+    & $pythonExe -m free_claude_code.cli.launchers.claude_desktop --unconfigure
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Failed to auto-unconfigure Claude Desktop (exit code $LASTEXITCODE). Run `fcc-claude-desktop --unconfigure` manually."
+    }
+}
+
 function Confirm-FccCommandsRemoved {
     if ($DryRun) {
         Write-Host "+ verify all Free Claude Code entry points are absent from the uv tool bin directory"
@@ -272,6 +299,32 @@ function Remove-FccDesktopShortcuts {
     }
 }
 
+function Unconfigure-ClaudeDesktopApp {
+    param([string] $ToolBin)
+
+    # Delegate JSON un-merge to the Python helper installed by `uv tool
+    # install` so the script does not depend on jq/ConvertTo-Json parsing.
+    # Best-effort: a non-zero exit is logged but does not fail the uninstall.
+    $pythonExe = Join-Path $ToolBin "python3"
+    if (-not (Test-Path $pythonExe)) {
+        $pythonExe = Join-Path $ToolBin "python.exe"
+    }
+    if (-not (Test-Path $pythonExe)) {
+        Write-Warning "Could not locate python inside the uv tool bin; skipping Claude Desktop auto-unconfigure."
+        return
+    }
+
+    if ($script:DryRun) {
+        Print-Command $pythonExe @("-m", "free_claude_code.cli.launchers.claude_desktop", "--unconfigure")
+        return
+    }
+
+    & $pythonExe -m free_claude_code.cli.launchers.claude_desktop --unconfigure
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Failed to auto-unconfigure Claude Desktop (exit code $LASTEXITCODE). Run `fcc-claude-desktop --unconfigure` manually."
+    }
+}
+
 function Purge-FccHome {
     $fccHome = Join-Path $env:USERPROFILE $FccHomeDirname
     if (-not (Test-Path -LiteralPath $fccHome)) {
@@ -314,6 +367,9 @@ Assert-NoFccProcessesRunning
 
 Write-Step "Locating the uv-managed Free Claude Code installation"
 Initialize-UvContext
+
+Write-Step "Reversing the Claude Desktop routing block"
+Unconfigure-ClaudeDesktopApp -ToolBin $script:UvToolBin
 
 Write-Step "Removing the Free Claude Code uv tool"
 Uninstall-FreeClaudeCode

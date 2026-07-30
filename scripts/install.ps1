@@ -29,6 +29,7 @@ $FccCommands = @(
     "fcc-codex",
     "fcc-pi",
     "fcc-init",
+    "fcc-claude-desktop",
     "free-claude-code"
 )
 
@@ -583,7 +584,7 @@ function Configure-AndConfirmFreeClaudeCode {
         [IO.Path]::AltDirectorySeparatorChar
     )
     $installedCommands = @{}
-    foreach ($commandName in @("fcc-desktop", "fcc-server", "fcc-claude", "fcc-codex", "fcc-pi")) {
+    foreach ($commandName in @("fcc-desktop", "fcc-server", "fcc-claude", "fcc-codex", "fcc-pi", "fcc-claude-desktop")) {
         $command = Get-ApplicationCommand $commandName
         if (-not $command) {
             throw "Free Claude Code installation did not create '$commandName'."
@@ -605,6 +606,8 @@ function Configure-AndConfirmFreeClaudeCode {
     Install-FccDesktopShortcuts `
         -DesktopCommand $installedCommands["fcc-desktop"] `
         -IconPath $iconPath
+    Configure-ClaudeDesktopApp `
+        -ToolBin $toolBin
 }
 
 function Test-EquivalentPath {
@@ -625,6 +628,32 @@ function Test-EquivalentPath {
     }
     catch {
         return $false
+    }
+}
+
+function Configure-ClaudeDesktopApp {
+    param([string] $ToolBin)
+
+    # Delegate JSON merging to the Python helper installed by `uv tool
+    # install` so the script does not depend on jq/ConvertTo-Json parsing.
+    # Best-effort: a non-zero exit is logged but does not fail the install.
+    $pythonExe = Join-Path $ToolBin "python3"
+    if (-not (Test-Path $pythonExe)) {
+        $pythonExe = Join-Path $ToolBin "python.exe"
+    }
+    if (-not (Test-Path $pythonExe)) {
+        Write-Warning "Could not locate python inside the uv tool bin; skipping Claude Desktop auto-configure."
+        return
+    }
+
+    if ($script:DryRun) {
+        Print-Command $pythonExe @("-m", "free_claude_code.cli.launchers.claude_desktop", "--configure")
+        return
+    }
+
+    & $pythonExe -m free_claude_code.cli.launchers.claude_desktop --configure
+    if ($LASTEXITCODE -ne 0) {
+        Write-Warning "Failed to auto-configure Claude Desktop (exit code $LASTEXITCODE). Run `fcc-claude-desktop --configure` manually."
     }
 }
 

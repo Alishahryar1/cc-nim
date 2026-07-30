@@ -1,5 +1,6 @@
 """Gateway-safe model ID encoding shared by API and CLI adapters."""
 
+from collections.abc import Iterable
 from dataclasses import dataclass
 
 GATEWAY_MODEL_ID_PREFIX = "anthropic"
@@ -8,6 +9,18 @@ GATEWAY_MODEL_ID_PREFIX = "anthropic"
 # supporting thinking. This intentionally uses that client-side capability
 # heuristic while keeping the real provider/model ref reversible for routing.
 NO_THINKING_GATEWAY_MODEL_ID_PREFIX = "claude-3-freecc-no-thinking"
+
+PICKER_ALIAS_PREFIX = "claude-sonnet-nim"
+_PICKER_ALIAS_NO_THINKING_SUFFIX = "-no-thinking"
+_PICKER_ALIAS_WIDTH = 4
+
+# Module-scope alias maps. Seeded once at startup with the sorted refs from the
+# runtime cached model catalog. Read-only after seed in production; tests
+# ``clear_picker_aliases()`` between runs to keep the maps empty.
+_picker_alias_to_ref: dict[str, str] = {}
+_picker_alias_to_ref_no_thinking: dict[str, str] = {}
+_picker_ref_to_alias: dict[str, str] = {}
+_picker_ref_to_alias_no_thinking: dict[str, str] = {}
 
 
 @dataclass(frozen=True, slots=True)
@@ -49,3 +62,78 @@ def decode_gateway_model_id(model_name: str) -> DecodedGatewayModelId | None:
         provider_model=provider_model,
         force_reasoning_off=force_reasoning_off,
     )
+
+
+def _format_picker_alias(index: int, *, no_thinking: bool) -> str:
+    suffix = _PICKER_ALIAS_NO_THINKING_SUFFIX if no_thinking else ""
+    return f"{PICKER_ALIAS_PREFIX}-{index:0{_PICKER_ALIAS_WIDTH}d}{suffix}"
+
+
+def seed_picker_aliases(provider_model_refs: Iterable[str]) -> None:
+    """Reset and rebuild the alias maps from the supplied refs.
+
+    Stable across restarts: counter is assigned by ``sorted(refs)``, so the
+    same input order produces the same numbering.
+
+    Maps stay empty when the iterable is empty so a cold-start ``/v1/models``
+    request still falls back to the canonical ``gateway_model_id`` wrappers.
+    """
+    global _picker_alias_to_ref, _picker_alias_to_ref_no_thinking
+    global _picker_ref_to_alias, _picker_ref_to_alias_no_thinking
+
+    thinking_aliases: dict[str, str] = {}
+    no_thinking_aliases: dict[str, str] = {}
+    ref_to_thinking: dict[str, str] = {}
+    ref_to_no_thinking: dict[str, str] = {}
+
+    for index, ref in enumerate(sorted(provider_model_refs), start=1):
+        if not ref:
+            continue
+        alias = _format_picker_alias(index, no_thinking=False)
+        no_thinking_alias = _format_picker_alias(index, no_thinking=True)
+        thinking_aliases[alias] = ref
+        no_thinking_aliases[no_thinking_alias] = ref
+        ref_to_thinking[ref] = alias
+        ref_to_no_thinking[ref] = no_thinking_alias
+
+    _picker_alias_to_ref = thinking_aliases
+    _picker_alias_to_ref_no_thinking = no_thinking_aliases
+    _picker_ref_to_alias = ref_to_thinking
+    _picker_ref_to_alias_no_thinking = ref_to_no_thinking
+
+
+def picker_alias_for(
+    provider_model_ref: str, *, force_reasoning_off: bool = False
+) -> str | None:
+    """Return the picker alias for ``provider_model_ref``, if seeded."""
+    if force_reasoning_off:
+        return _picker_ref_to_alias_no_thinking.get(provider_model_ref)
+    return _picker_ref_to_alias.get(provider_model_ref)
+
+
+def resolve_picker_alias(model_name: str) -> tuple[str, bool] | None:
+    """Reverse-lookup alias. Returns ``(provider_ref, force_reasoning_off)``."""
+    if not model_name:
+        return None
+    ref = _picker_alias_to_ref_no_thinking.get(model_name)
+    if ref is not None:
+        return ref, True
+    ref = _picker_alias_to_ref.get(model_name)
+    if ref is not None:
+        return ref, False
+    return None
+
+
+def has_picker_aliases() -> bool:
+    """Whether ``seed_picker_aliases`` has populated the maps."""
+    return bool(_picker_alias_to_ref) or bool(_picker_alias_to_ref_no_thinking)
+
+
+def clear_picker_aliases() -> None:
+    """Drop every alias entry. Used by tests and hardening paths."""
+    global _picker_alias_to_ref, _picker_alias_to_ref_no_thinking
+    global _picker_ref_to_alias, _picker_ref_to_alias_no_thinking
+    _picker_alias_to_ref = {}
+    _picker_alias_to_ref_no_thinking = {}
+    _picker_ref_to_alias = {}
+    _picker_ref_to_alias_no_thinking = {}
