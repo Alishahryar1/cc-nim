@@ -266,7 +266,8 @@ class ApplicationRuntime:
     async def refresh_models(self) -> ProviderModelRefreshResult:
         result = await self.provider_manager.refresh_model_list_cache()
         extend_picker_aliases(
-            info.model_id for info in self.provider_manager.cached_prefixed_model_infos()
+            info.model_id
+            for info in self.provider_manager.cached_prefixed_model_infos()
         )
         return result
 

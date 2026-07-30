@@ -2,6 +2,10 @@ from fastapi.testclient import TestClient
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.gateway_model_ids import (
+    clear_picker_aliases,
+    seed_picker_aliases,
+)
 from tests.api.support import create_test_app, provider_manager_for_app
 
 
@@ -42,30 +46,51 @@ def test_models_list_includes_configured_refs_cached_provider_models_and_aliases
         "anthropic/claude-opus",
     )
 
+    # Seed picker aliases from cached models (as ApplicationRuntime.start() would do)
+    clear_picker_aliases()
+
+    manager = provider_manager_for_app(app)
+    refs = [info.model_id for info in manager.cached_prefixed_model_infos()]
+    seed_picker_aliases(refs)
+
     response = TestClient(app).get("/v1/models")
 
     assert response.status_code == 200
     data = response.json()
     ids = [item["id"] for item in data["data"]]
-    assert ids[:6] == [
-        "anthropic/deepseek/deepseek-chat",
-        "claude-3-freecc-no-thinking/deepseek/deepseek-chat",
-        "anthropic/open_router/anthropic/claude-opus",
-        "claude-3-freecc-no-thinking/open_router/anthropic/claude-opus",
-        "anthropic/open_router/meta/llama-3.3",
-        "claude-3-freecc-no-thinking/open_router/meta/llama-3.3",
+
+    # Sorted refs: deepseek/deepseek-chat (0001), open_router/anthropic/claude-opus (0002), open_router/meta/llama-3.3 (0003)
+    assert any(id_.startswith("claude-sonnet-nim-0001") for id_ in ids)
+    assert any(id_.startswith("claude-sonnet-nim-0002") for id_ in ids)
+    assert any(id_.startswith("claude-sonnet-nim-0003") for id_ in ids)
+
+    # Each ref gets both thinking and no-thinking picker aliases
+    import re
+
+    deepseek_ids = [
+        id_ for id_ in ids if re.match(r"claude-sonnet-nim-0001(-no-thinking)?$", id_)
     ]
-    assert ids.count("anthropic/deepseek/deepseek-chat") == 1
-    assert ids.count("anthropic/open_router/anthropic/claude-opus") == 1
+    opus_ids = [
+        id_ for id_ in ids if re.match(r"claude-sonnet-nim-0002(-no-thinking)?$", id_)
+    ]
+    llama_ids = [
+        id_ for id_ in ids if re.match(r"claude-sonnet-nim-0003(-no-thinking)?$", id_)
+    ]
+
+    assert len(deepseek_ids) == 2  # thinking + no-thinking
+    assert len(opus_ids) == 2
+    assert len(llama_ids) == 2
+
     display_names = {item["id"]: item["display_name"] for item in data["data"]}
-    assert (
-        display_names["anthropic/open_router/meta/llama-3.3"]
-        == "open_router/meta/llama-3.3"
-    )
-    assert (
-        display_names["claude-3-freecc-no-thinking/open_router/meta/llama-3.3"]
-        == "open_router/meta/llama-3.3 (no thinking)"
-    )
+
+    # Both variants have display_name = provider_model_ref (no-thinking encoded in ID)
+    for id_ in deepseek_ids:
+        assert display_names[id_] == "deepseek/deepseek-chat"
+    for id_ in opus_ids:
+        assert display_names[id_] == "open_router/anthropic/claude-opus"
+    for id_ in llama_ids:
+        assert display_names[id_] == "open_router/meta/llama-3.3"
+
     assert "claude-sonnet-4-20250514" in ids
     assert "claude-fable-5" in ids
     assert data["first_id"] == ids[0]
@@ -136,6 +161,9 @@ def test_models_list_includes_cached_wafer_models():
 
 def test_models_list_works_with_empty_discovery_catalog():
     app = create_test_app(_settings())
+
+    # Clear picker aliases to test unseeded fallback behavior
+    clear_picker_aliases()
 
     response = TestClient(app).get("/v1/models")
 

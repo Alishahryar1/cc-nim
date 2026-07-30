@@ -32,6 +32,7 @@ class MalformedConfigError(ValueError):
 
     def __init__(self, path: Path, reason: str) -> None:
         self.path = path
+        self.reason = reason
         super().__init__(f"Claude Desktop config at {path} is malformed: {reason}")
 
 
@@ -94,6 +95,7 @@ def load_existing_config(path: Path) -> dict[str, object]:
     if not isinstance(loaded, dict):
         raise MalformedConfigError(path, "root element is not a JSON object")
 
+    # json.loads returns dict[str, Any] at runtime; narrow to dict[str, object]
     return loaded
 
 
@@ -122,7 +124,7 @@ def configure_claude_desktop_config(path: Path | None = None) -> bool:
 
     config_path = path or _config_path()
     try:
-        data = load_existing_config(config_path)
+        data: dict[str, object] = load_existing_config(config_path)
     except FileNotFoundError:
         data = {}
     except MalformedConfigError as exc:
@@ -139,17 +141,20 @@ def configure_claude_desktop_config(path: Path | None = None) -> bool:
         data[_DISCOVERY_KEY] = True
         changed = True
 
-    inference = data.get(_INFERENCE_KEY)
-    if not isinstance(inference, dict):
-        inference = {}
+    # Get inference block with proper type narrowing
+    inference_raw = data.get(_INFERENCE_KEY)
+    inference_dict: dict[str, object] = {}
+    if isinstance(inference_raw, dict):
+        for k, v in inference_raw.items():
+            inference_dict[str(k)] = v
 
     for key, value in INFERENCE_BLOCK.items():
-        if inference.get(key) != value:
-            inference[key] = value
+        if inference_dict.get(key) != value:
+            inference_dict[key] = value
             changed = True
 
-    if _INFERENCE_KEY not in data or data[_INFERENCE_KEY] != inference:
-        data[_INFERENCE_KEY] = inference
+    if _INFERENCE_KEY not in data or data[_INFERENCE_KEY] != inference_dict:
+        data[_INFERENCE_KEY] = inference_dict
         changed = True
 
     if changed:
@@ -169,7 +174,7 @@ def unconfigure_claude_desktop_config(path: Path | None = None) -> bool:
     if not config_path.exists():
         return False
     try:
-        data = load_existing_config(config_path)
+        data: dict[str, object] = load_existing_config(config_path)
     except MalformedConfigError as exc:
         logger.warning(
             "Skipping FCC config unmerge: malformed config at {}: {}",
@@ -187,12 +192,20 @@ def unconfigure_claude_desktop_config(path: Path | None = None) -> bool:
     if _INFERENCE_KEY in data:
         inference = data[_INFERENCE_KEY]
         if isinstance(inference, dict):
+            inference_dict: dict[str, object] = {}
+            for k, v in inference.items():
+                inference_dict[str(k)] = v
             for key in INFERENCE_BLOCK:
-                if key in inference and inference[key] == INFERENCE_BLOCK[key]:
-                    del inference[key]
+                if (
+                    key in inference_dict
+                    and inference_dict[key] == INFERENCE_BLOCK[key]
+                ):
+                    del inference_dict[key]
                     changed = True
-            if not inference:
+            if not inference_dict:
                 del data[_INFERENCE_KEY]
+            else:
+                data[_INFERENCE_KEY] = inference_dict
         else:
             del data[_INFERENCE_KEY]
             changed = True
