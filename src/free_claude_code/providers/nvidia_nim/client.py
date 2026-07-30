@@ -135,15 +135,18 @@ class NvidiaNimProvider(OpenAIChatProvider):
         return None
 
     def _provider_failure_override(self, error: Exception) -> ExecutionFailure | None:
-        """Classify NVIDIA-specific 400 responses by their actual semantics."""
-        if not isinstance(error, openai.BadRequestError):
+        """Classify NVIDIA-specific 400/500 responses by their actual semantics."""
+        if not isinstance(error, openai.BadRequestError | openai.InternalServerError):
             return None
-        if getattr(error, "status_code", None) != 400:
+        status = getattr(error, "status_code", None)
+        if status not in (400, 500):
             return None
         bodies = _nim_error_bodies(error)
         if any(_is_context_window_exhaustion(body) for body in bodies):
             return context_window_exceeded_provider_failure()
-        if any(_is_degraded_function(body) for body in bodies):
+        if isinstance(error, openai.BadRequestError) and any(
+            _is_degraded_function(body) for body in bodies
+        ):
             return overloaded_provider_failure()
         return None
 

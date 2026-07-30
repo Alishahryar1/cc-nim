@@ -140,6 +140,8 @@ class OpenAIChatProvider(BaseProvider):
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
         """Return model metadata from the OpenAI-compatible models endpoint."""
         payload = await self._list_models_payload()
+        if not self._profile.model_ids_are_routable:
+            return frozenset()
         return extract_openai_model_infos(payload, provider_name=self._provider_name)
 
     async def _list_models_payload(self) -> Any:

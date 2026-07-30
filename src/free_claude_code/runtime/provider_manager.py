@@ -22,6 +22,7 @@ from free_claude_code.providers.runtime.discovery import (
 from free_claude_code.providers.runtime.model_cache import ProviderModelCache
 
 ProviderRuntimeFactory = Callable[[Settings], ProviderRuntime]
+ConnectedProviderIds = Callable[[], tuple[str, ...]]
 CommitConfig = Callable[[], None]
 
 
@@ -87,12 +88,14 @@ class ProviderRuntimeManager:
         settings: Settings,
         *,
         runtime_factory: ProviderRuntimeFactory = ProviderRuntime,
+        connected_provider_ids: ConnectedProviderIds = tuple,
     ) -> None:
         self._runtime_factory = runtime_factory
+        self._connected_provider_ids = connected_provider_ids
         self._replace_lock = asyncio.Lock()
         self._close_lock = asyncio.Lock()
         self._model_cache = ProviderModelCache(
-            model_cache_provider_ids_for_settings(settings)
+            model_cache_provider_ids_for_settings(settings, connected_provider_ids())
         )
         self._refresh_task: asyncio.Task[None] | None = None
         self._next_generation_id = 2
@@ -123,14 +126,17 @@ class ProviderRuntimeManager:
         return self._current.settings
 
     def cached_model_ids(self) -> dict[str, frozenset[str]]:
+        self._synchronize_model_cache_scope()
         return self._model_cache.cached_model_ids()
 
     def cached_model_supports_thinking(
         self, provider_id: str, model_id: str
     ) -> bool | None:
+        self._synchronize_model_cache_scope()
         return self._model_cache.cached_model_supports_thinking(provider_id, model_id)
 
     def cached_prefixed_model_infos(self) -> tuple[ProviderModelInfo, ...]:
+        self._synchronize_model_cache_scope()
         return self._model_cache.cached_prefixed_model_infos()
 
     def cache_model_infos(
@@ -148,6 +154,7 @@ class ProviderRuntimeManager:
                 lease.settings,
                 lease.resolve_provider,
                 self._model_cache,
+                self._connected_provider_ids(),
             )
             return await discovery.warm_referenced_model_cache()
         finally:
@@ -171,6 +178,35 @@ class ProviderRuntimeManager:
                 raise ApplicationUnavailableError("Provider runtime is shutting down.")
             await self._cancel_refresh()
             return await self._refresh_generation(self._current, only_missing=False)
+
+    async def connected_provider_changed(
+        self, provider_id: str, *, connected: bool
+    ) -> ProviderModelRefreshResult:
+        """Synchronize one connected account without replacing a generation."""
+
+        async with self._replace_lock:
+            if self._closing or self._closed:
+                raise ApplicationUnavailableError("Provider runtime is shutting down.")
+            if not connected:
+                self._model_cache.remove_provider(provider_id)
+                return ProviderModelRefreshResult()
+            self._model_cache.add_provider(provider_id)
+            discovery = ProviderModelDiscovery(
+                self._current.settings,
+                self._current.runtime.resolve_provider,
+                self._model_cache,
+                self._connected_provider_ids(),
+            )
+            return await discovery.refresh_provider(provider_id)
+
+    def _synchronize_model_cache_scope(self) -> None:
+        """Drop metadata whose settings or connected account is no longer usable."""
+
+        self._model_cache.set_available_providers(
+            model_cache_provider_ids_for_settings(
+                self._current.settings, self._connected_provider_ids()
+            )
+        )
 
     async def replace(
         self,
@@ -214,7 +250,9 @@ class ProviderRuntimeManager:
             )
             self._current = candidate
             self._model_cache.set_available_providers(
-                model_cache_provider_ids_for_settings(settings)
+                model_cache_provider_ids_for_settings(
+                    settings, self._connected_provider_ids()
+                )
             )
             previous.retired = True
             self._retired[previous.generation_id] = previous
@@ -283,6 +321,7 @@ class ProviderRuntimeManager:
                 generation.settings,
                 generation.runtime.resolve_provider,
                 self._model_cache,
+                self._connected_provider_ids(),
             )
             return await discovery.refresh_model_list_cache(only_missing=only_missing)
         finally:

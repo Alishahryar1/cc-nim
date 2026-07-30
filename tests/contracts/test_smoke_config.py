@@ -15,6 +15,7 @@ from smoke.lib.config import (
     OPT_IN_TARGETS,
     PROVIDER_SMOKE_DEFAULT_MODELS,
     TARGET_REQUIRED_ENV,
+    ProviderModel,
     SmokeConfig,
     nvidia_nim_cli_model_refs,
     openrouter_free_cli_model_refs,
@@ -28,6 +29,8 @@ def _settings(**overrides):
         "model_opus": None,
         "model_sonnet": None,
         "model_haiku": None,
+        "azure_openai_api_key": "",
+        "azure_openai_base_url": "",
         "nvidia_nim_api_key": "",
         "open_router_api_key": "",
         "mistral_api_key": "",
@@ -147,6 +150,30 @@ def test_provider_smoke_models_cover_configured_providers_independent_of_model_m
     assert models[0].source == "provider_default"
 
 
+def test_connected_account_provider_smoke_requires_explicit_model(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_OPENAI", raising=False)
+    config = _smoke_config(
+        provider_matrix=frozenset({"openai"}),
+        settings=_settings(ollama_base_url=""),
+    )
+
+    assert not config.has_provider_configuration("openai")
+    assert config.provider_smoke_models() == []
+
+    monkeypatch.setenv("FCC_SMOKE_MODEL_OPENAI", "gpt-5.3-codex")
+
+    assert config.has_provider_configuration("openai")
+    assert config.provider_smoke_models() == [
+        ProviderModel(
+            provider="openai",
+            full_model="openai/gpt-5.3-codex",
+            source="FCC_SMOKE_MODEL_OPENAI",
+        )
+    ]
+
+
 def test_openrouter_provider_smoke_uses_concrete_free_model(monkeypatch) -> None:
     monkeypatch.delenv("FCC_SMOKE_MODEL_OPEN_ROUTER", raising=False)
     config = _smoke_config(
@@ -188,6 +215,29 @@ def test_bedrock_provider_configuration_uses_official_api_key(monkeypatch) -> No
     assert [model.provider for model in models] == ["bedrock"]
     assert models[0].full_model == "bedrock/openai.gpt-oss-120b"
     assert models[0].source == "provider_default"
+
+
+def test_azure_openai_provider_configuration_requires_key_and_resource_url(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_AZURE_OPENAI", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            azure_openai_api_key="azure-key",
+            azure_openai_base_url=("https://resource.openai.azure.com/openai/v1/"),
+        )
+    )
+
+    assert config.has_provider_configuration("azure_openai")
+    models = config.provider_smoke_models()
+    assert [model.provider for model in models] == ["azure_openai"]
+    assert models[0].full_model == "azure_openai/gpt-5.1"
+    assert models[0].source == "provider_default"
+
+    config.settings.azure_openai_base_url = ""
+    assert not config.has_provider_configuration("azure_openai")
 
 
 def test_vertex_provider_configuration_uses_project_id(monkeypatch) -> None:
@@ -407,7 +457,7 @@ def test_provider_smoke_model_override_accepts_owner_model_name(
     assert models[0].source == "FCC_SMOKE_MODEL_NVIDIA_NIM"
 
 
-def test_provider_smoke_model_override_rejects_wrong_provider_prefix(
+def test_provider_smoke_model_override_preserves_namespaced_upstream_model(
     monkeypatch,
 ) -> None:
     monkeypatch.setenv("FCC_SMOKE_MODEL_DEEPSEEK", "ollama/llama3.1")
@@ -419,12 +469,9 @@ def test_provider_smoke_model_override_rejects_wrong_provider_prefix(
         provider_matrix=frozenset({"deepseek"}),
     )
 
-    try:
-        config.provider_smoke_models()
-    except ValueError as exc:
-        assert "FCC_SMOKE_MODEL_DEEPSEEK" in str(exc)
-    else:
-        raise AssertionError("expected wrong provider prefix to fail")
+    models = config.provider_smoke_models()
+
+    assert models[0].full_model == "deepseek/ollama/llama3.1"
 
 
 def test_mistral_reasoning_smoke_uses_reasoning_default(monkeypatch) -> None:
@@ -570,13 +617,12 @@ def test_nvidia_nim_cli_models_reject_empty_override() -> None:
         raise AssertionError("expected empty NVIDIA NIM CLI model override to fail")
 
 
-def test_nvidia_nim_cli_models_reject_wrong_provider_prefix() -> None:
-    try:
-        nvidia_nim_cli_model_refs({"FCC_SMOKE_NIM_MODELS": "open_router/model"})
-    except ValueError as exc:
-        assert "nvidia_nim" in str(exc)
-    else:
-        raise AssertionError("expected wrong provider prefix to fail")
+def test_nvidia_nim_cli_models_preserve_namespaced_upstream_model() -> None:
+    refs = nvidia_nim_cli_model_refs({"FCC_SMOKE_NIM_MODELS": "open_router/model"})
+
+    assert refs == {
+        "nvidia_nim/open_router/model": "FCC_SMOKE_NIM_MODELS",
+    }
 
 
 def test_smoke_config_returns_nvidia_nim_cli_provider_models(monkeypatch) -> None:
@@ -642,15 +688,14 @@ def test_openrouter_free_cli_models_reject_empty_override() -> None:
         raise AssertionError("expected empty OpenRouter free CLI override to fail")
 
 
-def test_openrouter_free_cli_models_reject_wrong_provider_prefix() -> None:
-    try:
-        openrouter_free_cli_model_refs(
-            {"FCC_SMOKE_OPENROUTER_FREE_MODELS": "nvidia_nim/model"}
-        )
-    except ValueError as exc:
-        assert "open_router" in str(exc)
-    else:
-        raise AssertionError("expected wrong provider prefix to fail")
+def test_openrouter_free_cli_models_preserve_namespaced_upstream_model() -> None:
+    refs = openrouter_free_cli_model_refs(
+        {"FCC_SMOKE_OPENROUTER_FREE_MODELS": "nvidia_nim/model"}
+    )
+
+    assert refs == {
+        "open_router/nvidia_nim/model": "FCC_SMOKE_OPENROUTER_FREE_MODELS",
+    }
 
 
 def test_smoke_config_returns_openrouter_free_cli_provider_models(monkeypatch) -> None:

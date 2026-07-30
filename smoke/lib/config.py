@@ -9,6 +9,7 @@ from free_claude_code.config.model_refs import parse_model_name, parse_provider_
 from free_claude_code.config.provider_catalog import (
     PROVIDER_CATALOG,
     SUPPORTED_PROVIDER_IDS,
+    ProviderAuthKind,
 )
 from free_claude_code.config.settings import Settings, get_settings
 from free_claude_code.providers.runtime.config import has_provider_configuration
@@ -46,6 +47,7 @@ SECRET_KEY_PARTS = ("KEY", "TOKEN", "SECRET", "WEBHOOK", "AUTH")
 
 PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "nvidia_nim": "nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
+    "azure_openai": "azure_openai/gpt-5.1",
     "open_router": "open_router/moonshotai/kimi-k2.6:free",
     "mistral": "mistral/devstral-small-latest",
     "mistral_codestral": "mistral_codestral/codestral-latest",
@@ -259,6 +261,8 @@ class SmokeConfig:
         descriptor = PROVIDER_CATALOG.get(provider)
         if descriptor is None:
             return False
+        if descriptor.auth_kind is ProviderAuthKind.CONNECTED_ACCOUNT:
+            return bool(os.getenv(f"FCC_SMOKE_MODEL_{provider.upper()}"))
         return has_provider_configuration(descriptor, self.settings)
 
 
@@ -300,17 +304,8 @@ def _normalize_provider_model(provider: str, raw_model: str) -> str:
     if not model:
         msg = f"FCC_SMOKE_MODEL_{provider.upper()} must not be empty"
         raise ValueError(msg)
-    if "/" not in model:
-        return f"{provider}/{model}"
-    prefix = parse_provider_type(model)
-    if prefix == provider:
+    if "/" in model and parse_provider_type(model) == provider:
         return model
-    if prefix in SUPPORTED_PROVIDER_IDS:
-        msg = (
-            f"FCC_SMOKE_MODEL_{provider.upper()} must use provider prefix "
-            f"{provider!r}, got {model!r}"
-        )
-        raise ValueError(msg)
     return f"{provider}/{model}"
 
 

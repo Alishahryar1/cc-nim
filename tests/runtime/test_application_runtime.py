@@ -5,6 +5,11 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 import free_claude_code.messaging.session.persistence as persistence_module
+from free_claude_code.application.connected_accounts import (
+    ConnectedAccountState,
+    ConnectedAccountStatus,
+)
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.admin.persistence import PreparedAdminUpdate
 from free_claude_code.config.settings import Settings
 from free_claude_code.messaging.command_context import StopOutcome
@@ -402,6 +407,69 @@ async def test_close_retries_runtime_before_closing_later_resources() -> None:
     assert runtime._messaging_runtime is None
     assert runtime._transcriber is None
     assert runtime._closed is True
+
+
+@pytest.mark.asyncio
+async def test_close_retries_connected_account_without_reclosing_providers() -> None:
+    factory = TrackingFactory()
+    manager = ProviderRuntimeManager(
+        _settings("nvidia_nim/model"),
+        runtime_factory=factory,
+    )
+    account = MagicMock()
+    account.status.return_value = MagicMock(revision=0)
+    account.close = AsyncMock(side_effect=[RuntimeError("auth cleanup failed"), None])
+    runtime = ApplicationRuntime(
+        manager,
+        transcriber=None,
+        connected_accounts={"openai": account},
+    )
+
+    assert await runtime.close() is False
+    assert manager._closed is True
+    assert factory.runtimes[0].cleanup_calls == 1
+
+    assert await runtime.close() is True
+    assert account.close.await_count == 2
+    assert factory.runtimes[0].cleanup_calls == 1
+    assert runtime.is_closed is True
+
+
+@pytest.mark.asyncio
+async def test_connected_account_status_reports_cached_model_count() -> None:
+    account = MagicMock()
+    account.is_connected.return_value = True
+    account.status.return_value = ConnectedAccountStatus(
+        provider_id="openai",
+        state=ConnectedAccountState.CONNECTED,
+        connected=True,
+        revision=1,
+        email="person@example.com",
+    )
+    account.close = AsyncMock()
+    manager = ProviderRuntimeManager(
+        _settings("nvidia_nim/model"),
+        connected_provider_ids=lambda: ("openai",),
+    )
+    manager.cache_model_infos(
+        "openai",
+        {
+            ProviderModelInfo(model_id="gpt-one"),
+            ProviderModelInfo(model_id="gpt-two"),
+        },
+    )
+    runtime = ApplicationRuntime(
+        manager,
+        transcriber=None,
+        connected_accounts={"openai": account},
+    )
+
+    status = await runtime.connected_account_status("openai")
+
+    assert status.email == "person@example.com"
+    assert status.model_count == 2
+    assert status.as_dict()["model_count"] == 2
+    assert await runtime.close() is True
 
 
 @pytest.mark.asyncio

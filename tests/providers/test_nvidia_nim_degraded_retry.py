@@ -77,18 +77,23 @@ def _context_window_error(
     ),
     param: str = "max_tokens",
     nested: bool = False,
-) -> openai.BadRequestError:
+    status_code: int = 400,
+) -> openai.BadRequestError | openai.InternalServerError:
     request = httpx.Request(
         "POST", "https://integrate.api.nvidia.com/v1/chat/completions"
     )
-    response = httpx.Response(400, request=request)
+    response = httpx.Response(status_code, request=request)
     error_body: dict[str, object] = {
         "message": message,
         "type": "BadRequestError",
         "param": param,
-        "code": 400,
+        "code": status_code,
     }
     body = {"error": error_body} if nested else error_body
+    if status_code == 500:
+        return openai.InternalServerError(
+            "Internal Server Error", response=response, body=body
+        )
     return openai.BadRequestError("Bad Request", response=response, body=body)
 
 
@@ -229,6 +234,42 @@ async def test_negative_derived_max_tokens_is_context_window_failure(
     )
     assert "max_tokens must be at least 1, got -853" in failure.message
     assert "Request ID: req_context" in failure.message
+    assert "prompt is too long" not in failure.message
+
+
+@pytest.mark.parametrize("nested", [False, True])
+@pytest.mark.asyncio
+async def test_negative_derived_max_tokens_is_context_window_failure_on_500(
+    nested: bool,
+) -> None:
+    provider = _nim(_admission())
+
+    with (
+        patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=_context_window_error(nested=nested, status_code=500),
+        ) as create,
+        pytest.raises(ExecutionFailure) as exc_info,
+    ):
+        [
+            event
+            async for event in provider.stream_response(
+                make_messages_request(), request_id="req_context_500"
+            )
+        ]
+
+    assert create.await_count == 1
+    failure = exc_info.value
+    assert failure.kind is FailureKind.CONTEXT_WINDOW_EXCEEDED
+    assert failure.status_code == 400
+    assert failure.retryable is False
+    assert "Mapped message: Provider input exceeds the model context window." in (
+        failure.message
+    )
+    assert "max_tokens must be at least 1, got -853" in failure.message
+    assert "Request ID: req_context_500" in failure.message
     assert "prompt is too long" not in failure.message
 
 

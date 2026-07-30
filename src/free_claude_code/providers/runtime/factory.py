@@ -1,8 +1,11 @@
 """Provider construction from declarative profiles and exceptional adapters."""
 
-from collections.abc import Callable
+from collections.abc import Callable, Mapping
 
-from free_claude_code.application.errors import UnknownProviderError
+from free_claude_code.application.errors import (
+    ApplicationUnavailableError,
+    UnknownProviderError,
+)
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.settings import Settings
 from free_claude_code.providers.admission import ProviderAdmissionController
@@ -144,20 +147,30 @@ _SPECIAL_PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "vertex": _create_vertex,
     "github_models": _create_github_models,
 }
+_INJECTED_PROVIDER_IDS = {"openai"}
 
 _profiled_ids = set(OPENAI_CHAT_PROFILES)
 _special_ids = set(_SPECIAL_PROVIDER_FACTORIES)
-if _profiled_ids & _special_ids or _profiled_ids | _special_ids != set(
-    PROVIDER_CATALOG
+_construction_ids = _profiled_ids | _special_ids | _INJECTED_PROVIDER_IDS
+if (
+    _profiled_ids & _special_ids
+    or _profiled_ids & _INJECTED_PROVIDER_IDS
+    or _special_ids & _INJECTED_PROVIDER_IDS
+    or _construction_ids != set(PROVIDER_CATALOG)
 ):
     raise AssertionError(
         "Every provider must have exactly one construction owner: "
         f"profiles={_profiled_ids!r} special={_special_ids!r} "
-        f"catalog={set(PROVIDER_CATALOG)!r}"
+        f"injected={_INJECTED_PROVIDER_IDS!r} catalog={set(PROVIDER_CATALOG)!r}"
     )
 
 
-def create_provider(provider_id: str, settings: Settings) -> BaseProvider:
+def create_provider(
+    provider_id: str,
+    settings: Settings,
+    *,
+    injected_factories: Mapping[str, ProviderFactory] | None = None,
+) -> BaseProvider:
     """Create a provider instance for a supported provider id."""
     descriptor = PROVIDER_CATALOG.get(provider_id)
     if descriptor is None:
@@ -170,7 +183,12 @@ def create_provider(provider_id: str, settings: Settings) -> BaseProvider:
         rate_window=config.rate_window or 60.0,
         max_concurrency=config.max_concurrency,
     )
-    factory = _SPECIAL_PROVIDER_FACTORIES.get(provider_id)
+    factory = (injected_factories or {}).get(provider_id)
+    if provider_id in _INJECTED_PROVIDER_IDS and factory is None:
+        raise ApplicationUnavailableError(
+            f"Provider {provider_id!r} is unavailable in this runtime."
+        )
+    factory = factory or _SPECIAL_PROVIDER_FACTORIES.get(provider_id)
     if factory is not None:
         return factory(config, settings, admission)
     return create_openai_chat_provider(provider_id, config, admission)

@@ -79,6 +79,36 @@ async def test_startup_generation_lease_and_shutdown_close_exactly_once() -> Non
 
 
 @pytest.mark.asyncio
+async def test_connected_provider_refresh_and_eviction_are_targeted() -> None:
+    factory = RuntimeFactory()
+    connected: set[str] = set()
+    manager = ProviderRuntimeManager(
+        _settings("nvidia_nim/one"),
+        runtime_factory=factory,
+        connected_provider_ids=lambda: tuple(connected),
+    )
+    factory.runtimes[0].provider.list_model_infos = AsyncMock(
+        return_value=frozenset(
+            {ProviderModelInfo(model_id="gpt-visible", supports_thinking=True)}
+        )
+    )
+
+    connected.add("openai")
+    result = await manager.connected_provider_changed("openai", connected=True)
+
+    assert result.refreshed_provider_ids == ("openai",)
+    assert manager.cached_model_ids()["openai"] == frozenset({"gpt-visible"})
+
+    connected.clear()
+    assert "openai" not in manager.cached_model_ids()
+
+    await manager.connected_provider_changed("openai", connected=False)
+
+    assert "openai" not in manager.cached_model_ids()
+    await manager.close()
+
+
+@pytest.mark.asyncio
 async def test_replacement_keeps_leased_generation_open_until_final_release() -> None:
     factory = RuntimeFactory()
     first_settings = _settings("nvidia_nim/one")
