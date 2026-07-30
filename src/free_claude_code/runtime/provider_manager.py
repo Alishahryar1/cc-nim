@@ -160,15 +160,27 @@ class ProviderRuntimeManager:
         finally:
             await lease.release()
 
-    def start_model_list_refresh(self) -> None:
-        """Start one non-blocking refresh for the current generation."""
+    def start_model_list_refresh(
+        self,
+        *,
+        on_complete: Callable[[ProviderModelCache], None] | None = None,
+    ) -> None:
+        """Start one non-blocking refresh for the current generation.
+
+        Args:
+            on_complete: Optional callback invoked with the model cache after a
+                successful refresh. Useful for downstream consumers (e.g. picker
+                alias seeding) that need to react to newly discovered models.
+        """
         if self._closing or self._closed:
             return
         if self._refresh_task is not None and not self._refresh_task.done():
             return
         generation = self._current
         self._refresh_task = asyncio.create_task(
-            self._refresh_generation_in_background(generation, only_missing=True)
+            self._refresh_generation_in_background(
+                generation, only_missing=True, on_complete=on_complete
+            )
         )
 
     async def refresh_model_list_cache(self) -> ProviderModelRefreshResult:
@@ -332,9 +344,14 @@ class ProviderRuntimeManager:
         generation: _ProviderGeneration,
         *,
         only_missing: bool,
+        on_complete: Callable[[ProviderModelCache], None] | None = None,
     ) -> None:
         try:
-            await self._refresh_generation(generation, only_missing=only_missing)
+            cache = await self._refresh_generation(
+                generation, only_missing=only_missing
+            )
+            if on_complete is not None:
+                on_complete(cache)
         except asyncio.CancelledError:
             raise
         except Exception as exc:

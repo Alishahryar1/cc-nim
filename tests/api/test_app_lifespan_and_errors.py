@@ -180,7 +180,7 @@ async def test_runtime_startup_warms_catalog_before_background_refresh():
     async def warm_cache() -> None:
         events.append("warm")
 
-    def start_refresh() -> None:
+    def start_refresh(*, on_complete=None) -> None:
         events.append("background")
 
     with (

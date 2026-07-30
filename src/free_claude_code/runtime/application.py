@@ -156,7 +156,9 @@ class ApplicationRuntime:
         try:
             warn_if_process_auth_token(self.settings)
             await self.provider_manager.warm_referenced_model_cache()
-            self.provider_manager.start_model_list_refresh()
+            self.provider_manager.start_model_list_refresh(
+                on_complete=lambda cache: self._seed_picker_aliases_from_cache()
+            )
             self._seed_picker_aliases_from_cache()
             await self._start_messaging_if_configured()
             logging.getLogger("uvicorn.error").info(
