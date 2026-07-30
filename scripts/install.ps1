@@ -14,7 +14,8 @@ $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
 $RepoArchiveUrl = "https://github.com/Alishahryar1/free-claude-code/archive/refs/heads/main.zip"
-$PythonVersion = "3.14.0"
+# Windows on ARM emulates x64, whose Python package ecosystem has broader wheel support.
+$PythonRequest = "cpython-3.14.0-windows-x86_64-none"
 $MinUvVersion = "0.11.16"
 $ClaudeInstallUrl = "https://claude.ai/install.ps1"
 $CodexInstallUrl = "https://chatgpt.com/codex/install.ps1"
@@ -499,7 +500,7 @@ function Install-FreeClaudeCode {
         "--refresh-package",
         "free-claude-code",
         "--python",
-        $PythonVersion
+        $PythonRequest
     )
     if (-not [string]::IsNullOrWhiteSpace($TorchBackend)) {
         $arguments += @("--torch-backend", $TorchBackend)
