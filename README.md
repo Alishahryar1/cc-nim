@@ -49,7 +49,7 @@ Run your coding agents with free, paid, or local models. Choose and validate pro
 
 - Launch Claude Code with `fcc-claude`, Codex with `fcc-codex`, or Pi with `fcc-pi`.
 - Run FCC in the background from a desktop launcher on Windows or macOS.
-- Switch among 30 cloud and local providers from the Admin UI.
+- Switch among 31 cloud and local providers from the Admin UI.
 - Use each coding agent's native model picker.
 - Route Fable, Opus, Sonnet, Haiku, and fallback traffic to different models.
 - Keep streaming, tool use, reasoning, and image input across compatible models.
@@ -169,6 +169,7 @@ fcc-codex exec "hello"
 | --- | --- | --- |
 | [NVIDIA NIM](https://build.nvidia.com/settings/api-keys) | `NVIDIA_NIM_API_KEY` | `nvidia_nim/nvidia/nemotron-3-super-120b-a12b` |
 | [OpenAI / ChatGPT](https://learn.chatgpt.com/docs/auth) | Connect ChatGPT in the Admin UI | `openai/<model-id>` |
+| [Azure OpenAI](https://learn.microsoft.com/azure/foundry/openai/how-to/chatgpt) | `AZURE_OPENAI_API_KEY` and `AZURE_OPENAI_BASE_URL` | `azure_openai/<deployment-name>` |
 | [OpenRouter](https://openrouter.ai/keys) | `OPENROUTER_API_KEY` | `open_router/openrouter/free` |
 | [Google AI Studio (Gemini)](https://aistudio.google.com/apikey) | `GEMINI_API_KEY` | `gemini/models/gemini-3.1-flash-lite` |
 | [Google Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/start/openai) | `VERTEX_PROJECT_ID` + ADC | `vertex/google/gemini-3.5-flash` |
@@ -205,6 +206,12 @@ Important provider notes:
   code is available for headless setups. FCC stores its own renewable
   credentials under `~/.fcc/auth/` and leaves Codex login untouched. Restart
   an already-running agent after connecting to refresh its model picker.
+- Azure OpenAI uses the deployment names from your resource. Set
+  `AZURE_OPENAI_BASE_URL` to its complete v1 endpoint, such as
+  `https://YOUR-RESOURCE-NAME.openai.azure.com/openai/v1/`, and select a
+  deployment that supports Chat Completions. Azure does not expose custom
+  deployment names through its data-plane model list, so enter the deployment
+  name as a custom model slug.
 - Mistral Codestral uses a separate key from Mistral La Plateforme.
 - Kimi Code subscription keys use `kimi_code/`; Kimi API credit keys use
   `kimi/`. Kimi Code plans are for personal interactive coding-agent use under

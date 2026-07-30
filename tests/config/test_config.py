@@ -339,6 +339,24 @@ class TestSettings:
         assert settings.cloudflare_account_id == "cf-account"
         assert settings.cloudflare_proxy == "http://proxy.test:8080"
 
+    def test_azure_openai_settings_from_env(self, monkeypatch):
+        """Azure OpenAI key, resource URL, and proxy load into settings."""
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.setenv("AZURE_OPENAI_API_KEY", "azure-key")
+        monkeypatch.setenv(
+            "AZURE_OPENAI_BASE_URL",
+            "https://resource.openai.azure.com/openai/v1/",
+        )
+        monkeypatch.setenv("AZURE_OPENAI_PROXY", "http://proxy.test:8080")
+        settings = Settings()
+
+        assert settings.azure_openai_api_key == "azure-key"
+        assert settings.azure_openai_base_url == (
+            "https://resource.openai.azure.com/openai/v1/"
+        )
+        assert settings.azure_openai_proxy == "http://proxy.test:8080"
+
     def test_vertex_settings_from_env(self, monkeypatch):
         """Vertex project, location, and proxy env vars load into settings."""
         from free_claude_code.config.settings import Settings

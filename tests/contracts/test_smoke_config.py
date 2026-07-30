@@ -29,6 +29,8 @@ def _settings(**overrides):
         "model_opus": None,
         "model_sonnet": None,
         "model_haiku": None,
+        "azure_openai_api_key": "",
+        "azure_openai_base_url": "",
         "nvidia_nim_api_key": "",
         "open_router_api_key": "",
         "mistral_api_key": "",
@@ -213,6 +215,29 @@ def test_bedrock_provider_configuration_uses_official_api_key(monkeypatch) -> No
     assert [model.provider for model in models] == ["bedrock"]
     assert models[0].full_model == "bedrock/openai.gpt-oss-120b"
     assert models[0].source == "provider_default"
+
+
+def test_azure_openai_provider_configuration_requires_key_and_resource_url(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_AZURE_OPENAI", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            azure_openai_api_key="azure-key",
+            azure_openai_base_url=("https://resource.openai.azure.com/openai/v1/"),
+        )
+    )
+
+    assert config.has_provider_configuration("azure_openai")
+    models = config.provider_smoke_models()
+    assert [model.provider for model in models] == ["azure_openai"]
+    assert models[0].full_model == "azure_openai/gpt-5.1"
+    assert models[0].source == "provider_default"
+
+    config.settings.azure_openai_base_url = ""
+    assert not config.has_provider_configuration("azure_openai")
 
 
 def test_vertex_provider_configuration_uses_project_id(monkeypatch) -> None:

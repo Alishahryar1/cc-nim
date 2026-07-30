@@ -155,3 +155,40 @@ def test_vertex_admin_status_uses_project_configuration_not_an_api_key() -> None
     assert vertex_status("")["label"] == "Missing configuration"
     assert vertex_status("")["configuration"] == "VERTEX_PROJECT_ID"
     assert vertex_status("vertex-project")["status"] == "configured"
+
+
+def test_azure_openai_admin_status_distinguishes_key_and_url() -> None:
+    from free_claude_code.config.admin.status import provider_config_status
+
+    def azure_status(api_key: str, base_url: str) -> dict[str, object]:
+        statuses = provider_config_status(
+            {
+                "AZURE_OPENAI_API_KEY": {"value": api_key},
+                "AZURE_OPENAI_BASE_URL": {"value": base_url},
+            }
+        )
+        return next(
+            status for status in statuses if status["provider_id"] == "azure_openai"
+        )
+
+    missing_key = azure_status(
+        "",
+        "https://resource.openai.azure.com/openai/v1/",
+    )
+    assert missing_key["status"] == "missing_key"
+    assert missing_key["label"] == "Missing key"
+
+    missing_url = azure_status("azure-key", "")
+    assert missing_url["status"] == "missing_config"
+    assert missing_url["label"] == "Missing configuration"
+    assert missing_url["configuration"] == (
+        "AZURE_OPENAI_API_KEY + AZURE_OPENAI_BASE_URL"
+    )
+
+    assert (
+        azure_status(
+            "azure-key",
+            "https://resource.openai.azure.com/openai/v1/",
+        )["status"]
+        == "configured"
+    )

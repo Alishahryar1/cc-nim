@@ -44,15 +44,17 @@ def provider_config_status(
             )
             continue
 
-        configured = all(
-            _value_for_settings_attr(state, attr).strip()
-            for attr in descriptor.configuration_attrs()
+        configuration_attrs = descriptor.configuration_attrs()
+        missing_attrs = tuple(
+            attr
+            for attr in configuration_attrs
+            if not _value_for_settings_attr(state, attr).strip()
         )
+        configured = not missing_attrs
         configuration = " + ".join(
-            _field_key_for_settings_attr(attr)
-            for attr in descriptor.configuration_attrs()
+            _field_key_for_settings_attr(attr) for attr in configuration_attrs
         )
-        missing_key = descriptor.credential_env is not None
+        missing_key = descriptor.credential_attr in missing_attrs
         statuses.append(
             {
                 "provider_id": provider_id,

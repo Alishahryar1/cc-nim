@@ -58,8 +58,14 @@ def build_provider_config(
     )
     resolved_base_url = base_url or descriptor.default_base_url
     if not resolved_base_url:
-        raise AssertionError(
-            f"Provider {descriptor.provider_id!r} has no configured base URL."
+        if descriptor.base_url_attr is None:
+            raise AssertionError(
+                f"Provider {descriptor.provider_id!r} has no base URL owner."
+            )
+        field = Settings.model_fields[descriptor.base_url_attr]
+        env_name = field.validation_alias or descriptor.base_url_attr
+        raise ApplicationUnavailableError(
+            f"{env_name} is not set. Add it to your .env file."
         )
     proxy = string_setting(settings, descriptor.proxy_attr)
     return ProviderConfig(

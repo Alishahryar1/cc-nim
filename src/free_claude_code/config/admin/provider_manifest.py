@@ -13,6 +13,15 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
         ),
         "restart_required": True,
     },
+    "AZURE_OPENAI_API_KEY": {
+        "description": "API key for the Azure OpenAI resource.",
+    },
+    "AZURE_OPENAI_BASE_URL": {
+        "description": (
+            "Resource-specific OpenAI v1 base URL, for example "
+            "https://YOUR-RESOURCE-NAME.openai.azure.com/openai/v1/."
+        ),
+    },
     "NVIDIA_NIM_API_KEY": {
         "label": "NVIDIA NIM API Key",
         "description": "Used by NVIDIA NIM chat and optional NIM voice transcription.",

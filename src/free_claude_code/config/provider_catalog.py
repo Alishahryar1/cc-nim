@@ -103,6 +103,19 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         default_base_url=OPENAI_CODEX_DEFAULT_BASE,
         proxy_attr="openai_proxy",
     ),
+    "azure_openai": ProviderDescriptor(
+        provider_id="azure_openai",
+        display_name="Azure OpenAI",
+        credential_env="AZURE_OPENAI_API_KEY",
+        credential_url="https://ai.azure.com/",
+        credential_attr="azure_openai_api_key",
+        base_url_attr="azure_openai_base_url",
+        proxy_attr="azure_openai_proxy",
+        required_settings_attrs=(
+            "azure_openai_api_key",
+            "azure_openai_base_url",
+        ),
+    ),
     "open_router": ProviderDescriptor(
         provider_id="open_router",
         display_name="OpenRouter",

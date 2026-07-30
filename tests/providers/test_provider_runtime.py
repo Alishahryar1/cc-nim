@@ -5,7 +5,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from free_claude_code.application.errors import UnknownProviderError
+from free_claude_code.application.errors import (
+    ApplicationUnavailableError,
+    UnknownProviderError,
+)
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.config.provider_catalog import (
     BEDROCK_DEFAULT_BASE,
@@ -50,6 +53,8 @@ def _make_settings(**overrides):
     mock.model_opus = None
     mock.model_sonnet = None
     mock.model_haiku = None
+    mock.azure_openai_api_key = "test_azure_openai_key"
+    mock.azure_openai_base_url = "https://test-resource.openai.azure.com/openai/v1/"
     mock.nvidia_nim_api_key = "test_key"
     mock.open_router_api_key = "test_openrouter_key"
     mock.mistral_api_key = "test_mistral_key"
@@ -107,6 +112,7 @@ def _make_settings(**overrides):
     mock.kilo_api_key = "test_kilo_key"
     mock.kilo_proxy = ""
     mock.openai_proxy = ""
+    mock.azure_openai_proxy = ""
     mock.provider_rate_limit = 40
     mock.provider_rate_window = 60
     mock.provider_max_concurrency = 5
@@ -190,6 +196,42 @@ def test_bedrock_provider_config_uses_regional_base_key_and_proxy() -> None:
     assert config.api_key == "bedrock-token"
     assert config.base_url == "https://bedrock-mantle.eu-west-1.api.aws/v1"
     assert config.proxy == "http://proxy.test:8080"
+
+
+def test_azure_openai_provider_config_uses_resource_base_key_and_proxy() -> None:
+    descriptor = PROVIDER_CATALOG["azure_openai"]
+    settings = _make_settings(
+        azure_openai_api_key="azure-token",
+        azure_openai_base_url=("https://resource.openai.azure.com/openai/v1/"),
+        azure_openai_proxy="http://proxy.test:8080",
+    )
+
+    config = build_provider_config(descriptor, settings)
+
+    assert descriptor.default_base_url is None
+    assert descriptor.configuration_attrs() == (
+        "azure_openai_api_key",
+        "azure_openai_base_url",
+    )
+    assert config.api_key == "azure-token"
+    assert config.base_url == "https://resource.openai.azure.com/openai/v1/"
+    assert config.proxy == "http://proxy.test:8080"
+
+
+def test_azure_openai_provider_config_reports_missing_resource_url() -> None:
+    descriptor = PROVIDER_CATALOG["azure_openai"]
+
+    with pytest.raises(
+        ApplicationUnavailableError,
+        match="AZURE_OPENAI_BASE_URL is not set",
+    ):
+        build_provider_config(
+            descriptor,
+            _make_settings(
+                azure_openai_api_key="azure-token",
+                azure_openai_base_url="",
+            ),
+        )
 
 
 @pytest.mark.parametrize(
@@ -419,6 +461,7 @@ def test_create_provider_instantiates_each_builtin():
     cases = {
         "nvidia_nim": NvidiaNimProvider,
         "openai": OpenAICodexProvider,
+        "azure_openai": OpenAIChatProvider,
         "open_router": OpenRouterProvider,
         "mistral": MistralProvider,
         "mistral_codestral": OpenAIChatProvider,

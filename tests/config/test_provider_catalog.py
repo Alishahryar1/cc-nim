@@ -46,6 +46,10 @@ def test_ollama_cloud_is_remote_and_distinct_from_local_ollama() -> None:
 
 
 def test_provider_configuration_attrs_cover_multi_field_and_adc_providers() -> None:
+    assert PROVIDER_CATALOG["azure_openai"].configuration_attrs() == (
+        "azure_openai_api_key",
+        "azure_openai_base_url",
+    )
     assert PROVIDER_CATALOG["cloudflare"].configuration_attrs() == (
         "cloudflare_api_token",
         "cloudflare_account_id",
