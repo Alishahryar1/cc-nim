@@ -111,6 +111,8 @@ def _make_settings(**overrides):
     mock.ollama_cloud_proxy = ""
     mock.kilo_api_key = "test_kilo_key"
     mock.kilo_proxy = ""
+    mock.orcarouter_api_key = "test_orcarouter_key"
+    mock.orcarouter_proxy = ""
     mock.openai_proxy = ""
     mock.azure_openai_proxy = ""
     mock.provider_rate_limit = 40
@@ -489,6 +491,7 @@ def test_create_provider_instantiates_each_builtin():
         "groq": OpenAIChatProvider,
         "sambanova": OpenAIChatProvider,
         "kilo": KiloProvider,
+        "orcarouter": OpenAIChatProvider,
         "cerebras": OpenAIChatProvider,
     }
     sentinel_admission = MagicMock(spec=ProviderAdmissionController)

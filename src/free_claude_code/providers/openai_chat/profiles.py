@@ -226,6 +226,22 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             enabled_value="high",
         ),
     ),
+    "orcarouter": OpenAIChatProfile(
+        _policy(
+            "ORCAROUTER",
+            ReasoningReplayMode.THINK_TAGS,
+        ),
+        # The gateway forwards ``reasoning_effort`` to the selected upstream model and
+        # rejects a top-level ``reasoning`` object with ``unknown_parameter``.
+        #
+        # Upstream vocabularies differ per routed model, so only the low/medium/high
+        # values common to every upstream are emitted, and disabling reasoning omits
+        # the field rather than sending a value some upstreams would reject.
+        #
+        # The gateway has no token-budget field, so a budget-only "thinking enabled"
+        # request falls back to the middle effort rather than sending nothing.
+        NamedEffortReasoning(_LOW_MEDIUM_HIGH, enabled_value="medium"),
+    ),
     "kimi": OpenAIChatProfile(
         _policy(
             "KIMI",

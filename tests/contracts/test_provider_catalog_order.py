@@ -26,6 +26,7 @@ _EXPECTED_PROVIDER_ORDER: tuple[str, ...] = (
     "kimi",
     "kimi_code",
     "kilo",
+    "orcarouter",
     "minimax",
     "cerebras",
     "groq",

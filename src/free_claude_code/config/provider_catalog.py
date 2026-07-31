@@ -48,6 +48,8 @@ CEREBRAS_DEFAULT_BASE = "https://api.cerebras.ai/v1"
 SAMBANOVA_DEFAULT_BASE = "https://api.sambanova.ai/v1"
 # Kilo.ai gateway OpenAI-compatible Chat Completions API.
 KILO_DEFAULT_BASE = "https://api.kilo.ai/api/gateway"
+# OrcaRouter gateway OpenAI-compatible Chat Completions API.
+ORCAROUTER_DEFAULT_BASE = "https://api.orcarouter.ai/v1"
 OPENAI_CODEX_DEFAULT_BASE = "https://chatgpt.com/backend-api/codex"
 
 
@@ -270,6 +272,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="kilo_api_key",
         default_base_url=KILO_DEFAULT_BASE,
         proxy_attr="kilo_proxy",
+    ),
+    "orcarouter": ProviderDescriptor(
+        provider_id="orcarouter",
+        display_name="OrcaRouter",
+        credential_env="ORCAROUTER_API_KEY",
+        credential_url="https://www.orcarouter.ai/keys",
+        credential_attr="orcarouter_api_key",
+        default_base_url=ORCAROUTER_DEFAULT_BASE,
+        proxy_attr="orcarouter_proxy",
     ),
     "minimax": ProviderDescriptor(
         provider_id="minimax",
