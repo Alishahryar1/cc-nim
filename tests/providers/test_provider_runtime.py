@@ -109,6 +109,8 @@ def _make_settings(**overrides):
     mock.cerebras_api_key = ""
     mock.cerebras_proxy = ""
     mock.ollama_cloud_proxy = ""
+    mock.tokenrouter_api_key = "test_tokenrouter_key"
+    mock.tokenrouter_proxy = ""
     mock.kilo_api_key = "test_kilo_key"
     mock.kilo_proxy = ""
     mock.openai_proxy = ""
@@ -457,6 +459,7 @@ def test_create_provider_instantiates_each_builtin():
         provider_rate_window=11,
         provider_max_concurrency=3,
         sambanova_api_key="test_sambanova_key",
+        tokenrouter_api_key="test_tokenrouter_key",
     )
     cases = {
         "nvidia_nim": NvidiaNimProvider,
@@ -490,6 +493,7 @@ def test_create_provider_instantiates_each_builtin():
         "sambanova": OpenAIChatProvider,
         "kilo": KiloProvider,
         "cerebras": OpenAIChatProvider,
+        "tokenrouter": OpenAIChatProvider,
     }
     sentinel_admission = MagicMock(spec=ProviderAdmissionController)
     auth = MagicMock()
@@ -672,3 +676,28 @@ async def test_provider_runtime_cleanup_exceptiongroup_on_multiple_failures() ->
 
     assert not runtime.is_cached("x")
     assert not runtime.is_cached("y")
+
+
+def test_tokenrouter_descriptor_uses_openai_chat_gateway():
+    descriptor = PROVIDER_CATALOG["tokenrouter"]
+
+    assert descriptor.default_base_url == "https://api.tokenrouter.com/v1"
+    assert descriptor.credential_env == "TOKENROUTER_API_KEY"
+    assert descriptor.credential_attr == "tokenrouter_api_key"
+    assert descriptor.proxy_attr == "tokenrouter_proxy"
+    assert descriptor.base_url_attr is None
+    assert descriptor.local is False
+
+
+def test_tokenrouter_provider_config_uses_key_and_proxy():
+    descriptor = PROVIDER_CATALOG["tokenrouter"]
+    settings = _make_settings(
+        tokenrouter_api_key="tokenrouter-token",
+        tokenrouter_proxy="http://proxy.test:8080",
+    )
+
+    config = build_provider_config(descriptor, settings)
+
+    assert config.api_key == "tokenrouter-token"
+    assert config.base_url == "https://api.tokenrouter.com/v1"
+    assert config.proxy == "http://proxy.test:8080"
