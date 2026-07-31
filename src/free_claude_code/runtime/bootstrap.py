@@ -23,6 +23,7 @@ from free_claude_code.providers.runtime.factory import create_provider
 
 from .application import ApplicationRuntime, RestartCallback
 from .asgi import RuntimeASGIApp
+from .codex_catalog import CodexModelCatalogPublisher
 from .provider_manager import ProviderRuntimeManager
 
 
@@ -51,6 +52,7 @@ def build_asgi_app(
         settings,
         runtime_factory=runtime_factory,
         connected_provider_ids=openai_auth.connected_provider_ids,
+        model_catalog_publisher=CodexModelCatalogPublisher(),
     )
     runtime = ApplicationRuntime(
         provider_manager,

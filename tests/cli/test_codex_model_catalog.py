@@ -153,6 +153,23 @@ def test_generated_catalog_schema_is_accepted_by_installed_codex(
     )
     codex_home = tmp_path / "codex-home"
     codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "\n".join(
+            (
+                'model_provider = "fcc"',
+                'model = "nvidia_nim/test-model"',
+                f"model_catalog_json = {json.dumps(str(catalog_path))}",
+                "",
+                "[model_providers.fcc]",
+                'name = "Free Claude Code"',
+                'base_url = "http://127.0.0.1:8082/v1"',
+                'http_headers = { Authorization = "Bearer freecc" }',
+                'wire_api = "responses"',
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
     codex_env = os.environ.copy()
     for key in (
         "CODEX_THREAD_ID",
@@ -164,13 +181,7 @@ def test_generated_catalog_schema_is_accepted_by_installed_codex(
     codex_env["CODEX_HOME"] = str(codex_home)
 
     result = subprocess.run(
-        [
-            codex_binary,
-            "debug",
-            "models",
-            "-c",
-            f"model_catalog_json={json.dumps(str(catalog_path))}",
-        ],
+        [codex_binary, "debug", "models"],
         capture_output=True,
         check=False,
         encoding="utf-8",
@@ -182,3 +193,43 @@ def test_generated_catalog_schema_is_accepted_by_installed_codex(
 
     assert result.returncode == 0, result.stderr
     assert "nvidia_nim/test-model" in result.stdout
+
+
+def test_catalog_writer_skips_identical_content_and_replaces_changes(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "codex-model-catalog.json"
+    first = build_codex_model_catalog(_models_payload("anthropic/nvidia_nim/first"))
+    second = build_codex_model_catalog(_models_payload("anthropic/nvidia_nim/second"))
+
+    assert write_codex_model_catalog(catalog_path, first) is True
+    assert write_codex_model_catalog(catalog_path, first) is False
+    assert list(tmp_path.glob(".codex-model-catalog.json.*.tmp")) == []
+
+    assert write_codex_model_catalog(catalog_path, second) is True
+    assert json.loads(catalog_path.read_text(encoding="utf-8")) == second
+    assert list(tmp_path.glob(".codex-model-catalog.json.*.tmp")) == []
+
+
+def test_catalog_writer_cleans_temporary_file_after_replace_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "codex-model-catalog.json"
+    catalog_path.write_text("previous\n", encoding="utf-8")
+
+    def fail_replace(_source: Path, _destination: Path) -> Path:
+        raise PermissionError("destination is locked")
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+
+    with pytest.raises(PermissionError, match="locked"):
+        write_codex_model_catalog(
+            catalog_path,
+            build_codex_model_catalog(
+                _models_payload("anthropic/nvidia_nim/replacement")
+            ),
+        )
+
+    assert catalog_path.read_text(encoding="utf-8") == "previous\n"
+    assert list(tmp_path.glob(".codex-model-catalog.json.*.tmp")) == []

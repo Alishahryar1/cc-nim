@@ -12,8 +12,8 @@ and how contributors should extend it.
 
 Free Claude Code is a local proxy for agent clients. It accepts Anthropic
 Messages traffic from Claude Code and Pi clients and OpenAI Responses traffic
-from Codex clients, routes the request to a configured upstream provider, and
-preserves the wire protocol expected by the caller.
+from Codex CLI, IDE, and App clients, routes the request to a configured
+upstream provider, and preserves the wire protocol expected by the caller.
 
 There are three runtime surfaces:
 
@@ -27,7 +27,7 @@ There are three runtime surfaces:
 ```mermaid
 flowchart LR
     ClaudeCode[Claude Code CLI and Extensions] --> ProxyAPI[FastAPI Proxy]
-    Codex[Codex CLI and Extensions] --> ProxyAPI
+    Codex[Codex CLI, IDE, and App] --> ProxyAPI
     Pi[Pi Coding Agent] --> ProxyAPI
     AdminUI[Local Admin UI] --> ProxyAPI
     Bots[Discord or Telegram Bots] --> Messaging[Messaging Bridge]
@@ -301,8 +301,11 @@ Settings-configured providers and currently connected accounts contribute to
 the same availability set. Account connect/disconnect performs a targeted model
 refresh or eviction; it does not mutate settings or replace a provider
 generation.
-This keeps the server model inventory stable without extra synchronization;
-Claude clients may independently retain the list they fetched at startup.
+Runtime integrations may observe those lifecycle events through one neutral
+catalog publisher supplied by the composition root. Publication is fail-open
+and occurs only after settings or cache changes; provider adapters remain the
+sole owners of upstream discovery. Claude and Codex clients may independently
+retain the model list they loaded at startup.
 
 ## Configuration Model
 
@@ -539,11 +542,26 @@ translate reasoning. The catalog is not part of an individual provider
 generation, so a hot replacement does not erase the last useful model list.
 Discovery failures retain prior entries.
 
-Codex-specific model picker shaping stays out of this route. `fcc-codex` fetches
-the same `/v1/models` response at launch, converts FCC gateway IDs into
-provider-selectable Codex slugs, writes `~/.fcc/codex-model-catalog.json`, and
-passes it as `model_catalog_json`. Codex users open the native picker with
-`/model`; FCC does not implement a proxy-level `/models` alias.
+Codex-specific model picker shaping stays out of this route.
+[runtime/codex_catalog.py](src/free_claude_code/runtime/codex_catalog.py) is the
+composition bridge: it asks this route's pure builder for the exact application
+inventory, passes that response to the existing Codex adapter, and writes
+`~/.fcc/codex-model-catalog.json` without making a loopback HTTP request.
+`ProviderRuntimeManager` invokes the bridge after authoritative settings,
+discovery, provider-test, or connected-account changes. Startup creates a
+missing file after routed-provider warming but preserves an existing
+last-known-good catalog until the background discovery pass publishes the
+complete accumulated inventory. Writes are atomic and identical bytes are not
+rewritten. Projection or filesystem failures emit only a concise warning and do
+not fail server startup, Admin operations, discovery, or inference. Shutdown
+never publishes the cleared in-memory cache.
+
+The Codex App reads `model_catalog_json` at startup, so it must restart to see a
+later catalog publication. `fcc-codex` remains an additional launch-time
+synchronizer: it fetches the same `/v1/models` response, uses the same adapter
+and writer, and passes the path as an ephemeral override. Codex users open the
+native picker with `/model`; FCC does not implement a proxy-level `/models`
+alias.
 
 ## Provider Architecture
 
@@ -1047,6 +1065,8 @@ instead of stopping at its login gate.
   `model_catalog_json` file under `~/.fcc/`, and injects that path so Codex's
   native `/model` picker lists FCC provider slugs. Catalog generation is
   fail-open: launch continues with a warning if the catalog cannot be prepared.
+- The server lifecycle independently keeps that same file synchronized for
+  Codex App and IDE processes that are not launched through `fcc-codex`.
 - Catalog discovery and inference both authenticate with HTTP bearer authorization.
 - It stores the proxy auth token in `FCC_CODEX_API_KEY` for Codex's provider
   `env_key` to read. This process-local variable is a client credential carrier,

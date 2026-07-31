@@ -11,6 +11,7 @@ from free_claude_code.application.errors import (
     ApplicationUnavailableError,
     InvalidRequestError,
 )
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.settings import Settings
 from free_claude_code.messaging.transcription import TranscriptionService
 from free_claude_code.providers.nvidia_nim.client import NvidiaNimProvider
@@ -333,6 +334,28 @@ def test_bootstrap_configures_default_log_and_publishes_only_services(tmp_path):
     )
     api_app = cast(FastAPI, asgi_app.app)
     assert set(api_app.state._state) == {"services"}
+
+
+def test_bootstrap_wires_the_codex_catalog_publisher() -> None:
+    publisher = MagicMock()
+
+    with (
+        patch("free_claude_code.runtime.bootstrap.configure_logging"),
+        patch(
+            "free_claude_code.runtime.bootstrap.CodexModelCatalogPublisher",
+            return_value=publisher,
+        ) as publisher_type,
+    ):
+        asgi_app = build_asgi_app(_settings())
+
+    manager = asgi_app.runtime.provider_manager
+    manager.cache_model_infos(
+        "nvidia_nim",
+        {ProviderModelInfo("published-model")},
+    )
+
+    publisher_type.assert_called_once_with()
+    publisher.publish.assert_called_once_with(manager)
 
 
 def test_bootstrap_honors_process_log_file_override(monkeypatch, tmp_path):
