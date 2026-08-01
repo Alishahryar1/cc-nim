@@ -173,6 +173,100 @@ async def test_provider_uses_subscription_headers_and_visible_model_catalog() ->
 
 
 @pytest.mark.asyncio
+async def test_provider_round_trips_portable_tool_name_alias() -> None:
+    original = "mcp__codex_provider__" + "x" * 70
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "use the tool"}],
+            "tools": [
+                {
+                    "name": original,
+                    "description": "Long tool",
+                    "input_schema": {"type": "object"},
+                }
+            ],
+            "tool_choice": {"type": "tool", "name": original},
+        }
+    )
+    payloads: list[dict[str, Any]] = []
+
+    def handler(http_request: httpx.Request) -> httpx.Response:
+        payload = json.loads(http_request.content)
+        payloads.append(payload)
+        alias = payload["tools"][0]["name"]
+        body = _sse(
+            (
+                "response.output_item.added",
+                {
+                    "type": "response.output_item.added",
+                    "item": {
+                        "type": "function_call",
+                        "id": "fc_1",
+                        "call_id": "call_1",
+                        "name": alias,
+                    },
+                },
+            ),
+            (
+                "response.output_item.done",
+                {
+                    "type": "response.output_item.done",
+                    "item": {
+                        "type": "function_call",
+                        "id": "fc_1",
+                        "call_id": "call_1",
+                        "name": alias,
+                        "arguments": "{}",
+                    },
+                },
+            ),
+            (
+                "response.completed",
+                {
+                    "type": "response.completed",
+                    "response": {
+                        "id": "resp_1",
+                        "usage": {"input_tokens": 3, "output_tokens": 2},
+                    },
+                },
+            ),
+        )
+        return httpx.Response(
+            200,
+            text=body,
+            headers={"content-type": "text/event-stream"},
+            request=http_request,
+        )
+
+    client = httpx.AsyncClient(
+        base_url="https://chatgpt.com/backend-api/codex/",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = OpenAICodexProvider(
+        _config(), auth=_FakeAuth(), admission=_admission(), client=client
+    )
+
+    body = await _collect(provider.stream_response(request))
+
+    payload = payloads[0]
+    alias = payload["tools"][0]["name"]
+    assert alias != original
+    assert len(alias) <= 64
+    assert payload["tool_choice"] == {"type": "function", "name": alias}
+    events = parse_sse_text(body)
+    assert_anthropic_stream_contract(events)
+    tool_start = next(
+        event.data["content_block"]
+        for event in events
+        if event.event == "content_block_start"
+    )
+    assert tool_start["name"] == original
+    assert alias not in body
+    await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_early_truncated_attempt_is_retried_without_duplicate_output() -> None:
     attempts = 0
 

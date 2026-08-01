@@ -107,6 +107,66 @@ def test_build_responses_provider_request_preserves_multiturn_protocol() -> None
     }
 
 
+def test_responses_provider_request_uses_one_portable_tool_alias() -> None:
+    original = "mcp__responses_provider__" + "x" * 70
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_1",
+                            "name": original,
+                            "input": {"q": "value"},
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_1",
+                            "content": "done",
+                        }
+                    ],
+                },
+            ],
+            "tools": [
+                {
+                    "name": original,
+                    "description": "Long tool",
+                    "input_schema": {"type": "object"},
+                },
+                {"name": "safe_tool", "input_schema": {"type": "object"}},
+            ],
+            "tool_choice": {"type": "tool", "name": original},
+        }
+    )
+    snapshot = request.model_dump()
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.provider_default(),
+    )
+
+    alias = body["tools"][0]["name"]
+    assert alias != original
+    assert len(alias) <= 64
+    assert body["tools"][1]["name"] == "safe_tool"
+    assert body["tool_choice"] == {"type": "function", "name": alias}
+    function_call = next(
+        item for item in body["input"] if item["type"] == "function_call"
+    )
+    assert function_call["name"] == alias
+    assert function_call["call_id"] == "call_1"
+    assert function_call["arguments"] == '{"q":"value"}'
+    assert request.model_dump() == snapshot
+
+
 def test_responses_round_trip_preserves_encrypted_reasoning_and_tool_ids() -> None:
     adapter = OpenAIResponsesAdapter()
     ingress = OpenAIResponsesRequest.model_validate(

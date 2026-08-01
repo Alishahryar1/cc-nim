@@ -15,6 +15,7 @@ from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic import (
     ContentType,
     HeuristicToolParser,
+    OpenAIToolNameCodec,
     ThinkTagParser,
 )
 from free_claude_code.core.anthropic.models import MessagesRequest
@@ -361,6 +362,7 @@ class _OpenAIChatStreamRunner:
             request.model if response_model is None else response_model
         )
         self._reasoning = reasoning
+        self._tool_names = OpenAIToolNameCodec.from_request(request)
         self._message_id = f"msg_{uuid.uuid4()}"
         self._tool_calls = OpenAIToolCallAssembler(
             record_extra_content=provider._record_tool_call_extra_content
@@ -408,6 +410,7 @@ class _OpenAIChatStreamRunner:
         usage_info = None
         tool_argument_aliases: dict[str, dict[str, str]] = {}
         tool_argument_alias_buffers: dict[int, str] = {}
+        tool_name_buffers: dict[int, str] = {}
 
         while True:
             structured_reasoning = (
@@ -505,7 +508,9 @@ class _OpenAIChatStreamRunner:
 
                                 for tool_use in detected_tools:
                                     for event in iter_heuristic_tool_use_sse(
-                                        ledger, tool_use
+                                        ledger,
+                                        tool_use,
+                                        tool_names=self._tool_names,
                                     ):
                                         for out_event in hold_event(event):
                                             yield out_event
@@ -528,6 +533,8 @@ class _OpenAIChatStreamRunner:
                             for event in self._tool_calls.process_tool_call(
                                 tool_call_info,
                                 ledger,
+                                tool_names=self._tool_names,
+                                tool_name_buffers=tool_name_buffers,
                                 tool_argument_aliases=tool_argument_aliases,
                                 tool_argument_alias_buffers=tool_argument_alias_buffers,
                             ):
@@ -537,6 +544,13 @@ class _OpenAIChatStreamRunner:
                 if finish_reason is None:
                     raise TruncatedProviderStreamError(
                         "Provider stream ended without finish_reason."
+                    )
+                if any(
+                    not self._tool_names.is_unchanged_name(name)
+                    for name in tool_name_buffers.values()
+                ):
+                    raise TruncatedProviderStreamError(
+                        "Provider stream ended with an incomplete tool name."
                     )
                 break
 
@@ -584,6 +598,7 @@ class _OpenAIChatStreamRunner:
                     usage_info = None
                     tool_argument_aliases = {}
                     tool_argument_alias_buffers = {}
+                    tool_name_buffers = {}
                     continue
 
                 if decision.action == RecoveryFailureAction.MIDSTREAM_RECOVERY:
@@ -683,9 +698,23 @@ class _OpenAIChatStreamRunner:
                     yield event
 
         for tool_use in heuristic_parser.flush():
-            for event in iter_heuristic_tool_use_sse(ledger, tool_use):
+            for event in iter_heuristic_tool_use_sse(
+                ledger,
+                tool_use,
+                tool_names=self._tool_names,
+            ):
                 for out_event in hold_event(event):
                     yield out_event
+
+        for event in self._tool_calls.flush_tool_name_buffers(
+            ledger,
+            tool_names=self._tool_names,
+            tool_name_buffers=tool_name_buffers,
+            tool_argument_aliases=tool_argument_aliases,
+            tool_argument_alias_buffers=tool_argument_alias_buffers,
+        ):
+            for out_event in hold_event(event):
+                yield out_event
 
         has_emitted_tool = ledger.has_emitted_tool_block()
         has_content_blocks = (
@@ -803,6 +832,7 @@ class _OpenAIChatStreamRunner:
 
                 completed_tool_calls = tool_calls.completed_calls(
                     self._request,
+                    tool_names=self._tool_names,
                     tool_argument_aliases=self._provider._tool_argument_aliases(
                         accepted_body
                     ),

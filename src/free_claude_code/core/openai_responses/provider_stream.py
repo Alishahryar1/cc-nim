@@ -3,6 +3,7 @@
 from dataclasses import dataclass
 from typing import Any
 
+from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.anthropic.streaming import AnthropicStreamLedger
 
 
@@ -35,6 +36,7 @@ class ResponsesProviderStream:
         model: str,
         input_tokens: int,
         log_raw_events: bool = False,
+        tool_names: OpenAIToolNameCodec | None = None,
     ) -> None:
         self.ledger = AnthropicStreamLedger(
             message_id,
@@ -44,6 +46,7 @@ class ResponsesProviderStream:
         )
         self.completed = False
         self.generated_output = False
+        self._tool_names = tool_names or OpenAIToolNameCodec.from_names(())
         self._tools: dict[str, _ToolState] = {}
         self._encrypted_reasoning: dict[str, str] = {}
 
@@ -85,7 +88,7 @@ class ResponsesProviderStream:
             self._tools[item_id] = _ToolState(
                 tool_index=len(self._tools),
                 call_id=_string(item.get("call_id")) or item_id,
-                name=_string(item.get("name")),
+                name=self._tool_names.decode(_string(item.get("name"))),
             )
         if item.get("type") == "reasoning" and item_id:
             encrypted = item.get("encrypted_content")
@@ -144,11 +147,11 @@ class ResponsesProviderStream:
                 state = _ToolState(
                     tool_index=len(self._tools),
                     call_id=_string(item.get("call_id")) or item_id,
-                    name=_string(item.get("name")),
+                    name=self._tool_names.decode(_string(item.get("name"))),
                 )
                 self._tools[item_id] = state
             if not state.name:
-                state.name = _string(item.get("name"))
+                state.name = self._tool_names.decode(_string(item.get("name")))
             events = list(self.ledger.close_content_blocks())
             events.extend(self._ensure_tool_started(state))
             arguments = item.get("arguments")

@@ -688,6 +688,15 @@ client-specific recovery phrase.
 
 Providers call the OpenAI request policy for Anthropic-to-OpenAI conversion,
 reasoning replay selection, `extra_body`, and chat-completion field normalization.
+The SDK-free `OpenAIToolNameCodec` in
+[core/anthropic/](src/free_claude_code/core/anthropic/) owns reversible
+translation from client tool identities to OpenAI's portable function-name
+grammar. OpenAI Chat and upstream Responses adapters apply that codec only to
+their explicit declaration, forced-choice, and replay fields, then restore the
+original identity before Anthropic tool state or schema validation. Valid names
+remain unchanged, while deterministic aliases keep retries, replay, and
+append-only prompt prefixes stable. This is target-protocol conversion, never a
+provider or model capability switch.
 Specialized provider packages remain only for true upstream quirks such as
 Gemini thought signatures, NIM tool-schema aliases, retry downgrades, and NVCF
 deployment-failure classification, or DeepSeek attachment/tool/thinking
@@ -733,7 +742,9 @@ request schemas, and converts it into ordinary OpenAI tool-call deltas before
 the shared stream runner can commit visible text. Native structured tool-call
 deltas remain authoritative when both forms appear; incomplete or invalid
 native markup is a retryable upstream protocol failure rather than user-visible
-assistant text.
+assistant text. NIM argument-property aliases remain keyed by the original tool
+identity: shared OpenAI output restores the tool name first, then NIM restores
+arguments and validates the original schema.
 
 ### Reasoning Ownership
 
@@ -968,6 +979,11 @@ tools with a single string `input` field, and restores `custom_tool_call`,
 `custom_tool_call_output`, and `response.custom_tool_call_input.*` shapes at the
 Responses edge. Text or grammar format metadata is preserved as model guidance;
 FCC does not validate custom-tool grammars.
+
+Client-facing Responses tool identity mapping is distinct from upstream wire
+portability. Namespaces and custom-tool identities are restored at the public
+Responses edge; the OpenAI tool-name codec operates beneath that mapping only
+while the canonical Anthropic request crosses an OpenAI upstream transport.
 
 Responses reasoning is handled as lossless protocol conversion before provider
 policy. The adapter preserves `reasoning.effort` in Anthropic `output_config`;

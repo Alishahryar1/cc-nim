@@ -1,5 +1,6 @@
 import pytest
 
+from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.anthropic.stream_contracts import (
     assert_anthropic_stream_contract,
     parse_sse_text,
@@ -151,3 +152,68 @@ def test_responses_provider_stream_surfaces_failed_event() -> None:
         )
 
     assert exc_info.value.code == "server_error"
+
+
+def test_responses_provider_stream_restores_added_and_done_only_tool_names() -> None:
+    originals = (
+        "mcp__responses_added__" + "x" * 70,
+        "mcp__responses_done__" + "y" * 70,
+    )
+    codec = OpenAIToolNameCodec.from_names(originals)
+    stream = ResponsesProviderStream(
+        message_id="msg_test",
+        model="gpt-test",
+        input_tokens=0,
+        tool_names=codec,
+    )
+    output = stream.start()
+    output.extend(
+        stream.feed(
+            "response.output_item.added",
+            {
+                "item": {
+                    "type": "function_call",
+                    "id": "fc_added",
+                    "call_id": "call_added",
+                    "name": codec.encode(originals[0]),
+                }
+            },
+        )
+    )
+    output.extend(
+        stream.feed(
+            "response.output_item.done",
+            {
+                "item": {
+                    "type": "function_call",
+                    "id": "fc_added",
+                    "call_id": "call_added",
+                    "name": codec.encode(originals[0]),
+                    "arguments": "{}",
+                }
+            },
+        )
+    )
+    output.extend(
+        stream.feed(
+            "response.output_item.done",
+            {
+                "item": {
+                    "type": "function_call",
+                    "id": "fc_done",
+                    "call_id": "call_done",
+                    "name": codec.encode(originals[1]),
+                    "arguments": "{}",
+                }
+            },
+        )
+    )
+
+    event_text = "".join(output)
+    starts = [
+        event.data["content_block"]
+        for event in parse_sse_text(event_text)
+        if event.event == "content_block_start"
+    ]
+    assert [start["name"] for start in starts] == list(originals)
+    assert all(codec.encode(name) not in event_text for name in originals)
