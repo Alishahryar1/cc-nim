@@ -4,6 +4,7 @@ import asyncio
 from collections.abc import Callable, MutableMapping
 
 from free_claude_code.config.settings import Settings
+from free_claude_code.providers.admission import ProviderRecoveryStatus
 from free_claude_code.providers.base import BaseProvider
 
 from .factory import create_provider
@@ -36,6 +37,14 @@ class ProviderRuntime:
                 provider_id, self.settings
             )
         return self._providers[provider_id]
+
+    def recovery_statuses(self) -> dict[str, ProviderRecoveryStatus]:
+        """Return recovery state for every provider this generation built."""
+        return {
+            provider_id: status
+            for provider_id, provider in self._providers.items()
+            if (status := provider.recovery_status()) is not None
+        }
 
     async def cleanup(self) -> None:
         """Release every provider client constructed by this generation."""

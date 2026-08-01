@@ -38,6 +38,17 @@ class ExecutionFailure(Exception):
         super().__setattr__(name, value)
 
 
+def failure_permits_failover(exc: BaseException) -> bool:
+    """Return whether a canonical failure lets a backup route serve the request.
+
+    Anything that never reached canonical classification is treated as not
+    eligible, so an unrecognized failure is surfaced rather than retried
+    somewhere else.
+    """
+    failure = find_execution_failure(exc)
+    return failure is not None and failure.retryable
+
+
 def find_execution_failure(exc: BaseException) -> ExecutionFailure | None:
     """Return the first canonical failure in an exception or nested group."""
     pending = [exc]

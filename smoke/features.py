@@ -144,6 +144,31 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         "configured mixed-provider mappings must resolve consistently",
     ),
     FeatureCoverage(
+        "cross_provider_failover",
+        "A configured backup serves a tier when its primary fails before output",
+        "public_surface",
+        (
+            "tests/application/test_execution.py",
+            "tests/application/test_routing.py",
+            "tests/config/test_config.py",
+        ),
+        (),
+        (
+            "test_quota_exhausted_primary_is_served_by_its_backup_e2e",
+            "test_healthy_primary_is_never_replaced_by_its_backup_e2e",
+            "test_backup_chain_walks_to_the_last_healthy_link_e2e",
+        ),
+        ("config",),
+        (
+            "MODEL_BACKUP",
+            "MODEL_FABLE_BACKUP",
+            "MODEL_OPUS_BACKUP",
+            "MODEL_SONNET_BACKUP",
+            "MODEL_HAIKU_BACKUP",
+        ),
+        "stub upstreams make this deterministic, so it never skips when live",
+    ),
+    FeatureCoverage(
         "thinking_token_support",
         "Thinking history, adaptive thinking, and redacted blocks are accepted",
         "readme",

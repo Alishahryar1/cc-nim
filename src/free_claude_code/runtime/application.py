@@ -33,7 +33,10 @@ from free_claude_code.config.env_files import (
     ANTHROPIC_AUTH_TOKEN_ENV,
     process_env_key_is_effective,
 )
-from free_claude_code.config.model_refs import parse_provider_type
+from free_claude_code.config.model_refs import (
+    configured_failover_routes,
+    parse_provider_type,
+)
 from free_claude_code.config.paths import messaging_state_dir_path
 from free_claude_code.config.server_urls import local_admin_url, local_proxy_root_url
 from free_claude_code.config.settings import Settings, get_settings
@@ -221,6 +224,38 @@ class ApplicationRuntime:
             self._pending_fields = []
             result["restart"] = self._restart_metadata((), prepared.settings)
             return result
+
+    def failover_status(self) -> dict[str, Any]:
+        """Return configured backup chains and live provider circuit state."""
+        statuses = self.provider_manager.provider_recovery_statuses()
+        return {
+            "routes": [
+                {
+                    "primary_env": route.primary_env,
+                    "backup_env": route.backup_env,
+                    "primary_ref": route.primary_ref,
+                    "backup_refs": list(route.backup_refs),
+                    "inherited": route.inherited,
+                }
+                for route in configured_failover_routes(self.settings)
+            ],
+            "providers": [
+                {
+                    "provider_id": provider_id,
+                    "state": status.state,
+                    "generation": status.generation,
+                    "seconds_remaining": (
+                        None
+                        if status.seconds_remaining is None
+                        else round(status.seconds_remaining, 1)
+                    ),
+                    "last_error_type": status.last_error_type,
+                    "waiters": status.waiters,
+                    "quota_threshold_s": status.quota_threshold_s,
+                }
+                for provider_id, status in sorted(statuses.items())
+            ],
+        }
 
     def admin_status(self) -> dict[str, Any]:
         settings = self.settings

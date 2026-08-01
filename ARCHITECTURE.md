@@ -336,6 +336,17 @@ Model routing configuration is tiered:
 
 - `MODEL` is the fallback provider-prefixed model ref.
 - `MODEL_FABLE`, `MODEL_OPUS`, `MODEL_SONNET`, and `MODEL_HAIKU` override Claude model tiers.
+- `MODEL_FABLE_BACKUP`, `MODEL_OPUS_BACKUP`, `MODEL_SONNET_BACKUP`, and
+  `MODEL_HAIKU_BACKUP` name a same-tier backup route, with `MODEL_BACKUP` as the
+  fallback for tiers without one. `ModelRouter.resolve_backup` attaches the
+  backup to the routed request and `ProviderExecutor` serves it when the primary
+  fails a retryable way before emitting any chunk. Each accepts a
+  comma-separated chain tried in order. Direct provider refs never fail over,
+  and a backup identical to its own primary is dropped at load.
+- `PROVIDER_QUOTA_THRESHOLD_OVERRIDES` sets per-provider `provider=seconds`
+  bounds above which a 429 retry hint opens the circuit instead of being slept
+  through. `GET /admin/api/failover` reports the configured chains and each
+  provider's live circuit state.
 - `REASONING_POLICY` selects `off`, `client`, `low`, `medium`, `high`, `xhigh`,
   or `max` for the fallback route.
 - `REASONING_FABLE`, `REASONING_OPUS`, `REASONING_SONNET`, and
@@ -513,6 +524,23 @@ request carries the provider model sent upstream, while
 Anthropic responses and traces. `ProviderExecutor` passes both identities
 explicitly; providers, local optimizations, and local server tools must never
 publish the private upstream model as the response model.
+
+Cross-provider failover is executed in
+[application/execution.py](src/free_claude_code/application/execution.py), not in
+routing. `ModelRouter.resolve_backup` attaches the resolved backup chain to
+`RoutedMessagesRequest.backups`; `ProviderExecutor` turns the primary plus that
+chain into an ordered `_Candidate` list. Each candidate rewrites the request
+model lazily on first use, so a healthy primary never deep-copies a configured
+backup. Preflight walks the chain synchronously: the first candidate whose
+`preflight_stream` succeeds is served, and a preflight failure that
+`failure_permits_failover` advances to the next candidate before any SSE has
+started, preserving the ordinary typed HTTP-error contract. During streaming a
+candidate is abandoned for its successor only when it has emitted no chunk and
+its failure is failover-eligible; once any byte is yielded the request stays
+bound to that provider (D2). Non-retryable failures (auth, `400`, context
+window) and requests that name a provider directly never fail over. Each hop
+emits a `free_claude_code.api.failover` trace event recording the from/to
+providers, the phase, and the canonical failure kind.
 
 `GET /v1/models` advertises:
 

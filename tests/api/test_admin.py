@@ -17,6 +17,7 @@ from free_claude_code.application.model_metadata import (
 from free_claude_code.config.admin.values import MASKED_SECRET
 from free_claude_code.config.server_urls import local_admin_url
 from free_claude_code.config.settings import Settings
+from free_claude_code.providers.admission import ProviderRecoveryStatus
 from tests.api.support import create_test_app, provider_manager_for_app
 
 
@@ -420,7 +421,18 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
         field["key"]: field["type"]
         for field in body["fields"]
         if field["key"]
-        in {"MODEL", "MODEL_FABLE", "MODEL_OPUS", "MODEL_SONNET", "MODEL_HAIKU"}
+        in {
+            "MODEL",
+            "MODEL_FABLE",
+            "MODEL_OPUS",
+            "MODEL_SONNET",
+            "MODEL_HAIKU",
+            "MODEL_FABLE_BACKUP",
+            "MODEL_OPUS_BACKUP",
+            "MODEL_SONNET_BACKUP",
+            "MODEL_HAIKU_BACKUP",
+            "MODEL_BACKUP",
+        }
     }
     assert model_field_types == {
         "MODEL": "model",
@@ -428,6 +440,11 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
         "MODEL_OPUS": "optional_model",
         "MODEL_SONNET": "optional_model",
         "MODEL_HAIKU": "optional_model",
+        "MODEL_FABLE_BACKUP": "optional_model",
+        "MODEL_OPUS_BACKUP": "optional_model",
+        "MODEL_SONNET_BACKUP": "optional_model",
+        "MODEL_HAIKU_BACKUP": "optional_model",
+        "MODEL_BACKUP": "optional_model",
     }
     reasoning_policy = next(
         field for field in body["fields"] if field["key"] == "REASONING_POLICY"
@@ -1225,3 +1242,103 @@ def test_admin_launch_url_uses_loopback_for_wildcard_host():
     settings = Settings.model_construct(host="0.0.0.0", port=8082)
 
     assert local_admin_url(settings) == "http://127.0.0.1:8082/admin"
+
+
+def test_failover_endpoint_is_loopback_only(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    app = create_test_app()
+
+    remote = TestClient(app, client=("10.0.0.5", 50000))
+    assert remote.get("/admin/api/failover").status_code == 403
+    assert _local_client(app).get("/admin/api/failover").status_code == 200
+
+
+def test_failover_endpoint_reports_configured_chains(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    monkeypatch.setenv("MODEL", "nvidia_nim/fallback-model")
+    monkeypatch.setenv("MODEL_OPUS", "gemini/gemini-3-pro")
+    monkeypatch.setenv(
+        "MODEL_OPUS_BACKUP", "groq/llama-3.3-70b,open_router/deepseek/deepseek-r1"
+    )
+    app = create_test_app(Settings(), providers={})
+
+    body = _local_client(app).get("/admin/api/failover").json()
+
+    routes = {route["primary_env"]: route for route in body["routes"]}
+    assert routes["MODEL_OPUS"]["primary_ref"] == "gemini/gemini-3-pro"
+    assert routes["MODEL_OPUS"]["backup_env"] == "MODEL_OPUS_BACKUP"
+    assert routes["MODEL_OPUS"]["backup_refs"] == [
+        "groq/llama-3.3-70b",
+        "open_router/deepseek/deepseek-r1",
+    ]
+    assert routes["MODEL_OPUS"]["inherited"] is False
+    assert routes["MODEL"]["primary_ref"] == "nvidia_nim/fallback-model"
+    assert routes["MODEL"]["backup_refs"] == []
+    assert body["providers"] == []
+
+
+def test_failover_endpoint_reports_live_circuit_state(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app(providers={})
+    manager = provider_manager_for_app(app)
+    status = ProviderRecoveryStatus(
+        provider_name="gemini",
+        state="exhausted",
+        generation=4,
+        seconds_remaining=3599.55,
+        last_error_type="RateLimitError",
+        waiters=2,
+        quota_threshold_s=20.0,
+    )
+
+    with patch.object(
+        manager, "provider_recovery_statuses", return_value={"gemini": status}
+    ):
+        body = _local_client(app).get("/admin/api/failover").json()
+
+    assert body["providers"] == [
+        {
+            "provider_id": "gemini",
+            "state": "exhausted",
+            "generation": 4,
+            "seconds_remaining": 3599.6,
+            "last_error_type": "RateLimitError",
+            "waiters": 2,
+            "quota_threshold_s": 20.0,
+        }
+    ]
+
+
+def test_admin_static_renders_the_failover_panel():
+    markup = Path("src/free_claude_code/api/admin_static/index.html").read_text(
+        encoding="utf-8"
+    )
+    script = Path("src/free_claude_code/api/admin_static/admin.js").read_text(
+        encoding="utf-8"
+    )
+    styles = Path("src/free_claude_code/api/admin_static/admin.css").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'id="failoverRoutes"' in markup
+    assert 'id="failoverProviders"' in markup
+    assert 'id="failoverRefresh"' in markup
+    assert 'api("/admin/api/failover")' in script
+    assert "await refreshFailoverStatus();" in script
+    assert 'byId("failoverRefresh").addEventListener' in script
+    assert ".failover-route-chain" in styles
+    assert ".failover-provider" in styles
+
+
+@pytest.mark.parametrize(
+    ("state", "expected"),
+    [("healthy", "ok"), ("recovering", "warn"), ("exhausted", "error")],
+)
+def test_admin_static_maps_every_failover_state_to_a_pill(state, expected):
+    script = Path("src/free_claude_code/api/admin_static/admin.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert f'if (state === "{state}") return "{expected}";' in script

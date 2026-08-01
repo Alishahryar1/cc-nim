@@ -1164,6 +1164,11 @@ class TestPerModelMapping:
         s.model_opus = "open_router/anthropic/claude-opus"
         s.model_sonnet = "nvidia_nim/fallback"
         s.model_haiku = None
+        s.model_fable_backup = None
+        s.model_opus_backup = None
+        s.model_sonnet_backup = None
+        s.model_haiku_backup = None
+        s.model_backup = None
 
         refs = configured_chat_model_refs(s)
 
@@ -1178,3 +1183,322 @@ class TestPerModelMapping:
         assert refs[1].model_id == "anthropic/claude-fable-5"
         assert refs[2].provider_id == "open_router"
         assert refs[2].model_id == "anthropic/claude-opus"
+
+
+class TestBackupModelMapping:
+    """Same-tier backup routes and their identical-to-primary normalization."""
+
+    @staticmethod
+    def _settings(monkeypatch, **env: str):
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.setenv("MODEL", "nvidia_nim/fallback-model")
+        for key in (
+            "MODEL_FABLE",
+            "MODEL_OPUS",
+            "MODEL_SONNET",
+            "MODEL_HAIKU",
+            "MODEL_FABLE_BACKUP",
+            "MODEL_OPUS_BACKUP",
+            "MODEL_SONNET_BACKUP",
+            "MODEL_HAIKU_BACKUP",
+            "MODEL_BACKUP",
+            "PROVIDER_QUOTA_THRESHOLD_OVERRIDES",
+        ):
+            monkeypatch.delenv(key, raising=False)
+        for key, value in env.items():
+            monkeypatch.setenv(key, value)
+        return Settings()
+
+    def test_backup_fields_default_none(self, monkeypatch):
+        s = self._settings(monkeypatch)
+
+        assert s.model_fable_backup is None
+        assert s.model_opus_backup is None
+        assert s.model_sonnet_backup is None
+        assert s.model_haiku_backup is None
+        assert s.model_backup is None
+
+    @pytest.mark.parametrize(
+        ("env_var", "attr"),
+        [
+            ("MODEL_FABLE_BACKUP", "model_fable_backup"),
+            ("MODEL_OPUS_BACKUP", "model_opus_backup"),
+            ("MODEL_SONNET_BACKUP", "model_sonnet_backup"),
+            ("MODEL_HAIKU_BACKUP", "model_haiku_backup"),
+            ("MODEL_BACKUP", "model_backup"),
+        ],
+    )
+    def test_backup_env_vars_are_loaded(self, monkeypatch, env_var, attr):
+        s = self._settings(monkeypatch, **{env_var: "gemini/gemini-3-pro"})
+
+        assert getattr(s, attr) == "gemini/gemini-3-pro"
+
+    @pytest.mark.parametrize(
+        ("env_var", "attr"),
+        [
+            ("MODEL_FABLE_BACKUP", "model_fable_backup"),
+            ("MODEL_OPUS_BACKUP", "model_opus_backup"),
+            ("MODEL_SONNET_BACKUP", "model_sonnet_backup"),
+            ("MODEL_HAIKU_BACKUP", "model_haiku_backup"),
+            ("MODEL_BACKUP", "model_backup"),
+        ],
+    )
+    def test_empty_backup_env_is_unset(self, monkeypatch, env_var, attr):
+        s = self._settings(monkeypatch, **{env_var: ""})
+
+        assert getattr(s, attr) is None
+
+    @pytest.mark.parametrize(
+        "env_var",
+        [
+            "MODEL_FABLE_BACKUP",
+            "MODEL_OPUS_BACKUP",
+            "MODEL_SONNET_BACKUP",
+            "MODEL_HAIKU_BACKUP",
+            "MODEL_BACKUP",
+        ],
+    )
+    def test_backup_requires_a_supported_provider_prefix(self, monkeypatch, env_var):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            self._settings(monkeypatch, **{env_var: "invalid/model"})
+
+        with pytest.raises(ValidationError):
+            self._settings(monkeypatch, **{env_var: "no-prefix"})
+
+    def test_backup_equal_to_its_tier_primary_is_dropped(self, monkeypatch):
+        s = self._settings(
+            monkeypatch,
+            MODEL_OPUS="gemini/gemini-3-pro",
+            MODEL_OPUS_BACKUP="gemini/gemini-3-pro",
+        )
+
+        assert s.model_opus == "gemini/gemini-3-pro"
+        assert s.model_opus_backup is None
+
+    def test_backup_equal_to_the_inherited_default_model_is_dropped(self, monkeypatch):
+        s = self._settings(monkeypatch, MODEL_HAIKU_BACKUP="nvidia_nim/fallback-model")
+
+        assert s.model_haiku is None
+        assert s.model_haiku_backup is None
+
+    def test_global_backup_equal_to_the_default_model_is_dropped(self, monkeypatch):
+        s = self._settings(monkeypatch, MODEL_BACKUP="nvidia_nim/fallback-model")
+
+        assert s.model_backup is None
+
+    def test_dropping_a_redundant_backup_warns(self, monkeypatch):
+        from unittest.mock import patch
+
+        with patch("free_claude_code.config.settings.logger.warning") as warning:
+            self._settings(monkeypatch, MODEL_BACKUP="nvidia_nim/fallback-model")
+
+        warning.assert_called_once()
+        assert "MODEL_BACKUP" in warning.call_args[0][1]
+
+    def test_distinct_backups_survive_validation(self, monkeypatch):
+        s = self._settings(
+            monkeypatch,
+            MODEL_OPUS="gemini/gemini-3-pro",
+            MODEL_OPUS_BACKUP="groq/llama-3.3-70b-versatile",
+            MODEL_BACKUP="open_router/deepseek/deepseek-r1",
+        )
+
+        assert s.model_opus_backup == "groq/llama-3.3-70b-versatile"
+        assert s.model_backup == "open_router/deepseek/deepseek-r1"
+
+    def test_backups_are_included_in_configured_chat_model_refs(self, monkeypatch):
+        s = self._settings(
+            monkeypatch,
+            MODEL_OPUS="gemini/gemini-3-pro",
+            MODEL_OPUS_BACKUP="groq/llama-3.3-70b-versatile",
+            MODEL_HAIKU_BACKUP="groq/llama-3.3-70b-versatile",
+            MODEL_BACKUP="open_router/deepseek/deepseek-r1",
+        )
+
+        refs = [ref.model_ref for ref in configured_chat_model_refs(s)]
+
+        assert refs == [
+            "nvidia_nim/fallback-model",
+            "gemini/gemini-3-pro",
+            "groq/llama-3.3-70b-versatile",
+            "open_router/deepseek/deepseek-r1",
+        ]
+
+
+class TestBackupModelChains:
+    """Comma-separated backup chains and their normalization."""
+
+    def test_parse_model_ref_chain_normalizes_order_and_duplicates(self):
+        from free_claude_code.config.model_refs import parse_model_ref_chain
+
+        assert parse_model_ref_chain(None) == ()
+        assert parse_model_ref_chain("") == ()
+        assert parse_model_ref_chain("  ,, ") == ()
+        assert parse_model_ref_chain("gemini/a") == ("gemini/a",)
+        assert parse_model_ref_chain(" gemini/a , groq/b ,gemini/a") == (
+            "gemini/a",
+            "groq/b",
+        )
+
+    def test_chain_is_stored_normalized(self, monkeypatch):
+        s = TestBackupModelMapping._settings(
+            monkeypatch,
+            MODEL_BACKUP=" gemini/gemini-3-pro , groq/llama-3.3-70b ,gemini/gemini-3-pro ",
+        )
+
+        assert s.model_backup == "gemini/gemini-3-pro,groq/llama-3.3-70b"
+
+    def test_every_chain_entry_is_validated(self, monkeypatch):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            TestBackupModelMapping._settings(
+                monkeypatch, MODEL_BACKUP="gemini/gemini-3-pro,invalid/model"
+            )
+        with pytest.raises(ValidationError):
+            TestBackupModelMapping._settings(
+                monkeypatch, MODEL_BACKUP="gemini/gemini-3-pro,no-prefix"
+            )
+
+    def test_only_the_entry_matching_the_primary_is_dropped(self, monkeypatch):
+        s = TestBackupModelMapping._settings(
+            monkeypatch,
+            MODEL_OPUS="gemini/gemini-3-pro",
+            MODEL_OPUS_BACKUP="gemini/gemini-3-pro,groq/llama-3.3-70b",
+        )
+
+        assert s.model_opus_backup == "groq/llama-3.3-70b"
+
+    def test_a_chain_of_only_the_primary_becomes_none(self, monkeypatch):
+        s = TestBackupModelMapping._settings(
+            monkeypatch, MODEL_BACKUP="nvidia_nim/fallback-model"
+        )
+
+        assert s.model_backup is None
+
+    def test_chains_expand_into_configured_chat_model_refs(self, monkeypatch):
+        s = TestBackupModelMapping._settings(
+            monkeypatch,
+            MODEL_OPUS_BACKUP="gemini/gemini-3-pro,groq/llama-3.3-70b",
+            MODEL_BACKUP="groq/llama-3.3-70b,open_router/deepseek/deepseek-r1",
+        )
+
+        assert [ref.model_ref for ref in configured_chat_model_refs(s)] == [
+            "nvidia_nim/fallback-model",
+            "gemini/gemini-3-pro",
+            "groq/llama-3.3-70b",
+            "open_router/deepseek/deepseek-r1",
+        ]
+
+    def test_configured_failover_routes_pair_each_tier_with_its_chain(
+        self, monkeypatch
+    ):
+        from free_claude_code.config.model_refs import configured_failover_routes
+
+        s = TestBackupModelMapping._settings(
+            monkeypatch,
+            MODEL_OPUS="gemini/gemini-3-pro",
+            MODEL_OPUS_BACKUP="groq/llama-3.3-70b,open_router/deepseek/deepseek-r1",
+        )
+        routes = {route.primary_env: route for route in configured_failover_routes(s)}
+
+        assert set(routes) == {
+            "MODEL",
+            "MODEL_FABLE",
+            "MODEL_OPUS",
+            "MODEL_SONNET",
+            "MODEL_HAIKU",
+        }
+        assert routes["MODEL_OPUS"].primary_ref == "gemini/gemini-3-pro"
+        assert routes["MODEL_OPUS"].backup_env == "MODEL_OPUS_BACKUP"
+        assert not routes["MODEL_OPUS"].inherited
+        assert routes["MODEL_OPUS"].backup_refs == (
+            "groq/llama-3.3-70b",
+            "open_router/deepseek/deepseek-r1",
+        )
+        assert routes["MODEL_SONNET"].primary_ref == "nvidia_nim/fallback-model"
+        assert routes["MODEL_SONNET"].backup_refs == ()
+
+    def test_tiers_without_a_chain_inherit_the_global_one(self, monkeypatch):
+        from free_claude_code.config.model_refs import configured_failover_routes
+
+        s = TestBackupModelMapping._settings(
+            monkeypatch,
+            MODEL_OPUS="gemini/gemini-3-pro",
+            MODEL_OPUS_BACKUP="groq/llama-3.3-70b",
+            MODEL_HAIKU="deepseek/deepseek-chat",
+            MODEL_BACKUP="deepseek/deepseek-chat,open_router/deepseek/deepseek-r1",
+        )
+        routes = {route.primary_env: route for route in configured_failover_routes(s)}
+
+        # Its own chain wins and is not marked inherited.
+        assert routes["MODEL_OPUS"].backup_refs == ("groq/llama-3.3-70b",)
+        assert not routes["MODEL_OPUS"].inherited
+
+        # Sonnet has no chain, so it inherits the global one verbatim.
+        assert routes["MODEL_SONNET"].inherited
+        assert routes["MODEL_SONNET"].backup_env == "MODEL_BACKUP"
+        assert routes["MODEL_SONNET"].backup_refs == (
+            "deepseek/deepseek-chat",
+            "open_router/deepseek/deepseek-r1",
+        )
+
+        # Haiku inherits the same chain, minus the entry that is its own primary.
+        assert routes["MODEL_HAIKU"].inherited
+        assert routes["MODEL_HAIKU"].backup_refs == (
+            "open_router/deepseek/deepseek-r1",
+        )
+
+
+class TestProviderQuotaThresholdOverrides:
+    """Per-provider bounds for the quota fail-fast circuit."""
+
+    def test_overrides_default_to_empty(self, monkeypatch):
+        s = TestBackupModelMapping._settings(monkeypatch)
+
+        assert s.provider_quota_threshold_overrides == ""
+
+    @pytest.mark.parametrize(
+        ("raw", "expected"),
+        [
+            ("", {}),
+            ("   ", {}),
+            ("gemini=20", {"gemini": 20.0}),
+            (" gemini = 20.5 , groq=120 ", {"gemini": 20.5, "groq": 120.0}),
+            ("gemini=20,gemini=30", {"gemini": 30.0}),
+        ],
+    )
+    def test_parse_quota_threshold_overrides(self, raw, expected):
+        from free_claude_code.config.settings import parse_quota_threshold_overrides
+
+        assert parse_quota_threshold_overrides(raw) == expected
+
+    @pytest.mark.parametrize(
+        "raw",
+        [
+            "gemini",
+            "gemini=abc",
+            "gemini=inf",
+            "gemini=nan",
+            "not_a_provider=20",
+            "gemini=0",
+            "gemini=-5",
+        ],
+    )
+    def test_invalid_overrides_are_rejected(self, monkeypatch, raw):
+        from pydantic import ValidationError
+
+        with pytest.raises(ValidationError):
+            TestBackupModelMapping._settings(
+                monkeypatch, PROVIDER_QUOTA_THRESHOLD_OVERRIDES=raw
+            )
+
+    def test_valid_overrides_are_kept(self, monkeypatch):
+        s = TestBackupModelMapping._settings(
+            monkeypatch, PROVIDER_QUOTA_THRESHOLD_OVERRIDES="gemini=20,groq=120"
+        )
+
+        assert s.provider_quota_threshold_overrides == "gemini=20,groq=120"

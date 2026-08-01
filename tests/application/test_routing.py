@@ -23,6 +23,11 @@ def settings():
     settings.model_opus = None
     settings.model_sonnet = None
     settings.model_haiku = None
+    settings.model_fable_backup = None
+    settings.model_opus_backup = None
+    settings.model_sonnet_backup = None
+    settings.model_haiku_backup = None
+    settings.model_backup = None
     settings.reasoning_policy = ReasoningPreference.CLIENT
     settings.reasoning_fable = ReasoningPreference.INHERIT
     settings.reasoning_opus = ReasoningPreference.INHERIT
@@ -270,3 +275,197 @@ def test_model_router_preserves_typed_error_for_unknown_mapped_provider(settings
     assert str(exc_info.value) == (
         f"Unknown provider_type: 'unknown'. Supported: '{supported}'"
     )
+
+
+def test_model_router_resolves_a_tier_backup(settings):
+    settings.model_opus = "open_router/deepseek/deepseek-r1"
+    settings.model_opus_backup = "gemini/gemini-3-pro"
+
+    backups = ModelRouter(settings).resolve_backups("claude-opus-4-20250514")
+
+    assert len(backups) == 1
+    assert backups[0].original_model == "claude-opus-4-20250514"
+    assert backups[0].provider_id == "gemini"
+    assert backups[0].provider_model == "gemini-3-pro"
+    assert backups[0].provider_model_ref == "gemini/gemini-3-pro"
+
+
+def test_model_router_falls_back_to_the_global_backup(settings):
+    settings.model_backup = "groq/llama-3.3-70b-versatile"
+    router = ModelRouter(settings)
+
+    tier_backups = router.resolve_backups("claude-sonnet-4-5")
+    unmatched_backups = router.resolve_backups("claude-2.1")
+
+    assert [backup.provider_model_ref for backup in tier_backups] == [
+        "groq/llama-3.3-70b-versatile"
+    ]
+    assert [backup.provider_model_ref for backup in unmatched_backups] == [
+        "groq/llama-3.3-70b-versatile"
+    ]
+
+
+def test_tier_backup_wins_over_the_global_backup(settings):
+    settings.model_haiku = "lmstudio/qwen2.5-7b"
+    settings.model_haiku_backup = "gemini/gemini-3-flash"
+    settings.model_backup = "groq/llama-3.3-70b-versatile"
+
+    backups = ModelRouter(settings).resolve_backups("claude-3-haiku-20240307")
+
+    assert [backup.provider_model_ref for backup in backups] == [
+        "gemini/gemini-3-flash"
+    ]
+
+
+@pytest.mark.parametrize(
+    "model_name",
+    [
+        "deepseek/deepseek-chat",
+        "anthropic/nvidia_nim/deepseek-ai/deepseek-v4-pro",
+        "claude-3-freecc-no-thinking/nvidia_nim/deepseek-ai/deepseek-v4-pro",
+    ],
+)
+def test_direct_provider_refs_never_fail_over(settings, model_name):
+    settings.model_backup = "groq/llama-3.3-70b-versatile"
+    settings.model_opus_backup = "gemini/gemini-3-pro"
+
+    routed = ModelRouter(settings).resolve_messages_request(
+        MessagesRequest(
+            model=model_name,
+            max_tokens=100,
+            messages=[Message(role="user", content="hello")],
+        )
+    )
+
+    assert ModelRouter(settings).resolve_backups(model_name) == ()
+    assert routed.backups == ()
+
+
+def test_backup_matching_its_effective_primary_is_dropped(settings):
+    settings.model_opus = "gemini/gemini-3-pro"
+    settings.model_opus_backup = "gemini/gemini-3-pro"
+    settings.model_backup = "nvidia_nim/fallback-model"
+
+    router = ModelRouter(settings)
+
+    assert router.resolve_backups("claude-opus-4-20250514") == ()
+    assert router.resolve_backups("claude-2.1") == ()
+
+
+def test_backup_inherits_the_tier_reasoning_preference(settings):
+    settings.model_opus = "open_router/deepseek/deepseek-r1"
+    settings.model_opus_backup = "gemini/gemini-3-pro"
+    settings.reasoning_opus = ReasoningPreference.OFF
+
+    router = ModelRouter(settings)
+    primary = router.resolve("claude-opus-4-20250514")
+    backups = router.resolve_backups("claude-opus-4-20250514")
+
+    assert len(backups) == 1
+    assert backups[0].reasoning_preference is ReasoningPreference.OFF
+    assert backups[0].reasoning_preference is primary.reasoning_preference
+
+
+def test_backup_provider_id_is_validated(settings):
+    settings.model_backup = "unknown/model"
+
+    with pytest.raises(UnknownProviderError):
+        ModelRouter(settings).resolve_backups("claude-2.1")
+
+
+def test_resolve_messages_request_attaches_the_backup_without_rewriting_the_body(
+    settings,
+):
+    settings.model_opus = "open_router/deepseek/deepseek-r1"
+    settings.model_opus_backup = "gemini/gemini-3-pro"
+
+    routed = ModelRouter(settings).resolve_messages_request(
+        MessagesRequest(
+            model="claude-opus-4-20250514",
+            max_tokens=100,
+            messages=[Message(role="user", content="hello")],
+        )
+    )
+
+    assert routed.request.model == "deepseek/deepseek-r1"
+    assert len(routed.backups) == 1
+    assert routed.backups[0].provider_id == "gemini"
+    assert routed.backups[0].provider_model == "gemini-3-pro"
+
+
+def test_requests_without_a_configured_backup_have_none(settings):
+    routed = ModelRouter(settings).resolve_messages_request(
+        MessagesRequest(
+            model="claude-opus-4-20250514",
+            max_tokens=100,
+            messages=[Message(role="user", content="hello")],
+        )
+    )
+
+    assert routed.backups == ()
+
+
+def test_backup_chains_resolve_in_configured_order(settings):
+    settings.model_opus = "open_router/deepseek/deepseek-r1"
+    settings.model_opus_backup = (
+        "gemini/gemini-3-pro,groq/llama-3.3-70b-versatile,nvidia_nim/fallback-model"
+    )
+
+    backups = ModelRouter(settings).resolve_backups("claude-opus-4-20250514")
+
+    assert [backup.provider_model_ref for backup in backups] == [
+        "gemini/gemini-3-pro",
+        "groq/llama-3.3-70b-versatile",
+        "nvidia_nim/fallback-model",
+    ]
+    assert [backup.provider_id for backup in backups] == [
+        "gemini",
+        "groq",
+        "nvidia_nim",
+    ]
+    assert all(
+        backup.reasoning_preference is ReasoningPreference.CLIENT for backup in backups
+    )
+
+
+def test_backup_chain_drops_entries_matching_the_primary(settings):
+    settings.model_opus = "gemini/gemini-3-pro"
+    settings.model_opus_backup = "gemini/gemini-3-pro,groq/llama-3.3-70b-versatile"
+
+    backups = ModelRouter(settings).resolve_backups("claude-opus-4-20250514")
+
+    assert [backup.provider_model_ref for backup in backups] == [
+        "groq/llama-3.3-70b-versatile"
+    ]
+
+
+def test_backup_chain_tolerates_whitespace_and_duplicates(settings):
+    settings.model_backup = (
+        " gemini/gemini-3-pro , groq/llama-3.3-70b-versatile ,gemini/gemini-3-pro "
+    )
+
+    backups = ModelRouter(settings).resolve_backups("claude-2.1")
+
+    assert [backup.provider_model_ref for backup in backups] == [
+        "gemini/gemini-3-pro",
+        "groq/llama-3.3-70b-versatile",
+    ]
+
+
+def test_resolve_messages_request_attaches_the_whole_chain(settings):
+    settings.model_haiku = "lmstudio/qwen2.5-7b"
+    settings.model_haiku_backup = "gemini/gemini-3-flash,groq/llama-3.3-70b-versatile"
+
+    routed = ModelRouter(settings).resolve_messages_request(
+        MessagesRequest(
+            model="claude-3-haiku-20240307",
+            max_tokens=100,
+            messages=[Message(role="user", content="hello")],
+        )
+    )
+
+    assert routed.request.model == "qwen2.5-7b"
+    assert [backup.provider_model for backup in routed.backups] == [
+        "gemini-3-flash",
+        "llama-3.3-70b-versatile",
+    ]

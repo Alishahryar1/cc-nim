@@ -15,6 +15,7 @@ from free_claude_code.application.model_metadata import (
 from free_claude_code.application.ports import RequestRuntimePort
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.trace import trace_event
+from free_claude_code.providers.admission import ProviderRecoveryStatus
 from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.providers.runtime.discovery import (
@@ -136,6 +137,10 @@ class ProviderRuntimeManager:
 
     def current_settings(self) -> Settings:
         return self._current.settings
+
+    def provider_recovery_statuses(self) -> dict[str, ProviderRecoveryStatus]:
+        """Return live recovery state for the current provider generation."""
+        return self._current.runtime.recovery_statuses()
 
     def cached_model_ids(self) -> dict[str, frozenset[str]]:
         self._synchronize_model_cache_scope()

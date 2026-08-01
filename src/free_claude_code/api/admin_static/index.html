@@ -57,6 +57,16 @@
           </section>
 
           <section id="view-model_config" class="admin-view" data-view="model_config" hidden>
+            <section class="provider-strip" aria-label="Failover status">
+              <div class="strip-header">
+                <h3>Failover</h3>
+                <button id="failoverRefresh" class="secondary-button" type="button">
+                  Refresh
+                </button>
+              </div>
+              <div id="failoverRoutes" class="failover-routes"></div>
+              <div id="failoverProviders" class="failover-providers"></div>
+            </section>
             <div
               id="modelConfigSections"
               class="form-sections"

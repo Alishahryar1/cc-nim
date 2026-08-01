@@ -15,6 +15,8 @@ from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.providers.failure_policy import (
     ProviderRecoveryExhausted,
     classify_provider_failure,
+    context_window_exceeded_provider_failure,
+    is_failover_eligible,
     is_retryable_provider_error,
     retryable_upstream_status,
 )
@@ -453,3 +455,129 @@ def test_shared_recovery_exhaustion_preserves_last_provider_failure() -> None:
     assert "Request ID: req_exhausted" in failure.message
     assert retryable_upstream_status(exhausted) is None
     assert not is_retryable_provider_error(exhausted)
+
+
+@dataclass(frozen=True, slots=True)
+class _FailoverCase:
+    name: str
+    error: Callable[[], Exception]
+    kind: FailureKind
+    eligible: bool
+
+
+_FAILOVER_CASES = (
+    _FailoverCase(
+        name="authentication",
+        error=lambda: _openai_status_error(
+            openai.AuthenticationError,
+            status_code=401,
+            message="invalid api key",
+        ),
+        kind=FailureKind.AUTHENTICATION,
+        eligible=False,
+    ),
+    _FailoverCase(
+        name="permission",
+        error=lambda: _openai_status_error(
+            openai.PermissionDeniedError,
+            status_code=403,
+            message="model access denied",
+        ),
+        kind=FailureKind.PERMISSION,
+        eligible=False,
+    ),
+    _FailoverCase(
+        name="invalid_request",
+        error=lambda: _openai_status_error(
+            openai.BadRequestError,
+            status_code=400,
+            message="unsupported parameter",
+        ),
+        kind=FailureKind.INVALID_REQUEST,
+        eligible=False,
+    ),
+    _FailoverCase(
+        name="context_window_exceeded",
+        error=context_window_exceeded_provider_failure,
+        kind=FailureKind.CONTEXT_WINDOW_EXCEEDED,
+        eligible=False,
+    ),
+    _FailoverCase(
+        name="rate_limit",
+        error=lambda: _openai_status_error(
+            openai.RateLimitError,
+            status_code=429,
+            message="quota exhausted",
+        ),
+        kind=FailureKind.RATE_LIMIT,
+        eligible=True,
+    ),
+    _FailoverCase(
+        name="overloaded",
+        error=lambda: _http_status_error(503, "upstream overloaded"),
+        kind=FailureKind.OVERLOADED,
+        eligible=True,
+    ),
+    _FailoverCase(
+        name="timeout",
+        error=lambda: httpx.ReadTimeout(
+            "read timed out",
+            request=httpx.Request("POST", "https://provider.test/v1/messages"),
+        ),
+        kind=FailureKind.TIMEOUT,
+        eligible=True,
+    ),
+    _FailoverCase(
+        name="upstream",
+        error=lambda: _http_status_error(500, "upstream failed"),
+        kind=FailureKind.UPSTREAM,
+        eligible=True,
+    ),
+    _FailoverCase(
+        name="unavailable",
+        error=lambda: httpx.ConnectError(
+            "connection refused",
+            request=httpx.Request("POST", "https://provider.test/v1/messages"),
+        ),
+        kind=FailureKind.UNAVAILABLE,
+        eligible=True,
+    ),
+)
+
+
+def test_failover_cases_cover_every_failure_kind() -> None:
+    assert {case.kind for case in _FAILOVER_CASES} == set(FailureKind)
+
+
+@pytest.mark.parametrize("case", _FAILOVER_CASES, ids=lambda case: case.name)
+def test_failover_eligibility_follows_the_retryable_taxonomy(
+    case: _FailoverCase,
+) -> None:
+    raw = case.error()
+    classified = classify_provider_failure(
+        raw,
+        provider_name="PRIMARY",
+        read_timeout_s=30.0,
+        request_id="req_failover",
+    )
+
+    assert classified.kind is case.kind
+    assert classified.retryable is case.eligible
+    assert is_failover_eligible(raw) is case.eligible
+    assert is_failover_eligible(classified) is case.eligible
+
+
+@pytest.mark.parametrize("case", _FAILOVER_CASES, ids=lambda case: case.name)
+def test_failover_eligibility_unwraps_recovery_exhaustion(
+    case: _FailoverCase,
+) -> None:
+    exhausted = ProviderRecoveryExhausted(case.error())
+    nested = ProviderRecoveryExhausted(exhausted)
+
+    assert is_failover_eligible(exhausted) is case.eligible
+    assert is_failover_eligible(nested) is case.eligible
+    assert not is_retryable_provider_error(exhausted)
+
+
+def test_unclassified_exceptions_are_not_failover_eligible() -> None:
+    assert not is_failover_eligible(ValueError("not a provider failure"))

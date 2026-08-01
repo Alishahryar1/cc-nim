@@ -1,8 +1,10 @@
 """Flat application settings schema loaded by Pydantic Settings."""
 
+import math
 from functools import lru_cache
 from typing import Any
 
+from loguru import logger
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -12,6 +14,7 @@ from .env_files import (
     env_file_override,
     settings_env_files,
 )
+from .model_refs import BACKUP_MODEL_SLOTS, parse_model_ref_chain
 from .nim import NimSettings
 from .provider_catalog import BEDROCK_DEFAULT_BASE, SUPPORTED_PROVIDER_IDS
 from .reasoning import ReasoningPreference
@@ -160,6 +163,23 @@ class Settings(BaseSettings):
     model_sonnet: str | None = Field(default=None, validation_alias="MODEL_SONNET")
     model_haiku: str | None = Field(default=None, validation_alias="MODEL_HAIKU")
 
+    # Same-tier backups (optional). A backup serves the request when its
+    # primary fails before any response chunk has been emitted. Each accepts a
+    # comma-separated chain that is tried in order.
+    model_fable_backup: str | None = Field(
+        default=None, validation_alias="MODEL_FABLE_BACKUP"
+    )
+    model_opus_backup: str | None = Field(
+        default=None, validation_alias="MODEL_OPUS_BACKUP"
+    )
+    model_sonnet_backup: str | None = Field(
+        default=None, validation_alias="MODEL_SONNET_BACKUP"
+    )
+    model_haiku_backup: str | None = Field(
+        default=None, validation_alias="MODEL_HAIKU_BACKUP"
+    )
+    model_backup: str | None = Field(default=None, validation_alias="MODEL_BACKUP")
+
     # ==================== Per-Provider Proxy ====================
     openai_proxy: str = Field(default="", validation_alias="OPENAI_PROXY")
     azure_openai_proxy: str = Field(default="", validation_alias="AZURE_OPENAI_PROXY")
@@ -194,6 +214,15 @@ class Settings(BaseSettings):
     ollama_cloud_proxy: str = Field(default="", validation_alias="OLLAMA_CLOUD_PROXY")
 
     # ==================== Provider Rate Limiting ====================
+    # Per-provider overrides for the retry hint above which a 429 is treated as
+    # quota exhaustion rather than momentary pressure. Format:
+    # ``provider=seconds,provider=seconds``. Unlisted providers keep the
+    # default bound of one full backoff ceiling.
+    provider_quota_threshold_overrides: str = Field(
+        default="",
+        validation_alias="PROVIDER_QUOTA_THRESHOLD_OVERRIDES",
+    )
+
     provider_rate_limit: int = Field(default=40, validation_alias="PROVIDER_RATE_LIMIT")
     provider_rate_window: int = Field(
         default=60, validation_alias="PROVIDER_RATE_WINDOW"
@@ -340,6 +369,11 @@ class Settings(BaseSettings):
         "model_opus",
         "model_sonnet",
         "model_haiku",
+        "model_fable_backup",
+        "model_opus_backup",
+        "model_sonnet_backup",
+        "model_haiku_backup",
+        "model_backup",
         mode="before",
     )
     @classmethod
@@ -425,17 +459,66 @@ class Settings(BaseSettings):
     def validate_model_format(cls, v: str | None) -> str | None:
         if v is None:
             return None
-        if "/" not in v:
-            raise ValueError(
-                f"Model must be prefixed with provider type. "
-                f"Valid providers: {', '.join(SUPPORTED_PROVIDER_IDS)}. "
-                f"Format: provider_type/model/name"
-            )
-        provider = v.split("/", 1)[0]
-        if provider not in SUPPORTED_PROVIDER_IDS:
-            supported = ", ".join(f"'{p}'" for p in SUPPORTED_PROVIDER_IDS)
-            raise ValueError(f"Invalid provider: '{provider}'. Supported: {supported}")
+        _validate_model_ref(v)
         return v
+
+    @field_validator(
+        "model_fable_backup",
+        "model_opus_backup",
+        "model_sonnet_backup",
+        "model_haiku_backup",
+        "model_backup",
+    )
+    @classmethod
+    def validate_backup_chain_format(cls, v: str | None) -> str | None:
+        """Validate every ref in a comma-separated backup chain."""
+        if v is None:
+            return None
+        chain = parse_model_ref_chain(v)
+        if not chain:
+            return None
+        for model_ref in chain:
+            _validate_model_ref(model_ref)
+        return ",".join(chain)
+
+    @field_validator("provider_quota_threshold_overrides")
+    @classmethod
+    def validate_provider_quota_threshold_overrides(cls, v: str) -> str:
+        """Validate ``provider=seconds`` overrides for the quota fail-fast bound."""
+        for provider_id, seconds in parse_quota_threshold_overrides(v).items():
+            if provider_id not in SUPPORTED_PROVIDER_IDS:
+                supported = ", ".join(f"'{p}'" for p in SUPPORTED_PROVIDER_IDS)
+                raise ValueError(
+                    f"Invalid provider in PROVIDER_QUOTA_THRESHOLD_OVERRIDES: "
+                    f"'{provider_id}'. Supported: {supported}"
+                )
+            if seconds <= 0:
+                raise ValueError(
+                    f"PROVIDER_QUOTA_THRESHOLD_OVERRIDES seconds for "
+                    f"'{provider_id}' must be > 0, got {seconds}"
+                )
+        return v.strip()
+
+    @model_validator(mode="after")
+    def drop_backups_matching_their_primary(self) -> Settings:
+        """Drop chain entries that resolve to the same ref as their own primary."""
+        for backup_attr, primary_attr, backup_env, primary_env in BACKUP_MODEL_SLOTS:
+            chain = parse_model_ref_chain(getattr(self, backup_attr))
+            if not chain:
+                continue
+            primary = getattr(self, primary_attr) or self.model
+            kept = tuple(model_ref for model_ref in chain if model_ref != primary)
+            if len(kept) == len(chain):
+                continue
+            logger.warning(
+                "{} lists the effective {} route ({}); dropping it because a "
+                "backup identical to its primary cannot fail over.",
+                backup_env,
+                primary_env,
+                primary,
+            )
+            setattr(self, backup_attr, ",".join(kept) if kept else None)
+        return self
 
     @model_validator(mode="after")
     def check_nvidia_nim_api_key(self) -> Settings:
@@ -463,6 +546,49 @@ class Settings(BaseSettings):
         env_file_encoding="utf-8",
         extra="ignore",
     )
+
+
+def _validate_model_ref(model_ref: str) -> None:
+    if "/" not in model_ref:
+        raise ValueError(
+            f"Model must be prefixed with provider type. "
+            f"Valid providers: {', '.join(SUPPORTED_PROVIDER_IDS)}. "
+            f"Format: provider_type/model/name"
+        )
+    provider = model_ref.split("/", 1)[0]
+    if provider not in SUPPORTED_PROVIDER_IDS:
+        supported = ", ".join(f"'{p}'" for p in SUPPORTED_PROVIDER_IDS)
+        raise ValueError(f"Invalid provider: '{provider}'. Supported: {supported}")
+
+
+def parse_quota_threshold_overrides(value: str) -> dict[str, float]:
+    """Parse ``provider=seconds`` pairs into per-provider quota bounds."""
+    overrides: dict[str, float] = {}
+    for entry in value.split(","):
+        item = entry.strip()
+        if not item:
+            continue
+        provider_id, separator, raw_seconds = item.partition("=")
+        if not separator:
+            raise ValueError(
+                f"PROVIDER_QUOTA_THRESHOLD_OVERRIDES entry must be "
+                f"'provider=seconds', got {item!r}"
+            )
+        try:
+            seconds = float(raw_seconds.strip())
+        except ValueError:
+            raise ValueError(
+                f"PROVIDER_QUOTA_THRESHOLD_OVERRIDES seconds for "
+                f"'{provider_id.strip()}' must be a number, got "
+                f"{raw_seconds.strip()!r}"
+            ) from None
+        if not math.isfinite(seconds):
+            raise ValueError(
+                f"PROVIDER_QUOTA_THRESHOLD_OVERRIDES seconds for "
+                f"'{provider_id.strip()}' must be finite"
+            )
+        overrides[provider_id.strip()] = seconds
+    return overrides
 
 
 @lru_cache

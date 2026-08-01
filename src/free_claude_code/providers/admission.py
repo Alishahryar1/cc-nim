@@ -1,14 +1,15 @@
 """Provider-owned admission, concurrency, and coordinated retry lifecycle."""
 
 import asyncio
+import json
 import math
 import random
 import time
-from collections.abc import Awaitable, Callable
+from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from email.utils import parsedate_to_datetime
-from typing import TypeVar
+from typing import Any, TypeVar
 
 from loguru import logger
 
@@ -27,6 +28,14 @@ UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS = 5
 DEFAULT_UPSTREAM_BASE_DELAY = 2.0
 DEFAULT_UPSTREAM_MAX_DELAY = 60.0
 DEFAULT_UPSTREAM_JITTER = 1.0
+
+# A retry hint longer than one full backoff ceiling reports quota exhaustion
+# rather than momentary pressure: probing it would strand every waiter for the
+# whole window, so the episode opens terminal instead and callers fail fast.
+LONG_EXHAUSTION_THRESHOLD_S = DEFAULT_UPSTREAM_MAX_DELAY
+TERMINAL_WINDOW_CAP_S = 24 * 3600.0
+
+_RETRY_INFO_TYPE = "type.googleapis.com/google.rpc.RetryInfo"
 
 
 class ProviderRetrySession:
@@ -71,6 +80,24 @@ class ProviderRetrySession:
 
     def _terminal_failure(self) -> Exception | None:
         return self._terminal_error
+
+
+@dataclass(frozen=True, slots=True)
+class ProviderRecoveryStatus:
+    """A point-in-time view of one provider's shared recovery state.
+
+    ``state`` is ``healthy`` with no open episode, ``exhausted`` while a
+    quota window fails every caller fast, and ``recovering`` while one probe
+    owns the half-open retry.
+    """
+
+    provider_name: str
+    state: str
+    generation: int | None = None
+    seconds_remaining: float | None = None
+    last_error_type: str | None = None
+    waiters: int = 0
+    quota_threshold_s: float = LONG_EXHAUSTION_THRESHOLD_S
 
 
 @dataclass(frozen=True, slots=True)
@@ -198,6 +225,7 @@ class ProviderAdmissionController:
         base_delay: float = DEFAULT_UPSTREAM_BASE_DELAY,
         max_delay: float = DEFAULT_UPSTREAM_MAX_DELAY,
         jitter: float = DEFAULT_UPSTREAM_JITTER,
+        quota_threshold: float = LONG_EXHAUSTION_THRESHOLD_S,
     ) -> None:
         if rate_limit <= 0:
             raise ValueError("rate_limit must be > 0")
@@ -213,8 +241,11 @@ class ProviderAdmissionController:
             raise ValueError("max_delay must be >= base_delay")
         if jitter < 0:
             raise ValueError("jitter must be >= 0")
+        if quota_threshold <= 0:
+            raise ValueError("quota_threshold must be > 0")
 
         self._provider_name = provider_name
+        self._quota_threshold = quota_threshold
         self._max_attempts = max_attempts
         self._base_delay = base_delay
         self._max_delay = max_delay
@@ -234,6 +265,37 @@ class ProviderAdmissionController:
             rate_window,
             max_concurrency,
             max_attempts,
+        )
+
+    def recovery_status(self) -> ProviderRecoveryStatus:
+        """Return a snapshot of the shared recovery state for operators.
+
+        Deliberately synchronous: without an await the episode fields cannot
+        change underneath the read, so no condition lock is needed.
+        """
+        episode = self._episode
+        if episode is None:
+            return ProviderRecoveryStatus(
+                provider_name=self._provider_name,
+                state="healthy",
+                quota_threshold_s=self._quota_threshold,
+            )
+
+        now = time.monotonic()
+        terminal_until = episode.terminal_until
+        exhausted = terminal_until is not None and now < terminal_until
+        return ProviderRecoveryStatus(
+            provider_name=self._provider_name,
+            state="exhausted" if exhausted else "recovering",
+            generation=episode.generation,
+            seconds_remaining=(
+                terminal_until - now
+                if exhausted and terminal_until is not None
+                else max(0.0, episode.ready_at - now)
+            ),
+            last_error_type=type(episode.last_error).__name__,
+            waiters=len(episode.waiters),
+            quota_threshold_s=self._quota_threshold,
         )
 
     def new_retry_session(
@@ -333,6 +395,12 @@ class ProviderAdmissionController:
                     if episode.probe_active:
                         await self._condition.wait()
                         continue
+                    # ready_at is already bounded: coordinated backoff never
+                    # exceeds max_delay, and any Retry-After longer than the
+                    # quota threshold has already opened a terminal episode
+                    # above. No extra clamp is needed, and clamping to the
+                    # quota threshold would wrongly truncate the backoff curve
+                    # when that threshold is overridden below max_delay.
                     sleep_delay = max(0.0, episode.ready_at - now)
                     claimed_generation = episode.generation
                     if sleep_delay == 0:
@@ -499,7 +567,18 @@ class ProviderAdmissionController:
         status: int | None,
     ) -> bool:
         can_retry = session.can_attempt
-        delay = self._retry_delay(error, session.attempts_started)
+        retry_after = _retry_after_seconds(error)
+        retry_after_s = None if retry_after is None else round(retry_after, 3)
+        if retry_after is not None and retry_after > self._quota_threshold:
+            await self._open_terminal_exhaustion(
+                session,
+                error=error,
+                status=status,
+                retry_after=retry_after,
+            )
+            return False
+
+        delay = self._retry_delay(session.attempts_started, retry_after)
         became_leader = False
         exhausted_episode = False
 
@@ -526,8 +605,8 @@ class ProviderAdmissionController:
                 self._condition.notify_all()
             elif episode is None or matching_probe is not None:
                 terminal_delay = self._retry_delay(
-                    error,
                     session.attempts_started,
+                    retry_after,
                 )
                 if episode is None:
                     episode = self._start_recovery_episode(
@@ -566,6 +645,7 @@ class ProviderAdmissionController:
                 attempt=session.attempts_started,
                 max_attempts=session.max_attempts,
                 delay_s=round(delay, 3),
+                retry_after_s=retry_after_s,
                 coordinated=True,
             )
         elif can_retry:
@@ -595,9 +675,61 @@ class ProviderAdmissionController:
                 status_code=status,
                 exc_type=type(error).__name__,
                 attempts=session.attempts_started,
+                retry_after_s=retry_after_s,
                 episode_exhausted=exhausted_episode,
             )
         return can_retry
+
+    async def _open_terminal_exhaustion(
+        self,
+        session: ProviderRetrySession,
+        *,
+        error: Exception,
+        status: int | None,
+        retry_after: float,
+    ) -> None:
+        """Fail the provider for a quota window instead of probing through it."""
+        window = min(retry_after, TERMINAL_WINDOW_CAP_S)
+        async with self._condition:
+            episode = self._episode
+            if episode is None:
+                episode = self._start_recovery_episode(
+                    leader=None,
+                    ready_at=time.monotonic(),
+                    last_error=error,
+                    request_id=session.request_id,
+                )
+            episode.last_error = error
+            episode.leader = None
+            episode.probe_active = False
+            episode.terminal_until = time.monotonic() + window
+            for waiter in episode.waiters:
+                waiter._fail_recovery(error)
+            episode.waiters.clear()
+            session._fail_recovery(error)
+            generation = episode.generation
+            self._condition.notify_all()
+
+        logger.warning(
+            "{} reports a {:.0f}s retry delay; provider {} fails fast for {:.0f}s",
+            self._failure_label(status, error),
+            retry_after,
+            self._provider_name,
+            window,
+        )
+        trace_event(
+            stage="provider",
+            event="provider.recovery.exhausted_long",
+            source="provider",
+            provider=self._provider_name,
+            request_id=session.request_id,
+            generation=generation,
+            status_code=status,
+            exc_type=type(error).__name__,
+            attempts=session.attempts_started,
+            retry_after_s=round(retry_after, 3),
+            terminal_window_s=round(window, 3),
+        )
 
     def _start_recovery_episode(
         self,
@@ -677,11 +809,10 @@ class ProviderAdmissionController:
     def _release_concurrency(self) -> None:
         self._concurrency_sem.release()
 
-    def _retry_delay(self, error: Exception, attempt: int) -> float:
+    def _retry_delay(self, attempt: int, retry_after: float | None) -> float:
         exponent = max(0, attempt - 1)
         backoff = min(self._base_delay * (2**exponent), self._max_delay)
         backoff += random.uniform(0, self._jitter)
-        retry_after = _retry_after_seconds(error)
         return max(backoff, retry_after or 0.0)
 
     @staticmethod
@@ -694,6 +825,14 @@ class ProviderAdmissionController:
 
 
 def _retry_after_seconds(error: Exception) -> float | None:
+    """Return an upstream retry hint from the header or a documented error body."""
+    header_hint = _retry_after_header_seconds(error)
+    if header_hint is not None:
+        return header_hint
+    return _retry_info_seconds(getattr(error, "body", None))
+
+
+def _retry_after_header_seconds(error: Exception) -> float | None:
     response = getattr(error, "response", None)
     headers = getattr(response, "headers", None)
     if headers is None:
@@ -712,6 +851,52 @@ def _retry_after_seconds(error: Exception) -> float | None:
         if retry_at.tzinfo is None:
             retry_at = retry_at.replace(tzinfo=UTC)
         seconds = (retry_at - datetime.now(UTC)).total_seconds()
+    return _finite_seconds(seconds)
+
+
+def _retry_info_seconds(body: Any) -> float | None:
+    """Read ``google.rpc.RetryInfo`` from a Google-style JSON error envelope.
+
+    Google relays this envelope through the Gemini OpenAI-compatible endpoint,
+    which carries the machine-readable delay in the body rather than a
+    ``Retry-After`` header.
+    """
+    for detail in _error_details(body):
+        if not isinstance(detail, Mapping) or detail.get("@type") != _RETRY_INFO_TYPE:
+            continue
+        delay = detail.get("retryDelay")
+        if not isinstance(delay, str) or not delay.endswith("s"):
+            continue
+        try:
+            seconds = float(delay[:-1])
+        except ValueError:
+            continue
+        parsed = _finite_seconds(seconds)
+        if parsed is not None:
+            return parsed
+    return None
+
+
+def _error_details(body: Any) -> tuple[Any, ...]:
+    if isinstance(body, bytes):
+        body = body.decode("utf-8", errors="replace")
+    if isinstance(body, str):
+        try:
+            body = json.loads(body)
+        except ValueError:
+            return ()
+    if isinstance(body, list):
+        return tuple(detail for item in body for detail in _error_details(item))
+    if not isinstance(body, Mapping):
+        return ()
+    error = body.get("error")
+    details = (
+        error.get("details") if isinstance(error, Mapping) else body.get("details")
+    )
+    return tuple(details) if isinstance(details, list) else ()
+
+
+def _finite_seconds(seconds: float) -> float | None:
     if not math.isfinite(seconds):
         return None
     return max(0.0, seconds)

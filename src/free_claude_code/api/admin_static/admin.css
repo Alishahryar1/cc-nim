@@ -255,6 +255,60 @@ textarea:focus-visible,
 }
 
 /* Provider Status Cards */
+.failover-routes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+
+.failover-route {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.failover-route-label {
+  flex: 0 0 168px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.failover-route-chain {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.failover-route-chain.muted,
+.failover-empty {
+  color: var(--muted);
+}
+
+.failover-providers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.failover-provider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.failover-provider-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.failover-empty {
+  margin: 0;
+  font-size: 13px;
+}
+
 .provider-grid {
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(240px, 1fr));
@@ -804,7 +858,61 @@ textarea:focus-visible,
     font-size: 24px;
   }
 
-  .provider-grid {
+  .failover-routes {
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  margin-bottom: 18px;
+}
+
+.failover-route {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.failover-route-label {
+  flex: 0 0 168px;
+  font-weight: 600;
+  color: var(--text-strong);
+}
+
+.failover-route-chain {
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+
+.failover-route-chain.muted,
+.failover-empty {
+  color: var(--muted);
+}
+
+.failover-providers {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.failover-provider {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  font-size: 13px;
+}
+
+.failover-provider-meta {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.failover-empty {
+  margin: 0;
+  font-size: 13px;
+}
+
+.provider-grid {
     grid-template-columns: 1fr;
   }
   

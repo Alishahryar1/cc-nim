@@ -146,6 +146,21 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
     ),
     CapabilityContract(
         "provider_routing",
+        "same_tier_failover",
+        "cross_provider_failover",
+        "free_claude_code.application.execution.ProviderExecutor",
+        "MODEL_*_BACKUP routes plus the primary's pre-output failure",
+        "the backup provider's stream, served under the same gateway model",
+        "the backup's own failure surfaces once no candidate remains",
+        (
+            "tests/application/test_execution.py",
+            "tests/application/test_routing.py",
+            "tests/config/test_config.py",
+        ),
+        ("test_quota_exhausted_primary_is_served_by_its_backup_e2e",),
+    ),
+    CapabilityContract(
+        "provider_routing",
         "provider_runtime_config",
         "provider_proxy_timeout_config",
         "free_claude_code.providers.runtime.ProviderRuntime",

@@ -14,7 +14,11 @@ from free_claude_code.core.diagnostics import (
     format_execution_failure_message,
     safe_exception_message,
 )
-from free_claude_code.core.failures import ExecutionFailure, FailureKind
+from free_claude_code.core.failures import (
+    ExecutionFailure,
+    FailureKind,
+    failure_permits_failover,
+)
 
 ProviderFailureOverride = Callable[[Exception], ExecutionFailure | None]
 
@@ -187,6 +191,15 @@ def is_retryable_provider_error(exc: BaseException) -> bool:
             RetryableProviderProtocolError,
         ),
     )
+
+
+def is_failover_eligible(exc: BaseException) -> bool:
+    """Return whether a same-tier backup provider may serve this request instead."""
+    if isinstance(exc, ProviderRecoveryExhausted):
+        return is_failover_eligible(exc.last_error)
+    if isinstance(exc, ExecutionFailure):
+        return failure_permits_failover(exc)
+    return is_retryable_provider_error(exc)
 
 
 def retryable_upstream_status(exc: BaseException) -> int | None:

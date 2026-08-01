@@ -52,6 +52,7 @@ Run your coding agents with free, paid, or local models. Choose and validate pro
 - Switch among 31 cloud and local providers from the Admin UI.
 - Use each coding agent's native model picker.
 - Route Fable, Opus, Sonnet, Haiku, and fallback traffic to different models.
+- Fail over to a backup provider when a tier's free quota runs out, before the reply starts.
 - Keep streaming, tool use, reasoning, and image input across compatible models.
 - Connect Claude Code and Codex in VS Code or Claude Code through JetBrains ACP.
 - Optionally run Claude Code sessions through Discord or Telegram with voice-note transcription.
@@ -258,6 +259,16 @@ Use the tag shown by `ollama list` with the `ollama/` prefix. `OLLAMA_BASE_URL` 
 `MODEL` is the fallback for every request. Select a model for `MODEL_FABLE`, `MODEL_OPUS`, `MODEL_SONNET`, or `MODEL_HAIKU` to override an individual Claude Code tier; select **None** to use `MODEL`.
 
 For example, route Opus to `nvidia_nim/moonshotai/kimi-k2.6`, Sonnet to `open_router/openrouter/free`, Haiku to `lmstudio/qwen3.5-coder`, and keep `MODEL` on `zai/glm-5.2`.
+
+### Optional Provider Failover
+
+`MODEL_FABLE_BACKUP`, `MODEL_OPUS_BACKUP`, `MODEL_SONNET_BACKUP`, and `MODEL_HAIKU_BACKUP` name a second provider for a tier, and `MODEL_BACKUP` covers every tier without one. When a free-tier quota runs out, a backup takes over automatically and the reply arrives as usual.
+
+Each accepts a comma-separated chain that is tried in order, so `MODEL_OPUS_BACKUP="gemini/gemini-3-pro,groq/llama-3.3-70b-versatile"` falls through to Groq if Gemini is out too.
+
+Failover only happens before the answer starts arriving, so a reply is never restarted midway. Configuration errors — a bad API key, a rejected request, or a prompt past the model's context window — are reported instead of retried elsewhere, and requests that name a provider directly (`gemini/gemini-3-pro`) always use that provider.
+
+The **Model Config** page in the admin UI shows each tier's chain and which providers are currently rate-limited, with a countdown until they are retried.
 
 ### Reasoning Control
 

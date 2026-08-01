@@ -98,6 +98,7 @@ async function load() {
   await hydrateModelOptions();
   await validate(false);
   await refreshLocalStatus();
+  await refreshFailoverStatus();
   updateDirtyState();
   showMessage("");
 }
@@ -857,6 +858,86 @@ async function apply() {
   );
 }
 
+function failoverStateClass(state) {
+  if (state === "healthy") return "ok";
+  if (state === "recovering") return "warn";
+  if (state === "exhausted") return "error";
+  return "neutral";
+}
+
+function failoverStateLabel(provider) {
+  if (provider.state === "healthy") return "Healthy";
+  const seconds = provider.seconds_remaining;
+  const suffix = typeof seconds === "number" ? ` ${Math.ceil(seconds)}s` : "";
+  if (provider.state === "exhausted") return `Quota exhausted${suffix}`;
+  if (provider.state === "recovering") return `Recovering${suffix}`;
+  return provider.state;
+}
+
+function renderFailoverRoutes(routes) {
+  const container = byId("failoverRoutes");
+  container.innerHTML = "";
+  routes.forEach((route) => {
+    const row = document.createElement("div");
+    row.className = "failover-route";
+
+    const label = document.createElement("span");
+    label.className = "failover-route-label";
+    label.textContent = route.primary_env;
+
+    const chain = document.createElement("span");
+    chain.className = "failover-route-chain";
+    const inherited = route.inherited ? `  (via ${route.backup_env})` : "";
+    chain.textContent = route.backup_refs.length
+      ? `${[route.primary_ref, ...route.backup_refs].join("  \u2192  ")}${inherited}`
+      : `${route.primary_ref}  (no backup)`;
+    if (!route.backup_refs.length) {
+      chain.classList.add("muted");
+    }
+
+    row.append(label, chain);
+    container.appendChild(row);
+  });
+}
+
+function renderFailoverProviders(providers) {
+  const container = byId("failoverProviders");
+  container.innerHTML = "";
+  if (!providers.length) {
+    const empty = document.createElement("p");
+    empty.className = "failover-empty";
+    empty.textContent = "No provider has served a request yet this generation.";
+    container.appendChild(empty);
+    return;
+  }
+  providers.forEach((provider) => {
+    const row = document.createElement("div");
+    row.className = "failover-provider";
+
+    const name = document.createElement("span");
+    name.textContent = providerDisplayName(provider.provider_id);
+
+    const pill = document.createElement("span");
+    pill.className = `status-pill ${failoverStateClass(provider.state)}`;
+    pill.textContent = failoverStateLabel(provider);
+
+    const meta = document.createElement("span");
+    meta.className = "failover-provider-meta";
+    meta.textContent = provider.last_error_type
+      ? `${provider.last_error_type} \u00b7 quota bound ${provider.quota_threshold_s}s`
+      : `quota bound ${provider.quota_threshold_s}s`;
+
+    row.append(name, pill, meta);
+    container.appendChild(row);
+  });
+}
+
+async function refreshFailoverStatus() {
+  const result = await api("/admin/api/failover");
+  renderFailoverRoutes(result.routes || []);
+  renderFailoverProviders(result.providers || []);
+}
+
 async function refreshLocalStatus() {
   const result = await api("/admin/api/providers/local-status");
   result.providers.forEach((provider) => {
@@ -959,6 +1040,9 @@ function showMessage(message, kind = "") {
   area.className = `message-area ${kind}`.trim();
 }
 
+byId("failoverRefresh").addEventListener("click", () => {
+  refreshFailoverStatus().catch((error) => showMessage(error.message, "error"));
+});
 byId("validateButton").addEventListener("click", () => validate(true));
 byId("applyButton").addEventListener("click", apply);
 document.addEventListener("pointerdown", (event) => {

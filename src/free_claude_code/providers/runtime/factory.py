@@ -7,8 +7,14 @@ from free_claude_code.application.errors import (
     UnknownProviderError,
 )
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
-from free_claude_code.config.settings import Settings
-from free_claude_code.providers.admission import ProviderAdmissionController
+from free_claude_code.config.settings import (
+    Settings,
+    parse_quota_threshold_overrides,
+)
+from free_claude_code.providers.admission import (
+    LONG_EXHAUSTION_THRESHOLD_S,
+    ProviderAdmissionController,
+)
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.openai_chat import (
     OPENAI_CHAT_PROFILES,
@@ -177,11 +183,15 @@ def create_provider(
         raise UnknownProviderError.for_provider(provider_id, PROVIDER_CATALOG)
 
     config = build_provider_config(descriptor, settings)
+    quota_thresholds = parse_quota_threshold_overrides(
+        settings.provider_quota_threshold_overrides
+    )
     admission = ProviderAdmissionController(
         provider_name=provider_id,
         rate_limit=config.rate_limit or 40,
         rate_window=config.rate_window or 60.0,
         max_concurrency=config.max_concurrency,
+        quota_threshold=quota_thresholds.get(provider_id, LONG_EXHAUSTION_THRESHOLD_S),
     )
     factory = (injected_factories or {}).get(provider_id)
     if provider_id in _INJECTED_PROVIDER_IDS and factory is None:

@@ -23,7 +23,11 @@ from free_claude_code.config.provider_catalog import (
     VERCEL_AI_GATEWAY_DEFAULT_BASE,
     ZAI_DEFAULT_BASE,
 )
-from free_claude_code.providers.admission import ProviderAdmissionController
+from free_claude_code.providers.admission import (
+    LONG_EXHAUSTION_THRESHOLD_S,
+    ProviderAdmissionController,
+)
+from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.cloudflare import CloudflareProvider
 from free_claude_code.providers.deepseek import DeepSeekProvider
 from free_claude_code.providers.gemini import GeminiProvider
@@ -523,10 +527,36 @@ def test_create_provider_instantiates_each_builtin():
                 rate_limit=7,
                 rate_window=11,
                 max_concurrency=3,
+                quota_threshold=LONG_EXHAUSTION_THRESHOLD_S,
             )
             admission_factory.reset_mock()
 
     assert set(cases) == set(PROVIDER_CATALOG)
+
+
+def test_create_provider_applies_per_provider_quota_threshold_overrides():
+    settings = _make_settings(
+        gemini_api_key="test_gemini_key",
+        provider_quota_threshold_overrides="gemini=15.5",
+    )
+    sentinel_admission = MagicMock(spec=ProviderAdmissionController)
+
+    with (
+        patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"),
+        patch(
+            "free_claude_code.providers.runtime.factory.ProviderAdmissionController",
+            return_value=sentinel_admission,
+        ) as admission_factory,
+    ):
+        create_provider("gemini", settings)
+        assert admission_factory.call_args.kwargs["quota_threshold"] == 15.5
+        admission_factory.reset_mock()
+
+        create_provider("nvidia_nim", settings)
+        assert (
+            admission_factory.call_args.kwargs["quota_threshold"]
+            == LONG_EXHAUSTION_THRESHOLD_S
+        )
 
 
 def test_provider_runtime_caches_by_provider_id():
@@ -672,3 +702,47 @@ async def test_provider_runtime_cleanup_exceptiongroup_on_multiple_failures() ->
 
     assert not runtime.is_cached("x")
     assert not runtime.is_cached("y")
+
+
+def test_provider_runtime_reports_recovery_status_for_built_providers():
+    runtime = ProviderRuntime(_make_settings())
+
+    with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
+        assert runtime.recovery_statuses() == {}
+        runtime.resolve_provider("nvidia_nim")
+
+    statuses = runtime.recovery_statuses()
+
+    assert set(statuses) == {"nvidia_nim"}
+    assert statuses["nvidia_nim"].provider_name == "nvidia_nim"
+    assert statuses["nvidia_nim"].state == "healthy"
+
+
+def test_provider_runtime_skips_providers_without_an_admission_gate():
+    class _Gateless(BaseProvider):
+        async def cleanup(self) -> None:
+            return None
+
+        async def list_model_infos(self):
+            return frozenset()
+
+        def preflight_stream(self, request, *, reasoning=None) -> None:
+            return None
+
+        def stream_response(
+            self,
+            request,
+            input_tokens: int = 0,
+            *,
+            request_id=None,
+            response_model=None,
+            reasoning=None,
+        ):
+            raise NotImplementedError
+
+    runtime = ProviderRuntime(
+        _make_settings(),
+        {"gateless": _Gateless(ProviderConfig(api_key="k", base_url="https://x"))},
+    )
+
+    assert runtime.recovery_statuses() == {}

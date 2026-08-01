@@ -15,6 +15,7 @@ from free_claude_code.core.diagnostics import (
 )
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.core.trace import trace_event
+from free_claude_code.providers.admission import ProviderRecoveryStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,6 +44,10 @@ class BaseProvider(ABC):
 
     def __init__(self, config: ProviderConfig):
         self._config = config
+
+    def recovery_status(self) -> ProviderRecoveryStatus | None:
+        """Return shared recovery state when this provider owns an admission gate."""
+        return None
 
     @abstractmethod
     def preflight_stream(

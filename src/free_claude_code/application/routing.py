@@ -5,7 +5,11 @@ from dataclasses import dataclass
 from loguru import logger
 
 from free_claude_code.application.errors import UnknownProviderError
-from free_claude_code.config.model_refs import parse_model_name, parse_provider_type
+from free_claude_code.config.model_refs import (
+    parse_model_name,
+    parse_model_ref_chain,
+    parse_provider_type,
+)
 from free_claude_code.config.provider_catalog import (
     PROVIDER_CATALOG,
     SUPPORTED_PROVIDER_IDS,
@@ -40,6 +44,7 @@ class RoutedMessagesRequest:
     request: MessagesRequest
     resolved: ResolvedModel
     reasoning: ReasoningPolicy
+    backups: tuple[ResolvedModel, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,6 +102,52 @@ class ModelRouter:
             provider_model_ref=provider_model_ref,
             reasoning_preference=reasoning_preference,
         )
+
+    def resolve_backups(self, claude_model_name: str) -> tuple[ResolvedModel, ...]:
+        """Resolve the ordered same-tier backup chain, empty when failover is off."""
+        direct_provider_id, direct_provider_model, _ = self._direct_provider_model(
+            claude_model_name
+        )
+        if direct_provider_id is not None and direct_provider_model is not None:
+            # Direct provider refs name one provider explicitly; honoring a
+            # tier backup would silently contradict the caller (D5).
+            return ()
+
+        primary_ref = self._resolve_model_ref(claude_model_name)
+        reasoning_preference = self._resolve_reasoning_preference(claude_model_name)
+        backups: list[ResolvedModel] = []
+        for backup_ref in self._resolve_backup_chain(claude_model_name):
+            if backup_ref == primary_ref:
+                continue
+            provider_id = parse_provider_type(backup_ref)
+            self._validate_provider_id(provider_id)
+            logger.debug(
+                "MODEL BACKUP {}: '{}' -> provider='{}' model='{}'",
+                len(backups) + 1,
+                claude_model_name,
+                provider_id,
+                parse_model_name(backup_ref),
+            )
+            backups.append(
+                ResolvedModel(
+                    original_model=claude_model_name,
+                    provider_id=provider_id,
+                    provider_model=parse_model_name(backup_ref),
+                    provider_model_ref=backup_ref,
+                    reasoning_preference=reasoning_preference,
+                )
+            )
+        return tuple(backups)
+
+    def _resolve_backup_chain(self, claude_model_name: str) -> tuple[str, ...]:
+        """Resolve the configured backup chain for a tier, else the global one."""
+
+        route = self._matched_route(claude_model_name)
+        if route is not None:
+            backup = getattr(self._settings, f"{route[1]}_backup")
+            if isinstance(backup, str):
+                return parse_model_ref_chain(backup)
+        return parse_model_ref_chain(self._settings.model_backup)
 
     @staticmethod
     def _validate_provider_id(provider_id: str) -> None:
@@ -169,6 +220,7 @@ class ModelRouter:
                 routed,
                 resolved.reasoning_preference,
             ),
+            backups=self.resolve_backups(request.model),
         )
 
     def resolve_token_count_request(

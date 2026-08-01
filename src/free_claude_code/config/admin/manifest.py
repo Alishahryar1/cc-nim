@@ -174,6 +174,66 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         description="Select None to use the Default Model for Haiku requests.",
     ),
     ConfigFieldSpec(
+        "MODEL_FABLE_BACKUP",
+        "Fable Backup",
+        "models",
+        "optional_model",
+        settings_attr="model_fable_backup",
+        description=(
+            "Serves Fable requests when the primary fails before any output. "
+            "Comma-separate several routes to try them in order. Select None to "
+            "disable failover for Fable."
+        ),
+    ),
+    ConfigFieldSpec(
+        "MODEL_OPUS_BACKUP",
+        "Opus Backup",
+        "models",
+        "optional_model",
+        settings_attr="model_opus_backup",
+        description=(
+            "Serves Opus requests when the primary fails before any output. "
+            "Comma-separate several routes to try them in order. Select None to "
+            "disable failover for Opus."
+        ),
+    ),
+    ConfigFieldSpec(
+        "MODEL_SONNET_BACKUP",
+        "Sonnet Backup",
+        "models",
+        "optional_model",
+        settings_attr="model_sonnet_backup",
+        description=(
+            "Serves Sonnet requests when the primary fails before any output. "
+            "Comma-separate several routes to try them in order. Select None to "
+            "disable failover for Sonnet."
+        ),
+    ),
+    ConfigFieldSpec(
+        "MODEL_HAIKU_BACKUP",
+        "Haiku Backup",
+        "models",
+        "optional_model",
+        settings_attr="model_haiku_backup",
+        description=(
+            "Serves Haiku requests when the primary fails before any output. "
+            "Comma-separate several routes to try them in order. Select None to "
+            "disable failover for Haiku."
+        ),
+    ),
+    ConfigFieldSpec(
+        "MODEL_BACKUP",
+        "Default Backup",
+        "models",
+        "optional_model",
+        settings_attr="model_backup",
+        description=(
+            "Backup route for any tier without its own backup. Comma-separate "
+            "several routes to try them in order. Select None to disable "
+            "failover by default."
+        ),
+    ),
+    ConfigFieldSpec(
         "REASONING_POLICY",
         "Reasoning Policy",
         "reasoning",
@@ -232,6 +292,19 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         secret=True,
         restart_required=True,
         description="Bearer token protecting Claude/API access. It is not admin-page login.",
+    ),
+    ConfigFieldSpec(
+        "PROVIDER_QUOTA_THRESHOLD_OVERRIDES",
+        "Quota Fail-Fast Overrides",
+        "runtime",
+        settings_attr="provider_quota_threshold_overrides",
+        advanced=True,
+        restart_required=True,
+        description=(
+            "Per-provider retry-hint bound above which a 429 opens the circuit "
+            "instead of retrying, as provider=seconds pairs "
+            "(e.g. gemini=20,groq=120). Unlisted providers use 60s."
+        ),
     ),
     ConfigFieldSpec(
         "PROVIDER_RATE_LIMIT",

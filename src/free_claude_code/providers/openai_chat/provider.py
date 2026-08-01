@@ -36,6 +36,7 @@ from free_claude_code.core.trace import provider_chat_body_snapshot, trace_event
 from free_claude_code.providers.admission import (
     ProviderAdmissionController,
     ProviderAttempt,
+    ProviderRecoveryStatus,
     ProviderRetrySession,
 )
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
@@ -166,6 +167,10 @@ class OpenAIChatProvider(BaseProvider):
             policy=self._profile.request_policy,
             postprocessors=self._profile.request_postprocessors,
         )
+
+    def recovery_status(self) -> ProviderRecoveryStatus:
+        """Return this provider's shared admission recovery state."""
+        return self._admission.recovery_status()
 
     def preflight_stream(
         self,

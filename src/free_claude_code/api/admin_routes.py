@@ -136,6 +136,15 @@ async def admin_status(
     return services.admin.admin_status()
 
 
+@router.get("/admin/api/failover")
+async def failover_status(
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    require_loopback_admin(request)
+    return services.admin.failover_status()
+
+
 @router.get("/admin/api/providers/local-status")
 async def local_provider_status(request: Request):
     require_loopback_admin(request)
