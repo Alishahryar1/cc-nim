@@ -990,6 +990,16 @@ policy. The adapter preserves `reasoning.effort` in Anthropic `output_config`;
 the application reasoning boundary then interprets `none` as off and preserves
 all other named efforts. It never translates OpenAI effort names into Anthropic
 token budgets.
+Application-resolved source controls remain on the immutable canonical request;
+provider adapters consume the resolved `ReasoningPolicy` rather than parsing
+those controls again. A target converter validates only the unrepresented
+semantic remainder: it may omit an application-consumed control or an exact
+no-op, but must reject active or unknown behavior before upstream I/O. For the
+connected OpenAI Responses transport, `output_config.effort` is already
+represented by the policy and an empty context edit or exact
+`clear_thinking_20251015` edit with `keep: "all"` is inert. Structured-output
+configuration and any active, malformed, or extended context edit remain
+unsupported and fail preflight rather than being silently discarded.
 Prior Responses `reasoning` input items replay plaintext `reasoning_text`, or
 fallback `summary_text`, into assistant `reasoning_content`. Encrypted reasoning
 input is ignored because the proxy cannot decrypt it.

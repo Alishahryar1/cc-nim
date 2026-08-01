@@ -100,10 +100,9 @@ def _validate_supported_request(request: MessagesRequest) -> None:
         unsupported.append("stop_sequences")
     if request.top_k is not None:
         unsupported.append("top_k")
-    if request.context_management:
+    if not _is_noop_context_management(request.context_management):
         unsupported.append("context_management")
-    if request.output_config:
-        unsupported.append("output_config")
+    unsupported.extend(_unsupported_output_config_paths(request.output_config))
     if request.mcp_servers:
         unsupported.append("mcp_servers")
     if request.extra_body:
@@ -113,6 +112,33 @@ def _validate_supported_request(request: MessagesRequest) -> None:
             "OpenAI Responses cannot represent these fields without data loss: "
             f"{unsupported}."
         )
+
+
+def _unsupported_output_config_paths(
+    output_config: dict[str, Any] | None,
+) -> list[str]:
+    if not output_config:
+        return []
+    return [f"output_config.{key}" for key in sorted(output_config) if key != "effort"]
+
+
+def _is_noop_context_management(
+    context_management: dict[str, Any] | None,
+) -> bool:
+    if not context_management:
+        return True
+    if set(context_management) != {"edits"}:
+        return False
+    edits = context_management["edits"]
+    return isinstance(edits, list) and all(
+        isinstance(edit, dict)
+        and edit
+        == {
+            "type": "clear_thinking_20251015",
+            "keep": "all",
+        }
+        for edit in edits
+    )
 
 
 def _system_text(request: MessagesRequest) -> list[str]:
