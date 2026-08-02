@@ -67,16 +67,24 @@ def build_codex_model_catalog(models_response: Mapping[str, Any]) -> dict[str, A
     return {"models": models}
 
 
-def write_codex_model_catalog(catalog_path: Path, catalog: Mapping[str, Any]) -> None:
-    """Atomically write a Codex model catalog JSON file."""
+def write_codex_model_catalog(catalog_path: Path, catalog: Mapping[str, Any]) -> bool:
+    """Atomically write changed Codex model catalog JSON."""
+
+    content = (json.dumps(catalog, ensure_ascii=True, indent=2) + "\n").encode()
+    try:
+        if catalog_path.read_bytes() == content:
+            return False
+    except FileNotFoundError:
+        pass
 
     catalog_path.parent.mkdir(parents=True, exist_ok=True)
     temp_path = catalog_path.with_name(f".{catalog_path.name}.{uuid.uuid4().hex}.tmp")
-    temp_path.write_text(
-        json.dumps(catalog, ensure_ascii=True, indent=2) + "\n",
-        encoding="utf-8",
-    )
-    temp_path.replace(catalog_path)
+    try:
+        temp_path.write_bytes(content)
+        temp_path.replace(catalog_path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+    return True
 
 
 def _catalog_candidates(

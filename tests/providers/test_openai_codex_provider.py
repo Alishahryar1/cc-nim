@@ -5,6 +5,7 @@ from typing import Any
 import httpx
 import pytest
 
+from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import (
     assert_anthropic_stream_contract,
@@ -12,7 +13,7 @@ from free_claude_code.core.anthropic.stream_contracts import (
     text_content,
 )
 from free_claude_code.core.failures import ExecutionFailure
-from free_claude_code.core.reasoning import ReasoningPolicy
+from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_codex.auth import (
@@ -67,6 +68,27 @@ def _request() -> MessagesRequest:
         max_tokens=1024,
         messages=[{"role": "user", "content": "hello"}],
         stream=True,
+    )
+
+
+def _client_control_request() -> MessagesRequest:
+    return MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "max_tokens": 1024,
+            "messages": [{"role": "user", "content": "hello"}],
+            "thinking": {"type": "adaptive", "display": "omitted"},
+            "context_management": {
+                "edits": [
+                    {
+                        "type": "clear_thinking_20251015",
+                        "keep": "all",
+                    }
+                ]
+            },
+            "output_config": {"effort": "high"},
+            "stream": True,
+        }
     )
 
 
@@ -169,6 +191,201 @@ async def test_provider_uses_subscription_headers_and_visible_model_catalog() ->
     events = parse_sse_text(body)
     assert_anthropic_stream_contract(events)
     assert text_content(events) == "hello"
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_provider_accepts_claude_client_controls_before_upstream_io() -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(
+            200,
+            text=_complete_stream("hello"),
+            headers={"content-type": "text/event-stream"},
+            request=request,
+        )
+
+    client = httpx.AsyncClient(
+        base_url="https://chatgpt.com/backend-api/codex/",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = OpenAICodexProvider(
+        _config(), auth=_FakeAuth(), admission=_admission(), client=client
+    )
+    request = _client_control_request()
+    reasoning = ReasoningPolicy.on(effort=ReasoningEffort.HIGH)
+
+    provider.preflight_stream(request, reasoning=reasoning)
+    assert requests == []
+
+    body = await _collect(
+        provider.stream_response(
+            request,
+            request_id="req_client_controls",
+            response_model="claude-opus-4",
+            reasoning=reasoning,
+        )
+    )
+
+    assert len(requests) == 1
+    upstream = requests[0]
+    assert upstream.url.path.endswith("/responses")
+    payload = json.loads(upstream.content)
+    assert payload["model"] == "gpt-test"
+    assert payload["reasoning"] == {"effort": "high", "summary": "auto"}
+    assert "context_management" not in payload
+    assert "output_config" not in payload
+    assert_anthropic_stream_contract(parse_sse_text(body))
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("field", "value", "error_path"),
+    [
+        (
+            "context_management",
+            {
+                "edits": [
+                    {
+                        "type": "clear_thinking_20251015",
+                        "keep": {"type": "thinking_turns", "value": 2},
+                    }
+                ]
+            },
+            "context_management",
+        ),
+        (
+            "output_config",
+            {"format": {"type": "json_schema"}},
+            "output_config.format",
+        ),
+    ],
+)
+async def test_provider_preflight_rejects_unrepresentable_client_controls(
+    field: str,
+    value: object,
+    error_path: str,
+) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500, request=request)
+
+    client = httpx.AsyncClient(
+        base_url="https://chatgpt.com/backend-api/codex/",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = OpenAICodexProvider(
+        _config(), auth=_FakeAuth(), admission=_admission(), client=client
+    )
+    payload = {
+        "model": "gpt-test",
+        "messages": [{"role": "user", "content": "hello"}],
+        field: value,
+    }
+
+    with pytest.raises(InvalidRequestError, match=error_path):
+        provider.preflight_stream(MessagesRequest.model_validate(payload))
+
+    assert requests == []
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_provider_round_trips_portable_tool_name_alias() -> None:
+    original = "mcp__codex_provider__" + "x" * 70
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "use the tool"}],
+            "tools": [
+                {
+                    "name": original,
+                    "description": "Long tool",
+                    "input_schema": {"type": "object"},
+                }
+            ],
+            "tool_choice": {"type": "tool", "name": original},
+        }
+    )
+    payloads: list[dict[str, Any]] = []
+
+    def handler(http_request: httpx.Request) -> httpx.Response:
+        payload = json.loads(http_request.content)
+        payloads.append(payload)
+        alias = payload["tools"][0]["name"]
+        body = _sse(
+            (
+                "response.output_item.added",
+                {
+                    "type": "response.output_item.added",
+                    "item": {
+                        "type": "function_call",
+                        "id": "fc_1",
+                        "call_id": "call_1",
+                        "name": alias,
+                    },
+                },
+            ),
+            (
+                "response.output_item.done",
+                {
+                    "type": "response.output_item.done",
+                    "item": {
+                        "type": "function_call",
+                        "id": "fc_1",
+                        "call_id": "call_1",
+                        "name": alias,
+                        "arguments": "{}",
+                    },
+                },
+            ),
+            (
+                "response.completed",
+                {
+                    "type": "response.completed",
+                    "response": {
+                        "id": "resp_1",
+                        "usage": {"input_tokens": 3, "output_tokens": 2},
+                    },
+                },
+            ),
+        )
+        return httpx.Response(
+            200,
+            text=body,
+            headers={"content-type": "text/event-stream"},
+            request=http_request,
+        )
+
+    client = httpx.AsyncClient(
+        base_url="https://chatgpt.com/backend-api/codex/",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = OpenAICodexProvider(
+        _config(), auth=_FakeAuth(), admission=_admission(), client=client
+    )
+
+    body = await _collect(provider.stream_response(request))
+
+    payload = payloads[0]
+    alias = payload["tools"][0]["name"]
+    assert alias != original
+    assert len(alias) <= 64
+    assert payload["tool_choice"] == {"type": "function", "name": alias}
+    events = parse_sse_text(body)
+    assert_anthropic_stream_contract(events)
+    tool_start = next(
+        event.data["content_block"]
+        for event in events
+        if event.event == "content_block_start"
+    )
+    assert tool_start["name"] == original
+    assert alias not in body
     await client.aclose()
 
 

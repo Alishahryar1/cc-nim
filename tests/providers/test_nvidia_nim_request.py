@@ -1,5 +1,6 @@
 """Tests for NVIDIA NIM request policy helpers."""
 
+import re
 from copy import deepcopy
 from typing import Any
 
@@ -253,6 +254,41 @@ class TestBuildRequestBody:
         assert "-A" in parameters["required"]
         assert "_fcc_arg_type" in parameters["required"]
         assert tool_schema == original_schema
+
+    def test_reported_long_tool_name_uses_generic_alias_after_nim_repairs(self, req):
+        """Issue #1307's 52nd tool is portable without losing NIM arg aliases."""
+        long_name = "mcp__issue_1307__" + "x" * 85
+        assert len(long_name) == 102
+        tools = [
+            Tool(name=f"tool_{index}", input_schema={"type": "object"})
+            for index in range(51)
+        ]
+        tools.append(
+            Tool(
+                name=long_name,
+                input_schema={
+                    "type": "object",
+                    "properties": {"type": {"type": "string"}},
+                    "required": ["type"],
+                },
+            )
+        )
+        req.tools = tools
+        snapshot = req.model_dump()
+
+        body = build_request_body(req, NimSettings(), reasoning=REASONING_OFF)
+
+        wire_name = body["tools"][51]["function"]["name"]
+        assert wire_name != long_name
+        assert re.fullmatch(r"[A-Za-z0-9_-]{1,64}", wire_name)
+        assert body[NIM_TOOL_ARGUMENT_ALIASES_KEY] == {
+            long_name: {"_fcc_arg_type": "type"}
+        }
+        assert (
+            NIM_TOOL_ARGUMENT_ALIASES_KEY
+            not in body_without_nim_tool_argument_aliases(body)
+        )
+        assert req.model_dump() == snapshot
 
     def test_safe_tool_schema_does_not_add_alias_metadata(self, req):
         tool_schema = {

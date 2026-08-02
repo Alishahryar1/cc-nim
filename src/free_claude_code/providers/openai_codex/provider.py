@@ -12,6 +12,7 @@ import httpx
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.diagnostics import (
     ERROR_DETAIL_DISPLAY_CAP_BYTES,
     attach_upstream_error_body,
@@ -134,12 +135,14 @@ class OpenAICodexProvider(BaseProvider):
     ) -> AsyncIterator[str]:
         """Stream Responses output in Anthropic Messages format."""
 
+        tool_names = OpenAIToolNameCodec.from_request(request)
         body = self._build_body(request, reasoning=reasoning)
         return self._run_stream(
             body,
             input_tokens=input_tokens,
             request_id=request_id,
             response_model=response_model or request.model,
+            tool_names=tool_names,
         )
 
     @staticmethod
@@ -160,6 +163,7 @@ class OpenAICodexProvider(BaseProvider):
         input_tokens: int,
         request_id: str | None,
         response_model: str,
+        tool_names: OpenAIToolNameCodec,
     ) -> AsyncIterator[str]:
         retry_session = self._admission.new_retry_session(request_id=request_id)
         recovery = RecoveryController()
@@ -184,6 +188,7 @@ class OpenAICodexProvider(BaseProvider):
                 model=response_model,
                 input_tokens=input_tokens,
                 log_raw_events=self._config.log_raw_sse_events,
+                tool_names=tool_names,
             )
             for event in stream.start():
                 for held in recovery.push(event):

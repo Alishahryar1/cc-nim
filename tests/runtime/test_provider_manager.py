@@ -6,6 +6,7 @@ import pytest
 
 from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.application.ports import RequestRuntimePort
 from free_claude_code.config.settings import Settings
 from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
@@ -50,6 +51,27 @@ class RuntimeFactory:
         runtime = FakeRuntime(settings)
         self.runtimes.append(runtime)
         return runtime
+
+
+class RecordingModelCatalogPublisher:
+    def __init__(self) -> None:
+        self.events: list[str] = []
+        self.snapshots: list[tuple[str, tuple[str, ...]]] = []
+
+    def ensure_exists(self, runtime: RequestRuntimePort) -> None:
+        self._record("ensure_exists", runtime)
+
+    def publish(self, runtime: RequestRuntimePort) -> None:
+        self._record("publish", runtime)
+
+    def _record(self, event: str, runtime: RequestRuntimePort) -> None:
+        self.events.append(event)
+        self.snapshots.append(
+            (
+                runtime.current_settings().model,
+                tuple(info.model_id for info in runtime.cached_prefixed_model_infos()),
+            )
+        )
 
 
 def _settings(model: str) -> Settings:
@@ -105,6 +127,146 @@ async def test_connected_provider_refresh_and_eviction_are_targeted() -> None:
     await manager.connected_provider_changed("openai", connected=False)
 
     assert "openai" not in manager.cached_model_ids()
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_catalog_publication_tracks_warm_refresh_and_direct_cache() -> None:
+    factory = RuntimeFactory()
+    publisher = RecordingModelCatalogPublisher()
+    manager = ProviderRuntimeManager(
+        _settings("nvidia_nim/one"),
+        runtime_factory=factory,
+        model_catalog_publisher=publisher,
+    )
+    factory.runtimes[0].provider.list_model_infos = AsyncMock(
+        return_value=frozenset({ProviderModelInfo("warm-model")})
+    )
+
+    await manager.warm_referenced_model_cache()
+    manager.start_model_list_refresh()
+    refresh_task = manager._refresh_task
+    assert refresh_task is not None
+    await refresh_task
+    manager.cache_model_infos(
+        "nvidia_nim",
+        {ProviderModelInfo("tested-model")},
+    )
+
+    assert publisher.events == ["ensure_exists", "publish", "publish"]
+    assert publisher.snapshots == [
+        ("nvidia_nim/one", ("nvidia_nim/warm-model",)),
+        ("nvidia_nim/one", ("nvidia_nim/warm-model",)),
+        ("nvidia_nim/one", ("nvidia_nim/tested-model",)),
+    ]
+
+    await manager.close()
+    assert publisher.events == ["ensure_exists", "publish", "publish"]
+
+
+@pytest.mark.asyncio
+async def test_failed_startup_discovery_still_ensures_a_fresh_catalog() -> None:
+    factory = RuntimeFactory()
+    publisher = RecordingModelCatalogPublisher()
+    manager = ProviderRuntimeManager(
+        _settings("nvidia_nim/configured"),
+        runtime_factory=factory,
+        model_catalog_publisher=publisher,
+    )
+    factory.runtimes[0].provider.list_model_infos = AsyncMock(
+        side_effect=RuntimeError("upstream unavailable")
+    )
+
+    result = await manager.warm_referenced_model_cache()
+
+    assert result.failed_provider_ids == ("nvidia_nim",)
+    assert publisher.events == ["ensure_exists"]
+    assert publisher.snapshots == [("nvidia_nim/configured", ())]
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_catalog_publication_tracks_connected_account_changes() -> None:
+    factory = RuntimeFactory()
+    publisher = RecordingModelCatalogPublisher()
+    connected: set[str] = set()
+    manager = ProviderRuntimeManager(
+        _settings("nvidia_nim/one"),
+        runtime_factory=factory,
+        connected_provider_ids=lambda: tuple(connected),
+        model_catalog_publisher=publisher,
+    )
+    factory.runtimes[0].provider.list_model_infos = AsyncMock(
+        return_value=frozenset({ProviderModelInfo("gpt-connected")})
+    )
+
+    connected.add("openai")
+    await manager.connected_provider_changed("openai", connected=True)
+    connected.clear()
+    await manager.connected_provider_changed("openai", connected=False)
+
+    assert publisher.events == ["publish", "publish"]
+    assert publisher.snapshots == [
+        ("nvidia_nim/one", ("openai/gpt-connected",)),
+        ("nvidia_nim/one", ()),
+    ]
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_catalog_publication_tracks_replacement_and_its_refresh() -> None:
+    factory = RuntimeFactory()
+    publisher = RecordingModelCatalogPublisher()
+    manager = ProviderRuntimeManager(
+        _settings("nvidia_nim/one"),
+        runtime_factory=factory,
+        model_catalog_publisher=publisher,
+    )
+
+    await manager.replace(
+        _settings("nvidia_nim/two"),
+        commit=lambda: None,
+    )
+    refresh_task = manager._refresh_task
+    assert refresh_task is not None
+    await refresh_task
+
+    assert publisher.events == ["publish", "publish"]
+    assert publisher.snapshots == [
+        ("nvidia_nim/two", ()),
+        ("nvidia_nim/two", ()),
+    ]
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_catalog_publication_failure_is_warning_only_and_secret_safe() -> None:
+    factory = RuntimeFactory()
+    secret = "private-catalog-write-detail"
+    publisher = MagicMock()
+    publisher.ensure_exists.side_effect = PermissionError(secret)
+    publisher.publish.side_effect = PermissionError(secret)
+    manager = ProviderRuntimeManager(
+        _settings("nvidia_nim/one"),
+        runtime_factory=factory,
+        model_catalog_publisher=publisher,
+    )
+
+    with patch("free_claude_code.runtime.provider_manager.logger.warning") as warning:
+        await manager.warm_referenced_model_cache()
+        manager.cache_model_infos(
+            "nvidia_nim",
+            {ProviderModelInfo("tested-model")},
+        )
+
+    assert warning.call_count == 2
+    log_blob = " ".join(
+        str(value)
+        for call in warning.call_args_list
+        for value in (*call.args, *call.kwargs.values())
+    )
+    assert "PermissionError" in log_blob
+    assert secret not in log_blob
     await manager.close()
 
 

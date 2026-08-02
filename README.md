@@ -265,7 +265,7 @@ Use the tag shown by `ollama list` with the `ollama/` prefix. `OLLAMA_BASE_URL` 
 
 `MODEL` is the fallback for every request. Select a model for `MODEL_FABLE`, `MODEL_OPUS`, `MODEL_SONNET`, or `MODEL_HAIKU` to override an individual Claude Code tier; select **None** to use `MODEL`.
 
-For example, route Opus to `nvidia_nim/moonshotai/kimi-k2.6`, Sonnet to `open_router/openrouter/free`, Haiku to `lmstudio/qwen3.5-coder`, and keep `MODEL` on `zai/glm-5.2`.
+For example, route Opus to `nvidia_nim/nvidia/nemotron-3-super-120b-a12b`, Sonnet to `open_router/openrouter/free`, Haiku to `lmstudio/qwen3.5-coder`, and keep `MODEL` on `zai/glm-5.2`.
 
 ### Reasoning Control
 
@@ -305,6 +305,43 @@ Install the [Claude Code extension](https://marketplace.visualstudio.com/items?i
 ```
 
 Match the port and authentication token to the Admin UI, then reload the extension.
+
+</details>
+
+<details>
+<summary><strong>Codex App</strong></summary>
+
+Start FCC, then add its provider and generated model catalog to your user-level Codex configuration.
+
+**Windows** — edit `%USERPROFILE%\.codex\config.toml` and replace `YOUR_USERNAME`:
+
+```toml
+model_provider = "fcc"
+model = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
+model_catalog_json = "C:/Users/YOUR_USERNAME/.fcc/codex-model-catalog.json"
+
+[model_providers.fcc]
+name = "Free Claude Code"
+base_url = "http://127.0.0.1:8082/v1"
+http_headers = { Authorization = "Bearer freecc" }
+wire_api = "responses"
+```
+
+**macOS** — edit `~/.codex/config.toml` and replace `YOUR_USERNAME`:
+
+```toml
+model_provider = "fcc"
+model = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
+model_catalog_json = "/Users/YOUR_USERNAME/.fcc/codex-model-catalog.json"
+
+[model_providers.fcc]
+name = "Free Claude Code"
+base_url = "http://127.0.0.1:8082/v1"
+http_headers = { Authorization = "Bearer freecc" }
+wire_api = "responses"
+```
+
+Match the model, port, and bearer token to the Admin UI. Restart the Codex App after setup or model changes, then use its model picker to select any FCC provider/model slug.
 
 </details>
 

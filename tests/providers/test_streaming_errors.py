@@ -9,6 +9,7 @@ import openai
 import pytest
 
 from free_claude_code.config.nim import NimSettings
+from free_claude_code.core.anthropic import OpenAIToolNameCodec
 from free_claude_code.core.anthropic.stream_contracts import (
     parse_sse_text,
 )
@@ -27,6 +28,7 @@ from free_claude_code.providers.openai_chat.provider import (
 )
 from free_claude_code.providers.openai_chat.tool_calls import (
     OpenAIToolCallAssembler,
+    OpenAIToolCallCollector,
     has_committed_sse_output,
     iter_heuristic_tool_use_sse,
 )
@@ -769,6 +771,66 @@ class TestStreamingExceptionHandling:
         assert parsed[-1].event == "message_stop"
 
     @pytest.mark.asyncio
+    async def test_precommit_retry_discards_abandoned_tool_name_fragment(self):
+        """A retried alias fragment cannot prefix or duplicate the successful call."""
+        provider = _make_provider()
+        original = "mcp__retry_tool_name__" + "x" * 70
+        request = _make_request(
+            tools=[{"name": original, "input_schema": {"type": "object"}}]
+        )
+        alias = OpenAIToolNameCodec.from_request(request).encode(original)
+        first_stream = AsyncStreamMock(
+            [
+                _make_tool_calls_chunk(
+                    name=alias[:20],
+                    arguments="",
+                    tool_id="call_abandoned",
+                ),
+                _make_chunk(finish_reason="tool_calls"),
+            ]
+        )
+        second_stream = AsyncStreamMock(
+            [
+                _make_tool_calls_chunk(
+                    name=alias,
+                    arguments="{}",
+                    tool_id="call_success",
+                ),
+                _make_chunk(finish_reason="tool_calls"),
+            ]
+        )
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=[first_stream, second_stream],
+        ) as create:
+            events = await _collect_stream(provider, request)
+
+        event_text = "".join(events)
+        parsed = parse_sse_text(event_text)
+        tool_starts = [
+            event.data["content_block"]
+            for event in parsed
+            if event.event == "content_block_start"
+            and event.data.get("content_block", {}).get("type") == "tool_use"
+        ]
+        assert create.await_count == 2
+        assert tool_starts == [
+            {
+                "type": "tool_use",
+                "id": "call_success",
+                "name": original,
+                "input": {},
+            }
+        ]
+        assert alias not in event_text
+        assert "call_abandoned" not in event_text
+        assert sum(event.event == "message_start" for event in parsed) == 1
+        assert sum(event.event == "message_stop" for event in parsed) == 1
+
+    @pytest.mark.asyncio
     async def test_primary_replay_and_continuation_share_five_attempts(self):
         """Four replays plus continuation emit one unduplicated response."""
         provider = _make_provider()
@@ -1292,6 +1354,233 @@ class TestProcessToolCall:
         assert "tool_use" in event_text
         assert "search" in event_text
         assert "call_123" in event_text
+
+    def test_structured_tool_call_restores_portable_wire_alias(self):
+        """A wire alias never escapes in the Anthropic tool block."""
+        provider = _make_provider()
+        original = "mcp__portable_output__" + "x" * 70
+        request = _make_request(
+            tools=[{"name": original, "input_schema": {"type": "object"}}]
+        )
+        codec = OpenAIToolNameCodec.from_request(request)
+        alias = codec.encode(original)
+        sse = AnthropicStreamLedger("msg_test", "test-model")
+
+        events = list(
+            _make_tool_assembler(provider).process_tool_call(
+                {
+                    "index": 0,
+                    "id": "call_alias",
+                    "function": {"name": alias, "arguments": "{}"},
+                },
+                sse,
+                tool_names=codec,
+                tool_name_buffers={},
+            )
+        )
+
+        event_text = "".join(events)
+        assert original in event_text
+        assert alias not in event_text
+        assert (
+            sum(
+                event.event == "content_block_start"
+                for event in parse_sse_text(event_text)
+            )
+            == 1
+        )
+
+    def test_tool_name_restores_before_nim_argument_alias_lookup(self):
+        """Generic name decoding composes with original-name NIM arg metadata."""
+        provider = _make_provider()
+        original = "mcp__nim_argument_composition__" + "x" * 70
+        request = _make_request(
+            tools=[
+                {
+                    "name": original,
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"type": {"type": "string"}},
+                        "required": ["type"],
+                    },
+                }
+            ]
+        )
+        codec = OpenAIToolNameCodec.from_request(request)
+        sse = AnthropicStreamLedger("msg_test", "test-model")
+
+        events = list(
+            _make_tool_assembler(provider).process_tool_call(
+                {
+                    "index": 0,
+                    "id": "call_composed",
+                    "function": {
+                        "name": codec.encode(original),
+                        "arguments": '{"_fcc_arg_type":"file"}',
+                    },
+                },
+                sse,
+                tool_names=codec,
+                tool_name_buffers={},
+                tool_argument_aliases={original: {"_fcc_arg_type": "type"}},
+                tool_argument_alias_buffers={},
+            )
+        )
+
+        parsed = parse_sse_text("".join(events))
+        start = next(
+            event.data["content_block"]
+            for event in parsed
+            if event.event == "content_block_start"
+        )
+        argument_delta = next(
+            event.data["delta"]["partial_json"]
+            for event in parsed
+            if event.event == "content_block_delta"
+        )
+        assert start["name"] == original
+        assert json.loads(argument_delta) == {"type": "file"}
+
+    def test_fragmented_wire_alias_starts_one_original_tool_block(self):
+        """A split alias is held until the exact request alias is complete."""
+        provider = _make_provider()
+        original = "mcp__fragmented_output__" + "x" * 70
+        request = _make_request(
+            tools=[{"name": original, "input_schema": {"type": "object"}}]
+        )
+        codec = OpenAIToolNameCodec.from_request(request)
+        alias = codec.encode(original)
+        split = len(alias) // 2
+        buffers: dict[int, str] = {}
+        sse = AnthropicStreamLedger("msg_test", "test-model")
+        assembler = _make_tool_assembler(provider)
+
+        first = list(
+            assembler.process_tool_call(
+                {
+                    "index": 0,
+                    "id": "call_split_alias",
+                    "function": {"name": alias[:split], "arguments": ""},
+                },
+                sse,
+                tool_names=codec,
+                tool_name_buffers=buffers,
+            )
+        )
+        second = list(
+            assembler.process_tool_call(
+                {
+                    "index": 0,
+                    "id": None,
+                    "function": {"name": alias[split:], "arguments": "{}"},
+                },
+                sse,
+                tool_names=codec,
+                tool_name_buffers=buffers,
+            )
+        )
+
+        assert first == []
+        event_text = "".join(second)
+        assert original in event_text
+        assert alias not in event_text
+        assert (
+            sum(
+                event.event == "content_block_start"
+                for event in parse_sse_text(event_text)
+            )
+            == 1
+        )
+        assert buffers == {}
+
+    def test_valid_name_that_prefixes_alias_is_resolved_on_flush(self):
+        """An ambiguous valid name is delayed, not mistaken for an alias fragment."""
+        provider = _make_provider()
+        original = "tool"
+        long_name = "tool." + "x" * 70
+        request = _make_request(
+            tools=[
+                {"name": original, "input_schema": {"type": "object"}},
+                {"name": long_name, "input_schema": {"type": "object"}},
+            ]
+        )
+        codec = OpenAIToolNameCodec.from_request(request)
+        assert codec.is_alias_prefix(original)
+        buffers: dict[int, str] = {}
+        sse = AnthropicStreamLedger("msg_test", "test-model")
+        assembler = _make_tool_assembler(provider)
+
+        initial = list(
+            assembler.process_tool_call(
+                {
+                    "index": 0,
+                    "id": "call_valid",
+                    "function": {"name": original, "arguments": "{}"},
+                },
+                sse,
+                tool_names=codec,
+                tool_name_buffers=buffers,
+            )
+        )
+        flushed = list(
+            assembler.flush_tool_name_buffers(
+                sse,
+                tool_names=codec,
+                tool_name_buffers=buffers,
+                tool_argument_aliases={},
+                tool_argument_alias_buffers={},
+            )
+        )
+
+        assert initial == []
+        assert original in "".join(flushed)
+        assert buffers == {}
+
+    def test_buffered_collector_decodes_before_schema_validation(self):
+        """Recovery validates the original tool identity, not its wire alias."""
+        original = "mcp__recovery_output__" + "x" * 70
+        request = _make_request(
+            tools=[{"name": original, "input_schema": {"type": "object"}}]
+        )
+        codec = OpenAIToolNameCodec.from_request(request)
+        collector = OpenAIToolCallCollector()
+        collector.add(
+            SimpleNamespace(
+                index=0,
+                id="call_recovered",
+                function=SimpleNamespace(name=codec.encode(original), arguments="{}"),
+            )
+        )
+
+        calls = collector.completed_calls(request, tool_names=codec)
+
+        assert calls is not None
+        assert calls[0]["function"]["name"] == original
+
+    def test_heuristic_tool_call_restores_original_name(self):
+        """Complete heuristic calls share the same outbound name contract."""
+        original = "mcp__heuristic_output__" + "x" * 70
+        request = _make_request(
+            tools=[{"name": original, "input_schema": {"type": "object"}}]
+        )
+        codec = OpenAIToolNameCodec.from_request(request)
+        sse = AnthropicStreamLedger("msg_test", "test-model")
+
+        events = list(
+            iter_heuristic_tool_use_sse(
+                sse,
+                {
+                    "id": "call_heuristic",
+                    "name": codec.encode(original),
+                    "input": {},
+                },
+                tool_names=codec,
+            )
+        )
+
+        event_text = "".join(events)
+        assert original in event_text
+        assert codec.encode(original) not in event_text
 
     def test_tool_call_id_arrives_before_name_still_emits_id_and_name(self):
         """Split-stream tool: id (no name) then name then args; id preserved on start."""

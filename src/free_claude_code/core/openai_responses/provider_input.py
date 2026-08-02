@@ -5,6 +5,7 @@ from typing import Any
 
 from free_claude_code.core.anthropic.content import get_block_attr, get_block_type
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.anthropic.request_serialization import (
     serialize_tool_result_content,
 )
@@ -21,6 +22,7 @@ def build_responses_provider_request(
     """Build a stateless Responses request without silently dropping fields."""
 
     _validate_supported_request(request)
+    tool_names = OpenAIToolNameCodec.from_request(request)
     instructions = _system_text(request)
     input_items: list[dict[str, Any]] = []
     for message in request.messages:
@@ -33,6 +35,7 @@ def build_responses_provider_request(
                 _assistant_items(
                     message.content,
                     reasoning_content=message.reasoning_content,
+                    tool_names=tool_names,
                 )
             )
         else:
@@ -64,7 +67,7 @@ def build_responses_provider_request(
         body["tools"] = [
             {
                 "type": "function",
-                "name": tool.name,
+                "name": tool_names.encode(tool.name),
                 "description": tool.description,
                 "parameters": tool.input_schema or {"type": "object", "properties": {}},
                 "strict": False,
@@ -72,7 +75,7 @@ def build_responses_provider_request(
             for tool in request.tools
         ]
     if request.tool_choice is not None:
-        body["tool_choice"] = _tool_choice(request.tool_choice)
+        body["tool_choice"] = _tool_choice(request.tool_choice, tool_names=tool_names)
     if reasoning_config := _reasoning_config(reasoning):
         body["reasoning"] = reasoning_config
     return body
@@ -97,10 +100,9 @@ def _validate_supported_request(request: MessagesRequest) -> None:
         unsupported.append("stop_sequences")
     if request.top_k is not None:
         unsupported.append("top_k")
-    if request.context_management:
+    if not _is_noop_context_management(request.context_management):
         unsupported.append("context_management")
-    if request.output_config:
-        unsupported.append("output_config")
+    unsupported.extend(_unsupported_output_config_paths(request.output_config))
     if request.mcp_servers:
         unsupported.append("mcp_servers")
     if request.extra_body:
@@ -110,6 +112,33 @@ def _validate_supported_request(request: MessagesRequest) -> None:
             "OpenAI Responses cannot represent these fields without data loss: "
             f"{unsupported}."
         )
+
+
+def _unsupported_output_config_paths(
+    output_config: dict[str, Any] | None,
+) -> list[str]:
+    if not output_config:
+        return []
+    return [f"output_config.{key}" for key in sorted(output_config) if key != "effort"]
+
+
+def _is_noop_context_management(
+    context_management: dict[str, Any] | None,
+) -> bool:
+    if not context_management:
+        return True
+    if set(context_management) != {"edits"}:
+        return False
+    edits = context_management["edits"]
+    return isinstance(edits, list) and all(
+        isinstance(edit, dict)
+        and edit
+        == {
+            "type": "clear_thinking_20251015",
+            "keep": "all",
+        }
+        for edit in edits
+    )
 
 
 def _system_text(request: MessagesRequest) -> list[str]:
@@ -124,6 +153,7 @@ def _assistant_items(
     content: Any,
     *,
     reasoning_content: str | None,
+    tool_names: OpenAIToolNameCodec,
 ) -> list[dict[str, Any]]:
     if isinstance(content, str):
         items = [_assistant_message([{"type": "output_text", "text": content}])]
@@ -172,7 +202,7 @@ def _assistant_items(
                 {
                     "type": "function_call",
                     "call_id": str(get_block_attr(block, "id", "")),
-                    "name": str(get_block_attr(block, "name", "")),
+                    "name": tool_names.encode(str(get_block_attr(block, "name", ""))),
                     "arguments": json.dumps(
                         get_block_attr(block, "input", {}),
                         ensure_ascii=False,
@@ -292,7 +322,11 @@ def _user_message(content: list[dict[str, Any]]) -> dict[str, Any]:
     return {"type": "message", "role": "user", "content": content}
 
 
-def _tool_choice(choice: dict[str, Any]) -> str | dict[str, str]:
+def _tool_choice(
+    choice: dict[str, Any],
+    *,
+    tool_names: OpenAIToolNameCodec,
+) -> str | dict[str, str]:
     choice_type = choice.get("type")
     if choice_type in {"auto", "none"}:
         return str(choice_type)
@@ -302,7 +336,7 @@ def _tool_choice(choice: dict[str, Any]) -> str | dict[str, str]:
         name = choice.get("name")
         if not isinstance(name, str) or not name:
             raise ResponsesConversionError("Forced tool choice requires a tool name.")
-        return {"type": "function", "name": name}
+        return {"type": "function", "name": tool_names.encode(name)}
     raise ResponsesConversionError(f"Unsupported tool_choice type {choice_type!r}.")
 
 
