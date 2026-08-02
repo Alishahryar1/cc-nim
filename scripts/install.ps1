@@ -96,7 +96,7 @@ function Invoke-NativeCommand {
     }
 }
 
-function Invoke-NativeCapture {
+function Invoke-Utf8NativeCapture {
     param(
         [string] $FilePath,
         [string[]] $Arguments = @()
@@ -104,9 +104,16 @@ function Invoke-NativeCapture {
 
     $commandText = Format-Command -FilePath $FilePath -Arguments $Arguments
     Write-Host "+ $commandText"
-    $global:LASTEXITCODE = 0
-    $output = & $FilePath @Arguments
-    $exitCode = $LASTEXITCODE
+    $originalOutputEncoding = [Console]::OutputEncoding
+    try {
+        [Console]::OutputEncoding = [Text.UTF8Encoding]::new($false)
+        $global:LASTEXITCODE = 0
+        $output = & $FilePath @Arguments
+        $exitCode = $LASTEXITCODE
+    }
+    finally {
+        [Console]::OutputEncoding = $originalOutputEncoding
+    }
     if ($exitCode -ne 0) {
         throw "Command failed with exit code ${exitCode}: $commandText"
     }
@@ -389,7 +396,7 @@ function Convert-UvVersionOutput {
 function Get-UvVersion {
     param([string] $UvPath)
 
-    $output = Invoke-NativeCapture -FilePath $UvPath -Arguments @("--version")
+    $output = Invoke-Utf8NativeCapture -FilePath $UvPath -Arguments @("--version")
     $version = Convert-UvVersionOutput $output
     if ([string]::IsNullOrWhiteSpace($version)) {
         throw "uv is present, but 'uv --version' did not return a valid version."
@@ -573,7 +580,7 @@ function Configure-AndConfirmFreeClaudeCode {
         throw "uv is not available for PATH configuration."
     }
     Invoke-NativeCommand -FilePath $uvCommand.Source -Arguments @("tool", "update-shell")
-    $toolBin = Invoke-NativeCapture -FilePath $uvCommand.Source -Arguments @("tool", "dir", "--bin")
+    $toolBin = Invoke-Utf8NativeCapture -FilePath $uvCommand.Source -Arguments @("tool", "dir", "--bin")
     if ([string]::IsNullOrWhiteSpace($toolBin)) {
         throw "uv returned an empty tool bin directory."
     }
