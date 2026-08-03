@@ -25,18 +25,21 @@ def create_openai_chat_provider(
     provider_id: str,
     config: ProviderConfig,
     admission: ProviderAdmissionController,
+    *,
+    default_headers: Mapping[str, str] | None = None,
 ) -> OpenAIChatProvider:
     """Construct one profile-driven provider."""
     profile = OPENAI_CHAT_PROFILES.get(provider_id)
     if profile is None:
         raise KeyError(f"No declarative OpenAI-chat profile for {provider_id!r}")
+    headers = dict(default_headers) if default_headers else {}
+    if profile.user_agent:
+        headers["User-Agent"] = profile.user_agent
     return OpenAIChatProvider(
         config,
         profile=profile,
         admission=admission,
-        default_headers=(
-            {"User-Agent": profile.user_agent} if profile.user_agent else None
-        ),
+        default_headers=headers if headers else None,
     )
 
 

@@ -150,6 +150,26 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "Ollama API key for direct OpenAI-compatible Cloud access at ollama.com/v1."
         ),
     },
+    "CUSTOM_API_KEY": {
+        "label": "Custom OpenAI API Key",
+        "description": "API Key or Token ID for custom OpenAI endpoints.",
+    },
+    "CUSTOM_BASE_URL": {
+        "label": "Custom OpenAI Base URL",
+        "description": "Base URL for custom OpenAI-compatible endpoint.",
+    },
+    "MODAL_PROXY_TOKEN_ID": {
+        "label": "Modal Proxy Token ID",
+        "description": "Modal Proxy Token ID (sent in Modal-Key header).",
+    },
+    "MODAL_PROXY_TOKEN_SECRET": {
+        "label": "Modal Proxy Token Secret",
+        "description": "Modal Proxy Token Secret (sent in Modal-Secret header).",
+    },
+    "MODAL_BASE_URL": {
+        "label": "Modal Base URL",
+        "description": "Base URL for Modal endpoint.",
+    },
 }
 
 

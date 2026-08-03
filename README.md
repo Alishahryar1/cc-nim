@@ -49,7 +49,7 @@ Run your coding agents with free, paid, or local models. Choose and validate pro
 
 - Launch Claude Code with `fcc-claude`, Codex with `fcc-codex`, or Pi with `fcc-pi`.
 - Run FCC in the background from a desktop launcher on Windows or macOS.
-- Switch among 31 cloud and local providers from the Admin UI.
+- Switch among 33 cloud and local providers from the Admin UI.
 - Use each coding agent's native model picker.
 - Route Fable, Opus, Sonnet, Haiku, and fallback traffic to different models.
 - Keep streaming, tool use, reasoning, and image input across compatible models.
@@ -198,6 +198,8 @@ fcc-codex exec "hello"
 | [LM Studio](https://lmstudio.ai/) | `LM_STUDIO_BASE_URL` | `lmstudio/<model-id>` |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | `LLAMACPP_BASE_URL` | `llamacpp/<model-id>` |
 | [Ollama](https://ollama.com/) | `OLLAMA_BASE_URL` | `ollama/<model-tag>` |
+| [Custom OpenAI](https://github.com/alishahryar1/free-claude-code) | `CUSTOM_BASE_URL` and `CUSTOM_API_KEY` | `custom/<model-id>` |
+| [Modal Endpoint](https://modal.com/) | `MODAL_BASE_URL` and `MODAL_PROXY_TOKEN_ID` | `modal/<model-id>` |
 
 Important provider notes:
 
@@ -212,7 +214,7 @@ Important provider notes:
   deployment that supports Chat Completions. Azure does not expose custom
   deployment names through its data-plane model list, so enter the deployment
   name as a custom model slug.
-- Mistral Codestral uses a separate key from Mistral La Plateforme.
+- Modal.com endpoints give $30 in free credits per month and support models like Kimi K3 (`moonshotai/Kimi-K3`). Set `MODAL_BASE_URL` to your Modal endpoint base URL (dropping `/chat/completions`), set `MODAL_PROXY_TOKEN_ID` and `MODAL_PROXY_TOKEN_SECRET`, and set `MODEL="modal/moonshotai/Kimi-K3"`. Requests automatically pass required `Modal-Key` and `Modal-Secret` headers or combined Bearer tokens.
 - Kimi Code subscription keys use `kimi_code/`; Kimi API credit keys use
   `kimi/`. Kimi Code plans are for personal interactive coding-agent use under
   [Kimi's community guidelines](https://www.kimi.com/code/docs/en/kimi-code/community-guidelines.html).

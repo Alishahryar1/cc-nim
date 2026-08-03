@@ -160,7 +160,21 @@ class Settings(BaseSettings):
     model_sonnet: str | None = Field(default=None, validation_alias="MODEL_SONNET")
     model_haiku: str | None = Field(default=None, validation_alias="MODEL_HAIKU")
 
+    # ==================== Custom OpenAI & Modal Endpoint ====================
+    custom_api_key: str = Field(default="", validation_alias="CUSTOM_API_KEY")
+    custom_base_url: str = Field(default="", validation_alias="CUSTOM_BASE_URL")
+    custom_headers_json: str = Field(default="", validation_alias="CUSTOM_HEADERS_JSON")
+    modal_proxy_token_id: str = Field(
+        default="", validation_alias="MODAL_PROXY_TOKEN_ID"
+    )
+    modal_proxy_token_secret: str = Field(
+        default="", validation_alias="MODAL_PROXY_TOKEN_SECRET"
+    )
+    modal_base_url: str = Field(default="", validation_alias="MODAL_BASE_URL")
+
     # ==================== Per-Provider Proxy ====================
+    custom_proxy: str = Field(default="", validation_alias="CUSTOM_PROXY")
+    modal_proxy: str = Field(default="", validation_alias="MODAL_PROXY")
     openai_proxy: str = Field(default="", validation_alias="OPENAI_PROXY")
     azure_openai_proxy: str = Field(default="", validation_alias="AZURE_OPENAI_PROXY")
     nvidia_nim_proxy: str = Field(default="", validation_alias="NVIDIA_NIM_PROXY")
@@ -448,6 +462,18 @@ class Settings(BaseSettings):
                 "NVIDIA_NIM_API_KEY is required when WHISPER_DEVICE is 'nvidia_nim'. "
                 "Set it in your .env file."
             )
+        return self
+
+    @model_validator(mode="after")
+    def sync_custom_and_modal_keys(self) -> "Settings":
+        if not self.custom_api_key and self.modal_proxy_token_id:
+            self.custom_api_key = self.modal_proxy_token_id
+        if not self.modal_proxy_token_id and self.custom_api_key:
+            self.modal_proxy_token_id = self.custom_api_key
+        if not self.modal_base_url and self.custom_base_url:
+            self.modal_base_url = self.custom_base_url
+        if not self.custom_base_url and self.modal_base_url:
+            self.custom_base_url = self.modal_base_url
         return self
 
     @model_validator(mode="after")

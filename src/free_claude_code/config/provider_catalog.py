@@ -372,6 +372,22 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         base_url_attr="ollama_base_url",
         local=True,
     ),
+    "custom": ProviderDescriptor(
+        provider_id="custom",
+        display_name="Custom OpenAI",
+        credential_env="CUSTOM_API_KEY",
+        credential_attr="custom_api_key",
+        base_url_attr="custom_base_url",
+        proxy_attr="custom_proxy",
+    ),
+    "modal": ProviderDescriptor(
+        provider_id="modal",
+        display_name="Modal Endpoint",
+        credential_env="MODAL_PROXY_TOKEN_ID",
+        credential_attr="modal_proxy_token_id",
+        base_url_attr="modal_base_url",
+        proxy_attr="modal_proxy",
+    ),
 }
 
 # Key order:

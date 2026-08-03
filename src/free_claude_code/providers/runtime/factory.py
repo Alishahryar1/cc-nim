@@ -191,4 +191,27 @@ def create_provider(
     factory = factory or _SPECIAL_PROVIDER_FACTORIES.get(provider_id)
     if factory is not None:
         return factory(config, settings, admission)
-    return create_openai_chat_provider(provider_id, config, admission)
+
+    default_headers: dict[str, str] = {}
+    if provider_id in ("modal", "custom"):
+        if settings.modal_proxy_token_id:
+            default_headers["Modal-Key"] = settings.modal_proxy_token_id
+        if settings.modal_proxy_token_secret:
+            default_headers["Modal-Secret"] = settings.modal_proxy_token_secret
+
+        if provider_id == "custom" and settings.custom_headers_json:
+            try:
+                import json
+
+                parsed = json.loads(settings.custom_headers_json)
+                if isinstance(parsed, dict):
+                    default_headers.update({str(k): str(v) for k, v in parsed.items()})
+            except Exception:
+                pass
+
+    return create_openai_chat_provider(
+        provider_id,
+        config,
+        admission,
+        default_headers=default_headers if default_headers else None,
+    )

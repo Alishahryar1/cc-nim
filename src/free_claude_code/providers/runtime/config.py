@@ -18,6 +18,8 @@ def provider_credential(descriptor: ProviderDescriptor, settings: Settings) -> s
     """Return the configured credential for a provider descriptor."""
     if descriptor.static_credential is not None:
         return descriptor.static_credential
+    if descriptor.provider_id == "modal" and settings.modal_proxy_token_id and settings.modal_proxy_token_secret:
+        return f"{settings.modal_proxy_token_id}.{settings.modal_proxy_token_secret}"
     if descriptor.credential_attr:
         return string_setting(settings, descriptor.credential_attr)
     return ""
