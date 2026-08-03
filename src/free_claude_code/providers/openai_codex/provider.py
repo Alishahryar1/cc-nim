@@ -91,7 +91,7 @@ class OpenAICodexProvider(BaseProvider):
         *,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> None:
-        """Validate lossless request conversion before any upstream I/O."""
+        """Validate and adapt the private Codex request before upstream I/O."""
 
         self._build_body(request, reasoning=reasoning)
 
@@ -152,9 +152,14 @@ class OpenAICodexProvider(BaseProvider):
         reasoning: ReasoningPolicy,
     ) -> dict[str, Any]:
         try:
-            return build_responses_provider_request(request, reasoning=reasoning)
+            body = build_responses_provider_request(request, reasoning=reasoning)
         except ResponsesConversionError as exc:
             raise InvalidRequestError(str(exc)) from exc
+        # The private Codex backend rejects these public Responses fields.
+        # Codex itself omits the output cap and uses separate internal metadata.
+        body.pop("max_output_tokens", None)
+        body.pop("metadata", None)
+        return body
 
     async def _run_stream(
         self,
@@ -232,8 +237,8 @@ class OpenAICodexProvider(BaseProvider):
                             truncated=body_truncated,
                         )
                         raise
-                content_type = response.headers.get("content-type", "")
-                if "text/event-stream" not in content_type.lower():
+                content_type = response.headers.get("content-type")
+                if content_type and "text/event-stream" not in content_type.lower():
                     body_bytes, body_truncated = await _read_bounded_body(response)
                     error = _TruncatedResponsesStream(
                         "OpenAI returned a non-streaming Responses payload."

@@ -657,8 +657,15 @@ failure classification, model discovery, admission, and commit-boundary retry.
 Neutral Anthropic-to-Responses input and Responses-to-Anthropic stream
 conversion remain in
 [core/openai_responses/](src/free_claude_code/core/openai_responses/), which
-never imports OAuth, account IDs, or provider endpoints. The Admin API exposes
-only safe connected-account state and never serializes token objects.
+never imports OAuth, account IDs, or provider endpoints. That neutral converter
+preserves the public Responses contract; the subscription provider owns the
+private Codex request projection and omits fields that backend does not accept,
+such as the public `max_output_tokens` cap and `metadata`. Successful private
+responses can omit `Content-Type`, so the provider accepts an absent media type
+for its always-streaming request and parses the body as SSE. An explicitly
+declared non-SSE media type retains the bounded diagnostic failure path. The
+Admin API exposes only safe connected-account state and never serializes token
+objects.
 
 [providers/google_openai/](src/free_claude_code/providers/google_openai/) owns the
 Google-specific protocol behavior shared by AI Studio and Vertex AI: literal

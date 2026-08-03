@@ -12,6 +12,7 @@ from free_claude_code.core.anthropic.stream_contracts import (
     parse_sse_text,
     text_content,
 )
+from free_claude_code.core.diagnostics import ERROR_DETAIL_DISPLAY_CAP_BYTES
 from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.admission import ProviderAdmissionController
@@ -77,6 +78,7 @@ def _client_control_request() -> MessagesRequest:
             "model": "gpt-test",
             "max_tokens": 1024,
             "messages": [{"role": "user", "content": "hello"}],
+            "metadata": {"user_id": "example-user"},
             "thinking": {"type": "adaptive", "display": "omitted"},
             "context_management": {
                 "edits": [
@@ -151,8 +153,7 @@ async def test_provider_uses_subscription_headers_and_visible_model_catalog() ->
         assert request.url.path.endswith("/responses")
         return httpx.Response(
             200,
-            text=_complete_stream("hello"),
-            headers={"content-type": "text/event-stream"},
+            content=_complete_stream("hello").encode(),
             request=request,
         )
 
@@ -215,6 +216,7 @@ async def test_provider_accepts_claude_client_controls_before_upstream_io() -> N
         _config(), auth=_FakeAuth(), admission=_admission(), client=client
     )
     request = _client_control_request()
+    original_request = request.model_dump()
     reasoning = ReasoningPolicy.on(effort=ReasoningEffort.HIGH)
 
     provider.preflight_stream(request, reasoning=reasoning)
@@ -235,8 +237,11 @@ async def test_provider_accepts_claude_client_controls_before_upstream_io() -> N
     payload = json.loads(upstream.content)
     assert payload["model"] == "gpt-test"
     assert payload["reasoning"] == {"effort": "high", "summary": "auto"}
+    assert "max_output_tokens" not in payload
+    assert "metadata" not in payload
     assert "context_management" not in payload
     assert "output_config" not in payload
+    assert request.model_dump() == original_request
     assert_anthropic_stream_contract(parse_sse_text(body))
     await client.aclose()
 
@@ -487,13 +492,20 @@ async def test_pre_stream_retry_discards_held_message_start() -> None:
 @pytest.mark.asyncio
 async def test_non_streaming_success_is_retried_then_reports_bounded_body() -> None:
     attempts = 0
+    tail_sentinel = "must-not-escape-the-diagnostic-cap"
+    upstream_body = (
+        "upstream contract changed\n"
+        + "x" * ERROR_DETAIL_DISPLAY_CAP_BYTES
+        + tail_sentinel
+    ).encode()
 
     def handler(request: httpx.Request) -> httpx.Response:
         nonlocal attempts
         attempts += 1
         return httpx.Response(
             200,
-            json={"error": {"message": "upstream contract changed"}},
+            content=upstream_body,
+            headers={"content-type": "application/json"},
             request=request,
         )
 
@@ -516,6 +528,10 @@ async def test_non_streaming_success_is_retried_then_reports_bounded_body() -> N
 
     assert attempts > 1
     assert "upstream contract changed" in exc_info.value.message
+    assert f"truncated after {ERROR_DETAIL_DISPLAY_CAP_BYTES} bytes" in (
+        exc_info.value.message
+    )
+    assert tail_sentinel not in exc_info.value.message
     assert "Request ID: req_non_stream" in exc_info.value.message
     await client.aclose()
 

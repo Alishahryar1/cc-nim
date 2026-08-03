@@ -62,8 +62,7 @@ async def test_messages_accepts_current_claude_controls_for_openai_provider() ->
         upstream_requests.append(request)
         return httpx.Response(
             200,
-            text=_complete_stream("hello"),
-            headers={"content-type": "text/event-stream"},
+            content=_complete_stream("hello").encode(),
             request=request,
         )
 
@@ -101,6 +100,7 @@ async def test_messages_accepts_current_claude_controls_for_openai_provider() ->
                     "model": "openai/gpt-test",
                     "max_tokens": 1024,
                     "messages": [{"role": "user", "content": "hello"}],
+                    "metadata": {"user_id": "example-user"},
                     "thinking": {"type": "adaptive", "display": "omitted"},
                     "context_management": {
                         "edits": [
@@ -126,5 +126,7 @@ async def test_messages_accepts_current_claude_controls_for_openai_provider() ->
     payload = json.loads(upstream_requests[0].content)
     assert payload["model"] == "gpt-test"
     assert payload["reasoning"] == {"effort": "high", "summary": "auto"}
+    assert "max_output_tokens" not in payload
+    assert "metadata" not in payload
     assert "context_management" not in payload
     assert "output_config" not in payload

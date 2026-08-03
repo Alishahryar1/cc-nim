@@ -169,6 +169,77 @@ printf '%s\n' "$FCC_PS_OUTPUT"
             env=env,
         )
 
+    def run_interactive(
+        self,
+        answers: str,
+        *args: str,
+        fail_step: str = "",
+    ) -> subprocess.CompletedProcess[str]:
+        import errno
+        import pty
+        import select
+        import time
+
+        env = self.env | {
+            "FAIL_STEP": fail_step,
+            "FCC_INSTALLER": str(_repo_root() / "scripts" / "install.sh"),
+        }
+        command = [
+            "/bin/sh",
+            "-c",
+            'cat "$FCC_INSTALLER" | /bin/sh -s -- "$@"',
+            "fcc-installer",
+            *args,
+        ]
+        fork = vars(pty)["fork"]
+        wait_without_blocking = vars(os)["WNOHANG"]
+        child_pid, master_fd = fork()
+        if child_pid == 0:
+            os.execve(command[0], command, env)
+
+        output = bytearray()
+        status: int | None = None
+        deadline = time.monotonic() + 30
+        try:
+            os.write(master_fd, answers.encode())
+            while status is None:
+                readable, _, _ = select.select([master_fd], [], [], 0.1)
+                if readable:
+                    try:
+                        output.extend(os.read(master_fd, 65536))
+                    except OSError as error:
+                        if error.errno != errno.EIO:
+                            raise
+
+                waited_pid, wait_status = os.waitpid(child_pid, wait_without_blocking)
+                if waited_pid == child_pid:
+                    status = wait_status
+                elif time.monotonic() >= deadline:
+                    os.kill(child_pid, 9)
+                    os.waitpid(child_pid, 0)
+                    raise AssertionError("Interactive installer did not finish")
+
+            while True:
+                readable, _, _ = select.select([master_fd], [], [], 0)
+                if not readable:
+                    break
+                try:
+                    output.extend(os.read(master_fd, 65536))
+                except OSError as error:
+                    if error.errno == errno.EIO:
+                        break
+                    raise
+        finally:
+            os.close(master_fd)
+
+        assert status is not None
+        return subprocess.CompletedProcess(
+            command,
+            os.waitstatus_to_exitcode(status),
+            output.decode(errors="replace"),
+            "",
+        )
+
     def calls(self) -> list[str]:
         if not self.log.exists():
             return []
@@ -352,6 +423,32 @@ def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> No
         "uv:tool dir --bin",
         "fcc-server:--version",
     ]
+
+
+def test_install_sh_reprompts_then_installs_only_selected_agent(
+    posix_harness: PosixHarness,
+) -> None:
+    result = posix_harness.run_interactive("n\nn\nn\nn\ny\nn\n")
+
+    assert result.returncode == 0, result.stdout
+    assert "Select at least one coding agent." in result.stdout
+    assert "Run Codex with: fcc-codex" in result.stdout
+    assert "Run Claude Code with: fcc-claude" not in result.stdout
+    assert "Run Pi with: fcc-pi" not in result.stdout
+    calls = posix_harness.calls()
+    assert "codex-install:1" in calls
+    assert not any("claude.ai" in call for call in calls)
+    assert not any("pi.dev" in call for call in calls)
+
+
+def test_install_sh_rejects_uninstalled_only_selection(
+    posix_harness: PosixHarness,
+) -> None:
+    result = posix_harness.run_interactive("n\nn\ny\n", fail_step="pi-skip")
+
+    assert result.returncode != 0
+    assert "No selected coding agent was installed." in result.stdout
+    assert not any("astral.sh" in call for call in posix_harness.calls())
 
 
 def test_install_sh_creates_native_macos_app_and_desktop_link(
@@ -1560,6 +1657,158 @@ def test_readme_install_section_has_no_manual_git_prerequisite() -> None:
 
     assert "Install Git" not in install_section
     assert "official native installers" not in install_section
+
+
+@pytest.mark.parametrize("powershell", _powershells())
+def test_install_ps1_rejects_invalid_download_before_execution(
+    powershell: str,
+) -> None:
+    text = (_repo_root() / "scripts" / "install.ps1").read_text(encoding="utf-8")
+    body = _braced_body(text, "function Invoke-DownloadedPowerShellInstaller")
+    script = f"""Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+$DryRun = $false
+function Format-Argument {{ param([string] $Value) return $Value }}
+function Invoke-RestMethod {{
+    [CmdletBinding()]
+    param([string] $Uri, [string] $OutFile)
+    [IO.File]::WriteAllText($OutFile, "<style>div#box {{")
+}}
+function Get-PowerShellExecutable {{ throw "invalid installer reached execution" }}
+function Invoke-DownloadedPowerShellInstaller {{{body}}}
+Invoke-DownloadedPowerShellInstaller `
+    -Url "https://example.test/install.ps1" `
+    -Name "Example"
+"""
+
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-Command", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert (
+        "Example installer from 'https://example.test/install.ps1' is not valid PowerShell"
+        in result.stderr
+    )
+    assert "network proxy or filter" in result.stderr
+    assert "invalid installer reached execution" not in result.stderr
+
+
+@pytest.mark.parametrize("powershell", _powershells())
+@pytest.mark.parametrize(
+    ("answers", "expected", "expected_messages"),
+    [
+        (("", "", ""), "True,True,True", ()),
+        (
+            ("maybe", "n", "n", "n", "n", "y", "n"),
+            "False,True,False",
+            ("Please answer Y or N.", "Select at least one coding agent."),
+        ),
+    ],
+)
+def test_install_ps1_selects_at_least_one_coding_agent(
+    powershell: str,
+    answers: tuple[str, ...],
+    expected: str,
+    expected_messages: tuple[str, ...],
+) -> None:
+    text = (_repo_root() / "scripts" / "install.ps1").read_text(encoding="utf-8")
+    read_yes_no = _braced_body(text, "function Read-YesNo")
+    select_agents = _braced_body(text, "function Select-CodingAgents")
+    answer_array = ", ".join(repr(answer) for answer in answers)
+    script = f"""Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+$script:Answers = @({answer_array})
+$script:AnswerIndex = 0
+$script:InstallClaudeCode = $true
+$script:InstallCodex = $true
+$script:InstallPi = $true
+function Read-Host {{
+    param([string] $Prompt)
+    $answer = $script:Answers[$script:AnswerIndex]
+    $script:AnswerIndex += 1
+    return $answer
+}}
+function Read-YesNo {{{read_yes_no}}}
+function Select-CodingAgents {{{select_agents}}}
+Select-CodingAgents
+Write-Output "selection:$($script:InstallClaudeCode),$($script:InstallCodex),$($script:InstallPi)"
+"""
+
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-Command", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert f"selection:{expected}" in result.stdout
+    for message in expected_messages:
+        assert message in result.stdout
+
+
+@pytest.mark.parametrize("powershell", _powershells())
+def test_install_ps1_runs_only_selected_coding_agents(powershell: str) -> None:
+    text = (_repo_root() / "scripts" / "install.ps1").read_text(encoding="utf-8")
+    body = _braced_body(text, "function Ensure-SelectedCodingAgents")
+    script = f"""Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+$script:InstallClaudeCode = $false
+$script:InstallCodex = $true
+$script:InstallPi = $false
+$script:PiAvailable = $false
+$script:Calls = @()
+function Write-Step {{ param([string] $Message) }}
+function Ensure-ClaudeCode {{ $script:Calls += "claude" }}
+function Ensure-Codex {{ $script:Calls += "codex" }}
+function Ensure-Pi {{ $script:Calls += "pi"; $script:PiAvailable = $true }}
+function Ensure-SelectedCodingAgents {{{body}}}
+Ensure-SelectedCodingAgents
+Write-Output "calls:$($script:Calls -join ',')"
+"""
+
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-Command", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "calls:codex" in result.stdout
+
+
+@pytest.mark.parametrize("powershell", _powershells())
+def test_install_ps1_rejects_uninstalled_only_selection(powershell: str) -> None:
+    text = (_repo_root() / "scripts" / "install.ps1").read_text(encoding="utf-8")
+    body = _braced_body(text, "function Ensure-SelectedCodingAgents")
+    script = f"""Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+$script:InstallClaudeCode = $false
+$script:InstallCodex = $false
+$script:InstallPi = $true
+$script:PiAvailable = $false
+function Write-Step {{ param([string] $Message) }}
+function Ensure-ClaudeCode {{ }}
+function Ensure-Codex {{ }}
+function Ensure-Pi {{ }}
+function Ensure-SelectedCodingAgents {{{body}}}
+Ensure-SelectedCodingAgents
+"""
+
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-Command", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "No selected coding agent was installed." in result.stderr
 
 
 @pytest.mark.parametrize("powershell", _powershells())

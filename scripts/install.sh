@@ -17,6 +17,9 @@ dry_run=0
 voice_nim=0
 voice_local=0
 voice_all=0
+install_claude=1
+install_codex=1
+install_pi=1
 torch_backend=""
 temporary_script=""
 tool_bin=""
@@ -26,7 +29,7 @@ show_usage() {
     cat <<'USAGE'
 Usage: install.sh [options]
 
-Installs Claude Code and Codex, offers to install Pi, ensures a compatible uv, and installs or updates Free Claude Code.
+Installs or updates Free Claude Code and lets you choose which coding agents to install or verify.
 
 Options:
   --voice-nim              Install NVIDIA NIM voice transcription support.
@@ -41,6 +44,58 @@ USAGE
 fail() {
     printf 'error: %s\n' "$*" >&2
     exit 1
+}
+
+installer_is_interactive() {
+    [ -t 1 ] && ( : </dev/tty ) 2>/dev/null
+}
+
+prompt_yes_no() {
+    question=$1
+    while :; do
+        printf '%s [Y/n] ' "$question" >&4
+        if ! IFS= read -r answer <&3; then
+            fail "Could not read the coding agent selection."
+        fi
+        case "$answer" in
+            ""|[Yy]|[Yy][Ee][Ss]) return 0 ;;
+            [Nn]|[Nn][Oo]) return 1 ;;
+            *) printf 'Please answer Y or N.\n' >&4 ;;
+        esac
+    done
+}
+
+choose_coding_agents() {
+    selection_input=$1
+    selection_output=$2
+    exec 3<"$selection_input"
+    exec 4>"$selection_output"
+
+    while :; do
+        if prompt_yes_no "Install or verify Claude Code for fcc-claude?"; then
+            install_claude=1
+        else
+            install_claude=0
+        fi
+        if prompt_yes_no "Install or verify Codex for fcc-codex?"; then
+            install_codex=1
+        else
+            install_codex=0
+        fi
+        if prompt_yes_no "Install or verify Pi for fcc-pi?"; then
+            install_pi=1
+        else
+            install_pi=0
+        fi
+
+        if [ "$install_claude" -eq 1 ] || [ "$install_codex" -eq 1 ] || [ "$install_pi" -eq 1 ]; then
+            break
+        fi
+        printf 'Select at least one coding agent.\n\n' >&4
+    done
+
+    exec 3<&-
+    exec 4>&-
 }
 
 step() {
@@ -329,6 +384,27 @@ ensure_pi() {
 
     verify_pi_command
     pi_available=1
+}
+
+ensure_selected_coding_agents() {
+    if [ "$install_claude" -eq 1 ]; then
+        step "Ensuring Claude Code is installed"
+        ensure_claude
+    fi
+
+    if [ "$install_codex" -eq 1 ]; then
+        step "Ensuring Codex is installed"
+        ensure_codex
+    fi
+
+    if [ "$install_pi" -eq 1 ]; then
+        step "Checking or installing Pi"
+        ensure_pi
+    fi
+
+    if [ "$install_claude" -eq 0 ] && [ "$install_codex" -eq 0 ] && [ "$pi_available" -eq 0 ]; then
+        fail "No selected coding agent was installed. Re-run the installer and choose at least one."
+    fi
 }
 
 current_uv_version() {
@@ -631,20 +707,20 @@ add_known_bin_directories
 step "Checking for running Free Claude Code processes"
 assert_no_fcc_processes_running
 
+if installer_is_interactive; then
+    step "Choosing coding agents"
+    choose_coding_agents /dev/tty /dev/tty
+fi
+
 step "Checking installation prerequisites"
 require_command curl
-require_command bash
+if [ "$install_claude" -eq 1 ]; then
+    require_command bash
+fi
 require_command sh
 require_command mktemp
 
-step "Ensuring Claude Code is installed"
-ensure_claude
-
-step "Ensuring Codex is installed"
-ensure_codex
-
-step "Checking or installing Pi"
-ensure_pi
+ensure_selected_coding_agents
 
 step "Ensuring uv $MIN_UV_VERSION or newer is installed"
 ensure_uv
@@ -669,8 +745,12 @@ else
     else
         printf '\nFree Claude Code is installed and verified. Start the proxy with: fcc-server\n'
     fi
-    printf 'Run Claude Code with: fcc-claude\n'
-    printf 'Run Codex with: fcc-codex\n'
+    if [ "$install_claude" -eq 1 ]; then
+        printf 'Run Claude Code with: fcc-claude\n'
+    fi
+    if [ "$install_codex" -eq 1 ]; then
+        printf 'Run Codex with: fcc-codex\n'
+    fi
     if [ "$pi_available" -eq 1 ]; then
         printf 'Run Pi with: fcc-pi\n'
     fi
