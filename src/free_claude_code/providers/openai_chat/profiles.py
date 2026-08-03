@@ -157,11 +157,11 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         NO_REASONING,
     ),
     "opencode": OpenAIChatProfile(
-        _policy("OPENCODE", ReasoningReplayMode.THINK_TAGS),
+        _policy("OPENCODE", ReasoningReplayMode.REASONING_CONTENT),
         NO_REASONING,
     ),
     "opencode_go": OpenAIChatProfile(
-        _policy("OPENCODE_GO", ReasoningReplayMode.THINK_TAGS),
+        _policy("OPENCODE_GO", ReasoningReplayMode.REASONING_CONTENT),
         NO_REASONING,
     ),
     "vercel": OpenAIChatProfile(
