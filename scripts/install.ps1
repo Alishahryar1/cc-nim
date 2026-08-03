@@ -21,6 +21,9 @@ $ClaudeInstallUrl = "https://claude.ai/install.ps1"
 $CodexInstallUrl = "https://chatgpt.com/codex/install.ps1"
 $PiInstallUrl = "https://pi.dev/install.ps1"
 $UvInstallUrl = "https://astral.sh/uv/install.ps1"
+$script:InstallClaudeCode = $true
+$script:InstallCodex = $true
+$script:InstallPi = $true
 $script:PiAvailable = $false
 $FccCommands = @(
     # Include retired entry points so updates reject older FCC processes before replacement.
@@ -37,7 +40,7 @@ function Show-Usage {
     @"
 Usage: install.ps1 [options]
 
-Installs Claude Code and Codex, offers to install Pi, ensures a compatible uv, and installs or updates Free Claude Code.
+Installs or updates Free Claude Code and lets you choose which coding agents to install or verify.
 
 Options:
   -VoiceNim              Install NVIDIA NIM voice transcription support.
@@ -54,6 +57,39 @@ function Write-Step {
 
     Write-Host ""
     Write-Host "==> $Message"
+}
+
+function Test-InteractiveInstaller {
+    return (-not [Console]::IsInputRedirected) -and (-not [Console]::IsOutputRedirected)
+}
+
+function Read-YesNo {
+    param([string] $Prompt)
+
+    while ($true) {
+        $answer = ([string] (Read-Host "$Prompt [Y/n]")).Trim().ToLowerInvariant()
+        if ($answer -in @("", "y", "yes")) {
+            return $true
+        }
+        if ($answer -in @("n", "no")) {
+            return $false
+        }
+        Write-Host "Please answer Y or N."
+    }
+}
+
+function Select-CodingAgents {
+    while ($true) {
+        $script:InstallClaudeCode = Read-YesNo "Install or verify Claude Code for fcc-claude?"
+        $script:InstallCodex = Read-YesNo "Install or verify Codex for fcc-codex?"
+        $script:InstallPi = Read-YesNo "Install or verify Pi for fcc-pi?"
+
+        if ($script:InstallClaudeCode -or $script:InstallCodex -or $script:InstallPi) {
+            return
+        }
+        Write-Host "Select at least one coding agent."
+        Write-Host ""
+    }
 }
 
 function Format-Argument {
@@ -390,6 +426,27 @@ function Ensure-Pi {
     $script:PiAvailable = $true
 }
 
+function Ensure-SelectedCodingAgents {
+    if ($script:InstallClaudeCode) {
+        Write-Step "Ensuring Claude Code is installed"
+        Ensure-ClaudeCode
+    }
+
+    if ($script:InstallCodex) {
+        Write-Step "Ensuring Codex is installed"
+        Ensure-Codex
+    }
+
+    if ($script:InstallPi) {
+        Write-Step "Checking or installing Pi"
+        Ensure-Pi
+    }
+
+    if ((-not $script:InstallClaudeCode) -and (-not $script:InstallCodex) -and (-not $script:PiAvailable)) {
+        throw "No selected coding agent was installed. Re-run the installer and choose at least one."
+    }
+}
+
 function Convert-UvVersionOutput {
     param([string] $Output)
 
@@ -709,14 +766,12 @@ Add-KnownBinDirectories
 Write-Step "Checking for running Free Claude Code processes"
 Assert-NoFccProcessesRunning
 
-Write-Step "Ensuring Claude Code is installed"
-Ensure-ClaudeCode
+if (Test-InteractiveInstaller) {
+    Write-Step "Choosing coding agents"
+    Select-CodingAgents
+}
 
-Write-Step "Ensuring Codex is installed"
-Ensure-Codex
-
-Write-Step "Checking or installing Pi"
-Ensure-Pi
+Ensure-SelectedCodingAgents
 
 Write-Step "Ensuring uv $MinUvVersion or newer is installed"
 Ensure-Uv
@@ -734,8 +789,12 @@ if ($DryRun) {
 else {
     Write-Host "Free Claude Code is installed and verified. Open the Free Claude Code desktop shortcut to run it in the background."
     Write-Host "For terminal use, start the proxy with: fcc-server"
-    Write-Host "Run Claude Code with: fcc-claude"
-    Write-Host "Run Codex with: fcc-codex"
+    if ($script:InstallClaudeCode) {
+        Write-Host "Run Claude Code with: fcc-claude"
+    }
+    if ($script:InstallCodex) {
+        Write-Host "Run Codex with: fcc-codex"
+    }
     if ($script:PiAvailable) {
         Write-Host "Run Pi with: fcc-pi"
     }
