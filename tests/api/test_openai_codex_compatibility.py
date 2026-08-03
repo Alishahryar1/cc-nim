@@ -62,7 +62,7 @@ async def test_messages_accepts_current_claude_controls_for_openai_provider() ->
         upstream_requests.append(request)
         return httpx.Response(
             200,
-            text=_complete_stream("hello"),
+            content=_complete_stream("hello").encode(),
             request=request,
         )
 

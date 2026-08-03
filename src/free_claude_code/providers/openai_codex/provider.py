@@ -237,6 +237,18 @@ class OpenAICodexProvider(BaseProvider):
                             truncated=body_truncated,
                         )
                         raise
+                content_type = response.headers.get("content-type")
+                if content_type and "text/event-stream" not in content_type.lower():
+                    body_bytes, body_truncated = await _read_bounded_body(response)
+                    error = _TruncatedResponsesStream(
+                        "OpenAI returned a non-streaming Responses payload."
+                    )
+                    attach_upstream_error_body(
+                        error,
+                        body_bytes,
+                        truncated=body_truncated,
+                    )
+                    raise error
                 stream_opened = True
 
                 async for event_type, payload in _iter_sse(response):
@@ -327,141 +339,38 @@ async def _iter_sse(
 ) -> AsyncIterator[tuple[str, dict[str, Any]]]:
     event_type = ""
     data_lines: list[str] = []
-    body_prefix = bytearray()
-    saw_sse_framing = False
-    saw_sse_event = False
-    pending_line = bytearray()
-    suppress_lf = False
-    done = False
-
-    def decode_lines(chunk: bytes, *, flush: bool = False) -> list[str]:
-        nonlocal saw_sse_framing, suppress_lf
-        lines: list[str] = []
-        for byte in chunk:
-            if suppress_lf:
-                suppress_lf = False
-                if byte == 0x0A:
-                    continue
-            if byte == 0x0D:
-                lines.append(pending_line.decode("utf-8", errors="replace"))
-                pending_line.clear()
-                suppress_lf = True
-            elif byte == 0x0A:
-                lines.append(pending_line.decode("utf-8", errors="replace"))
-                pending_line.clear()
-            else:
-                pending_line.append(byte)
-                # A valid first Codex event can exceed the diagnostic cap.
-                # Field syntax, not complete event size, ends the non-SSE guard.
-                if pending_line in (b"event:", b"data:"):
-                    saw_sse_framing = True
-        if flush and pending_line:
-            lines.append(pending_line.decode("utf-8", errors="replace"))
-            pending_line.clear()
-        return lines
-
-    def process_line(line: str) -> tuple[str, dict[str, Any]] | None:
-        nonlocal data_lines, done, event_type, saw_sse_event
+    async for line in response.aiter_lines():
         if not line:
             if not data_lines:
                 event_type = ""
-                return None
+                continue
             raw_data = "\n".join(data_lines)
             data_lines = []
             if raw_data == "[DONE]":
-                done = True
-                return None
+                return
             try:
                 payload = json.loads(raw_data)
             except json.JSONDecodeError as exc:
-                error = _TruncatedResponsesStream(
+                raise _TruncatedResponsesStream(
                     "OpenAI returned malformed Responses SSE."
-                )
-                body_bytes = raw_data.encode("utf-8", errors="replace")
-                attach_upstream_error_body(
-                    error,
-                    body_bytes[:ERROR_DETAIL_DISPLAY_CAP_BYTES],
-                    truncated=len(body_bytes) > ERROR_DETAIL_DISPLAY_CAP_BYTES,
-                )
-                raise error from exc
+                ) from exc
             if not isinstance(payload, dict):
-                error = _TruncatedResponsesStream(
+                raise _TruncatedResponsesStream(
                     "OpenAI returned a non-object Responses event."
                 )
-                body_bytes = raw_data.encode("utf-8", errors="replace")
-                attach_upstream_error_body(
-                    error,
-                    body_bytes[:ERROR_DETAIL_DISPLAY_CAP_BYTES],
-                    truncated=len(body_bytes) > ERROR_DETAIL_DISPLAY_CAP_BYTES,
-                )
-                raise error
-            saw_sse_event = True
-            body_prefix.clear()
             resolved_type = event_type or payload.get("type")
             event_type = ""
             if isinstance(resolved_type, str) and resolved_type:
-                return resolved_type, payload
-            return None
+                yield resolved_type, payload
+            continue
         if line.startswith("event:"):
             event_type = line[6:].strip()
         elif line.startswith("data:"):
             data_lines.append(line[5:].lstrip())
-        return None
-
-    def non_streaming_error() -> _TruncatedResponsesStream:
-        error = _TruncatedResponsesStream(
-            "OpenAI returned a non-streaming Responses payload."
-        )
-        attach_upstream_error_body(
-            error,
-            bytes(body_prefix[:ERROR_DETAIL_DISPLAY_CAP_BYTES]),
-            truncated=len(body_prefix) > ERROR_DETAIL_DISPLAY_CAP_BYTES,
-        )
-        return error
-
-    async for chunk in response.aiter_bytes():
-        offset = 0
-        while offset < len(chunk):
-            if saw_sse_framing:
-                segment = chunk[offset:]
-                offset = len(chunk)
-            else:
-                remaining = ERROR_DETAIL_DISPLAY_CAP_BYTES + 1 - len(body_prefix)
-                segment = chunk[offset : offset + remaining]
-                body_prefix.extend(segment)
-                offset += len(segment)
-
-            for line in decode_lines(segment):
-                event = process_line(line)
-                if done:
-                    return
-                if event is not None:
-                    yield event
-
-            if not saw_sse_framing and (
-                len(body_prefix) > ERROR_DETAIL_DISPLAY_CAP_BYTES
-            ):
-                raise non_streaming_error()
-
-    for line in decode_lines(b"", flush=True):
-        event = process_line(line)
-        if done:
-            return
-        if event is not None:
-            yield event
     if data_lines:
-        error = _TruncatedResponsesStream(
+        raise _TruncatedResponsesStream(
             "OpenAI Responses stream ended during an SSE event."
         )
-        body_bytes = "\n".join(data_lines).encode("utf-8", errors="replace")
-        attach_upstream_error_body(
-            error,
-            body_bytes[:ERROR_DETAIL_DISPLAY_CAP_BYTES],
-            truncated=len(body_bytes) > ERROR_DETAIL_DISPLAY_CAP_BYTES,
-        )
-        raise error
-    if not saw_sse_event:
-        raise non_streaming_error()
 
 
 async def _read_bounded_body(
