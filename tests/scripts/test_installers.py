@@ -1563,6 +1563,44 @@ def test_readme_install_section_has_no_manual_git_prerequisite() -> None:
 
 
 @pytest.mark.parametrize("powershell", _powershells())
+def test_install_ps1_rejects_invalid_download_before_execution(
+    powershell: str,
+) -> None:
+    text = (_repo_root() / "scripts" / "install.ps1").read_text(encoding="utf-8")
+    body = _braced_body(text, "function Invoke-DownloadedPowerShellInstaller")
+    script = f"""Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+$DryRun = $false
+function Format-Argument {{ param([string] $Value) return $Value }}
+function Invoke-RestMethod {{
+    [CmdletBinding()]
+    param([string] $Uri, [string] $OutFile)
+    [IO.File]::WriteAllText($OutFile, "<style>div#box {{")
+}}
+function Get-PowerShellExecutable {{ throw "invalid installer reached execution" }}
+function Invoke-DownloadedPowerShellInstaller {{{body}}}
+Invoke-DownloadedPowerShellInstaller `
+    -Url "https://example.test/install.ps1" `
+    -Name "Example"
+"""
+
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-Command", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert (
+        "Example installer from 'https://example.test/install.ps1' is not valid PowerShell"
+        in result.stderr
+    )
+    assert "network proxy or filter" in result.stderr
+    assert "invalid installer reached execution" not in result.stderr
+
+
+@pytest.mark.parametrize("powershell", _powershells())
 def test_install_ps1_falls_back_when_pshome_executable_is_unavailable(
     tmp_path: Path,
     powershell: str,

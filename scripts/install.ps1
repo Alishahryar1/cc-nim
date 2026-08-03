@@ -241,6 +241,17 @@ function Invoke-DownloadedPowerShellInstaller {
             throw "The downloaded $Name installer was empty."
         }
 
+        $tokens = $null
+        $parseErrors = $null
+        [System.Management.Automation.Language.Parser]::ParseFile(
+            $temporaryScript,
+            [ref] $tokens,
+            [ref] $parseErrors
+        ) | Out-Null
+        if ($parseErrors.Count -gt 0) {
+            throw "The downloaded $Name installer from '$Url' is not valid PowerShell. A network proxy or filter may have replaced it with an HTML response."
+        }
+
         $powerShellPath = Get-PowerShellExecutable
 
         $hadNonInteractive = Test-Path Env:CODEX_NON_INTERACTIVE
