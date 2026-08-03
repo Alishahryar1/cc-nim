@@ -662,9 +662,10 @@ preserves the public Responses contract; the subscription provider owns the
 private Codex request projection and omits fields that backend does not accept,
 such as the public `max_output_tokens` cap and `metadata`. Successful private
 responses are recognized from their SSE framing rather than their media type
-because the backend can omit `Content-Type`; a bounded pre-event prefix is
-retained only for diagnosing genuine non-SSE HTTP 2xx responses. The Admin API
-exposes only safe connected-account state and never serializes token objects.
+because the backend can omit `Content-Type`. Before framing is established,
+parsing stops at the diagnostic byte cap and retains only that bounded prefix
+for genuine non-SSE HTTP 2xx responses. The Admin API exposes only safe
+connected-account state and never serializes token objects.
 
 [providers/google_openai/](src/free_claude_code/providers/google_openai/) owns the
 Google-specific protocol behavior shared by AI Studio and Vertex AI: literal

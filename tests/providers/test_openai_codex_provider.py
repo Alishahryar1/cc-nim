@@ -128,6 +128,38 @@ async def _collect(stream: AsyncIterator[str]) -> str:
     return "".join([chunk async for chunk in stream])
 
 
+class _ChunkedAsyncStream(httpx.AsyncByteStream):
+    def __init__(self, chunks: list[bytes]) -> None:
+        self._chunks = chunks
+        self.closed = False
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        for chunk in self._chunks:
+            yield chunk
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
+class _GuardedNonStreamingBody(httpx.AsyncByteStream):
+    def __init__(self) -> None:
+        prefix = b"upstream contract changed "
+        self._first_chunk = prefix + b"x" * (
+            ERROR_DETAIL_DISPLAY_CAP_BYTES + 1 - len(prefix)
+        )
+        self.reads = 0
+        self.closed = False
+
+    async def __aiter__(self) -> AsyncIterator[bytes]:
+        self.reads += 1
+        yield self._first_chunk
+        self.reads += 1
+        raise AssertionError("FCC requested bytes beyond the diagnostic cap")
+
+    async def aclose(self) -> None:
+        self.closed = True
+
+
 @pytest.mark.asyncio
 async def test_provider_uses_subscription_headers_and_visible_model_catalog() -> None:
     requests: list[httpx.Request] = []
@@ -533,6 +565,136 @@ async def test_non_streaming_success_is_retried_then_reports_bounded_body() -> N
     )
     assert tail_sentinel not in exc_info.value.message
     assert "Request ID: req_non_stream" in exc_info.value.message
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_non_streaming_success_stops_reading_at_diagnostic_cap() -> None:
+    streams: list[_GuardedNonStreamingBody] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        stream = _GuardedNonStreamingBody()
+        streams.append(stream)
+        return httpx.Response(200, stream=stream, request=request)
+
+    client = httpx.AsyncClient(
+        base_url="https://chatgpt.com/backend-api/codex/",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = OpenAICodexProvider(
+        _config(), auth=_FakeAuth(), admission=_admission(), client=client
+    )
+
+    with pytest.raises(ExecutionFailure) as exc_info:
+        await _collect(
+            provider.stream_response(
+                _request(),
+                request_id="req_bounded_stream",
+                response_model="claude-opus-4",
+            )
+        )
+
+    assert len(streams) > 1
+    assert all(stream.reads == 1 for stream in streams)
+    assert all(stream.closed for stream in streams)
+    assert "upstream contract changed" in exc_info.value.message
+    assert "requested bytes beyond" not in exc_info.value.message
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_stream_parser_preserves_chunked_sse_line_boundaries() -> None:
+    text = "héllo"
+    created = json.dumps(
+        {
+            "type": "response.created",
+            "response": {
+                "id": "resp_1",
+                "instructions": "x" * (ERROR_DETAIL_DISPLAY_CAP_BYTES + 1),
+            },
+        }
+    )
+    delta = json.dumps(
+        {"type": "response.output_text.delta", "delta": text},
+        ensure_ascii=False,
+    )
+    completed = json.dumps(
+        {
+            "type": "response.completed",
+            "response": {
+                "id": "resp_1",
+                "usage": {"input_tokens": 3, "output_tokens": 2},
+            },
+        }
+    )
+    body = (
+        f"event: response.created\r\ndata: {created}\r\r"
+        f"event: response.output_text.delta\ndata: {delta}\n\n"
+        f"event: response.completed\r\ndata: {completed}\r\n\r\n"
+    ).encode()
+    crlf_split = body.index(b"\r\n") + 1
+    utf8_split = body.index("é".encode()) + 1
+    split_points = sorted((crlf_split, utf8_split))
+    chunks = [
+        body[: split_points[0]],
+        body[split_points[0] : split_points[1]],
+        body[split_points[1] :],
+    ]
+    streams: list[_ChunkedAsyncStream] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        stream = _ChunkedAsyncStream(chunks)
+        streams.append(stream)
+        return httpx.Response(200, stream=stream, request=request)
+
+    client = httpx.AsyncClient(
+        base_url="https://chatgpt.com/backend-api/codex/",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = OpenAICodexProvider(
+        _config(), auth=_FakeAuth(), admission=_admission(), client=client
+    )
+
+    result = await _collect(provider.stream_response(_request()))
+
+    events = parse_sse_text(result)
+    assert_anthropic_stream_contract(events)
+    assert text_content(events) == text
+    assert len(streams) == 1
+    assert streams[0].closed
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("body", "expected_detail"),
+    [
+        (b"data: {\n\n", "malformed Responses SSE"),
+        (b"data: []\n\n", "non-object Responses event"),
+        (
+            b'data: {"type":"response.created"}',
+            "stream ended during an SSE event",
+        ),
+    ],
+)
+async def test_invalid_sse_event_diagnostics_are_preserved(
+    body: bytes,
+    expected_detail: str,
+) -> None:
+    def handler(request: httpx.Request) -> httpx.Response:
+        return httpx.Response(200, content=body, request=request)
+
+    client = httpx.AsyncClient(
+        base_url="https://chatgpt.com/backend-api/codex/",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = OpenAICodexProvider(
+        _config(), auth=_FakeAuth(), admission=_admission(), client=client
+    )
+
+    with pytest.raises(ExecutionFailure, match=expected_detail):
+        await _collect(provider.stream_response(_request()))
+
     await client.aclose()
 
 
