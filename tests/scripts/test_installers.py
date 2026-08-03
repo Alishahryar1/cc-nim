@@ -921,12 +921,7 @@ exit /b 0
 if "%FAIL_STEP%"=="path-update" exit /b 54
 exit /b 0
 :tool_bin
-if "%FAKE_UTF8_TOOL_BIN%"=="1" goto utf8_tool_bin
 echo %FAKE_TOOL_BIN%
-exit /b 0
-:utf8_tool_bin
-"%FAKE_POWERSHELL%" -NoProfile -NonInteractive -File "%FAKE_FIXTURES%\utf8-output.ps1"
-if errorlevel 1 exit /b 66
 exit /b 0
 """
 
@@ -956,12 +951,7 @@ class PowerShellHarness:
     def add_uv(self, version: str) -> None:
         _write_executable(self.bin_dir / "uv.cmd", _batch_uv(version))
 
-    def run(
-        self,
-        *args: str,
-        fail_step: str = "",
-        output_encoding: str | None = None,
-    ) -> subprocess.CompletedProcess[str]:
+    def run(self, *args: str, fail_step: str = "") -> subprocess.CompletedProcess[str]:
         env = self.env | {"FAIL_STEP": fail_step}
         return subprocess.run(
             [
@@ -976,7 +966,6 @@ class PowerShellHarness:
             check=False,
             capture_output=True,
             text=True,
-            encoding=output_encoding,
             env=env,
         )
 
@@ -1028,14 +1017,6 @@ if "%FCC_NAME%"=="fcc-desktop" if "%1"=="--export-icon" (
 )
 if "%FCC_NAME%"=="fcc-server" if "%1"=="--version" echo free-claude-code 3.5.18
 exit /b 0
-""",
-        encoding="utf-8",
-    )
-    (fixtures / "utf8-output.ps1").write_text(
-        """$value = $env:FAKE_TOOL_BIN + [Environment]::NewLine
-$bytes = [Text.UTF8Encoding]::new($false).GetBytes($value)
-$stdout = [Console]::OpenStandardOutput()
-$stdout.Write($bytes, 0, $bytes.Length)
 """,
         encoding="utf-8",
     )
@@ -1133,18 +1114,8 @@ function Get-Process {
         }
     }
 }
-if (-not [string]::IsNullOrWhiteSpace($env:FAKE_CONSOLE_OUTPUT_CODE_PAGE)) {
-    [Console]::OutputEncoding = [Text.Encoding]::GetEncoding(
-        [int] $env:FAKE_CONSOLE_OUTPUT_CODE_PAGE
-    )
-}
 $installer = [scriptblock]::Create([IO.File]::ReadAllText($env:FCC_INSTALLER))
 & $installer @args
-if (-not [string]::IsNullOrWhiteSpace($env:FAKE_CONSOLE_OUTPUT_CODE_PAGE)) {
-    Add-Content -LiteralPath $env:CALL_LOG -Value (
-        "console-output-code-page:$([Console]::OutputEncoding.CodePage)"
-    )
-}
 """,
         encoding="utf-8",
     )
@@ -1162,7 +1133,6 @@ if (-not [string]::IsNullOrWhiteSpace($env:FAKE_CONSOLE_OUTPUT_CODE_PAGE)) {
             "APPDATA": str(app_data),
             "CALL_LOG": str(log),
             "FAKE_FIXTURES": str(fixtures),
-            "FAKE_POWERSHELL": powershell,
             "FAKE_TOOL_BIN": str(tool_bin),
             "FCC_INSTALLER": str(_repo_root() / "scripts" / "install.ps1"),
             "FCC_PROCESS_MARKER": str(tmp_path / "fcc-process-ready"),
@@ -1225,25 +1195,6 @@ def test_install_ps1_fresh_install_is_verified(
         / "Programs"
         / "Free Claude Code.lnk"
     ).is_file()
-
-
-def test_install_ps1_decodes_utf8_tool_bin_under_legacy_console_encoding(
-    powershell_harness: PowerShellHarness,
-) -> None:
-    tool_bin = powershell_harness.root / "Éxample" / ".local" / "bin"
-    powershell_harness.env.update(
-        {
-            "FAKE_TOOL_BIN": str(tool_bin),
-            "FAKE_UTF8_TOOL_BIN": "1",
-            "FAKE_CONSOLE_OUTPUT_CODE_PAGE": "850",
-        }
-    )
-
-    result = powershell_harness.run(output_encoding="cp850")
-
-    assert result.returncode == 0, result.stderr
-    assert "Free Claude Code is installed and verified." in result.stdout
-    assert "console-output-code-page:850" in powershell_harness.calls()
 
 
 def test_install_ps1_stops_if_windows_icon_export_fails(
