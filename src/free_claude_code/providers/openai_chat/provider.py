@@ -118,6 +118,7 @@ class OpenAIChatProvider(BaseProvider):
                     write=config.http_write_timeout,
                 ),
             )
+        logger.info("Base URL: {}", self._base_url)
         self._client = AsyncOpenAI(
             api_key=api_key_provider or self._api_key,
             base_url=self._base_url,

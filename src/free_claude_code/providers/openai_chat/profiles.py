@@ -382,4 +382,18 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         normalize_base_url=True,
         reasoning_delta_field="reasoning",
     ),
+    "modal": OpenAIChatProfile(
+        _policy(
+            "MODAL",
+            ReasoningReplayMode.REASONING,
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        NamedEffortReasoning(
+            _LOW_TO_MAX,
+            disabled_value="none",
+            enabled_value="high",
+        ),
+        normalize_base_url=True,
+        reasoning_delta_field="reasoning",
+    ),
 }

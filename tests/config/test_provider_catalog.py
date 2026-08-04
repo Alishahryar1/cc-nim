@@ -55,6 +55,19 @@ def test_provider_configuration_attrs_cover_multi_field_and_adc_providers() -> N
         "cloudflare_account_id",
     )
     assert PROVIDER_CATALOG["vertex"].configuration_attrs() == ("vertex_project_id",)
+    assert PROVIDER_CATALOG["modal"].configuration_attrs() == (
+        "modal_base_url",
+        "modal_proxy_token_id",
+        "modal_proxy_token_secret",
+    )
+
+
+def test_modal_is_remote_with_no_shared_default_base_url() -> None:
+    modal = PROVIDER_CATALOG["modal"]
+
+    assert modal.local is False
+    assert modal.default_base_url is None
+    assert modal.base_url_attr == "modal_base_url"
 
 
 def test_every_provider_declares_its_configuration_boundary() -> None:

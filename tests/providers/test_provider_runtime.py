@@ -74,6 +74,10 @@ def _make_settings(**overrides):
     mock.llamacpp_base_url = "http://localhost:8080/v1"
     mock.ollama_base_url = "http://localhost:11434"
     mock.ollama_api_key = "test_ollama_cloud_key"
+    mock.modal_base_url = "https://acme--inkling-nvfp4-server.us-west.modal.direct/v1"
+    mock.modal_proxy_token_id = "test_modal_token_id"
+    mock.modal_proxy_token_secret = "test_modal_token_secret"
+    mock.modal_proxy = ""
     mock.nvidia_nim_proxy = ""
     mock.open_router_proxy = ""
     mock.lmstudio_proxy = ""
@@ -198,40 +202,54 @@ def test_bedrock_provider_config_uses_regional_base_key_and_proxy() -> None:
     assert config.proxy == "http://proxy.test:8080"
 
 
-def test_azure_openai_provider_config_uses_resource_base_key_and_proxy() -> None:
-    descriptor = PROVIDER_CATALOG["azure_openai"]
+def test_modal_provider_config_uses_base_url_key_and_proxy() -> None:
+    descriptor = PROVIDER_CATALOG["modal"]
     settings = _make_settings(
-        azure_openai_api_key="azure-token",
-        azure_openai_base_url=("https://resource.openai.azure.com/openai/v1/"),
-        azure_openai_proxy="http://proxy.test:8080",
+        modal_base_url="https://acme--inkling-nvfp4-server.us-west.modal.direct/v1",
+        modal_proxy_token_id="wk-token-id",
+        modal_proxy_token_secret="ws-token-secret",
+        modal_proxy="http://proxy.test:8080",
     )
 
     config = build_provider_config(descriptor, settings)
 
-    assert descriptor.default_base_url is None
-    assert descriptor.configuration_attrs() == (
-        "azure_openai_api_key",
-        "azure_openai_base_url",
+    assert descriptor.credential_env == "MODAL_PROXY_TOKEN_ID"
+    assert config.api_key == "wk-token-id"
+    assert (
+        config.base_url
+        == "https://acme--inkling-nvfp4-server.us-west.modal.direct/v1"
     )
-    assert config.api_key == "azure-token"
-    assert config.base_url == "https://resource.openai.azure.com/openai/v1/"
     assert config.proxy == "http://proxy.test:8080"
+    assert config.modal_proxy_token_id == "wk-token-id"
+    assert config.modal_proxy_token_secret == "ws-token-secret"
 
 
-def test_azure_openai_provider_config_reports_missing_resource_url() -> None:
-    descriptor = PROVIDER_CATALOG["azure_openai"]
+def test_modal_provider_config_raises_friendly_error_when_base_url_missing() -> None:
+    from free_claude_code.application.errors import ApplicationUnavailableError
 
-    with pytest.raises(
-        ApplicationUnavailableError,
-        match="AZURE_OPENAI_BASE_URL is not set",
-    ):
-        build_provider_config(
-            descriptor,
-            _make_settings(
-                azure_openai_api_key="azure-token",
-                azure_openai_base_url="",
-            ),
-        )
+    descriptor = PROVIDER_CATALOG["modal"]
+    settings = _make_settings(
+        modal_base_url="",
+        modal_proxy_token_id="wk-token-id",
+        modal_proxy_token_secret="ws-token-secret",
+    )
+
+    with pytest.raises(ApplicationUnavailableError, match="MODAL_BASE_URL"):
+        build_provider_config(descriptor, settings)
+
+
+def test_modal_provider_config_raises_friendly_error_when_token_id_missing() -> None:
+    from free_claude_code.application.errors import ApplicationUnavailableError
+
+    descriptor = PROVIDER_CATALOG["modal"]
+    settings = _make_settings(
+        modal_base_url="https://acme--inkling-nvfp4-server.us-west.modal.direct/v1",
+        modal_proxy_token_id="",
+        modal_proxy_token_secret="ws-token-secret",
+    )
+
+    with pytest.raises(ApplicationUnavailableError, match="MODAL_PROXY_TOKEN_ID"):
+        build_provider_config(descriptor, settings)
 
 
 @pytest.mark.parametrize(
@@ -475,6 +493,7 @@ def test_create_provider_instantiates_each_builtin():
         "llamacpp": OpenAIChatProvider,
         "ollama": OpenAIChatProvider,
         "ollama_cloud": OpenAIChatProvider,
+        "modal": OpenAIChatProvider,
         "wafer": OpenAIChatProvider,
         "opencode": OpenAIChatProvider,
         "opencode_go": OpenAIChatProvider,

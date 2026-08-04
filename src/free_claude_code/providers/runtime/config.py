@@ -14,6 +14,12 @@ def string_setting(settings: Settings, attr_name: str | None, default: str = "")
     return value if isinstance(value, str) else default
 
 
+def _env_key_for_attr(attr_name: str) -> str:
+    """Return the env var key backing a Settings attribute, for error messages."""
+    alias = Settings.model_fields[attr_name].validation_alias
+    return str(alias) if alias is not None else attr_name
+
+
 def provider_credential(descriptor: ProviderDescriptor, settings: Settings) -> str:
     """Return the configured credential for a provider descriptor."""
     if descriptor.static_credential is not None:
@@ -58,14 +64,13 @@ def build_provider_config(
     )
     resolved_base_url = base_url or descriptor.default_base_url
     if not resolved_base_url:
-        if descriptor.base_url_attr is None:
-            raise AssertionError(
-                f"Provider {descriptor.provider_id!r} has no base URL owner."
+        if descriptor.base_url_attr is not None:
+            env_key = _env_key_for_attr(descriptor.base_url_attr)
+            raise ApplicationUnavailableError(
+                f"{env_key} is not set. Add it to your .env file."
             )
-        field = Settings.model_fields[descriptor.base_url_attr]
-        env_name = field.validation_alias or descriptor.base_url_attr
-        raise ApplicationUnavailableError(
-            f"{env_name} is not set. Add it to your .env file."
+        raise AssertionError(
+            f"Provider {descriptor.provider_id!r} has no configured base URL."
         )
     proxy = string_setting(settings, descriptor.proxy_attr)
     return ProviderConfig(
@@ -80,4 +85,6 @@ def build_provider_config(
         proxy=proxy,
         log_raw_sse_events=settings.log_raw_sse_events,
         log_api_error_tracebacks=settings.log_api_error_tracebacks,
+        modal_proxy_token_id=settings.modal_proxy_token_id,
+        modal_proxy_token_secret=settings.modal_proxy_token_secret,
     )

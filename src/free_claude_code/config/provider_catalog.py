@@ -346,6 +346,20 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         default_base_url=OLLAMA_CLOUD_DEFAULT_BASE,
         proxy_attr="ollama_cloud_proxy",
     ),
+    "modal": ProviderDescriptor(
+        provider_id="modal",
+        display_name="Modal",
+        credential_env="MODAL_PROXY_TOKEN_ID",
+        credential_url="https://modal.com/docs/guide/webhook-proxy-auth",
+        credential_attr="modal_proxy_token_id",
+        base_url_attr="modal_base_url",
+        proxy_attr="modal_proxy",
+        required_settings_attrs=(
+            "modal_base_url",
+            "modal_proxy_token_id",
+            "modal_proxy_token_secret",
+        ),
+    ),
     "lmstudio": ProviderDescriptor(
         provider_id="lmstudio",
         display_name="LM Studio",
@@ -377,7 +391,8 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
 # Key order:
 # NVIDIA NIM first (README default), DeepSeek fourth, OpenCode gateways adjacent,
 # Vercel / Hugging Face / Cohere / GitHub Models follow gateway-style remotes,
-# then cloud gateways, Ollama Cloud, and local providers per project plan
+# then cloud gateways, Ollama Cloud, Modal (remote but user-deployed, so it sits
+# with Ollama Cloud just ahead of the local trio), and local providers per project plan
 # (github.com/cheahjs/free-llm-api-resources Free Providers TOC as rough guide
 # beyond fixed slots).
 # ``SUPPORTED_PROVIDER_IDS`` inherits this insertion order for UI and error-message listing.
