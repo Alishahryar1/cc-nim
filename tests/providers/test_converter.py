@@ -641,6 +641,99 @@ def test_convert_assistant_tool_use_replays_empty_reasoning_content():
     assert result[0]["tool_calls"][0]["id"] == "call_empty"
 
 
+def _convert_tool_turn(
+    assistant_content: list[MockBlock],
+    reasoning_replay: ReasoningReplayMode = ReasoningReplayMode.REASONING_CONTENT,
+) -> list[dict]:
+    tool_ids = [
+        block.get("id")
+        for block in assistant_content
+        if block.get("type") == "tool_use"
+    ]
+    return AnthropicToOpenAIConverter.convert_messages(
+        [
+            MockMessage("assistant", assistant_content),
+            MockMessage(
+                "user",
+                [
+                    MockBlock(
+                        type="tool_result",
+                        tool_use_id=tool_id,
+                        content="result",
+                    )
+                    for tool_id in tool_ids
+                ],
+            ),
+        ],
+        reasoning_replay=reasoning_replay,
+    )
+
+
+def test_convert_assistant_tool_use_without_thinking_replays_empty_reasoning_content():
+    result = _convert_tool_turn(
+        [MockBlock(type="tool_use", id="call_missing", name="Read", input={})]
+    )
+
+    assert result[0]["content"] == ""
+    assert result[0]["reasoning_content"] == ""
+    assert result[0]["tool_calls"][0]["id"] == "call_missing"
+
+
+def test_convert_parallel_tool_use_without_thinking_replays_one_empty_reasoning_field():
+    result = _convert_tool_turn(
+        [
+            MockBlock(type="tool_use", id="call_1", name="Read", input={}),
+            MockBlock(type="tool_use", id="call_2", name="Glob", input={}),
+        ]
+    )
+
+    assert result[0]["reasoning_content"] == ""
+    assert [tool_call["id"] for tool_call in result[0]["tool_calls"]] == [
+        "call_1",
+        "call_2",
+    ]
+
+
+def test_convert_redacted_thinking_tool_use_replays_empty_reasoning_without_data():
+    result = _convert_tool_turn(
+        [
+            MockBlock(type="redacted_thinking", data="opaque-secret"),
+            MockBlock(type="tool_use", id="call_redacted", name="Read", input={}),
+        ]
+    )
+
+    assert result[0]["reasoning_content"] == ""
+    assert "opaque-secret" not in json.dumps(result)
+
+
+def test_convert_text_only_assistant_without_thinking_omits_reasoning_content():
+    result = AnthropicToOpenAIConverter.convert_messages(
+        [MockMessage("assistant", "Visible answer")],
+        reasoning_replay=ReasoningReplayMode.REASONING_CONTENT,
+    )
+
+    assert result == [{"role": "assistant", "content": "Visible answer"}]
+
+
+@pytest.mark.parametrize(
+    "reasoning_replay",
+    [
+        ReasoningReplayMode.THINK_TAGS,
+        ReasoningReplayMode.REASONING,
+        ReasoningReplayMode.DISABLED,
+    ],
+)
+def test_convert_tool_use_without_thinking_does_not_change_other_replay_modes(
+    reasoning_replay: ReasoningReplayMode,
+) -> None:
+    result = _convert_tool_turn(
+        [MockBlock(type="tool_use", id="call_other", name="Read", input={})],
+        reasoning_replay,
+    )
+
+    assert "reasoning_content" not in result[0]
+
+
 def test_convert_assistant_message_thinking_removed_when_disabled():
     content = [
         MockBlock(type="thinking", thinking="I need to calculate this."),

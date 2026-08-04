@@ -574,6 +574,8 @@ class AnthropicToOpenAIConverter:
                 reasoning_replay=reasoning_replay,
             )[0]
         pre_msg["tool_calls"] = tool_calls
+        if reasoning_replay is ReasoningReplayMode.REASONING_CONTENT:
+            pre_msg.setdefault("reasoning_content", "")
         if tool_calls and pre_msg.get("content") == " ":
             pre_msg["content"] = ""
         return _ToolTurnSegment(
