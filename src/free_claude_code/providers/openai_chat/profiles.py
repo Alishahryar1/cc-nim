@@ -310,6 +310,10 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             enabled_value="medium",
         ),
     ),
+    "fpt_ai_factory": OpenAIChatProfile(
+        _policy("FPT_AI_FACTORY", ReasoningReplayMode.REASONING_CONTENT),
+        NO_REASONING,
+    ),
     "fireworks": OpenAIChatProfile(
         _policy(
             "FIREWORKS",

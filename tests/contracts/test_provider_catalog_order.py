@@ -30,6 +30,7 @@ _EXPECTED_PROVIDER_ORDER: tuple[str, ...] = (
     "cerebras",
     "groq",
     "sambanova",
+    "fpt_ai_factory",
     "fireworks",
     "cloudflare",
     "zai",

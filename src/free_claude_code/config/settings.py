@@ -82,6 +82,11 @@ class Settings(BaseSettings):
     # ==================== SambaNova Cloud ====================
     sambanova_api_key: str = Field(default="", validation_alias="SAMBANOVA_API_KEY")
 
+    # ==================== FPT AI Factory Config ====================
+    fpt_ai_factory_api_key: str = Field(
+        default="", validation_alias="FPT_AI_FACTORY_API_KEY"
+    )
+
     # ==================== Kilo.ai Config ====================
     kilo_api_key: str = Field(default="", validation_alias="KILO_API_KEY")
 
@@ -183,6 +188,9 @@ class Settings(BaseSettings):
     cohere_proxy: str = Field(default="", validation_alias="COHERE_PROXY")
     github_models_proxy: str = Field(default="", validation_alias="GITHUB_MODELS_PROXY")
     sambanova_proxy: str = Field(default="", validation_alias="SAMBANOVA_PROXY")
+    fpt_ai_factory_proxy: str = Field(
+        default="", validation_alias="FPT_AI_FACTORY_PROXY"
+    )
     kilo_proxy: str = Field(default="", validation_alias="KILO_PROXY")
     zai_proxy: str = Field(default="", validation_alias="ZAI_PROXY")
     fireworks_proxy: str = Field(default="", validation_alias="FIREWORKS_PROXY")

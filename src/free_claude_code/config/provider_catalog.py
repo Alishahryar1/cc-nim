@@ -46,6 +46,8 @@ VERTEX_AI_API_ROOT = "https://aiplatform.googleapis.com"
 GROQ_DEFAULT_BASE = "https://api.groq.com/openai/v1"
 CEREBRAS_DEFAULT_BASE = "https://api.cerebras.ai/v1"
 SAMBANOVA_DEFAULT_BASE = "https://api.sambanova.ai/v1"
+# FPT AI Factory OpenAI-compatible Chat Completions gateway (mkp-api.fptcloud.com).
+FPT_AI_FACTORY_DEFAULT_BASE = "https://mkp-api.fptcloud.com/v1"
 # Kilo.ai gateway OpenAI-compatible Chat Completions API.
 KILO_DEFAULT_BASE = "https://api.kilo.ai/api/gateway"
 OPENAI_CODEX_DEFAULT_BASE = "https://chatgpt.com/backend-api/codex"
@@ -306,6 +308,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="sambanova_api_key",
         default_base_url=SAMBANOVA_DEFAULT_BASE,
         proxy_attr="sambanova_proxy",
+    ),
+    "fpt_ai_factory": ProviderDescriptor(
+        provider_id="fpt_ai_factory",
+        display_name="FPT AI Factory",
+        credential_env="FPT_AI_FACTORY_API_KEY",
+        credential_url="https://marketplace.fptcloud.com/",
+        credential_attr="fpt_ai_factory_api_key",
+        default_base_url=FPT_AI_FACTORY_DEFAULT_BASE,
+        proxy_attr="fpt_ai_factory_proxy",
     ),
     "fireworks": ProviderDescriptor(
         provider_id="fireworks",

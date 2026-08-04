@@ -111,6 +111,8 @@ def _make_settings(**overrides):
     mock.ollama_cloud_proxy = ""
     mock.kilo_api_key = "test_kilo_key"
     mock.kilo_proxy = ""
+    mock.fpt_ai_factory_api_key = "test_fpt_ai_factory_key"
+    mock.fpt_ai_factory_proxy = ""
     mock.openai_proxy = ""
     mock.azure_openai_proxy = ""
     mock.provider_rate_limit = 40
@@ -457,6 +459,7 @@ def test_create_provider_instantiates_each_builtin():
         provider_rate_window=11,
         provider_max_concurrency=3,
         sambanova_api_key="test_sambanova_key",
+        fpt_ai_factory_api_key="test_fpt_ai_factory_key",
     )
     cases = {
         "nvidia_nim": NvidiaNimProvider,
@@ -488,6 +491,7 @@ def test_create_provider_instantiates_each_builtin():
         "vertex": VertexProvider,
         "groq": OpenAIChatProvider,
         "sambanova": OpenAIChatProvider,
+        "fpt_ai_factory": OpenAIChatProvider,
         "kilo": KiloProvider,
         "cerebras": OpenAIChatProvider,
     }
