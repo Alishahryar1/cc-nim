@@ -8,6 +8,7 @@ from free_claude_code.providers.cloudflare import CloudflareProvider
 from free_claude_code.providers.deepseek import DeepSeekProvider
 from free_claude_code.providers.gemini import GeminiProvider
 from free_claude_code.providers.github_models import GitHubModelsProvider
+from free_claude_code.providers.kilo import KiloProvider
 from free_claude_code.providers.lmstudio import LMStudioProvider
 from free_claude_code.providers.mistral import MistralProvider
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
@@ -16,6 +17,7 @@ from free_claude_code.providers.openai_chat import (
     OPENAI_CHAT_PROFILES,
     OpenAIChatProvider,
 )
+from free_claude_code.providers.openai_codex import OpenAICodexProvider
 from free_claude_code.providers.vertex import VertexProvider
 from smoke.features import FEATURE_INVENTORY, README_FEATURES, feature_ids
 
@@ -37,6 +39,7 @@ def test_readme_provider_table_covers_full_catalog() -> None:
     provider_section = readme.split("## Choose A Provider", 1)[1].split("\n## ", 1)[0]
     rows = [line for line in provider_section.splitlines() if line.startswith("| [")]
 
+    assert f"Switch among {len(PROVIDER_CATALOG)} cloud and local providers" in readme
     prefixes: list[str] = []
     for row in rows:
         example_cell = row.split("|")[3]
@@ -91,10 +94,12 @@ def test_product_coverage_is_not_satisfied_by_prereq_probes() -> None:
 
 def test_provider_and_platform_registries_include_advertised_builtins() -> None:
     specialized_provider_classes = {
+        "openai": OpenAICodexProvider,
         "nvidia_nim": NvidiaNimProvider,
         "open_router": OpenRouterProvider,
         "mistral": MistralProvider,
         "deepseek": DeepSeekProvider,
+        "kilo": KiloProvider,
         "cloudflare": CloudflareProvider,
         "lmstudio": LMStudioProvider,
         "github_models": GitHubModelsProvider,

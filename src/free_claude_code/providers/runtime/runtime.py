@@ -1,12 +1,14 @@
 """One closable generation of lazily constructed provider clients."""
 
 import asyncio
-from collections.abc import MutableMapping
+from collections.abc import Callable, MutableMapping
 
 from free_claude_code.config.settings import Settings
 from free_claude_code.providers.base import BaseProvider
 
 from .factory import create_provider
+
+ProviderConstructor = Callable[[str, Settings], BaseProvider]
 
 
 class ProviderRuntime:
@@ -16,9 +18,12 @@ class ProviderRuntime:
         self,
         settings: Settings,
         providers: MutableMapping[str, BaseProvider] | None = None,
+        *,
+        provider_constructor: ProviderConstructor = create_provider,
     ) -> None:
         self.settings = settings
         self._providers = providers if providers is not None else {}
+        self._provider_constructor = provider_constructor
 
     def is_cached(self, provider_id: str) -> bool:
         """Return whether a provider for this id is already cached."""
@@ -27,7 +32,9 @@ class ProviderRuntime:
     def resolve_provider(self, provider_id: str) -> BaseProvider:
         """Return an existing provider or create it lazily."""
         if provider_id not in self._providers:
-            self._providers[provider_id] = create_provider(provider_id, self.settings)
+            self._providers[provider_id] = self._provider_constructor(
+                provider_id, self.settings
+            )
         return self._providers[provider_id]
 
     async def cleanup(self) -> None:

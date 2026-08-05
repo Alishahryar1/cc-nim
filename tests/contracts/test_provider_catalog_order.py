@@ -7,6 +7,8 @@ from free_claude_code.config.provider_catalog import (
 
 _EXPECTED_PROVIDER_ORDER: tuple[str, ...] = (
     "nvidia_nim",
+    "openai",
+    "azure_openai",
     "open_router",
     "gemini",
     "vertex",
@@ -23,6 +25,7 @@ _EXPECTED_PROVIDER_ORDER: tuple[str, ...] = (
     "wafer",
     "kimi",
     "kimi_code",
+    "kilo",
     "minimax",
     "cerebras",
     "groq",

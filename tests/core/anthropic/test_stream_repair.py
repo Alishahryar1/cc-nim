@@ -4,6 +4,7 @@ from free_claude_code.core.anthropic.streaming import (
     ToolSchema,
     accept_tool_json_repair,
     continuation_suffix,
+    make_response_recovery_body,
     make_text_recovery_body,
     make_tool_repair_body,
 )
@@ -57,6 +58,7 @@ def test_recovery_bodies_do_not_own_transport_flags() -> None:
     }
 
     text_body = make_text_recovery_body(body, "partial")
+    response_body = make_response_recovery_body(body, "partial")
     tool_body = make_tool_repair_body(
         body,
         tool_name="Echo",
@@ -65,6 +67,9 @@ def test_recovery_bodies_do_not_own_transport_flags() -> None:
     )
 
     assert "stream" not in text_body
+    assert "stream" not in response_body
     assert "stream" not in tool_body
     assert "tools" not in text_body
+    assert response_body["tools"] == body["tools"]
+    assert response_body["tool_choice"] == body["tool_choice"]
     assert "tools" not in tool_body

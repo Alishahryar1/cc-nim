@@ -56,18 +56,26 @@ def test_web_tool_user_agent_reports_installed_package_version() -> None:
 class FixedProviderModelRouter(ModelRouter):
     """Test double that pins provider identity."""
 
-    def __init__(self, settings: Settings, provider_id: str) -> None:
+    def __init__(
+        self,
+        settings: Settings,
+        provider_id: str,
+        *,
+        provider_model: str | None = None,
+    ) -> None:
         super().__init__(settings)
         self._fixed_provider_id = provider_id
+        self._fixed_provider_model = provider_model
 
     def resolve_messages_request(
         self, request: MessagesRequest
     ) -> RoutedMessagesRequest:
+        provider_model = self._fixed_provider_model or request.model
         resolved = ResolvedModel(
             original_model=request.model,
             provider_id=self._fixed_provider_id,
-            provider_model=request.model,
-            provider_model_ref=f"{self._fixed_provider_id}/{request.model}",
+            provider_model=provider_model,
+            provider_model_ref=f"{self._fixed_provider_id}/{provider_model}",
             reasoning_preference=ReasoningPreference.OFF,
         )
         routed = request.model_copy(deep=True)
@@ -425,7 +433,11 @@ async def test_service_streams_forced_web_search_by_default(monkeypatch):
     service = MessagesHandler(
         settings,
         provider_resolver=provider_resolver,
-        model_router=FixedProviderModelRouter(settings, _PROVIDER_IDS[0]),
+        model_router=FixedProviderModelRouter(
+            settings,
+            _PROVIDER_IDS[0],
+            provider_model="upstream-model",
+        ),
     )
     request = MessagesRequest(
         model="claude-haiku-4-5-20251001",
@@ -443,6 +455,12 @@ async def test_service_streams_forced_web_search_by_default(monkeypatch):
     raw = await _streaming_body_text(response)
     assert "event: message_start" in raw
     assert "DeepSeek V4 Released" in raw
+    message_start = next(
+        event.data["message"]
+        for event in parse_sse_text(raw)
+        if event.event == "message_start"
+    )
+    assert message_start["model"] == request.model
     provider_resolver.assert_not_called()
 
 

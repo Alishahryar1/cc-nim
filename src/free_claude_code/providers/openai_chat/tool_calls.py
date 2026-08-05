@@ -3,21 +3,118 @@
 import json
 import uuid
 from collections.abc import Callable, Iterator
+from dataclasses import dataclass, field
 from typing import Any
 
+from free_claude_code.core.anthropic import OpenAIToolNameCodec
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.streaming import (
     AnthropicStreamLedger,
+    parse_complete_tool_input,
     tool_schemas_by_name,
 )
 
 RecordToolExtraContent = Callable[[str, dict[str, Any]], None]
 
 
+@dataclass(slots=True)
+class _CollectedToolCall:
+    index: int
+    tool_id: str | None = None
+    name: str = ""
+    argument_parts: list[str] = field(default_factory=list)
+    extra_content: dict[str, Any] | None = None
+
+
+class OpenAIToolCallCollector:
+    """Collect and validate one buffered OpenAI tool-call response."""
+
+    def __init__(self) -> None:
+        self._calls: dict[int, _CollectedToolCall] = {}
+
+    @property
+    def has_calls(self) -> bool:
+        return bool(self._calls)
+
+    def add(self, tool_call: Any) -> None:
+        """Add one SDK tool-call delta without emitting downstream state."""
+        raw_index = getattr(tool_call, "index", 0)
+        index = raw_index if isinstance(raw_index, int) and raw_index >= 0 else 0
+        state = self._calls.setdefault(index, _CollectedToolCall(index=index))
+
+        tool_id = getattr(tool_call, "id", None)
+        if tool_id:
+            state.tool_id = str(tool_id)
+
+        function = getattr(tool_call, "function", None)
+        incoming_name = getattr(function, "name", None)
+        if isinstance(incoming_name, str) and incoming_name:
+            state.name = _merge_tool_name(state.name, incoming_name)
+
+        arguments = getattr(function, "arguments", None)
+        if isinstance(arguments, str) and arguments:
+            state.argument_parts.append(arguments)
+
+        extra_content = tool_call_extra_content(tool_call)
+        if extra_content:
+            state.extra_content = extra_content
+
+    def completed_calls(
+        self,
+        request: MessagesRequest,
+        *,
+        tool_names: OpenAIToolNameCodec | None = None,
+        tool_argument_aliases: dict[str, dict[str, str]] | None = None,
+    ) -> tuple[dict[str, Any], ...] | None:
+        """Return complete schema-valid calls, or None when output is incomplete."""
+        schemas = tool_schemas_by_name(request)
+        completed: list[dict[str, Any]] = []
+        for index in sorted(self._calls):
+            state = self._calls[index]
+            wire_name = state.name.strip()
+            name = tool_names.decode(wire_name) if tool_names is not None else wire_name
+            if not name or name not in schemas:
+                return None
+            arguments = "".join(state.argument_parts)
+            aliases = (
+                tool_argument_aliases.get(name, {})
+                if tool_argument_aliases is not None
+                else {}
+            )
+            if aliases:
+                restored = restore_tool_argument_aliases(arguments, aliases)
+                if restored is None:
+                    return None
+                arguments = restored
+            if parse_complete_tool_input(arguments, name, schemas) is None:
+                return None
+
+            call: dict[str, Any] = {
+                "index": index,
+                "id": state.tool_id,
+                "function": {
+                    "name": name,
+                    "arguments": arguments,
+                },
+            }
+            if state.extra_content:
+                call["extra_content"] = state.extra_content
+            completed.append(call)
+        return tuple(completed)
+
+
 def iter_heuristic_tool_use_sse(
-    ledger: AnthropicStreamLedger, tool_use: dict[str, Any]
+    ledger: AnthropicStreamLedger,
+    tool_use: dict[str, Any],
+    *,
+    tool_names: OpenAIToolNameCodec | None = None,
 ) -> Iterator[str]:
     """Emit SSE for one heuristic tool_use block."""
+    name = tool_use.get("name")
+    if tool_names is not None and isinstance(name, str):
+        decoded_name = tool_names.decode(name)
+        if decoded_name != name:
+            tool_use = {**tool_use, "name": decoded_name}
     if tool_use.get("name") == "Task" and isinstance(tool_use.get("input"), dict):
         task_input = tool_use["input"]
         if task_input.get("run_in_background") is not False:
@@ -101,6 +198,8 @@ class OpenAIToolCallAssembler:
         tc: dict[str, Any],
         ledger: AnthropicStreamLedger,
         *,
+        tool_names: OpenAIToolNameCodec | None = None,
+        tool_name_buffers: dict[int, str] | None = None,
         tool_argument_aliases: dict[str, dict[str, str]] | None = None,
         tool_argument_alias_buffers: dict[int, str] | None = None,
     ) -> Iterator[str]:
@@ -126,8 +225,15 @@ class OpenAIToolCallAssembler:
         if extra_content:
             ledger.blocks.set_tool_extra_content(tc_index, extra_content)
 
-        if incoming_name is not None:
-            ledger.blocks.register_tool_name(tc_index, incoming_name)
+        if isinstance(incoming_name, str) and incoming_name:
+            resolved_name = _decode_streamed_tool_name(
+                incoming_name,
+                tool_index=tc_index,
+                tool_names=tool_names,
+                buffers=tool_name_buffers,
+            )
+            if resolved_name is not None:
+                ledger.blocks.register_tool_name(tc_index, resolved_name)
 
         state = ledger.blocks.tool_states.get(tc_index)
         resolved_id = (state.tool_id if state and state.tool_id else None) or tc.get(
@@ -184,6 +290,29 @@ class OpenAIToolCallAssembler:
         """Emit buffered Task args as a single JSON delta."""
         for tool_index, out in ledger.blocks.flush_task_arg_buffers():
             yield ledger.emit_tool_delta(tool_index, out)
+
+    def flush_tool_name_buffers(
+        self,
+        ledger: AnthropicStreamLedger,
+        *,
+        tool_names: OpenAIToolNameCodec,
+        tool_name_buffers: dict[int, str],
+        tool_argument_aliases: dict[str, dict[str, str]],
+        tool_argument_alias_buffers: dict[int, str],
+    ) -> Iterator[str]:
+        """Resolve names held only because they also prefix a generated alias."""
+        for tool_index, name in list(tool_name_buffers.items()):
+            tool_name_buffers.pop(tool_index, None)
+            yield from self.process_tool_call(
+                {
+                    "index": tool_index,
+                    "function": {"name": name, "arguments": ""},
+                },
+                ledger,
+                tool_names=tool_names,
+                tool_argument_aliases=tool_argument_aliases,
+                tool_argument_alias_buffers=tool_argument_alias_buffers,
+            )
 
     def flush_tool_argument_alias_buffers(
         self,
@@ -252,34 +381,69 @@ class OpenAIToolCallAssembler:
     def _restore_aliased_tool_arguments(
         self, argument_json: str, aliases: dict[str, str]
     ) -> str | None:
-        try:
-            parsed = json.loads(argument_json)
-        except json.JSONDecodeError:
-            return None
-        if not isinstance(parsed, dict):
-            return argument_json
-        restored = self._restore_aliased_tool_argument_value(parsed, aliases)
-        return json.dumps(restored)
-
-    def _restore_aliased_tool_argument_value(
-        self, value: Any, aliases: dict[str, str]
-    ) -> Any:
-        if isinstance(value, dict):
-            return {
-                aliases.get(key, key): self._restore_aliased_tool_argument_value(
-                    item, aliases
-                )
-                for key, item in value.items()
-            }
-        if isinstance(value, list):
-            return [
-                self._restore_aliased_tool_argument_value(item, aliases)
-                for item in value
-            ]
-        return value
+        return restore_tool_argument_aliases(argument_json, aliases)
 
     def _record_tool_call_extra_content(
         self, tool_call_id: str, extra_content: dict[str, Any]
     ) -> None:
         if self._record_extra_content is not None:
             self._record_extra_content(tool_call_id, extra_content)
+
+
+def restore_tool_argument_aliases(
+    argument_json: str,
+    aliases: dict[str, str],
+) -> str | None:
+    """Restore provider-private argument aliases in one complete JSON object."""
+    try:
+        parsed = json.loads(argument_json)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(parsed, dict):
+        return argument_json
+    return json.dumps(_restore_tool_argument_alias_value(parsed, aliases))
+
+
+def _restore_tool_argument_alias_value(
+    value: Any,
+    aliases: dict[str, str],
+) -> Any:
+    if isinstance(value, dict):
+        return {
+            aliases.get(key, key): _restore_tool_argument_alias_value(item, aliases)
+            for key, item in value.items()
+        }
+    if isinstance(value, list):
+        return [_restore_tool_argument_alias_value(item, aliases) for item in value]
+    return value
+
+
+def _merge_tool_name(existing: str, incoming: str) -> str:
+    if not existing or incoming.startswith(existing):
+        return incoming
+    if existing.startswith(incoming):
+        return existing
+    return "".join((existing, incoming))
+
+
+def _decode_streamed_tool_name(
+    incoming: str,
+    *,
+    tool_index: int,
+    tool_names: OpenAIToolNameCodec | None,
+    buffers: dict[int, str] | None,
+) -> str | None:
+    if tool_names is None or not tool_names.has_aliases:
+        return incoming
+    if buffers is None:
+        return tool_names.decode(incoming)
+
+    combined = _merge_tool_name(buffers.get(tool_index, ""), incoming)
+    if tool_names.is_alias(combined):
+        buffers.pop(tool_index, None)
+        return tool_names.decode(combined)
+    if tool_names.is_alias_prefix(combined):
+        buffers[tool_index] = combined
+        return None
+    buffers.pop(tool_index, None)
+    return tool_names.decode(combined)

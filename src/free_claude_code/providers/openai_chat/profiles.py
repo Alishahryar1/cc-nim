@@ -61,10 +61,12 @@ class OpenAIChatProfile:
     request_policy: OpenAIChatRequestPolicy
     reasoning: ReasoningEncoder
     postprocessors: tuple[OpenAIChatPostprocessor, ...] = ()
+    model_ids_are_routable: bool = True
     normalize_base_url: bool = False
     reasoning_delta_field: Literal["reasoning_content", "reasoning"] = (
         "reasoning_content"
     )
+    structured_reasoning_details: bool = False
     user_agent: str | None = None
 
     @property
@@ -137,16 +139,29 @@ def _policy(
 
 
 OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
+    "azure_openai": OpenAIChatProfile(
+        _policy(
+            "AZURE_OPENAI",
+            ReasoningReplayMode.THINK_TAGS,
+            max_tokens_field="max_completion_tokens",
+        ),
+        NamedEffortReasoning(
+            _LOW_MEDIUM_HIGH,
+            disabled_value="none",
+            enabled_value="medium",
+        ),
+        model_ids_are_routable=False,
+    ),
     "mistral_codestral": OpenAIChatProfile(
         _policy("CODESTRAL", ReasoningReplayMode.THINK_TAGS),
         NO_REASONING,
     ),
     "opencode": OpenAIChatProfile(
-        _policy("OPENCODE", ReasoningReplayMode.THINK_TAGS),
+        _policy("OPENCODE", ReasoningReplayMode.REASONING_CONTENT),
         NO_REASONING,
     ),
     "opencode_go": OpenAIChatProfile(
-        _policy("OPENCODE_GO", ReasoningReplayMode.THINK_TAGS),
+        _policy("OPENCODE_GO", ReasoningReplayMode.REASONING_CONTENT),
         NO_REASONING,
     ),
     "vercel": OpenAIChatProfile(

@@ -27,6 +27,7 @@ class ProviderPort(Protocol):
         *,
         input_tokens: int,
         request_id: str,
+        response_model: str,
         reasoning: ReasoningPolicy,
     ) -> AsyncIterator[str]: ...
 

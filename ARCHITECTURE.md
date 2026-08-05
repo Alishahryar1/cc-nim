@@ -12,8 +12,8 @@ and how contributors should extend it.
 
 Free Claude Code is a local proxy for agent clients. It accepts Anthropic
 Messages traffic from Claude Code and Pi clients and OpenAI Responses traffic
-from Codex clients, routes the request to a configured upstream provider, and
-preserves the wire protocol expected by the caller.
+from Codex CLI, IDE, and App clients, routes the request to a configured
+upstream provider, and preserves the wire protocol expected by the caller.
 
 There are three runtime surfaces:
 
@@ -27,7 +27,7 @@ There are three runtime surfaces:
 ```mermaid
 flowchart LR
     ClaudeCode[Claude Code CLI and Extensions] --> ProxyAPI[FastAPI Proxy]
-    Codex[Codex CLI and Extensions] --> ProxyAPI
+    Codex[Codex CLI, IDE, and App] --> ProxyAPI
     Pi[Pi Coding Agent] --> ProxyAPI
     AdminUI[Local Admin UI] --> ProxyAPI
     Bots[Discord or Telegram Bots] --> Messaging[Messaging Bridge]
@@ -263,9 +263,11 @@ not read global settings or construct runtime resources.
 
 [runtime/application.py](src/free_claude_code/runtime/application.py) owns process startup and shutdown, optional messaging,
 the selected transcriber, the managed CLI session manager, Admin pending state,
-and the injected restart callback. Shutdown is serialized and ordered: quiesce
+connected-account use cases, and the injected restart callback. Shutdown is
+serialized and ordered: quiesce
 messaging ingress, cancel and drain workflow/CLI work, flush persistence, close
-delivery, close transcription, then close providers. An owner reference is
+delivery, close transcription, close providers, then close connected-account
+login and HTTP resources. An owner reference is
 released only after its cleanup succeeds; cancellation or failure leaves the
 incomplete graph retryable. Teardown stops at a failed dependency gate rather
 than closing resources that still-live upstream work may need, and the ASGI
@@ -295,8 +297,15 @@ every owned runtime closes.
 
 The manager also owns one application-lifetime provider model catalog and its
 single best-effort discovery task. The catalog survives provider replacement.
-This keeps the server model inventory stable without extra synchronization;
-Claude clients may independently retain the list they fetched at startup.
+Settings-configured providers and currently connected accounts contribute to
+the same availability set. Account connect/disconnect performs a targeted model
+refresh or eviction; it does not mutate settings or replace a provider
+generation.
+Runtime integrations may observe those lifecycle events through one neutral
+catalog publisher supplied by the composition root. Publication is fail-open
+and occurs only after settings or cache changes; provider adapters remain the
+sole owners of upstream discovery. Claude and Codex clients may independently
+retain the model list they loaded at startup.
 
 ## Configuration Model
 
@@ -498,6 +507,13 @@ exact client token budget without guessing provider behavior. `ResolvedModel`
 owns the selected route and preference; `RoutedMessagesRequest` owns the final
 request-scoped policy passed to execution.
 
+Routing keeps model identity split at the application boundary. The routed
+request carries the provider model sent upstream, while
+`ResolvedModel.original_model` remains the stable gateway model exposed in
+Anthropic responses and traces. `ProviderExecutor` passes both identities
+explicitly; providers, local optimizations, and local server tools must never
+publish the private upstream model as the response model.
+
 `GET /v1/models` advertises:
 
 - configured provider model refs;
@@ -526,17 +542,32 @@ translate reasoning. The catalog is not part of an individual provider
 generation, so a hot replacement does not erase the last useful model list.
 Discovery failures retain prior entries.
 
-Codex-specific model picker shaping stays out of this route. `fcc-codex` fetches
-the same `/v1/models` response at launch, converts FCC gateway IDs into
-provider-selectable Codex slugs, writes `~/.fcc/codex-model-catalog.json`, and
-passes it as `model_catalog_json`. Codex users open the native picker with
-`/model`; FCC does not implement a proxy-level `/models` alias.
+Codex-specific model picker shaping stays out of this route.
+[runtime/codex_catalog.py](src/free_claude_code/runtime/codex_catalog.py) is the
+composition bridge: it asks this route's pure builder for the exact application
+inventory, passes that response to the existing Codex adapter, and writes
+`~/.fcc/codex-model-catalog.json` without making a loopback HTTP request.
+`ProviderRuntimeManager` invokes the bridge after authoritative settings,
+discovery, provider-test, or connected-account changes. Startup creates a
+missing file after routed-provider warming but preserves an existing
+last-known-good catalog until the background discovery pass publishes the
+complete accumulated inventory. Writes are atomic and identical bytes are not
+rewritten. Projection or filesystem failures emit only a concise warning and do
+not fail server startup, Admin operations, discovery, or inference. Shutdown
+never publishes the cleared in-memory cache.
+
+The Codex App reads `model_catalog_json` at startup, so it must restart to see a
+later catalog publication. `fcc-codex` remains an additional launch-time
+synchronizer: it fetches the same `/v1/models` response, uses the same adapter
+and writer, and passes the path as an ephemeral override. Codex users open the
+native picker with `/model`; FCC does not implement a proxy-level `/models`
+alias.
 
 ## Provider Architecture
 
 Provider metadata is neutral and centralized in
 [config/provider_catalog.py](src/free_claude_code/config/provider_catalog.py). Each
-`ProviderDescriptor` declares provider ID, display name, locality, credential env
+`ProviderDescriptor` declares provider ID, display name, authentication kind, locality, credential env
 var, default base URL, settings attribute names, configuration readiness, and
 proxy support. Readiness may require multiple ordinary settings or a non-secret
 project ID; it is not inferred exclusively from API-key presence. The catalog
@@ -546,9 +577,11 @@ does not select a concrete adapter.
 closable provider generation: construction policy, resolved provider
 configuration, lazy provider instances, provider-owned admission controllers, and
 cleanup. [providers/runtime/factory.py](src/free_claude_code/providers/runtime/factory.py)
-constructs ordinary provider IDs from `OPENAI_CHAT_PROFILES` and keeps a sparse
-factory mapping only for adapters with real state or algorithms. The union of
-those two construction owners must exactly equal the neutral provider catalog.
+constructs ordinary provider IDs from `OPENAI_CHAT_PROFILES`, keeps a sparse
+factory mapping for adapters with real state or algorithms, and accepts explicit
+composition-root factories for providers with process-lifetime dependencies.
+The union of those construction owners must exactly equal the neutral provider
+catalog.
 `ProviderRuntime` directly guarantees one provider and admission controller per
 provider ID within a generation; there is no pass-through cache object, process
 singleton, or second admission registry.
@@ -603,7 +636,7 @@ compatibility layer.
   `list_model_infos()`. Providers return application-owned `ProviderModelInfo`
   values directly; there is no parallel IDs-only catalog contract.
 
-There is one upstream transport family:
+There are two upstream transport families:
 [providers/openai_chat/](src/free_claude_code/providers/openai_chat/) implements the concrete
 `OpenAIChatProvider` used by every OpenAI-compatible `/chat/completions`
 upstream. `OpenAIChatProfile` contains immutable request policy, an explicit
@@ -614,6 +647,25 @@ empty subclasses. The package also
 owns the exactly typed private per-request runner, recovery operations, tool-call
 assembly, and streamed usage handling. No obsolete generic transport namespace
 or untyped provider backchannel remains.
+
+[providers/openai_codex/](src/free_claude_code/providers/openai_codex/) owns
+ChatGPT subscription authentication and the Codex backend's OpenAI Responses
+transport. Its process-lifetime auth manager owns FCC's credential file,
+browser/device authorization, refresh, and revocation; provider generations
+borrow it and resolve fresh headers for each operation. The provider owns HTTP
+failure classification, model discovery, admission, and commit-boundary retry.
+Neutral Anthropic-to-Responses input and Responses-to-Anthropic stream
+conversion remain in
+[core/openai_responses/](src/free_claude_code/core/openai_responses/), which
+never imports OAuth, account IDs, or provider endpoints. That neutral converter
+preserves the public Responses contract; the subscription provider owns the
+private Codex request projection and omits fields that backend does not accept,
+such as the public `max_output_tokens` cap and `metadata`. Successful private
+responses can omit `Content-Type`, so the provider accepts an absent media type
+for its always-streaming request and parses the body as SSE. An explicitly
+declared non-SSE media type retains the bounded diagnostic failure path. The
+Admin API exposes only safe connected-account state and never serializes token
+objects.
 
 [providers/google_openai/](src/free_claude_code/providers/google_openai/) owns the
 Google-specific protocol behavior shared by AI Studio and Vertex AI: literal
@@ -643,6 +695,15 @@ client-specific recovery phrase.
 
 Providers call the OpenAI request policy for Anthropic-to-OpenAI conversion,
 reasoning replay selection, `extra_body`, and chat-completion field normalization.
+The SDK-free `OpenAIToolNameCodec` in
+[core/anthropic/](src/free_claude_code/core/anthropic/) owns reversible
+translation from client tool identities to OpenAI's portable function-name
+grammar. OpenAI Chat and upstream Responses adapters apply that codec only to
+their explicit declaration, forced-choice, and replay fields, then restore the
+original identity before Anthropic tool state or schema validation. Valid names
+remain unchanged, while deterministic aliases keep retries, replay, and
+append-only prompt prefixes stable. This is target-protocol conversion, never a
+provider or model capability switch.
 Specialized provider packages remain only for true upstream quirks such as
 Gemini thought signatures, NIM tool-schema aliases, retry downgrades, and NVCF
 deployment-failure classification, or DeepSeek attachment/tool/thinking
@@ -661,8 +722,10 @@ Cloudflare uses its
 account-scoped Workers AI OpenAI-compatible Chat Completions endpoint for
 `@cf/...` model IDs, while account ID composition, model search, and
 Cloudflare-specific reasoning deltas stay in the Cloudflare provider client.
-OpenRouter remains specialized for model filtering and reasoning-detail stream
-events. Amazon Bedrock Mantle uses an ordinary profile with a region-specific,
+OpenRouter and Kilo remain specialized for capability-aware model filtering and
+structured reasoning-detail stream events. Kilo excludes image-output and
+Responses-only models from Chat Completions discovery while keeping direct model
+execution upstream-authoritative. Amazon Bedrock Mantle uses an ordinary profile with a region-specific,
 configurable OpenAI base URL and bearer API key; AWS SigV4 and native
 Converse/Invoke transports are outside that provider contract. Wafer, Kimi API,
 Kimi Code, MiniMax, Fireworks, and Z.ai use ordinary
@@ -679,6 +742,16 @@ fallback retry when an upstream request rejects reasoning fields.
 NIM reasoning budget control is also treated as a provider-owned best-effort
 downgrade: if an upstream NIM deployment rejects explicit budget control, FCC
 retries without the budget while preserving thinking enablement.
+NIM also owns response normalization for model-native tool markup exposed in
+chat-completion text. The normalizer recognizes the native protocol signature
+only when tools are declared, validates one complete tool block against the
+request schemas, and converts it into ordinary OpenAI tool-call deltas before
+the shared stream runner can commit visible text. Native structured tool-call
+deltas remain authoritative when both forms appear; incomplete or invalid
+native markup is a retryable upstream protocol failure rather than user-visible
+assistant text. NIM argument-property aliases remain keyed by the original tool
+identity: shared OpenAI output restores the tool name first, then NIM restores
+arguments and validates the original schema.
 
 ### Reasoning Ownership
 
@@ -789,10 +862,12 @@ Top-level `system` content stays distinct from inline `system` messages.
 Target-protocol conversion owns their representation: neutral OpenAI Chat
 conversion emits top-level `system` content as the sole leading system message
 and maps inline `system` content into ordered `user` turns. After tool-result
-dependencies are ordered, adjacent user content is coalesced into one turn so
-strict chat templates do not receive consecutive user roles. Conversion
-preserves content order and rejects unrepresentable blocks instead of dropping
-them. Provider policies do not reinterpret this role mapping.
+dependencies are ordered, a neutral whitespace-only assistant boundary closes
+any completed tool round before subsequent user input. Adjacent user content
+is then coalesced into one turn so strict chat templates receive neither
+`tool → user` nor consecutive user roles. Conversion preserves content order
+and rejects unrepresentable blocks instead of dropping them. Provider policies
+do not reinterpret this role mapping.
 
 User image conversion is a pure protocol operation. Core maps Anthropic base64
 and URL image sources to ordered OpenAI `image_url` content parts without
@@ -912,11 +987,26 @@ tools with a single string `input` field, and restores `custom_tool_call`,
 Responses edge. Text or grammar format metadata is preserved as model guidance;
 FCC does not validate custom-tool grammars.
 
+Client-facing Responses tool identity mapping is distinct from upstream wire
+portability. Namespaces and custom-tool identities are restored at the public
+Responses edge; the OpenAI tool-name codec operates beneath that mapping only
+while the canonical Anthropic request crosses an OpenAI upstream transport.
+
 Responses reasoning is handled as lossless protocol conversion before provider
 policy. The adapter preserves `reasoning.effort` in Anthropic `output_config`;
 the application reasoning boundary then interprets `none` as off and preserves
 all other named efforts. It never translates OpenAI effort names into Anthropic
 token budgets.
+Application-resolved source controls remain on the immutable canonical request;
+provider adapters consume the resolved `ReasoningPolicy` rather than parsing
+those controls again. A target converter validates only the unrepresented
+semantic remainder: it may omit an application-consumed control or an exact
+no-op, but must reject active or unknown behavior before upstream I/O. For the
+connected OpenAI Responses transport, `output_config.effort` is already
+represented by the policy and an empty context edit or exact
+`clear_thinking_20251015` edit with `keep: "all"` is inert. Structured-output
+configuration and any active, malformed, or extended context edit remain
+unsupported and fail preflight rather than being silently discarded.
 Prior Responses `reasoning` input items replay plaintext `reasoning_text`, or
 fallback `summary_text`, into assistant `reasoning_content`. Encrypted reasoning
 input is ignored because the proxy cannot decrypt it.
@@ -1008,6 +1098,8 @@ instead of stopping at its login gate.
   `model_catalog_json` file under `~/.fcc/`, and injects that path so Codex's
   native `/model` picker lists FCC provider slugs. Catalog generation is
   fail-open: launch continues with a warning if the catalog cannot be prepared.
+- The server lifecycle independently keeps that same file synchronized for
+  Codex App and IDE processes that are not launched through `fcc-codex`.
 - Catalog discovery and inference both authenticate with HTTP bearer authorization.
 - It stores the proxy auth token in `FCC_CODEX_API_KEY` for Codex's provider
   `env_key` to read. This process-local variable is a client credential carrier,

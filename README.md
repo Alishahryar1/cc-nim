@@ -1,6 +1,11 @@
 <div align="center">
 
-# 🤖 Free Claude Code
+<h1>
+  <picture>
+    <source media="(prefers-color-scheme: light)" srcset="assets/free-claude-code-wordmark-light.svg">
+    <img src="assets/free-claude-code-wordmark-dark.svg" alt="Free Claude Code" width="610">
+  </picture>
+</h1>
 
 Use Claude Code, Codex, Pi, or their IDE extensions through your own provider-backed proxy.
 
@@ -44,7 +49,7 @@ Run your coding agents with free, paid, or local models. Choose and validate pro
 
 - Launch Claude Code with `fcc-claude`, Codex with `fcc-codex`, or Pi with `fcc-pi`.
 - Run FCC in the background from a desktop launcher on Windows or macOS.
-- Switch among 25 cloud and local providers from the Admin UI.
+- Switch among 31 cloud and local providers from the Admin UI.
 - Use each coding agent's native model picker.
 - Route Fable, Opus, Sonnet, Haiku, and fallback traffic to different models.
 - Keep streaming, tool use, reasoning, and image input across compatible models.
@@ -71,6 +76,8 @@ Windows PowerShell:
 ```
 
 Re-run the same command whenever you want to update. You can review the installers before running them: [install.sh](scripts/install.sh) and [install.ps1](scripts/install.ps1).
+
+The installer asks which coding agents to install or verify. Choose at least one; skipped agents are left unchanged.
 
 ### 2. Start FCC
 
@@ -152,7 +159,8 @@ fcc-codex exec "hello"
 ## Choose A Provider
 
 1. Open a provider link below for its key, models, or setup instructions.
-2. In the Admin UI, open **Model Config** and enter the listed setting.
+2. In the Admin UI, configure the listed setting. For OpenAI, use
+   **Providers → Connected accounts** instead.
 3. Search the `MODEL` dropdown and select a model. If the provider cannot list
    models, enter `<provider-id>/<exact-provider-model-id>` manually.
 4. Click **Validate**, then **Apply**.
@@ -160,6 +168,8 @@ fcc-codex exec "hello"
 | Provider | Admin UI setting | Example `MODEL` |
 | --- | --- | --- |
 | [NVIDIA NIM](https://build.nvidia.com/settings/api-keys) | `NVIDIA_NIM_API_KEY` | `nvidia_nim/nvidia/nemotron-3-super-120b-a12b` |
+| [OpenAI / ChatGPT](https://learn.chatgpt.com/docs/auth) | Connect ChatGPT in the Admin UI | `openai/<model-id>` |
+| [Azure OpenAI](https://learn.microsoft.com/azure/foundry/openai/how-to/chatgpt) | `AZURE_OPENAI_API_KEY` and `AZURE_OPENAI_BASE_URL` | `azure_openai/<deployment-name>` |
 | [OpenRouter](https://openrouter.ai/keys) | `OPENROUTER_API_KEY` | `open_router/openrouter/free` |
 | [Google AI Studio (Gemini)](https://aistudio.google.com/apikey) | `GEMINI_API_KEY` | `gemini/models/gemini-3.1-flash-lite` |
 | [Google Vertex AI](https://cloud.google.com/vertex-ai/generative-ai/docs/start/openai) | `VERTEX_PROJECT_ID` + ADC | `vertex/google/gemini-3.5-flash` |
@@ -180,6 +190,7 @@ fcc-codex exec "hello"
 | [Cerebras Inference](https://cloud.cerebras.ai/) | `CEREBRAS_API_KEY` | `cerebras/gpt-oss-120b` |
 | [Groq](https://console.groq.com/keys) | `GROQ_API_KEY` | `groq/llama-3.3-70b-versatile` |
 | [SambaNova](https://cloud.sambanova.ai/apis) | `SAMBANOVA_API_KEY` | `sambanova/Meta-Llama-3.3-70B-Instruct` |
+| [Kilo.ai](https://kilo.ai) | `KILO_API_KEY` | `kilo/kilo-auto/free` |
 | [Fireworks AI](https://fireworks.ai/account/api-keys) | `FIREWORKS_API_KEY` | `fireworks/accounts/fireworks/models/llama-v3p3-70b-instruct` |
 | [Cloudflare Workers AI](https://developers.cloudflare.com/workers-ai/) | `CLOUDFLARE_API_TOKEN` and `CLOUDFLARE_ACCOUNT_ID` | `cloudflare/@cf/moonshotai/kimi-k2.6` |
 | [Z.ai](https://z.ai/manage-apikey/apikey-list) | `ZAI_API_KEY` | `zai/glm-5.2` |
@@ -190,6 +201,17 @@ fcc-codex exec "hello"
 
 Important provider notes:
 
+- OpenAI uses your ChatGPT subscription rather than an API key. Connect from
+  **Providers → Connected accounts**; browser PKCE is the default and device
+  code is available for headless setups. FCC stores its own renewable
+  credentials under `~/.fcc/auth/` and leaves Codex login untouched. Restart
+  an already-running agent after connecting to refresh its model picker.
+- Azure OpenAI uses the deployment names from your resource. Set
+  `AZURE_OPENAI_BASE_URL` to its complete v1 endpoint, such as
+  `https://YOUR-RESOURCE-NAME.openai.azure.com/openai/v1/`, and select a
+  deployment that supports Chat Completions. Azure does not expose custom
+  deployment names through its data-plane model list, so enter the deployment
+  name as a custom model slug.
 - Mistral Codestral uses a separate key from Mistral La Plateforme.
 - Kimi Code subscription keys use `kimi_code/`; Kimi API credit keys use
   `kimi/`. Kimi Code plans are for personal interactive coding-agent use under
@@ -237,7 +259,7 @@ Use the tag shown by `ollama list` with the `ollama/` prefix. `OLLAMA_BASE_URL` 
 
 `MODEL` is the fallback for every request. Select a model for `MODEL_FABLE`, `MODEL_OPUS`, `MODEL_SONNET`, or `MODEL_HAIKU` to override an individual Claude Code tier; select **None** to use `MODEL`.
 
-For example, route Opus to `nvidia_nim/moonshotai/kimi-k2.6`, Sonnet to `open_router/openrouter/free`, Haiku to `lmstudio/qwen3.5-coder`, and keep `MODEL` on `zai/glm-5.2`.
+For example, route Opus to `nvidia_nim/nvidia/nemotron-3-super-120b-a12b`, Sonnet to `open_router/openrouter/free`, Haiku to `lmstudio/qwen3.5-coder`, and keep `MODEL` on `zai/glm-5.2`.
 
 ### Reasoning Control
 
@@ -272,12 +294,48 @@ Install the [Claude Code extension](https://marketplace.visualstudio.com/items?i
   { "name": "CLAUDE_CODE_AUTO_COMPACT_WINDOW", "value": "190000" },
   { "name": "DISABLE_AUTOUPDATER", "value": "1" },
   { "name": "DISABLE_FEEDBACK_COMMAND", "value": "1" },
-  { "name": "DISABLE_ERROR_REPORTING", "value": "1" },
-  { "name": "DISABLE_TELEMETRY", "value": "1" }
+  { "name": "DISABLE_ERROR_REPORTING", "value": "1" }
 ]
 ```
 
 Match the port and authentication token to the Admin UI, then reload the extension.
+
+</details>
+
+<details>
+<summary><strong>Codex App</strong></summary>
+
+Start FCC, then add its provider and generated model catalog to your user-level Codex configuration.
+
+**Windows** — edit `%USERPROFILE%\.codex\config.toml` and replace `YOUR_USERNAME`:
+
+```toml
+model_provider = "fcc"
+model = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
+model_catalog_json = "C:/Users/YOUR_USERNAME/.fcc/codex-model-catalog.json"
+
+[model_providers.fcc]
+name = "Free Claude Code"
+base_url = "http://127.0.0.1:8082/v1"
+http_headers = { Authorization = "Bearer freecc" }
+wire_api = "responses"
+```
+
+**macOS** — edit `~/.codex/config.toml` and replace `YOUR_USERNAME`:
+
+```toml
+model_provider = "fcc"
+model = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
+model_catalog_json = "/Users/YOUR_USERNAME/.fcc/codex-model-catalog.json"
+
+[model_providers.fcc]
+name = "Free Claude Code"
+base_url = "http://127.0.0.1:8082/v1"
+http_headers = { Authorization = "Bearer freecc" }
+wire_api = "responses"
+```
+
+Match the model, port, and bearer token to the Admin UI. Restart the Codex App after setup or model changes, then use its model picker to select any FCC provider/model slug.
 
 </details>
 
@@ -319,8 +377,7 @@ Set the environment for `acp.registry.claude-acp`:
   "CLAUDE_CODE_AUTO_COMPACT_WINDOW": "190000",
   "DISABLE_AUTOUPDATER": "1",
   "DISABLE_FEEDBACK_COMMAND": "1",
-  "DISABLE_ERROR_REPORTING": "1",
-  "DISABLE_TELEMETRY": "1"
+  "DISABLE_ERROR_REPORTING": "1"
 }
 ```
 

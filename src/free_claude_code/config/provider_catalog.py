@@ -5,6 +5,7 @@ provider implementation imports (see contract tests).
 """
 
 from dataclasses import dataclass
+from enum import StrEnum
 
 # Default upstream base URLs are owned here with the provider catalog.
 NVIDIA_NIM_DEFAULT_BASE = "https://integrate.api.nvidia.com/v1"
@@ -45,6 +46,16 @@ VERTEX_AI_API_ROOT = "https://aiplatform.googleapis.com"
 GROQ_DEFAULT_BASE = "https://api.groq.com/openai/v1"
 CEREBRAS_DEFAULT_BASE = "https://api.cerebras.ai/v1"
 SAMBANOVA_DEFAULT_BASE = "https://api.sambanova.ai/v1"
+# Kilo.ai gateway OpenAI-compatible Chat Completions API.
+KILO_DEFAULT_BASE = "https://api.kilo.ai/api/gateway"
+OPENAI_CODEX_DEFAULT_BASE = "https://chatgpt.com/backend-api/codex"
+
+
+class ProviderAuthKind(StrEnum):
+    """How a customer makes one provider available."""
+
+    CONFIGURATION = "configuration"
+    CONNECTED_ACCOUNT = "connected_account"
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +64,7 @@ class ProviderDescriptor:
 
     provider_id: str
     display_name: str
+    auth_kind: ProviderAuthKind = ProviderAuthKind.CONFIGURATION
     local: bool = False
     credential_env: str | None = None
     credential_url: str | None = None
@@ -83,6 +95,26 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="nvidia_nim_api_key",
         default_base_url=NVIDIA_NIM_DEFAULT_BASE,
         proxy_attr="nvidia_nim_proxy",
+    ),
+    "openai": ProviderDescriptor(
+        provider_id="openai",
+        display_name="OpenAI / ChatGPT",
+        auth_kind=ProviderAuthKind.CONNECTED_ACCOUNT,
+        default_base_url=OPENAI_CODEX_DEFAULT_BASE,
+        proxy_attr="openai_proxy",
+    ),
+    "azure_openai": ProviderDescriptor(
+        provider_id="azure_openai",
+        display_name="Azure OpenAI",
+        credential_env="AZURE_OPENAI_API_KEY",
+        credential_url="https://ai.azure.com/",
+        credential_attr="azure_openai_api_key",
+        base_url_attr="azure_openai_base_url",
+        proxy_attr="azure_openai_proxy",
+        required_settings_attrs=(
+            "azure_openai_api_key",
+            "azure_openai_base_url",
+        ),
     ),
     "open_router": ProviderDescriptor(
         provider_id="open_router",
@@ -229,6 +261,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="kimi_code_api_key",
         default_base_url=KIMI_CODE_DEFAULT_BASE,
         proxy_attr="kimi_code_proxy",
+    ),
+    "kilo": ProviderDescriptor(
+        provider_id="kilo",
+        display_name="Kilo.ai",
+        credential_env="KILO_API_KEY",
+        credential_url="https://app.kilo.ai",
+        credential_attr="kilo_api_key",
+        default_base_url=KILO_DEFAULT_BASE,
+        proxy_attr="kilo_proxy",
     ),
     "minimax": ProviderDescriptor(
         provider_id="minimax",

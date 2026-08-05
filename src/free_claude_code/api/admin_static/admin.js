@@ -4,6 +4,7 @@ const state = {
   localStatus: new Map(),
   modelOptions: [],
   modelComboboxes: new Set(),
+  authPollers: new Map(),
   activeView: "providers",
 };
 
@@ -59,8 +60,8 @@ function sourceText(field) {
 }
 
 function statusClass(status) {
-  if (["configured", "reachable", "running"].includes(status)) return "ok";
-  if (["missing_key", "missing_config", "missing_url", "unknown"].includes(status)) return "warn";
+  if (["configured", "reachable", "running", "connected"].includes(status)) return "ok";
+  if (["missing_key", "missing_config", "missing_url", "unknown", "connecting"].includes(status)) return "warn";
   if (["offline", "error"].includes(status)) return "error";
   return "neutral";
 }
@@ -72,7 +73,14 @@ async function api(path, options = {}) {
     cache: "no-store",
   });
   if (!response.ok) {
-    throw new Error(`${response.status} ${response.statusText}`);
+    let detail = "";
+    try {
+      const payload = await response.json();
+      detail = typeof payload.detail === "string" ? payload.detail : "";
+    } catch {
+      // The status remains useful when an upstream proxy returns a non-JSON page.
+    }
+    throw new Error(detail || `${response.status} ${response.statusText}`);
   }
   return response.json();
 }
@@ -86,6 +94,7 @@ async function load() {
   renderProviders(config.provider_status);
   renderSections(config.sections, config.fields);
   byId("configPath").textContent = config.paths.managed;
+  await refreshConnectedAccounts();
   await hydrateModelOptions();
   await validate(false);
   await refreshLocalStatus();
@@ -142,8 +151,18 @@ function setActiveView(viewId, { scroll = false } = {}) {
 
 function renderProviders(providerStatus) {
   const grid = byId("providerGrid");
+  const connectedGrid = byId("connectedAccountGrid");
   grid.innerHTML = "";
+  connectedGrid.innerHTML = "";
+  const connected = providerStatus.filter(
+    (provider) => provider.kind === "connected_account",
+  );
+  byId("connectedAccountsSection").hidden = connected.length === 0;
   providerStatus.forEach((provider) => {
+    if (provider.kind === "connected_account") {
+      connectedGrid.appendChild(renderConnectedAccountCard(provider));
+      return;
+    }
     const card = document.createElement("article");
     card.className = "provider-card";
     card.dataset.provider = provider.provider_id;
@@ -173,6 +192,230 @@ function renderProviders(providerStatus) {
     card.append(title, meta, button);
     grid.appendChild(card);
   });
+}
+
+function renderConnectedAccountCard(provider, status = provider) {
+  const card = document.createElement("article");
+  card.className = "provider-card";
+  card.dataset.provider = provider.provider_id;
+  card.dataset.connectedAccount = "true";
+
+  const title = document.createElement("div");
+  title.className = "provider-title";
+  const name = document.createElement("strong");
+  name.textContent = provider.display_name || provider.provider_id;
+  const pill = document.createElement("span");
+  pill.className = `status-pill ${statusClass(status.state || status.status)}`;
+  pill.textContent = connectedAccountLabel(status);
+  title.append(name, pill);
+
+  const meta = document.createElement("div");
+  meta.className = "provider-meta";
+  meta.textContent = connectedAccountMeta(status);
+
+  const actions = document.createElement("div");
+  actions.className = "provider-actions";
+  populateConnectedAccountActions(provider, status, actions);
+  card.append(title, meta, actions);
+  return card;
+}
+
+function connectedAccountLabel(status) {
+  const labels = {
+    disconnected: "Not connected",
+    connecting: "Connecting",
+    connected: "Connected",
+    error: "Needs attention",
+  };
+  return labels[status.state] || status.label || "Not connected";
+}
+
+function connectedAccountMeta(status) {
+  if (status.connected) {
+    const identity = status.email || "ChatGPT subscription connected";
+    const models = Number.isInteger(status.model_count)
+      ? `${status.model_count} model${status.model_count === 1 ? "" : "s"} available. `
+      : "";
+    const error = status.message ? `${status.message} ` : "";
+    return `${identity}. ${models}${error}Restart your agent to refresh its model picker.`;
+  }
+  if (status.mode === "device" && status.user_code) {
+    return `Enter code ${status.user_code} at ${status.verification_url}`;
+  }
+  if (status.state === "connecting") {
+    return "Finish signing in, then return to this page.";
+  }
+  return status.message || "Connect a ChatGPT account to discover subscription models.";
+}
+
+function populateConnectedAccountActions(provider, status, actions) {
+  const providerId = provider.provider_id;
+  if (status.state === "connecting") {
+    const target = status.authorization_url || status.verification_url;
+    if (target) {
+      actions.appendChild(authButton("Open sign-in", () => window.open(target, "_blank", "noopener")));
+    }
+    if (status.mode === "device" && status.user_code) {
+      actions.appendChild(
+        authButton(
+          "Copy code",
+          () => copyDeviceCode(status.user_code),
+          "secondary-button",
+        ),
+      );
+    }
+    actions.appendChild(
+      authButton("Cancel", () => cancelConnectedAccountLogin(providerId), "secondary-button"),
+    );
+    return;
+  }
+  if (status.connected) {
+    actions.appendChild(
+      authButton(
+        "Reconnect",
+        (button) => startConnectedAccountLogin(providerId, "browser", button),
+      ),
+    );
+    actions.appendChild(
+      authButton(
+        "Disconnect",
+        () => disconnectConnectedAccount(providerId),
+        "secondary-button",
+      ),
+    );
+    return;
+  }
+  actions.appendChild(
+    authButton("Connect", (button) => startConnectedAccountLogin(providerId, "browser", button)),
+    authButton(
+      "Use device code",
+      (button) => startConnectedAccountLogin(providerId, "device", button),
+      "secondary-button",
+    ),
+  );
+}
+
+function authButton(label, action, className = "test-button") {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.textContent = label;
+  button.addEventListener("click", () => action(button));
+  return button;
+}
+
+async function refreshConnectedAccounts() {
+  const providers = (state.config?.provider_status || []).filter(
+    (provider) => provider.kind === "connected_account",
+  );
+  await Promise.all(
+    providers.map(async (provider) => {
+      try {
+        const status = await api(`/admin/api/providers/${provider.provider_id}/auth`);
+        updateConnectedAccountCard(provider, status);
+        if (status.state === "connecting") pollConnectedAccount(provider);
+      } catch (error) {
+        updateConnectedAccountCard(provider, {
+          state: "error",
+          connected: false,
+          message: error.message,
+        });
+      }
+    }),
+  );
+}
+
+function updateConnectedAccountCard(provider, status) {
+  const current = document.querySelector(
+    `[data-provider="${provider.provider_id}"][data-connected-account="true"]`,
+  );
+  if (current) current.replaceWith(renderConnectedAccountCard(provider, status));
+}
+
+async function startConnectedAccountLogin(providerId, mode, button) {
+  button.disabled = true;
+  const popup = window.open("about:blank", "_blank");
+  if (popup) popup.opener = null;
+  try {
+    const status = await api(`/admin/api/providers/${providerId}/auth/login`, {
+      method: "POST",
+      body: JSON.stringify({ mode }),
+    });
+    const provider = connectedAccountDescriptor(providerId);
+    updateConnectedAccountCard(provider, status);
+    const target = status.authorization_url || status.verification_url;
+    if (target && popup) {
+      popup.location.replace(target);
+    } else if (target) {
+      window.open(target, "_blank", "noopener");
+    } else if (popup) {
+      popup.close();
+    }
+    pollConnectedAccount(provider);
+  } catch (error) {
+    if (popup) popup.close();
+    showMessage(error.message, true);
+    button.disabled = false;
+  }
+}
+
+async function cancelConnectedAccountLogin(providerId) {
+  clearConnectedAccountPoll(providerId);
+  const status = await api(`/admin/api/providers/${providerId}/auth/cancel`, {
+    method: "POST",
+  });
+  updateConnectedAccountCard(connectedAccountDescriptor(providerId), status);
+}
+
+async function disconnectConnectedAccount(providerId) {
+  if (!window.confirm("Disconnect this ChatGPT account from FCC?")) return;
+  clearConnectedAccountPoll(providerId);
+  const status = await api(`/admin/api/providers/${providerId}/auth`, {
+    method: "DELETE",
+  });
+  updateConnectedAccountCard(connectedAccountDescriptor(providerId), status);
+  await hydrateModelOptions();
+}
+
+function pollConnectedAccount(provider) {
+  clearConnectedAccountPoll(provider.provider_id);
+  const poll = async () => {
+    try {
+      const status = await api(`/admin/api/providers/${provider.provider_id}/auth`);
+      updateConnectedAccountCard(provider, status);
+      if (status.state === "connecting") {
+        state.authPollers.set(provider.provider_id, window.setTimeout(poll, 1000));
+      } else {
+        state.authPollers.delete(provider.provider_id);
+        if (status.connected) await hydrateModelOptions();
+      }
+    } catch (error) {
+      state.authPollers.delete(provider.provider_id);
+      showMessage(error.message, true);
+    }
+  };
+  state.authPollers.set(provider.provider_id, window.setTimeout(poll, 1000));
+}
+
+function clearConnectedAccountPoll(providerId) {
+  const timer = state.authPollers.get(providerId);
+  if (timer) window.clearTimeout(timer);
+  state.authPollers.delete(providerId);
+}
+
+function connectedAccountDescriptor(providerId) {
+  return state.config.provider_status.find(
+    (provider) => provider.provider_id === providerId,
+  );
+}
+
+async function copyDeviceCode(code) {
+  try {
+    await navigator.clipboard.writeText(code);
+    showMessage("Device code copied.");
+  } catch {
+    showMessage(`Copy this device code: ${code}`);
+  }
 }
 
 function updateProviderCard(providerId, status, label, metaText) {

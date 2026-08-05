@@ -6,6 +6,22 @@ from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.settings import Settings
 
 _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
+    "OPENAI_PROXY": {
+        "description": (
+            "Optional proxy used for OpenAI sign-in and ChatGPT Codex requests. "
+            "Changing it restarts FCC."
+        ),
+        "restart_required": True,
+    },
+    "AZURE_OPENAI_API_KEY": {
+        "description": "API key for the Azure OpenAI resource.",
+    },
+    "AZURE_OPENAI_BASE_URL": {
+        "description": (
+            "Resource-specific OpenAI v1 base URL, for example "
+            "https://YOUR-RESOURCE-NAME.openai.azure.com/openai/v1/."
+        ),
+    },
     "NVIDIA_NIM_API_KEY": {
         "label": "NVIDIA NIM API Key",
         "description": "Used by NVIDIA NIM chat and optional NIM voice transcription.",

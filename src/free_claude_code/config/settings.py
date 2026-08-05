@@ -24,6 +24,14 @@ from .reasoning import ReasoningPreference
 class Settings(BaseSettings):
     """Application settings loaded from environment variables."""
 
+    # ==================== Azure OpenAI ====================
+    azure_openai_api_key: str = Field(
+        default="", validation_alias="AZURE_OPENAI_API_KEY"
+    )
+    azure_openai_base_url: str = Field(
+        default="", validation_alias="AZURE_OPENAI_BASE_URL"
+    )
+
     # ==================== OpenRouter Config ====================
     open_router_api_key: str = Field(default="", validation_alias="OPENROUTER_API_KEY")
 
@@ -81,6 +89,9 @@ class Settings(BaseSettings):
 
     # ==================== SambaNova Cloud ====================
     sambanova_api_key: str = Field(default="", validation_alias="SAMBANOVA_API_KEY")
+
+    # ==================== Kilo.ai Config ====================
+    kilo_api_key: str = Field(default="", validation_alias="KILO_API_KEY")
 
     # ==================== Z.ai Config ====================
     zai_api_key: str = Field(default="", validation_alias="ZAI_API_KEY")
@@ -158,6 +169,8 @@ class Settings(BaseSettings):
     model_haiku: str | None = Field(default=None, validation_alias="MODEL_HAIKU")
 
     # ==================== Per-Provider Proxy ====================
+    openai_proxy: str = Field(default="", validation_alias="OPENAI_PROXY")
+    azure_openai_proxy: str = Field(default="", validation_alias="AZURE_OPENAI_PROXY")
     nvidia_nim_proxy: str = Field(default="", validation_alias="NVIDIA_NIM_PROXY")
     open_router_proxy: str = Field(default="", validation_alias="OPENROUTER_PROXY")
     mistral_proxy: str = Field(default="", validation_alias="MISTRAL_PROXY")
@@ -178,6 +191,7 @@ class Settings(BaseSettings):
     cohere_proxy: str = Field(default="", validation_alias="COHERE_PROXY")
     github_models_proxy: str = Field(default="", validation_alias="GITHUB_MODELS_PROXY")
     sambanova_proxy: str = Field(default="", validation_alias="SAMBANOVA_PROXY")
+    kilo_proxy: str = Field(default="", validation_alias="KILO_PROXY")
     zai_proxy: str = Field(default="", validation_alias="ZAI_PROXY")
     fireworks_proxy: str = Field(default="", validation_alias="FIREWORKS_PROXY")
     cloudflare_proxy: str = Field(default="", validation_alias="CLOUDFLARE_PROXY")

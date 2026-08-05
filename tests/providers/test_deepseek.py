@@ -1,13 +1,10 @@
 """Tests for DeepSeek OpenAI-compatible Chat Completions provider."""
 
-import json
 import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-import httpx
 import pytest
-from openai import AsyncOpenAI
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
@@ -24,6 +21,7 @@ from free_claude_code.providers.deepseek import DeepSeekProvider
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
+    capture_openai_chat_wire_body,
     immediate_admission,
     reasoning_for,
 )
@@ -42,36 +40,6 @@ def deepseek_config():
 @pytest.fixture
 def deepseek_provider(deepseek_config):
     return DeepSeekProvider(deepseek_config, admission=immediate_admission())
-
-
-async def _capture_openai_wire_body(body: dict) -> dict:
-    captured: list[dict] = []
-
-    def handler(request: httpx.Request) -> httpx.Response:
-        payload = json.loads(request.content)
-        assert isinstance(payload, dict)
-        captured.append(payload)
-        return httpx.Response(
-            200,
-            headers={"content-type": "text/event-stream"},
-            text="data: [DONE]\n\n",
-        )
-
-    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
-    client = AsyncOpenAI(
-        api_key="test",
-        base_url="https://deepseek.invalid",
-        http_client=http_client,
-        max_retries=0,
-    )
-    try:
-        stream = await client.chat.completions.create(**body, stream=True)
-        await stream.close()
-    finally:
-        await client.close()
-
-    assert len(captured) == 1
-    return captured[0]
 
 
 def test_default_base_url_alias():
@@ -866,8 +834,8 @@ async def test_wire_messages_keep_prefix_across_tool_thinking_fallback(
             request, reasoning=reasoning_for(request)
         )
 
-    first_wire = await _capture_openai_wire_body(build(prefix_messages))
-    continued_wire = await _capture_openai_wire_body(build(continued_messages))
+    first_wire = await capture_openai_chat_wire_body(build(prefix_messages))
+    continued_wire = await capture_openai_chat_wire_body(build(continued_messages))
     first_messages = first_wire["messages"]
     continued = continued_wire["messages"]
 

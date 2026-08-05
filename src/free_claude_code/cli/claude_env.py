@@ -34,5 +34,4 @@ def build_claude_proxy_env(
     env["DISABLE_AUTOUPDATER"] = "1"
     env["DISABLE_FEEDBACK_COMMAND"] = "1"
     env["DISABLE_ERROR_REPORTING"] = "1"
-    env["DISABLE_TELEMETRY"] = "1"
     return env
