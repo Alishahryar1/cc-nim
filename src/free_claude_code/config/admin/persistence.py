@@ -227,6 +227,12 @@ def load_provider_allowlists() -> dict[str, list[str]]:
     return parse_provider_allowlists(managed.get(ALLOWLIST_ENV_KEY, ""))
 
 
+def provider_allowlists_are_locked() -> bool:
+    """Return whether the allowlist env key is locked by a higher-precedence source."""
+
+    return is_locked_source(load_value_state()[ALLOWLIST_ENV_KEY]["source"])
+
+
 def _normalize_allowlist_model(provider_id: str, model: str) -> str:
     """Strip a redundant leading ``{provider_id}/`` prefix from a model id.
 

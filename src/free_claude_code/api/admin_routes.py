@@ -187,9 +187,12 @@ async def set_provider_allowlist(
     services: ApiServices = Depends(get_services),
 ):
     require_loopback_admin(request)
-    return await services.admin.set_provider_allowlist(
-        provider_id, payload.models, restricted=payload.restricted
-    )
+    try:
+        return await services.admin.set_provider_allowlist(
+            provider_id, payload.models, restricted=payload.restricted
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/admin/api/providers/{provider_id}/auth")

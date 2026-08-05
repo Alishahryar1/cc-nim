@@ -476,6 +476,60 @@ def test_admin_allowlist_hidden_from_config_response(monkeypatch, tmp_path):
     assert "FCC_PROVIDER_MODEL_ALLOWLIST" not in keys
 
 
+def test_admin_allowlist_post_rejected_when_locked_by_process_env(
+    monkeypatch, tmp_path
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    monkeypatch.setenv("FCC_PROVIDER_MODEL_ALLOWLIST", "nvidia_nim/locked-model")
+    app = create_test_app()
+
+    response = _local_client(app).post(
+        "/admin/api/providers/nvidia_nim/allowlist",
+        json={"models": ["admin-model"]},
+    )
+
+    assert response.status_code == 400
+    assert "locked" in response.json()["detail"]
+
+
+def test_admin_allowlist_post_rejected_when_locked_by_explicit_env_file(
+    monkeypatch, tmp_path
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    env_file = tmp_path / "locked.env"
+    env_file.write_text(
+        "FCC_PROVIDER_MODEL_ALLOWLIST=nvidia_nim/locked-model\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("FCC_ENV_FILE", str(env_file))
+    app = create_test_app()
+
+    response = _local_client(app).post(
+        "/admin/api/providers/nvidia_nim/allowlist",
+        json={"models": ["admin-model"]},
+    )
+
+    assert response.status_code == 400
+    assert "locked" in response.json()["detail"]
+
+
+def test_admin_allowlist_get_reflects_locked_process_env(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    monkeypatch.setenv("FCC_PROVIDER_MODEL_ALLOWLIST", "nvidia_nim/locked-model")
+    app = create_test_app()
+
+    response = _local_client(app).get("/admin/api/providers/nvidia_nim/allowlist")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "provider_id": "nvidia_nim",
+        "models": ["locked-model"],
+        "restricted": True,
+    }
+
+
 def test_admin_page_no_longer_renders_generated_env_panel(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     app = create_test_app()

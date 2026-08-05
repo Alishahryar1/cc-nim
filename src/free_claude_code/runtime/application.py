@@ -28,6 +28,7 @@ from free_claude_code.config.admin.persistence import (
     commit_provider_allowlist,
     load_provider_allowlists,
     prepare_admin_update,
+    provider_allowlists_are_locked,
 )
 from free_claude_code.config.admin.status import provider_config_status
 from free_claude_code.config.admin.values import load_value_state
@@ -308,10 +309,17 @@ class ApplicationRuntime:
         return status
 
     def get_provider_allowlist(self, provider_id: str) -> list[str]:
-        return list(load_provider_allowlists().get(provider_id, []))
+        return list(
+            self.provider_manager.current_settings().provider_model_allowlists.get(
+                provider_id, []
+            )
+        )
 
     def is_provider_allowlist_restricted(self, provider_id: str) -> bool:
-        return provider_id in load_provider_allowlists()
+        return (
+            provider_id
+            in self.provider_manager.current_settings().provider_model_allowlists
+        )
 
     async def set_provider_allowlist(
         self,
@@ -320,6 +328,12 @@ class ApplicationRuntime:
         *,
         restricted: bool = True,
     ) -> dict[str, Any]:
+        if provider_allowlists_are_locked():
+            raise ValueError(
+                "FCC_PROVIDER_MODEL_ALLOWLIST is locked by the process "
+                "environment or FCC_ENV_FILE and cannot be edited from the "
+                "admin UI."
+            )
         async with self._config_lock:
             result = commit_provider_allowlist(
                 provider_id, models, restricted=restricted

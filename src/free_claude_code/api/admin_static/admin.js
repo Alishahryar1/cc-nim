@@ -1113,11 +1113,13 @@ async function saveProviderAllowlist() {
   try {
     const available = state.providerAllowlistAvailable;
     const selectedSet = state.providerAllowlistSelected;
-    const allSelected =
-      available.length > 0 &&
-      available.length === selectedSet.size &&
-      available.every((model) => selectedSet.has(model));
-    const restricted = !allSelected;
+    const restricted =
+      available.length === 0
+        ? Boolean(state.providerAllowlistRestricted.get(providerId))
+        : !(
+            available.length === selectedSet.size &&
+            available.every((model) => selectedSet.has(model))
+          );
     const selected = restricted
       ? Array.from(selectedSet).sort((a, b) => a.localeCompare(b))
       : [];
