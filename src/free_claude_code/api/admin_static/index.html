@@ -85,6 +85,37 @@
           <button id="applyButton" class="primary-button" type="button" disabled>Apply</button>
         </div>
       </footer>
+
+      <div id="providerAllowlistModal" class="modal" hidden>
+        <div class="modal-backdrop" data-close="providerAllowlistModal"></div>
+        <div class="modal-dialog" role="dialog" aria-modal="true" aria-labelledby="providerAllowlistTitle">
+          <div class="modal-header">
+            <h3 id="providerAllowlistTitle">Select Models</h3>
+            <button class="modal-close" data-close="providerAllowlistModal" aria-label="Close">×</button>
+          </div>
+          <div class="modal-body">
+            <div class="model-selector-toolbar">
+              <input
+                id="providerAllowlistSearch"
+                class="model-selector-search"
+                type="text"
+                placeholder="Search models..."
+                autocomplete="off"
+              />
+              <div class="model-selector-actions">
+                <button id="providerAllowlistSelectAll" class="ghost-button" type="button">Select all</button>
+                <button id="providerAllowlistSelectFiltered" class="ghost-button" type="button">Select filtered</button>
+                <button id="providerAllowlistDeselectAll" class="ghost-button" type="button">Deselect all</button>
+              </div>
+            </div>
+            <div id="providerAllowlistList" class="model-selector-list"></div>
+          </div>
+          <div class="modal-footer">
+            <button id="providerAllowlistCancel" class="secondary-button" type="button">Cancel</button>
+            <button id="providerAllowlistSave" class="primary-button" type="button">Save selection</button>
+          </div>
+        </div>
+      </div>
     </div>
     <script src="/admin/assets/admin.js"></script>
   </body>

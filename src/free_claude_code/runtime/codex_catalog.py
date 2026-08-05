@@ -41,8 +41,8 @@ class CodexModelCatalogPublisher:
         )
         catalog = build_codex_model_catalog(models_response.model_dump())
         models = catalog.get("models")
-        if not isinstance(models, list) or not models:
-            raise ValueError("Codex model catalog contains no routable models.")
+        if not isinstance(models, list):
+            raise ValueError("Codex model catalog is not a list of models.")
         write_codex_model_catalog(catalog_path, catalog)
 
     def _resolved_catalog_path(self) -> Path:

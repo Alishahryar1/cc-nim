@@ -7,7 +7,9 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from free_claude_code.config.model_refs import model_ref_allowed
 from free_claude_code.config.provider_catalog import SUPPORTED_PROVIDER_IDS
+from free_claude_code.config.settings import get_settings
 from free_claude_code.core.gateway_model_ids import (
     GATEWAY_MODEL_ID_PREFIX,
     NO_THINKING_GATEWAY_MODEL_ID_PREFIX,
@@ -44,6 +46,8 @@ class _CatalogCandidate:
 def build_codex_model_catalog(models_response: Mapping[str, Any]) -> dict[str, Any]:
     """Convert FCC `/v1/models` data into Codex `model_catalog_json` payload."""
 
+    settings = get_settings()
+
     candidates = list(_catalog_candidates(models_response))
     normal_provider_refs = {
         candidate.provider_model_ref
@@ -61,10 +65,20 @@ def build_codex_model_catalog(models_response: Mapping[str, Any]) -> dict[str, A
             continue
         if candidate.slug in seen_slugs:
             continue
+        # Apply per-provider allowlist when configured; otherwise global.
+        if not _model_is_allowed(settings, candidate):
+            continue
         seen_slugs.add(candidate.slug)
         models.append(_codex_catalog_entry(candidate, priority=len(models)))
 
     return {"models": models}
+
+
+def _model_is_allowed(settings: Any, candidate: _CatalogCandidate) -> bool:
+    """Return whether a catalog candidate passes allowlist filtering."""
+    return model_ref_allowed(
+        settings, candidate.provider_model_ref, alt_ids=(candidate.slug,)
+    )
 
 
 def write_codex_model_catalog(catalog_path: Path, catalog: Mapping[str, Any]) -> bool:

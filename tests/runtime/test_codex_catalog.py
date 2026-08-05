@@ -2,8 +2,6 @@ import json
 from pathlib import Path
 from unittest.mock import patch
 
-import pytest
-
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.application.ports import (
     RequestRuntimeLease,
@@ -83,18 +81,15 @@ def test_startup_publication_creates_missing_catalog_and_preserves_existing(
     assert catalog_path.read_text(encoding="utf-8") == "complete prior catalog\n"
 
 
-def test_empty_projection_preserves_existing_catalog(tmp_path: Path) -> None:
+def test_empty_projection_publishes_empty_catalog(tmp_path: Path) -> None:
     catalog_path = tmp_path / "codex-model-catalog.json"
     catalog_path.write_text("last known good\n", encoding="utf-8")
     publisher = CodexModelCatalogPublisher(catalog_path)
 
-    with (
-        patch(
-            "free_claude_code.runtime.codex_catalog.build_codex_model_catalog",
-            return_value={"models": []},
-        ),
-        pytest.raises(ValueError, match="no routable models"),
+    with patch(
+        "free_claude_code.runtime.codex_catalog.build_codex_model_catalog",
+        return_value={"models": []},
     ):
         publisher.publish(_runtime())
 
-    assert catalog_path.read_text(encoding="utf-8") == "last known good\n"
+    assert json.loads(catalog_path.read_text(encoding="utf-8")) == {"models": []}

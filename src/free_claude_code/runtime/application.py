@@ -25,7 +25,10 @@ from free_claude_code.application.ports import StopResult
 from free_claude_code.config.admin.persistence import (
     PreparedAdminUpdate,
     commit_prepared_admin_update,
+    commit_provider_allowlist,
+    load_provider_allowlists,
     prepare_admin_update,
+    provider_allowlists_are_locked,
 )
 from free_claude_code.config.admin.status import provider_config_status
 from free_claude_code.config.admin.values import load_value_state
@@ -304,6 +307,50 @@ class ApplicationRuntime:
         )
         self._connected_account_revisions[provider_id] = status.revision
         return status
+
+    def get_provider_allowlist(self, provider_id: str) -> list[str]:
+        return list(
+            self.provider_manager.current_settings().provider_model_allowlists.get(
+                provider_id, []
+            )
+        )
+
+    def is_provider_allowlist_restricted(self, provider_id: str) -> bool:
+        return (
+            provider_id
+            in self.provider_manager.current_settings().provider_model_allowlists
+        )
+
+    async def set_provider_allowlist(
+        self,
+        provider_id: str,
+        models: list[str],
+        *,
+        restricted: bool = True,
+    ) -> dict[str, Any]:
+        if provider_allowlists_are_locked():
+            raise ValueError(
+                "FCC_PROVIDER_MODEL_ALLOWLIST is locked by the process "
+                "environment or FCC_ENV_FILE and cannot be edited from the "
+                "admin UI."
+            )
+        async with self._config_lock:
+            result = commit_provider_allowlist(
+                provider_id, models, restricted=restricted
+            )
+            get_settings.cache_clear()
+            # Refresh the running generation's allowlist from the committed
+            # managed env so model lists, the Codex catalog, and cache scope
+            # update live without a server restart. Copy the current generation
+            # settings so every other value stays untouched.
+            committed = load_provider_allowlists()
+            updated = self.provider_manager.current_settings().model_copy(
+                update={"provider_model_allowlists": committed}
+            )
+            await self.provider_manager.replace(
+                updated, commit=lambda: None, reason="admin_allowlist"
+            )
+            return result
 
     async def request_restart(self) -> None:
         callback = self._restart_callback

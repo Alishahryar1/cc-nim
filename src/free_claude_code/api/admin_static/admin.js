@@ -6,6 +6,12 @@ const state = {
   modelComboboxes: new Set(),
   authPollers: new Map(),
   activeView: "providers",
+  providerAllowlists: new Map(),
+  providerAllowlistRestricted: new Map(),
+  providerAllowlistOpen: false,
+  providerAllowlistProviderId: null,
+  providerAllowlistSelected: new Set(),
+  providerAllowlistAvailable: [],
 };
 
 const MASKED_SECRET = "********";
@@ -96,8 +102,10 @@ async function load() {
   byId("configPath").textContent = config.paths.managed;
   await refreshConnectedAccounts();
   await hydrateModelOptions();
+  await loadProviderAllowlists(config.provider_status);
   await validate(false);
   await refreshLocalStatus();
+  await refreshProviderAllowlistMeta(config.provider_status);
   updateDirtyState();
   showMessage("");
 }
@@ -189,7 +197,33 @@ function renderProviders(providerStatus) {
     button.textContent = provider.kind === "local" ? "Test" : "Refresh models";
     button.addEventListener("click", () => testProvider(provider.provider_id, button));
 
-    card.append(title, meta, button);
+    const allowlistButton = document.createElement("button");
+    allowlistButton.type = "button";
+    allowlistButton.className = "test-button provider-allowlist-trigger";
+    allowlistButton.textContent = "Select models";
+    allowlistButton.addEventListener("click", () =>
+      openProviderAllowlistModal(provider.provider_id),
+    );
+
+    const enabledToggle = document.createElement("label");
+    enabledToggle.className = "provider-enabled-toggle";
+    enabledToggle.dataset.provider = provider.provider_id;
+    const enabledCheckbox = document.createElement("input");
+    enabledCheckbox.type = "checkbox";
+    enabledCheckbox.checked = true;
+    enabledCheckbox.addEventListener("click", (event) => event.stopPropagation());
+    enabledCheckbox.addEventListener("change", () => {
+      toggleProviderEnabled(provider.provider_id, enabledCheckbox.checked);
+    });
+    const enabledText = document.createElement("span");
+    enabledText.textContent = "Enabled";
+    enabledToggle.append(enabledCheckbox, enabledText);
+
+    const allowlistMeta = document.createElement("div");
+    allowlistMeta.className = "provider-allowlist-meta";
+    allowlistMeta.dataset.provider = provider.provider_id;
+
+    card.append(title, meta, button, allowlistButton, enabledToggle, allowlistMeta);
     grid.appendChild(card);
   });
 }
@@ -878,15 +912,17 @@ async function testProvider(providerId, button) {
       body: "{}",
     });
     if (result.ok) {
+      const models = result.models;
+
       updateProviderCard(
         providerId,
         "reachable",
-        `${result.models.length} models`,
-        result.models.slice(0, 3).join(", ") || "No models returned",
+        `${models.length} models`,
+        models.slice(0, 3).join(", ") || "No models returned",
       );
       setModelOptions([
         ...state.modelOptions,
-        ...result.models.map((model) => `${providerId}/${model}`),
+        ...models.map((model) => `${providerId}/${model}`),
       ]);
     } else {
       updateProviderCard(providerId, "offline", result.error_type, result.error_type);
@@ -959,12 +995,232 @@ function showMessage(message, kind = "") {
   area.className = `message-area ${kind}`.trim();
 }
 
+async function loadProviderAllowlists(providerStatus) {
+  for (const provider of providerStatus) {
+    try {
+      const result = await api(
+        `/admin/api/providers/${provider.provider_id}/allowlist`,
+      );
+      state.providerAllowlists.set(provider.provider_id, result.models || []);
+      state.providerAllowlistRestricted.set(
+        provider.provider_id,
+        Boolean(result.restricted),
+      );
+    } catch {
+      state.providerAllowlists.set(provider.provider_id, []);
+      state.providerAllowlistRestricted.set(provider.provider_id, false);
+    }
+  }
+}
+
+function modelsForProvider(providerId) {
+  const prefix = `${providerId}/`;
+  return state.modelOptions.filter((model) =>
+    model.toLocaleLowerCase().startsWith(prefix),
+  );
+}
+
+function rawModelsForProvider(providerId, refs) {
+  const prefix = `${providerId}/`;
+  return refs.map((ref) =>
+    ref.toLocaleLowerCase().startsWith(prefix) ? ref.slice(prefix.length) : ref,
+  );
+}
+
+function openProviderAllowlistModal(providerId) {
+  state.providerAllowlistProviderId = providerId;
+  state.providerAllowlistAvailable = modelsForProvider(providerId);
+  const restricted = state.providerAllowlistRestricted.get(providerId) || false;
+  const allowed = state.providerAllowlists.get(providerId) || [];
+  const prefix = `${providerId}/`;
+  const allowedRefs = allowed.map((model) =>
+    model.toLocaleLowerCase().startsWith(prefix) ? model : `${prefix}${model}`,
+  );
+  state.providerAllowlistSelected = new Set(
+    restricted ? allowedRefs : state.providerAllowlistAvailable,
+  );
+  state.providerAllowlistOpen = true;
+  renderProviderAllowlistList();
+  byId("providerAllowlistTitle").textContent =
+    `Select Models — ${providerDisplayName(providerId)}`;
+  byId("providerAllowlistModal").hidden = false;
+  byId("providerAllowlistSearch").value = "";
+  byId("providerAllowlistSearch").focus();
+}
+
+function closeProviderAllowlistModal() {
+  state.providerAllowlistOpen = false;
+  state.providerAllowlistProviderId = null;
+  state.providerAllowlistSelected = new Set();
+  state.providerAllowlistAvailable = [];
+  byId("providerAllowlistModal").hidden = true;
+}
+
+function renderProviderAllowlistList(query = "") {
+  const list = byId("providerAllowlistList");
+  list.innerHTML = "";
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const models = normalizedQuery
+    ? state.providerAllowlistAvailable.filter((model) =>
+        model.toLocaleLowerCase().includes(normalizedQuery),
+      )
+    : state.providerAllowlistAvailable;
+
+  if (models.length === 0) {
+    const empty = document.createElement("div");
+    empty.className = "model-selector-empty";
+    empty.textContent = normalizedQuery
+      ? "No matching models."
+      : "No models available. Refresh models first.";
+    list.appendChild(empty);
+    return;
+  }
+
+  const fragment = document.createDocumentFragment();
+  models.forEach((model) => {
+    const item = document.createElement("div");
+    item.className = "model-selector-item";
+
+    const checkbox = document.createElement("input");
+    checkbox.type = "checkbox";
+    checkbox.checked = state.providerAllowlistSelected.has(model);
+    checkbox.addEventListener("change", () => {
+      if (checkbox.checked) {
+        state.providerAllowlistSelected.add(model);
+      } else {
+        state.providerAllowlistSelected.delete(model);
+      }
+    });
+
+    const label = document.createElement("span");
+    label.className = "model-selector-label";
+    label.textContent = model;
+
+    item.appendChild(checkbox);
+    item.appendChild(label);
+    fragment.appendChild(item);
+  });
+  list.appendChild(fragment);
+}
+
+async function saveProviderAllowlist() {
+  const providerId = state.providerAllowlistProviderId;
+  if (!providerId) return;
+  const button = byId("providerAllowlistSave");
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "Saving";
+  try {
+    const available = state.providerAllowlistAvailable;
+    const selectedSet = state.providerAllowlistSelected;
+    const restricted =
+      available.length === 0
+        ? Boolean(state.providerAllowlistRestricted.get(providerId))
+        : !(
+            available.length === selectedSet.size &&
+            available.every((model) => selectedSet.has(model))
+          );
+    const selected = restricted
+      ? Array.from(selectedSet).sort((a, b) => a.localeCompare(b))
+      : [];
+    const rawSelected = rawModelsForProvider(providerId, selected);
+    await api(`/admin/api/providers/${providerId}/allowlist`, {
+      method: "POST",
+      body: JSON.stringify({ models: rawSelected, restricted }),
+    });
+    state.providerAllowlists.set(providerId, rawSelected);
+    state.providerAllowlistRestricted.set(providerId, restricted);
+    showMessage(`${providerDisplayName(providerId)} allowlist saved`, "ok");
+    closeProviderAllowlistModal();
+    refreshProviderAllowlistMeta([{ provider_id: providerId }]);
+  } catch (error) {
+    showMessage(`Could not save allowlist: ${error.message}`, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+async function toggleProviderEnabled(providerId, enabled) {
+  try {
+    await api(`/admin/api/providers/${providerId}/allowlist`, {
+      method: "POST",
+      body: JSON.stringify({ models: [], restricted: !enabled }),
+    });
+    state.providerAllowlistRestricted.set(providerId, !enabled);
+    state.providerAllowlists.set(providerId, []);
+    refreshProviderAllowlistMeta([{ provider_id: providerId }]);
+    showMessage(
+      `${providerDisplayName(providerId)} ${enabled ? "enabled" : "disabled"}`,
+      "ok",
+    );
+  } catch (error) {
+    showMessage(`Could not update provider: ${error.message}`, "error");
+  }
+}
+
+function refreshProviderAllowlistMeta(providerStatus) {
+  providerStatus.forEach((provider) => {
+    const allowed = state.providerAllowlists.get(provider.provider_id) || [];
+    const restricted =
+      state.providerAllowlistRestricted.get(provider.provider_id) || false;
+    const disabled = restricted && allowed.length === 0;
+    const meta = document.querySelector(
+      `[data-provider="${provider.provider_id}"].provider-allowlist-meta`,
+    );
+    if (meta) {
+      meta.textContent = disabled
+        ? "No models allowed"
+        : allowed.length > 0
+          ? `${allowed.length} allowed: ${allowed.slice(0, 3).join(", ")}${allowed.length > 3 ? "…" : ""}`
+          : "All models allowed";
+    }
+    const toggle = document.querySelector(
+      `[data-provider="${provider.provider_id}"].provider-enabled-toggle input`,
+    );
+    if (toggle) toggle.checked = !disabled;
+  });
+}
+
 byId("validateButton").addEventListener("click", () => validate(true));
 byId("applyButton").addEventListener("click", apply);
 document.addEventListener("pointerdown", (event) => {
   state.modelComboboxes.forEach((combobox) => {
     if (combobox.isOpen && !combobox.element.contains(event.target)) combobox.close();
   });
+  if (state.providerAllowlistOpen) {
+    const modal = byId("providerAllowlistModal");
+    if (!modal.contains(event.target)) closeProviderAllowlistModal();
+  }
+});
+
+byId("providerAllowlistSearch").addEventListener("input", (event) => {
+  renderProviderAllowlistList(event.target.value);
+});
+byId("providerAllowlistSelectAll").addEventListener("click", () => {
+  state.providerAllowlistSelected = new Set(state.providerAllowlistAvailable);
+  renderProviderAllowlistList(byId("providerAllowlistSearch").value);
+});
+byId("providerAllowlistSelectFiltered").addEventListener("click", () => {
+  const query = byId("providerAllowlistSearch").value;
+  const normalizedQuery = query.trim().toLocaleLowerCase();
+  const models = normalizedQuery
+    ? state.providerAllowlistAvailable.filter((model) =>
+        model.toLocaleLowerCase().includes(normalizedQuery),
+      )
+    : state.providerAllowlistAvailable;
+  state.providerAllowlistSelected = new Set(models);
+  renderProviderAllowlistList(query);
+});
+byId("providerAllowlistDeselectAll").addEventListener("click", () => {
+  state.providerAllowlistSelected = new Set();
+  renderProviderAllowlistList(byId("providerAllowlistSearch").value);
+});
+byId("providerAllowlistSave").addEventListener("click", saveProviderAllowlist);
+byId("providerAllowlistCancel").addEventListener("click", closeProviderAllowlistModal);
+byId("providerAllowlistModal").addEventListener("click", (event) => {
+  const closer = event.target.closest("[data-close]");
+  if (closer) closeProviderAllowlistModal();
 });
 
 load().catch((error) => {

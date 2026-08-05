@@ -5,6 +5,7 @@ import subprocess
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Any, cast
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -233,3 +234,167 @@ def test_catalog_writer_cleans_temporary_file_after_replace_failure(
 
     assert catalog_path.read_text(encoding="utf-8") == "previous\n"
     assert list(tmp_path.glob(".codex-model-catalog.json.*.tmp")) == []
+
+
+def test_codex_catalog_allowlist_filters_models() -> None:
+    settings = MagicMock()
+    settings.model_allowlist = [
+        "nvidia_nim/nvidia/nemotron-3-super",
+        "open_router/meta-llama/llama-3.3-70b",
+    ]
+
+    with patch(
+        "free_claude_code.cli.launchers.codex_model_catalog.get_settings",
+        return_value=settings,
+    ):
+        catalog = build_codex_model_catalog(
+            _models_payload(
+                "anthropic/nvidia_nim/nvidia/nemotron-3-super",
+                "anthropic/open_router/meta-llama/llama-3.3-70b",
+                "anthropic/open_router/google/gemini-pro",
+            )
+        )
+
+    assert _slugs(catalog) == [
+        "nvidia_nim/nvidia/nemotron-3-super",
+        "open_router/meta-llama/llama-3.3-70b",
+    ]
+
+
+def test_codex_catalog_empty_allowlist_shows_all() -> None:
+    settings = MagicMock()
+    settings.model_allowlist = []
+
+    with patch(
+        "free_claude_code.cli.launchers.codex_model_catalog.get_settings",
+        return_value=settings,
+    ):
+        catalog = build_codex_model_catalog(
+            _models_payload(
+                "anthropic/nvidia_nim/nvidia/nemotron-3-super",
+                "anthropic/open_router/google/gemini-pro",
+            )
+        )
+
+    assert _slugs(catalog) == [
+        "nvidia_nim/nvidia/nemotron-3-super",
+        "open_router/google/gemini-pro",
+    ]
+
+
+def test_codex_catalog_allowlist_excludes_non_matching_models() -> None:
+    settings = MagicMock()
+    settings.model_allowlist = ["open_router/google/gemini-pro"]
+
+    with patch(
+        "free_claude_code.cli.launchers.codex_model_catalog.get_settings",
+        return_value=settings,
+    ):
+        catalog = build_codex_model_catalog(
+            _models_payload(
+                "anthropic/nvidia_nim/nvidia/nemotron-3-super",
+                "anthropic/open_router/google/gemini-pro",
+                "anthropic/open_router/meta-llama/llama-3.3-70b",
+            )
+        )
+
+    assert _slugs(catalog) == ["open_router/google/gemini-pro"]
+
+
+def test_codex_catalog_allowlist_with_no_thinking_prefix() -> None:
+    settings = MagicMock()
+    settings.model_allowlist = [
+        "claude-3-freecc-no-thinking/open_router/google/gemini-pro"
+    ]
+
+    with patch(
+        "free_claude_code.cli.launchers.codex_model_catalog.get_settings",
+        return_value=settings,
+    ):
+        catalog = build_codex_model_catalog(
+            _models_payload(
+                "claude-3-freecc-no-thinking/open_router/google/gemini-pro",
+            )
+        )
+
+    assert _slugs(catalog) == [
+        "claude-3-freecc-no-thinking/open_router/google/gemini-pro"
+    ]
+
+
+def test_codex_catalog_provider_allowlist_filters_that_provider_only() -> None:
+    settings = MagicMock()
+    settings.provider_model_allowlists = {
+        "nvidia_nim": ["nvidia/nemotron-3-super"],
+    }
+    settings.model_allowlist = []
+
+    with patch(
+        "free_claude_code.cli.launchers.codex_model_catalog.get_settings",
+        return_value=settings,
+    ):
+        catalog = build_codex_model_catalog(
+            _models_payload(
+                "anthropic/nvidia_nim/nvidia/nemotron-3-super",
+                "anthropic/nvidia_nim/nvidia/other-model",
+                "anthropic/open_router/google/gemini-pro",
+                "anthropic/open_router/meta-llama/llama-3.3-70b",
+            )
+        )
+
+    # nvidia_nim is restricted to nemotron-3-super; open_router is untouched.
+    assert _slugs(catalog) == [
+        "nvidia_nim/nvidia/nemotron-3-super",
+        "open_router/google/gemini-pro",
+        "open_router/meta-llama/llama-3.3-70b",
+    ]
+
+
+def test_codex_catalog_provider_allowlist_takes_precedence_over_global() -> None:
+    settings = MagicMock()
+    settings.provider_model_allowlists = {
+        "open_router": ["google/gemini-pro"],
+    }
+    settings.model_allowlist = ["open_router/meta-llama/llama-3.3-70b"]
+
+    with patch(
+        "free_claude_code.cli.launchers.codex_model_catalog.get_settings",
+        return_value=settings,
+    ):
+        catalog = build_codex_model_catalog(
+            _models_payload(
+                "anthropic/open_router/google/gemini-pro",
+                "anthropic/open_router/meta-llama/llama-3.3-70b",
+                "anthropic/nvidia_nim/nvidia/nemotron-3-super",
+            )
+        )
+
+    # open_router follows its per-provider list, not the global allowlist.
+    # nvidia_nim has no per-provider entry, so the global allowlist applies
+    # and excludes nemotron-3-super.
+    assert _slugs(catalog) == [
+        "open_router/google/gemini-pro",
+    ]
+
+
+def test_codex_catalog_provider_allowlist_restricts_no_thinking_entries() -> None:
+    settings = MagicMock()
+    settings.provider_model_allowlists = {
+        "open_router": ["google/gemini-pro"],
+    }
+    settings.model_allowlist = []
+
+    with patch(
+        "free_claude_code.cli.launchers.codex_model_catalog.get_settings",
+        return_value=settings,
+    ):
+        catalog = build_codex_model_catalog(
+            _models_payload(
+                "claude-3-freecc-no-thinking/open_router/google/gemini-pro",
+                "claude-3-freecc-no-thinking/open_router/meta-llama/llama-3.3-70b",
+            )
+        )
+
+    assert _slugs(catalog) == [
+        "claude-3-freecc-no-thinking/open_router/google/gemini-pro"
+    ]

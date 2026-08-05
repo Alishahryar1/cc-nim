@@ -77,6 +77,8 @@ def load_config_response() -> dict[str, Any]:
     state = load_value_state()
     fields: list[dict[str, Any]] = []
     for field in FIELDS:
+        if field.hidden:
+            continue
         entry = state[field.key]
         source = entry["source"]
         raw_value = entry["value"]

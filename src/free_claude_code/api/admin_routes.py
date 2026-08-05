@@ -48,6 +48,13 @@ class ConnectedAccountLoginPayload(BaseModel):
     mode: ConnectedAccountLoginMode = ConnectedAccountLoginMode.BROWSER
 
 
+class ProviderAllowlistPayload(BaseModel):
+    """Per-provider model allowlist submitted by the admin UI."""
+
+    models: list[str] = Field(default_factory=list)
+    restricted: bool = True
+
+
 def _is_loopback_host(host: str | None) -> bool:
     if host is None:
         return False
@@ -156,6 +163,36 @@ async def test_provider(
 ):
     require_loopback_admin(request)
     return await services.admin.test_provider(provider_id)
+
+
+@router.get("/admin/api/providers/{provider_id}/allowlist")
+async def get_provider_allowlist(
+    provider_id: str,
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    require_loopback_admin(request)
+    return {
+        "provider_id": provider_id,
+        "models": services.admin.get_provider_allowlist(provider_id),
+        "restricted": services.admin.is_provider_allowlist_restricted(provider_id),
+    }
+
+
+@router.post("/admin/api/providers/{provider_id}/allowlist")
+async def set_provider_allowlist(
+    provider_id: str,
+    payload: ProviderAllowlistPayload,
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    require_loopback_admin(request)
+    try:
+        return await services.admin.set_provider_allowlist(
+            provider_id, payload.models, restricted=payload.restricted
+        )
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
 @router.get("/admin/api/providers/{provider_id}/auth")

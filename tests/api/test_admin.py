@@ -273,6 +273,263 @@ def test_admin_provider_cards_support_non_key_configuration():
     assert ": provider.configuration;" in script
 
 
+def test_admin_allowlist_get_returns_empty_when_unset(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+
+    response = _local_client(app).get("/admin/api/providers/nvidia_nim/allowlist")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "provider_id": "nvidia_nim",
+        "models": [],
+        "restricted": False,
+    }
+
+
+def test_admin_allowlist_post_persists_and_get_reads_back(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+
+    response = _local_client(app).post(
+        "/admin/api/providers/nvidia_nim/allowlist",
+        json={"models": ["nvidia/nemotron-3-super", "meta/llama3-70b"]},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "applied": True,
+        "provider_id": "nvidia_nim",
+        "models": ["meta/llama3-70b", "nvidia/nemotron-3-super"],
+        "restricted": True,
+    }
+
+    env_file = tmp_path / ".fcc" / ".env"
+    text = env_file.read_text(encoding="utf-8")
+    assert (
+        "FCC_PROVIDER_MODEL_ALLOWLIST="
+        "nvidia_nim/meta/llama3-70b,nvidia_nim/nvidia/nemotron-3-super" in text
+    )
+
+    get_response = _local_client(app).get("/admin/api/providers/nvidia_nim/allowlist")
+    assert get_response.status_code == 200
+    assert get_response.json() == {
+        "provider_id": "nvidia_nim",
+        "models": ["meta/llama3-70b", "nvidia/nemotron-3-super"],
+        "restricted": True,
+    }
+
+
+def test_admin_allowlist_post_normalizes_prefixed_models(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+
+    response = _local_client(app).post(
+        "/admin/api/providers/nvidia_nim/allowlist",
+        json={
+            "models": [
+                "nvidia_nim/meta/llama3-70b",
+                "meta/llama3-70b",
+                "nvidia/nemotron-3-super",
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "applied": True,
+        "provider_id": "nvidia_nim",
+        "models": ["meta/llama3-70b", "nvidia/nemotron-3-super"],
+        "restricted": True,
+    }
+
+    env_file = tmp_path / ".fcc" / ".env"
+    text = env_file.read_text(encoding="utf-8")
+    assert (
+        "FCC_PROVIDER_MODEL_ALLOWLIST="
+        "nvidia_nim/meta/llama3-70b,nvidia_nim/nvidia/nemotron-3-super" in text
+    )
+    assert "nvidia_nim/nvidia_nim/" not in text
+
+
+def test_admin_allowlist_post_with_empty_models_clears_entry(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+
+    _local_client(app).post(
+        "/admin/api/providers/nvidia_nim/allowlist",
+        json={"models": ["nvidia/nemotron-3-super"]},
+    )
+    response = _local_client(app).post(
+        "/admin/api/providers/nvidia_nim/allowlist",
+        json={"models": [], "restricted": False},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "applied": True,
+        "provider_id": "nvidia_nim",
+        "models": [],
+        "restricted": False,
+    }
+    env_file = tmp_path / ".fcc" / ".env"
+    text = env_file.read_text(encoding="utf-8")
+    assert "FCC_PROVIDER_MODEL_ALLOWLIST=nvidia_nim/" not in text
+    assert "FCC_PROVIDER_MODEL_ALLOWLIST=" not in text or (
+        text.split("FCC_PROVIDER_MODEL_ALLOWLIST=")[1].splitlines()[0] == ""
+    )
+
+
+def test_admin_allowlist_post_restricted_empty_disables_provider(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+
+    response = _local_client(app).post(
+        "/admin/api/providers/nvidia_nim/allowlist",
+        json={"models": [], "restrict": True},
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "applied": True,
+        "provider_id": "nvidia_nim",
+        "models": [],
+        "restricted": True,
+    }
+
+    env_file = tmp_path / ".fcc" / ".env"
+    text = env_file.read_text(encoding="utf-8")
+    assert "FCC_PROVIDER_MODEL_ALLOWLIST=nvidia_nim/__fcc_no_models__" in text
+
+    get_response = _local_client(app).get("/admin/api/providers/nvidia_nim/allowlist")
+    assert get_response.status_code == 200
+    assert get_response.json() == {
+        "provider_id": "nvidia_nim",
+        "models": [],
+        "restricted": True,
+    }
+
+
+def test_admin_allowlist_post_applies_to_running_runtime_without_restart(
+    monkeypatch, tmp_path
+):
+    """Allowlist saves propagate live to the runtime generation snapshot."""
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+    manager = provider_manager_for_app(app)
+
+    assert "nvidia_nim" not in manager.current_settings().provider_model_allowlists
+
+    response = _local_client(app).post(
+        "/admin/api/providers/nvidia_nim/allowlist",
+        json={"models": ["nvidia/nemotron-3-super"]},
+    )
+    assert response.status_code == 200
+    assert manager.current_settings().provider_model_allowlists == {
+        "nvidia_nim": ["nvidia/nemotron-3-super"]
+    }
+
+    clear_response = _local_client(app).post(
+        "/admin/api/providers/nvidia_nim/allowlist",
+        json={"models": [], "restricted": False},
+    )
+    assert clear_response.status_code == 200
+    assert "nvidia_nim" not in manager.current_settings().provider_model_allowlists
+
+
+def test_admin_allowlist_preserves_other_managed_values(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+
+    _local_client(app).post(
+        "/admin/api/config/apply",
+        json={"values": {"MODEL": "open_router/test-model"}},
+    )
+    response = _local_client(app).post(
+        "/admin/api/providers/open_router/allowlist",
+        json={"models": ["google/gemini-pro"]},
+    )
+
+    assert response.status_code == 200
+    env_file = tmp_path / ".fcc" / ".env"
+    text = env_file.read_text(encoding="utf-8")
+    assert "MODEL=open_router/test-model" in text
+    assert "FCC_PROVIDER_MODEL_ALLOWLIST=open_router/google/gemini-pro" in text
+
+
+def test_admin_allowlist_hidden_from_config_response(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+
+    response = _local_client(app).get("/admin/api/config")
+
+    assert response.status_code == 200
+    keys = [field["key"] for field in response.json()["fields"]]
+    assert "FCC_PROVIDER_MODEL_ALLOWLIST" not in keys
+
+
+def test_admin_allowlist_post_rejected_when_locked_by_process_env(
+    monkeypatch, tmp_path
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    monkeypatch.setenv("FCC_PROVIDER_MODEL_ALLOWLIST", "nvidia_nim/locked-model")
+    app = create_test_app()
+
+    response = _local_client(app).post(
+        "/admin/api/providers/nvidia_nim/allowlist",
+        json={"models": ["admin-model"]},
+    )
+
+    assert response.status_code == 400
+    assert "locked" in response.json()["detail"]
+
+
+def test_admin_allowlist_post_rejected_when_locked_by_explicit_env_file(
+    monkeypatch, tmp_path
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    env_file = tmp_path / "locked.env"
+    env_file.write_text(
+        "FCC_PROVIDER_MODEL_ALLOWLIST=nvidia_nim/locked-model\n", encoding="utf-8"
+    )
+    monkeypatch.setenv("FCC_ENV_FILE", str(env_file))
+    app = create_test_app()
+
+    response = _local_client(app).post(
+        "/admin/api/providers/nvidia_nim/allowlist",
+        json={"models": ["admin-model"]},
+    )
+
+    assert response.status_code == 400
+    assert "locked" in response.json()["detail"]
+
+
+def test_admin_allowlist_get_reflects_locked_process_env(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    monkeypatch.setenv("FCC_PROVIDER_MODEL_ALLOWLIST", "nvidia_nim/locked-model")
+    app = create_test_app()
+
+    response = _local_client(app).get("/admin/api/providers/nvidia_nim/allowlist")
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "provider_id": "nvidia_nim",
+        "models": ["locked-model"],
+        "restricted": True,
+    }
+
+
 def test_admin_page_no_longer_renders_generated_env_panel(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     app = create_test_app()
