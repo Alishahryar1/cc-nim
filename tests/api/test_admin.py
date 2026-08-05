@@ -415,6 +415,34 @@ def test_admin_allowlist_post_restricted_empty_disables_provider(monkeypatch, tm
     }
 
 
+def test_admin_allowlist_post_applies_to_running_runtime_without_restart(
+    monkeypatch, tmp_path
+):
+    """Allowlist saves propagate live to the runtime generation snapshot."""
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+    manager = provider_manager_for_app(app)
+
+    assert "nvidia_nim" not in manager.current_settings().provider_model_allowlists
+
+    response = _local_client(app).post(
+        "/admin/api/providers/nvidia_nim/allowlist",
+        json={"models": ["nvidia/nemotron-3-super"]},
+    )
+    assert response.status_code == 200
+    assert manager.current_settings().provider_model_allowlists == {
+        "nvidia_nim": ["nvidia/nemotron-3-super"]
+    }
+
+    clear_response = _local_client(app).post(
+        "/admin/api/providers/nvidia_nim/allowlist",
+        json={"models": [], "restricted": False},
+    )
+    assert clear_response.status_code == 200
+    assert "nvidia_nim" not in manager.current_settings().provider_model_allowlists
+
+
 def test_admin_allowlist_preserves_other_managed_values(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)

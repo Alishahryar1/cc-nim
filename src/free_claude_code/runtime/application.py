@@ -325,6 +325,17 @@ class ApplicationRuntime:
                 provider_id, models, restricted=restricted
             )
             get_settings.cache_clear()
+            # Refresh the running generation's allowlist from the committed
+            # managed env so model lists, the Codex catalog, and cache scope
+            # update live without a server restart. Copy the current generation
+            # settings so every other value stays untouched.
+            committed = load_provider_allowlists()
+            updated = self.provider_manager.current_settings().model_copy(
+                update={"provider_model_allowlists": committed}
+            )
+            await self.provider_manager.replace(
+                updated, commit=lambda: None, reason="admin_allowlist"
+            )
             return result
 
     async def request_restart(self) -> None:
