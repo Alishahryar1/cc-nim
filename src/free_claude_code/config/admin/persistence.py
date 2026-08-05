@@ -227,6 +227,23 @@ def load_provider_allowlists() -> dict[str, list[str]]:
     return parse_provider_allowlists(managed.get(ALLOWLIST_ENV_KEY, ""))
 
 
+def _normalize_allowlist_model(provider_id: str, model: str) -> str:
+    """Strip a redundant leading ``{provider_id}/`` prefix from a model id.
+
+    The admin UI lists model refs already prefixed with the provider id, while
+    the persistence layer always prepends ``provider_id/`` itself. Stripping a
+    single leading prefix keeps stored values canonical even when a client
+    sends an already-prefixed ref, and repairs double-prefixed entries when
+    they are re-saved.
+    """
+
+    model = model.strip()
+    prefix = f"{provider_id}/"
+    if model.startswith(prefix):
+        return model[len(prefix) :]
+    return model
+
+
 def commit_provider_allowlist(
     provider_id: str,
     models: list[str],
@@ -243,7 +260,11 @@ def commit_provider_allowlist(
     allowlists = load_provider_allowlists()
     if restricted:
         allowlists[provider_id] = sorted(
-            model.strip() for model in models if model.strip()
+            dict.fromkeys(
+                _normalize_allowlist_model(provider_id, model)
+                for model in models
+                if model.strip()
+            )
         )
     else:
         allowlists.pop(provider_id, None)

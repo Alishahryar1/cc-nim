@@ -322,6 +322,39 @@ def test_admin_allowlist_post_persists_and_get_reads_back(monkeypatch, tmp_path)
     }
 
 
+def test_admin_allowlist_post_normalizes_prefixed_models(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+
+    response = _local_client(app).post(
+        "/admin/api/providers/nvidia_nim/allowlist",
+        json={
+            "models": [
+                "nvidia_nim/meta/llama3-70b",
+                "meta/llama3-70b",
+                "nvidia/nemotron-3-super",
+            ]
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "applied": True,
+        "provider_id": "nvidia_nim",
+        "models": ["meta/llama3-70b", "nvidia/nemotron-3-super"],
+        "restricted": True,
+    }
+
+    env_file = tmp_path / ".fcc" / ".env"
+    text = env_file.read_text(encoding="utf-8")
+    assert (
+        "FCC_PROVIDER_MODEL_ALLOWLIST="
+        "nvidia_nim/meta/llama3-70b,nvidia_nim/nvidia/nemotron-3-super" in text
+    )
+    assert "nvidia_nim/nvidia_nim/" not in text
+
+
 def test_admin_allowlist_post_with_empty_models_clears_entry(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)

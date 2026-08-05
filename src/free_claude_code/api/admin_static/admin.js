@@ -1020,13 +1020,24 @@ function modelsForProvider(providerId) {
   );
 }
 
+function rawModelsForProvider(providerId, refs) {
+  const prefix = `${providerId}/`;
+  return refs.map((ref) =>
+    ref.toLocaleLowerCase().startsWith(prefix) ? ref.slice(prefix.length) : ref,
+  );
+}
+
 function openProviderAllowlistModal(providerId) {
   state.providerAllowlistProviderId = providerId;
   state.providerAllowlistAvailable = modelsForProvider(providerId);
   const restricted = state.providerAllowlistRestricted.get(providerId) || false;
   const allowed = state.providerAllowlists.get(providerId) || [];
+  const prefix = `${providerId}/`;
+  const allowedRefs = allowed.map((model) =>
+    model.toLocaleLowerCase().startsWith(prefix) ? model : `${prefix}${model}`,
+  );
   state.providerAllowlistSelected = new Set(
-    restricted ? allowed : state.providerAllowlistAvailable,
+    restricted ? allowedRefs : state.providerAllowlistAvailable,
   );
   state.providerAllowlistOpen = true;
   renderProviderAllowlistList();
@@ -1110,11 +1121,12 @@ async function saveProviderAllowlist() {
     const selected = restricted
       ? Array.from(selectedSet).sort((a, b) => a.localeCompare(b))
       : [];
+    const rawSelected = rawModelsForProvider(providerId, selected);
     await api(`/admin/api/providers/${providerId}/allowlist`, {
       method: "POST",
-      body: JSON.stringify({ models: selected, restricted }),
+      body: JSON.stringify({ models: rawSelected, restricted }),
     });
-    state.providerAllowlists.set(providerId, selected);
+    state.providerAllowlists.set(providerId, rawSelected);
     state.providerAllowlistRestricted.set(providerId, restricted);
     showMessage(`${providerDisplayName(providerId)} allowlist saved`, "ok");
     closeProviderAllowlistModal();
