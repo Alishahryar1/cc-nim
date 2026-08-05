@@ -45,6 +45,14 @@ class AdminRuntimePort(Protocol):
         self, provider_id: str
     ) -> ConnectedAccountStatus: ...
 
+    def get_provider_allowlist(self, provider_id: str) -> list[str]: ...
+
+    def is_provider_allowlist_restricted(self, provider_id: str) -> bool: ...
+
+    async def set_provider_allowlist(
+        self, provider_id: str, models: list[str], *, restricted: bool = True
+    ) -> dict[str, Any]: ...
+
 
 @dataclass(frozen=True, slots=True)
 class ApiServices:

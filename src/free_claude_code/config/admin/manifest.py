@@ -48,6 +48,7 @@ class ConfigFieldSpec:
     options: tuple[str | ConfigOptionSpec, ...] = ()
     secret: bool = False
     advanced: bool = False
+    hidden: bool = False
     restart_required: bool = False
     session_sensitive: bool = False
     description: str = ""
@@ -172,6 +173,12 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "optional_model",
         settings_attr="model_haiku",
         description="Select None to use the Default Model for Haiku requests.",
+    ),
+    ConfigFieldSpec(
+        "FCC_PROVIDER_MODEL_ALLOWLIST",
+        "Per-Provider Model Allowlists",
+        "models",
+        hidden=True,
     ),
     ConfigFieldSpec(
         "REASONING_POLICY",

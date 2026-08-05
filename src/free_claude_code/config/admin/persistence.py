@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from free_claude_code.config.model_refs import RESTRICTED_EMPTY_MARKER
 from free_claude_code.config.paths import managed_env_path
 from free_claude_code.config.settings import Settings
 
@@ -178,6 +179,92 @@ def commit_prepared_admin_update(prepared: PreparedAdminUpdate) -> dict[str, Any
     finally:
         temp_path.unlink(missing_ok=True)
     return prepared.applied_response()
+
+
+ALLOWLIST_ENV_KEY = "FCC_PROVIDER_MODEL_ALLOWLIST"
+
+
+def render_provider_allowlists(allowlists: Mapping[str, list[str]]) -> str:
+    """Render per-provider allowlists into the FCC_PROVIDER_MODEL_ALLOWLIST value."""
+
+    parts: list[str] = []
+    for provider_id in sorted(allowlists):
+        models = sorted(allowlists[provider_id])
+        if models:
+            parts.extend(f"{provider_id}/{model}" for model in models)
+        else:
+            parts.append(f"{provider_id}/{RESTRICTED_EMPTY_MARKER}")
+    return ",".join(parts)
+
+
+def parse_provider_allowlists(value: str) -> dict[str, list[str]]:
+    """Parse the FCC_PROVIDER_MODEL_ALLOWLIST value into provider -> models.
+
+    A provider restricted to zero models is stored with the internal
+    RESTRICTED_EMPTY_MARKER and parsed back as an empty list so the restriction
+    survives a managed-env round-trip.
+    """
+
+    result: dict[str, list[str]] = {}
+    for item in value.split(","):
+        item = item.strip()
+        if not item or "/" not in item:
+            continue
+        provider_id, model = item.split("/", 1)
+        provider_id = provider_id.strip()
+        model = model.strip()
+        if model == RESTRICTED_EMPTY_MARKER:
+            result.setdefault(provider_id, [])
+        else:
+            result.setdefault(provider_id, []).append(model)
+    return result
+
+
+def load_provider_allowlists() -> dict[str, list[str]]:
+    """Return per-provider allowlists persisted in the managed env file."""
+
+    managed = dotenv_values_from_file(managed_env_path())
+    return parse_provider_allowlists(managed.get(ALLOWLIST_ENV_KEY, ""))
+
+
+def commit_provider_allowlist(
+    provider_id: str,
+    models: list[str],
+    *,
+    restricted: bool = True,
+) -> dict[str, Any]:
+    """Persist one provider's allowlist into the managed env file.
+
+    When ``restricted`` is True the provider is limited to ``models`` (an empty
+    list disables the provider). When False the provider entry is removed so all
+    of its models are allowed again.
+    """
+
+    allowlists = load_provider_allowlists()
+    if restricted:
+        allowlists[provider_id] = sorted(
+            model.strip() for model in models if model.strip()
+        )
+    else:
+        allowlists.pop(provider_id, None)
+
+    path = managed_env_path()
+    path.parent.mkdir(parents=True, exist_ok=True)
+    managed = dotenv_values_from_file(path)
+    managed[ALLOWLIST_ENV_KEY] = render_provider_allowlists(allowlists)
+
+    temp_path = path.with_suffix(path.suffix + ".tmp")
+    try:
+        temp_path.write_text(render_env_file(managed), encoding="utf-8")
+        os.replace(temp_path, path)
+    finally:
+        temp_path.unlink(missing_ok=True)
+    return {
+        "applied": True,
+        "provider_id": provider_id,
+        "models": allowlists.get(provider_id, []),
+        "restricted": provider_id in allowlists,
+    }
 
 
 def quote_env_value(value: str) -> str:

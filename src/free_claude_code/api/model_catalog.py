@@ -5,7 +5,10 @@ from typing import Literal
 from pydantic import BaseModel
 
 from free_claude_code.application.ports import RequestRuntimePort
-from free_claude_code.config.model_refs import configured_chat_model_refs
+from free_claude_code.config.model_refs import (
+    configured_chat_model_refs,
+    model_ref_allowed,
+)
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.gateway_model_ids import (
     gateway_model_id,
@@ -85,6 +88,8 @@ def build_models_list_response(
     seen: set[str] = set()
 
     for ref in configured_chat_model_refs(settings):
+        if not model_ref_allowed(settings, ref.model_ref):
+            continue
         supports_thinking = runtime.cached_model_supports_thinking(
             ref.provider_id, ref.model_id
         )
@@ -96,6 +101,8 @@ def build_models_list_response(
         )
 
     for model_info in runtime.cached_prefixed_model_infos():
+        if not model_ref_allowed(settings, model_info.model_id):
+            continue
         _append_provider_model_variants(
             models,
             seen,

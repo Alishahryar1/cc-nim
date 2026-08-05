@@ -25,6 +25,8 @@ from free_claude_code.application.ports import StopResult
 from free_claude_code.config.admin.persistence import (
     PreparedAdminUpdate,
     commit_prepared_admin_update,
+    commit_provider_allowlist,
+    load_provider_allowlists,
     prepare_admin_update,
 )
 from free_claude_code.config.admin.status import provider_config_status
@@ -304,6 +306,26 @@ class ApplicationRuntime:
         )
         self._connected_account_revisions[provider_id] = status.revision
         return status
+
+    def get_provider_allowlist(self, provider_id: str) -> list[str]:
+        return list(load_provider_allowlists().get(provider_id, []))
+
+    def is_provider_allowlist_restricted(self, provider_id: str) -> bool:
+        return provider_id in load_provider_allowlists()
+
+    async def set_provider_allowlist(
+        self,
+        provider_id: str,
+        models: list[str],
+        *,
+        restricted: bool = True,
+    ) -> dict[str, Any]:
+        async with self._config_lock:
+            result = commit_provider_allowlist(
+                provider_id, models, restricted=restricted
+            )
+            get_settings.cache_clear()
+            return result
 
     async def request_restart(self) -> None:
         callback = self._restart_callback

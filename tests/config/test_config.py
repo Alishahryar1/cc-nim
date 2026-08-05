@@ -942,6 +942,29 @@ class TestPerModelMapping:
         with pytest.raises(ValidationError, match="Invalid provider"):
             Settings()
 
+    def test_provider_model_allowlists_from_env(self, monkeypatch):
+        """FCC_PROVIDER_MODEL_ALLOWLIST env var is parsed into per-provider lists."""
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.setenv(
+            "FCC_PROVIDER_MODEL_ALLOWLIST",
+            "open_router/anthropic/claude-3-opus,open_router/google/gemini-pro,"
+            "nvidia_nim/nvidia/nemotron-3-super",
+        )
+        s = Settings()
+        assert s.provider_model_allowlists == {
+            "open_router": ["anthropic/claude-3-opus", "google/gemini-pro"],
+            "nvidia_nim": ["nvidia/nemotron-3-super"],
+        }
+
+    def test_provider_model_allowlists_empty_env(self, monkeypatch):
+        """Empty FCC_PROVIDER_MODEL_ALLOWLIST yields an empty dict."""
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.setenv("FCC_PROVIDER_MODEL_ALLOWLIST", "")
+        s = Settings()
+        assert s.provider_model_allowlists == {}
+
     def test_model_fable_invalid_provider_raises(self, monkeypatch):
         """MODEL_FABLE with invalid provider prefix raises ValidationError."""
         from free_claude_code.config.settings import Settings

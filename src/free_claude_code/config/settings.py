@@ -1,10 +1,10 @@
 """Flat application settings schema loaded by Pydantic Settings."""
 
 from functools import lru_cache
-from typing import Any
+from typing import Annotated, Any
 
 from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic_settings import BaseSettings, NoDecode, SettingsConfigDict
 
 from .constants import HTTP_CONNECT_TIMEOUT_DEFAULT
 from .env_files import (
@@ -12,6 +12,7 @@ from .env_files import (
     env_file_override,
     settings_env_files,
 )
+from .model_refs import RESTRICTED_EMPTY_MARKER
 from .nim import NimSettings
 from .provider_catalog import BEDROCK_DEFAULT_BASE, SUPPORTED_PROVIDER_IDS
 from .reasoning import ReasoningPreference
@@ -159,6 +160,72 @@ class Settings(BaseSettings):
     model_opus: str | None = Field(default=None, validation_alias="MODEL_OPUS")
     model_sonnet: str | None = Field(default=None, validation_alias="MODEL_SONNET")
     model_haiku: str | None = Field(default=None, validation_alias="MODEL_HAIKU")
+
+    # ==================== Model Filtering ====================
+    # Comma-separated list of model IDs to display in model pickers.
+    # When empty, all discovered models are shown.
+    # Example: "open_router/anthropic/claude-3-opus,open_router/google/gemini-pro"
+    model_allowlist: list[str] = Field(
+        default_factory=list,
+        validation_alias="FCC_MODEL_ALLOWLIST",
+    )
+
+    @field_validator("model_allowlist", mode="before")
+    @classmethod
+    def parse_model_allowlist(cls, value: Any) -> list[str]:
+        if value is None:
+            return []
+        if isinstance(value, list):
+            return [str(item).strip() for item in value if str(item).strip()]
+        if isinstance(value, str):
+            if not value.strip():
+                return []
+            return [item.strip() for item in value.split(",") if item.strip()]
+        return []
+
+    # Per-provider model allowlists. Maps provider_id -> list of model IDs
+    # (without the provider prefix). When a provider has no entry, the global
+    # model_allowlist (or all discovered models) applies.
+    # Env format: comma-separated "provider/model" pairs, e.g.
+    # "open_router/anthropic/claude-3-opus,nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
+    provider_model_allowlists: Annotated[dict[str, list[str]], NoDecode] = Field(
+        default_factory=dict,
+        validation_alias="FCC_PROVIDER_MODEL_ALLOWLIST",
+    )
+
+    @field_validator("provider_model_allowlists", mode="before")
+    @classmethod
+    def parse_provider_model_allowlists(cls, value: Any) -> dict[str, list[str]]:
+        if value is None:
+            return {}
+        if isinstance(value, dict):
+            return {
+                str(provider).strip(): [
+                    str(model).strip() for model in models if str(model).strip()
+                ]
+                for provider, models in value.items()
+                if str(provider).strip()
+            }
+        if isinstance(value, str):
+            if not value.strip():
+                return {}
+            result: dict[str, list[str]] = {}
+            for item in value.split(","):
+                item = item.strip()
+                if not item:
+                    continue
+                if "/" in item:
+                    provider, model = item.split("/", 1)
+                    provider = provider.strip()
+                    model = model.strip()
+                    if model == RESTRICTED_EMPTY_MARKER:
+                        result.setdefault(provider, [])
+                    else:
+                        result.setdefault(provider, []).append(model)
+                else:
+                    result.setdefault("", []).append(item)
+            return result
+        return {}
 
     # ==================== Per-Provider Proxy ====================
     openai_proxy: str = Field(default="", validation_alias="OPENAI_PROXY")
