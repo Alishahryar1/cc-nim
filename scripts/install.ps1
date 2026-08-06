@@ -469,6 +469,20 @@ function Invoke-RtkCommand {
     }
 }
 
+function Ensure-RtkClaudeConfigDirectory {
+    $claudeConfigDirectory = $env:CLAUDE_CONFIG_DIR
+    if ([string]::IsNullOrWhiteSpace($claudeConfigDirectory)) {
+        $claudeConfigDirectory = Join-Path $env:USERPROFILE ".claude"
+    }
+
+    if ($DryRun) {
+        Write-Host "+ mkdir $(Format-Argument $claudeConfigDirectory)"
+        return
+    }
+
+    New-Item -ItemType Directory -Force -Path $claudeConfigDirectory | Out-Null
+}
+
 function Confirm-RtkApplication {
     if ($DryRun) {
         Invoke-RtkCommand -Arguments @("--version")
@@ -511,6 +525,7 @@ function Configure-RtkForSelectedAgents {
     Ensure-Rtk
 
     if ($script:InstallClaudeCode) {
+        Ensure-RtkClaudeConfigDirectory
         Invoke-RtkCommand -Arguments @("init", "--global", "--auto-patch")
     }
     if ($script:InstallCodex) {

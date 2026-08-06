@@ -487,6 +487,16 @@ run_rtk_init() {
     fail "RTK configuration failed with exit code $status. Correct the reported RTK error, then rerun the installer."
 }
 
+ensure_rtk_claude_config_directory() {
+    if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+        rtk_claude_config_directory=$CLAUDE_CONFIG_DIR
+    else
+        [ -n "${HOME:-}" ] || fail "HOME is required to configure RTK for Claude Code."
+        rtk_claude_config_directory="$HOME/.claude"
+    fi
+    run mkdir -p "$rtk_claude_config_directory"
+}
+
 configure_rtk_for_selected_agents() {
     [ "$enable_rtk" -eq 1 ] || return 0
 
@@ -494,6 +504,7 @@ configure_rtk_for_selected_agents() {
     ensure_rtk
 
     if [ "$install_claude" -eq 1 ]; then
+        ensure_rtk_claude_config_directory
         run_rtk_init init --global --auto-patch
     fi
     if [ "$install_codex" -eq 1 ]; then

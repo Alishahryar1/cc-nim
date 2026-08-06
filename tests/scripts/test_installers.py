@@ -127,6 +127,10 @@ exit 35
 def _posix_rtk_command() -> str:
     return """#!/bin/sh
 echo "rtk:$*:telemetry=${RTK_TELEMETRY_DISABLED:-}" >> "$CALL_LOG"
+if [ "$*" = "init --global --auto-patch" ]; then
+    claude_config_directory=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
+    [ -d "$claude_config_directory" ] || exit 77
+fi
 case "${1:-}:$FAIL_STEP" in
     --version:rtk-verify|gain:rtk-verify) exit 72 ;;
 esac
@@ -457,6 +461,7 @@ printf '%s  %s\n' "$checksum" "$1"
             "FCC_RUNNING_COMMAND": "",
             "FCC_RUNNING_PHASE": "early",
             "FAKE_UNAME": "Linux",
+            "CLAUDE_CONFIG_DIR": "",
             "FAIL_STEP": "",
         }
     )
@@ -516,6 +521,21 @@ def test_install_sh_installs_and_configures_rtk_for_selected_agents(
     assert calls.index("rtk:init --global --agent pi:telemetry=1") < calls.index(
         "uv-install"
     )
+    assert (Path(posix_harness.env["HOME"]) / ".claude").is_dir()
+
+
+def test_install_sh_prepares_custom_claude_config_directory_for_rtk(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.add_rtk()
+    custom_config = posix_harness.root / "custom-claude"
+    posix_harness.env["CLAUDE_CONFIG_DIR"] = str(custom_config)
+
+    result = posix_harness.run("--rtk")
+
+    assert result.returncode == 0, result.stderr
+    assert custom_config.is_dir()
+    assert not (Path(posix_harness.env["HOME"]) / ".claude").exists()
 
 
 @pytest.mark.parametrize(
@@ -1206,6 +1226,8 @@ exit /b 0
 def _batch_rtk() -> str:
     return r"""@echo off
 >>"%CALL_LOG%" echo rtk:%*:telemetry=%RTK_TELEMETRY_DISABLED%
+if "%*"=="init --global --auto-patch" if defined CLAUDE_CONFIG_DIR if not exist "%CLAUDE_CONFIG_DIR%" exit /b 77
+if "%*"=="init --global --auto-patch" if not defined CLAUDE_CONFIG_DIR if not exist "%USERPROFILE%\.claude" exit /b 77
 if "%FAIL_STEP%"=="rtk-verify" if "%1"=="--version" exit /b 72
 if "%FAIL_STEP%"=="rtk-verify" if "%1"=="gain" exit /b 72
 if "%FAIL_STEP%"=="rtk-init-claude" if "%*"=="init --global --auto-patch" exit /b 73
@@ -1446,6 +1468,7 @@ $installer = [scriptblock]::Create([IO.File]::ReadAllText($env:FCC_INSTALLER))
             "LOCALAPPDATA": str(local_app_data),
             "APPDATA": str(app_data),
             "CALL_LOG": str(log),
+            "CLAUDE_CONFIG_DIR": "",
             "FAKE_FIXTURES": str(fixtures),
             "FAKE_TOOL_BIN": str(tool_bin),
             "FCC_INSTALLER": str(_repo_root() / "scripts" / "install.ps1"),
@@ -1529,6 +1552,21 @@ def test_install_ps1_preserves_existing_rtk_and_configures_selected_agents(
         "rtk:init --global --codex:telemetry=1",
         "rtk:init --global --agent pi:telemetry=1",
     ]
+    assert (Path(powershell_harness.env["USERPROFILE"]) / ".claude").is_dir()
+
+
+def test_install_ps1_prepares_custom_claude_config_directory_for_rtk(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    powershell_harness.add_rtk()
+    custom_config = powershell_harness.root / "custom-claude"
+    powershell_harness.env["CLAUDE_CONFIG_DIR"] = str(custom_config)
+
+    result = powershell_harness.run("-Rtk")
+
+    assert result.returncode == 0, result.stderr
+    assert custom_config.is_dir()
+    assert not (Path(powershell_harness.env["USERPROFILE"]) / ".claude").exists()
 
 
 def test_install_ps1_rejects_conflicting_rtk_command(
