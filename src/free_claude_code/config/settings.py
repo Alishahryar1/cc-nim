@@ -53,7 +53,7 @@ class Settings(BaseSettings):
     minimax_api_key: str = Field(default="", validation_alias="MINIMAX_API_KEY")
 
     # ==================== OpenCode Zen / OpenCode Go ====================
-    # Same key from opencode.ai/auth; zen uses prefix ``opencode/``, Go uses ``opencode_go/``.
+    # Same key from opencode.ai/auth; Zen uses ``opencode_zen/``, Go uses ``opencode_go/``.
     opencode_api_key: str = Field(default="", validation_alias="OPENCODE_API_KEY")
 
     # ==================== Vercel AI Gateway ====================
@@ -173,7 +173,7 @@ class Settings(BaseSettings):
     kimi_code_proxy: str = Field(default="", validation_alias="KIMI_CODE_PROXY")
     wafer_proxy: str = Field(default="", validation_alias="WAFER_PROXY")
     minimax_proxy: str = Field(default="", validation_alias="MINIMAX_PROXY")
-    opencode_proxy: str = Field(default="", validation_alias="OPENCODE_PROXY")
+    opencode_zen_proxy: str = Field(default="", validation_alias="OPENCODE_ZEN_PROXY")
     opencode_go_proxy: str = Field(default="", validation_alias="OPENCODE_GO_PROXY")
     vercel_ai_gateway_proxy: str = Field(
         default="", validation_alias="VERCEL_AI_GATEWAY_PROXY"

@@ -346,7 +346,39 @@ def test_serve_migrates_hf_token_before_loading_settings(
     get_settings.assert_called_once_with()
 
 
-def test_config_env_key_migration_warns_for_explicit_env_file(
+def test_serve_migrates_opencode_zen_prefix_before_loading_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from free_claude_code.cli import commands
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    env_file = repo / ".env"
+    env_file.write_text("MODEL=opencode/model\n", encoding="utf-8")
+    settings = _launcher_settings()
+
+    def load_settings() -> Settings:
+        assert env_file.read_text(encoding="utf-8") == ("MODEL=opencode_zen/model\n")
+        return settings
+
+    get_settings = MagicMock(side_effect=load_settings)
+    get_settings.cache_clear = MagicMock()
+    monkeypatch.chdir(repo)
+
+    with (
+        patch("pathlib.Path.home", return_value=tmp_path),
+        patch.object(commands, "get_settings", get_settings),
+        patch.object(commands.ServerSupervisor, "_run_once", return_value=False),
+        patch.object(commands, "kill_all_best_effort"),
+        patch.object(commands, "explicit_env_file_migration_warning"),
+    ):
+        commands.serve()
+
+    get_settings.assert_called_once_with()
+
+
+def test_config_env_migration_warns_for_explicit_env_file(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -356,7 +388,7 @@ def test_config_env_key_migration_warns_for_explicit_env_file(
     explicit.write_text("HF_TOKEN=legacy-hf\n", encoding="utf-8")
 
     with patch.dict(commands.os.environ, {"FCC_ENV_FILE": str(explicit)}):
-        migrated = commands._migrate_config_env_keys()
+        migrated = commands._migrate_config_env()
 
     assert migrated == ()
     assert "HF_TOKEN" in capsys.readouterr().err

@@ -149,6 +149,20 @@ def test_model_router_routes_prefixed_provider_model_directly(settings):
     assert routed.resolved.provider_model_ref == "deepseek/deepseek-chat"
 
 
+def test_model_router_routes_explicit_opencode_zen_prefix(settings):
+    routed = ModelRouter(settings).resolve_messages_request(
+        MessagesRequest(
+            model="opencode_zen/kimi-k2.6",
+            max_tokens=100,
+            messages=[Message(role="user", content="hello")],
+        )
+    )
+
+    assert routed.request.model == "kimi-k2.6"
+    assert routed.resolved.provider_id == "opencode_zen"
+    assert routed.resolved.provider_model_ref == "opencode_zen/kimi-k2.6"
+
+
 def test_model_router_routes_wafer_provider_model_directly(settings):
     routed = ModelRouter(settings).resolve_messages_request(
         MessagesRequest(

@@ -59,7 +59,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "kimi_code": "kimi_code/k3",
     "wafer": "wafer/DeepSeek-V4-Pro",
     "minimax": "minimax/MiniMax-M3",
-    "opencode": "opencode/gpt-5.3-codex",
+    "opencode_zen": "opencode_zen/gpt-5.3-codex",
     "opencode_go": "opencode_go/minimax-m2.7",
     "vercel": "vercel/openai/gpt-5.5",
     "bedrock": "bedrock/openai.gpt-oss-120b",

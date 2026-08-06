@@ -640,7 +640,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         advanced=True,
     ),
     ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_OPENCODE",
+        "FCC_SMOKE_MODEL_OPENCODE_ZEN",
         "Smoke OpenCode Zen Model",
         "smoke",
         advanced=True,

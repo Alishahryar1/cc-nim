@@ -342,9 +342,10 @@ Model routing configuration is tiered:
   `REASONING_HAIKU` accept the same values plus `inherit`.
 
 [config/reasoning.py](src/free_claude_code/config/reasoning.py) owns the typed
-configuration vocabulary. FCC-owned dotenv files receive a one-time rename and
-value migration from the retired boolean settings; explicit `FCC_ENV_FILE`
-files are never rewritten and instead receive an actionable startup warning.
+configuration vocabulary. FCC-owned dotenv files receive one-time migrations
+for retired configuration keys and values before Settings loads them. Explicit
+`FCC_ENV_FILE` files are never rewritten and instead receive an actionable
+startup warning.
 
 [config/model_refs.py](src/free_claude_code/config/model_refs.py) owns provider-prefixed model ref
 parsing and configured `MODEL*` inventory. API routing and provider validation

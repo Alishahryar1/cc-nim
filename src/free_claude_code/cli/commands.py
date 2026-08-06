@@ -192,7 +192,7 @@ def load_server_settings() -> Settings:
     """Apply owned config migrations before returning the cached settings."""
 
     _migrate_legacy_env_if_missing()
-    _migrate_config_env_keys()
+    _migrate_config_env()
     return get_settings()
 
 
@@ -238,8 +238,8 @@ def _migrate_legacy_env_if_missing() -> Path | None:
     return None
 
 
-def _migrate_config_env_keys() -> tuple[Path, ...]:
-    """Apply dotenv key migrations before Settings loads config."""
+def _migrate_config_env() -> tuple[Path, ...]:
+    """Apply dotenv migrations before Settings loads config."""
 
     migrated = migrate_owned_env_files()
     if warning := explicit_env_file_migration_warning(os.environ):

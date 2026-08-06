@@ -176,7 +176,7 @@ fcc-codex exec "hello"
 | [DeepSeek](https://platform.deepseek.com/api_keys) | `DEEPSEEK_API_KEY` | `deepseek/deepseek-chat` |
 | [Mistral La Plateforme](https://console.mistral.ai/) | `MISTRAL_API_KEY` | `mistral/devstral-small-latest` |
 | [Mistral Codestral](https://console.mistral.ai/) | `CODESTRAL_API_KEY` | `mistral_codestral/codestral-latest` |
-| [OpenCode Zen](https://opencode.ai/auth) | `OPENCODE_API_KEY` | `opencode/gpt-5.3-codex` |
+| [OpenCode Zen](https://opencode.ai/auth) | `OPENCODE_API_KEY` | `opencode_zen/gpt-5.3-codex` |
 | [OpenCode Go](https://opencode.ai/auth) | `OPENCODE_API_KEY` | `opencode_go/minimax-m2.7` |
 | [Vercel AI Gateway](https://vercel.com/docs/ai-gateway/models-and-providers) | `AI_GATEWAY_API_KEY` | `vercel/openai/gpt-5.5` |
 | [Amazon Bedrock](https://console.aws.amazon.com/bedrock/) | `AWS_BEARER_TOKEN_BEDROCK` | `bedrock/openai.gpt-oss-120b` |
@@ -216,7 +216,8 @@ Important provider notes:
 - Kimi Code subscription keys use `kimi_code/`; Kimi API credit keys use
   `kimi/`. Kimi Code plans are for personal interactive coding-agent use under
   [Kimi's community guidelines](https://www.kimi.com/code/docs/en/kimi-code/community-guidelines.html).
-- OpenCode Zen and OpenCode Go share `OPENCODE_API_KEY` but use different model prefixes.
+- OpenCode Zen and OpenCode Go share `OPENCODE_API_KEY` but use the explicit
+  `opencode_zen/` and `opencode_go/` model prefixes.
 - Amazon Bedrock uses its Mantle OpenAI-compatible endpoint. Set
   `BEDROCK_BASE_URL` to the endpoint for the same region as the API key and
   select one of the models returned by FCC's model picker.
