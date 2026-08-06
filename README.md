@@ -24,6 +24,7 @@
 - **Use your preferred coding agent.** Run Claude Code, Codex, or Pi with FCC.
 - **Choose your own models.** Connect free, paid, or local providers and search their models from one Admin UI.
 - **Route work your way.** Set one default model or map Fable, Opus, Sonnet, and Haiku separately.
+- **Save time and tokens.** Five built-in optimizations handle quota probes, command-prefix detection, title generation, suggestion mode, and filepath extraction locally instead of calling your provider.
 - **Keep coding-agent capabilities.** Use streaming, tools, reasoning, and image input with compatible models.
 - **Work where you want.** Launch from your desktop, connect supported IDEs, or use optional Discord and Telegram bots with voice notes.
 
