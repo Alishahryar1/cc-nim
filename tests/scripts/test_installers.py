@@ -1,7 +1,9 @@
+import hashlib
 import os
 import shutil
 import subprocess
 import sys
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -120,6 +122,24 @@ exit 35
 """
 
 
+def _posix_rtk_command() -> str:
+    return """#!/bin/sh
+echo "rtk:$*:telemetry=${RTK_TELEMETRY_DISABLED:-}" >> "$CALL_LOG"
+case "${1:-}:$FAIL_STEP" in
+    --version:rtk-verify|gain:rtk-verify) exit 72 ;;
+esac
+case "$*:$FAIL_STEP" in
+    "init --global --auto-patch:rtk-init-claude") exit 73 ;;
+    "init --global --codex:rtk-init-codex") exit 74 ;;
+    "init --global --agent pi:rtk-init-pi") exit 75 ;;
+esac
+if [ "${1:-}" = "--version" ]; then
+    echo "rtk 0.44.2"
+fi
+exit 0
+"""
+
+
 @dataclass
 class PosixHarness:
     root: Path
@@ -142,6 +162,19 @@ class PosixHarness:
 
     def add_uv(self, version: str) -> None:
         _write_executable(self.bin_dir / "uv", _posix_uv_command(version))
+
+    def add_rtk(self) -> None:
+        _write_executable(self.bin_dir / "rtk", _posix_rtk_command())
+
+    def add_unrelated_rtk(self) -> None:
+        _write_executable(
+            self.bin_dir / "rtk",
+            """#!/bin/sh
+echo "unrelated-rtk:$*" >> "$CALL_LOG"
+[ "${1:-}" = "--version" ] && echo "rtk 1.0.0" && exit 0
+exit 76
+""",
+        )
 
     def use_process_list_fallback(self, process_line: str) -> None:
         fallback_bin = self.root / "fallback-bin"
@@ -291,7 +324,7 @@ while [ "$#" -gt 0 ]; do
 done
 echo "download:$url" >> "$CALL_LOG"
 case "$url:$FAIL_STEP" in
-    *claude.ai*:claude-download|*chatgpt.com*:codex-download|*pi.dev*:pi-download|*astral.sh*:uv-download)
+    *claude.ai*:claude-download|*chatgpt.com*:codex-download|*pi.dev*:pi-download|*rtk-ai*:rtk-download|*astral.sh*:uv-download)
         exit 41
         ;;
 esac
@@ -299,6 +332,7 @@ case "$url" in
     *claude.ai*) source="$FAKE_FIXTURES/claude-installer.sh" ;;
     *chatgpt.com*) source="$FAKE_FIXTURES/codex-installer.sh" ;;
     *pi.dev*) source="$FAKE_FIXTURES/pi-installer.sh" ;;
+    *rtk-ai*) source="$FAKE_FIXTURES/rtk-installer.sh" ;;
     *astral.sh*) source="$FAKE_FIXTURES/uv-installer.sh" ;;
     *) exit 42 ;;
 esac
@@ -342,6 +376,16 @@ chmod +x "$pi_bin/pi"
 """,
     )
     _write_executable(
+        fixtures / "rtk-installer.sh",
+        """#!/bin/sh
+echo "rtk-install" >> "$CALL_LOG"
+[ "$FAIL_STEP" = "rtk-install" ] && exit 25
+mkdir -p "$HOME/.local/bin"
+cp "$FAKE_FIXTURES/rtk-command.sh" "$HOME/.local/bin/rtk"
+chmod +x "$HOME/.local/bin/rtk"
+""",
+    )
+    _write_executable(
         fixtures / "uv-installer.sh",
         """#!/bin/sh
 echo "uv-install" >> "$CALL_LOG"
@@ -354,6 +398,7 @@ chmod +x "$HOME/.local/bin/uv"
     _write_executable(fixtures / "claude-command.sh", _posix_command("claude"))
     _write_executable(fixtures / "codex-command.sh", _posix_command("codex"))
     _write_executable(fixtures / "pi-command.sh", _posix_command("pi"))
+    _write_executable(fixtures / "rtk-command.sh", _posix_rtk_command())
     _write_executable(fixtures / "uv-command.sh", _posix_uv_command("0.11.28"))
     _write_executable(
         fixtures / "fcc-command.sh",
@@ -425,10 +470,78 @@ def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> No
     ]
 
 
+def test_install_sh_installs_and_configures_rtk_for_selected_agents(
+    posix_harness: PosixHarness,
+) -> None:
+    result = posix_harness.run("--rtk")
+
+    assert result.returncode == 0, result.stderr
+    calls = posix_harness.calls()
+    assert (
+        "download:https://raw.githubusercontent.com/rtk-ai/rtk/master/install.sh"
+        in calls
+    )
+    assert calls.index("rtk-install") < calls.index("rtk:--version:telemetry=1")
+    assert calls.index("rtk:--version:telemetry=1") < calls.index(
+        "rtk:gain:telemetry=1"
+    )
+    assert [call for call in calls if call.startswith("rtk:init")] == [
+        "rtk:init --global --auto-patch:telemetry=1",
+        "rtk:init --global --codex:telemetry=1",
+        "rtk:init --global --agent pi:telemetry=1",
+    ]
+    assert calls.index("rtk:init --global --agent pi:telemetry=1") < calls.index(
+        "uv-install"
+    )
+
+
+def test_install_sh_preserves_existing_rtk_and_configures_only_selected_agent(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.add_rtk()
+
+    result = posix_harness.run_interactive("n\ny\nn\ny\n")
+
+    assert result.returncode == 0, result.stdout
+    assert "verifying it without updating it" in result.stdout
+    assert not any("rtk-ai/rtk" in call for call in posix_harness.calls())
+    assert [call for call in posix_harness.calls() if call.startswith("rtk:init")] == [
+        "rtk:init --global --codex:telemetry=1"
+    ]
+
+
+def test_install_sh_rejects_conflicting_rtk_command(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.add_unrelated_rtk()
+
+    result = posix_harness.run("--rtk")
+
+    assert result.returncode != 0
+    assert "not a compatible Rust Token Killer installation" in result.stderr
+    assert not any("rtk-ai/rtk" in call for call in posix_harness.calls())
+    assert not any("astral.sh" in call for call in posix_harness.calls())
+
+
+@pytest.mark.parametrize(
+    "failure",
+    ["rtk-download", "rtk-install", "rtk-verify", "rtk-init-claude"],
+)
+def test_install_sh_stops_when_rtk_setup_fails(
+    posix_harness: PosixHarness,
+    failure: str,
+) -> None:
+    result = posix_harness.run("--rtk", fail_step=failure)
+
+    assert result.returncode != 0
+    assert "Free Claude Code is installed and verified." not in result.stdout
+    assert not any("astral.sh" in call for call in posix_harness.calls())
+
+
 def test_install_sh_reprompts_then_installs_only_selected_agent(
     posix_harness: PosixHarness,
 ) -> None:
-    result = posix_harness.run_interactive("n\nn\nn\nn\ny\nn\n")
+    result = posix_harness.run_interactive("n\nn\nn\nn\ny\nn\nn\n")
 
     assert result.returncode == 0, result.stdout
     assert "Select at least one coding agent." in result.stdout
@@ -439,12 +552,13 @@ def test_install_sh_reprompts_then_installs_only_selected_agent(
     assert "codex-install:1" in calls
     assert not any("claude.ai" in call for call in calls)
     assert not any("pi.dev" in call for call in calls)
+    assert not any("rtk-ai/rtk" in call for call in calls)
 
 
 def test_install_sh_rejects_uninstalled_only_selection(
     posix_harness: PosixHarness,
 ) -> None:
-    result = posix_harness.run_interactive("n\nn\ny\n", fail_step="pi-skip")
+    result = posix_harness.run_interactive("n\nn\ny\nn\n", fail_step="pi-skip")
 
     assert result.returncode != 0
     assert "No selected coding agent was installed." in result.stdout
@@ -1023,6 +1137,19 @@ exit /b 0
 """
 
 
+def _batch_rtk() -> str:
+    return r"""@echo off
+>>"%CALL_LOG%" echo rtk:%*:telemetry=%RTK_TELEMETRY_DISABLED%
+if "%FAIL_STEP%"=="rtk-verify" if "%1"=="--version" exit /b 72
+if "%FAIL_STEP%"=="rtk-verify" if "%1"=="gain" exit /b 72
+if "%FAIL_STEP%"=="rtk-init-claude" if "%*"=="init --global --auto-patch" exit /b 73
+if "%FAIL_STEP%"=="rtk-init-codex" if "%*"=="init --global --codex" exit /b 74
+if "%FAIL_STEP%"=="rtk-init-pi" if "%*"=="init --global --agent pi" exit /b 75
+if "%1"=="--version" echo rtk 0.44.2
+exit /b 0
+"""
+
+
 @dataclass
 class PowerShellHarness:
     root: Path
@@ -1047,6 +1174,22 @@ class PowerShellHarness:
 
     def add_uv(self, version: str) -> None:
         _write_executable(self.bin_dir / "uv.cmd", _batch_uv(version))
+
+    def add_rtk(self) -> None:
+        _write_executable(self.bin_dir / "rtk.cmd", _batch_rtk())
+
+    def add_unrelated_rtk(self) -> None:
+        _write_executable(
+            self.bin_dir / "rtk.cmd",
+            r"""@echo off
+echo unrelated-rtk:%*>>"%CALL_LOG%"
+if "%1"=="--version" (
+    echo rtk 1.0.0
+    exit /b 0
+)
+exit /b 76
+""",
+        )
 
     def run(self, *args: str, fail_step: str = "") -> subprocess.CompletedProcess[str]:
         env = self.env | {"FAIL_STEP": fail_step}
@@ -1101,6 +1244,7 @@ def powershell_harness(
         _batch_client("codex"), encoding="utf-8"
     )
     (fixtures / "pi-command.cmd").write_text(_batch_client("pi"), encoding="utf-8")
+    (fixtures / "rtk-command.cmd").write_text(_batch_rtk(), encoding="utf-8")
     (fixtures / "uv-command.cmd").write_text(_batch_uv("0.11.28"), encoding="utf-8")
     (fixtures / "fcc-command.cmd").write_text(
         """@echo off
@@ -1157,6 +1301,14 @@ Add-Content -LiteralPath $env:CALL_LOG -Value "uv-install"
 """,
         encoding="utf-8",
     )
+    rtk_archive = fixtures / "rtk-x86_64-pc-windows-msvc.zip"
+    with zipfile.ZipFile(rtk_archive, "w") as archive:
+        archive.writestr("rtk.exe", b"fake RTK executable")
+    rtk_hash = hashlib.sha256(rtk_archive.read_bytes()).hexdigest()
+    (fixtures / "rtk-checksums.txt").write_text(
+        f"{rtk_hash}  {rtk_archive.name}\n",
+        encoding="utf-8",
+    )
 
     wrapper = tmp_path / "run-installer.ps1"
     wrapper.write_text(
@@ -1171,6 +1323,7 @@ function Invoke-RestMethod {
         ($env:FAIL_STEP -eq "claude-download" -and $Uri.Contains("claude.ai")) -or
         ($env:FAIL_STEP -eq "codex-download" -and $Uri.Contains("chatgpt.com")) -or
         ($env:FAIL_STEP -eq "pi-download" -and $Uri.Contains("pi.dev")) -or
+        ($env:FAIL_STEP -eq "rtk-download" -and $Uri.Contains("rtk-ai/rtk")) -or
         ($env:FAIL_STEP -eq "uv-download" -and $Uri.Contains("astral.sh"))
     ) {
         throw "simulated download failure"
@@ -1183,6 +1336,12 @@ function Invoke-RestMethod {
     }
     elseif ($Uri.Contains("pi.dev")) {
         $source = Join-Path $env:FAKE_FIXTURES "pi-installer.ps1"
+    }
+    elseif ($Uri.EndsWith("rtk-x86_64-pc-windows-msvc.zip")) {
+        $source = Join-Path $env:FAKE_FIXTURES "rtk-x86_64-pc-windows-msvc.zip"
+    }
+    elseif ($Uri.Contains("rtk-ai/rtk") -and $Uri.EndsWith("checksums.txt")) {
+        $source = Join-Path $env:FAKE_FIXTURES "rtk-checksums.txt"
     }
     elseif ($Uri.Contains("astral.sh")) {
         $source = Join-Path $env:FAKE_FIXTURES "uv-installer.ps1"
@@ -1292,6 +1451,123 @@ def test_install_ps1_fresh_install_is_verified(
         / "Programs"
         / "Free Claude Code.lnk"
     ).is_file()
+
+
+def test_install_ps1_preserves_existing_rtk_and_configures_selected_agents(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    powershell_harness.add_rtk()
+
+    result = powershell_harness.run("-Rtk")
+
+    assert result.returncode == 0, result.stderr
+    assert "verifying it without updating it" in result.stdout
+    calls = powershell_harness.calls()
+    assert not any("rtk-ai/rtk" in call for call in calls)
+    assert "rtk:--version:telemetry=1" in calls
+    assert "rtk:gain:telemetry=1" in calls
+    assert [call for call in calls if call.startswith("rtk:init")] == [
+        "rtk:init --global --auto-patch:telemetry=1",
+        "rtk:init --global --codex:telemetry=1",
+        "rtk:init --global --agent pi:telemetry=1",
+    ]
+
+
+def test_install_ps1_rejects_conflicting_rtk_command(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    powershell_harness.add_unrelated_rtk()
+
+    result = powershell_harness.run("-Rtk")
+
+    assert result.returncode != 0
+    assert "not a compatible Rust Token Killer installation" in result.stderr
+    assert not any("rtk-ai/rtk" in call for call in powershell_harness.calls())
+    assert not any("astral.sh" in call for call in powershell_harness.calls())
+
+
+def test_install_ps1_rtk_dry_run_prints_install_and_agent_setup(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    result = powershell_harness.run("-Rtk", "-DryRun")
+
+    assert result.returncode == 0, result.stderr
+    assert powershell_harness.calls() == []
+    assert "releases/latest/download/rtk-x86_64-pc-windows-msvc.zip" in result.stdout
+    assert "RTK_TELEMETRY_DISABLED=1 rtk init --global --auto-patch" in result.stdout
+    assert "RTK_TELEMETRY_DISABLED=1 rtk init --global --codex" in result.stdout
+    assert "RTK_TELEMETRY_DISABLED=1 rtk init --global --agent pi" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "powershell",
+    _powershells() or (None,),
+    ids=lambda path: Path(path).name if path is not None else "unavailable",
+)
+@pytest.mark.parametrize("valid_checksum", [True, False])
+def test_install_ps1_installs_only_checksum_verified_rtk_archive(
+    powershell: str | None,
+    tmp_path: Path,
+    valid_checksum: bool,
+) -> None:
+    if powershell is None or os.name != "nt":
+        pytest.skip("PowerShell RTK archive installation runs on Windows hosts")
+
+    asset_name = "rtk-x86_64-pc-windows-msvc.zip"
+    archive_path = tmp_path / asset_name
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("rtk.exe", b"verified RTK executable")
+    checksum = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+    if not valid_checksum:
+        checksum = "0" * 64
+    checksums_path = tmp_path / "checksums.txt"
+    checksums_path.write_text(f"{checksum}  {asset_name}\n", encoding="utf-8")
+
+    installer = (_repo_root() / "scripts" / "install.ps1").read_text(encoding="utf-8")
+    format_argument = _braced_body(installer, "function Format-Argument")
+    install_rtk = _braced_body(installer, "function Install-Rtk")
+    script = f"""Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+$DryRun = $false
+$RtkReleaseBaseUrl = "https://example.test/releases/latest/download"
+$RtkWindowsAssetName = "{asset_name}"
+function Format-Argument {{{format_argument}}}
+function Invoke-RestMethod {{
+    [CmdletBinding()]
+    param([string] $Uri, [string] $OutFile)
+    if ($Uri.EndsWith("checksums.txt")) {{
+        Copy-Item -LiteralPath $env:RTK_TEST_CHECKSUMS -Destination $OutFile
+    }}
+    else {{
+        Copy-Item -LiteralPath $env:RTK_TEST_ARCHIVE -Destination $OutFile
+    }}
+}}
+function Install-Rtk {{{install_rtk}}}
+Install-Rtk
+"""
+    home = tmp_path / "home"
+    home.mkdir()
+    env = os.environ | {
+        "USERPROFILE": str(home),
+        "RTK_TEST_ARCHIVE": str(archive_path),
+        "RTK_TEST_CHECKSUMS": str(checksums_path),
+    }
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-Command", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    installed = home / ".local" / "bin" / "rtk.exe"
+    if valid_checksum:
+        assert result.returncode == 0, result.stderr
+        assert installed.read_bytes() == b"verified RTK executable"
+    else:
+        assert result.returncode != 0
+        assert "checksum verification failed" in result.stderr
+        assert not installed.exists()
 
 
 def test_install_ps1_stops_if_windows_icon_export_fails(
@@ -1691,10 +1967,10 @@ Invoke-DownloadedPowerShellInstaller `
 @pytest.mark.parametrize(
     ("answers", "expected", "expected_messages"),
     [
-        (("", "", ""), "True,True,True", ()),
+        (("", "", "", ""), "True,True,True,False", ()),
         (
-            ("maybe", "n", "n", "n", "n", "y", "n"),
-            "False,True,False",
+            ("maybe", "n", "n", "n", "n", "y", "n", "y"),
+            "False,True,False,True",
             ("Please answer Y or N.", "Select at least one coding agent."),
         ),
     ],
@@ -1716,6 +1992,7 @@ $script:AnswerIndex = 0
 $script:InstallClaudeCode = $true
 $script:InstallCodex = $true
 $script:InstallPi = $true
+$script:EnableRtk = $false
 function Read-Host {{
     param([string] $Prompt)
     $answer = $script:Answers[$script:AnswerIndex]
@@ -1725,7 +2002,7 @@ function Read-Host {{
 function Read-YesNo {{{read_yes_no}}}
 function Select-CodingAgents {{{select_agents}}}
 Select-CodingAgents
-Write-Output "selection:$($script:InstallClaudeCode),$($script:InstallCodex),$($script:InstallPi)"
+Write-Output "selection:$($script:InstallClaudeCode),$($script:InstallCodex),$($script:InstallPi),$($script:EnableRtk)"
 """
 
     result = subprocess.run(
@@ -1770,6 +2047,42 @@ Write-Output "calls:$($script:Calls -join ',')"
 
     assert result.returncode == 0, result.stderr
     assert "calls:codex" in result.stdout
+
+
+@pytest.mark.parametrize("powershell", _powershells())
+def test_install_ps1_configures_rtk_only_for_available_selected_agents(
+    powershell: str,
+) -> None:
+    text = (_repo_root() / "scripts" / "install.ps1").read_text(encoding="utf-8")
+    body = _braced_body(text, "function Configure-RtkForSelectedAgents")
+    script = f"""Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+$script:EnableRtk = $true
+$script:InstallClaudeCode = $false
+$script:InstallCodex = $true
+$script:InstallPi = $true
+$script:PiAvailable = $false
+$script:Calls = @()
+function Write-Step {{ param([string] $Message) }}
+function Ensure-Rtk {{ $script:Calls += "ensure" }}
+function Invoke-RtkCommand {{
+    param([string[]] $Arguments)
+    $script:Calls += ($Arguments -join " ")
+}}
+function Configure-RtkForSelectedAgents {{{body}}}
+Configure-RtkForSelectedAgents
+Write-Output "calls:$($script:Calls -join ',')"
+"""
+
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-Command", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "calls:ensure,init --global --codex" in result.stdout
 
 
 @pytest.mark.parametrize("powershell", _powershells())

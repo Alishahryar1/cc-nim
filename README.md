@@ -25,6 +25,7 @@
 - **Choose your own models.** Connect free, paid, or local providers and search their models from one Admin UI.
 - **Route work your way.** Set one default model or map Fable, Opus, Sonnet, and Haiku separately.
 - **Save time and tokens.** Five built-in optimizations handle quota probes, command-prefix detection, title generation, suggestion mode, and filepath extraction locally instead of calling your provider.
+- **Reduce command-output noise.** Optionally enable [RTK](https://github.com/rtk-ai/rtk) to filter noisy terminal output before it reaches the model.
 - **Keep coding-agent capabilities.** Use streaming, tools, reasoning, and image input with compatible models.
 - **Work where you want.** Launch from your desktop, connect supported IDEs, or use optional Discord and Telegram bots with voice notes.
 
@@ -53,7 +54,7 @@ Windows PowerShell:
 
 Re-run the same command whenever you want to update. You can review the installers before running them: [install.sh](scripts/install.sh) and [install.ps1](scripts/install.ps1).
 
-The installer asks which coding agents to install or verify. Choose at least one; skipped agents are left unchanged.
+The installer asks which coding agents to install or verify. Choose at least one; skipped agents are left unchanged. It can also install and configure RTK globally for the selected agents; RTK is off by default.
 
 ### 2. Start FCC
 
@@ -493,7 +494,7 @@ Stop every running FCC command before uninstalling.
 **Keeps**
 
 - uv and Python
-- Claude Code, Codex, and Pi
+- Claude Code, Codex, Pi, and RTK
 - Shared PATH entries
 
 macOS/Linux:

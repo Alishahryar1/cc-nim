@@ -7,6 +7,7 @@ MIN_UV_VERSION="0.11.16"
 CLAUDE_INSTALL_URL="https://claude.ai/install.sh"
 CODEX_INSTALL_URL="https://chatgpt.com/codex/install.sh"
 PI_INSTALL_URL="https://pi.dev/install.sh"
+RTK_INSTALL_URL="https://raw.githubusercontent.com/rtk-ai/rtk/master/install.sh"
 UV_INSTALL_URL="https://astral.sh/uv/install.sh"
 FCC_MACOS_BUNDLE_ID="io.github.alishahryar1.free-claude-code"
 FCC_MACOS_OWNER_FILE=".free-claude-code-owner"
@@ -20,10 +21,12 @@ voice_all=0
 install_claude=1
 install_codex=1
 install_pi=1
+enable_rtk=0
 torch_backend=""
 temporary_script=""
 tool_bin=""
 pi_available=0
+rtk_path=""
 
 show_usage() {
     cat <<'USAGE'
@@ -36,6 +39,7 @@ Options:
   --voice-local            Install local Whisper voice transcription support.
   --voice-all              Install all voice transcription backends.
   --torch-backend VALUE    Use a uv PyTorch backend, such as cu130. Requires local voice.
+  --rtk                    Install and configure RTK for the selected coding agents.
   --dry-run                Print commands without running them.
   --help                   Show this help text.
 USAGE
@@ -52,13 +56,26 @@ installer_is_interactive() {
 
 prompt_yes_no() {
     question=$1
+    default_answer=${2:-yes}
+    case "$default_answer" in
+        yes) prompt='[Y/n]' ;;
+        no) prompt='[y/N]' ;;
+        *) fail "Unsupported prompt default: $default_answer" ;;
+    esac
+
     while :; do
-        printf '%s [Y/n] ' "$question" >&4
+        printf '%s %s ' "$question" "$prompt" >&4
         if ! IFS= read -r answer <&3; then
-            fail "Could not read the coding agent selection."
+            fail "Could not read the installer selection."
         fi
         case "$answer" in
-            ""|[Yy]|[Yy][Ee][Ss]) return 0 ;;
+            '')
+                if [ "$default_answer" = "yes" ]; then
+                    return 0
+                fi
+                return 1
+                ;;
+            [Yy]|[Yy][Ee][Ss]) return 0 ;;
             [Nn]|[Nn][Oo]) return 1 ;;
             *) printf 'Please answer Y or N.\n' >&4 ;;
         esac
@@ -93,6 +110,11 @@ choose_coding_agents() {
         fi
         printf 'Select at least one coding agent.\n\n' >&4
     done
+
+    if [ "$enable_rtk" -eq 0 ] &&
+        prompt_yes_no "Enable RTK token optimization globally for the selected coding agents?" no; then
+        enable_rtk=1
+    fi
 
     exec 3<&-
     exec 4>&-
@@ -332,6 +354,68 @@ verify_pi_command() {
     run "$pi_command_path" --version
 }
 
+verify_rtk_command() {
+    if [ "$dry_run" -eq 1 ]; then
+        print_command env RTK_TELEMETRY_DISABLED=1 rtk --version
+        print_command env RTK_TELEMETRY_DISABLED=1 rtk gain
+        return 0
+    fi
+
+    rtk_path=$(command -v rtk 2>/dev/null) || fail "RTK was installed, but 'rtk' is not available on PATH."
+    print_command env RTK_TELEMETRY_DISABLED=1 "$rtk_path" --version
+    if ! RTK_TELEMETRY_DISABLED=1 "$rtk_path" --version; then
+        fail "The 'rtk' command at $rtk_path is not a compatible Rust Token Killer installation. Remove the conflicting command from PATH, then rerun the installer."
+    fi
+
+    print_command env RTK_TELEMETRY_DISABLED=1 "$rtk_path" gain
+    if ! RTK_TELEMETRY_DISABLED=1 "$rtk_path" gain; then
+        fail "The 'rtk' command at $rtk_path is not a compatible Rust Token Killer installation. Remove the conflicting command from PATH, then rerun the installer."
+    fi
+}
+
+ensure_rtk() {
+    if command -v rtk >/dev/null 2>&1; then
+        printf 'RTK already found on PATH; verifying it without updating it.\n'
+    else
+        download_and_run "$RTK_INSTALL_URL" sh "RTK"
+        add_known_bin_directories
+    fi
+
+    verify_rtk_command
+}
+
+run_rtk_init() {
+    print_command env RTK_TELEMETRY_DISABLED=1 rtk "$@"
+    if [ "$dry_run" -eq 1 ]; then
+        return 0
+    fi
+
+    if RTK_TELEMETRY_DISABLED=1 "$rtk_path" "$@"; then
+        return 0
+    else
+        status=$?
+    fi
+
+    fail "RTK configuration failed with exit code $status. Correct the reported RTK error, then rerun the installer."
+}
+
+configure_rtk_for_selected_agents() {
+    [ "$enable_rtk" -eq 1 ] || return 0
+
+    step "Installing and configuring RTK token optimization"
+    ensure_rtk
+
+    if [ "$install_claude" -eq 1 ]; then
+        run_rtk_init init --global --auto-patch
+    fi
+    if [ "$install_codex" -eq 1 ]; then
+        run_rtk_init init --global --codex
+    fi
+    if [ "$install_pi" -eq 1 ] && [ "$pi_available" -eq 1 ]; then
+        run_rtk_init init --global --agent pi
+    fi
+}
+
 ensure_claude() {
     if command -v claude >/dev/null 2>&1; then
         printf 'Claude Code already found on PATH; verifying it.\n'
@@ -522,6 +606,9 @@ parse_args() {
             --torch-backend=*)
                 torch_backend=${1#*=}
                 [ -n "$torch_backend" ] || fail "--torch-backend requires a non-empty value."
+                ;;
+            --rtk)
+                enable_rtk=1
                 ;;
             --dry-run)
                 dry_run=1
@@ -719,8 +806,17 @@ if [ "$install_claude" -eq 1 ]; then
 fi
 require_command sh
 require_command mktemp
+if [ "$enable_rtk" -eq 1 ] && ! command -v rtk >/dev/null 2>&1; then
+    require_command tar
+    if [ "$dry_run" -eq 0 ] &&
+        ! command -v sha256sum >/dev/null 2>&1 &&
+        ! command -v shasum >/dev/null 2>&1; then
+        fail "RTK installation requires sha256sum or shasum for checksum verification."
+    fi
+fi
 
 ensure_selected_coding_agents
+configure_rtk_for_selected_agents
 
 step "Ensuring uv $MIN_UV_VERSION or newer is installed"
 ensure_uv
