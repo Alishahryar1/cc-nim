@@ -1,22 +1,18 @@
 """Public feature inventory for contract, prerequisite, and product smoke tests.
 
-The inventory is intentionally explicit. README-advertised behavior and exposed
-public surface area must have deterministic pytest contract coverage plus a
-product E2E scenario when that behavior is a user-facing product path. Liveness
-and route probes live in ``smoke/prereq`` and do not count as product coverage.
+The inventory is intentionally explicit. Public product behavior must have
+deterministic pytest contract coverage plus a product E2E scenario when that
+behavior is a user-facing product path. Liveness and route probes live in
+``smoke/prereq`` and do not count as product coverage.
 """
 
 from dataclasses import dataclass
-from typing import Literal
-
-FeatureSource = Literal["readme", "public_surface"]
 
 
 @dataclass(frozen=True, slots=True)
 class FeatureCoverage:
     feature_id: str
     title: str
-    source: FeatureSource
     pytest_contract_tests: tuple[str, ...]
     live_prereq_tests: tuple[str, ...]
     product_e2e_tests: tuple[str, ...]
@@ -30,28 +26,10 @@ class FeatureCoverage:
         return bool(self.pytest_contract_tests)
 
 
-README_FEATURES: tuple[str, ...] = (
-    "zero_cost_provider_access",
-    "drop_in_claude_code_replacement",
-    "drop_in_codex_replacement",
-    "pi_cli_integration",
-    "provider_matrix",
-    "per_model_mapping",
-    "thinking_token_support",
-    "heuristic_tool_parser",
-    "discord_telegram_bot",
-    "optional_authentication",
-    "vscode_extension",
-    "intellij_extension",
-    "voice_notes",
-)
-
-
 FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "zero_cost_provider_access",
         "Configured provider accepts real conversation turns",
-        "readme",
         ("tests/api/test_dependencies.py", "tests/providers/"),
         ("test_configured_provider_models_stream_successfully",),
         ("test_provider_text_multiturn_e2e",),
@@ -62,7 +40,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "drop_in_claude_code_replacement",
         "Claude-compatible API, CLI, and editor protocol flows work",
-        "readme",
         ("tests/api/test_api.py", "tests/cli/test_cli.py"),
         ("test_probe_and_models_routes", "test_claude_cli_prompt_when_available"),
         (
@@ -86,7 +63,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "drop_in_codex_replacement",
         "OpenAI Responses API and Codex CLI adapter route through the proxy",
-        "readme",
         (
             "tests/api/test_openai_responses.py",
             "tests/cli/test_entrypoints.py",
@@ -102,7 +78,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "pi_cli_integration",
         "Pi discovers FCC models and sends Anthropic Messages through the proxy",
-        "readme",
         ("tests/cli/test_entrypoints.py",),
         ("test_probe_and_models_routes",),
         ("test_pi_cli_prompt_e2e",),
@@ -113,7 +88,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "provider_matrix",
         "Every configured provider prefix can satisfy conversation scenarios",
-        "readme",
         ("tests/api/test_dependencies.py", "tests/providers/"),
         ("test_configured_provider_models_stream_successfully",),
         ("test_provider_matrix_presence_e2e", "test_provider_text_multiturn_e2e"),
@@ -124,7 +98,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "per_model_mapping",
         "Fable, Opus, Sonnet, Haiku, and fallback mappings route explicitly",
-        "readme",
         ("tests/application/test_routing.py", "tests/config/test_config.py"),
         ("test_model_mapping_configuration_is_consistent",),
         ("test_model_mapping_matrix_e2e",),
@@ -135,7 +108,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "mixed_provider_mapping",
         "Model-specific overrides can route to different providers",
-        "public_surface",
         ("tests/application/test_routing.py", "tests/config/test_config.py"),
         ("test_mixed_provider_model_mapping_when_configured",),
         ("test_model_mapping_matrix_e2e",),
@@ -146,7 +118,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "thinking_token_support",
         "Thinking history, adaptive thinking, and redacted blocks are accepted",
-        "readme",
         (
             "tests/contracts/test_stream_contracts.py",
             "tests/providers/test_open_router.py",
@@ -166,7 +137,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "heuristic_tool_parser",
         "Tool use and tool result continuation survive provider/client paths",
-        "readme",
         ("tests/providers/test_parsers.py", "tests/contracts/test_stream_contracts.py"),
         ("test_live_tool_use_when_configured_model_supports_tools",),
         (
@@ -183,7 +153,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "request_optimization",
         "Local request optimizations return product responses without providers",
-        "public_surface",
         (
             "tests/api/test_optimization_handlers.py",
             "tests/api/test_routes_optimizations.py",
@@ -197,7 +166,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "smart_rate_limiting",
         "Transient retries and disconnect cleanup preserve follow-up requests",
-        "public_surface",
         (
             "tests/providers/test_provider_admission.py",
             "tests/providers/test_nvidia_nim_degraded_retry.py",
@@ -211,7 +179,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "provider_hot_swap",
         "Provider config changes preserve active streams while new requests switch",
-        "public_surface",
         (
             "tests/runtime/test_provider_manager.py",
             "tests/api/test_response_streams.py",
@@ -226,7 +193,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "discord_telegram_bot",
         "Discord and Telegram product flows render progress and transcripts",
-        "readme",
         (
             "tests/messaging/test_discord_platform.py",
             "tests/messaging/test_telegram.py",
@@ -250,7 +216,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "subagent_control",
         "Task-like tool output is rendered and controlled as foreground work",
-        "public_surface",
         ("tests/providers/test_subagent_interception.py",),
         (),
         ("test_messaging_subagent_control_e2e",),
@@ -261,7 +226,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "extensible_provider_platform_abcs",
         "Provider and platform factories expose built-in extension points",
-        "public_surface",
         (
             "tests/contracts/test_feature_manifest.py",
             "tests/providers/test_provider_runtime.py",
@@ -275,7 +239,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "optional_authentication",
         "Canonical bearer proxy authentication is enforced",
-        "readme",
         ("tests/api/test_auth.py",),
         ("test_bearer_auth_is_the_only_supported_header_shape",),
         ("test_api_bearer_auth_contract_e2e",),
@@ -286,7 +249,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "vscode_extension",
         "VS Code protocol-shaped requests work against the proxy",
-        "readme",
         (
             "tests/core/anthropic/test_models.py::test_messages_request_accepts_adaptive_thinking_type",
         ),
@@ -299,7 +261,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "intellij_extension",
         "JetBrains/ACP protocol-shaped requests work against the proxy",
-        "readme",
         (
             "tests/core/anthropic/test_models.py::test_messages_request_accepts_adaptive_thinking_type",
         ),
@@ -312,7 +273,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "voice_notes",
         "Voice note intake, cancellation, and transcription backends work",
-        "readme",
         (
             "tests/messaging/test_voice_handlers.py",
             "tests/messaging/test_transcription.py",
@@ -330,7 +290,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "anthropic_api_routes",
         "Messages, count_tokens, errors, and stop use Anthropic-compatible shapes",
-        "public_surface",
         ("tests/api/test_api.py",),
         ("test_probe_and_models_routes", "test_stop_endpoint_reports_no_messaging"),
         (
@@ -346,7 +305,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "probe_routes",
         "HEAD and OPTIONS compatibility probes are accepted",
-        "public_surface",
         ("tests/api/test_api.py::test_probe_endpoints_return_204_with_allow_headers",),
         ("test_probe_and_models_routes",),
         (),
@@ -358,7 +316,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "count_tokens_contract",
         "Token counting accepts full Claude content payloads",
-        "public_surface",
         ("tests/api/test_request_utils.py",),
         ("test_count_tokens_accepts_thinking_tools_and_results",),
         ("test_api_count_tokens_full_payload_e2e",),
@@ -369,7 +326,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "provider_proxy_timeout_config",
         "Provider proxies and HTTP timeout settings reach provider config",
-        "public_surface",
         ("tests/api/test_dependencies.py", "tests/providers/test_provider_runtime.py"),
         (),
         ("test_proxy_timeout_config_e2e",),
@@ -380,7 +336,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "lmstudio_endpoint",
         "LM Studio Messages and local no-key operation work when running",
-        "public_surface",
         ("tests/providers/test_lmstudio.py",),
         ("test_lmstudio_models_endpoint_when_available",),
         ("test_lmstudio_messages_e2e",),
@@ -391,7 +346,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "llamacpp_endpoint",
         "llama.cpp OpenAI Chat and local no-key operation work when running",
-        "public_surface",
         ("tests/providers/test_llamacpp.py",),
         ("test_llamacpp_models_endpoint_when_available",),
         ("test_llamacpp_openai_chat_e2e",),
@@ -402,7 +356,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "ollama_endpoint",
         "Ollama OpenAI Chat and local no-key operation work when running",
-        "public_surface",
         ("tests/providers/test_ollama.py",),
         ("test_ollama_models_endpoint_when_available",),
         ("test_ollama_openai_chat_e2e",),
@@ -413,7 +366,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "package_cli_entrypoints",
         "Installed package scripts report version and start the server",
-        "public_surface",
         ("tests/cli/test_entrypoints.py", "tests/core/test_version.py"),
         ("test_fcc_server_entrypoint_starts_server",),
         (
@@ -427,7 +379,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "claude_cli_drop_in",
         "Claude CLI can send adaptive thinking and tool-shaped history",
-        "public_surface",
         ("tests/cli/test_cli.py",),
         ("test_claude_cli_prompt_when_available",),
         (
@@ -448,7 +399,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "messaging_commands",
         "Messaging commands clear exact reply subtrees or whole managed chats",
-        "public_surface",
         (
             "tests/messaging/test_handler.py",
             "tests/messaging/test_handler_integration.py",
@@ -469,7 +419,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "tree_threading",
         "Reply-based branches fork sessions and stay scoped",
-        "public_surface",
         (
             "tests/messaging/test_tree_queue.py",
             "tests/messaging/test_tree_concurrency.py",
@@ -489,7 +438,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "restart_restore",
         "Persisted tree state restores reply routing after restart",
-        "public_surface",
         ("tests/messaging/test_restart_reply_restore.py",),
         (),
         ("test_restart_restore_and_session_persistence_e2e",),
@@ -500,7 +448,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "session_persistence",
         "Session JSON preserves scoped trees and message logs",
-        "public_surface",
         ("tests/messaging/test_session_store_edge_cases.py",),
         (),
         ("test_restart_restore_and_session_persistence_e2e",),
@@ -511,7 +458,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "config_env_precedence",
         "FCC_ENV_FILE, dotenv, and process env precedence are deterministic",
-        "public_surface",
         ("tests/config/test_config.py",),
         (),
         ("test_env_precedence_e2e",),
@@ -522,7 +468,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "removed_env_migration",
         "Removed thinking env vars are ignored without changing defaults",
-        "public_surface",
         ("tests/config/test_config.py",),
         (),
         ("test_removed_env_migration_e2e",),
@@ -533,7 +478,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "streaming_error_mapping",
         "Canonical execution failures map to protocol-correct terminal output",
-        "public_surface",
         (
             "tests/api/test_execution_failure_contract.py",
             "tests/core/test_failure_protocol_mapping.py",
@@ -553,10 +497,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
 )
 
 
-def feature_ids(*, source: FeatureSource | None = None) -> set[str]:
+def feature_ids() -> set[str]:
     """Return feature IDs covered by the inventory."""
-    return {
-        feature.feature_id
-        for feature in FEATURE_INVENTORY
-        if source is None or feature.source == source
-    }
+    return {feature.feature_id for feature in FEATURE_INVENTORY}

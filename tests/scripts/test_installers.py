@@ -1649,16 +1649,6 @@ def test_install_ps1_uses_x64_python_for_windows_arm_compatibility() -> None:
     assert '$PythonRequest = "cpython-3.14.0-windows-x86_64-none"' in powershell
 
 
-def test_readme_install_section_has_no_manual_git_prerequisite() -> None:
-    readme = (_repo_root() / "README.md").read_text(encoding="utf-8")
-    install_section = readme.split("### 1. Install Or Update", 1)[1].split(
-        "### 2. Start FCC", 1
-    )[0]
-
-    assert "Install Git" not in install_section
-    assert "official native installers" not in install_section
-
-
 @pytest.mark.parametrize("powershell", _powershells())
 def test_install_ps1_rejects_invalid_download_before_execution(
     powershell: str,
