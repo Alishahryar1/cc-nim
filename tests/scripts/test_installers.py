@@ -1,8 +1,10 @@
 import hashlib
+import io
 import os
 import shutil
 import subprocess
 import sys
+import tarfile
 import zipfile
 from dataclasses import dataclass
 from pathlib import Path
@@ -332,7 +334,13 @@ case "$url" in
     *claude.ai*) source="$FAKE_FIXTURES/claude-installer.sh" ;;
     *chatgpt.com*) source="$FAKE_FIXTURES/codex-installer.sh" ;;
     *pi.dev*) source="$FAKE_FIXTURES/pi-installer.sh" ;;
-    *rtk-ai*) source="$FAKE_FIXTURES/rtk-installer.sh" ;;
+    *rtk-ai*)
+        if [ "$FAIL_STEP" = "rtk-install" ]; then
+            printf 'invalid archive\n' > "$output"
+            exit 0
+        fi
+        source="$FAKE_FIXTURES/rtk-x86_64-unknown-linux-musl.tar.gz"
+        ;;
     *astral.sh*) source="$FAKE_FIXTURES/uv-installer.sh" ;;
     *) exit 42 ;;
 esac
@@ -376,16 +384,6 @@ chmod +x "$pi_bin/pi"
 """,
     )
     _write_executable(
-        fixtures / "rtk-installer.sh",
-        """#!/bin/sh
-echo "rtk-install" >> "$CALL_LOG"
-[ "$FAIL_STEP" = "rtk-install" ] && exit 25
-mkdir -p "$HOME/.local/bin"
-cp "$FAKE_FIXTURES/rtk-command.sh" "$HOME/.local/bin/rtk"
-chmod +x "$HOME/.local/bin/rtk"
-""",
-    )
-    _write_executable(
         fixtures / "uv-installer.sh",
         """#!/bin/sh
 echo "uv-install" >> "$CALL_LOG"
@@ -398,7 +396,14 @@ chmod +x "$HOME/.local/bin/uv"
     _write_executable(fixtures / "claude-command.sh", _posix_command("claude"))
     _write_executable(fixtures / "codex-command.sh", _posix_command("codex"))
     _write_executable(fixtures / "pi-command.sh", _posix_command("pi"))
-    _write_executable(fixtures / "rtk-command.sh", _posix_rtk_command())
+    rtk_command = _posix_rtk_command().encode()
+    with tarfile.open(
+        fixtures / "rtk-x86_64-unknown-linux-musl.tar.gz", "w:gz"
+    ) as archive:
+        metadata = tarfile.TarInfo("rtk")
+        metadata.mode = 0o755
+        metadata.size = len(rtk_command)
+        archive.addfile(metadata, io.BytesIO(rtk_command))
     _write_executable(fixtures / "uv-command.sh", _posix_uv_command("0.11.28"))
     _write_executable(
         fixtures / "fcc-command.sh",
@@ -421,7 +426,22 @@ fi
     _write_executable(
         bin_dir / "uname",
         """#!/bin/sh
-printf '%s\n' "${FAKE_UNAME:-Linux}"
+case "${1:-}" in
+    -m) printf '%s\n' "${FAKE_UNAME_MACHINE:-x86_64}" ;;
+    *) printf '%s\n' "${FAKE_UNAME:-Linux}" ;;
+esac
+""",
+    )
+    _write_executable(
+        bin_dir / "sha256sum",
+        """#!/bin/sh
+echo "sha256sum:$*" >> "$CALL_LOG"
+if [ "$FAIL_STEP" = "rtk-checksum" ]; then
+    checksum="0000000000000000000000000000000000000000000000000000000000000000"
+else
+    checksum="d94cc2a3e57fa534892b5235a726e7eeb7523f205a5f8f48f853bfcae7be7e33"
+fi
+printf '%s  %s\n' "$checksum" "$1"
 """,
     )
 
@@ -478,10 +498,13 @@ def test_install_sh_installs_and_configures_rtk_for_selected_agents(
     assert result.returncode == 0, result.stderr
     calls = posix_harness.calls()
     assert (
-        "download:https://raw.githubusercontent.com/rtk-ai/rtk/master/install.sh"
+        "download:https://github.com/rtk-ai/rtk/releases/download/v0.44.2/rtk-x86_64-unknown-linux-musl.tar.gz"
         in calls
     )
-    assert calls.index("rtk-install") < calls.index("rtk:--version:telemetry=1")
+    assert any(call.startswith("sha256sum:") for call in calls)
+    assert calls.index("rtk:--version:telemetry=1") > next(
+        index for index, call in enumerate(calls) if call.startswith("sha256sum:")
+    )
     assert calls.index("rtk:--version:telemetry=1") < calls.index(
         "rtk:gain:telemetry=1"
     )
@@ -493,6 +516,43 @@ def test_install_sh_installs_and_configures_rtk_for_selected_agents(
     assert calls.index("rtk:init --global --agent pi:telemetry=1") < calls.index(
         "uv-install"
     )
+
+
+@pytest.mark.parametrize(
+    ("system", "machine", "asset"),
+    [
+        ("Linux", "x86_64", "rtk-x86_64-unknown-linux-musl.tar.gz"),
+        ("Linux", "aarch64", "rtk-aarch64-unknown-linux-gnu.tar.gz"),
+        ("Darwin", "x86_64", "rtk-x86_64-apple-darwin.tar.gz"),
+        ("Darwin", "arm64", "rtk-aarch64-apple-darwin.tar.gz"),
+    ],
+)
+def test_install_sh_selects_pinned_rtk_release_for_platform(
+    posix_harness: PosixHarness,
+    system: str,
+    machine: str,
+    asset: str,
+) -> None:
+    posix_harness.env["FAKE_UNAME"] = system
+    posix_harness.env["FAKE_UNAME_MACHINE"] = machine
+
+    result = posix_harness.run("--rtk", "--dry-run")
+
+    assert result.returncode == 0, result.stderr
+    assert f"rtk-ai/rtk/releases/download/v0.44.2/{asset}" in result.stdout
+    assert "raw.githubusercontent.com/rtk-ai/rtk" not in result.stdout
+
+
+def test_install_sh_rejects_unsupported_rtk_platform(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.env["FAKE_UNAME"] = "FreeBSD"
+    posix_harness.env["FAKE_UNAME_MACHINE"] = "riscv64"
+
+    result = posix_harness.run("--rtk", "--dry-run")
+
+    assert result.returncode != 0
+    assert "does not provide a release for FreeBSD riscv64" in result.stderr
 
 
 def test_install_sh_preserves_existing_rtk_and_configures_only_selected_agent(
@@ -525,7 +585,13 @@ def test_install_sh_rejects_conflicting_rtk_command(
 
 @pytest.mark.parametrize(
     "failure",
-    ["rtk-download", "rtk-install", "rtk-verify", "rtk-init-claude"],
+    [
+        "rtk-download",
+        "rtk-checksum",
+        "rtk-install",
+        "rtk-verify",
+        "rtk-init-claude",
+    ],
 )
 def test_install_sh_stops_when_rtk_setup_fails(
     posix_harness: PosixHarness,
@@ -1304,11 +1370,6 @@ Add-Content -LiteralPath $env:CALL_LOG -Value "uv-install"
     rtk_archive = fixtures / "rtk-x86_64-pc-windows-msvc.zip"
     with zipfile.ZipFile(rtk_archive, "w") as archive:
         archive.writestr("rtk.exe", b"fake RTK executable")
-    rtk_hash = hashlib.sha256(rtk_archive.read_bytes()).hexdigest()
-    (fixtures / "rtk-checksums.txt").write_text(
-        f"{rtk_hash}  {rtk_archive.name}\n",
-        encoding="utf-8",
-    )
 
     wrapper = tmp_path / "run-installer.ps1"
     wrapper.write_text(
@@ -1339,9 +1400,6 @@ function Invoke-RestMethod {
     }
     elseif ($Uri.EndsWith("rtk-x86_64-pc-windows-msvc.zip")) {
         $source = Join-Path $env:FAKE_FIXTURES "rtk-x86_64-pc-windows-msvc.zip"
-    }
-    elseif ($Uri.Contains("rtk-ai/rtk") -and $Uri.EndsWith("checksums.txt")) {
-        $source = Join-Path $env:FAKE_FIXTURES "rtk-checksums.txt"
     }
     elseif ($Uri.Contains("astral.sh")) {
         $source = Join-Path $env:FAKE_FIXTURES "uv-installer.ps1"
@@ -1493,7 +1551,7 @@ def test_install_ps1_rtk_dry_run_prints_install_and_agent_setup(
 
     assert result.returncode == 0, result.stderr
     assert powershell_harness.calls() == []
-    assert "releases/latest/download/rtk-x86_64-pc-windows-msvc.zip" in result.stdout
+    assert "releases/download/v0.44.2/rtk-x86_64-pc-windows-msvc.zip" in result.stdout
     assert "RTK_TELEMETRY_DISABLED=1 rtk init --global --auto-patch" in result.stdout
     assert "RTK_TELEMETRY_DISABLED=1 rtk init --global --codex" in result.stdout
     assert "RTK_TELEMETRY_DISABLED=1 rtk init --global --agent pi" in result.stdout
@@ -1520,8 +1578,6 @@ def test_install_ps1_installs_only_checksum_verified_rtk_archive(
     checksum = hashlib.sha256(archive_path.read_bytes()).hexdigest()
     if not valid_checksum:
         checksum = "0" * 64
-    checksums_path = tmp_path / "checksums.txt"
-    checksums_path.write_text(f"{checksum}  {asset_name}\n", encoding="utf-8")
 
     installer = (_repo_root() / "scripts" / "install.ps1").read_text(encoding="utf-8")
     format_argument = _braced_body(installer, "function Format-Argument")
@@ -1529,18 +1585,14 @@ def test_install_ps1_installs_only_checksum_verified_rtk_archive(
     script = f"""Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $DryRun = $false
-$RtkReleaseBaseUrl = "https://example.test/releases/latest/download"
+$RtkReleaseBaseUrl = "https://example.test/releases/download/v0.44.2"
 $RtkWindowsAssetName = "{asset_name}"
+$RtkWindowsAssetSha256 = "{checksum}"
 function Format-Argument {{{format_argument}}}
 function Invoke-RestMethod {{
     [CmdletBinding()]
     param([string] $Uri, [string] $OutFile)
-    if ($Uri.EndsWith("checksums.txt")) {{
-        Copy-Item -LiteralPath $env:RTK_TEST_CHECKSUMS -Destination $OutFile
-    }}
-    else {{
-        Copy-Item -LiteralPath $env:RTK_TEST_ARCHIVE -Destination $OutFile
-    }}
+    Copy-Item -LiteralPath $env:RTK_TEST_ARCHIVE -Destination $OutFile
 }}
 function Install-Rtk {{{install_rtk}}}
 Install-Rtk
@@ -1550,7 +1602,6 @@ Install-Rtk
     env = os.environ | {
         "USERPROFILE": str(home),
         "RTK_TEST_ARCHIVE": str(archive_path),
-        "RTK_TEST_CHECKSUMS": str(checksums_path),
     }
     result = subprocess.run(
         [powershell, "-NoProfile", "-Command", script],

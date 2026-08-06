@@ -21,8 +21,10 @@ $MinUvVersion = "0.11.16"
 $ClaudeInstallUrl = "https://claude.ai/install.ps1"
 $CodexInstallUrl = "https://chatgpt.com/codex/install.ps1"
 $PiInstallUrl = "https://pi.dev/install.ps1"
-$RtkReleaseBaseUrl = "https://github.com/rtk-ai/rtk/releases/latest/download"
+$RtkVersion = "0.44.2"
+$RtkReleaseBaseUrl = "https://github.com/rtk-ai/rtk/releases/download/v$RtkVersion"
 $RtkWindowsAssetName = "rtk-x86_64-pc-windows-msvc.zip"
+$RtkWindowsAssetSha256 = "3a1e114edce9080f8a10663e9c87488363a82f14a5ca8aab2ad416817f89d47c"
 $UvInstallUrl = "https://astral.sh/uv/install.ps1"
 $script:InstallClaudeCode = $true
 $script:InstallCodex = $true
@@ -389,43 +391,23 @@ function Confirm-PiApplication {
 
 function Install-Rtk {
     $archiveUrl = "$RtkReleaseBaseUrl/$RtkWindowsAssetName"
-    $checksumsUrl = "$RtkReleaseBaseUrl/checksums.txt"
     if ($DryRun) {
         Write-Host "+ irm $archiveUrl -OutFile <temporary-archive>"
-        Write-Host "+ irm $checksumsUrl -OutFile <temporary-checksums>"
-        Write-Host "+ verify SHA-256 checksum for $RtkWindowsAssetName"
+        Write-Host "+ verify pinned SHA-256 for $RtkWindowsAssetName"
         Write-Host "+ extract and install rtk.exe to ~/.local/bin"
         return
     }
 
     $temporaryRoot = Join-Path ([IO.Path]::GetTempPath()) ("fcc-rtk-" + [guid]::NewGuid().ToString("N"))
     $archivePath = Join-Path $temporaryRoot $RtkWindowsAssetName
-    $checksumsPath = Join-Path $temporaryRoot "checksums.txt"
     $extractPath = Join-Path $temporaryRoot "extracted"
     try {
         New-Item -ItemType Directory -Path $temporaryRoot | Out-Null
 
         Write-Host "+ irm $archiveUrl -OutFile $(Format-Argument $archivePath)"
         Invoke-RestMethod -Uri $archiveUrl -OutFile $archivePath -ErrorAction Stop
-        Write-Host "+ irm $checksumsUrl -OutFile $(Format-Argument $checksumsPath)"
-        Invoke-RestMethod -Uri $checksumsUrl -OutFile $checksumsPath -ErrorAction Stop
-
-        foreach ($download in @($archivePath, $checksumsPath)) {
-            if ((-not (Test-Path -LiteralPath $download -PathType Leaf)) -or ((Get-Item -LiteralPath $download).Length -eq 0)) {
-                throw "The RTK release download '$download' was empty."
-            }
-        }
-
-        $assetPattern = "^([0-9A-Fa-f]{64})\s+\*?$([regex]::Escape($RtkWindowsAssetName))$"
-        $expectedHashes = @(
-            foreach ($line in Get-Content -LiteralPath $checksumsPath) {
-                if ($line -match $assetPattern) {
-                    $Matches[1].ToLowerInvariant()
-                }
-            }
-        )
-        if ($expectedHashes.Count -ne 1) {
-            throw "RTK checksums.txt did not contain exactly one checksum for $RtkWindowsAssetName."
+        if ((-not (Test-Path -LiteralPath $archivePath -PathType Leaf)) -or ((Get-Item -LiteralPath $archivePath).Length -eq 0)) {
+            throw "The RTK release archive was empty."
         }
 
         $sha256 = [Security.Cryptography.SHA256]::Create()
@@ -437,7 +419,7 @@ function Install-Rtk {
             $archiveStream.Dispose()
             $sha256.Dispose()
         }
-        if ($actualHash -ne $expectedHashes[0]) {
+        if ($actualHash -ne $RtkWindowsAssetSha256) {
             throw "RTK checksum verification failed for $RtkWindowsAssetName."
         }
 
