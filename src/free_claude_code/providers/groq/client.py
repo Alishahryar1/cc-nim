@@ -1,5 +1,6 @@
 """Groq chat-completions provider with per-model reasoning negotiation."""
 
+import json
 import re
 from collections.abc import Iterator, Mapping
 from dataclasses import dataclass
@@ -188,64 +189,78 @@ def _is_bad_request(error: Exception) -> bool:
 
 
 def _error_candidates(error: Exception) -> tuple[_ErrorCandidate, ...]:
-    candidates: list[_ErrorCandidate] = []
-    positions: dict[str, int] = {}
-
-    def add(candidate: _ErrorCandidate) -> None:
-        text = candidate.text.strip()
-        if not text:
-            return
-        normalized = _ErrorCandidate(text, candidate.field_context)
-        position = positions.get(text)
-        if position is None:
-            positions[text] = len(candidates)
-            candidates.append(normalized)
-        elif candidate.field_context and not candidates[position].field_context:
-            candidates[position] = normalized
-
     body = getattr(error, "body", None)
-    for candidate in _body_error_candidates(body):
-        add(candidate)
+    if body is not None:
+        return _payload_error_candidates(body)
 
     response = getattr(error, "response", None)
     try:
         response_text = getattr(response, "text", None)
     except Exception:
         response_text = None
-    if isinstance(response_text, str):
-        add(_ErrorCandidate(response_text))
+    if isinstance(response_text, str) and response_text.strip():
+        return _payload_error_candidates(response_text)
 
     try:
         error_text = str(error)
     except Exception:
         error_text = ""
-    add(_ErrorCandidate(error_text))
-    return tuple(candidates)
+    return _payload_error_candidates(error_text)
 
 
-def _body_error_candidates(
-    value: Any, *, field_context: bool = False
-) -> Iterator[_ErrorCandidate]:
+def _payload_error_candidates(value: Any) -> tuple[_ErrorCandidate, ...]:
     if isinstance(value, str):
-        yield _ErrorCandidate(value, field_context)
+        parsed = _parse_json_container(value)
+        if parsed is not None:
+            value = parsed
+    return _deduplicate_candidates(_body_error_candidates(value))
+
+
+def _deduplicate_candidates(
+    candidates: Iterator[_ErrorCandidate],
+) -> tuple[_ErrorCandidate, ...]:
+    result: list[_ErrorCandidate] = []
+    positions: dict[str, int] = {}
+    for candidate in candidates:
+        text = candidate.text.strip()
+        if not text:
+            continue
+        normalized = _ErrorCandidate(text, candidate.field_context)
+        position = positions.get(text)
+        if position is None:
+            positions[text] = len(result)
+            result.append(normalized)
+        elif candidate.field_context and not result[position].field_context:
+            result[position] = normalized
+    return tuple(result)
+
+
+def _parse_json_container(text: str) -> Mapping[Any, Any] | list[Any] | None:
+    try:
+        parsed = json.loads(text)
+    except json.JSONDecodeError:
+        return None
+    return parsed if isinstance(parsed, (Mapping, list)) else None
+
+
+def _body_error_candidates(value: Any) -> Iterator[_ErrorCandidate]:
+    if isinstance(value, str):
+        yield _ErrorCandidate(value)
         return
 
     if isinstance(value, Mapping):
-        local_context = field_context or _mapping_names_reasoning_field(value)
+        local_context = _mapping_names_reasoning_field(value)
         for key, child in value.items():
             if str(key).lower() in {"message", "detail"} and isinstance(child, str):
                 yield _ErrorCandidate(child, local_context)
         for child in value.values():
             if isinstance(child, (Mapping, list, tuple)):
-                yield from _body_error_candidates(
-                    child,
-                    field_context=local_context,
-                )
+                yield from _body_error_candidates(child)
         return
 
     if isinstance(value, (list, tuple)):
         for child in value:
-            yield from _body_error_candidates(child, field_context=field_context)
+            yield from _body_error_candidates(child)
 
 
 def _mapping_names_reasoning_field(value: Mapping[Any, Any]) -> bool:

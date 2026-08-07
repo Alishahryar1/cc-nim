@@ -121,6 +121,18 @@ def test_parse_structured_error_shapes(body: object) -> None:
     )
 
 
+def test_parse_does_not_inherit_reasoning_param_into_unrelated_descendant() -> None:
+    error = _BadRequest(
+        "invalid request",
+        body={
+            "param": "reasoning_effort",
+            "details": [{"message": "temperature must be one of low, medium, or high"}],
+        },
+    )
+
+    assert _parse_reasoning_vocabulary(error) is None
+
+
 def test_parse_actual_openai_bad_request() -> None:
     request = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
     response = httpx.Response(400, request=request)
@@ -140,6 +152,32 @@ def test_parse_response_text_fallback() -> None:
         status_code=None,
         response=response,
     )
+
+    assert _parse_reasoning_vocabulary(error) == frozenset({"none", "default"})
+
+
+def test_parse_json_response_text_preserves_structured_field_scope() -> None:
+    response = SimpleNamespace(
+        status_code=400,
+        text=(
+            '{"param":"reasoning_effort","details":['
+            '{"message":"temperature must be one of low, medium, or high"}]}'
+        ),
+    )
+    error = _BadRequest("invalid request", status_code=None, response=response)
+
+    assert _parse_reasoning_vocabulary(error) is None
+
+
+def test_parse_json_response_text_accepts_direct_reasoning_message() -> None:
+    response = SimpleNamespace(
+        status_code=400,
+        text=(
+            '{"error":{"param":"reasoning_effort",'
+            '"message":"must be one of none or default"}}'
+        ),
+    )
+    error = _BadRequest("invalid request", status_code=None, response=response)
 
     assert _parse_reasoning_vocabulary(error) == frozenset({"none", "default"})
 
@@ -509,6 +547,33 @@ async def test_unrelated_400_propagates_without_cache_poisoning() -> None:
         await provider._create_stream(body, provider._admission.new_retry_session())
 
     assert create.await_count == 1
+    assert provider._model_reasoning_vocabularies == {}
+
+
+@pytest.mark.asyncio
+async def test_nested_unrelated_allow_list_cannot_retry_or_poison_cache() -> None:
+    provider = _provider()
+    body = provider._build_request_body(
+        _request(),
+        reasoning=ReasoningPolicy.off(),
+    )
+    error = _BadRequest(
+        "invalid request",
+        body={
+            "param": "reasoning_effort",
+            "details": [{"message": "temperature must be one of low, medium, or high"}],
+        },
+    )
+    create = AsyncMock(side_effect=error)
+
+    with (
+        patch.object(provider._client.chat.completions, "create", create),
+        pytest.raises(_BadRequest),
+    ):
+        await provider._create_stream(body, provider._admission.new_retry_session())
+
+    assert create.await_count == 1
+    assert create.await_args_list[0].kwargs["reasoning_effort"] == "none"
     assert provider._model_reasoning_vocabularies == {}
 
 
