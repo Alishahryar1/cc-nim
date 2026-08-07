@@ -649,6 +649,17 @@ owns the exactly typed private per-request runner, recovery operations, tool-cal
 assembly, and streamed usage handling. No obsolete generic transport namespace
 or untyped provider backchannel remains.
 
+[providers/groq/](src/free_claude_code/providers/groq/) is a specialized
+`OpenAIChatProvider` because Groq exposes incompatible `reasoning_effort`
+vocabularies without publishing that capability in model metadata. The Groq
+adapter owns a generation-local vocabulary cache keyed by the exact opaque model
+ID; model names and versions are never parsed to select behavior. A narrowly
+recognized pre-stream 400 can teach the adapter the accepted known vocabulary
+and trigger one request-body correction through the shared provider attempt
+budget. Later requests apply the same pure rewrite proactively. Unknown values
+are never echoed, unrelated errors retain their normal failure path, and no
+separate retry loop or persisted capability registry exists.
+
 [providers/openai_codex/](src/free_claude_code/providers/openai_codex/) owns
 ChatGPT subscription authentication and the Codex backend's OpenAI Responses
 transport. Its process-lifetime auth manager owns FCC's credential file,
@@ -706,9 +717,10 @@ remain unchanged, while deterministic aliases keep retries, replay, and
 append-only prompt prefixes stable. This is target-protocol conversion, never a
 provider or model capability switch.
 Specialized provider packages remain only for true upstream quirks such as
-Gemini thought signatures, NIM tool-schema aliases, retry downgrades, and NVCF
-deployment-failure classification, or DeepSeek attachment/tool/thinking
-compatibility. Local Ollama, Ollama Cloud, llama.cpp, and LM Studio all use the
+Gemini thought signatures, Groq reasoning-vocabulary negotiation, NIM
+tool-schema aliases, retry downgrades, and NVCF deployment-failure
+classification, or DeepSeek attachment/tool/thinking compatibility. Local
+Ollama, Ollama Cloud, llama.cpp, and LM Studio all use the
 same OpenAI-compatible Chat Completions provider family;
 Ollama's standard `reasoning` delta and history field are profile data rather
 than a specialized adapter. DeepSeek intentionally uses its

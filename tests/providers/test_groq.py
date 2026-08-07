@@ -6,8 +6,9 @@ import pytest
 
 from free_claude_code.config.provider_catalog import GROQ_DEFAULT_BASE
 from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.groq import GroqProvider
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import immediate_admission, profiled_provider
+from tests.providers.support import immediate_admission
 
 
 def make_request(**overrides):
@@ -26,7 +27,7 @@ def groq_config():
 
 @pytest.fixture
 def groq_provider(groq_config):
-    return profiled_provider("groq", groq_config, admission=immediate_admission())
+    return GroqProvider(groq_config, admission=immediate_admission())
 
 
 def test_init(groq_config):
@@ -34,9 +35,7 @@ def test_init(groq_config):
     with patch(
         "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as mock_openai:
-        provider = profiled_provider(
-            "groq", groq_config, admission=immediate_admission()
-        )
+        provider = GroqProvider(groq_config, admission=immediate_admission())
         assert provider._api_key == "test_groq_key"
         assert provider._base_url == GROQ_DEFAULT_BASE
         mock_openai.assert_called_once()
@@ -57,8 +56,7 @@ def test_build_request_body_basic(groq_provider):
 
 
 def test_build_request_body_global_disable_blocks_reasoning_mapping():
-    provider = profiled_provider(
-        "groq",
+    provider = GroqProvider(
         ProviderConfig(
             api_key="test_groq_key",
             base_url=GROQ_DEFAULT_BASE,

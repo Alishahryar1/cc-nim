@@ -281,23 +281,6 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         ),
         reasoning_delta_field="reasoning",
     ),
-    "groq": OpenAIChatProfile(
-        _policy(
-            "GROQ",
-            ReasoningReplayMode.REASONING_CONTENT,
-            include_extra_body=True,
-            extra_body_validator=validate_extra_body_does_not_override_reasoning_fields,
-            max_tokens_field="max_completion_tokens",
-            strip_message_names=True,
-            unsupported_body_keys=frozenset({"logprobs", "logit_bias", "top_logprobs"}),
-            normalize_n_to_one=True,
-        ),
-        NamedEffortReasoning(
-            _LOW_MEDIUM_HIGH,
-            disabled_value="none",
-            enabled_value="medium",
-        ),
-    ),
     "sambanova": OpenAIChatProfile(
         _policy(
             "SAMBANOVA",
