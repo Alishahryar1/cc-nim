@@ -315,6 +315,22 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             budget_field="reasoning_effort",
         ),
     ),
+    "novita": OpenAIChatProfile(
+        _policy(
+            "NOVITA",
+            ReasoningReplayMode.REASONING_CONTENT,
+            include_extra_body=True,
+            extra_body_validator=validate_extra_body_does_not_override_reasoning_fields,
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        NamedEffortReasoning(
+            (),
+            disabled_value=False,
+            enabled_value=True,
+            field="enable_thinking",
+            use_extra_body=True,
+        ),
+    ),
     "zai": OpenAIChatProfile(
         _policy(
             "ZAI",

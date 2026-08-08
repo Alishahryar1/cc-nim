@@ -92,6 +92,13 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
         "label": "Fireworks API Key",
         "description": "Fireworks AI inference API key.",
     },
+    "NOVITA_API_KEY": {
+        "label": "Novita AI API Key",
+        "description": (
+            "Novita AI OpenAI-compatible API key (create at "
+            "[novita.ai/settings/key-management](https://novita.ai/settings/key-management))."
+        ),
+    },
     "MINIMAX_API_KEY": {
         "label": "MiniMax API Key",
         "description": (

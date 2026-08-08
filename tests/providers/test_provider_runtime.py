@@ -105,6 +105,8 @@ def _make_settings(**overrides):
     mock.nararoute_proxy = ""
     mock.fireworks_proxy = ""
     mock.fireworks_api_key = "test_fireworks_key"
+    mock.novita_proxy = ""
+    mock.novita_api_key = "test_novita_key"
     mock.cloudflare_api_token = "test_cloudflare_token"
     mock.cloudflare_account_id = "test_cloudflare_account"
     mock.cloudflare_proxy = ""
@@ -463,6 +465,7 @@ def test_create_provider_instantiates_each_builtin():
         groq_api_key="test_groq_key",
         cerebras_api_key="test_cerebras_key",
         fireworks_api_key="test_fireworks_key",
+        novita_api_key="test_novita_key",
         cloudflare_api_token="test_cloudflare_token",
         cloudflare_account_id="test_cloudflare_account",
         vercel_ai_gateway_api_key="test_vercel_key",
@@ -489,6 +492,7 @@ def test_create_provider_instantiates_each_builtin():
         "kimi_code": OpenAIChatProvider,
         "minimax": OpenAIChatProvider,
         "fireworks": OpenAIChatProvider,
+        "novita": OpenAIChatProvider,
         "cloudflare": CloudflareProvider,
         "lmstudio": LMStudioProvider,
         "llamacpp": OpenAIChatProvider,

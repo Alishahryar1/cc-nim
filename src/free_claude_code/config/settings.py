@@ -110,6 +110,9 @@ class Settings(BaseSettings):
     # ==================== Fireworks AI Config ====================
     fireworks_api_key: str = Field(default="", validation_alias="FIREWORKS_API_KEY")
 
+    # ==================== Novita AI Config ====================
+    novita_api_key: str = Field(default="", validation_alias="NOVITA_API_KEY")
+
     # ==================== Cloudflare Workers AI Config ====================
     cloudflare_api_token: str = Field(
         default="", validation_alias="CLOUDFLARE_API_TOKEN"
@@ -207,6 +210,7 @@ class Settings(BaseSettings):
     tokenrouter_proxy: str = Field(default="", validation_alias="TOKENROUTER_PROXY")
     nararoute_proxy: str = Field(default="", validation_alias="NARAROUTE_PROXY")
     fireworks_proxy: str = Field(default="", validation_alias="FIREWORKS_PROXY")
+    novita_proxy: str = Field(default="", validation_alias="NOVITA_PROXY")
     cloudflare_proxy: str = Field(default="", validation_alias="CLOUDFLARE_PROXY")
     gemini_proxy: str = Field(default="", validation_alias="GEMINI_PROXY")
     vertex_proxy: str = Field(default="", validation_alias="VERTEX_PROXY")

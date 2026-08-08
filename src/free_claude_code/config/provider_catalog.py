@@ -18,6 +18,7 @@ MINIMAX_DEFAULT_BASE = "https://api.minimax.io/v1"
 # DeepSeek Chat Completions API; cache usage is reported on this endpoint.
 DEEPSEEK_DEFAULT_BASE = "https://api.deepseek.com"
 FIREWORKS_DEFAULT_BASE = "https://api.fireworks.ai/inference/v1"
+NOVITA_DEFAULT_BASE = "https://api.novita.ai/openai/v1"
 # Cloudflare account-scoped AI REST root; provider appends /accounts/{id}/ai/v1.
 CLOUDFLARE_AI_REST_ROOT = "https://api.cloudflare.com/client/v4"
 OPENROUTER_DEFAULT_BASE = "https://openrouter.ai/api/v1"
@@ -319,6 +320,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="fireworks_api_key",
         default_base_url=FIREWORKS_DEFAULT_BASE,
         proxy_attr="fireworks_proxy",
+    ),
+    "novita": ProviderDescriptor(
+        provider_id="novita",
+        display_name="Novita AI",
+        credential_env="NOVITA_API_KEY",
+        credential_url="https://novita.ai/settings/key-management",
+        credential_attr="novita_api_key",
+        default_base_url=NOVITA_DEFAULT_BASE,
+        proxy_attr="novita_proxy",
     ),
     "cloudflare": ProviderDescriptor(
         provider_id="cloudflare",
