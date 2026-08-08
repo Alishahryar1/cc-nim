@@ -322,12 +322,16 @@ model = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
 [model_providers.fcc]
 name = "Free Claude Code"
 base_url = "http://127.0.0.1:8082/v1"
-http_headers = { Authorization = "Bearer freecc" }
 wire_api = "responses"
+
+[model_providers.fcc.auth]
+command = "fcc-codex"
+args = ["--print-proxy-auth-token"]
 ```
 
-Match the model, port, and bearer token to the Admin UI. Restart the Codex App
-after setup or model changes, then select an FCC model from its model picker.
+Match the model and port to the Admin UI. The auth command reads FCC's current
+proxy token automatically. Restart the Codex App after setup or model changes,
+then select an FCC model from its model picker.
 
 </details>
 
@@ -343,11 +347,16 @@ model = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
 [model_providers.fcc]
 name = "Free Claude Code"
 base_url = "http://127.0.0.1:8082/v1"
-http_headers = { Authorization = "Bearer freecc" }
 wire_api = "responses"
+
+[model_providers.fcc.auth]
+command = "fcc-codex"
+args = ["--print-proxy-auth-token"]
 ```
 
-Match `model`, the port, and bearer token to the Admin UI, then restart VS Code. For WSL-backed Codex, edit the file inside WSL.
+Match `model` and the port to the Admin UI. The auth command reads FCC's current
+proxy token automatically. Restart VS Code after setup or model changes. For
+WSL-backed Codex, edit the file inside WSL.
 
 </details>
 

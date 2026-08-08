@@ -623,6 +623,38 @@ def test_launch_codex_passes_responses_config_and_child_env(
     unregister_pid.assert_called_once_with(12345)
 
 
+@pytest.mark.parametrize(
+    ("configured_token", "expected_token"),
+    [
+        (" proxy-token ", "proxy-token"),
+        ("", "fcc-no-auth"),
+    ],
+)
+def test_codex_proxy_auth_command_prints_only_current_token(
+    configured_token: str,
+    expected_token: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from free_claude_code.cli.launchers import codex
+
+    settings = _launcher_settings(token=configured_token)
+    with (
+        patch.object(codex, "get_settings", return_value=settings) as get_settings,
+        patch.object(codex, "preflight_proxy") as preflight_proxy,
+        patch.object(codex, "resolve_client_binary") as resolve_client_binary,
+        patch.object(codex, "open_local_request") as open_local_request,
+        patch.object(codex, "run_client_process") as run_client_process,
+    ):
+        codex.launch(["--print-proxy-auth-token"])
+
+    assert capsys.readouterr() == (f"{expected_token}\n", "")
+    get_settings.assert_called_once_with()
+    preflight_proxy.assert_not_called()
+    resolve_client_binary.assert_not_called()
+    open_local_request.assert_not_called()
+    run_client_process.assert_not_called()
+
+
 def test_launch_codex_catalog_failure_warns_and_continues(
     capsys: pytest.CaptureFixture[str],
     tmp_path: Path,

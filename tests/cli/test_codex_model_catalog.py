@@ -163,8 +163,11 @@ def test_generated_catalog_schema_is_accepted_by_installed_codex(
                 "[model_providers.fcc]",
                 'name = "Free Claude Code"',
                 'base_url = "http://127.0.0.1:8082/v1"',
-                'http_headers = { Authorization = "Bearer freecc" }',
                 'wire_api = "responses"',
+                "",
+                "[model_providers.fcc.auth]",
+                'command = "fcc-codex"',
+                'args = ["--print-proxy-auth-token"]',
                 "",
             )
         ),

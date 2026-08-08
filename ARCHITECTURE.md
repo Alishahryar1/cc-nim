@@ -1117,6 +1117,12 @@ instead of stopping at its login gate.
 - It stores the proxy auth token in `FCC_CODEX_API_KEY` for Codex's provider
   `env_key` to read. This process-local variable is a client credential carrier,
   not a second FCC setting.
+- Persistent Codex App and IDE configuration uses Codex's command-backed provider
+  authentication. Codex invokes `fcc-codex --print-proxy-auth-token`, which reads
+  the canonical FCC settings, prints only the shared proxy-auth token (or the
+  no-auth sentinel), and exits without a proxy preflight, model request, or client
+  process. This makes the FCC provider own its bearer credential instead of
+  competing with Codex's signed-in OpenAI authorization.
 
 [cli/launchers/pi.py](src/free_claude_code/cli/launchers/pi.py) owns the installed
 `fcc-pi` launcher and [cli/launchers/pi_extension.ts](src/free_claude_code/cli/launchers/pi_extension.ts)

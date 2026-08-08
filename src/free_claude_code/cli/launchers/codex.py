@@ -24,6 +24,7 @@ from .common import (
 )
 
 _CODEX_AUTH_ENV_KEY = "FCC_CODEX_API_KEY"
+_PRINT_PROXY_AUTH_TOKEN_FLAG = "--print-proxy-auth-token"
 _DISPLAY_NAME = "Codex CLI"
 _DEFAULT_BINARY = "codex"
 _INSTALL_HINT = "Install Codex with: npm install -g @openai/codex"
@@ -48,7 +49,12 @@ _STRIPPED_CODEX_ENV_KEYS = frozenset(
 def launch(argv: Sequence[str] | None = None) -> None:
     """Launch Codex CLI with Free Claude Code proxy configuration."""
 
+    args = list(sys.argv[1:] if argv is None else argv)
     settings = get_settings()
+    if args == [_PRINT_PROXY_AUTH_TOKEN_FLAG]:
+        print(proxy_auth_token(settings.anthropic_auth_token))
+        return
+
     proxy_root_url = local_proxy_root_url(settings)
     if error := preflight_proxy(proxy_root_url):
         print(
@@ -65,7 +71,6 @@ def launch(argv: Sequence[str] | None = None) -> None:
         install_hint=_INSTALL_HINT,
     )
     catalog_args = codex_model_catalog_config_args(proxy_root_url, settings)
-    args = list(sys.argv[1:] if argv is None else argv)
     run_client_process(
         command=build_codex_launcher_command(
             binary_path=binary_path,
