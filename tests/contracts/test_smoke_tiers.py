@@ -4,12 +4,9 @@ from pathlib import Path
 import pytest
 
 from free_claude_code.core.anthropic.stream_contracts import SSEEvent
-from smoke.lib.report import classify_outcome
+from smoke.lib.outcomes import classify_outcome, is_upstream_unavailable_text
 from smoke.lib.report_summary import format_summary, summarize_reports
-from smoke.lib.skips import (
-    is_upstream_unavailable_text,
-    skip_if_upstream_unavailable_events,
-)
+from smoke.lib.skips import skip_if_upstream_unavailable_events
 
 
 def test_smoke_report_summary_counts_regression_classes(tmp_path: Path) -> None:
@@ -83,7 +80,29 @@ def test_provider_error_text_stream_is_upstream_unavailable_skip() -> None:
 
 
 def test_deterministic_provider_error_is_not_upstream_unavailable() -> None:
-    assert not is_upstream_unavailable_text(
+    detail = (
         "Upstream provider GROQ returned HTTP 400: "
         "property 'reasoning_content' is unsupported"
+    )
+
+    assert not is_upstream_unavailable_text(detail)
+    assert (
+        classify_outcome(nodeid="groq_reasoning", outcome="failed", detail=detail)
+        == "product_failure"
+    )
+
+
+@pytest.mark.parametrize(
+    "detail",
+    (
+        "Upstream provider GROQ returned HTTP 429.",
+        "Upstream provider GROQ returned HTTP 529.",
+        "httpx.ConnectError: connection refused",
+    ),
+)
+def test_failed_transient_provider_errors_are_upstream_unavailable(detail: str) -> None:
+    assert is_upstream_unavailable_text(detail)
+    assert (
+        classify_outcome(nodeid="provider", outcome="failed", detail=detail)
+        == "upstream_unavailable"
     )
