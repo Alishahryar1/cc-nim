@@ -125,9 +125,55 @@ def test_responses_provider_stream_preserves_reasoning_tools_usage_and_ids() -> 
     assert argument_deltas == ['{"q":', '"x"}']
     message_delta = next(event for event in events if event.event == "message_delta")
     assert message_delta.data["usage"] == {
-        "input_tokens": 20,
+        "input_tokens": 5,
         "output_tokens": 8,
         "cache_read_input_tokens": 15,
+    }
+
+
+@pytest.mark.parametrize(
+    ("input_tokens", "cached_tokens", "expected_input_tokens"),
+    [
+        (20, -1, 20),
+        (20, 21, 20),
+        (20, True, 20),
+        (None, 5, 12),
+    ],
+)
+def test_responses_provider_stream_ignores_invalid_cache_partitions(
+    input_tokens: int | None,
+    cached_tokens: int | bool,
+    expected_input_tokens: int,
+) -> None:
+    stream = ResponsesProviderStream(
+        message_id="msg_test",
+        model="openai/gpt-test",
+        input_tokens=12,
+    )
+    output = stream.start()
+    output.extend(
+        stream.feed(
+            "response.completed",
+            {
+                "response": {
+                    "usage": {
+                        "input_tokens": input_tokens,
+                        "output_tokens": 8,
+                        "input_tokens_details": {"cached_tokens": cached_tokens},
+                    }
+                }
+            },
+        )
+    )
+
+    message_delta = next(
+        event
+        for event in parse_sse_text("".join(output))
+        if event.event == "message_delta"
+    )
+    assert message_delta.data["usage"] == {
+        "input_tokens": expected_input_tokens,
+        "output_tokens": 8,
     }
 
 

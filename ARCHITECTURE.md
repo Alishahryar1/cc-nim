@@ -725,8 +725,8 @@ same OpenAI-compatible Chat Completions provider family;
 Ollama's standard `reasoning` delta and history field are profile data rather
 than a specialized adapter. DeepSeek intentionally uses its
 OpenAI-compatible Chat Completions endpoint because that is the endpoint that
-reports prompt-cache hit/miss counters; the provider maps those counters back
-into Anthropic usage fields for Claude-compatible clients. DeepSeek reasoning
+reports prompt-cache hit/miss counters; the provider translates those native
+counters into Anthropic usage semantics. DeepSeek reasoning
 history is serialized per assistant turn: non-tool reasoning is omitted from
 its first replay, while tool-call reasoning is retained independently of the
 next generation's thinking mode. Append-only conversations therefore keep an
@@ -829,7 +829,12 @@ streamed usage handling: it requests
 `stream_options.include_usage`, consumes provider `prompt_tokens` and
 `completion_tokens` when present, and falls back to local estimates when
 providers omit or reject optional usage metadata. Provider modules only own true
-usage quirks such as DeepSeek prompt-cache counters.
+usage quirks: DeepSeek validates a complete hit/miss partition, maps misses to
+ordinary input and hits to cache reads, and never reports a miss as an
+Anthropic cache creation. The native Responses-to-Anthropic adapter likewise
+partitions a valid cached-token detail from the upstream total. At the reverse
+protocol boundary, the Anthropic-to-Responses adapter recombines those
+disjoint input categories into its single `input_tokens` total.
 
 ### Adding A Provider
 

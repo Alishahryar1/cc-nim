@@ -195,7 +195,11 @@ async def test_messages_handler_aggregates_provider_stream_when_stream_false() -
                 {
                     "type": "message_delta",
                     "delta": {"stop_reason": "end_turn", "stop_sequence": None},
-                    "usage": {"input_tokens": 7, "output_tokens": 2},
+                    "usage": {
+                        "input_tokens": 20,
+                        "output_tokens": 2,
+                        "cache_read_input_tokens": 10,
+                    },
                 },
             ),
             format_sse_event("message_stop", {"type": "message_stop"}),
@@ -220,7 +224,11 @@ async def test_messages_handler_aggregates_provider_stream_when_stream_false() -
     assert body["model"] == "test-model"
     assert body["content"] == [{"type": "text", "text": "OK"}]
     assert body["stop_reason"] == "end_turn"
-    assert body["usage"] == {"input_tokens": 7, "output_tokens": 2}
+    assert body["usage"] == {
+        "input_tokens": 20,
+        "output_tokens": 2,
+        "cache_read_input_tokens": 10,
+    }
 
 
 @pytest.mark.asyncio

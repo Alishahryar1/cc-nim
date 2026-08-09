@@ -56,6 +56,93 @@ def test_init(deepseek_config):
     assert mock_client.called
 
 
+@pytest.mark.parametrize(
+    ("usage", "expected"),
+    [
+        (
+            {
+                "prompt_tokens": 30,
+                "prompt_cache_hit_tokens": 10,
+                "prompt_cache_miss_tokens": 20,
+            },
+            {"input_tokens": 20, "cache_read_input_tokens": 10},
+        ),
+        (
+            {
+                "prompt_tokens": 30,
+                "prompt_cache_hit_tokens": 0,
+                "prompt_cache_miss_tokens": 30,
+            },
+            {"input_tokens": 30, "cache_read_input_tokens": 0},
+        ),
+        (
+            {
+                "prompt_tokens": 30,
+                "prompt_cache_hit_tokens": 30,
+                "prompt_cache_miss_tokens": 0,
+            },
+            {"input_tokens": 0, "cache_read_input_tokens": 30},
+        ),
+        (
+            {"prompt_cache_hit_tokens": 10, "prompt_cache_miss_tokens": 20},
+            {"input_tokens": 20, "cache_read_input_tokens": 10},
+        ),
+        (
+            {"prompt_tokens": 30, "prompt_cache_miss_tokens": 20},
+            {},
+        ),
+        (
+            {"prompt_tokens": 30, "prompt_cache_hit_tokens": 10},
+            {},
+        ),
+        (
+            {
+                "prompt_tokens": 30,
+                "prompt_cache_hit_tokens": True,
+                "prompt_cache_miss_tokens": 20,
+            },
+            {},
+        ),
+        (
+            {
+                "prompt_tokens": 30,
+                "prompt_cache_hit_tokens": 10,
+                "prompt_cache_miss_tokens": 20.0,
+            },
+            {},
+        ),
+        (
+            {
+                "prompt_tokens": 30,
+                "prompt_cache_hit_tokens": -1,
+                "prompt_cache_miss_tokens": 31,
+            },
+            {},
+        ),
+        (
+            {
+                "prompt_tokens": 30,
+                "prompt_cache_hit_tokens": 10,
+                "prompt_cache_miss_tokens": -1,
+            },
+            {},
+        ),
+        (
+            {
+                "prompt_tokens": 30,
+                "prompt_cache_hit_tokens": 10,
+                "prompt_cache_miss_tokens": 19,
+            },
+            {},
+        ),
+    ],
+)
+def test_maps_only_complete_consistent_cache_usage(
+    deepseek_provider, usage, expected
+) -> None:
+    assert deepseek_provider._anthropic_usage_fields(usage) == expected
+
+
 def test_build_request_body_openai_chat_shape(deepseek_provider):
     request = MessagesRequest(
         model="deepseek-v4-pro",
@@ -908,11 +995,11 @@ async def test_stream_uses_chat_completions_and_maps_cache_usage(deepseek_provid
     usage = next(
         event.data["usage"] for event in parsed if event.event == "message_delta"
     )
+    assert "cache_creation_input_tokens" not in usage
     assert usage == {
-        "input_tokens": 30,
+        "input_tokens": 20,
         "output_tokens": 3,
         "cache_read_input_tokens": 10,
-        "cache_creation_input_tokens": 20,
     }
 
 
