@@ -23,7 +23,6 @@ from .common import (
     run_client_process,
 )
 
-_CODEX_AUTH_ENV_KEY = "FCC_CODEX_API_KEY"
 _PRINT_PROXY_AUTH_TOKEN_FLAG = "--print-proxy-auth-token"
 _DISPLAY_NAME = "Codex CLI"
 _DEFAULT_BINARY = "codex"
@@ -41,7 +40,6 @@ _STRIPPED_CODEX_ENV_KEYS = frozenset(
         "CODEX_PERMISSION_PROFILE",
         "CODEX_SHELL",
         "CODEX_THREAD_ID",
-        _CODEX_AUTH_ENV_KEY,
     }
 )
 
@@ -81,7 +79,6 @@ def launch(argv: Sequence[str] | None = None) -> None:
         ),
         env=build_codex_launcher_env(
             proxy_root_url=proxy_root_url,
-            auth_token=settings.anthropic_auth_token,
             base_env=os.environ,
         ),
         binary_name=binary_name,
@@ -120,7 +117,6 @@ def build_codex_launcher_command(
 def build_codex_launcher_env(
     *,
     proxy_root_url: str,
-    auth_token: str,
     base_env: Mapping[str, str],
 ) -> dict[str, str]:
     """Return a Codex environment that targets the local proxy provider."""
@@ -133,7 +129,6 @@ def build_codex_launcher_env(
         },
         proxy_root_url=proxy_root_url,
     )
-    env[_CODEX_AUTH_ENV_KEY] = proxy_auth_token(auth_token)
     return env
 
 
@@ -206,7 +201,11 @@ def codex_config_args(*, api_url: str, model: str | None = None) -> list[str]:
         "-c",
         _toml_assignment("model_providers.fcc.base_url", _ensure_v1_url(api_url)),
         "-c",
-        _toml_assignment("model_providers.fcc.env_key", _CODEX_AUTH_ENV_KEY),
+        _toml_assignment("model_providers.fcc.auth.command", "fcc-codex"),
+        "-c",
+        _toml_assignment(
+            "model_providers.fcc.auth.args", [_PRINT_PROXY_AUTH_TOKEN_FLAG]
+        ),
         "-c",
         _toml_assignment("model_providers.fcc.wire_api", "responses"),
     ]
@@ -220,5 +219,5 @@ def _ensure_v1_url(url: str) -> str:
     return stripped if stripped.endswith("/v1") else f"{stripped}/v1"
 
 
-def _toml_assignment(key: str, value: str) -> str:
+def _toml_assignment(key: str, value: str | list[str]) -> str:
     return f"{key}={json.dumps(value)}"

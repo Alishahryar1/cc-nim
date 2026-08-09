@@ -595,7 +595,10 @@ def test_launch_codex_passes_responses_config_and_child_env(
     assert command[0] == "resolved-codex.cmd"
     assert 'model_provider="fcc"' in command
     assert 'model_providers.fcc.base_url="http://127.0.0.1:9191/v1"' in command
+    assert 'model_providers.fcc.auth.command="fcc-codex"' in command
+    assert 'model_providers.fcc.auth.args=["--print-proxy-auth-token"]' in command
     assert 'model_providers.fcc.wire_api="responses"' in command
+    assert not any("model_providers.fcc.env_key" in arg for arg in command)
     assert f"model_catalog_json={json.dumps(str(catalog_path))}" in command
     assert command[-2:] == ["exec", "hello"]
     assert len(requests) == 1
@@ -609,7 +612,7 @@ def test_launch_codex_passes_responses_config_and_child_env(
         "nvidia_nim/provider-model"
     ]
     child_env = popen.call_args.kwargs["env"]
-    assert child_env["FCC_CODEX_API_KEY"] == "proxy-token"
+    assert "FCC_CODEX_API_KEY" not in child_env
     assert child_env["CODEX_HOME"] == "keep-home"
     assert child_env["NO_PROXY"] == "127.0.0.1,localhost,::1"
     assert child_env["no_proxy"] == child_env["NO_PROXY"]

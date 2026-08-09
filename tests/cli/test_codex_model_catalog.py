@@ -8,6 +8,7 @@ from typing import Any, cast
 
 import pytest
 
+from free_claude_code.cli.launchers.codex import codex_config_args
 from free_claude_code.cli.launchers.codex_model_catalog import (
     build_codex_model_catalog,
     write_codex_model_catalog,
@@ -139,7 +140,7 @@ def test_codex_catalog_accepts_future_direct_provider_slugs() -> None:
     ]
 
 
-def test_generated_catalog_schema_is_accepted_by_installed_codex(
+def test_launcher_config_composes_with_persistent_codex_config(
     tmp_path: Path,
 ) -> None:
     codex_binary = shutil.which("codex")
@@ -184,7 +185,12 @@ def test_generated_catalog_schema_is_accepted_by_installed_codex(
     codex_env["CODEX_HOME"] = str(codex_home)
 
     result = subprocess.run(
-        [codex_binary, "debug", "models"],
+        [
+            codex_binary,
+            *codex_config_args(api_url="http://127.0.0.1:8082/v1"),
+            "debug",
+            "models",
+        ],
         capture_output=True,
         check=False,
         encoding="utf-8",
