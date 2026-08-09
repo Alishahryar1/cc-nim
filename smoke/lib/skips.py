@@ -14,7 +14,7 @@ UPSTREAM_UNAVAILABLE_MARKERS = (
     "service unavailable",
     "temporary failure",
     "timed out",
-    "upstream provider",
+    "returned http 429",
 )
 
 

@@ -658,7 +658,10 @@ recognized pre-stream 400 can teach the adapter the accepted known vocabulary
 and trigger one request-body correction through the shared provider attempt
 budget. Later requests apply the same pure rewrite proactively. Unknown values
 are never echoed, unrelated errors retain their normal failure path, and no
-separate retry loop or persisted capability registry exists.
+separate retry loop or persisted capability registry exists. Groq rejects
+structured assistant reasoning fields in replayed Chat Completions history, so
+the same provider policy preserves prior reasoning as ordinary tagged assistant
+content; this replay rule is provider-wide and never selected by model name.
 
 [providers/openai_codex/](src/free_claude_code/providers/openai_codex/) owns
 ChatGPT subscription authentication and the Codex backend's OpenAI Responses

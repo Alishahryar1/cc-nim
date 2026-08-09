@@ -6,7 +6,10 @@ import pytest
 from free_claude_code.core.anthropic.stream_contracts import SSEEvent
 from smoke.lib.report import classify_outcome
 from smoke.lib.report_summary import format_summary, summarize_reports
-from smoke.lib.skips import skip_if_upstream_unavailable_events
+from smoke.lib.skips import (
+    is_upstream_unavailable_text,
+    skip_if_upstream_unavailable_events,
+)
 
 
 def test_smoke_report_summary_counts_regression_classes(tmp_path: Path) -> None:
@@ -77,3 +80,10 @@ def test_provider_error_text_stream_is_upstream_unavailable_skip() -> None:
         skip_if_upstream_unavailable_events(events)
 
     assert "upstream_unavailable" in str(excinfo.value)
+
+
+def test_deterministic_provider_error_is_not_upstream_unavailable() -> None:
+    assert not is_upstream_unavailable_text(
+        "Upstream provider GROQ returned HTTP 400: "
+        "property 'reasoning_content' is unsupported"
+    )

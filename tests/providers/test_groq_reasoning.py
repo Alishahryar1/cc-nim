@@ -219,6 +219,7 @@ def test_parse_unknown_only_values_returns_understood_empty_vocabulary() -> None
         "Unknown field `reasoning_effort`",
         "Unrecognized parameter reasoning_effort",
         "This model does not support reasoning_effort",
+        "`reasoning_effort` is not supported with this model",
     ],
 )
 def test_parse_explicit_unsupported_phrasings(message: str) -> None:

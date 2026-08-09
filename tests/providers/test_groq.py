@@ -55,6 +55,56 @@ def test_build_request_body_basic(groq_provider):
     assert "max_completion_tokens" in body
 
 
+def test_build_request_body_replays_reasoning_as_tagged_content(groq_provider):
+    request = make_request(
+        messages=[
+            {"role": "user", "content": "Inspect the file."},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "I need to read it first."},
+                    {"type": "text", "text": "I will inspect the file."},
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_1",
+                        "name": "read_file",
+                        "input": {"path": "example.py"},
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_1",
+                        "content": "print('hello')",
+                    }
+                ],
+            },
+        ]
+    )
+
+    body = groq_provider._build_request_body(request)
+
+    assistant = next(
+        message for message in body["messages"] if message["role"] == "assistant"
+    )
+    assert assistant["content"] == (
+        "<think>\nI need to read it first.\n</think>\n\nI will inspect the file."
+    )
+    assert assistant["tool_calls"][0]["id"] == "toolu_1"
+    assert body["messages"][-1] == {
+        "role": "tool",
+        "tool_call_id": "toolu_1",
+        "content": "print('hello')",
+    }
+    assert all(
+        "reasoning_content" not in message and "reasoning" not in message
+        for message in body["messages"]
+    )
+
+
 def test_build_request_body_global_disable_blocks_reasoning_mapping():
     provider = GroqProvider(
         ProviderConfig(

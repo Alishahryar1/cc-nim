@@ -96,6 +96,24 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         default_base_url=NVIDIA_NIM_DEFAULT_BASE,
         proxy_attr="nvidia_nim_proxy",
     ),
+    "open_router": ProviderDescriptor(
+        provider_id="open_router",
+        display_name="OpenRouter",
+        credential_env="OPENROUTER_API_KEY",
+        credential_url="https://openrouter.ai/keys",
+        credential_attr="open_router_api_key",
+        default_base_url=OPENROUTER_DEFAULT_BASE,
+        proxy_attr="open_router_proxy",
+    ),
+    "groq": ProviderDescriptor(
+        provider_id="groq",
+        display_name="Groq",
+        credential_env="GROQ_API_KEY",
+        credential_url="https://console.groq.com/keys",
+        credential_attr="groq_api_key",
+        default_base_url=GROQ_DEFAULT_BASE,
+        proxy_attr="groq_proxy",
+    ),
     "openai": ProviderDescriptor(
         provider_id="openai",
         display_name="OpenAI / ChatGPT",
@@ -115,15 +133,6 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
             "azure_openai_api_key",
             "azure_openai_base_url",
         ),
-    ),
-    "open_router": ProviderDescriptor(
-        provider_id="open_router",
-        display_name="OpenRouter",
-        credential_env="OPENROUTER_API_KEY",
-        credential_url="https://openrouter.ai/keys",
-        credential_attr="open_router_api_key",
-        default_base_url=OPENROUTER_DEFAULT_BASE,
-        proxy_attr="open_router_proxy",
     ),
     "gemini": ProviderDescriptor(
         provider_id="gemini",
@@ -289,15 +298,6 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         default_base_url=CEREBRAS_DEFAULT_BASE,
         proxy_attr="cerebras_proxy",
     ),
-    "groq": ProviderDescriptor(
-        provider_id="groq",
-        display_name="Groq",
-        credential_env="GROQ_API_KEY",
-        credential_url="https://console.groq.com/keys",
-        credential_attr="groq_api_key",
-        default_base_url=GROQ_DEFAULT_BASE,
-        proxy_attr="groq_proxy",
-    ),
     "sambanova": ProviderDescriptor(
         provider_id="sambanova",
         display_name="SambaNova",
@@ -375,7 +375,8 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
 }
 
 # Key order:
-# NVIDIA NIM first (README default), DeepSeek fourth, OpenCode gateways adjacent,
+# NVIDIA NIM, OpenRouter, and Groq lead the customer-facing ranking;
+# OpenCode gateways remain adjacent,
 # Vercel / Hugging Face / Cohere / GitHub Models follow gateway-style remotes,
 # then cloud gateways, Ollama Cloud, and local providers per project plan
 # (github.com/cheahjs/free-llm-api-resources Free Providers TOC as rough guide

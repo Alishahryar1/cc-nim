@@ -36,7 +36,7 @@ _GROQ_EFFORTS = (
 )
 _REQUEST_POLICY = OpenAIChatRequestPolicy(
     provider_name="GROQ",
-    reasoning_replay=ReasoningReplayMode.REASONING_CONTENT,
+    reasoning_replay=ReasoningReplayMode.THINK_TAGS,
     include_extra_body=True,
     extra_body_validator=validate_extra_body_does_not_override_reasoning_fields,
     max_tokens_field="max_completion_tokens",
@@ -76,6 +76,7 @@ _UNSUPPORTED_PHRASE = re.compile(
     r"|unknown\s+(?:parameter|field)"
     r"|unrecognized\s+(?:parameter|field)"
     r"|does\s+not\s+support"
+    r"|is\s+not\s+supported"
     r")",
     re.I,
 )
