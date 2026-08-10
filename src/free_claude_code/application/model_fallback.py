@@ -239,6 +239,12 @@ def rank_potency(model_ref: str) -> int:
     `-mini/-nano/-lite` variant of a known family sits below its full-size
     siblings, and families the table does not know fall back to the pure size
     heuristic, always below the curated band.
+
+    Flash/lite/mini builds of a top family are demoted one curated tier so a
+    missing ``*-pro`` does not make derivation prefer that family's flash over
+    the next family's full/pro model (e.g. deepseek-v4-flash must not beat
+    glm-4.7). Gemini is exempt: its flash models are the free coding path
+    (pro is paid) and already sit at the bottom of the curated band.
     """
 
     ref = model_ref.lower()
@@ -261,8 +267,13 @@ def rank_potency(model_ref: str) -> int:
         variant = 0
     else:
         variant = 1
+    # Drop flash/lite/mini one tier so the next family's full/pro is tried
+    # before a reduced build of the current family. Skip Gemini (see docstring).
+    effective_index = index
+    if variant == 0 and "gemini" not in words:
+        effective_index = min(index + 1, len(_CODING_PATTERNS) - 1)
     curated = (
-        (len(_CODING_PATTERNS) - index) * 100_000
+        (len(_CODING_PATTERNS) - effective_index) * 100_000
         + int(min(version, 9) * 10_000)
         + variant * 2_000
         + min(params, 999)

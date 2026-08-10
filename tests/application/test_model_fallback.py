@@ -213,9 +213,23 @@ def test_rank_potency_prefers_pro_variant_over_flash_within_a_tier():
     flash = rank_potency("nvidia_nim/deepseek-ai/deepseek-v4-flash")
     v32 = rank_potency("nvidia_nim/deepseek-ai/deepseek-v3.2")
     assert pro > flash
-    # Newer version wins over an older base build too.
-    assert flash > v32
-    assert pro > v32
+    # A same-family full/base build outranks a newer flash: flash is demoted so
+    # derivation prefers full models over reduced builds when pro is missing.
+    assert pro > v32 > flash
+
+
+def test_rank_potency_prefers_next_family_full_over_top_family_flash():
+    # When deepseek-v4-pro is unavailable (common on NIM free keys that only
+    # expose flash), derivation must try the next family's full model before
+    # deepseek-v4-flash - otherwise flash of a top tier starves GLM/Kimi/etc.
+    pro = rank_potency("nvidia_nim/deepseek-ai/deepseek-v4-pro")
+    glm = rank_potency("cerebras/zai-glm-4.7")
+    flash = rank_potency("nvidia_nim/deepseek-ai/deepseek-v4-flash")
+    assert pro > glm > flash
+    # Gemini flash stays in its own band (not demoted across Gemini tiers).
+    assert rank_potency("gemini/gemini-3.5-flash") > rank_potency(
+        "gemini/gemini-2.0-flash"
+    )
 
 
 def test_rank_potency_orders_known_families_above_unknown():
