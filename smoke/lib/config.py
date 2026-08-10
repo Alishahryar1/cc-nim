@@ -74,6 +74,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "kilo": "kilo/kilo-auto/free",
     "cerebras": "cerebras/llama3.1-8b",
     "cloudflare": "cloudflare/@cf/moonshotai/kimi-k2.6",
+    "tokenrouter": "tokenrouter/moonshotai/kimi-k3-free",
 }
 MISTRAL_REASONING_SMOKE_DEFAULT_MODEL = "mistral/mistral-medium-3-5"
 

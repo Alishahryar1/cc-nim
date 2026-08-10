@@ -20,6 +20,7 @@ from free_claude_code.config.provider_catalog import (
     OLLAMA_CLOUD_DEFAULT_BASE,
     PROVIDER_CATALOG,
     SUPPORTED_PROVIDER_IDS,
+    TOKENROUTER_DEFAULT_BASE,
     VERCEL_AI_GATEWAY_DEFAULT_BASE,
     ZAI_DEFAULT_BASE,
 )
@@ -71,6 +72,8 @@ def _make_settings(**overrides):
     mock.cohere_api_key = "test_cohere_key"
     mock.github_models_token = "test_github_models_token"
     mock.zai_api_key = "test_zai_key"
+    mock.tokenrouter_api_key = "test_tokenrouter_key"
+    mock.tokenrouter_base_url = TOKENROUTER_DEFAULT_BASE
     mock.lm_studio_base_url = "http://localhost:1234/v1"
     mock.llamacpp_base_url = "http://localhost:8080/v1"
     mock.ollama_base_url = "http://localhost:11434"
@@ -95,6 +98,7 @@ def _make_settings(**overrides):
     mock.cohere_proxy = ""
     mock.github_models_proxy = ""
     mock.zai_proxy = ""
+    mock.tokenrouter_proxy = ""
     mock.fireworks_proxy = ""
     mock.fireworks_api_key = "test_fireworks_key"
     mock.cloudflare_api_token = "test_cloudflare_token"
@@ -495,6 +499,7 @@ def test_create_provider_instantiates_each_builtin():
         "cohere": OpenAIChatProvider,
         "github_models": GitHubModelsProvider,
         "zai": OpenAIChatProvider,
+        "tokenrouter": OpenAIChatProvider,
         "gemini": GeminiProvider,
         "vertex": VertexProvider,
         "groq": GroqProvider,

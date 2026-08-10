@@ -13,7 +13,11 @@ from .env_files import (
     settings_env_files,
 )
 from .nim import NimSettings
-from .provider_catalog import BEDROCK_DEFAULT_BASE, SUPPORTED_PROVIDER_IDS
+from .provider_catalog import (
+    BEDROCK_DEFAULT_BASE,
+    SUPPORTED_PROVIDER_IDS,
+    TOKENROUTER_DEFAULT_BASE,
+)
 from .reasoning import ReasoningPreference
 
 
@@ -87,6 +91,13 @@ class Settings(BaseSettings):
 
     # ==================== Z.ai Config ====================
     zai_api_key: str = Field(default="", validation_alias="ZAI_API_KEY")
+
+    # ==================== TokenRouter Config ====================
+    tokenrouter_api_key: str = Field(default="", validation_alias="TOKENROUTER_API_KEY")
+    tokenrouter_base_url: str = Field(
+        default=TOKENROUTER_DEFAULT_BASE,
+        validation_alias="TOKENROUTER_BASE_URL",
+    )
 
     # ==================== Fireworks AI Config ====================
     fireworks_api_key: str = Field(default="", validation_alias="FIREWORKS_API_KEY")
@@ -185,6 +196,7 @@ class Settings(BaseSettings):
     sambanova_proxy: str = Field(default="", validation_alias="SAMBANOVA_PROXY")
     kilo_proxy: str = Field(default="", validation_alias="KILO_PROXY")
     zai_proxy: str = Field(default="", validation_alias="ZAI_PROXY")
+    tokenrouter_proxy: str = Field(default="", validation_alias="TOKENROUTER_PROXY")
     fireworks_proxy: str = Field(default="", validation_alias="FIREWORKS_PROXY")
     cloudflare_proxy: str = Field(default="", validation_alias="CLOUDFLARE_PROXY")
     gemini_proxy: str = Field(default="", validation_alias="GEMINI_PROXY")

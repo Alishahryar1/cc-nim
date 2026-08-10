@@ -150,6 +150,18 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "Ollama API key for direct OpenAI-compatible Cloud access at ollama.com/v1."
         ),
     },
+    "TOKENROUTER_API_KEY": {
+        "label": "TokenRouter API Key",
+        "description": (
+            "TokenRouter OpenAI-compatible gateway API key for api.tokenrouter.com/v1."
+        ),
+    },
+    "TOKENROUTER_BASE_URL": {
+        "description": (
+            "TokenRouter OpenAI-compatible Chat Completions base URL. "
+            "Defaults to https://api.tokenrouter.com/v1."
+        ),
+    },
 }
 
 
