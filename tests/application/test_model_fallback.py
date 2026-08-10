@@ -292,9 +292,19 @@ def test_prioritize_large_context_front_loads_big_window_models_for_giant_reques
         "gemini/models/gemini-3.5-flash",  # 1M, fastest on huge context
     ]
     ordered = prioritize_large_context(refs, input_tokens=190_000)
-    # Gemini (1M) leads, then deepseek-v4 (256K); small-window models sink.
+    # Gemini (1M) leads, then deepseek-v4 (256K); small-window models are dropped.
     assert ordered[0] == "gemini/models/gemini-3.5-flash"
     assert ordered[1] == "nvidia_nim/deepseek-ai/deepseek-v4-pro"
-    assert ordered[-1] in ("cerebras/zai-glm-4.7", "github_models/openai/gpt-4.1")
-    # Same set, just reordered.
-    assert set(ordered) == set(refs)
+    assert "cerebras/zai-glm-4.7" not in ordered
+    assert "github_models/openai/gpt-4.1" not in ordered
+
+
+def test_prioritize_large_context_keeps_original_when_no_large_window_models():
+    from free_claude_code.application.model_fallback import prioritize_large_context
+
+    refs = [
+        "cerebras/zai-glm-4.7",
+        "github_models/openai/gpt-4.1",
+    ]
+    # Safety net: if nothing matches the large-window table, keep the list.
+    assert prioritize_large_context(refs, input_tokens=190_000) == refs

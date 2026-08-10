@@ -10,6 +10,11 @@ import httpx
 from loguru import logger
 from openai import AsyncOpenAI
 
+from free_claude_code.application.model_fallback import (
+    LARGE_REQUEST_CREATE_MAX_RETRIES,
+    LARGE_REQUEST_TIMEOUT_COOLDOWN_S,
+    is_large_request,
+)
 from free_claude_code.core.anthropic import (
     ContentType,
     HeuristicToolParser,
@@ -26,7 +31,7 @@ from free_claude_code.core.anthropic.streaming import (
     parse_complete_tool_input,
     tool_schemas_by_name,
 )
-from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.trace import provider_chat_body_snapshot, trace_event
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.failure_policy import classify_provider_failure
@@ -35,7 +40,10 @@ from free_claude_code.providers.http import (
     maybe_await_aclose,
 )
 from free_claude_code.providers.model_listing import extract_openai_model_ids
-from free_claude_code.providers.rate_limit import ProviderRateLimiter
+from free_claude_code.providers.rate_limit import (
+    DEFAULT_UPSTREAM_MAX_RETRIES,
+    ProviderRateLimiter,
+)
 from free_claude_code.providers.stream_recovery import (
     MIDSTREAM_RECOVERY_ATTEMPTS,
     RecoveryController,
@@ -171,10 +179,15 @@ class OpenAIChatProvider(BaseProvider):
         """Return provider-specific Anthropic usage fields for final SSE usage."""
         return {}
 
-    async def _create_stream(self, body: dict) -> tuple[Any, dict]:
+    async def _create_stream(
+        self, body: dict, *, max_retries: int | None = None
+    ) -> tuple[Any, dict]:
         """Create a streaming chat completion with bounded request fallbacks."""
         body = self._apply_learned_output_cap(body)
         used_retry_kinds: set[str] = set()
+        retries = (
+            DEFAULT_UPSTREAM_MAX_RETRIES if max_retries is None else max_retries
+        )
 
         while True:
             try:
@@ -182,6 +195,7 @@ class OpenAIChatProvider(BaseProvider):
                 stream = await self._rate_limiter.execute_with_retry(
                     self._client.chat.completions.create,
                     provider_failure_override=self._provider_failure_override,
+                    max_retries=retries,
                     **create_body,
                     stream=True,
                 )
@@ -297,10 +311,17 @@ class _OpenAIChatStreamRunner:
         """Convert the upstream OpenAI-chat stream into Anthropic SSE."""
         tag = self._provider._provider_name
         req_tag = f" request_id={self._request_id}" if self._request_id else ""
+        large_request = is_large_request(self._input_tokens)
+        create_max_retries = (
+            LARGE_REQUEST_CREATE_MAX_RETRIES if large_request else None
+        )
         ledger = self._new_ledger()
         recovery = RecoveryController(
             provider_name=tag,
             request_id=self._request_id,
+            early_max_retries=(
+                LARGE_REQUEST_CREATE_MAX_RETRIES if large_request else None
+            ),
         )
 
         def hold_event(event: str) -> Iterator[str]:
@@ -345,7 +366,9 @@ class _OpenAIChatStreamRunner:
                 stream: Any | None = None
                 stream_opened = False
                 try:
-                    stream, body = await self._provider._create_stream(body)
+                    stream, body = await self._provider._create_stream(
+                        body, max_retries=create_max_retries
+                    )
                     stream_opened = True
                     tool_argument_aliases = self._provider._tool_argument_aliases(body)
                     async for chunk in stream:
@@ -517,6 +540,13 @@ class _OpenAIChatStreamRunner:
                             self._provider._provider_failure_override
                         ),
                     )
+                    # Giant /compact herding: after a TTFT timeout, park this
+                    # model briefly so sibling sessions fail over instead of
+                    # retrying the same dead leader for minutes.
+                    if large_request and failure.kind == FailureKind.TIMEOUT:
+                        self._provider._rate_limiter.extend_reactive_block(
+                            LARGE_REQUEST_TIMEOUT_COOLDOWN_S, self._request.model
+                        )
                     error_trace: dict[str, Any] = {
                         "stage": "provider",
                         "event": "provider.response.error",
@@ -654,7 +684,14 @@ class _OpenAIChatStreamRunner:
         for attempt in range(MIDSTREAM_RECOVERY_ATTEMPTS):
             stream: Any | None = None
             try:
-                stream, _ = await self._provider._create_stream(body)
+                stream, _ = await self._provider._create_stream(
+                    body,
+                    max_retries=(
+                        LARGE_REQUEST_CREATE_MAX_RETRIES
+                        if is_large_request(self._input_tokens)
+                        else None
+                    ),
+                )
                 text_parts: list[str] = []
                 thinking_parts: list[str] = []
                 terminal_seen = False

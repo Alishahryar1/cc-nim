@@ -192,7 +192,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "number",
         settings_attr="provider_rate_limit",
-        default="1",
+        default="40",
     ),
     ConfigFieldSpec(
         "PROVIDER_RATE_WINDOW",
@@ -200,7 +200,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "number",
         settings_attr="provider_rate_window",
-        default="3",
+        default="60",
     ),
     ConfigFieldSpec(
         "PROVIDER_MAX_CONCURRENCY",
@@ -216,7 +216,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "number",
         settings_attr="http_read_timeout",
-        default="300",
+        default="600",
     ),
     ConfigFieldSpec(
         "HTTP_WRITE_TIMEOUT",
@@ -224,7 +224,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "number",
         settings_attr="http_write_timeout",
-        default="60",
+        default="120",
     ),
     ConfigFieldSpec(
         "HTTP_CONNECT_TIMEOUT",

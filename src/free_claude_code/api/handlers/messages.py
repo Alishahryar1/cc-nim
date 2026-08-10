@@ -33,6 +33,10 @@ from free_claude_code.api.web_tools.request import (
 from free_claude_code.api.web_tools.streaming import stream_web_server_tool_response
 from free_claude_code.application.errors import ApplicationError, InvalidRequestError
 from free_claude_code.application.execution import ProviderExecutor, TokenCounter
+from free_claude_code.application.model_fallback import (
+    LARGE_REQUEST_MAX_OUTPUT_TOKENS,
+    is_large_request,
+)
 from free_claude_code.application.ports import (
     ProviderResolver,
     RequestRuntimeLease,
@@ -280,6 +284,34 @@ class MessagesHandler:
     def _apply_message_routing_policies(
         self, routed: RoutedMessagesRequest
     ) -> RoutedMessagesRequest:
+        request = routed.request
+        resolved = routed.resolved
+        input_tokens = self._token_counter(
+            request.messages, request.system, request.tools
+        )
+
+        if is_large_request(input_tokens):
+            # /compact asks for huge max_tokens + thinking; cap output and skip
+            # reasoning so providers (esp. NIM) don't budget 64K thinking tokens.
+            capped = request.max_tokens
+            if capped is None or capped > LARGE_REQUEST_MAX_OUTPUT_TOKENS:
+                capped = LARGE_REQUEST_MAX_OUTPUT_TOKENS
+            thinking_was_on = resolved.thinking_enabled
+            trace_event(
+                stage="routing",
+                event="free_claude_code.api.optimization.large_request_compact_policy",
+                source="api",
+                model=request.model,
+                input_tokens=input_tokens,
+                max_tokens_before=request.max_tokens,
+                max_tokens_after=capped,
+                thinking_disabled=bool(thinking_was_on),
+            )
+            request = request.model_copy(update={"max_tokens": capped})
+            if thinking_was_on:
+                resolved = replace(resolved, thinking_enabled=False)
+            routed = RoutedMessagesRequest(request=request, resolved=resolved)
+
         if not is_safety_classifier_request(routed.request):
             return routed
         changed = routed.resolved.thinking_enabled

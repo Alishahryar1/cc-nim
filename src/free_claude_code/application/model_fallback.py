@@ -312,6 +312,14 @@ def eligible_candidate_refs(
 # A request at/over the common 128K window (compaction sends ~190K) only fits
 # models with a bigger window. Below this it stays on the normal coding order.
 LARGE_REQUEST_TOKENS = 130_000
+# Compact/summary outputs are short; Claude Code still asks for 64K which makes
+# NIM budget huge reasoning and stalls. Cap output for giant requests.
+LARGE_REQUEST_MAX_OUTPUT_TOKENS = 4096
+# After a TTFT timeout on a giant request, park the model briefly so parallel
+# /compact sessions fail over instead of re-herding onto the same dead leader.
+LARGE_REQUEST_TIMEOUT_COOLDOWN_S = 120.0
+# Create-time retries for giant requests: one retry then move on (default is 4).
+LARGE_REQUEST_CREATE_MAX_RETRIES = 1
 # Known large-window families, ordered by fitness for a giant request (window +
 # speed on huge inputs). Gemini leads: 1M window and fast at large context - the
 # opposite of deepseek-v4-pro, which the normal order leads with but is slow on
@@ -330,6 +338,12 @@ _LARGE_CONTEXT_ORDER = (
 _LARGE_CONTEXT_PATTERNS = tuple(re.compile(pattern) for pattern in _LARGE_CONTEXT_ORDER)
 
 
+def is_large_request(input_tokens: int) -> bool:
+    """Return whether a request is in the compaction / giant-context band."""
+
+    return input_tokens >= LARGE_REQUEST_TOKENS
+
+
 def _large_context_rank(ref: str) -> int | None:
     """Index of the first large-window family a ref matches, or None if unknown."""
 
@@ -341,21 +355,23 @@ def _large_context_rank(ref: str) -> int | None:
 
 
 def prioritize_large_context(refs: list[str], input_tokens: int) -> list[str]:
-    """Front-load known large-window models when the request is giant.
+    """Front-load (and prefer) known large-window models when the request is giant.
 
     A ~190K compaction request overflows every 128K model, so leading the chain
     with big-window models (gemini first for speed, then deepseek-v4, ...) keeps
     /compact from stalling on a slow model or burning turns on small ones. Below
-    the threshold the order is unchanged. Stable: within each group the incoming
-    potency order is preserved.
+    the threshold the order is unchanged. When large-window candidates exist they
+    alone are kept; if none match, the original list is preserved as a safety net.
+    Stable: within each group the incoming potency order is preserved.
     """
 
-    if input_tokens < LARGE_REQUEST_TOKENS:
+    if not is_large_request(input_tokens):
         return refs
     ranked = [(i, r, _large_context_rank(r)) for i, r in enumerate(refs)]
     large = sorted((t for t in ranked if t[2] is not None), key=lambda t: (t[2], t[0]))
-    rest = [t for t in ranked if t[2] is None]
-    return [r for _, r, _ in large] + [r for _, r, _ in rest]
+    if not large:
+        return refs
+    return [r for _, r, _ in large]
 
 
 def build_fallback_chain(

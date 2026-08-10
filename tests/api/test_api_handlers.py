@@ -473,6 +473,45 @@ async def test_messages_handler_keeps_existing_no_thinking_for_classifier() -> N
 
 
 @pytest.mark.asyncio
+async def test_messages_handler_caps_output_and_disables_thinking_for_large_requests() -> (
+    None
+):
+    from free_claude_code.application.model_fallback import (
+        LARGE_REQUEST_MAX_OUTPUT_TOKENS,
+    )
+
+    provider = FakeProvider()
+    handler = MessagesHandler(
+        Settings(),
+        provider_resolver=lambda _: provider,
+        token_counter=lambda *_args, **_kwargs: 190_000,
+    )
+    request = MessagesRequest(
+        model="nvidia_nim/test-model",
+        max_tokens=64000,
+        stream=True,
+        messages=[Message(role="user", content="compact this conversation")],
+    )
+
+    with patch("free_claude_code.api.handlers.messages.trace_event") as trace_mock:
+        response = await handler.create(request)
+        assert isinstance(response, StreamingResponse)
+        await _streaming_body_text(response)
+
+    assert provider.preflight_calls[0][1] is False
+    assert provider.stream_kwargs[0]["thinking_enabled"] is False
+    assert provider.requests[0].max_tokens == LARGE_REQUEST_MAX_OUTPUT_TOKENS
+    events = _trace_events(
+        trace_mock, "free_claude_code.api.optimization.large_request_compact_policy"
+    )
+    assert len(events) == 1
+    assert events[0]["input_tokens"] == 190_000
+    assert events[0]["max_tokens_before"] == 64000
+    assert events[0]["max_tokens_after"] == LARGE_REQUEST_MAX_OUTPUT_TOKENS
+    assert events[0]["thinking_disabled"] is True
+
+
+@pytest.mark.asyncio
 async def test_messages_handler_optimization_intercepts_before_provider_execution() -> (
     None
 ):

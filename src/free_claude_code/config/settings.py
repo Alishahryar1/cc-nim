@@ -184,11 +184,13 @@ class Settings(BaseSettings):
     )
 
     # ==================== HTTP Client Timeouts ====================
+    # Compact/summary requests need a long idle-read window; Admin Apply seeds
+    # ~/.fcc/.env from .env.example/manifest, so keep these aligned with those.
     http_read_timeout: float = Field(
-        default=120.0, validation_alias="HTTP_READ_TIMEOUT"
+        default=600.0, validation_alias="HTTP_READ_TIMEOUT"
     )
     http_write_timeout: float = Field(
-        default=10.0, validation_alias="HTTP_WRITE_TIMEOUT"
+        default=120.0, validation_alias="HTTP_WRITE_TIMEOUT"
     )
     http_connect_timeout: float = Field(
         default=HTTP_CONNECT_TIMEOUT_DEFAULT,

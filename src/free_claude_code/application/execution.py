@@ -330,4 +330,7 @@ class ProviderExecutor:
         chain = build_fallback_chain(routed.resolved.provider_model_ref, model_infos)
         if not chain:
             return [routed.resolved.provider_model_ref]
-        return chain
+        # Keep the pinned primary first; reorder/filter only the fallback tail
+        # so giant requests still prefer large-window models after a failure.
+        primary, *rest = chain
+        return [primary, *prioritize_large_context(rest, input_tokens)]

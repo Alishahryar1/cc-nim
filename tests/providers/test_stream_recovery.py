@@ -159,6 +159,29 @@ def test_recovery_controller_respects_early_retry_limit() -> None:
     assert controller.early_retries == EARLY_TRANSPARENT_MAX_RETRIES
 
 
+def test_recovery_controller_honors_custom_early_max_retries() -> None:
+    controller = RecoveryController(
+        provider_name="TEST", request_id=None, early_max_retries=1
+    )
+
+    first = controller.advance_failure(
+        httpx.ReadError("cutoff"),
+        stream_opened=True,
+        generated_output=False,
+        complete_tool_salvageable=False,
+    )
+    assert first.action == RecoveryFailureAction.EARLY_RETRY
+
+    second = controller.advance_failure(
+        httpx.ReadError("cutoff"),
+        stream_opened=True,
+        generated_output=False,
+        complete_tool_salvageable=False,
+    )
+    assert second.action == RecoveryFailureAction.FINAL_ERROR
+    assert controller.early_retries == 1
+
+
 def test_recovery_controller_classifies_midstream_recovery_after_commit() -> None:
     controller = RecoveryController(provider_name="TEST", request_id=None)
 

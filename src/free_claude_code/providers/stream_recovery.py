@@ -99,12 +99,23 @@ class RecoveryHoldbackBuffer:
 class RecoveryController:
     """Own holdback and retry counters for one provider stream lifecycle."""
 
-    def __init__(self, *, provider_name: str, request_id: str | None) -> None:
+    def __init__(
+        self,
+        *,
+        provider_name: str,
+        request_id: str | None,
+        early_max_retries: int | None = None,
+    ) -> None:
         self._provider_name = provider_name
         self._request_id = request_id
         self._holdback = RecoveryHoldbackBuffer()
         self._early_retry_count = 0
         self._midstream_recovery_count = 0
+        self._early_max_retries = (
+            EARLY_TRANSPARENT_MAX_RETRIES
+            if early_max_retries is None
+            else early_max_retries
+        )
 
     @property
     def committed(self) -> bool:
@@ -153,7 +164,7 @@ class RecoveryController:
             and stream_opened
             and not committed
             and not complete_tool_salvageable
-            and self._early_retry_count < EARLY_TRANSPARENT_MAX_RETRIES
+            and self._early_retry_count < self._early_max_retries
         ):
             self._early_retry_count += 1
             self._holdback.discard()
