@@ -73,7 +73,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "sambanova": "sambanova/Meta-Llama-3.3-70B-Instruct",
     "kilo": "kilo/kilo-auto/free",
     "cerebras": "cerebras/llama3.1-8b",
-    "novita": "novita/qwen/qwen3-coder-next",
+    "novita": "novita/deepseek/deepseek-v4-flash-0731",
     "cloudflare": "cloudflare/@cf/moonshotai/kimi-k2.6",
     "tokenrouter": "tokenrouter/moonshotai/kimi-k3-free",
     "nararoute": "nararoute/kimi-k3-free",

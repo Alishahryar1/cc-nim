@@ -46,7 +46,7 @@ def test_base_url_constant():
 
 def test_build_request_body_openai_chat_shape(novita_provider):
     request = MessagesRequest(
-        model="qwen/qwen3-coder-next",
+        model="deepseek/deepseek-v4-flash-0731",
         max_tokens=100,
         messages=[Message(role="user", content="Hello")],
         system="System prompt",
@@ -56,7 +56,7 @@ def test_build_request_body_openai_chat_shape(novita_provider):
         request, reasoning=reasoning_for(request)
     )
 
-    assert body["model"] == "qwen/qwen3-coder-next"
+    assert body["model"] == "deepseek/deepseek-v4-flash-0731"
     assert body["max_tokens"] == 100
     assert body["messages"] == [
         {"role": "system", "content": "System prompt"},
