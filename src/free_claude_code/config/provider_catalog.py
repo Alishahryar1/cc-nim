@@ -51,6 +51,8 @@ KILO_DEFAULT_BASE = "https://api.kilo.ai/api/gateway"
 OPENAI_CODEX_DEFAULT_BASE = "https://chatgpt.com/backend-api/codex"
 # TokenRouter OpenAI-compatible Chat Completions gateway.
 TOKENROUTER_DEFAULT_BASE = "https://api.tokenrouter.com/v1"
+# NaraRoute OpenAI-compatible Chat Completions gateway.
+NARAROUTE_DEFAULT_BASE = "https://router.bynara.id/v1"
 
 
 class ProviderAuthKind(StrEnum):
@@ -348,6 +350,16 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         default_base_url=TOKENROUTER_DEFAULT_BASE,
         base_url_attr="tokenrouter_base_url",
         proxy_attr="tokenrouter_proxy",
+    ),
+    "nararoute": ProviderDescriptor(
+        provider_id="nararoute",
+        display_name="NaraRoute",
+        credential_env="NARAROUTE_API_KEY",
+        credential_url="https://router.bynara.id/keys",
+        credential_attr="nararoute_api_key",
+        default_base_url=NARAROUTE_DEFAULT_BASE,
+        base_url_attr="nararoute_base_url",
+        proxy_attr="nararoute_proxy",
     ),
     "ollama_cloud": ProviderDescriptor(
         provider_id="ollama_cloud",

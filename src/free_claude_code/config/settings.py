@@ -15,6 +15,7 @@ from .env_files import (
 from .nim import NimSettings
 from .provider_catalog import (
     BEDROCK_DEFAULT_BASE,
+    NARAROUTE_DEFAULT_BASE,
     SUPPORTED_PROVIDER_IDS,
     TOKENROUTER_DEFAULT_BASE,
 )
@@ -97,6 +98,13 @@ class Settings(BaseSettings):
     tokenrouter_base_url: str = Field(
         default=TOKENROUTER_DEFAULT_BASE,
         validation_alias="TOKENROUTER_BASE_URL",
+    )
+
+    # ==================== NaraRoute Config ====================
+    nararoute_api_key: str = Field(default="", validation_alias="NARAROUTE_API_KEY")
+    nararoute_base_url: str = Field(
+        default=NARAROUTE_DEFAULT_BASE,
+        validation_alias="NARAROUTE_BASE_URL",
     )
 
     # ==================== Fireworks AI Config ====================
@@ -197,6 +205,7 @@ class Settings(BaseSettings):
     kilo_proxy: str = Field(default="", validation_alias="KILO_PROXY")
     zai_proxy: str = Field(default="", validation_alias="ZAI_PROXY")
     tokenrouter_proxy: str = Field(default="", validation_alias="TOKENROUTER_PROXY")
+    nararoute_proxy: str = Field(default="", validation_alias="NARAROUTE_PROXY")
     fireworks_proxy: str = Field(default="", validation_alias="FIREWORKS_PROXY")
     cloudflare_proxy: str = Field(default="", validation_alias="CLOUDFLARE_PROXY")
     gemini_proxy: str = Field(default="", validation_alias="GEMINI_PROXY")

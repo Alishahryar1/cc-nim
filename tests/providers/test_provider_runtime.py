@@ -17,6 +17,7 @@ from free_claude_code.config.provider_catalog import (
     HUGGINGFACE_DEFAULT_BASE,
     KIMI_CODE_DEFAULT_BASE,
     MINIMAX_DEFAULT_BASE,
+    NARAROUTE_DEFAULT_BASE,
     OLLAMA_CLOUD_DEFAULT_BASE,
     PROVIDER_CATALOG,
     SUPPORTED_PROVIDER_IDS,
@@ -74,6 +75,8 @@ def _make_settings(**overrides):
     mock.zai_api_key = "test_zai_key"
     mock.tokenrouter_api_key = "test_tokenrouter_key"
     mock.tokenrouter_base_url = TOKENROUTER_DEFAULT_BASE
+    mock.nararoute_api_key = "test_nararoute_key"
+    mock.nararoute_base_url = NARAROUTE_DEFAULT_BASE
     mock.lm_studio_base_url = "http://localhost:1234/v1"
     mock.llamacpp_base_url = "http://localhost:8080/v1"
     mock.ollama_base_url = "http://localhost:11434"
@@ -99,6 +102,7 @@ def _make_settings(**overrides):
     mock.github_models_proxy = ""
     mock.zai_proxy = ""
     mock.tokenrouter_proxy = ""
+    mock.nararoute_proxy = ""
     mock.fireworks_proxy = ""
     mock.fireworks_api_key = "test_fireworks_key"
     mock.cloudflare_api_token = "test_cloudflare_token"
@@ -500,6 +504,7 @@ def test_create_provider_instantiates_each_builtin():
         "github_models": GitHubModelsProvider,
         "zai": OpenAIChatProvider,
         "tokenrouter": OpenAIChatProvider,
+        "nararoute": OpenAIChatProvider,
         "gemini": GeminiProvider,
         "vertex": VertexProvider,
         "groq": GroqProvider,

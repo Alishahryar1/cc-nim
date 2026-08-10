@@ -162,6 +162,19 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "Defaults to https://api.tokenrouter.com/v1."
         ),
     },
+    "NARAROUTE_API_KEY": {
+        "label": "NaraRoute API Key",
+        "description": (
+            "NaraRoute OpenAI-compatible gateway API key for router.bynara.id/v1. "
+            "Keys begin with sk-nry-; create one at router.bynara.id/keys."
+        ),
+    },
+    "NARAROUTE_BASE_URL": {
+        "description": (
+            "NaraRoute OpenAI-compatible Chat Completions base URL. "
+            "Defaults to https://router.bynara.id/v1."
+        ),
+    },
 }
 
 

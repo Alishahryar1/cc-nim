@@ -34,6 +34,7 @@ _EXPECTED_PROVIDER_ORDER: tuple[str, ...] = (
     "cloudflare",
     "zai",
     "tokenrouter",
+    "nararoute",
     "ollama_cloud",
     "lmstudio",
     "llamacpp",

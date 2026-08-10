@@ -688,6 +688,12 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         advanced=True,
     ),
     ConfigFieldSpec(
+        "FCC_SMOKE_MODEL_NARAROUTE",
+        "Smoke NaraRoute Model",
+        "smoke",
+        advanced=True,
+    ),
+    ConfigFieldSpec(
         "FCC_SMOKE_MODEL_FIREWORKS",
         "Smoke Fireworks Model",
         "smoke",
