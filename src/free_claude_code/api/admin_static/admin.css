@@ -107,6 +107,369 @@ textarea {
   padding-bottom: 96px; /* Space for action bar */
 }
 
+.app-shell.sessions-active {
+  padding-bottom: 0;
+}
+
+/* Browser Sessions */
+.sessions-layout {
+  display: grid;
+  grid-template-columns: 240px minmax(0, 1fr);
+  min-height: calc(100vh - 150px);
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-lg);
+  background: var(--panel);
+  box-shadow: var(--shadow);
+}
+
+.projects-panel {
+  min-width: 0;
+  padding: 18px;
+  border-right: 1px solid var(--line);
+  background: var(--bg);
+}
+
+.sessions-panel-heading,
+.session-tabs-row,
+.terminal-toolbar,
+.terminal-identity,
+.terminal-actions,
+.dialog-actions {
+  display: flex;
+  align-items: center;
+}
+
+.sessions-panel-heading,
+.session-tabs-row,
+.terminal-toolbar {
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.sessions-panel-heading h3 {
+  margin: 0;
+  font-size: 15px;
+}
+
+.icon-button,
+.project-remove {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel-strong);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.icon-button {
+  min-height: 32px;
+  padding: 5px 10px;
+}
+
+.project-list {
+  display: grid;
+  gap: 7px;
+  margin-top: 16px;
+}
+
+.project-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  gap: 4px;
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+}
+
+.project-row.active {
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+}
+
+.project-select {
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 10px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.project-select strong,
+.project-select span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.project-select span {
+  margin-top: 3px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.project-remove {
+  align-self: center;
+  width: 26px;
+  height: 26px;
+  border-color: transparent;
+  background: transparent;
+  font-size: 18px;
+}
+
+.project-remove:hover {
+  color: var(--error);
+  background: var(--error-bg);
+}
+
+.session-workspace {
+  min-width: 0;
+  padding: 18px;
+}
+
+.session-tabs-row {
+  min-height: 38px;
+}
+
+.session-tabs {
+  display: flex;
+  min-width: 0;
+  gap: 6px;
+  overflow-x: auto;
+}
+
+.session-tab {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  flex: 0 0 auto;
+  min-height: 34px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--card);
+  padding: 7px 11px;
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.session-tab.active {
+  border-color: var(--accent-border);
+  color: var(--text-strong);
+  background: var(--accent-muted);
+}
+
+.session-state-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--neutral);
+}
+
+.session-state-dot.running {
+  background: var(--ok);
+}
+
+.session-state-dot.starting,
+.session-state-dot.stopping {
+  background: var(--warn);
+}
+
+.session-state-dot.failed {
+  background: var(--error);
+}
+
+.sessions-message {
+  min-height: 20px;
+  margin: 10px 0;
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.sessions-message.error {
+  color: var(--error);
+}
+
+.sessions-message.warn {
+  color: var(--warn);
+}
+
+.sessions-empty {
+  display: grid;
+  min-height: 50vh;
+  place-content: center;
+  text-align: center;
+  color: var(--muted);
+}
+
+.sessions-empty h3 {
+  margin: 0 0 6px;
+  color: var(--text-strong);
+}
+
+.sessions-empty p {
+  max-width: 480px;
+  margin: 0;
+}
+
+.terminal-panel {
+  min-width: 0;
+}
+
+.terminal-toolbar {
+  margin-bottom: 8px;
+}
+
+.terminal-identity,
+.terminal-actions {
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.session-badge {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-full);
+  padding: 3px 8px;
+  color: var(--muted);
+  font-size: 11px;
+}
+
+.session-detail {
+  min-height: 18px;
+  margin: 0 0 8px;
+  overflow: hidden;
+  color: var(--muted);
+  font-size: 12px;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.terminal-viewport {
+  position: relative;
+  height: calc(100vh - 260px);
+  min-height: 420px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: #08090d;
+  padding: 10px;
+}
+
+#terminal,
+#terminal .xterm {
+  width: 100%;
+  height: 100%;
+}
+
+.terminal-closed {
+  position: absolute;
+  inset: auto 16px 16px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: rgba(17, 19, 28, 0.94);
+  padding: 9px 12px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+  pointer-events: none;
+}
+
+.danger-button {
+  min-height: 34px;
+  border: 1px solid var(--error-border);
+  border-radius: var(--radius-md);
+  background: var(--error-bg);
+  padding: 7px 12px;
+  color: var(--error);
+  cursor: pointer;
+}
+
+.danger-button:hover:not(:disabled) {
+  border-color: var(--error);
+}
+
+.admin-dialog {
+  width: min(480px, calc(100vw - 32px));
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-lg);
+  background: var(--panel-strong);
+  padding: 0;
+  color: var(--text);
+  box-shadow: var(--shadow);
+}
+
+.admin-dialog::backdrop {
+  background: rgba(0, 0, 0, 0.72);
+}
+
+.admin-dialog form {
+  display: grid;
+  gap: 12px;
+  padding: 24px;
+}
+
+.admin-dialog h3,
+.admin-dialog p {
+  margin: 0;
+}
+
+.admin-dialog p,
+.dialog-hint {
+  color: var(--muted);
+  font-size: 13px;
+}
+
+.admin-dialog input,
+.admin-dialog select {
+  width: 100%;
+  min-height: 42px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-md);
+  background: var(--input);
+  padding: 9px 11px;
+}
+
+.dialog-actions {
+  justify-content: flex-end;
+  gap: 8px;
+  margin-top: 6px;
+}
+
+@media (max-width: 980px) {
+  .sessions-layout {
+    grid-template-columns: 190px minmax(0, 1fr);
+  }
+
+  .terminal-toolbar {
+    align-items: flex-start;
+    flex-direction: column;
+  }
+}
+
+@media (max-width: 720px) {
+  .sessions-layout {
+    display: block;
+  }
+
+  .projects-panel {
+    border-right: 0;
+    border-bottom: 1px solid var(--line);
+  }
+
+  .project-list {
+    display: flex;
+    overflow-x: auto;
+  }
+
+  .project-row {
+    flex: 0 0 180px;
+  }
+
+  .terminal-viewport {
+    min-height: 360px;
+  }
+}
+
 /* Sidebar Navigation */
 .sidebar {
   position: sticky;

@@ -1,6 +1,9 @@
 """Explicit test composition for the API adapter."""
 
 from collections.abc import Mapping, MutableMapping
+from pathlib import Path
+from tempfile import gettempdir
+from uuid import uuid4
 
 from fastapi import FastAPI
 
@@ -11,6 +14,8 @@ from free_claude_code.config.settings import Settings
 from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.runtime.application import ApplicationRuntime, RestartCallback
+from free_claude_code.runtime.browser_sessions import BrowserSessionManager
+from free_claude_code.runtime.browser_sessions.store import BrowserSessionStore
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
 
 
@@ -20,10 +25,16 @@ def create_test_app(
     providers: MutableMapping[str, BaseProvider] | None = None,
     restart_callback: RestartCallback | None = None,
     connected_accounts: Mapping[str, ConnectedAccountPort] | None = None,
+    browser_sessions: BrowserSessionManager | None = None,
 ) -> FastAPI:
     """Build an API app with explicit in-memory runtime services."""
     settings = settings or Settings()
     connected_accounts = dict(connected_accounts or {})
+    browser_sessions = browser_sessions or BrowserSessionManager(
+        BrowserSessionStore(
+            Path(gettempdir()) / f"fcc-test-browser-sessions-{uuid4().hex}.json"
+        )
+    )
 
     def connected_provider_ids() -> tuple[str, ...]:
         return tuple(
@@ -51,12 +62,14 @@ def create_test_app(
         transcriber=None,
         restart_callback=restart_callback,
         connected_accounts=connected_accounts,
+        browser_sessions=browser_sessions,
     )
     return create_app(
         ApiServices(
             requests=manager,
             admin=runtime,
             tasks=runtime,
+            sessions=browser_sessions,
         )
     )
 

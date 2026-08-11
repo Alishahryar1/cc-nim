@@ -6,6 +6,7 @@
     <title>Free Claude Code Admin</title>
     <link rel="icon" href="data:," />
     <link rel="stylesheet" href="/admin/assets/admin.css" />
+    <link rel="stylesheet" href="/admin/assets/vendor/xterm.css" />
   </head>
   <body>
     <div class="app-shell">
@@ -23,12 +24,58 @@
       <main class="main">
         <header class="topbar">
           <div>
-            <h2 id="pageTitle">Providers</h2>
+            <h2 id="pageTitle">Sessions</h2>
           </div>
         </header>
 
         <div id="adminViews" class="admin-views">
-          <section id="view-providers" class="admin-view active" data-view="providers">
+          <section id="view-sessions" class="admin-view active" data-view="sessions">
+            <div class="sessions-layout">
+              <aside class="projects-panel" aria-label="Projects">
+                <div class="sessions-panel-heading">
+                  <h3>Projects</h3>
+                  <button id="addProjectButton" class="icon-button" type="button">Add</button>
+                </div>
+                <div id="projectList" class="project-list"></div>
+              </aside>
+
+              <section class="session-workspace" aria-label="Project sessions">
+                <div class="session-tabs-row">
+                  <div id="sessionTabs" class="session-tabs" role="tablist"></div>
+                  <button id="newSessionButton" class="secondary-button" type="button" disabled>
+                    New session
+                  </button>
+                </div>
+                <div id="sessionsMessage" class="sessions-message" role="status"></div>
+                <div id="sessionsEmpty" class="sessions-empty">
+                  <h3>Add a project to begin</h3>
+                  <p>Choose a local folder, then run Claude Code, Codex, or Pi in it.</p>
+                </div>
+                <div id="terminalPanel" class="terminal-panel" hidden>
+                  <div class="terminal-toolbar">
+                    <div class="terminal-identity">
+                      <strong id="sessionName"></strong>
+                      <span id="sessionHarness" class="session-badge"></span>
+                      <span id="sessionStatus" class="status-pill neutral"></span>
+                    </div>
+                    <div class="terminal-actions">
+                      <button id="renameSessionButton" class="ghost-button" type="button">Rename</button>
+                      <button id="startSessionButton" class="secondary-button" type="button">Start again</button>
+                      <button id="stopSessionButton" class="secondary-button" type="button">Stop</button>
+                      <button id="deleteSessionButton" class="danger-button" type="button">Delete</button>
+                    </div>
+                  </div>
+                  <p id="sessionDetail" class="session-detail"></p>
+                  <div id="terminalViewport" class="terminal-viewport">
+                    <div id="terminal"></div>
+                    <div id="terminalClosed" class="terminal-closed" hidden></div>
+                  </div>
+                </div>
+              </section>
+            </div>
+          </section>
+
+          <section id="view-providers" class="admin-view" data-view="providers" hidden>
             <section
               id="connectedAccountsSection"
               class="provider-strip"
@@ -86,6 +133,51 @@
         </div>
       </footer>
     </div>
+
+    <dialog id="projectDialog" class="admin-dialog">
+      <form id="projectForm" method="dialog">
+        <h3>Add project</h3>
+        <p>Enter an existing absolute folder path on this computer.</p>
+        <label for="projectPath">Project folder</label>
+        <input id="projectPath" name="path" type="text" required autocomplete="off" />
+        <div class="dialog-actions">
+          <button class="ghost-button" type="button" data-close-dialog="projectDialog">Cancel</button>
+          <button class="primary-button" type="submit">Add project</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="sessionDialog" class="admin-dialog">
+      <form id="sessionForm" method="dialog">
+        <h3>New session</h3>
+        <label for="newSessionName">Name</label>
+        <input id="newSessionName" name="name" type="text" maxlength="80" required />
+        <label for="newSessionHarness">Harness</label>
+        <select id="newSessionHarness" name="harness" required></select>
+        <p id="harnessHint" class="dialog-hint"></p>
+        <div class="dialog-actions">
+          <button class="ghost-button" type="button" data-close-dialog="sessionDialog">Cancel</button>
+          <button id="createSessionButton" class="primary-button" type="submit">Create and start</button>
+        </div>
+      </form>
+    </dialog>
+
+    <dialog id="renameDialog" class="admin-dialog">
+      <form id="renameForm" method="dialog">
+        <h3>Rename session</h3>
+        <label for="renameSessionName">Name</label>
+        <input id="renameSessionName" name="name" type="text" maxlength="80" required />
+        <div class="dialog-actions">
+          <button class="ghost-button" type="button" data-close-dialog="renameDialog">Cancel</button>
+          <button class="primary-button" type="submit">Rename</button>
+        </div>
+      </form>
+    </dialog>
+
+    <script src="/admin/assets/vendor/xterm.js"></script>
+    <script src="/admin/assets/vendor/addon-fit.js"></script>
+    <script src="/admin/assets/admin-api.js"></script>
+    <script src="/admin/assets/sessions.js"></script>
     <script src="/admin/assets/admin.js"></script>
   </body>
 </html>

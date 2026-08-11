@@ -15,12 +15,14 @@ Messages traffic from Claude Code and Pi clients and OpenAI Responses traffic
 from Codex CLI, IDE, and App clients, routes the request to a configured
 upstream provider, and preserves the wire protocol expected by the caller.
 
-There are three runtime surfaces:
+There are four runtime surfaces:
 
 - HTTP proxy: FastAPI routes expose Anthropic-compatible, Responses-compatible,
   health, model-listing, stop, and admin endpoints.
 - CLI launchers: wrapper entrypoints prepare Claude Code, Codex, and Pi sessions
   so they target the local proxy.
+- Browser sessions: the local Admin UI can attach to runtime-owned native PTYs
+  running those same wrappers inside registered project folders.
 - Messaging bridge: optional Discord or Telegram adapters turn chat messages
   into managed client CLI sessions.
 
@@ -30,6 +32,8 @@ flowchart LR
     Codex[Codex CLI, IDE, and App] --> ProxyAPI
     Pi[Pi Coding Agent] --> ProxyAPI
     AdminUI[Local Admin UI] --> ProxyAPI
+    AdminUI --> BrowserSessions[Runtime Browser Sessions]
+    BrowserSessions --> ClientCLI
     Bots[Discord or Telegram Bots] --> Messaging[Messaging Bridge]
     Messaging --> ClientCLI[Managed Client CLI Sessions]
     ClientCLI --> ProxyAPI
@@ -70,8 +74,9 @@ The installable wheel packages are declared in [pyproject.toml](pyproject.toml):
   provider, specialized adapters, SDK/HTTP failure classification, retry and
   recovery policy, rate limiting, model listing, and concrete provider adapters.
 - [src/free_claude_code/runtime/](src/free_claude_code/runtime/) is the process composition root. It owns application
-  startup and shutdown, provider generations, Admin runtime operations, and the
-  concrete wiring between API, providers, messaging, and managed CLI sessions.
+  startup and shutdown, provider generations, Admin runtime operations, native
+  browser PTYs, and the concrete wiring between API, providers, messaging, and
+  managed CLI sessions.
 
 [tests/](tests/) contains deterministic unit and contract coverage.
 [smoke/](smoke/) contains local and live product smoke tests that can launch
@@ -149,7 +154,7 @@ for real prompts against supported providers:
 
 - `fcc-server`, the Windows/macOS FCC Desktop shell, and the local Admin UI for
   configuring supported providers, model routing, auth, server tools, messaging,
-  and diagnostics.
+  diagnostics, and native browser terminal sessions.
 - `fcc-claude`, Claude Code, and the Anthropic-compatible proxy behavior Claude
   Code relies on, including streaming text, native/interleaved thinking, tool
   use/results, model discovery, token counting, retries/recovery, and supported
@@ -249,10 +254,52 @@ owns only native status-area presentation and callbacks.
 [runtime/bootstrap.py](src/free_claude_code/runtime/bootstrap.py) is the single production composition function. The CLI
 supervisor supplies one settings snapshot and its restart callback; bootstrap
 configures logging, constructs the runtime owners and the configured voice
-  transcriber, constructs the explicit `ApiServices` composition value, and
-  returns the ASGI application. Provider request leases and task control satisfy
-  the consumer-owned ports in [application/ports.py](src/free_claude_code/application/ports.py); Admin operations retain
-  their inbound-adapter port in [api/ports.py](src/free_claude_code/api/ports.py).
+transcriber, constructs the explicit `ApiServices` composition value, and
+returns the ASGI application. Provider request leases and task control satisfy
+the consumer-owned ports in [application/ports.py](src/free_claude_code/application/ports.py); Admin operations retain
+their inbound-adapter port in [api/ports.py](src/free_claude_code/api/ports.py).
+
+### Browser Session Lifecycle
+
+[application/browser_sessions.py](src/free_claude_code/application/browser_sessions.py)
+owns the neutral session views, lifecycle states, errors, and API-facing port.
+[runtime/browser_sessions/](src/free_claude_code/runtime/browser_sessions/) owns
+the concrete JSON store, harness drivers, PTY adapters, terminal output, and
+process lifecycle. [api/session_routes.py](src/free_claude_code/api/session_routes.py)
+maps that port to local Admin REST and WebSocket contracts; it does not import
+runtime implementations.
+
+The metadata store at `~/.fcc/browser-sessions.json` persists only project
+paths, FCC labels, immutable harness choices, and harness-native session IDs.
+Live state, PIDs, terminal output, and attachments are process-local. Writes use
+same-directory atomic replacement, and unreadable or unknown schemas disable
+Sessions without replacing the customer's file or preventing the proxy from
+starting.
+
+Drivers own native continuity. FCC assigns Claude and Pi UUIDs under their
+documented session flags. Codex assigns its own thread ID: the Codex driver uses
+one bounded stdio `app-server` `thread/start` exchange, records the returned ID,
+closes stdin, requires a clean helper exit so Codex commits that ID, and launches
+the ordinary TUI with `fcc-codex resume`.
+FCC does not inspect private transcript files, parse terminal output for IDs, or
+use the experimental App Server WebSocket transport.
+
+The long-lived process is always the existing `fcc-claude`, `fcc-codex`, or
+`fcc-pi` wrapper under a real ConPTY/PTY. It is launched directly as argv in the
+project directory; FCC never launches an interactive shell or leaves a shell
+prompt behind the harness. Platform package shims may use their normal child
+interpreter, but the wrapper and PTY close when the harness exits. The manager
+continuously drains output into a bounded in-memory ring, admits one browser
+controller per session, and disconnects a slow browser instead of blocking the
+harness. Browser disconnect only detaches. Explicit stop/delete and
+`ApplicationRuntime` shutdown terminate the complete owned process tree before
+provider shutdown.
+
+Every browser-session HTTP request and WebSocket upgrade reuses the Admin
+loopback client and local-Origin checks. Terminal input and dimensions are
+bounded at the adapter edge. Admin assets, including the vendored xterm runtime,
+are exact-allowlisted, packaged locally, and always served with the Admin
+no-store policy.
 
 [api/app.py](src/free_claude_code/api/app.py) registers routers and exception
 handlers around an explicit `ApiServices` value, then wraps the application in a
@@ -264,9 +311,9 @@ not read global settings or construct runtime resources.
 [runtime/application.py](src/free_claude_code/runtime/application.py) owns process startup and shutdown, optional messaging,
 the selected transcriber, the managed CLI session manager, Admin pending state,
 connected-account use cases, and the injected restart callback. Shutdown is
-serialized and ordered: quiesce
-messaging ingress, cancel and drain workflow/CLI work, flush persistence, close
-delivery, close transcription, close providers, then close connected-account
+serialized and ordered: quiesce messaging ingress, cancel and drain workflow/CLI
+work, flush persistence, close delivery, close transcription, stop
+browser-session process trees, close providers, then close connected-account
 login and HTTP resources. An owner reference is
 released only after its cleanup succeeds; cancellation or failure leaves the
 incomplete graph retryable. Teardown stops at a failed dependency gate rather

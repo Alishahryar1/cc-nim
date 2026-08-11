@@ -10,6 +10,7 @@ MESSAGING_STATE_DIRNAME = "agent_workspace"
 FCC_LOGS_DIRNAME = "logs"
 SERVER_LOG_FILENAME = "server.log"
 CODEX_MODEL_CATALOG_FILENAME = "codex-model-catalog.json"
+BROWSER_SESSIONS_FILENAME = "browser-sessions.json"
 AUTH_DIRNAME = "auth"
 OPENAI_AUTH_FILENAME = "openai.json"
 OPENAI_AUTH_LOCK_FILENAME = "openai.lock"
@@ -53,6 +54,12 @@ def codex_model_catalog_path() -> Path:
     """Return the generated Codex model catalog path."""
 
     return config_dir_path() / CODEX_MODEL_CATALOG_FILENAME
+
+
+def browser_sessions_path() -> Path:
+    """Return the browser Sessions metadata path."""
+
+    return config_dir_path() / BROWSER_SESSIONS_FILENAME
 
 
 def openai_auth_path() -> Path:

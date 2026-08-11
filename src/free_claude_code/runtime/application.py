@@ -14,6 +14,7 @@ from loguru import logger
 import free_claude_code.cli.managed as cli_managed
 import free_claude_code.messaging.session as messaging_session
 import free_claude_code.messaging.workflow as messaging_workflow_module
+from free_claude_code.application.browser_sessions import BrowserSessionLifecyclePort
 from free_claude_code.application.connected_accounts import (
     ConnectedAccountLoginMode,
     ConnectedAccountPort,
@@ -114,11 +115,13 @@ class ApplicationRuntime:
         transcriber: Transcriber | None,
         restart_callback: RestartCallback | None = None,
         connected_accounts: Mapping[str, ConnectedAccountPort] | None = None,
+        browser_sessions: BrowserSessionLifecyclePort | None = None,
     ) -> None:
         self.provider_manager = provider_manager
         self._transcriber = transcriber
         self._restart_callback = restart_callback
         self._connected_accounts = dict(connected_accounts or {})
+        self._browser_sessions = browser_sessions
         self._connected_account_revisions = {
             provider_id: manager.status().revision
             for provider_id, manager in self._connected_accounts.items()
@@ -133,6 +136,7 @@ class ApplicationRuntime:
         self._started = False
         self._closed = False
         self._provider_manager_closed = False
+        self._browser_sessions_closed = browser_sessions is None
         self._connected_accounts_closed = False
         self._close_lock = asyncio.Lock()
 
@@ -445,6 +449,15 @@ class ApplicationRuntime:
         if not await self._cleanup_transcriber():
             return False
         verbose = self.settings.log_api_error_tracebacks
+        if not self._browser_sessions_closed:
+            assert self._browser_sessions is not None
+            self._browser_sessions_closed = await best_effort(
+                "browser_sessions.close",
+                self._browser_sessions.close(),
+                log_verbose_errors=verbose,
+            )
+            if not self._browser_sessions_closed:
+                return False
         if not self._provider_manager_closed:
             self._provider_manager_closed = await best_effort(
                 "provider_manager.close",

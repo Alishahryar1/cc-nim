@@ -436,6 +436,27 @@ async def test_close_retries_connected_account_without_reclosing_providers() -> 
 
 
 @pytest.mark.asyncio
+async def test_close_retries_browser_sessions_before_closing_providers() -> None:
+    manager = ProviderRuntimeManager(_settings("nvidia_nim/model"))
+    browser_sessions = MagicMock()
+    browser_sessions.close = AsyncMock(
+        side_effect=[RuntimeError("terminal cleanup failed"), None]
+    )
+    runtime = ApplicationRuntime(
+        manager,
+        transcriber=None,
+        browser_sessions=browser_sessions,
+    )
+
+    assert await runtime.close() is False
+    assert manager._closed is False
+
+    assert await runtime.close() is True
+    assert browser_sessions.close.await_count == 2
+    assert manager._closed is True
+
+
+@pytest.mark.asyncio
 async def test_connected_account_status_reports_cached_model_count() -> None:
     account = MagicMock()
     account.is_connected.return_value = True

@@ -150,7 +150,7 @@ def test_admin_cache_policy_does_not_match_similar_public_paths(monkeypatch, tmp
 
 
 def test_admin_api_fetches_bypass_browser_cache():
-    script = Path("src/free_claude_code/api/admin_static/admin.js").read_text(
+    script = Path("src/free_claude_code/api/admin_static/admin-api.js").read_text(
         encoding="utf-8"
     )
 

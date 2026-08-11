@@ -9,6 +9,7 @@ import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
 from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
+from starlette.requests import HTTPConnection
 
 from free_claude_code.application.connected_accounts import (
     ConnectedAccountLoginMode,
@@ -29,6 +30,15 @@ from .ports import ApiServices
 router = APIRouter()
 
 STATIC_DIR = Path(__file__).resolve().parent / "admin_static"
+ADMIN_ASSETS = {
+    "admin-api.js",
+    "admin.css",
+    "admin.js",
+    "sessions.js",
+    "vendor/addon-fit.js",
+    "vendor/xterm.css",
+    "vendor/xterm.js",
+}
 LOCAL_PROVIDER_PATHS = {
     "lmstudio": "/models",
     "llamacpp": "/models",
@@ -67,7 +77,7 @@ def _origin_is_local(origin: str | None) -> bool:
     return _is_loopback_host(parsed.hostname)
 
 
-def require_loopback_admin(request: Request) -> None:
+def require_loopback_admin(request: HTTPConnection) -> None:
     """Allow admin access only from the local machine."""
 
     client_host = request.client.host if request.client else None
@@ -79,8 +89,8 @@ def require_loopback_admin(request: Request) -> None:
         raise HTTPException(status_code=403, detail="Admin UI is local-only")
 
 
-def _asset_response(filename: str) -> FileResponse:
-    path = STATIC_DIR / filename
+def _asset_response(asset_path: str) -> FileResponse:
+    path = STATIC_DIR / asset_path
     if not path.is_file():
         raise HTTPException(status_code=404, detail="Admin asset not found")
     return FileResponse(path)
@@ -92,12 +102,12 @@ async def admin_page(request: Request):
     return _asset_response("index.html")
 
 
-@router.get("/admin/assets/{filename}", include_in_schema=False)
-async def admin_asset(filename: str, request: Request):
+@router.get("/admin/assets/{asset_path:path}", include_in_schema=False)
+async def admin_asset(asset_path: str, request: Request):
     require_loopback_admin(request)
-    if filename not in {"admin.css", "admin.js"}:
+    if asset_path not in ADMIN_ASSETS:
         raise HTTPException(status_code=404, detail="Admin asset not found")
-    return _asset_response(filename)
+    return _asset_response(asset_path)
 
 
 @router.get("/admin/api/config")

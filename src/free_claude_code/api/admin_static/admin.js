@@ -5,11 +5,19 @@ const state = {
   modelOptions: [],
   modelComboboxes: new Set(),
   authPollers: new Map(),
-  activeView: "providers",
+  activeView: "sessions",
 };
 
 const MASKED_SECRET = "********";
+const api = window.FCCAdminApi;
 const VIEW_GROUPS = [
+  {
+    id: "sessions",
+    label: "Sessions",
+    title: "Sessions",
+    sections: [],
+    containerId: null,
+  },
   {
     id: "providers",
     label: "Providers",
@@ -66,31 +74,12 @@ function statusClass(status) {
   return "neutral";
 }
 
-async function api(path, options = {}) {
-  const response = await fetch(path, {
-    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-    ...options,
-    cache: "no-store",
-  });
-  if (!response.ok) {
-    let detail = "";
-    try {
-      const payload = await response.json();
-      detail = typeof payload.detail === "string" ? payload.detail : "";
-    } catch {
-      // The status remains useful when an upstream proxy returns a non-JSON page.
-    }
-    throw new Error(detail || `${response.status} ${response.statusText}`);
-  }
-  return response.json();
-}
-
 async function load() {
+  renderNav();
   showMessage("Loading admin config");
   const config = await api("/admin/api/config");
   state.config = config;
   state.fields = new Map(config.fields.map((field) => [field.key, field]));
-  renderNav();
   renderProviders(config.provider_status);
   renderSections(config.sections, config.fields);
   byId("configPath").textContent = config.paths.managed;
@@ -143,6 +132,15 @@ function setActiveView(viewId, { scroll = false } = {}) {
     view.classList.toggle("active", selected);
     view.hidden = !selected;
   });
+
+  const sessionsActive = activeView.id === "sessions";
+  document.querySelector(".app-shell").classList.toggle("sessions-active", sessionsActive);
+  document.querySelector(".action-bar").hidden = sessionsActive;
+  if (sessionsActive) {
+    window.FCCSessions.activate();
+  } else {
+    window.FCCSessions.deactivate();
+  }
 
   if (scroll) {
     window.scrollTo({ top: 0, behavior: "smooth" });
@@ -432,7 +430,7 @@ function updateProviderCard(providerId, status, label, metaText) {
 function renderSections(sections, fields) {
   state.modelComboboxes.clear();
   VIEW_GROUPS.forEach((view) => {
-    byId(view.containerId).innerHTML = "";
+    if (view.containerId) byId(view.containerId).innerHTML = "";
   });
 
   const sectionById = new Map(sections.map((section) => [section.id, section]));
@@ -444,6 +442,7 @@ function renderSections(sections, fields) {
   });
 
   VIEW_GROUPS.forEach((view) => {
+    if (!view.containerId) return;
     const container = byId(view.containerId);
     view.sections.forEach((sectionId) => {
       const section = sectionById.get(sectionId);

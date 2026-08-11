@@ -7,7 +7,7 @@ from pathlib import Path
 from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
 from free_claude_code.config.logging_config import configure_logging
-from free_claude_code.config.paths import server_log_path
+from free_claude_code.config.paths import browser_sessions_path, server_log_path
 from free_claude_code.config.settings import Settings
 from free_claude_code.messaging.transcription import TranscriptionService
 from free_claude_code.messaging.voice import Transcriber
@@ -23,6 +23,8 @@ from free_claude_code.providers.runtime.factory import create_provider
 
 from .application import ApplicationRuntime, RestartCallback
 from .asgi import RuntimeASGIApp
+from .browser_sessions import BrowserSessionManager
+from .browser_sessions.store import BrowserSessionStore
 from .codex_catalog import CodexModelCatalogPublisher
 from .provider_manager import ProviderRuntimeManager
 
@@ -54,16 +56,21 @@ def build_asgi_app(
         connected_provider_ids=openai_auth.connected_provider_ids,
         model_catalog_publisher=CodexModelCatalogPublisher(),
     )
+    browser_sessions = BrowserSessionManager(
+        BrowserSessionStore(browser_sessions_path())
+    )
     runtime = ApplicationRuntime(
         provider_manager,
         transcriber=_create_transcriber(settings),
         restart_callback=restart_callback,
         connected_accounts={"openai": openai_auth},
+        browser_sessions=browser_sessions,
     )
     services = ApiServices(
         requests=provider_manager,
         admin=runtime,
         tasks=runtime,
+        sessions=browser_sessions,
     )
     return RuntimeASGIApp(create_app(services), runtime)
 

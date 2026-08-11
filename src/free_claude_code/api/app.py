@@ -31,6 +31,7 @@ from .request_ids import (
     get_request_id,
 )
 from .routes import router
+from .session_routes import router as session_router
 from .validation_log import summarize_request_validation_body
 
 
@@ -42,6 +43,7 @@ def create_app(services: ApiServices) -> FastAPI:
     app.add_middleware(AdminNoStoreMiddleware)
 
     app.include_router(admin_router)
+    app.include_router(session_router)
     app.include_router(router)
 
     @app.exception_handler(RequestValidationError)
