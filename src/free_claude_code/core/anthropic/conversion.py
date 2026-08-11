@@ -1,6 +1,7 @@
 """Message and tool format converters."""
 
 import json
+import re
 from copy import deepcopy
 from dataclasses import dataclass, field
 from enum import StrEnum
@@ -204,6 +205,24 @@ def _openai_system_text(
     return "\n\n".join(text_parts)
 
 
+_DATA_URL_BASE64_PREFIX = re.compile(r"^data:[^,]*;base64,", re.IGNORECASE)
+_BASE64_WHITESPACE = re.compile(r"\s+")
+
+
+def normalize_base64_image_data(data: str) -> str:
+    """Return raw base64 payload from a possibly-prefixed image data string.
+
+    Clients sometimes send a full ``data:<media-type>;base64,`` URL in the
+    ``data`` field, or include line-wrapping whitespace. Both corrupt the payload
+    and cause upstream base64 decoders to fail (e.g. "Non-base64 digit found").
+    Strip any existing data-URL prefix and remove whitespace so the value is
+    clean base64 before it is re-wrapped.
+    """
+    cleaned = data.strip()
+    cleaned = _DATA_URL_BASE64_PREFIX.sub("", cleaned)
+    return _BASE64_WHITESPACE.sub("", cleaned)
+
+
 def _openai_user_image_part(block: Any) -> dict[str, Any]:
     """Convert one Anthropic user image block without performing I/O."""
     source = get_block_attr(block, "source", {})
@@ -217,6 +236,9 @@ def _openai_user_image_part(block: Any) -> dict[str, Any]:
             )
         data = get_block_attr(source, "data")
         if not isinstance(data, str) or not data.strip():
+            raise OpenAIConversionError("Base64 image source requires non-empty data.")
+        data = normalize_base64_image_data(data)
+        if not data:
             raise OpenAIConversionError("Base64 image source requires non-empty data.")
         url = f"data:{media_type};base64,{data}"
     elif source_type == "url":

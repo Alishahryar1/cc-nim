@@ -4,7 +4,10 @@ import json
 from typing import Any
 
 from free_claude_code.core.anthropic.content import get_block_attr, get_block_type
-from free_claude_code.core.anthropic.conversion import resolve_anthropic_tool_choice
+from free_claude_code.core.anthropic.conversion import (
+    normalize_base64_image_data,
+    resolve_anthropic_tool_choice,
+)
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.request_serialization import (
     serialize_tool_result_content,
@@ -294,6 +297,9 @@ def _image_part(block: Any) -> dict[str, Any]:
         data = get_block_attr(source, "data")
         if not isinstance(media_type, str) or not isinstance(data, str):
             raise ResponsesConversionError("Base64 images require media_type and data.")
+        data = normalize_base64_image_data(data)
+        if not data:
+            raise ResponsesConversionError("Base64 images require non-empty data.")
         url = f"data:{media_type};base64,{data}"
     else:
         raise ResponsesConversionError(

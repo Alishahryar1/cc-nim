@@ -1117,6 +1117,20 @@ def test_assistant_redacted_thinking_omitted_from_openai_chat():
             {"type": "url", "url": "https://example.com/image.png"},
             "https://example.com/image.png",
         ),
+        # Client already sent a full data URL in `data` — prefix must not be doubled.
+        (
+            {
+                "type": "base64",
+                "media_type": "image/png",
+                "data": "data:image/png;base64,AAAA",
+            },
+            "data:image/png;base64,AAAA",
+        ),
+        # Line-wrapped / whitespace-padded base64 must be compacted.
+        (
+            {"type": "base64", "media_type": "image/png", "data": "AA AA\n\tBB"},
+            "data:image/png;base64,AAAABB",
+        ),
     ],
 )
 def test_convert_user_message_image_sources(source, expected_url):
