@@ -25,7 +25,12 @@ from free_claude_code.config.provider_catalog import (
     ZAI_DEFAULT_BASE,
 )
 from free_claude_code.providers.admission import ProviderAdmissionController
+from free_claude_code.providers.agent_router import AgentRouterProvider
+from free_claude_code.providers.alibaba import AlibabaProvider
+from free_claude_code.providers.anthropic_compatible import AnthropicCompatibleProvider
+from free_claude_code.providers.antigravity import AntigravityProvider
 from free_claude_code.providers.cloudflare import CloudflareProvider
+from free_claude_code.providers.command_code import CommandCodeProvider
 from free_claude_code.providers.deepseek import DeepSeekProvider
 from free_claude_code.providers.gemini import GeminiProvider
 from free_claude_code.providers.github_models import GitHubModelsProvider
@@ -40,6 +45,7 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProvider,
 )
 from free_claude_code.providers.openai_codex import OpenAICodexProvider
+from free_claude_code.providers.openai_compatible import OpenAICompatibleProvider
 from free_claude_code.providers.runtime import (
     ProviderRuntime,
     build_provider_config,
@@ -109,6 +115,8 @@ def _make_settings(**overrides):
     mock.vertex_project_id = "test-vertex-project"
     mock.vertex_location = "global"
     mock.vertex_proxy = ""
+    mock.antigravity_api_key = "test_antigravity_key"
+    mock.antigravity_proxy = ""
     mock.groq_api_key = ""
     mock.groq_proxy = ""
     mock.cerebras_api_key = ""
@@ -472,6 +480,12 @@ def test_create_provider_instantiates_each_builtin():
         provider_rate_window=11,
         provider_max_concurrency=3,
         sambanova_api_key="test_sambanova_key",
+        agentrouter_api_key="test_agentrouter_key",
+        commandcode_api_key="test_commandcode_key",
+        tokenrouter_api_key="test_tokenrouter_key",
+        alibaba_api_key="test_alibaba_key",
+        openai_compatible_api_key="test_openai_compatible_key",
+        anthropic_compatible_api_key="test_anthropic_compatible_key",
     )
     cases = {
         "nvidia_nim": NvidiaNimProvider,
@@ -499,13 +513,19 @@ def test_create_provider_instantiates_each_builtin():
         "cohere": OpenAIChatProvider,
         "github_models": GitHubModelsProvider,
         "zai": OpenAIChatProvider,
-        "tokenrouter": OpenAIChatProvider,
         "gemini": GeminiProvider,
         "vertex": VertexProvider,
         "groq": GroqProvider,
         "sambanova": OpenAIChatProvider,
         "kilo": KiloProvider,
         "cerebras": OpenAIChatProvider,
+        "antigravity": AntigravityProvider,
+        "agentrouter": AgentRouterProvider,
+        "commandcode": CommandCodeProvider,
+        "tokenrouter": OpenAIChatProvider,
+        "alibaba": AlibabaProvider,
+        "openai_compatible": OpenAICompatibleProvider,
+        "anthropic_compatible": AnthropicCompatibleProvider,
     }
     sentinel_admission = MagicMock(spec=ProviderAdmissionController)
     auth = MagicMock()

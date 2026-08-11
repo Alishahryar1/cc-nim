@@ -148,9 +148,17 @@ def _candidate_from_model_id(
     return None
 
 
+def _determine_context_window(candidate: _CatalogCandidate) -> int:
+    text = (candidate.slug + " " + candidate.display_name).lower()
+    if "2m" in text:
+        return 2000000
+    return 1048576
+
+
 def _codex_catalog_entry(
     candidate: _CatalogCandidate, *, priority: int
 ) -> dict[str, Any]:
+    context_size = _determine_context_window(candidate)
     return {
         "slug": candidate.slug,
         "display_name": candidate.display_name,
@@ -173,8 +181,8 @@ def _codex_catalog_entry(
         "truncation_policy": {"mode": "tokens", "limit": 10000},
         "supports_parallel_tool_calls": True,
         "supports_image_detail_original": True,
-        "context_window": 200000,
-        "max_context_window": 200000,
+        "context_window": context_size,
+        "max_context_window": context_size,
         "effective_context_window_percent": 95,
         "experimental_supported_tools": [],
         "input_modalities": ["text"],

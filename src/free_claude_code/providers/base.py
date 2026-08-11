@@ -15,6 +15,7 @@ from free_claude_code.core.diagnostics import (
 )
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.core.trace import trace_event
+from free_claude_code.providers.admission import ProviderAdmissionController
 
 
 @dataclass(frozen=True, slots=True)
@@ -41,8 +42,29 @@ class ProviderConfig:
 class BaseProvider(ABC):
     """Base class for all providers. Extend this to add your own."""
 
-    def __init__(self, config: ProviderConfig):
+    _admission: ProviderAdmissionController
+
+    def __init__(
+        self,
+        config: ProviderConfig,
+        admission: ProviderAdmissionController | None = None,
+    ):
         self._config = config
+        self._admission = (
+            admission
+            if admission is not None
+            else ProviderAdmissionController(provider_name="default")
+        )
+
+    def _is_thinking_enabled(
+        self, request: MessagesRequest, thinking_enabled: bool | None = None
+    ) -> bool:
+        if thinking_enabled is not None:
+            return thinking_enabled
+        thinking = request.thinking
+        if isinstance(thinking, dict):
+            return thinking.get("type") == "enabled"
+        return getattr(thinking, "type", None) == "enabled"
 
     @abstractmethod
     def preflight_stream(

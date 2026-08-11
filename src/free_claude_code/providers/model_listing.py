@@ -3,9 +3,9 @@
 from collections.abc import Iterable, Mapping, Sequence
 from typing import Any
 
-from free_claude_code.application.model_metadata import (
-    ProviderModelInfo as _ProviderModelInfo,
-)
+from free_claude_code.application.model_metadata import ProviderModelInfo
+
+_ProviderModelInfo = ProviderModelInfo
 
 
 class ModelListResponseError(ValueError):
@@ -41,6 +41,14 @@ def extract_openai_model_infos(
     if not model_ids:
         raise _malformed(provider_name, "response did not include any model ids")
     return model_infos_from_ids(model_ids)
+
+
+def extract_openai_model_ids(payload: Any, *, provider_name: str) -> frozenset[str]:
+    """Extract raw model id strings from an OpenAI-compatible /models response."""
+    return frozenset(
+        info.model_id
+        for info in extract_openai_model_infos(payload, provider_name=provider_name)
+    )
 
 
 def extract_tool_capable_model_infos(

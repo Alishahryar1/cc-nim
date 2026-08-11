@@ -99,6 +99,57 @@ class Settings(BaseSettings):
         validation_alias="TOKENROUTER_BASE_URL",
     )
 
+    # ==================== Google Antigravity Config ====================
+    antigravity_api_key: str = Field(default="", validation_alias="ANTIGRAVITY_API_KEY")
+    antigravity_proxy: str = Field(default="", validation_alias="ANTIGRAVITY_PROXY")
+
+    # ==================== AgentRouter Config ====================
+    agentrouter_api_key: str = Field(default="", validation_alias="AGENTROUTER_API_KEY")
+    agentrouter_base_url: str = Field(
+        default="https://ps.air-outer.com/v1", validation_alias="AGENTROUTER_BASE_URL"
+    )
+    agentrouter_proxy: str = Field(default="", validation_alias="AGENTROUTER_PROXY")
+
+    # ==================== CommandCode Config ====================
+    commandcode_api_key: str = Field(default="", validation_alias="COMMANDCODE_API_KEY")
+    commandcode_base_url: str = Field(
+        default="https://api.commandcode.ai/provider/v1",
+        validation_alias="COMMANDCODE_BASE_URL",
+    )
+    commandcode_proxy: str = Field(default="", validation_alias="COMMANDCODE_PROXY")
+
+    # ==================== Alibaba Config ====================
+    alibaba_api_key: str = Field(default="", validation_alias="ALIBABA_API_KEY")
+    alibaba_base_url: str = Field(
+        default="https://dashscope-intl.aliyuncs.com/compatible-mode/v1",
+        validation_alias="ALIBABA_BASE_URL",
+    )
+    alibaba_proxy: str = Field(default="", validation_alias="ALIBABA_PROXY")
+
+    # ==================== OpenAI Compatible Config ====================
+    openai_compatible_api_key: str = Field(
+        default="", validation_alias="OPENAI_COMPATIBLE_API_KEY"
+    )
+    openai_compatible_base_url: str = Field(
+        default="https://api.openai.com/v1",
+        validation_alias="OPENAI_COMPATIBLE_BASE_URL",
+    )
+    openai_compatible_proxy: str = Field(
+        default="", validation_alias="OPENAI_COMPATIBLE_PROXY"
+    )
+
+    # ==================== Anthropic Compatible Config ====================
+    anthropic_compatible_api_key: str = Field(
+        default="", validation_alias="ANTHROPIC_COMPATIBLE_API_KEY"
+    )
+    anthropic_compatible_base_url: str = Field(
+        default="https://api.anthropic.com/v1",
+        validation_alias="ANTHROPIC_COMPATIBLE_BASE_URL",
+    )
+    anthropic_compatible_proxy: str = Field(
+        default="", validation_alias="ANTHROPIC_COMPATIBLE_PROXY"
+    )
+
     # ==================== Fireworks AI Config ====================
     fireworks_api_key: str = Field(default="", validation_alias="FIREWORKS_API_KEY")
 
@@ -443,7 +494,16 @@ class Settings(BaseSettings):
                 f"Valid providers: {', '.join(SUPPORTED_PROVIDER_IDS)}. "
                 f"Format: provider_type/model/name"
             )
-        provider = v.split("/", 1)[0]
+        provider, model_name = v.split("/", 1)
+        aliases = {
+            "token_router": "tokenrouter",
+            "agent_router": "agentrouter",
+            "command_code": "commandcode",
+        }
+        if provider in aliases:
+            provider = aliases[provider]
+            v = f"{provider}/{model_name}"
+
         if provider not in SUPPORTED_PROVIDER_IDS:
             supported = ", ".join(f"'{p}'" for p in SUPPORTED_PROVIDER_IDS)
             raise ValueError(f"Invalid provider: '{provider}'. Supported: {supported}")

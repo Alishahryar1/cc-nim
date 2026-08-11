@@ -85,7 +85,28 @@ def _value_for_settings_attr(
 ) -> str:
     for field in FIELDS:
         if field.settings_attr == settings_attr:
-            return str(state.get(field.key, {}).get("value", field.default))
+            val = str(state.get(field.key, {}).get("value", field.default))
+            if val.strip():
+                return val
+            if settings_attr == "antigravity_api_key":
+                import os
+                from pathlib import Path
+
+                token_paths = [
+                    Path(
+                        "~/.gemini/antigravity-cli/antigravity-oauth-token"
+                    ).expanduser(),
+                    Path("~/.config/antigravity/oauth_token.json").expanduser(),
+                ]
+                env_file = os.environ.get("ANTIGRAVITY_TOKEN_FILE")
+                if env_file:
+                    token_paths.insert(0, Path(env_file).expanduser())
+
+                if os.environ.get("ANTIGRAVITY_ACCESS_TOKEN") or any(
+                    p.is_file() for p in token_paths
+                ):
+                    return "auto_discovered"
+            return val
     return ""
 
 

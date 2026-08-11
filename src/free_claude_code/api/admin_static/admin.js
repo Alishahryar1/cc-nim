@@ -93,7 +93,8 @@ async function load() {
   renderNav();
   renderProviders(config.provider_status);
   renderSections(config.sections, config.fields);
-  byId("configPath").textContent = config.paths.managed;
+  const configPathEl = byId("configPath");
+  if (configPathEl) configPathEl.textContent = config.paths ? config.paths.managed : "";
   await refreshConnectedAccounts();
   await hydrateModelOptions();
   await validate(false);
@@ -104,6 +105,7 @@ async function load() {
 
 function renderNav() {
   const nav = byId("sectionNav");
+  if (!nav) return;
   nav.innerHTML = "";
   VIEW_GROUPS.forEach((view, index) => {
     const button = document.createElement("button");
@@ -126,7 +128,8 @@ function setActiveView(viewId, { scroll = false } = {}) {
   const activeView =
     VIEW_GROUPS.find((view) => view.id === viewId) || VIEW_GROUPS[0];
   state.activeView = activeView.id;
-  byId("pageTitle").textContent = activeView.title;
+  const pageTitleEl = byId("pageTitle");
+  if (pageTitleEl) pageTitleEl.textContent = activeView.title;
 
   document.querySelectorAll(".nav-link").forEach((link) => {
     const selected = link.dataset.view === activeView.id;
@@ -152,15 +155,17 @@ function setActiveView(viewId, { scroll = false } = {}) {
 function renderProviders(providerStatus) {
   const grid = byId("providerGrid");
   const connectedGrid = byId("connectedAccountGrid");
-  grid.innerHTML = "";
-  connectedGrid.innerHTML = "";
-  const connected = providerStatus.filter(
+  if (grid) grid.innerHTML = "";
+  if (connectedGrid) connectedGrid.innerHTML = "";
+  const statusList = providerStatus || [];
+  const connected = statusList.filter(
     (provider) => provider.kind === "connected_account",
   );
-  byId("connectedAccountsSection").hidden = connected.length === 0;
-  providerStatus.forEach((provider) => {
+  const connectedSec = byId("connectedAccountsSection");
+  if (connectedSec) connectedSec.hidden = connected.length === 0;
+  statusList.forEach((provider) => {
     if (provider.kind === "connected_account") {
-      connectedGrid.appendChild(renderConnectedAccountCard(provider));
+      if (connectedGrid) connectedGrid.appendChild(renderConnectedAccountCard(provider));
       return;
     }
     const card = document.createElement("article");
@@ -190,7 +195,7 @@ function renderProviders(providerStatus) {
     button.addEventListener("click", () => testProvider(provider.provider_id, button));
 
     card.append(title, meta, button);
-    grid.appendChild(card);
+    if (grid) grid.appendChild(card);
   });
 }
 
@@ -432,19 +437,23 @@ function updateProviderCard(providerId, status, label, metaText) {
 function renderSections(sections, fields) {
   state.modelComboboxes.clear();
   VIEW_GROUPS.forEach((view) => {
-    byId(view.containerId).innerHTML = "";
+    const el = byId(view.containerId);
+    if (el) el.innerHTML = "";
   });
 
-  const sectionById = new Map(sections.map((section) => [section.id, section]));
+  const secList = sections || [];
+  const fieldList = fields || [];
+  const sectionById = new Map(secList.map((section) => [section.id, section]));
   const bySection = new Map();
-  sections.forEach((section) => bySection.set(section.id, []));
-  fields.forEach((field) => {
+  secList.forEach((section) => bySection.set(section.id, []));
+  fieldList.forEach((field) => {
     if (!bySection.has(field.section)) bySection.set(field.section, []);
     bySection.get(field.section).push(field);
   });
 
   VIEW_GROUPS.forEach((view) => {
     const container = byId(view.containerId);
+    if (!container) return;
     view.sections.forEach((sectionId) => {
       const section = sectionById.get(sectionId);
       const sectionFields = bySection.get(sectionId) || [];
@@ -955,12 +964,16 @@ function setModelOptions(models) {
 
 function showMessage(message, kind = "") {
   const area = byId("messageArea");
-  area.textContent = message;
-  area.className = `message-area ${kind}`.trim();
+  if (area) {
+    area.textContent = message;
+    area.className = `message-area ${kind}`.trim();
+  }
 }
 
-byId("validateButton").addEventListener("click", () => validate(true));
-byId("applyButton").addEventListener("click", apply);
+const validateBtn = byId("validateButton");
+if (validateBtn) validateBtn.addEventListener("click", () => validate(true));
+const applyBtn = byId("applyButton");
+if (applyBtn) applyBtn.addEventListener("click", apply);
 document.addEventListener("pointerdown", (event) => {
   state.modelComboboxes.forEach((combobox) => {
     if (combobox.isOpen && !combobox.element.contains(event.target)) combobox.close();

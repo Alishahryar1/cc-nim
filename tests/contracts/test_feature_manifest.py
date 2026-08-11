@@ -3,8 +3,13 @@ from pathlib import Path
 
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.messaging.platforms.factory import create_messaging_components
+from free_claude_code.providers.agent_router import AgentRouterProvider
+from free_claude_code.providers.alibaba import AlibabaProvider
+from free_claude_code.providers.anthropic_compatible import AnthropicCompatibleProvider
+from free_claude_code.providers.antigravity import AntigravityProvider
 from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.cloudflare import CloudflareProvider
+from free_claude_code.providers.command_code import CommandCodeProvider
 from free_claude_code.providers.deepseek import DeepSeekProvider
 from free_claude_code.providers.gemini import GeminiProvider
 from free_claude_code.providers.github_models import GitHubModelsProvider
@@ -19,6 +24,7 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProvider,
 )
 from free_claude_code.providers.openai_codex import OpenAICodexProvider
+from free_claude_code.providers.openai_compatible import OpenAICompatibleProvider
 from free_claude_code.providers.vertex import VertexProvider
 from smoke.features import FEATURE_INVENTORY
 
@@ -76,6 +82,12 @@ def test_provider_and_platform_registries_include_builtins() -> None:
         "groq": GroqProvider,
         "gemini": GeminiProvider,
         "vertex": VertexProvider,
+        "antigravity": AntigravityProvider,
+        "agentrouter": AgentRouterProvider,
+        "commandcode": CommandCodeProvider,
+        "alibaba": AlibabaProvider,
+        "openai_compatible": OpenAICompatibleProvider,
+        "anthropic_compatible": AnthropicCompatibleProvider,
     }
     assert set(OPENAI_CHAT_PROFILES).isdisjoint(specialized_provider_classes)
     assert set(PROVIDER_CATALOG) == (

@@ -145,6 +145,68 @@ def _create_groq(
     return GroqProvider(config, admission=admission)
 
 
+def _create_antigravity(
+    config: ProviderConfig,
+    _settings: Settings,
+    admission: ProviderAdmissionController,
+) -> BaseProvider:
+    from free_claude_code.providers.antigravity import AntigravityProvider
+
+    return AntigravityProvider(config, admission=admission)
+
+
+def _create_agentrouter(
+    config: ProviderConfig,
+    _settings: Settings,
+    admission: ProviderAdmissionController,
+) -> BaseProvider:
+    from free_claude_code.providers.agent_router import AgentRouterProvider
+
+    return AgentRouterProvider(config, admission=admission)
+
+
+def _create_commandcode(
+    config: ProviderConfig,
+    _settings: Settings,
+    admission: ProviderAdmissionController,
+) -> BaseProvider:
+    from free_claude_code.providers.command_code import CommandCodeProvider
+
+    return CommandCodeProvider(config, admission=admission)
+
+
+def _create_alibaba(
+    config: ProviderConfig,
+    _settings: Settings,
+    admission: ProviderAdmissionController,
+) -> BaseProvider:
+    from free_claude_code.providers.alibaba import AlibabaProvider
+
+    return AlibabaProvider(config, admission=admission)
+
+
+def _create_openai_compatible(
+    config: ProviderConfig,
+    _settings: Settings,
+    admission: ProviderAdmissionController,
+) -> BaseProvider:
+    from free_claude_code.providers.openai_compatible import OpenAICompatibleProvider
+
+    return OpenAICompatibleProvider(config, admission=admission)
+
+
+def _create_anthropic_compatible(
+    config: ProviderConfig,
+    _settings: Settings,
+    admission: ProviderAdmissionController,
+) -> BaseProvider:
+    from free_claude_code.providers.anthropic_compatible import (
+        AnthropicCompatibleProvider,
+    )
+
+    return AnthropicCompatibleProvider(config, admission=admission)
+
+
 _SPECIAL_PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "nvidia_nim": _create_nvidia_nim,
     "open_router": _create_open_router,
@@ -157,6 +219,12 @@ _SPECIAL_PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "vertex": _create_vertex,
     "github_models": _create_github_models,
     "groq": _create_groq,
+    "antigravity": _create_antigravity,
+    "agentrouter": _create_agentrouter,
+    "commandcode": _create_commandcode,
+    "alibaba": _create_alibaba,
+    "openai_compatible": _create_openai_compatible,
+    "anthropic_compatible": _create_anthropic_compatible,
 }
 _INJECTED_PROVIDER_IDS = {"openai"}
 

@@ -10,6 +10,26 @@ from loguru import logger
 
 from ..models import MessagesRequest
 
+MIDSTREAM_RECOVERY_ATTEMPTS = 3
+
+
+class TruncatedProviderStreamError(Exception):
+    """Provider stream was prematurely terminated or truncated."""
+
+
+def is_retryable_stream_error(error: Exception) -> bool:
+    """Return whether a stream error is eligible for midstream recovery attempt."""
+    if isinstance(error, TruncatedProviderStreamError):
+        return True
+    err_str = str(error).lower()
+    return (
+        "interrupted" in err_str
+        or "connection" in err_str
+        or "timeout" in err_str
+        or "truncated" in err_str
+    )
+
+
 _RECOVERY_USER_PREFIX = (
     "The previous provider stream was interrupted. Continue the assistant response "
     "exactly where it stopped. Do not repeat text already written."

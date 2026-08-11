@@ -548,6 +548,59 @@ class AnthropicStreamLedger:
         ):
             self.blocks.thinking_started = False
 
+    def ingest_native_event(self, event_text: Any) -> str | None:
+        """Process a raw native SSE event text and return formatted event."""
+        if isinstance(event_text, str):
+            return event_text
+        if hasattr(event_text, "raw"):
+            return str(event_text.raw)
+        return str(event_text)
+
+    def can_append_content(self) -> bool:
+        return bool(self._open_stack) or not self.has_terminal_message()
+
+    def append_tool_repair_suffix(self, index: int, suffix: str) -> str:
+        return self.emit_tool_delta(index, suffix)
+
+    def append_thinking_suffix(self, suffix: str) -> list[str]:
+        events = list(self.ensure_thinking_block())
+        events.append(self.emit_thinking_delta(suffix))
+        return events
+
+    def append_text_suffix(self, suffix: str) -> list[str]:
+        events = list(self.ensure_text_block())
+        events.append(self.emit_text_delta(suffix))
+        return events
+
+    def success_tail(self, stop_reason: str = "end_turn") -> list[str]:
+        events = list(self.close_all_blocks())
+        events.append(self.message_delta(stop_reason, self.estimate_output_tokens()))
+        events.append(self.message_stop())
+        return events
+
+    def midstream_error_tail(self, error_message: str) -> list[str]:
+        events = list(self.close_all_blocks())
+        events.append(self.message_delta("error", self.estimate_output_tokens()))
+        events.append(self.message_stop())
+        return events
+
+    def emit_top_level_error(self, error_message: str) -> list[str]:
+        events = [self.message_start()]
+        events.extend(self.ensure_text_block())
+        events.append(self.emit_text_delta(error_message))
+        events.extend(self.close_all_blocks())
+        events.append(self.message_delta("error", self.estimate_output_tokens()))
+        events.append(self.message_stop())
+        return events
+
+    def emit_error(self, error_message: str) -> list[str]:
+        events = list(self.ensure_text_block())
+        events.append(self.emit_text_delta(error_message))
+        events.extend(self.close_all_blocks())
+        events.append(self.message_delta("error", self.estimate_output_tokens()))
+        events.append(self.message_stop())
+        return events
+
 
 def _normalize_task_run_in_background(args_json: dict[str, Any]) -> None:
     if args_json.get("run_in_background") is not False:

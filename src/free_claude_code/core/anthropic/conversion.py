@@ -51,7 +51,7 @@ def _openai_reject_native_only_top_level_fields(
     the OpenAI API but are allowed so clients do not hit spurious 400s.
     Unknown extra keys (``__pydantic_extra__``) are still rejected.
     """
-    extra = request_data.model_extra
+    extra = getattr(request_data, "model_extra", None)
     if not extra:
         return
     raise OpenAIConversionError(

@@ -19,7 +19,25 @@ def provider_credential(descriptor: ProviderDescriptor, settings: Settings) -> s
     if descriptor.static_credential is not None:
         return descriptor.static_credential
     if descriptor.credential_attr:
-        return string_setting(settings, descriptor.credential_attr)
+        val = string_setting(settings, descriptor.credential_attr)
+        if val and val.strip():
+            return val
+        if descriptor.provider_id == "antigravity":
+            import os
+
+            from free_claude_code.providers.antigravity.auth import (
+                find_token_file,
+                load_antigravity_token,
+            )
+
+            if os.environ.get("ANTIGRAVITY_ACCESS_TOKEN") or find_token_file():
+                try:
+                    data = load_antigravity_token()
+                    if data and data.get("access_token"):
+                        return data["access_token"]
+                except Exception:
+                    pass
+                return "auto_discovered"
     return ""
 
 

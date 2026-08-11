@@ -51,6 +51,12 @@ KILO_DEFAULT_BASE = "https://api.kilo.ai/api/gateway"
 OPENAI_CODEX_DEFAULT_BASE = "https://chatgpt.com/backend-api/codex"
 # TokenRouter OpenAI-compatible Chat Completions gateway.
 TOKENROUTER_DEFAULT_BASE = "https://api.tokenrouter.com/v1"
+ANTIGRAVITY_DEFAULT_BASE = "https://cloudcode-pa.googleapis.com"
+AGENTROUTER_DEFAULT_BASE = "https://ps.air-outer.com/v1"
+COMMANDCODE_DEFAULT_BASE = "https://api.commandcode.ai/provider/v1"
+ALIBABA_DEFAULT_BASE = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
+OPENAI_COMPATIBLE_DEFAULT_BASE = "https://api.openai.com/v1"
+ANTHROPIC_COMPATIBLE_DEFAULT_BASE = "https://api.anthropic.com/v1"
 
 
 class ProviderAuthKind(StrEnum):
@@ -348,6 +354,59 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         default_base_url=TOKENROUTER_DEFAULT_BASE,
         base_url_attr="tokenrouter_base_url",
         proxy_attr="tokenrouter_proxy",
+    ),
+    "antigravity": ProviderDescriptor(
+        provider_id="antigravity",
+        display_name="Google Antigravity CLI",
+        credential_env="ANTIGRAVITY_API_KEY",
+        credential_attr="antigravity_api_key",
+        default_base_url=ANTIGRAVITY_DEFAULT_BASE,
+        proxy_attr="antigravity_proxy",
+    ),
+    "agentrouter": ProviderDescriptor(
+        provider_id="agentrouter",
+        display_name="AgentRouter",
+        credential_env="AGENTROUTER_API_KEY",
+        credential_attr="agentrouter_api_key",
+        default_base_url=AGENTROUTER_DEFAULT_BASE,
+        base_url_attr="agentrouter_base_url",
+        proxy_attr="agentrouter_proxy",
+    ),
+    "commandcode": ProviderDescriptor(
+        provider_id="commandcode",
+        display_name="CommandCode",
+        credential_env="COMMANDCODE_API_KEY",
+        credential_attr="commandcode_api_key",
+        default_base_url=COMMANDCODE_DEFAULT_BASE,
+        base_url_attr="commandcode_base_url",
+        proxy_attr="commandcode_proxy",
+    ),
+    "alibaba": ProviderDescriptor(
+        provider_id="alibaba",
+        display_name="Alibaba DashScope",
+        credential_env="ALIBABA_API_KEY",
+        credential_attr="alibaba_api_key",
+        default_base_url=ALIBABA_DEFAULT_BASE,
+        base_url_attr="alibaba_base_url",
+        proxy_attr="alibaba_proxy",
+    ),
+    "openai_compatible": ProviderDescriptor(
+        provider_id="openai_compatible",
+        display_name="OpenAI Compatible",
+        credential_env="OPENAI_COMPATIBLE_API_KEY",
+        credential_attr="openai_compatible_api_key",
+        default_base_url=OPENAI_COMPATIBLE_DEFAULT_BASE,
+        base_url_attr="openai_compatible_base_url",
+        proxy_attr="openai_compatible_proxy",
+    ),
+    "anthropic_compatible": ProviderDescriptor(
+        provider_id="anthropic_compatible",
+        display_name="Anthropic Compatible",
+        credential_env="ANTHROPIC_COMPATIBLE_API_KEY",
+        credential_attr="anthropic_compatible_api_key",
+        default_base_url=ANTHROPIC_COMPATIBLE_DEFAULT_BASE,
+        base_url_attr="anthropic_compatible_base_url",
+        proxy_attr="anthropic_compatible_proxy",
     ),
     "ollama_cloud": ProviderDescriptor(
         provider_id="ollama_cloud",

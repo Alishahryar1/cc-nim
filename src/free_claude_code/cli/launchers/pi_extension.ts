@@ -3,7 +3,7 @@ import type { ExtensionAPI, ProviderModelConfig } from "@earendil-works/pi-codin
 const API_KEY_ENV = "FCC_PI_API_KEY";
 const BASE_URL_ENV = "FCC_PI_BASE_URL";
 const CATALOG_TIMEOUT_MS = 3000;
-const DEFAULT_CONTEXT_WINDOW = 128000;
+const DEFAULT_CONTEXT_WINDOW = 1000000;
 const DEFAULT_MAX_TOKENS = 16384;
 const NORMAL_MODEL_PREFIX = "anthropic/";
 const NO_THINKING_MODEL_PREFIX = "claude-3-freecc-no-thinking/";

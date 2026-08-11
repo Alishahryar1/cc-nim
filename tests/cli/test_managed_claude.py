@@ -67,7 +67,7 @@ def test_managed_claude_builds_new_task_command_and_env() -> None:
     assert invocation.env["ANTHROPIC_BASE_URL"] == "http://localhost:8082"
     assert invocation.env["ANTHROPIC_AUTH_TOKEN"] == "proxy-token"
     assert invocation.env["CLAUDE_CODE_ENABLE_GATEWAY_MODEL_DISCOVERY"] == "1"
-    assert invocation.env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "190000"
+    assert invocation.env["CLAUDE_CODE_AUTO_COMPACT_WINDOW"] == "1048576"
     assert invocation.env["DISABLE_AUTOUPDATER"] == "1"
     assert invocation.env["DISABLE_FEEDBACK_COMMAND"] == "1"
     assert invocation.env["DISABLE_ERROR_REPORTING"] == "1"
