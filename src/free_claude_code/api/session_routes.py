@@ -33,13 +33,10 @@ class _StrictPayload(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
 
-class ProjectPayload(_StrictPayload):
-    path: str = Field(min_length=1)
-
-
 class SessionPayload(_StrictPayload):
-    name: str = Field(min_length=1, max_length=80)
+    path: str = Field(min_length=1)
     harness: BrowserSessionHarness
+    name: str | None = Field(default=None, max_length=80)
 
 
 class RenamePayload(_StrictPayload):
@@ -55,38 +52,15 @@ async def sessions_snapshot(
     return (await services.sessions.snapshot()).as_dict()
 
 
-@router.post("/admin/api/projects", status_code=201)
-async def create_project(
-    payload: ProjectPayload,
-    request: Request,
-    services: ApiServices = Depends(get_services),
-):
-    require_loopback_admin(request)
-    project = await _domain_call(services.sessions.create_project(payload.path))
-    return project.as_dict()
-
-
-@router.delete("/admin/api/projects/{project_id}", status_code=204)
-async def delete_project(
-    project_id: str,
-    request: Request,
-    services: ApiServices = Depends(get_services),
-):
-    require_loopback_admin(request)
-    await _domain_call(services.sessions.delete_project(project_id))
-    return Response(status_code=204)
-
-
-@router.post("/admin/api/projects/{project_id}/sessions", status_code=201)
+@router.post("/admin/api/sessions", status_code=201)
 async def create_session(
-    project_id: str,
     payload: SessionPayload,
     request: Request,
     services: ApiServices = Depends(get_services),
 ):
     require_loopback_admin(request)
     session = await _domain_call(
-        services.sessions.create_session(project_id, payload.name, payload.harness)
+        services.sessions.create_session(payload.path, payload.harness, payload.name)
     )
     return session.as_dict()
 

@@ -22,7 +22,7 @@ There are four runtime surfaces:
 - CLI launchers: wrapper entrypoints prepare Claude Code, Codex, and Pi sessions
   so they target the local proxy.
 - Browser sessions: the local Admin UI can attach to runtime-owned native PTYs
-  running those same wrappers inside registered project folders.
+  running those same wrappers inside session-owned local folders.
 - Messaging bridge: optional Discord or Telegram adapters turn chat messages
   into managed client CLI sessions.
 
@@ -269,8 +269,11 @@ process lifecycle. [api/session_routes.py](src/free_claude_code/api/session_rout
 maps that port to local Admin REST and WebSocket contracts; it does not import
 runtime implementations.
 
-The metadata store at `~/.fcc/browser-sessions.json` persists only project
-paths, FCC labels, immutable harness choices, and harness-native session IDs.
+The metadata store at `~/.fcc/browser-sessions.json` persists one flat ordered
+session catalog: canonical folder paths, FCC labels, immutable harness choices,
+and harness-native session IDs. Folder groups in the Admin sidebar are derived
+from those paths; there is no separately persisted project aggregate or project
+CRUD boundary.
 Live state, PIDs, terminal output, and attachments are process-local. Writes use
 same-directory atomic replacement, and unreadable or unknown schemas disable
 Sessions without replacing the customer's file or preventing the proxy from
@@ -280,13 +283,18 @@ Drivers own native continuity. FCC assigns Claude and Pi UUIDs under their
 documented session flags. Codex assigns its own thread ID: the Codex driver uses
 one bounded stdio `app-server` `thread/start` exchange, records the returned ID,
 closes stdin, requires a clean helper exit so Codex commits that ID, and launches
-the ordinary TUI with `fcc-codex resume`.
+the ordinary TUI with `fcc-codex resume`. Session creation is an FCC-owned
+transaction: if metadata cannot commit after a native identity is returned, the
+driver disposes only that uncommitted identity. Claude and Pi creation has
+nothing to dispose before first launch; Codex uses the stable App Server
+`thread/delete` method. Once FCC metadata commits, normal FCC deletion preserves
+the harness-native conversation history.
 FCC does not inspect private transcript files, parse terminal output for IDs, or
 use the experimental App Server WebSocket transport.
 
 The long-lived process is always the existing `fcc-claude`, `fcc-codex`, or
 `fcc-pi` wrapper under a real ConPTY/PTY. It is launched directly as argv in the
-project directory; FCC never launches an interactive shell or leaves a shell
+session folder; FCC never launches an interactive shell or leaves a shell
 prompt behind the harness. Platform package shims may use their normal child
 interpreter, but the wrapper and PTY close when the harness exits. The manager
 continuously drains output into a bounded in-memory ring, admits one browser

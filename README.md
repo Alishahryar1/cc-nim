@@ -105,11 +105,11 @@ Use the port shown in your terminal if it differs from `8082`.
 
 ### 4. Run Your Coding Agent
 
-The Admin UI opens on **Sessions**. Click **Add**, enter an existing project
-folder, then click **New session** and choose Claude Code, Codex, or Pi. FCC runs
-the agent's real terminal UI in the browser. Reloading or leaving Admin only
-detaches the browser; use **Stop** when you want to end the agent process, and
-**Start again** to resume its native conversation.
+The Admin UI opens on **Sessions**. Click **+**, choose a folder and Claude Code,
+Codex, or Pi, then work in the agent's real terminal UI. Sessions are grouped by
+folder in the sidebar with search and pagination. Reloading or leaving Admin
+only detaches the browser; use **Stop** to end the process and **Start again** to
+resume its native conversation.
 
 You can also launch agents from any terminal:
 

@@ -55,6 +55,9 @@ class HarnessDriver:
     async def create_native_id(self, project_path: Path) -> str:
         return str(uuid4())
 
+    async def discard_native_id(self, native_id: str, project_path: Path) -> None:
+        """Discard an uncommitted native identity, if creation allocated one."""
+
     def command(self, native_id: str, *, started_once: bool) -> list[str]:
         raise NotImplementedError
 
@@ -107,6 +110,18 @@ class CodexDriver(HarnessDriver):
                 "Codex did not create a session before the local timeout."
             ) from exc
 
+    async def discard_native_id(self, native_id: str, project_path: Path) -> None:
+        wrapper = self._wrapper()
+        try:
+            await asyncio.wait_for(
+                _delete_codex_thread(wrapper, project_path, native_id),
+                timeout=CODEX_CREATE_TIMEOUT_SECONDS,
+            )
+        except TimeoutError as exc:
+            raise BrowserSessionUnavailableError(
+                "Codex did not discard the local session before the timeout."
+            ) from exc
+
     def command(self, native_id: str, *, started_once: bool) -> list[str]:
         return [self._wrapper(), "resume", native_id]
 
@@ -152,6 +167,42 @@ def _resolve_command(name: str) -> str | None:
 
 
 async def _create_codex_thread(wrapper: str, project_path: Path) -> str:
+    response = await _codex_app_server_request(
+        wrapper,
+        project_path,
+        "thread/start",
+        {
+            "cwd": str(project_path),
+            "serviceName": "free_claude_code",
+        },
+    )
+    result = response.get("result")
+    thread = result.get("thread") if isinstance(result, dict) else None
+    thread_id = thread.get("id") if isinstance(thread, dict) else None
+    if not isinstance(thread_id, str) or not thread_id:
+        raise BrowserSessionUnavailableError(
+            "Codex returned an invalid session identifier."
+        )
+    return thread_id
+
+
+async def _delete_codex_thread(
+    wrapper: str, project_path: Path, thread_id: str
+) -> None:
+    await _codex_app_server_request(
+        wrapper,
+        project_path,
+        "thread/delete",
+        {"threadId": thread_id},
+    )
+
+
+async def _codex_app_server_request(
+    wrapper: str,
+    project_path: Path,
+    method: str,
+    params: dict[str, object],
+) -> dict[str, object]:
     process = await asyncio.create_subprocess_exec(
         wrapper,
         "app-server",
@@ -167,7 +218,7 @@ async def _create_codex_thread(wrapper: str, project_path: Path) -> str:
     try:
         if process.stdin is None or process.stdout is None:
             raise BrowserSessionUnavailableError(
-                "Codex session creation did not expose its local protocol."
+                "Codex local session operation did not expose its protocol."
             )
         await _send_json(
             process.stdin,
@@ -188,27 +239,17 @@ async def _create_codex_thread(wrapper: str, project_path: Path) -> str:
         await _send_json(
             process.stdin,
             {
-                "method": "thread/start",
+                "method": method,
                 "id": 1,
-                "params": {
-                    "cwd": str(project_path),
-                    "serviceName": "free_claude_code",
-                },
+                "params": params,
             },
         )
         response = await _read_response(process.stdout, 1)
-        result = response.get("result")
-        thread = result.get("thread") if isinstance(result, dict) else None
-        thread_id = thread.get("id") if isinstance(thread, dict) else None
-        if not isinstance(thread_id, str) or not thread_id:
-            raise BrowserSessionUnavailableError(
-                "Codex returned an invalid session identifier."
-            )
-        await _finish_codex_thread_creation(process)
-        return thread_id
+        await _finish_codex_app_server(process)
+        return response
     except (BrokenPipeError, ConnectionError, json.JSONDecodeError) as exc:
         raise BrowserSessionUnavailableError(
-            "Codex session creation ended before returning an identifier."
+            "Codex local session operation ended before completion."
         ) from exc
     finally:
         await _stop_helper_process(process)
@@ -232,11 +273,11 @@ async def _read_response(
         error = payload.get("error")
         if error is not None:
             raise BrowserSessionUnavailableError(
-                "Codex declined to create the local session."
+                "Codex declined the local session operation."
             )
         return payload
     raise BrowserSessionUnavailableError(
-        "Codex session creation ended before returning an identifier."
+        "Codex local session operation ended before completion."
     )
 
 
@@ -251,10 +292,10 @@ async def _drain_stderr(reader: asyncio.StreamReader | None) -> bytes:
     return bytes(tail)
 
 
-async def _finish_codex_thread_creation(
+async def _finish_codex_app_server(
     process: asyncio.subprocess.Process,
 ) -> None:
-    """Close App Server cleanly so Codex commits the new thread to disk."""
+    """Close App Server cleanly so Codex commits local thread changes."""
 
     if process.stdin is not None and not process.stdin.is_closing():
         process.stdin.close()
@@ -266,11 +307,11 @@ async def _finish_codex_thread_creation(
         )
     except TimeoutError as exc:
         raise BrowserSessionUnavailableError(
-            "Codex did not finish saving the new local session."
+            "Codex did not finish saving local session changes."
         ) from exc
     if returncode != 0:
         raise BrowserSessionUnavailableError(
-            "Codex could not save the new local session."
+            "Codex could not save local session changes."
         )
 
 

@@ -7,7 +7,6 @@ from starlette.websockets import WebSocketDisconnect
 from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
 from free_claude_code.application.browser_sessions import (
-    BrowserProjectView,
     BrowserSessionConflictError,
     BrowserSessionHarness,
     BrowserSessionNotFoundError,
@@ -50,23 +49,20 @@ class StubTerminal:
 class StubSessions:
     def __init__(self) -> None:
         self.terminal = StubTerminal()
+        self.created: list[tuple[str, BrowserSessionHarness, str | None]] = []
         self.session = BrowserSessionView(
             session_id="ses_one",
             name="Review",
             harness=BrowserSessionHarness.CODEX,
             state=BrowserSessionState.RUNNING,
-        )
-        self.project = BrowserProjectView(
-            project_id="prj_one",
-            name="project",
+            project_name="project",
             path="C:\\project",
-            sessions=(self.session,),
         )
 
     async def snapshot(self) -> BrowserSessionSnapshot:
         return BrowserSessionSnapshot(
             available=True,
-            projects=(self.project,),
+            sessions=(self.session,),
             harnesses=(
                 HarnessAvailability(BrowserSessionHarness.CLAUDE, True),
                 HarnessAvailability(BrowserSessionHarness.CODEX, True),
@@ -74,15 +70,10 @@ class StubSessions:
             ),
         )
 
-    async def create_project(self, path: str) -> BrowserProjectView:
+    async def create_session(self, path, harness, name=None):
         if path == "bad":
             raise BrowserSessionValidationError("Project path is invalid.")
-        return self.project
-
-    async def delete_project(self, project_id: str) -> None:
-        return None
-
-    async def create_session(self, project_id, name, harness):
+        self.created.append((path, harness, name))
         return self.session
 
     async def rename_session(self, session_id, name):
@@ -123,11 +114,13 @@ def test_sessions_catalog_is_local_only_no_store_and_redacts_native_ids():
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
-    assert response.json()["projects"][0]["sessions"][0] == {
+    assert response.json()["sessions"][0] == {
         "id": "ses_one",
         "name": "Review",
         "harness": "codex",
         "state": "running",
+        "project_name": "project",
+        "path": "C:\\project",
         "detail": None,
     }
     assert "native" not in response.text
@@ -137,10 +130,38 @@ def test_sessions_catalog_is_local_only_no_store_and_redacts_native_ids():
 def test_sessions_domain_validation_maps_to_customer_400():
     client = TestClient(session_app(StubSessions()), client=("127.0.0.1", 50000))
 
-    response = client.post("/admin/api/projects", json={"path": "bad"})
+    response = client.post(
+        "/admin/api/sessions",
+        json={"path": "bad", "harness": "codex", "name": None},
+    )
 
     assert response.status_code == 400
     assert response.json() == {"detail": "Project path is invalid."}
+
+
+def test_session_creation_accepts_an_optional_name_without_project_registration():
+    stub = StubSessions()
+    client = TestClient(session_app(stub), client=("127.0.0.1", 50000))
+
+    response = client.post(
+        "/admin/api/sessions",
+        json={"path": "C:\\project", "harness": "pi"},
+    )
+
+    assert response.status_code == 201
+    assert stub.created == [
+        ("C:\\project", BrowserSessionHarness.PI, None),
+    ]
+
+
+def test_unreleased_project_routes_are_removed():
+    client = TestClient(session_app(StubSessions()), client=("127.0.0.1", 50000))
+
+    assert (
+        client.post("/admin/api/projects", json={"path": "C:\\project"}).status_code
+        == 404
+    )
+    assert client.delete("/admin/api/projects/prj_one").status_code == 404
 
 
 @pytest.mark.parametrize(
@@ -211,6 +232,9 @@ def test_sessions_is_the_first_default_admin_view_and_assets_are_local():
         'data-view="providers"'
     )
     assert 'id="view-sessions" class="admin-view active"' in page.text
+    assert 'id="newSessionPath"' in page.text
+    assert 'id="sessionTabs"' not in page.text
+    assert 'id="projectDialog"' not in page.text
     for path in (
         "/admin/assets/admin-api.js",
         "/admin/assets/sessions.js",

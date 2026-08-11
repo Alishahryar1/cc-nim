@@ -48,6 +48,8 @@ class BrowserSessionView:
     name: str
     harness: BrowserSessionHarness
     state: BrowserSessionState
+    project_name: str
+    path: str
     detail: str | None = None
 
     def as_dict(self) -> dict[str, object]:
@@ -56,25 +58,9 @@ class BrowserSessionView:
             "name": self.name,
             "harness": self.harness.value,
             "state": self.state.value,
-            "detail": self.detail,
-        }
-
-
-@dataclass(frozen=True, slots=True)
-class BrowserProjectView:
-    """Safe public state for one registered project."""
-
-    project_id: str
-    name: str
-    path: str
-    sessions: tuple[BrowserSessionView, ...]
-
-    def as_dict(self) -> dict[str, object]:
-        return {
-            "id": self.project_id,
-            "name": self.name,
+            "project_name": self.project_name,
             "path": self.path,
-            "sessions": [session.as_dict() for session in self.sessions],
+            "detail": self.detail,
         }
 
 
@@ -83,7 +69,7 @@ class BrowserSessionSnapshot:
     """Complete local Sessions catalog returned to the Admin UI."""
 
     available: bool
-    projects: tuple[BrowserProjectView, ...]
+    sessions: tuple[BrowserSessionView, ...]
     harnesses: tuple[HarnessAvailability, ...]
     message: str | None = None
 
@@ -92,7 +78,7 @@ class BrowserSessionSnapshot:
             "available": self.available,
             "message": self.message,
             "harnesses": [harness.as_dict() for harness in self.harnesses],
-            "projects": [project.as_dict() for project in self.projects],
+            "sessions": [session.as_dict() for session in self.sessions],
         }
 
 
@@ -123,15 +109,11 @@ class BrowserSessionPort(Protocol):
 
     async def snapshot(self) -> BrowserSessionSnapshot: ...
 
-    async def create_project(self, path: str) -> BrowserProjectView: ...
-
-    async def delete_project(self, project_id: str) -> None: ...
-
     async def create_session(
         self,
-        project_id: str,
-        name: str,
+        path: str,
         harness: BrowserSessionHarness,
+        name: str | None = None,
     ) -> BrowserSessionView: ...
 
     async def rename_session(

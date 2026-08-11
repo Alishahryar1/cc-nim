@@ -64,6 +64,10 @@
   box-sizing: border-box;
 }
 
+[hidden] {
+  display: none !important;
+}
+
 body {
   margin: 0;
   min-width: 320px;
@@ -112,151 +116,31 @@ textarea {
 }
 
 /* Browser Sessions */
-.sessions-layout {
-  display: grid;
-  grid-template-columns: 240px minmax(0, 1fr);
-  min-height: calc(100vh - 150px);
-  overflow: hidden;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-lg);
-  background: var(--panel);
-  box-shadow: var(--shadow);
-}
-
-.projects-panel {
-  min-width: 0;
-  padding: 18px;
-  border-right: 1px solid var(--line);
-  background: var(--bg);
-}
-
-.sessions-panel-heading,
-.session-tabs-row,
 .terminal-toolbar,
 .terminal-identity,
-.terminal-actions,
 .dialog-actions {
   display: flex;
   align-items: center;
 }
 
-.sessions-panel-heading,
-.session-tabs-row,
 .terminal-toolbar {
   justify-content: space-between;
   gap: 12px;
 }
 
-.sessions-panel-heading h3 {
-  margin: 0;
-  font-size: 15px;
-}
-
-.icon-button,
-.project-remove {
-  border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
-  background: var(--panel-strong);
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.icon-button {
-  min-height: 32px;
-  padding: 5px 10px;
-}
-
-.project-list {
-  display: grid;
-  gap: 7px;
-  margin-top: 16px;
-}
-
-.project-row {
-  display: grid;
-  grid-template-columns: minmax(0, 1fr) 28px;
-  gap: 4px;
-  border: 1px solid transparent;
-  border-radius: var(--radius-md);
-}
-
-.project-row.active {
-  border-color: var(--accent-border);
-  background: var(--accent-muted);
-}
-
-.project-select {
-  min-width: 0;
-  border: 0;
-  background: transparent;
-  padding: 10px;
-  color: var(--text);
-  text-align: left;
-  cursor: pointer;
-}
-
-.project-select strong,
-.project-select span {
-  display: block;
-  overflow: hidden;
-  text-overflow: ellipsis;
-  white-space: nowrap;
-}
-
-.project-select span {
-  margin-top: 3px;
-  color: var(--muted);
-  font-size: 11px;
-}
-
-.project-remove {
-  align-self: center;
-  width: 26px;
-  height: 26px;
-  border-color: transparent;
-  background: transparent;
-  font-size: 18px;
-}
-
-.project-remove:hover {
-  color: var(--error);
-  background: var(--error-bg);
-}
-
-.session-workspace {
-  min-width: 0;
+.sessions-active .main {
+  height: 100vh;
   padding: 18px;
+  overflow: hidden;
 }
 
-.session-tabs-row {
-  min-height: 38px;
+.sessions-active .admin-views,
+.sessions-active #view-sessions {
+  height: 100%;
 }
 
-.session-tabs {
-  display: flex;
-  min-width: 0;
-  gap: 6px;
-  overflow-x: auto;
-}
-
-.session-tab {
-  display: inline-flex;
-  align-items: center;
-  gap: 7px;
-  flex: 0 0 auto;
-  min-height: 34px;
-  border: 1px solid var(--line);
-  border-radius: var(--radius-md);
-  background: var(--card);
-  padding: 7px 11px;
-  color: var(--muted);
-  cursor: pointer;
-}
-
-.session-tab.active {
-  border-color: var(--accent-border);
-  color: var(--text-strong);
-  background: var(--accent-muted);
+.sessions-active #view-sessions {
+  position: relative;
 }
 
 .session-state-dot {
@@ -280,10 +164,20 @@ textarea {
 }
 
 .sessions-message {
-  min-height: 20px;
-  margin: 10px 0;
+  position: absolute;
+  top: 12px;
+  right: 24px;
+  z-index: 4;
+  max-width: min(520px, calc(100% - 48px));
+  border-radius: var(--radius-sm);
+  background: rgba(9, 10, 15, 0.9);
+  padding: 7px 10px;
   color: var(--muted);
   font-size: 13px;
+}
+
+.sessions-message:empty {
+  display: none;
 }
 
 .sessions-message.error {
@@ -296,8 +190,10 @@ textarea {
 
 .sessions-empty {
   display: grid;
-  min-height: 50vh;
+  height: 100%;
   place-content: center;
+  justify-items: center;
+  gap: 10px;
   text-align: center;
   color: var(--muted);
 }
@@ -313,15 +209,18 @@ textarea {
 }
 
 .terminal-panel {
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr);
+  height: 100%;
   min-width: 0;
 }
 
 .terminal-toolbar {
-  margin-bottom: 8px;
+  min-width: 0;
+  padding: 0 2px 10px;
 }
 
-.terminal-identity,
-.terminal-actions {
+.terminal-identity {
   flex-wrap: wrap;
   gap: 8px;
 }
@@ -334,9 +233,9 @@ textarea {
   font-size: 11px;
 }
 
-.session-detail {
-  min-height: 18px;
-  margin: 0 0 8px;
+.session-path {
+  min-width: 0;
+  max-width: 50%;
   overflow: hidden;
   color: var(--muted);
   font-size: 12px;
@@ -346,8 +245,7 @@ textarea {
 
 .terminal-viewport {
   position: relative;
-  height: calc(100vh - 260px);
-  min-height: 420px;
+  min-height: 0;
   overflow: hidden;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-md);
@@ -363,15 +261,19 @@ textarea {
 
 .terminal-closed {
   position: absolute;
-  inset: auto 16px 16px;
+  inset: 0;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  flex-direction: column;
+  gap: 12px;
   border: 1px solid var(--line-strong);
-  border-radius: var(--radius-sm);
-  background: rgba(17, 19, 28, 0.94);
-  padding: 9px 12px;
+  border-radius: var(--radius-md);
+  background: rgba(8, 9, 13, 0.86);
+  padding: 24px;
   color: var(--muted);
-  font-size: 12px;
+  font-size: 13px;
   text-align: center;
-  pointer-events: none;
 }
 
 .danger-button {
@@ -419,6 +321,13 @@ textarea {
   font-size: 13px;
 }
 
+.optional-label {
+  margin-left: 5px;
+  color: var(--muted);
+  font-size: 11px;
+  font-weight: 400;
+}
+
 .admin-dialog input,
 .admin-dialog select {
   width: 100%;
@@ -436,37 +345,21 @@ textarea {
 }
 
 @media (max-width: 980px) {
-  .sessions-layout {
-    grid-template-columns: 190px minmax(0, 1fr);
-  }
-
   .terminal-toolbar {
     align-items: flex-start;
     flex-direction: column;
   }
+
+  .session-path {
+    max-width: 100%;
+  }
 }
 
 @media (max-width: 720px) {
-  .sessions-layout {
-    display: block;
-  }
-
-  .projects-panel {
-    border-right: 0;
-    border-bottom: 1px solid var(--line);
-  }
-
-  .project-list {
-    display: flex;
-    overflow-x: auto;
-  }
-
-  .project-row {
-    flex: 0 0 180px;
-  }
-
-  .terminal-viewport {
-    min-height: 360px;
+  .sessions-active .main {
+    height: 70vh;
+    min-height: 520px;
+    padding: 14px;
   }
 }
 
@@ -517,8 +410,233 @@ textarea {
 }
 
 .section-nav {
+  display: flex;
+  flex: 1;
+  min-height: 0;
+  flex-direction: column;
+  gap: 6px;
+}
+
+.nav-section {
   display: grid;
   gap: 6px;
+  min-width: 0;
+}
+
+.nav-section:first-child {
+  display: flex;
+  flex: 1;
+  min-height: 180px;
+  flex-direction: column;
+}
+
+.session-nav-children {
+  display: flex;
+  min-height: 0;
+  flex: 1;
+  flex-direction: column;
+  gap: 8px;
+  padding: 0 0 4px 8px;
+}
+
+.session-nav-tools {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 34px;
+  gap: 6px;
+}
+
+.session-search input {
+  width: 100%;
+  height: 34px;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--input);
+  padding: 6px 9px;
+  font-size: 12px;
+}
+
+.session-add-button,
+.session-pagination button {
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel-strong);
+  color: var(--muted);
+  cursor: pointer;
+}
+
+.session-add-button {
+  font-size: 20px;
+  line-height: 1;
+}
+
+.session-add-button:hover:not(:disabled),
+.session-pagination button:hover:not(:disabled) {
+  border-color: var(--accent-border);
+  color: var(--accent);
+}
+
+.session-nav-list {
+  min-height: 0;
+  overflow-y: auto;
+  padding-right: 3px;
+}
+
+.session-nav-empty {
+  margin: 18px 8px;
+  color: var(--muted);
+  font-size: 12px;
+  text-align: center;
+}
+
+.session-folder-group + .session-folder-group {
+  margin-top: 12px;
+}
+
+.session-folder-heading {
+  min-width: 0;
+  padding: 4px 8px;
+}
+
+.session-folder-heading strong,
+.session-folder-heading span,
+.session-nav-copy strong,
+.session-nav-copy span {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.session-folder-heading strong {
+  color: var(--text);
+  font-size: 11px;
+  font-weight: 700;
+}
+
+.session-folder-heading span {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 9px;
+}
+
+.session-nav-row {
+  position: relative;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 28px;
+  align-items: center;
+  border: 1px solid transparent;
+  border-radius: var(--radius-sm);
+}
+
+.session-nav-row:hover {
+  background: var(--panel-strong);
+}
+
+.session-nav-row.active {
+  border-color: var(--accent-border);
+  background: var(--accent-muted);
+}
+
+.session-nav-select {
+  display: grid;
+  grid-template-columns: 8px minmax(0, 1fr);
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+  border: 0;
+  background: transparent;
+  padding: 7px 8px;
+  color: var(--text);
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-nav-copy strong {
+  font-size: 12px;
+  font-weight: 600;
+}
+
+.session-nav-copy span {
+  margin-top: 2px;
+  color: var(--muted);
+  font-size: 10px;
+}
+
+.session-row-menu summary {
+  display: grid;
+  width: 26px;
+  height: 28px;
+  place-items: center;
+  border-radius: var(--radius-sm);
+  color: var(--muted);
+  cursor: pointer;
+  list-style: none;
+}
+
+.session-row-menu summary::-webkit-details-marker {
+  display: none;
+}
+
+.session-row-menu summary:hover,
+.session-row-menu[open] summary {
+  background: var(--card-hover);
+  color: var(--text);
+}
+
+.session-row-menu-actions {
+  position: absolute;
+  top: 30px;
+  right: 0;
+  z-index: 8;
+  display: grid;
+  width: 112px;
+  overflow: hidden;
+  border: 1px solid var(--line-strong);
+  border-radius: var(--radius-sm);
+  background: var(--panel-strong);
+  box-shadow: var(--shadow-sm);
+}
+
+.session-row-menu-actions button {
+  border: 0;
+  background: transparent;
+  padding: 8px 10px;
+  color: var(--text);
+  font-size: 11px;
+  text-align: left;
+  cursor: pointer;
+}
+
+.session-row-menu-actions button:hover:not(:disabled) {
+  background: var(--card-hover);
+}
+
+.session-row-menu-actions button.danger {
+  color: var(--error);
+}
+
+.session-pagination {
+  display: grid;
+  grid-template-columns: 30px 1fr 30px;
+  align-items: center;
+  gap: 5px;
+  color: var(--muted);
+  font-size: 10px;
+  text-align: center;
+}
+
+.session-pagination button {
+  height: 28px;
+}
+
+.sr-only {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0, 0, 0, 0);
+  white-space: nowrap;
+  clip-path: inset(50%);
 }
 
 .nav-link {
@@ -1106,7 +1224,15 @@ textarea:focus-visible,
   }
 
   .section-nav {
+    display: grid;
     grid-template-columns: repeat(auto-fit, minmax(130px, 1fr));
+    overflow: visible;
+  }
+
+  .nav-section:first-child {
+    grid-column: 1 / -1;
+    min-height: 0;
+    max-height: 330px;
   }
 
   .main {

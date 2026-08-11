@@ -1,5 +1,6 @@
 import asyncio
 import json
+import signal
 import sys
 import threading
 from pathlib import Path
@@ -22,6 +23,7 @@ from free_claude_code.runtime.browser_sessions.drivers import (
     HarnessDriverRegistry,
     PiDriver,
     _create_codex_thread,
+    _delete_codex_thread,
     terminal_environment,
 )
 from free_claude_code.runtime.browser_sessions.manager import (
@@ -34,7 +36,6 @@ from free_claude_code.runtime.browser_sessions.pty import (
 )
 from free_claude_code.runtime.browser_sessions.store import (
     BrowserSessionStore,
-    ProjectRecord,
     SessionCatalog,
     SessionRecord,
     SessionStoreError,
@@ -47,12 +48,16 @@ class FakeDriver(HarnessDriver):
         self.wrapper_name = f"fcc-{harness.value}"
         self.client_name = harness.value
         self.commands: list[tuple[str, bool]] = []
+        self.discarded: list[tuple[str, Path]] = []
 
     def availability(self) -> HarnessAvailability:
         return HarnessAvailability(self.harness, True)
 
     async def create_native_id(self, project_path: Path) -> str:
         return f"native-{self.harness.value}"
+
+    async def discard_native_id(self, native_id: str, project_path: Path) -> None:
+        self.discarded.append((native_id, project_path))
 
     def command(self, native_id: str, *, started_once: bool) -> list[str]:
         self.commands.append((native_id, started_once))
@@ -160,19 +165,14 @@ def test_store_round_trips_ordered_metadata_and_rejects_corruption(tmp_path):
     path = tmp_path / "sessions.json"
     store = BrowserSessionStore(path)
     catalog = SessionCatalog(
-        projects=[
-            ProjectRecord(
-                project_id="prj_one",
+        sessions=[
+            SessionRecord(
+                session_id="ses_one",
                 path=str(tmp_path),
-                sessions=[
-                    SessionRecord(
-                        session_id="ses_one",
-                        name="Review",
-                        harness=BrowserSessionHarness.CODEX,
-                        native_id="thread-id",
-                        started_once=True,
-                    )
-                ],
+                name="Review",
+                harness=BrowserSessionHarness.CODEX,
+                native_id="thread-id",
+                started_once=True,
             )
         ]
     )
@@ -182,7 +182,7 @@ def test_store_round_trips_ordered_metadata_and_rejects_corruption(tmp_path):
     assert store.load() == catalog
     assert not list(tmp_path.glob("*.tmp"))
 
-    path.write_text('{"version": 999, "projects": []}', encoding="utf-8")
+    path.write_text('{"version": 999, "sessions": []}', encoding="utf-8")
     with pytest.raises(SessionStoreError, match="original file was preserved"):
         store.load()
     assert json.loads(path.read_text(encoding="utf-8"))["version"] == 999
@@ -197,11 +197,10 @@ async def test_manager_detaches_without_stopping_and_resumes_native_session(tmp_
         drivers=registry,
         process_factory=factory,
     )
-    project = await manager.create_project(str(tmp_path))
     session = await manager.create_session(
-        project.project_id,
-        "First task",
+        str(tmp_path),
         BrowserSessionHarness.CLAUDE,
+        "First task",
     )
     process = factory.processes[0]
 
@@ -220,9 +219,7 @@ async def test_manager_detaches_without_stopping_and_resumes_native_session(tmp_
 
     assert process.writes == ["answer\r"]
     assert process.resizes == [(100, 30)]
-    assert (await manager.snapshot()).projects[0].sessions[
-        0
-    ].state == BrowserSessionState.RUNNING
+    assert (await manager.snapshot()).sessions[0].state == BrowserSessionState.RUNNING
 
     stopped = await manager.stop_session(session.session_id)
     assert stopped.state == BrowserSessionState.STOPPED
@@ -245,7 +242,7 @@ async def test_manager_detaches_without_stopping_and_resumes_native_session(tmp_
         process_factory=reloaded_factory,
     )
     snapshot = await reloaded.snapshot()
-    assert snapshot.projects[0].sessions[0].state == BrowserSessionState.STOPPED
+    assert snapshot.sessions[0].state == BrowserSessionState.STOPPED
     await reloaded.start_session(session.session_id)
     assert drivers[BrowserSessionHarness.CLAUDE].commands[-1] == (
         "native-claude",
@@ -262,11 +259,10 @@ async def test_manager_replaces_terminal_controller_and_validates_names(tmp_path
         drivers=registry,
         process_factory=FakeProcessFactory(),
     )
-    project = await manager.create_project(str(tmp_path))
     session = await manager.create_session(
-        project.project_id,
-        "Unique",
+        str(tmp_path),
         BrowserSessionHarness.PI,
+        "Unique",
     )
     first = await manager.attach_terminal(session.session_id)
     await first.receive()
@@ -277,10 +273,104 @@ async def test_manager_replaces_terminal_controller_and_validates_names(tmp_path
 
     with pytest.raises(BrowserSessionConflictError, match="unique"):
         await manager.create_session(
-            project.project_id,
-            "unique",
+            str(tmp_path),
             BrowserSessionHarness.CODEX,
+            "unique",
         )
+
+    other = tmp_path / "other"
+    other.mkdir()
+    same_name_elsewhere = await manager.create_session(
+        str(other),
+        BrowserSessionHarness.CODEX,
+        "unique",
+    )
+    assert same_name_elsewhere.project_name == "other"
+    assert same_name_elsewhere.path == str(other.resolve())
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_manager_defaults_names_and_returns_newest_sessions_first(tmp_path):
+    registry, drivers = fake_drivers()
+    manager = BrowserSessionManager(
+        BrowserSessionStore(tmp_path / "sessions.json"),
+        drivers=registry,
+        process_factory=FakeProcessFactory(),
+    )
+
+    first = await manager.create_session(str(tmp_path), BrowserSessionHarness.PI)
+    second = await manager.create_session(str(tmp_path), BrowserSessionHarness.CODEX)
+
+    assert first.name == "New session"
+    assert second.name == "New session 2"
+    assert [session.session_id for session in (await manager.snapshot()).sessions] == [
+        second.session_id,
+        first.session_id,
+    ]
+    await manager.delete_session(first.session_id)
+    assert drivers[BrowserSessionHarness.PI].discarded == []
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_metadata_commit_failure_discards_uncommitted_native_identity(
+    monkeypatch, tmp_path
+):
+    registry, drivers = fake_drivers()
+    store = BrowserSessionStore(tmp_path / "sessions.json")
+    manager = BrowserSessionManager(
+        store,
+        drivers=registry,
+        process_factory=FakeProcessFactory(),
+    )
+
+    def fail_save(catalog):
+        raise SessionStoreError("Browser Sessions metadata could not be saved.")
+
+    monkeypatch.setattr(store, "save", fail_save)
+
+    with pytest.raises(BrowserSessionUnavailableError, match="could not be saved"):
+        await manager.create_session(
+            str(tmp_path),
+            BrowserSessionHarness.CODEX,
+            "Rollback",
+        )
+
+    driver = drivers[BrowserSessionHarness.CODEX]
+    assert driver.discarded == [("native-codex", tmp_path.resolve())]
+    assert (await manager.snapshot()).sessions == ()
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_cleanup_failure_does_not_replace_metadata_failure(monkeypatch, tmp_path):
+    class FailingDiscardDriver(FakeDriver):
+        async def discard_native_id(self, native_id: str, project_path: Path) -> None:
+            await super().discard_native_id(native_id, project_path)
+            raise RuntimeError("cleanup details must stay secondary")
+
+    driver = FailingDiscardDriver(BrowserSessionHarness.CODEX)
+    store = BrowserSessionStore(tmp_path / "sessions.json")
+    manager = BrowserSessionManager(
+        store,
+        drivers=HarnessDriverRegistry([driver]),
+        process_factory=FakeProcessFactory(),
+    )
+
+    def fail_save(_catalog):
+        raise SessionStoreError("Browser Sessions metadata could not be saved.")
+
+    monkeypatch.setattr(store, "save", fail_save)
+
+    with pytest.raises(BrowserSessionUnavailableError, match="could not be saved"):
+        await manager.create_session(
+            str(tmp_path),
+            BrowserSessionHarness.CODEX,
+            "Rollback",
+        )
+
+    assert driver.discarded == [("native-codex", tmp_path.resolve())]
     await manager.close()
 
 
@@ -293,11 +383,10 @@ async def test_reader_failure_terminates_the_owned_process_tree(tmp_path):
         drivers=registry,
         process_factory=factory,
     )
-    project = await manager.create_project(str(tmp_path))
     session = await manager.create_session(
-        project.project_id,
-        "Reader failure",
+        str(tmp_path),
         BrowserSessionHarness.PI,
+        "Reader failure",
     )
     attachment = await manager.attach_terminal(session.session_id)
     await attachment.receive()
@@ -322,11 +411,10 @@ async def test_natural_nonzero_exit_is_reported_without_exposing_a_shell(tmp_pat
         drivers=registry,
         process_factory=factory,
     )
-    project = await manager.create_project(str(tmp_path))
     session = await manager.create_session(
-        project.project_id,
-        "Natural exit",
+        str(tmp_path),
         BrowserSessionHarness.CLAUDE,
+        "Natural exit",
     )
     attachment = await manager.attach_terminal(session.session_id)
     await attachment.receive()
@@ -338,7 +426,7 @@ async def test_natural_nonzero_exit_is_reported_without_exposing_a_shell(tmp_pat
     assert event.state == BrowserSessionState.FAILED
     assert event.detail == "Harness exited with code 7."
     assert factory.processes[0].closed
-    persisted = (await manager.snapshot()).projects[0].sessions[0]
+    persisted = (await manager.snapshot()).sessions[0]
     assert persisted.state == BrowserSessionState.FAILED
     await manager.close()
 
@@ -352,11 +440,10 @@ async def test_terminal_reconnect_replays_only_the_bounded_output_tail(tmp_path)
         drivers=registry,
         process_factory=factory,
     )
-    project = await manager.create_project(str(tmp_path))
     session = await manager.create_session(
-        project.project_id,
-        "Bounded replay",
+        str(tmp_path),
         BrowserSessionHarness.PI,
+        "Bounded replay",
     )
     first = await manager.attach_terminal(session.session_id)
     await first.receive()
@@ -381,18 +468,13 @@ async def test_cancelled_terminal_spawn_cleans_up_the_late_process(tmp_path):
     store = BrowserSessionStore(tmp_path / "sessions.json")
     store.save(
         SessionCatalog(
-            projects=[
-                ProjectRecord(
-                    project_id="prj_one",
+            sessions=[
+                SessionRecord(
+                    session_id="ses_one",
                     path=str(tmp_path),
-                    sessions=[
-                        SessionRecord(
-                            session_id="ses_one",
-                            name="Cancellation",
-                            harness=BrowserSessionHarness.CLAUDE,
-                            native_id="native-claude",
-                        )
-                    ],
+                    name="Cancellation",
+                    harness=BrowserSessionHarness.CLAUDE,
+                    native_id="native-claude",
                 )
             ]
         )
@@ -413,7 +495,7 @@ async def test_cancelled_terminal_spawn_cleans_up_the_late_process(tmp_path):
         await start
     assert factory.processes[0].terminated
     assert factory.processes[0].closed
-    session = (await manager.snapshot()).projects[0].sessions[0]
+    session = (await manager.snapshot()).sessions[0]
     assert session.state == BrowserSessionState.FAILED
     assert session.detail == "Session start was cancelled."
     await manager.close()
@@ -429,12 +511,11 @@ async def test_shutdown_waits_for_identity_creation_and_rejects_late_commit(
         drivers=HarnessDriverRegistry([driver]),
         process_factory=FakeProcessFactory(),
     )
-    project = await manager.create_project(str(tmp_path))
     creation = asyncio.create_task(
         manager.create_session(
-            project.project_id,
-            "During shutdown",
+            str(tmp_path),
             BrowserSessionHarness.CODEX,
+            "During shutdown",
         )
     )
     await asyncio.wait_for(driver.creation_started.wait(), timeout=1)
@@ -448,7 +529,8 @@ async def test_shutdown_waits_for_identity_creation_and_rejects_late_commit(
     with pytest.raises(BrowserSessionUnavailableError, match="shutting down"):
         await creation
     persisted = BrowserSessionStore(tmp_path / "sessions.json").load()
-    assert persisted.projects[0].sessions == []
+    assert persisted.sessions == []
+    assert driver.discarded == [("native-codex", tmp_path.resolve())]
 
 
 def test_harness_drivers_build_documented_native_resume_commands(monkeypatch):
@@ -558,6 +640,10 @@ def test_native_terminal_process_normalizes_io_cleanup_and_exit_status(monkeypat
         "free_claude_code.runtime.browser_sessions.pty.kill_pid_tree_best_effort",
         terminated.append,
     )
+    monkeypatch.setattr(
+        "free_claude_code.runtime.browser_sessions.pty.IS_WINDOWS",
+        True,
+    )
     native = FakeNativePty(wait_result=None, exitstatus=9)
     process = NativeTerminalProcess(native)
 
@@ -576,6 +662,31 @@ def test_native_terminal_process_normalizes_io_cleanup_and_exit_status(monkeypat
     assert terminated == [4242]
     assert native.close_calls == [True]
     assert unregistered == [4242]
+
+
+def test_native_terminal_process_terminates_posix_process_group(monkeypatch):
+    terminated: list[tuple[int, signal.Signals]] = []
+    monkeypatch.setattr(
+        "free_claude_code.runtime.browser_sessions.pty.IS_WINDOWS",
+        False,
+    )
+    monkeypatch.setattr(
+        "free_claude_code.runtime.browser_sessions.pty.register_pid", lambda pid: None
+    )
+    monkeypatch.setattr(
+        "free_claude_code.runtime.browser_sessions.pty.unregister_pid", lambda pid: None
+    )
+    monkeypatch.setattr(
+        "free_claude_code.runtime.browser_sessions.pty.os.killpg",
+        lambda pid, sig: terminated.append((pid, sig)),
+        raising=False,
+    )
+    process = NativeTerminalProcess(FakeNativePty())
+
+    process.terminate_tree()
+    process.close()
+
+    assert terminated == [(4242, signal.SIGTERM)]
 
 
 @pytest.mark.parametrize(
@@ -694,6 +805,35 @@ async def test_codex_thread_start_records_the_id_assigned_by_codex(
     assert process.stdin.payloads[2]["method"] == "thread/start"
     params = process.stdin.payloads[2]["params"]
     assert params == {"cwd": str(tmp_path), "serviceName": "free_claude_code"}
+    assert process.stdin.closed is True
+
+
+@pytest.mark.asyncio
+async def test_codex_thread_delete_uses_the_stable_app_server_method(
+    monkeypatch, tmp_path
+):
+    process = FakeCodexProcess()
+
+    async def create_process(*args, **kwargs):
+        return process
+
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", create_process)
+    monkeypatch.setattr(
+        "free_claude_code.runtime.browser_sessions.drivers.register_pid",
+        lambda pid: None,
+    )
+    monkeypatch.setattr(
+        "free_claude_code.runtime.browser_sessions.drivers.unregister_pid",
+        lambda pid: None,
+    )
+
+    await _delete_codex_thread("fcc-codex", tmp_path, "assigned-thread-id")
+
+    assert process.stdin.payloads[2] == {
+        "method": "thread/delete",
+        "id": 1,
+        "params": {"threadId": "assigned-thread-id"},
+    }
     assert process.stdin.closed is True
 
 

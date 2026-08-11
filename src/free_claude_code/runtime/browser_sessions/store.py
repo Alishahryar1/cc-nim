@@ -15,6 +15,7 @@ SCHEMA_VERSION = 1
 @dataclass(slots=True)
 class SessionRecord:
     session_id: str
+    path: str
     name: str
     harness: BrowserSessionHarness
     native_id: str
@@ -22,15 +23,8 @@ class SessionRecord:
 
 
 @dataclass(slots=True)
-class ProjectRecord:
-    project_id: str
-    path: str
-    sessions: list[SessionRecord] = field(default_factory=list)
-
-
-@dataclass(slots=True)
 class SessionCatalog:
-    projects: list[ProjectRecord] = field(default_factory=list)
+    sessions: list[SessionRecord] = field(default_factory=list)
 
 
 class SessionStoreError(Exception):
@@ -79,22 +73,16 @@ class BrowserSessionStore:
 def _encode_catalog(catalog: SessionCatalog) -> dict[str, object]:
     return {
         "version": SCHEMA_VERSION,
-        "projects": [
+        "sessions": [
             {
-                "id": project.project_id,
-                "path": project.path,
-                "sessions": [
-                    {
-                        "id": session.session_id,
-                        "name": session.name,
-                        "harness": session.harness.value,
-                        "native_id": session.native_id,
-                        "started_once": session.started_once,
-                    }
-                    for session in project.sessions
-                ],
+                "id": session.session_id,
+                "path": session.path,
+                "name": session.name,
+                "harness": session.harness.value,
+                "native_id": session.native_id,
+                "started_once": session.started_once,
             }
-            for project in catalog.projects
+            for session in catalog.sessions
         ],
     }
 
@@ -103,52 +91,38 @@ def _decode_catalog(payload: object) -> SessionCatalog:
     root = _object(payload, "root")
     if root.get("version") != SCHEMA_VERSION:
         raise SessionStoreError("Unsupported browser Sessions schema version")
-    projects_value = root.get("projects")
-    if not isinstance(projects_value, list):
-        raise SessionStoreError("projects must be a list")
+    sessions_value = root.get("sessions")
+    if not isinstance(sessions_value, list):
+        raise SessionStoreError("sessions must be a list")
 
-    projects: list[ProjectRecord] = []
-    project_ids: set[str] = set()
+    sessions: list[SessionRecord] = []
     session_ids: set[str] = set()
-    for project_value in projects_value:
-        project = _object(project_value, "project")
-        project_id = _string(project.get("id"), "project.id")
-        path = _string(project.get("path"), "project.path")
-        if project_id in project_ids:
-            raise SessionStoreError("Duplicate project id")
-        project_ids.add(project_id)
-        sessions_value = project.get("sessions")
-        if not isinstance(sessions_value, list):
-            raise SessionStoreError("project.sessions must be a list")
-        sessions: list[SessionRecord] = []
-        for session_value in sessions_value:
-            session = _object(session_value, "session")
-            session_id = _string(session.get("id"), "session.id")
-            if session_id in session_ids:
-                raise SessionStoreError("Duplicate session id")
-            session_ids.add(session_id)
-            try:
-                harness = BrowserSessionHarness(
-                    _string(session.get("harness"), "session.harness")
-                )
-            except ValueError as exc:
-                raise SessionStoreError("Unknown session harness") from exc
-            started_once = session.get("started_once")
-            if not isinstance(started_once, bool):
-                raise SessionStoreError("session.started_once must be a boolean")
-            sessions.append(
-                SessionRecord(
-                    session_id=session_id,
-                    name=_string(session.get("name"), "session.name"),
-                    harness=harness,
-                    native_id=_string(session.get("native_id"), "session.native_id"),
-                    started_once=started_once,
-                )
+    for session_value in sessions_value:
+        session = _object(session_value, "session")
+        session_id = _string(session.get("id"), "session.id")
+        if session_id in session_ids:
+            raise SessionStoreError("Duplicate session id")
+        session_ids.add(session_id)
+        try:
+            harness = BrowserSessionHarness(
+                _string(session.get("harness"), "session.harness")
             )
-        projects.append(
-            ProjectRecord(project_id=project_id, path=path, sessions=sessions)
+        except ValueError as exc:
+            raise SessionStoreError("Unknown session harness") from exc
+        started_once = session.get("started_once")
+        if not isinstance(started_once, bool):
+            raise SessionStoreError("session.started_once must be a boolean")
+        sessions.append(
+            SessionRecord(
+                session_id=session_id,
+                path=_string(session.get("path"), "session.path"),
+                name=_string(session.get("name"), "session.name"),
+                harness=harness,
+                native_id=_string(session.get("native_id"), "session.native_id"),
+                started_once=started_once,
+            )
         )
-    return SessionCatalog(projects=projects)
+    return SessionCatalog(sessions=sessions)
 
 
 def _object(value: object, name: str) -> dict[str, object]:

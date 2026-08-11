@@ -9,8 +9,9 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from uuid import uuid4
 
+from loguru import logger
+
 from free_claude_code.application.browser_sessions import (
-    BrowserProjectView,
     BrowserSessionConflictError,
     BrowserSessionError,
     BrowserSessionHarness,
@@ -24,11 +25,10 @@ from free_claude_code.application.browser_sessions import (
     TerminalEvent,
 )
 
-from .drivers import HarnessDriverRegistry, terminal_environment
+from .drivers import HarnessDriver, HarnessDriverRegistry, terminal_environment
 from .pty import TerminalProcess, TerminalProcessFactory, TerminalSpawner
 from .store import (
     BrowserSessionStore,
-    ProjectRecord,
     SessionCatalog,
     SessionRecord,
     SessionStoreError,
@@ -129,10 +129,9 @@ class BrowserSessionManager:
         self._close_lock = asyncio.Lock()
         self._closed = False
         self._close_complete = False
-        self._busy_projects: set[str] = set()
-        self._deleting_projects: set[str] = set()
+        self._busy_paths: set[str] = set()
         self._deleting_sessions: set[str] = set()
-        self._creation_tasks: set[asyncio.Task[str]] = set()
+        self._creation_tasks: set[asyncio.Task[object]] = set()
         self._start_tasks: dict[str, asyncio.Task[object]] = {}
         self._unavailable_message: str | None = None
         try:
@@ -141,9 +140,7 @@ class BrowserSessionManager:
             self._catalog = SessionCatalog()
             self._unavailable_message = str(exc)
         self._runtime = {
-            session.session_id: _SessionRuntime()
-            for project in self._catalog.projects
-            for session in project.sessions
+            session.session_id: _SessionRuntime() for session in self._catalog.sessions
         }
 
     async def snapshot(self) -> BrowserSessionSnapshot:
@@ -152,122 +149,94 @@ class BrowserSessionManager:
                 available=self._unavailable_message is None and not self._closed,
                 message=self._unavailable_message,
                 harnesses=self._drivers.availability(),
-                projects=tuple(
-                    self._project_view(project) for project in self._catalog.projects
+                sessions=tuple(
+                    self._session_view(session)
+                    for session in reversed(self._catalog.sessions)
                 ),
             )
 
-    async def create_project(self, path: str) -> BrowserProjectView:
-        canonical = _canonical_directory(path)
-        async with self._lock:
-            self._ensure_available()
-            for project in self._catalog.projects:
-                if _same_directory(Path(project.path), canonical):
-                    raise BrowserSessionConflictError(
-                        "That project is already registered."
-                    )
-            updated = copy.deepcopy(self._catalog)
-            record = ProjectRecord(
-                project_id=f"prj_{uuid4().hex}",
-                path=str(canonical),
-            )
-            updated.projects.append(record)
-            self._commit(updated)
-            return self._project_view(record)
-
-    async def delete_project(self, project_id: str) -> None:
-        async with self._lock:
-            self._ensure_available()
-            project = self._project(project_id)
-            if project_id in self._busy_projects:
-                raise BrowserSessionConflictError(
-                    "A session is currently being created for this project."
-                )
-            self._deleting_projects.add(project_id)
-            session_ids = [session.session_id for session in project.sessions]
-        try:
-            for session_id in session_ids:
-                await self.stop_session(session_id)
-            async with self._lock:
-                updated = copy.deepcopy(self._catalog)
-                updated.projects = [
-                    project
-                    for project in updated.projects
-                    if project.project_id != project_id
-                ]
-                self._commit(updated)
-                for session_id in session_ids:
-                    runtime = self._runtime.pop(session_id, None)
-                    if runtime is not None and runtime.attachment is not None:
-                        runtime.attachment.finish(TerminalEvent(kind="deleted"))
-        finally:
-            async with self._lock:
-                self._deleting_projects.discard(project_id)
-
     async def create_session(
         self,
-        project_id: str,
-        name: str,
+        path: str,
         harness: BrowserSessionHarness,
+        name: str | None = None,
     ) -> BrowserSessionView:
-        clean_name = _session_name(name)
+        canonical = _canonical_directory(path)
+        path_key = _directory_key(canonical)
+        driver = self._drivers.driver(harness)
+        operation = asyncio.current_task()
         async with self._lock:
             self._ensure_available()
-            project = self._project(project_id)
-            if project_id in self._deleting_projects:
-                raise BrowserSessionConflictError("That project is being deleted.")
-            if project_id in self._busy_projects:
+            if path_key in self._busy_paths:
                 raise BrowserSessionConflictError(
-                    "Another session is currently being created for this project."
+                    "Another session is currently being created for this folder."
                 )
-            _ensure_unique_name(project, clean_name)
-            availability = self._drivers.driver(harness).availability()
+            clean_name = (
+                _default_session_name(self._catalog, canonical)
+                if name is None
+                else _session_name(name)
+            )
+            _ensure_unique_name(self._catalog, canonical, clean_name)
+            availability = driver.availability()
             if not availability.available:
                 raise BrowserSessionUnavailableError(
                     availability.message or "That harness is unavailable."
                 )
-            self._busy_projects.add(project_id)
-            project_path = _existing_project_path(project.path)
-            creation_task = asyncio.create_task(
-                self._drivers.driver(harness).create_native_id(project_path)
-            )
-            self._creation_tasks.add(creation_task)
-            creation_task.add_done_callback(self._forget_creation_task)
+            self._busy_paths.add(path_key)
+            if operation is not None:
+                self._creation_tasks.add(operation)
 
         try:
-            native_id = await creation_task
+            native_id = await driver.create_native_id(canonical)
             session_id = f"ses_{uuid4().hex}"
-            async with self._lock:
-                self._ensure_available()
-                project = self._project(project_id)
-                if project_id in self._deleting_projects:
-                    raise BrowserSessionConflictError("That project is being deleted.")
-                _ensure_unique_name(project, clean_name)
-                updated = copy.deepcopy(self._catalog)
-                updated_project = _project_in(updated, project_id)
-                updated_project.sessions.append(
-                    SessionRecord(
-                        session_id=session_id,
-                        name=clean_name,
-                        harness=harness,
-                        native_id=native_id,
+            committed = False
+            try:
+                async with self._lock:
+                    self._ensure_available()
+                    _ensure_unique_name(self._catalog, canonical, clean_name)
+                    updated = copy.deepcopy(self._catalog)
+                    updated.sessions.append(
+                        SessionRecord(
+                            session_id=session_id,
+                            path=str(canonical),
+                            name=clean_name,
+                            harness=harness,
+                            native_id=native_id,
+                        )
                     )
-                )
-                self._commit(updated)
-                self._runtime[session_id] = _SessionRuntime()
+                    self._commit(updated)
+                    committed = True
+                    self._runtime[session_id] = _SessionRuntime()
+            except Exception, asyncio.CancelledError:
+                if not committed:
+                    await asyncio.shield(
+                        self._discard_native_identity(
+                            driver,
+                            native_id,
+                            canonical,
+                        )
+                    )
+                raise
         finally:
             async with self._lock:
-                self._busy_projects.discard(project_id)
+                self._busy_paths.discard(path_key)
+                if operation is not None:
+                    self._creation_tasks.discard(operation)
         return await self.start_session(session_id)
 
     async def rename_session(self, session_id: str, name: str) -> BrowserSessionView:
         clean_name = _session_name(name)
         async with self._lock:
             self._ensure_available()
-            project, session = self._session(session_id)
-            _ensure_unique_name(project, clean_name, except_id=session_id)
+            session = self._session(session_id)
+            _ensure_unique_name(
+                self._catalog,
+                Path(session.path),
+                clean_name,
+                except_id=session_id,
+            )
             updated = copy.deepcopy(self._catalog)
-            _, updated_session = _session_in(updated, session_id)
+            updated_session = _session_in(updated, session_id)
             updated_session.name = clean_name
             self._commit(updated)
             session.name = clean_name
@@ -276,11 +245,8 @@ class BrowserSessionManager:
     async def start_session(self, session_id: str) -> BrowserSessionView:
         async with self._lock:
             self._ensure_available()
-            project, session = self._session(session_id)
-            if (
-                project.project_id in self._deleting_projects
-                or session_id in self._deleting_sessions
-            ):
+            session = self._session(session_id)
+            if session_id in self._deleting_sessions:
                 raise BrowserSessionConflictError("That session is being deleted.")
             runtime = self._runtime[session_id]
             if runtime.state not in {
@@ -291,7 +257,7 @@ class BrowserSessionManager:
                 raise BrowserSessionConflictError(
                     f"Session is already {runtime.state.value}."
                 )
-            project_path = _existing_project_path(project.path)
+            project_path = _existing_session_path(session.path)
             driver = self._drivers.driver(session.harness)
             try:
                 command = driver.command(
@@ -348,7 +314,7 @@ class BrowserSessionManager:
                     runtime.process = process
                     if not session.started_once:
                         updated = copy.deepcopy(self._catalog)
-                        _, updated_session = _session_in(updated, session_id)
+                        updated_session = _session_in(updated, session_id)
                         updated_session.started_once = True
                         try:
                             self._commit(updated)
@@ -380,13 +346,13 @@ class BrowserSessionManager:
                 raise BrowserSessionUnavailableError(
                     "Browser Sessions is shutting down."
                 )
-            _, current = self._session(session_id)
+            current = self._session(session_id)
             return self._session_view(current)
 
     async def stop_session(self, session_id: str) -> BrowserSessionView:
         async with self._lock:
             self._ensure_available(allow_closed=True)
-            _, session = self._session(session_id)
+            session = self._session(session_id)
             runtime = self._runtime[session_id]
             if runtime.state in {
                 BrowserSessionState.STOPPED,
@@ -427,7 +393,7 @@ class BrowserSessionManager:
                 await asyncio.gather(task, return_exceptions=True)
 
         async with self._lock:
-            _, session = self._session(session_id)
+            session = self._session(session_id)
             runtime = self._runtime[session_id]
             runtime.process = None
             runtime.reader_task = None
@@ -446,10 +412,9 @@ class BrowserSessionManager:
             await self.stop_session(session_id)
             async with self._lock:
                 updated = copy.deepcopy(self._catalog)
-                project, _ = _session_in(updated, session_id)
-                project.sessions = [
+                updated.sessions = [
                     session
-                    for session in project.sessions
+                    for session in updated.sessions
                     if session.session_id != session_id
                 ]
                 self._commit(updated)
@@ -634,6 +599,21 @@ class BrowserSessionManager:
             process = runtime.process
         await asyncio.to_thread(process.write, data)
 
+    async def _discard_native_identity(
+        self,
+        driver: HarnessDriver,
+        native_id: str,
+        project_path: Path,
+    ) -> None:
+        try:
+            await driver.discard_native_id(native_id, project_path)
+        except Exception as exc:
+            logger.warning(
+                "Could not discard an uncommitted {} browser session ({}).",
+                driver.harness.value,
+                type(exc).__name__,
+            )
+
     async def _resize_terminal(
         self, session_id: str, token: str, columns: int, rows: int
     ) -> None:
@@ -669,9 +649,6 @@ class BrowserSessionManager:
         if self._start_tasks.get(session_id) is completed:
             self._start_tasks.pop(session_id, None)
 
-    def _forget_creation_task(self, completed: asyncio.Task[str]) -> None:
-        self._creation_tasks.discard(completed)
-
     def _publish_state(self, runtime: _SessionRuntime) -> None:
         if runtime.attachment is not None:
             runtime.attachment.publish(
@@ -695,60 +672,48 @@ class BrowserSessionManager:
         if self._closed and not allow_closed:
             raise BrowserSessionUnavailableError("Browser Sessions is shutting down.")
 
-    def _project(self, project_id: str) -> ProjectRecord:
-        try:
-            return _project_in(self._catalog, project_id)
-        except KeyError as exc:
-            raise BrowserSessionNotFoundError("Project not found.") from exc
-
-    def _session(self, session_id: str) -> tuple[ProjectRecord, SessionRecord]:
+    def _session(self, session_id: str) -> SessionRecord:
         try:
             return _session_in(self._catalog, session_id)
         except KeyError as exc:
             raise BrowserSessionNotFoundError("Session not found.") from exc
 
-    def _project_view(self, project: ProjectRecord) -> BrowserProjectView:
-        path = Path(project.path)
-        return BrowserProjectView(
-            project_id=project.project_id,
-            name=path.name or path.anchor or str(path),
-            path=project.path,
-            sessions=tuple(self._session_view(session) for session in project.sessions),
-        )
-
     def _session_view(self, session: SessionRecord) -> BrowserSessionView:
         runtime = self._runtime[session.session_id]
+        path = Path(session.path)
         return BrowserSessionView(
             session_id=session.session_id,
             name=session.name,
             harness=session.harness,
             state=runtime.state,
+            project_name=path.name or path.anchor or str(path),
+            path=session.path,
             detail=runtime.detail,
         )
 
 
 def _canonical_directory(value: str) -> Path:
     if not value.strip():
-        raise BrowserSessionValidationError("Project path is required.")
+        raise BrowserSessionValidationError("Folder path is required.")
     try:
         path = Path(value).expanduser().resolve(strict=True)
     except (OSError, RuntimeError) as exc:
         raise BrowserSessionValidationError(
-            "Project path must be an existing local directory."
+            "Folder path must be an existing local directory."
         ) from exc
     if not path.is_dir():
         raise BrowserSessionValidationError(
-            "Project path must be an existing local directory."
+            "Folder path must be an existing local directory."
         )
     return path
 
 
-def _existing_project_path(value: str) -> Path:
+def _existing_session_path(value: str) -> Path:
     try:
         return _canonical_directory(value)
     except BrowserSessionValidationError as exc:
         raise BrowserSessionConflictError(
-            "The project directory no longer exists."
+            "The session folder no longer exists."
         ) from exc
 
 
@@ -761,6 +726,10 @@ def _same_directory(left: Path, right: Path) -> bool:
         )
 
 
+def _directory_key(path: Path) -> str:
+    return os.path.normcase(str(path))
+
+
 def _session_name(value: str) -> str:
     name = value.strip()
     if not 1 <= len(name) <= 80:
@@ -771,28 +740,38 @@ def _session_name(value: str) -> str:
 
 
 def _ensure_unique_name(
-    project: ProjectRecord, name: str, *, except_id: str | None = None
+    catalog: SessionCatalog,
+    path: Path,
+    name: str,
+    *,
+    except_id: str | None = None,
 ) -> None:
     if any(
-        session.session_id != except_id and session.name.casefold() == name.casefold()
-        for session in project.sessions
+        session.session_id != except_id
+        and _same_directory(Path(session.path), path)
+        and session.name.casefold() == name.casefold()
+        for session in catalog.sessions
     ):
         raise BrowserSessionConflictError(
-            "Session names must be unique within a project."
+            "Session names must be unique within a folder."
         )
 
 
-def _project_in(catalog: SessionCatalog, project_id: str) -> ProjectRecord:
+def _default_session_name(catalog: SessionCatalog, path: Path) -> str:
+    existing = {
+        session.name.casefold()
+        for session in catalog.sessions
+        if _same_directory(Path(session.path), path)
+    }
+    if "new session" not in existing:
+        return "New session"
+    suffix = 2
+    while f"new session {suffix}" in existing:
+        suffix += 1
+    return f"New session {suffix}"
+
+
+def _session_in(catalog: SessionCatalog, session_id: str) -> SessionRecord:
     return next(
-        project for project in catalog.projects if project.project_id == project_id
+        session for session in catalog.sessions if session.session_id == session_id
     )
-
-
-def _session_in(
-    catalog: SessionCatalog, session_id: str
-) -> tuple[ProjectRecord, SessionRecord]:
-    for project in catalog.projects:
-        for session in project.sessions:
-            if session.session_id == session_id:
-                return project, session
-    raise KeyError(session_id)

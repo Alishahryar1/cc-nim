@@ -95,6 +95,8 @@ function renderNav() {
   const nav = byId("sectionNav");
   nav.innerHTML = "";
   VIEW_GROUPS.forEach((view, index) => {
+    const section = document.createElement("div");
+    section.className = "nav-section";
     const button = document.createElement("button");
     button.type = "button";
     button.className = `nav-link${index === 0 ? " active" : ""}`;
@@ -106,8 +108,16 @@ function renderNav() {
     button.addEventListener("click", () => {
       setActiveView(view.id, { scroll: true });
     });
-    nav.appendChild(button);
+    section.appendChild(button);
+    if (view.id === "sessions") {
+      const children = document.createElement("div");
+      children.id = "sessionNavChildren";
+      children.className = "session-nav-children";
+      section.appendChild(children);
+    }
+    nav.appendChild(section);
   });
+  window.FCCSessions.mount(byId("sessionNavChildren"));
   setActiveView(state.activeView, { scroll: false });
 }
 
@@ -135,7 +145,9 @@ function setActiveView(viewId, { scroll = false } = {}) {
 
   const sessionsActive = activeView.id === "sessions";
   document.querySelector(".app-shell").classList.toggle("sessions-active", sessionsActive);
+  document.querySelector(".topbar").hidden = sessionsActive;
   document.querySelector(".action-bar").hidden = sessionsActive;
+  byId("sessionNavChildren").hidden = !sessionsActive;
   if (sessionsActive) {
     window.FCCSessions.activate();
   } else {

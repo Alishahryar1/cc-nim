@@ -1,10 +1,13 @@
 (() => {
   const api = window.FCCAdminApi;
+  const PAGE_SIZE = 20;
   const state = {
     active: false,
     snapshot: null,
-    projectId: null,
     sessionId: null,
+    renameSessionId: null,
+    page: 1,
+    query: "",
     socket: null,
     socketSessionId: null,
     suspendedSessionId: null,
@@ -16,12 +19,45 @@
 
   const byId = (id) => document.getElementById(id);
 
-  function currentProject() {
-    return state.snapshot?.projects.find((project) => project.id === state.projectId) || null;
+  function sessions() {
+    return state.snapshot?.sessions || [];
   }
 
   function currentSession() {
-    return currentProject()?.sessions.find((session) => session.id === state.sessionId) || null;
+    return sessions().find((session) => session.id === state.sessionId) || null;
+  }
+
+  function mount(container) {
+    container.innerHTML = `
+      <div class="session-nav-tools">
+        <label class="session-search">
+          <span class="sr-only">Search sessions</span>
+          <input id="sessionSearch" type="search" placeholder="Search sessions" autocomplete="off" />
+        </label>
+        <button id="newSessionButton" class="session-add-button" type="button" aria-label="New session" title="New session">+</button>
+      </div>
+      <div id="sessionNavList" class="session-nav-list" aria-label="Coding sessions"></div>
+      <div id="sessionPagination" class="session-pagination" hidden>
+        <button id="previousSessionPage" type="button" aria-label="Previous sessions">‹</button>
+        <span id="sessionPageLabel"></span>
+        <button id="nextSessionPage" type="button" aria-label="Next sessions">›</button>
+      </div>
+    `;
+    byId("newSessionButton").addEventListener("click", openSessionDialog);
+    byId("sessionSearch").addEventListener("input", (event) => {
+      state.query = event.target.value.trim().toLocaleLowerCase();
+      state.page = 1;
+      renderSidebar();
+    });
+    byId("previousSessionPage").addEventListener("click", () => {
+      state.page -= 1;
+      renderSidebar();
+    });
+    byId("nextSessionPage").addEventListener("click", () => {
+      state.page += 1;
+      renderSidebar();
+    });
+    renderSidebar();
   }
 
   async function activate() {
@@ -41,8 +77,7 @@
 
   async function refresh({ quiet = false } = {}) {
     try {
-      const snapshot = await api("/admin/api/sessions");
-      state.snapshot = snapshot;
+      state.snapshot = await api("/admin/api/sessions");
       reconcileSelection();
       render();
     } catch (error) {
@@ -51,21 +86,14 @@
   }
 
   function reconcileSelection() {
-    const projects = state.snapshot?.projects || [];
-    if (!projects.some((project) => project.id === state.projectId)) {
-      state.projectId = projects[0]?.id || null;
-      state.sessionId = null;
-    }
-    const project = currentProject();
-    if (!project?.sessions.some((session) => session.id === state.sessionId)) {
-      state.sessionId = project?.sessions[0]?.id || null;
+    if (!sessions().some((session) => session.id === state.sessionId)) {
+      state.sessionId = sessions()[0]?.id || null;
       state.suspendedSessionId = null;
     }
   }
 
   function render() {
-    renderProjects();
-    renderSessionTabs();
+    renderSidebar();
     renderWorkspace();
     if (
       state.active &&
@@ -77,80 +105,164 @@
     }
   }
 
-  function renderProjects() {
-    const list = byId("projectList");
-    list.innerHTML = "";
-    const snapshot = state.snapshot;
-    byId("addProjectButton").disabled = snapshot ? !snapshot.available : true;
-    if (!snapshot?.available) {
-      showMessage(snapshot?.message || "Browser Sessions is unavailable.", "error");
-    }
-    (snapshot?.projects || []).forEach((project) => {
-      const row = document.createElement("div");
-      row.className = `project-row${project.id === state.projectId ? " active" : ""}`;
-
-      const select = document.createElement("button");
-      select.type = "button";
-      select.className = "project-select";
-      select.title = project.path;
-      const name = document.createElement("strong");
-      name.textContent = project.name;
-      const count = document.createElement("span");
-      count.textContent = `${project.sessions.length} session${project.sessions.length === 1 ? "" : "s"}`;
-      select.append(name, count);
-      select.addEventListener("click", () => selectProject(project.id));
-
-      const remove = document.createElement("button");
-      remove.type = "button";
-      remove.className = "project-remove";
-      remove.textContent = "×";
-      remove.title = `Remove ${project.name}`;
-      remove.setAttribute("aria-label", `Remove ${project.name}`);
-      remove.addEventListener("click", () => deleteProject(project));
-      row.append(select, remove);
-      list.appendChild(row);
+  function matchingGroups() {
+    const groups = new Map();
+    sessions().forEach((session) => {
+      const searchable = [
+        session.name,
+        session.project_name,
+        session.path,
+        harnessLabel(session.harness),
+      ]
+        .join(" ")
+        .toLocaleLowerCase();
+      if (state.query && !searchable.includes(state.query)) return;
+      if (!groups.has(session.path)) {
+        groups.set(session.path, {
+          name: session.project_name,
+          path: session.path,
+          sessions: [],
+        });
+      }
+      groups.get(session.path).sessions.push(session);
     });
+    return Array.from(groups.values());
   }
 
-  function renderSessionTabs() {
-    const tabs = byId("sessionTabs");
-    tabs.innerHTML = "";
-    const project = currentProject();
-    byId("newSessionButton").disabled = !project || !state.snapshot?.available;
-    (project?.sessions || []).forEach((session) => {
-      const tab = document.createElement("button");
-      tab.type = "button";
-      tab.className = `session-tab${session.id === state.sessionId ? " active" : ""}`;
-      tab.setAttribute("role", "tab");
-      tab.setAttribute("aria-selected", String(session.id === state.sessionId));
-      const dot = document.createElement("span");
-      dot.className = `session-state-dot ${session.state}`;
-      const label = document.createElement("span");
-      label.textContent = session.name;
-      tab.append(dot, label);
-      tab.addEventListener("click", () => selectSession(session.id));
-      tabs.appendChild(tab);
+  function renderSidebar() {
+    const list = byId("sessionNavList");
+    const create = byId("newSessionButton");
+    if (!list || !create) return;
+    list.innerHTML = "";
+    const snapshot = state.snapshot;
+    const hasHarness = snapshot?.harnesses.some((harness) => harness.available);
+    create.disabled = !snapshot?.available || !hasHarness;
+    byId("emptyCreateSessionButton").disabled = create.disabled;
+    if (snapshot && !snapshot.available) {
+      showMessage(snapshot.message || "Browser Sessions is unavailable.", "error");
+    }
+
+    const groups = matchingGroups();
+    const flattened = groups.flatMap((group) => group.sessions);
+    const pageCount = Math.max(1, Math.ceil(flattened.length / PAGE_SIZE));
+    state.page = Math.min(Math.max(1, state.page), pageCount);
+    const first = (state.page - 1) * PAGE_SIZE;
+    const pageSessions = flattened.slice(first, first + PAGE_SIZE);
+    const pageGroups = groupSessions(pageSessions);
+
+    if (pageGroups.length === 0) {
+      const empty = document.createElement("p");
+      empty.className = "session-nav-empty";
+      empty.textContent = state.query ? "No matching sessions" : "No sessions yet";
+      list.appendChild(empty);
+    } else {
+      pageGroups.forEach((group) => list.appendChild(renderGroup(group)));
+    }
+
+    const pagination = byId("sessionPagination");
+    pagination.hidden = pageCount <= 1;
+    byId("sessionPageLabel").textContent = `${state.page} / ${pageCount}`;
+    byId("previousSessionPage").disabled = state.page === 1;
+    byId("nextSessionPage").disabled = state.page === pageCount;
+  }
+
+  function groupSessions(items) {
+    const groups = new Map();
+    items.forEach((session) => {
+      if (!groups.has(session.path)) {
+        groups.set(session.path, {
+          name: session.project_name,
+          path: session.path,
+          sessions: [],
+        });
+      }
+      groups.get(session.path).sessions.push(session);
     });
+    return Array.from(groups.values());
+  }
+
+  function renderGroup(group) {
+    const section = document.createElement("section");
+    section.className = "session-folder-group";
+    const heading = document.createElement("div");
+    heading.className = "session-folder-heading";
+    heading.title = group.path;
+    const name = document.createElement("strong");
+    name.textContent = group.name;
+    const path = document.createElement("span");
+    path.textContent = group.path;
+    heading.append(name, path);
+    section.appendChild(heading);
+    group.sessions.forEach((session) => section.appendChild(renderSessionRow(session)));
+    return section;
+  }
+
+  function renderSessionRow(session) {
+    const row = document.createElement("div");
+    row.className = `session-nav-row${session.id === state.sessionId ? " active" : ""}`;
+
+    const select = document.createElement("button");
+    select.type = "button";
+    select.className = "session-nav-select";
+    select.setAttribute("aria-current", session.id === state.sessionId ? "page" : "false");
+    const dot = document.createElement("span");
+    dot.className = `session-state-dot ${session.state}`;
+    dot.title = session.state;
+    const copy = document.createElement("span");
+    copy.className = "session-nav-copy";
+    const label = document.createElement("strong");
+    label.textContent = session.name;
+    const harness = document.createElement("span");
+    harness.textContent = harnessLabel(session.harness);
+    copy.append(label, harness);
+    select.append(dot, copy);
+    select.addEventListener("click", () => selectSession(session.id));
+
+    const menu = document.createElement("details");
+    menu.className = "session-row-menu";
+    const summary = document.createElement("summary");
+    summary.textContent = "⋯";
+    summary.setAttribute("aria-label", `Actions for ${session.name}`);
+    summary.title = `Actions for ${session.name}`;
+    const actions = document.createElement("div");
+    actions.className = "session-row-menu-actions";
+    const transitioning = ["starting", "stopping"].includes(session.state);
+    const lifecycle = menuButton(
+      session.state === "running" || session.state === "starting" ? "Stop" : "Start",
+      () => sessionAction(
+        session.id,
+        session.state === "running" || session.state === "starting" ? "stop" : "start",
+      ),
+    );
+    lifecycle.disabled = transitioning;
+    const rename = menuButton("Rename", () => openRenameDialog(session));
+    rename.disabled = transitioning;
+    const remove = menuButton("Delete", () => deleteSession(session), "danger");
+    remove.disabled = transitioning;
+    actions.append(lifecycle, rename, remove);
+    actions.addEventListener("click", () => {
+      menu.open = false;
+    });
+    menu.append(summary, actions);
+    row.append(select, menu);
+    return row;
+  }
+
+  function menuButton(label, action, kind = "") {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.textContent = label;
+    if (kind) button.className = kind;
+    button.addEventListener("click", action);
+    return button;
   }
 
   function renderWorkspace() {
-    const project = currentProject();
     const session = currentSession();
     const empty = byId("sessionsEmpty");
     const panel = byId("terminalPanel");
-    if (!project) {
-      empty.hidden = false;
-      empty.querySelector("h3").textContent = "Add a project to begin";
-      empty.querySelector("p").textContent =
-        "Choose a local folder, then run Claude Code, Codex, or Pi in it.";
-      panel.hidden = true;
-      return;
-    }
     if (!session) {
       empty.hidden = false;
-      empty.querySelector("h3").textContent = "Create a session";
-      empty.querySelector("p").textContent =
-        `Start a native coding harness inside ${project.path}.`;
       panel.hidden = true;
       return;
     }
@@ -159,43 +271,32 @@
     panel.hidden = false;
     byId("sessionName").textContent = session.name;
     byId("sessionHarness").textContent = harnessLabel(session.harness);
+    byId("sessionPath").textContent = session.path;
+    byId("sessionPath").title = session.path;
     const status = byId("sessionStatus");
     status.textContent = session.state;
     status.className = `status-pill ${statusKind(session.state)}`;
-    byId("sessionDetail").textContent = session.detail || currentProject().path;
-
-    const running = session.state === "running";
-    const transitioning = ["starting", "stopping"].includes(session.state);
-    byId("startSessionButton").hidden = running || transitioning;
-    byId("stopSessionButton").hidden = !running && session.state !== "starting";
-    byId("stopSessionButton").disabled = transitioning;
-    byId("renameSessionButton").disabled = transitioning;
-    byId("deleteSessionButton").disabled = transitioning;
     updateTerminalInput(session);
   }
 
   function updateTerminalInput(session) {
-    if (!state.terminal) return;
+    if (state.terminal) state.terminal.options.disableStdin = session?.state !== "running";
     const running = session?.state === "running";
-    state.terminal.options.disableStdin = !running;
+    const starting = session?.state === "starting";
     const overlay = byId("terminalClosed");
-    overlay.hidden = running || session?.state === "starting";
-    overlay.textContent = session?.detail || "Terminal is closed. Start again to resume.";
-  }
-
-  function selectProject(projectId) {
-    if (state.projectId === projectId) return;
-    state.projectId = projectId;
-    state.sessionId = currentProject()?.sessions[0]?.id || null;
-    state.suspendedSessionId = null;
-    closeSocket();
-    resetTerminal();
-    render();
+    overlay.hidden = running || starting;
+    byId("terminalClosedMessage").textContent =
+      session?.detail || "Terminal is closed. Start again to resume this session.";
+    byId("restartSessionButton").disabled = !session || starting || session.state === "stopping";
   }
 
   function selectSession(sessionId) {
-    state.sessionId = sessionId;
     state.suspendedSessionId = null;
+    if (state.sessionId === sessionId) {
+      render();
+      return;
+    }
+    state.sessionId = sessionId;
     closeSocket();
     resetTerminal();
     render();
@@ -274,18 +375,20 @@
     if (session && event.state) {
       session.state = event.state;
       session.detail = event.detail;
-      renderSessionTabs();
+      renderSidebar();
       renderWorkspace();
     }
     if (event.type === "replaced") {
       state.suspendedSessionId = state.sessionId;
-      showMessage("Terminal opened in another tab. Click its tab to take control.", "warn");
+      showMessage("Terminal opened in another tab. Select this session to take control.", "warn");
     }
     if (event.type === "deleted") {
       state.suspendedSessionId = state.sessionId;
       showMessage("Session was deleted.", "warn");
     }
-    if (event.type === "error") showMessage(event.detail || "Terminal connection ended.", "error");
+    if (event.type === "error") {
+      showMessage(event.detail || "Terminal connection ended.", "error");
+    }
   }
 
   function fitTerminal() {
@@ -311,24 +414,6 @@
     if (socket && socket.readyState < WebSocket.CLOSING) socket.close();
   }
 
-  async function submitProject(event) {
-    event.preventDefault();
-    const path = byId("projectPath").value;
-    try {
-      const project = await api("/admin/api/projects", {
-        method: "POST",
-        body: JSON.stringify({ path }),
-      });
-      byId("projectDialog").close();
-      byId("projectForm").reset();
-      state.projectId = project.id;
-      state.sessionId = null;
-      await refresh();
-    } catch (error) {
-      showMessage(error.message, "error");
-    }
-  }
-
   function openSessionDialog() {
     const select = byId("newSessionHarness");
     select.innerHTML = "";
@@ -347,7 +432,7 @@
     byId("createSessionButton").disabled = !first;
     updateHarnessHint();
     byId("sessionDialog").showModal();
-    byId("newSessionName").focus();
+    byId("newSessionPath").focus();
   }
 
   function updateHarnessHint() {
@@ -357,17 +442,21 @@
 
   async function submitSession(event) {
     event.preventDefault();
-    if (!state.projectId) return;
+    const suppliedName = byId("newSessionName").value.trim();
     try {
-      const session = await api(`/admin/api/projects/${state.projectId}/sessions`, {
+      const session = await api("/admin/api/sessions", {
         method: "POST",
         body: JSON.stringify({
-          name: byId("newSessionName").value,
+          path: byId("newSessionPath").value,
           harness: byId("newSessionHarness").value,
+          name: suppliedName || null,
         }),
       });
       byId("sessionDialog").close();
       byId("sessionForm").reset();
+      state.query = "";
+      state.page = 1;
+      byId("sessionSearch").value = "";
       state.sessionId = session.id;
       state.suspendedSessionId = null;
       closeSocket();
@@ -377,9 +466,8 @@
     }
   }
 
-  function openRenameDialog() {
-    const session = currentSession();
-    if (!session) return;
+  function openRenameDialog(session) {
+    state.renameSessionId = session.id;
     byId("renameSessionName").value = session.name;
     byId("renameDialog").showModal();
     byId("renameSessionName").select();
@@ -387,12 +475,13 @@
 
   async function submitRename(event) {
     event.preventDefault();
-    if (!state.sessionId) return;
+    if (!state.renameSessionId) return;
     try {
-      await api(`/admin/api/sessions/${state.sessionId}`, {
+      await api(`/admin/api/sessions/${state.renameSessionId}`, {
         method: "PATCH",
         body: JSON.stringify({ name: byId("renameSessionName").value }),
       });
+      state.renameSessionId = null;
       byId("renameDialog").close();
       await refresh();
     } catch (error) {
@@ -400,10 +489,9 @@
     }
   }
 
-  async function sessionAction(action) {
-    if (!state.sessionId) return;
+  async function sessionAction(sessionId, action) {
     try {
-      await api(`/admin/api/sessions/${state.sessionId}/${action}`, {
+      await api(`/admin/api/sessions/${sessionId}/${action}`, {
         method: "POST",
         body: "{}",
       });
@@ -413,28 +501,15 @@
     }
   }
 
-  async function deleteSession() {
-    const session = currentSession();
-    if (!session || !window.confirm(`Delete session “${session.name}”?`)) return;
+  async function deleteSession(session) {
+    const confirmed = window.confirm(
+      `Delete “${session.name}” from FCC? Its process will stop, but its native ${harnessLabel(session.harness)} history will be kept.`,
+    );
+    if (!confirmed) return;
     try {
       await api(`/admin/api/sessions/${session.id}`, { method: "DELETE" });
-      closeSocket();
-      state.sessionId = null;
-      state.suspendedSessionId = null;
-      resetTerminal();
-      await refresh();
-    } catch (error) {
-      showMessage(error.message, "error");
-    }
-  }
-
-  async function deleteProject(project) {
-    if (!window.confirm(`Remove project “${project.name}” and its FCC sessions?`)) return;
-    try {
-      await api(`/admin/api/projects/${project.id}`, { method: "DELETE" });
-      if (state.projectId === project.id) {
+      if (state.sessionId === session.id) {
         closeSocket();
-        state.projectId = null;
         state.sessionId = null;
         state.suspendedSessionId = null;
         resetTerminal();
@@ -462,16 +537,10 @@
     area.className = `sessions-message ${kind}`.trim();
   }
 
-  byId("addProjectButton").addEventListener("click", () => {
-    byId("projectDialog").showModal();
-    byId("projectPath").focus();
+  byId("emptyCreateSessionButton").addEventListener("click", openSessionDialog);
+  byId("restartSessionButton").addEventListener("click", () => {
+    if (state.sessionId) sessionAction(state.sessionId, "start");
   });
-  byId("newSessionButton").addEventListener("click", openSessionDialog);
-  byId("renameSessionButton").addEventListener("click", openRenameDialog);
-  byId("startSessionButton").addEventListener("click", () => sessionAction("start"));
-  byId("stopSessionButton").addEventListener("click", () => sessionAction("stop"));
-  byId("deleteSessionButton").addEventListener("click", deleteSession);
-  byId("projectForm").addEventListener("submit", submitProject);
   byId("sessionForm").addEventListener("submit", submitSession);
   byId("renameForm").addEventListener("submit", submitRename);
   byId("newSessionHarness").addEventListener("change", updateHarnessHint);
@@ -479,5 +548,5 @@
     button.addEventListener("click", () => byId(button.dataset.closeDialog).close());
   });
 
-  window.FCCSessions = { activate, deactivate };
+  window.FCCSessions = { mount, activate, deactivate };
 })();
