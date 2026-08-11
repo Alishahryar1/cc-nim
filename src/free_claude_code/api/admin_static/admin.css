@@ -583,14 +583,21 @@ textarea {
   color: var(--text);
 }
 
-.session-row-menu-actions {
+.session-row-menu[open] {
+  grid-column: 1 / -1;
+}
+
+.session-row-menu[open] summary {
   position: absolute;
-  top: 30px;
-  right: 0;
-  z-index: 8;
+  top: 4px;
+  right: 1px;
+}
+
+.session-row-menu-actions {
   display: grid;
-  width: 112px;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   overflow: hidden;
+  margin: 0 6px 6px;
   border: 1px solid var(--line-strong);
   border-radius: var(--radius-sm);
   background: var(--panel-strong);
