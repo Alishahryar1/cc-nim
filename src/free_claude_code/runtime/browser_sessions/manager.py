@@ -29,6 +29,7 @@ from .drivers import HarnessDriver, HarnessDriverRegistry, terminal_environment
 from .pty import TerminalProcess, TerminalProcessFactory, TerminalSpawner
 from .store import (
     BrowserSessionStore,
+    PendingNativeCleanup,
     SessionCatalog,
     SessionRecord,
     SessionStoreError,
@@ -143,6 +144,25 @@ class BrowserSessionManager:
             session.session_id: _SessionRuntime() for session in self._catalog.sessions
         }
 
+    async def start(self) -> None:
+        """Reconcile native identities left behind by interrupted rollbacks."""
+
+        async with self._lock:
+            if self._closed or self._unavailable_message is not None:
+                return
+            pending = tuple(copy.deepcopy(self._catalog.pending_native_cleanups))
+        for cleanup in pending:
+            try:
+                driver = self._drivers.driver(cleanup.harness)
+            except BrowserSessionUnavailableError as exc:
+                logger.warning(
+                    "Could not reconcile an uncommitted {} browser session ({}).",
+                    cleanup.harness.value,
+                    type(exc).__name__,
+                )
+                continue
+            await self._discard_native_identity(driver, cleanup, persisted=True)
+
     async def snapshot(self) -> BrowserSessionSnapshot:
         async with self._lock:
             return BrowserSessionSnapshot(
@@ -189,12 +209,25 @@ class BrowserSessionManager:
         try:
             native_id = await driver.create_native_id(canonical)
             session_id = f"ses_{uuid4().hex}"
+            cleanup = PendingNativeCleanup(
+                harness=harness,
+                native_id=native_id,
+                path=str(canonical),
+            )
+            cleanup_persisted = False
             committed = False
             try:
                 async with self._lock:
                     self._ensure_available()
                     _ensure_unique_name(self._catalog, canonical, clean_name)
+                    if driver.allocates_native_session:
+                        staged = copy.deepcopy(self._catalog)
+                        staged.pending_native_cleanups.append(cleanup)
+                        self._commit(staged)
+                        cleanup_persisted = True
                     updated = copy.deepcopy(self._catalog)
+                    if cleanup_persisted:
+                        updated.pending_native_cleanups.remove(cleanup)
                     updated.sessions.append(
                         SessionRecord(
                             session_id=session_id,
@@ -212,8 +245,8 @@ class BrowserSessionManager:
                     await asyncio.shield(
                         self._discard_native_identity(
                             driver,
-                            native_id,
-                            canonical,
+                            cleanup,
+                            persisted=cleanup_persisted,
                         )
                     )
                 raise
@@ -602,17 +635,34 @@ class BrowserSessionManager:
     async def _discard_native_identity(
         self,
         driver: HarnessDriver,
-        native_id: str,
-        project_path: Path,
+        cleanup: PendingNativeCleanup,
+        *,
+        persisted: bool,
     ) -> None:
         try:
-            await driver.discard_native_id(native_id, project_path)
+            await driver.discard_native_id(cleanup.native_id, Path(cleanup.path))
         except Exception as exc:
             logger.warning(
                 "Could not discard an uncommitted {} browser session ({}).",
                 driver.harness.value,
                 type(exc).__name__,
             )
+            return
+        if not persisted:
+            return
+        async with self._lock:
+            if cleanup not in self._catalog.pending_native_cleanups:
+                return
+            updated = copy.deepcopy(self._catalog)
+            updated.pending_native_cleanups.remove(cleanup)
+            try:
+                self._commit(updated)
+            except BrowserSessionUnavailableError as exc:
+                logger.warning(
+                    "Could not finish reconciling an uncommitted {} browser session ({}).",
+                    driver.harness.value,
+                    type(exc).__name__,
+                )
 
     async def _resize_terminal(
         self, session_id: str, token: str, columns: int, rows: int

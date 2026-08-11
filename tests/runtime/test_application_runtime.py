@@ -457,6 +457,29 @@ async def test_close_retries_browser_sessions_before_closing_providers() -> None
 
 
 @pytest.mark.asyncio
+async def test_start_reconciles_browser_sessions_through_the_runtime_owner() -> None:
+    manager = ProviderRuntimeManager(_settings("nvidia_nim/model"))
+    browser_sessions = MagicMock()
+    browser_sessions.start = AsyncMock()
+    browser_sessions.close = AsyncMock()
+    runtime = ApplicationRuntime(
+        manager,
+        transcriber=None,
+        browser_sessions=browser_sessions,
+    )
+
+    with (
+        patch.object(manager, "warm_referenced_model_cache", AsyncMock()),
+        patch.object(manager, "start_model_list_refresh"),
+    ):
+        await runtime.start()
+
+    browser_sessions.start.assert_awaited_once_with()
+    await runtime.close()
+    browser_sessions.close.assert_awaited_once_with()
+
+
+@pytest.mark.asyncio
 async def test_connected_account_status_reports_cached_model_count() -> None:
     account = MagicMock()
     account.is_connected.return_value = True

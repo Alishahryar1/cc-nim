@@ -36,6 +36,7 @@ from free_claude_code.runtime.browser_sessions.pty import (
 )
 from free_claude_code.runtime.browser_sessions.store import (
     BrowserSessionStore,
+    PendingNativeCleanup,
     SessionCatalog,
     SessionRecord,
     SessionStoreError,
@@ -47,6 +48,7 @@ class FakeDriver(HarnessDriver):
         self.harness = harness
         self.wrapper_name = f"fcc-{harness.value}"
         self.client_name = harness.value
+        self.allocates_native_session = harness == BrowserSessionHarness.CODEX
         self.commands: list[tuple[str, bool]] = []
         self.discarded: list[tuple[str, Path]] = []
 
@@ -174,7 +176,14 @@ def test_store_round_trips_ordered_metadata_and_rejects_corruption(tmp_path):
                 native_id="thread-id",
                 started_once=True,
             )
-        ]
+        ],
+        pending_native_cleanups=[
+            PendingNativeCleanup(
+                harness=BrowserSessionHarness.CODEX,
+                native_id="pending-thread-id",
+                path=str(tmp_path),
+            )
+        ],
     )
 
     store.save(catalog)
@@ -186,6 +195,13 @@ def test_store_round_trips_ordered_metadata_and_rejects_corruption(tmp_path):
     with pytest.raises(SessionStoreError, match="original file was preserved"):
         store.load()
     assert json.loads(path.read_text(encoding="utf-8"))["version"] == 999
+
+
+def test_store_loads_catalogs_written_before_cleanup_ledger(tmp_path):
+    path = tmp_path / "sessions.json"
+    path.write_text('{"version": 1, "sessions": []}', encoding="utf-8")
+
+    assert BrowserSessionStore(path).load() == SessionCatalog()
 
 
 @pytest.mark.asyncio
@@ -372,6 +388,69 @@ async def test_cleanup_failure_does_not_replace_metadata_failure(monkeypatch, tm
 
     assert driver.discarded == [("native-codex", tmp_path.resolve())]
     await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_failed_cleanup_is_reconciled_from_the_durable_ledger(
+    monkeypatch, tmp_path
+):
+    class FailingDiscardDriver(FakeDriver):
+        async def discard_native_id(self, native_id: str, project_path: Path) -> None:
+            await super().discard_native_id(native_id, project_path)
+            raise RuntimeError("cleanup timed out")
+
+    path = tmp_path / "sessions.json"
+    driver = FailingDiscardDriver(BrowserSessionHarness.CODEX)
+    store = BrowserSessionStore(path)
+    manager = BrowserSessionManager(
+        store,
+        drivers=HarnessDriverRegistry([driver]),
+        process_factory=FakeProcessFactory(),
+    )
+    save = store.save
+    save_calls = 0
+
+    def fail_session_promotion(catalog):
+        nonlocal save_calls
+        save_calls += 1
+        if save_calls == 2:
+            raise SessionStoreError("Browser Sessions metadata could not be saved.")
+        save(catalog)
+
+    monkeypatch.setattr(store, "save", fail_session_promotion)
+
+    with pytest.raises(BrowserSessionUnavailableError, match="could not be saved"):
+        await manager.create_session(
+            str(tmp_path),
+            BrowserSessionHarness.CODEX,
+            "Rollback",
+        )
+
+    persisted = BrowserSessionStore(path).load()
+    assert persisted.sessions == []
+    assert persisted.pending_native_cleanups == [
+        PendingNativeCleanup(
+            harness=BrowserSessionHarness.CODEX,
+            native_id="native-codex",
+            path=str(tmp_path.resolve()),
+        )
+    ]
+    assert driver.discarded == [("native-codex", tmp_path.resolve())]
+    await manager.close()
+
+    recovery_driver = FakeDriver(BrowserSessionHarness.CODEX)
+    recovered = BrowserSessionManager(
+        BrowserSessionStore(path),
+        drivers=HarnessDriverRegistry([recovery_driver]),
+        process_factory=FakeProcessFactory(),
+    )
+
+    await recovered.start()
+    await recovered.start()
+
+    assert recovery_driver.discarded == [("native-codex", tmp_path.resolve())]
+    assert BrowserSessionStore(path).load().pending_native_cleanups == []
+    await recovered.close()
 
 
 @pytest.mark.asyncio
@@ -835,6 +914,27 @@ async def test_codex_thread_delete_uses_the_stable_app_server_method(
         "params": {"threadId": "assigned-thread-id"},
     }
     assert process.stdin.closed is True
+
+
+@pytest.mark.asyncio
+async def test_codex_cleanup_does_not_require_the_original_folder(
+    monkeypatch, tmp_path
+):
+    calls: list[tuple[str, Path, str]] = []
+
+    async def delete_thread(wrapper: str, path: Path, native_id: str) -> None:
+        calls.append((wrapper, path, native_id))
+
+    driver = CodexDriver()
+    monkeypatch.setattr(driver, "_wrapper", lambda: "fcc-codex")
+    monkeypatch.setattr(
+        "free_claude_code.runtime.browser_sessions.drivers._delete_codex_thread",
+        delete_thread,
+    )
+
+    await driver.discard_native_id("assigned-thread-id", tmp_path / "removed")
+
+    assert calls == [("fcc-codex", Path.home(), "assigned-thread-id")]
 
 
 @pytest.mark.asyncio
