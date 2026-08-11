@@ -81,6 +81,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "cloudflare": "cloudflare/@cf/moonshotai/kimi-k2.6",
     "tokenrouter": "tokenrouter/moonshotai/kimi-k3-free",
     "nararoute": "nararoute/kimi-k3-free",
+    "agnes": "agnes/agnes-2.0-flash",
 }
 MISTRAL_REASONING_SMOKE_DEFAULT_MODEL = "mistral/mistral-medium-3-5"
 

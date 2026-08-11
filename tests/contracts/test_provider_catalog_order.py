@@ -14,6 +14,7 @@ _EXPECTED_PROVIDER_ORDER: tuple[str, ...] = (
     "qwencloud",
     "together",
     "deepinfra",
+    "agnes",
     "azure_openai",
     "gemini",
     "vertex",

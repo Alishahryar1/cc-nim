@@ -223,6 +223,23 @@ def test_deepinfra_provider_smoke_uses_current_coding_model(monkeypatch) -> None
     assert models[0].source == "provider_default"
 
 
+def test_agnes_provider_smoke_uses_documented_model(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_AGNES", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            agnes_api_key="agnes-key",
+        )
+    )
+
+    models = config.provider_smoke_models()
+
+    assert [model.provider for model in models] == ["agnes"]
+    assert models[0].full_model == "agnes/agnes-2.0-flash"
+    assert models[0].source == "provider_default"
+
+
 def test_connected_account_provider_smoke_requires_explicit_model(
     monkeypatch,
 ) -> None:

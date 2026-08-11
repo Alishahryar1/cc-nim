@@ -20,6 +20,7 @@ from .reasoning import (
     LLAMACPP_REASONING,
     NO_REASONING,
     SPLIT_REASONING_OUTPUT,
+    ChatTemplateReasoning,
     NamedEffortReasoning,
     ReasoningEncoder,
     ReasoningObject,
@@ -213,6 +214,16 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             tags_field="tags",
             non_thinking_tag="non-reasoning",
         ),
+    ),
+    "agnes": OpenAIChatProfile(
+        _policy(
+            "AGNES",
+            ReasoningReplayMode.THINK_TAGS,
+            include_extra_body=True,
+            extra_body_validator=validate_extra_body_does_not_override_reasoning_fields,
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        ChatTemplateReasoning(field="enable_thinking"),
     ),
     "azure_openai": OpenAIChatProfile(
         _policy(

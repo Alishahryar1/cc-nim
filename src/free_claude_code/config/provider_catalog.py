@@ -64,6 +64,8 @@ DEEPINFRA_DEFAULT_BASE = "https://api.deepinfra.com/v1/openai"
 TOKENROUTER_DEFAULT_BASE = "https://api.tokenrouter.com/v1"
 # NaraRoute OpenAI-compatible Chat Completions gateway.
 NARAROUTE_DEFAULT_BASE = "https://router.bynara.id/v1"
+# Agnes AI OpenAI-compatible Chat Completions API.
+AGNES_DEFAULT_BASE = "https://apihub.agnes-ai.com/v1"
 
 
 class ProviderAuthKind(StrEnum):
@@ -171,6 +173,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="deepinfra_api_key",
         default_base_url=DEEPINFRA_DEFAULT_BASE,
         proxy_attr="deepinfra_proxy",
+    ),
+    "agnes": ProviderDescriptor(
+        provider_id="agnes",
+        display_name="Agnes AI",
+        credential_env="AGNES_API_KEY",
+        credential_url="https://agnes-ai.com/",
+        credential_attr="agnes_api_key",
+        default_base_url=AGNES_DEFAULT_BASE,
+        proxy_attr="agnes_proxy",
     ),
     "azure_openai": ProviderDescriptor(
         provider_id="azure_openai",

@@ -210,6 +210,12 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "Defaults to https://router.bynara.id/v1."
         ),
     },
+    "AGNES_API_KEY": {
+        "label": "Agnes AI API Key",
+        "description": (
+            "Agnes AI OpenAI-compatible API key for apihub.agnes-ai.com/v1."
+        ),
+    },
 }
 
 

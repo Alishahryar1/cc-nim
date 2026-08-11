@@ -11,6 +11,7 @@ from free_claude_code.application.errors import (
 )
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.config.provider_catalog import (
+    AGNES_DEFAULT_BASE,
     BEDROCK_DEFAULT_BASE,
     COHERE_DEFAULT_BASE,
     DEEPINFRA_DEFAULT_BASE,
@@ -85,6 +86,7 @@ def _make_settings(**overrides):
     mock.tokenrouter_base_url = TOKENROUTER_DEFAULT_BASE
     mock.nararoute_api_key = "test_nararoute_key"
     mock.nararoute_base_url = NARAROUTE_DEFAULT_BASE
+    mock.agnes_api_key = "test_agnes_key"
     mock.lm_studio_base_url = "http://localhost:1234/v1"
     mock.llamacpp_base_url = "http://localhost:8080/v1"
     mock.ollama_base_url = "http://localhost:11434"
@@ -111,6 +113,7 @@ def _make_settings(**overrides):
     mock.zai_proxy = ""
     mock.tokenrouter_proxy = ""
     mock.nararoute_proxy = ""
+    mock.agnes_proxy = ""
     mock.fireworks_proxy = ""
     mock.fireworks_api_key = "test_fireworks_key"
     mock.novita_proxy = ""
@@ -276,6 +279,26 @@ def test_deepinfra_provider_config_uses_key_base_and_proxy() -> None:
     assert descriptor.credential_env == "DEEPINFRA_API_KEY"
     assert config.api_key == "deepinfra-token"
     assert config.base_url == DEEPINFRA_DEFAULT_BASE
+    assert config.proxy == "http://proxy.test:8080"
+    assert isinstance(provider, OpenAIChatProvider)
+
+
+def test_agnes_provider_config_uses_key_base_and_proxy() -> None:
+    descriptor = PROVIDER_CATALOG["agnes"]
+    settings = _make_settings(
+        agnes_api_key="agnes-token",
+        agnes_proxy="http://proxy.test:8080",
+    )
+
+    config = build_provider_config(descriptor, settings)
+    with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
+        provider = create_provider("agnes", settings)
+
+    assert descriptor.display_name == "Agnes AI"
+    assert descriptor.credential_env == "AGNES_API_KEY"
+    assert descriptor.base_url_attr is None
+    assert config.api_key == "agnes-token"
+    assert config.base_url == AGNES_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
 
@@ -601,6 +624,7 @@ def test_create_provider_instantiates_each_builtin():
         "zai": OpenAIChatProvider,
         "tokenrouter": OpenAIChatProvider,
         "nararoute": OpenAIChatProvider,
+        "agnes": OpenAIChatProvider,
         "gemini": GeminiProvider,
         "vertex": VertexProvider,
         "groq": GroqProvider,
