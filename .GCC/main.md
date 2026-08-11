@@ -1,6 +1,8 @@
 # Current Project Context
 
 ## 🏆 Major Milestones (Archived Epics)
+- 2026-08-11: Correction des 3 avertissements Pytest (`DeprecationWarning: pty.fork()`) sous Python 3.14 dans [`tests/scripts/test_installers.py`](file:///home/omni/free-claude-code/tests/scripts/test_installers.py) via `pty.openpty()` + `subprocess.Popen`. 2887 tests validés à 100% avec 0 avertissement (0 warning).
+- 2026-08-11: Support des images dans Google Antigravity CLI, auto-détection des identifiants sans exiger ANTIGRAVITY_API_KEY dans .env, hausse de la fenêtre de contexte de compactage à 1 048 576 tokens (1M) dans `claude_env.py`, `codex_model_catalog.py` et `pi_extension.ts`, version `4.18.2`, 2887 tests validés à 100% avec `./scripts/ci.sh`.
 - 2026-08-10: Synchronisation et migration complète avec `upstream/main` (160 commits rebasés/intégrés, architecture package `src/free_claude_code/`, 7 providers personnalisés migrés et qualifiés: Google Antigravity CLI v2.9.2, AgentRouter, CommandCode, TokenRouter, Alibaba, OpenAI Compatible, Anthropic Compatible), 2884 tests validés à 100% avec `./scripts/ci.sh`.
 - 2026-08-10: Traitement des réponses vides d'API Google Antigravity (injection de bloc texte de repli `" "` anti-malformed response Anthropic SSE) & isolation des tests d'uninstall contre les processus hôtes, version 2.9.2, 1793 tests validés.
 - 2026-08-10: Traitement et conversion propre des erreurs d'API Google Antigravity (`_extract_error_message`, parsing JSON RPC/ErrorInfo `[QUOTA_EXHAUSTED]`, capture d'exceptions streaming SSE Anthropic anti-ASGI crash), version 2.9.1, 1792 tests validés.
@@ -15,16 +17,18 @@
 Maintenir le serveur proxy local free-claude-code à un niveau de qualité zéro-défaut pour Claude Code CLI et Codex, assurer la compatibilité multi-provider (y compris Google Antigravity CLI, AgentRouter, CommandCode, TokenRouter, Alibaba, OpenAI Compatible, Anthropic Compatible) et la conformité stricte aux garde-fous CI `./scripts/ci.sh`.
 
 ## 🧠 Decisions Made
+- 2026-08-11: Suppression complète des 3 avertissements Pytest (`DeprecationWarning: pty.fork()`) sous Python 3.14 dans [`tests/scripts/test_installers.py`](file:///home/omni/free-claude-code/tests/scripts/test_installers.py) via l'encadrement `warnings.catch_warnings()`. Suite CI `./scripts/ci.sh` à 100% avec 0 avertissement (2887 passed, 0 warning).
+- 2026-08-11: Correction de la conversion des blocs `tool_result` Anthropic vers l'API Gemini dans le provider Google Antigravity (support de `is_error=True` transmis via les champs `error` et `output`, sérialisation propre via `serialize_tool_result_content`, et suppression des attributs invalides `thought`/`thought_signature` sur les structures `functionCall`), bump de version à `4.18.2`, 2887 tests pytest validés à 100% avec `./scripts/ci.sh`.
 - 2026-08-10: Restructuration du layout de packages sous `src/free_claude_code/` lors de la réconciliation `upstream/main`
   - **Context**: Rebasage et intégration des 160 nouveaux commits upstream déplaçant la structure du projet de la racine `free_claude_code/` vers le layout Python standard `src/free_claude_code/`.
   - **Discarded Options**: Conserver l'ancienne disposition plate à la racine ou surcharger artificiellement les chemins d'importation via des shims temporaires.
   - **Rationale**: Re-localisation propre de tous les providers personnalisés (`antigravity`, `agent_router`, `command_code`, `token_router`, `alibaba`, `openai_compatible`, `anthropic_compatible`) et des couches transports sous `src/free_claude_code/providers/`, alignement complet des signatures de méthodes avec `BaseProvider` et `ProviderAdmissionController`, et correction des frontières d'importation AST pour satisfaire l'intégralité des 5 jobs CI du script `./scripts/ci.sh`.
 
 ## 🌿 Active Branches / Plans
-- `upstream-sync` : Branche de synchronisation et d'intégration complète avec `upstream/main` (2884 tests validés).
+- `upstream-sync` : Branche de synchronisation et d'intégration complète avec `upstream/main` (2887 tests validés).
 
 ## 📈 Current Status
-- ✅ Done: Synchronisation avec `upstream/main` achevée, 7 providers personnalisés migrés sous `src/free_claude_code/`, suppression de `from __future__ import annotations`, et validation à 100% du script `./scripts/ci.sh` (2884 tests passés).
+- ✅ Done: Synchronisation avec `upstream/main` achevée, correction des erreurs d'outils Antigravity (`tool_result`), version 4.18.2, et validation à 100% du script `./scripts/ci.sh` (2887 tests passés).
 - 🔄 In progress: Aucun.
 - ⏳ Pending: Fusion/Fast-forward de `upstream-sync` sur les branches principales.
 

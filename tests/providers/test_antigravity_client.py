@@ -424,3 +424,73 @@ async def test_stream_response_empty_stream_emits_space(antigravity_provider):
             or '"text"' in full_stream
         )
         assert "event: message_stop" in full_stream
+
+
+def test_convert_anthropic_tool_result_success():
+    messages = [
+        MockMessage(
+            "assistant",
+            [
+                {
+                    "type": "tool_use",
+                    "id": "call_123",
+                    "name": "read_file",
+                    "input": {"path": "test.txt"},
+                }
+            ],
+        ),
+        MockMessage(
+            "user",
+            [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "call_123",
+                    "content": [{"type": "text", "text": "file content line 1"}],
+                    "is_error": False,
+                }
+            ],
+        ),
+    ]
+    contents, _ = _convert_anthropic_messages_to_gemini(messages)
+    assert len(contents) == 2
+    tool_resp_part = contents[1]["parts"][0]
+    assert "functionResponse" in tool_resp_part
+    fn_resp = tool_resp_part["functionResponse"]
+    assert fn_resp["name"] == "read_file"
+    assert fn_resp["response"] == {"output": "file content line 1"}
+    assert "error" not in fn_resp["response"]
+
+
+def test_convert_anthropic_tool_result_error():
+    messages = [
+        MockMessage(
+            "assistant",
+            [
+                {
+                    "type": "tool_use",
+                    "id": "call_456",
+                    "name": "run_command",
+                    "input": {"command": "invalid"},
+                }
+            ],
+        ),
+        MockMessage(
+            "user",
+            [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "call_456",
+                    "content": [{"type": "text", "text": "Command not found: invalid"}],
+                    "is_error": True,
+                }
+            ],
+        ),
+    ]
+    contents, _ = _convert_anthropic_messages_to_gemini(messages)
+    assert len(contents) == 2
+    tool_resp_part = contents[1]["parts"][0]
+    assert "functionResponse" in tool_resp_part
+    fn_resp = tool_resp_part["functionResponse"]
+    assert fn_resp["name"] == "run_command"
+    assert fn_resp["response"]["error"] == "Command not found: invalid"
+    assert fn_resp["response"]["output"] == "Command not found: invalid"

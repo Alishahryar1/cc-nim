@@ -3,7 +3,6 @@
 Authenticates user account with Google Cloud Code Assist API and saves fresh OAuth token to disk.
 """
 
-import base64
 import contextlib
 import json
 import logging
@@ -20,7 +19,9 @@ logging.basicConfig(
 )
 logger = logging.getLogger("antigravity_login")
 
-CLIENT_ID = "1071006060591-tmhssin2h21lcre235vtolojh4g403ep." + "apps.googleusercontent.com"
+CLIENT_ID = (
+    "1071006060591-tmhssin2h21lcre235vtolojh4g403ep." + "apps.googleusercontent.com"
+)
 CLIENT_SECRET = "GOCSPX-" + "K58FWR486LdLJ1mLB8sXC4z6qDAf"
 REDIRECT_PORT = 8085
 REDIRECT_URI = f"http://localhost:{REDIRECT_PORT}/oauth/callback"

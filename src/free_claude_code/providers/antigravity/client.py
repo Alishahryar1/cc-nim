@@ -12,6 +12,7 @@ from typing import Any
 import httpx
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.core.anthropic import serialize_tool_result_content
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.streaming import AnthropicStreamLedger
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
@@ -197,9 +198,12 @@ def _convert_anthropic_messages_to_gemini(
                 )
                 if b_type == "tool_use":
                     t_id = (
-                        block.get("id")
+                        (block.get("id") or block.get("tool_use_id"))
                         if isinstance(block, dict)
-                        else getattr(block, "id", "")
+                        else (
+                            getattr(block, "id", None)
+                            or getattr(block, "tool_use_id", "")
+                        )
                     )
                     t_name = (
                         block.get("name")
@@ -207,7 +211,7 @@ def _convert_anthropic_messages_to_gemini(
                         else getattr(block, "name", "")
                     )
                     if t_id and t_name:
-                        tool_name_map[t_id] = t_name
+                        tool_name_map[str(t_id)] = t_name
 
     for msg in messages:
         if isinstance(msg, dict):
@@ -267,17 +271,12 @@ def _convert_anthropic_messages_to_gemini(
                         if isinstance(block, dict)
                         else getattr(block, "input", {})
                     )
-                    ts = (
-                        block.get("thought_signature")
-                        if isinstance(block, dict)
-                        else getattr(block, "thought_signature", None)
-                    )
                     parts.append(
                         {
-                            "functionCall": {"name": name, "args": inp},
-                            "thought": True,
-                            "thought_signature": ts
-                            or "skip_thought_signature_validator",
+                            "functionCall": {
+                                "name": name,
+                                "args": inp if isinstance(inp, dict) else {},
+                            },
                         }
                     )
                 elif b_type in ("image", "image_url"):
@@ -358,11 +357,27 @@ def _convert_anthropic_messages_to_gemini(
                         if isinstance(block, dict)
                         else getattr(block, "content", "")
                     )
+                    is_err = (
+                        block.get("is_error", False)
+                        if isinstance(block, dict)
+                        else getattr(block, "is_error", False)
+                    )
+                    serialized_content = serialize_tool_result_content(res_content)
+                    if is_err:
+                        err_text = serialized_content or "Tool execution failed"
+                        response_dict = {
+                            "error": err_text,
+                            "output": err_text,
+                        }
+                    else:
+                        response_dict = {
+                            "output": serialized_content,
+                        }
                     parts.append(
                         {
                             "functionResponse": {
                                 "name": func_name,
-                                "response": {"output": res_content},
+                                "response": response_dict,
                             }
                         }
                     )
