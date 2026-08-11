@@ -271,12 +271,19 @@ def _convert_anthropic_messages_to_gemini(
                         if isinstance(block, dict)
                         else getattr(block, "input", {})
                     )
+                    ts = (
+                        block.get("thought_signature")
+                        if isinstance(block, dict)
+                        else getattr(block, "thought_signature", None)
+                    )
                     parts.append(
                         {
                             "functionCall": {
                                 "name": name,
                                 "args": inp if isinstance(inp, dict) else {},
                             },
+                            "thought_signature": ts
+                            or "skip_thought_signature_validator",
                         }
                     )
                 elif b_type in ("image", "image_url"):

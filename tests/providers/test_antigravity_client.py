@@ -453,6 +453,11 @@ def test_convert_anthropic_tool_result_success():
     ]
     contents, _ = _convert_anthropic_messages_to_gemini(messages)
     assert len(contents) == 2
+    fn_call_part = contents[0]["parts"][0]
+    assert "functionCall" in fn_call_part
+    assert fn_call_part["thought_signature"] == "skip_thought_signature_validator"
+    assert "thought" not in fn_call_part
+
     tool_resp_part = contents[1]["parts"][0]
     assert "functionResponse" in tool_resp_part
     fn_resp = tool_resp_part["functionResponse"]
