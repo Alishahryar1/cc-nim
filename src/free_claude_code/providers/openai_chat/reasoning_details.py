@@ -68,6 +68,12 @@ class StructuredReasoningStream:
             yield ledger.emit_thinking_delta(native_reasoning)
 
         for detail in details:
+            if self._text_source == "details":
+                text = _reasoning_detail_text(detail)
+                if text:
+                    yield from ledger.ensure_thinking_block()
+                    yield ledger.emit_thinking_delta(text)
+
             preserved = _preserved_reasoning_detail(detail)
             if preserved:
                 yield from ledger.close_content_blocks()
@@ -78,14 +84,6 @@ class StructuredReasoningStream:
                     data=preserved,
                 )
                 yield ledger.content_block_stop(index)
-                continue
-            if self._text_source != "details":
-                continue
-            text = _reasoning_detail_text(detail)
-            if not text:
-                continue
-            yield from ledger.ensure_thinking_block()
-            yield ledger.emit_thinking_delta(text)
 
 
 def _reasoning_details(delta: Any) -> Sequence[Any]:
@@ -145,10 +143,12 @@ def _preserved_reasoning_detail(detail: Any) -> str | None:
     if not isinstance(detail, Mapping):
         return None
     kind = str(_field(detail, "type") or "").lower()
+    signature = _field(detail, "signature")
     if (
         "encrypted" in kind
         or "redacted" in kind
         or "summary" in kind
+        or isinstance(signature, str)
         or _reasoning_detail_text(detail) is None
     ):
         return json.dumps(dict(detail), separators=(",", ":"))

@@ -216,6 +216,13 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "Agnes AI OpenAI-compatible API key for apihub.agnes-ai.com/v1."
         ),
     },
+    "ZENMUX_API_KEY": {
+        "label": "ZenMux API Key",
+        "description": (
+            "ZenMux OpenAI-compatible gateway API key for zenmux.ai/api/v1. "
+            "Create one at zenmux.ai/platform/pay-as-you-go."
+        ),
+    },
 }
 
 

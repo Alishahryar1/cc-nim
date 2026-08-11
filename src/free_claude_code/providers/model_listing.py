@@ -36,9 +36,11 @@ def extract_openai_model_infos(
     aliases_field: str | None = None,
     field_equals: tuple[str, str] | None = None,
     required_null_field: str | None = None,
+    required_sequence_items: tuple[tuple[str, str], ...] = (),
     tags_field: str | None = None,
     thinking_tag: str = "reasoning",
     non_thinking_tag: str | None = None,
+    thinking_boolean_path: tuple[str, ...] | None = None,
 ) -> frozenset[_ProviderModelInfo]:
     """Extract routable IDs from an OpenAI-compatible model-list response."""
     model_infos: set[_ProviderModelInfo] = set()
@@ -77,6 +79,19 @@ def extract_openai_model_infos(
             if _field(item, required_null_field) is not None:
                 included = False
 
+        for field_name, required_item in required_sequence_items:
+            values = _field(item, field_name)
+            if not _is_sequence(values) or any(
+                not isinstance(value, str) or not value.strip() for value in values
+            ):
+                raise _malformed(
+                    provider_name,
+                    f"expected every {item_location} item to include "
+                    f"{field_name} string array",
+                )
+            if required_item not in values:
+                included = False
+
         supports_thinking: bool | None = None
         if tags_field is not None:
             tags_value = _field(item, tags_field)
@@ -93,6 +108,16 @@ def extract_openai_model_infos(
                 supports_thinking = True
             elif non_thinking_tag is not None and non_thinking_tag in tags:
                 supports_thinking = False
+
+        if thinking_boolean_path is not None:
+            capability = _path(item, thinking_boolean_path)
+            if capability is not _MISSING:
+                if not isinstance(capability, bool):
+                    raise _malformed(
+                        provider_name,
+                        f"expected {'.'.join(thinking_boolean_path)} to be boolean",
+                    )
+                supports_thinking = capability
 
         if not included:
             continue
@@ -190,6 +215,18 @@ def _has_field(item: Any, name: str) -> bool:
     if isinstance(item, Mapping):
         return name in item
     return hasattr(item, name)
+
+
+_MISSING = object()
+
+
+def _path(item: Any, path: tuple[str, ...]) -> Any:
+    current = item
+    for name in path:
+        if not _has_field(current, name):
+            return _MISSING
+        current = _field(current, name)
+    return current
 
 
 def _is_sequence(value: Any) -> bool:

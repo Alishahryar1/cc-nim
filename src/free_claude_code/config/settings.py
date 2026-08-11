@@ -146,6 +146,9 @@ class Settings(BaseSettings):
     # ==================== Agnes AI (OpenAI-compatible) ====================
     agnes_api_key: str = Field(default="", validation_alias="AGNES_API_KEY")
 
+    # ==================== ZenMux (OpenAI-compatible) ====================
+    zenmux_api_key: str = Field(default="", validation_alias="ZENMUX_API_KEY")
+
     # ==================== Cerebras Inference (OpenAI-compatible) ====================
     cerebras_api_key: str = Field(default="", validation_alias="CEREBRAS_API_KEY")
 
@@ -204,6 +207,7 @@ class Settings(BaseSettings):
     together_proxy: str = Field(default="", validation_alias="TOGETHER_PROXY")
     deepinfra_proxy: str = Field(default="", validation_alias="DEEPINFRA_PROXY")
     agnes_proxy: str = Field(default="", validation_alias="AGNES_PROXY")
+    zenmux_proxy: str = Field(default="", validation_alias="ZENMUX_PROXY")
     azure_openai_proxy: str = Field(default="", validation_alias="AZURE_OPENAI_PROXY")
     nvidia_nim_proxy: str = Field(default="", validation_alias="NVIDIA_NIM_PROXY")
     open_router_proxy: str = Field(default="", validation_alias="OPENROUTER_PROXY")

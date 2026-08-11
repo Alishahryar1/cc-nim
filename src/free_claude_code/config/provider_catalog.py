@@ -66,6 +66,8 @@ TOKENROUTER_DEFAULT_BASE = "https://api.tokenrouter.com/v1"
 NARAROUTE_DEFAULT_BASE = "https://router.bynara.id/v1"
 # Agnes AI OpenAI-compatible Chat Completions API.
 AGNES_DEFAULT_BASE = "https://apihub.agnes-ai.com/v1"
+# ZenMux OpenAI-compatible Chat Completions gateway.
+ZENMUX_DEFAULT_BASE = "https://zenmux.ai/api/v1"
 
 
 class ProviderAuthKind(StrEnum):
@@ -182,6 +184,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="agnes_api_key",
         default_base_url=AGNES_DEFAULT_BASE,
         proxy_attr="agnes_proxy",
+    ),
+    "zenmux": ProviderDescriptor(
+        provider_id="zenmux",
+        display_name="ZenMux",
+        credential_env="ZENMUX_API_KEY",
+        credential_url="https://zenmux.ai/platform/pay-as-you-go",
+        credential_attr="zenmux_api_key",
+        default_base_url=ZENMUX_DEFAULT_BASE,
+        proxy_attr="zenmux_proxy",
     ),
     "azure_openai": ProviderDescriptor(
         provider_id="azure_openai",

@@ -240,6 +240,23 @@ def test_agnes_provider_smoke_uses_documented_model(monkeypatch) -> None:
     assert models[0].source == "provider_default"
 
 
+def test_zenmux_provider_smoke_uses_current_free_model(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_ZENMUX", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            zenmux_api_key="zenmux-key",
+        )
+    )
+
+    models = config.provider_smoke_models()
+
+    assert [model.provider for model in models] == ["zenmux"]
+    assert models[0].full_model == "zenmux/deepseek/deepseek-v4-flash-free"
+    assert models[0].source == "provider_default"
+
+
 def test_connected_account_provider_smoke_requires_explicit_model(
     monkeypatch,
 ) -> None:

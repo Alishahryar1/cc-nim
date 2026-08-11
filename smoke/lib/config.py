@@ -82,6 +82,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "tokenrouter": "tokenrouter/moonshotai/kimi-k3-free",
     "nararoute": "nararoute/kimi-k3-free",
     "agnes": "agnes/agnes-2.0-flash",
+    "zenmux": "zenmux/deepseek/deepseek-v4-flash-free",
 }
 MISTRAL_REASONING_SMOKE_DEFAULT_MODEL = "mistral/mistral-medium-3-5"
 
