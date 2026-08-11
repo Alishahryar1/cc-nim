@@ -7,6 +7,8 @@ MIN_UV_VERSION="0.11.16"
 CLAUDE_INSTALL_URL="https://claude.ai/install.sh"
 CODEX_INSTALL_URL="https://chatgpt.com/codex/install.sh"
 PI_INSTALL_URL="https://pi.dev/install.sh"
+RTK_VERSION="0.44.2"
+RTK_RELEASE_BASE_URL="https://github.com/rtk-ai/rtk/releases/download/v$RTK_VERSION"
 UV_INSTALL_URL="https://astral.sh/uv/install.sh"
 FCC_MACOS_BUNDLE_ID="io.github.alishahryar1.free-claude-code"
 FCC_MACOS_OWNER_FILE=".free-claude-code-owner"
@@ -20,10 +22,13 @@ voice_all=0
 install_claude=1
 install_codex=1
 install_pi=1
+enable_rtk=0
 torch_backend=""
-temporary_script=""
+temporary_file=""
+temporary_binary=""
 tool_bin=""
 pi_available=0
+rtk_path=""
 
 show_usage() {
     cat <<'USAGE'
@@ -36,6 +41,7 @@ Options:
   --voice-local            Install local Whisper voice transcription support.
   --voice-all              Install all voice transcription backends.
   --torch-backend VALUE    Use a uv PyTorch backend, such as cu130. Requires local voice.
+  --rtk                    Install and configure RTK for the selected coding agents.
   --dry-run                Print commands without running them.
   --help                   Show this help text.
 USAGE
@@ -52,13 +58,26 @@ installer_is_interactive() {
 
 prompt_yes_no() {
     question=$1
+    default_answer=${2:-yes}
+    case "$default_answer" in
+        yes) prompt='[Y/n]' ;;
+        no) prompt='[y/N]' ;;
+        *) fail "Unsupported prompt default: $default_answer" ;;
+    esac
+
     while :; do
-        printf '%s [Y/n] ' "$question" >&4
+        printf '%s %s ' "$question" "$prompt" >&4
         if ! IFS= read -r answer <&3; then
-            fail "Could not read the coding agent selection."
+            fail "Could not read the installer selection."
         fi
         case "$answer" in
-            ""|[Yy]|[Yy][Ee][Ss]) return 0 ;;
+            '')
+                if [ "$default_answer" = "yes" ]; then
+                    return 0
+                fi
+                return 1
+                ;;
+            [Yy]|[Yy][Ee][Ss]) return 0 ;;
             [Nn]|[Nn][Oo]) return 1 ;;
             *) printf 'Please answer Y or N.\n' >&4 ;;
         esac
@@ -93,6 +112,11 @@ choose_coding_agents() {
         fi
         printf 'Select at least one coding agent.\n\n' >&4
     done
+
+    if [ "$enable_rtk" -eq 0 ] &&
+        prompt_yes_no "Enable RTK token optimization globally for the selected coding agents?" no; then
+        enable_rtk=1
+    fi
 
     exec 3<&-
     exec 4>&-
@@ -139,8 +163,11 @@ run() {
 }
 
 cleanup() {
-    if [ -n "$temporary_script" ] && [ -e "$temporary_script" ]; then
-        rm -f "$temporary_script"
+    if [ -n "$temporary_file" ] && [ -e "$temporary_file" ]; then
+        rm -f "$temporary_file"
+    fi
+    if [ -n "$temporary_binary" ] && [ -e "$temporary_binary" ]; then
+        rm -f "$temporary_binary"
     fi
 }
 
@@ -255,16 +282,16 @@ download_and_run() {
         return 0
     fi
 
-    temporary_script=$(mktemp "${TMPDIR:-/tmp}/fcc-install.XXXXXX") || fail "Unable to create a temporary file for $label."
-    print_command curl -fsSL "$url" -o "$temporary_script"
-    if curl -fsSL "$url" -o "$temporary_script"; then
+    temporary_file=$(mktemp "${TMPDIR:-/tmp}/fcc-install.XXXXXX") || fail "Unable to create a temporary file for $label."
+    print_command curl -fsSL "$url" -o "$temporary_file"
+    if curl -fsSL "$url" -o "$temporary_file"; then
         :
     else
         status=$?
         fail "Could not download the $label installer (curl exit code $status)."
     fi
 
-    if [ ! -s "$temporary_script" ]; then
+    if [ ! -s "$temporary_file" ]; then
         fail "The downloaded $label installer was empty."
     fi
 
@@ -272,17 +299,17 @@ download_and_run() {
         printf '+ CODEX_NON_INTERACTIVE=1 '
         quote_arg "$interpreter"
         printf ' '
-        quote_arg "$temporary_script"
+        quote_arg "$temporary_file"
         printf '\n'
-        if CODEX_NON_INTERACTIVE=1 "$interpreter" "$temporary_script"; then
+        if CODEX_NON_INTERACTIVE=1 "$interpreter" "$temporary_file"; then
             :
         else
             status=$?
             fail "$label installation failed with exit code $status."
         fi
     else
-        print_command "$interpreter" "$temporary_script"
-        if "$interpreter" "$temporary_script"; then
+        print_command "$interpreter" "$temporary_file"
+        if "$interpreter" "$temporary_file"; then
             :
         else
             status=$?
@@ -290,8 +317,8 @@ download_and_run() {
         fi
     fi
 
-    rm -f "$temporary_script"
-    temporary_script=""
+    rm -f "$temporary_file"
+    temporary_file=""
 }
 
 verify_command() {
@@ -330,6 +357,162 @@ verify_pi_command() {
     pi_command_path=$(command -v pi 2>/dev/null) || fail "Pi was installed, but 'pi' is not available on PATH."
     pi_command_is_compatible || fail "The 'pi' command at $pi_command_path is not a compatible Pi Coding Agent."
     run "$pi_command_path" --version
+}
+
+verify_rtk_command() {
+    if [ "$dry_run" -eq 1 ]; then
+        print_command env RTK_TELEMETRY_DISABLED=1 rtk --version
+        print_command env RTK_TELEMETRY_DISABLED=1 rtk gain
+        return 0
+    fi
+
+    rtk_path=$(command -v rtk 2>/dev/null) || fail "RTK was installed, but 'rtk' is not available on PATH."
+    print_command env RTK_TELEMETRY_DISABLED=1 "$rtk_path" --version
+    if ! RTK_TELEMETRY_DISABLED=1 "$rtk_path" --version; then
+        fail "The 'rtk' command at $rtk_path is not a compatible Rust Token Killer installation. Remove the conflicting command from PATH, then rerun the installer."
+    fi
+
+    print_command env RTK_TELEMETRY_DISABLED=1 "$rtk_path" gain
+    if ! RTK_TELEMETRY_DISABLED=1 "$rtk_path" gain; then
+        fail "The 'rtk' command at $rtk_path is not a compatible Rust Token Killer installation. Remove the conflicting command from PATH, then rerun the installer."
+    fi
+}
+
+select_rtk_release() {
+    rtk_platform=$(uname -s)
+    rtk_architecture=$(uname -m)
+    case "$rtk_platform:$rtk_architecture" in
+        Linux:x86_64|Linux:amd64)
+            rtk_asset_name="rtk-x86_64-unknown-linux-musl.tar.gz"
+            rtk_asset_sha256="d94cc2a3e57fa534892b5235a726e7eeb7523f205a5f8f48f853bfcae7be7e33"
+            ;;
+        Linux:aarch64|Linux:arm64)
+            rtk_asset_name="rtk-aarch64-unknown-linux-gnu.tar.gz"
+            rtk_asset_sha256="5cd3f7fa2697faf9e5b77a10ce4e699006e02d4752d792f06550697eb4b8e8a9"
+            ;;
+        Darwin:x86_64|Darwin:amd64)
+            rtk_asset_name="rtk-x86_64-apple-darwin.tar.gz"
+            rtk_asset_sha256="636f808db86b2cefab7db7dd9393da8b6e4721bb2ffaa0644e3ffa52d3420d81"
+            ;;
+        Darwin:aarch64|Darwin:arm64)
+            rtk_asset_name="rtk-aarch64-apple-darwin.tar.gz"
+            rtk_asset_sha256="b7c2218eca538b54e63fa594a8ce58bd3716851b01b3b0dc026515323baf6393"
+            ;;
+        *)
+            fail "RTK $RTK_VERSION does not provide a release for $rtk_platform $rtk_architecture."
+            ;;
+    esac
+}
+
+install_rtk() {
+    select_rtk_release
+    rtk_archive_url="$RTK_RELEASE_BASE_URL/$rtk_asset_name"
+    if [ "$dry_run" -eq 1 ]; then
+        print_command curl -fsSL "$rtk_archive_url" -o "<temporary-archive>"
+        printf '+ verify pinned SHA-256 for %s\n' "$rtk_asset_name"
+        printf '+ extract rtk to %s\n' "${HOME:-~}/.local/bin/rtk"
+        return 0
+    fi
+
+    [ -n "${HOME:-}" ] || fail "HOME is required to install RTK."
+    temporary_file=$(mktemp "${TMPDIR:-/tmp}/fcc-rtk.XXXXXX") || fail "Unable to create a temporary RTK archive."
+    print_command curl -fsSL "$rtk_archive_url" -o "$temporary_file"
+    if curl -fsSL "$rtk_archive_url" -o "$temporary_file"; then
+        :
+    else
+        status=$?
+        fail "Could not download RTK $RTK_VERSION (curl exit code $status)."
+    fi
+    [ -s "$temporary_file" ] || fail "The downloaded RTK archive was empty."
+
+    if command -v sha256sum >/dev/null 2>&1; then
+        print_command sha256sum "$temporary_file"
+        rtk_actual_sha256=$(sha256sum "$temporary_file") || fail "Could not hash the downloaded RTK archive."
+    elif command -v shasum >/dev/null 2>&1; then
+        print_command shasum -a 256 "$temporary_file"
+        rtk_actual_sha256=$(shasum -a 256 "$temporary_file") || fail "Could not hash the downloaded RTK archive."
+    else
+        fail "RTK installation requires sha256sum or shasum for checksum verification."
+    fi
+    rtk_actual_sha256=${rtk_actual_sha256%% *}
+    [ "$rtk_actual_sha256" = "$rtk_asset_sha256" ] || fail "RTK checksum verification failed for $rtk_asset_name."
+
+    if rtk_archive_entries=$(tar -tzf "$temporary_file"); then
+        :
+    else
+        fail "The verified RTK archive could not be inspected."
+    fi
+    [ "$rtk_archive_entries" = "rtk" ] || fail "The verified RTK archive did not contain exactly one root rtk executable."
+
+    rtk_install_directory="$HOME/.local/bin"
+    run mkdir -p "$rtk_install_directory"
+    temporary_binary=$(mktemp "$rtk_install_directory/.rtk.XXXXXX") || fail "Unable to create a temporary RTK executable."
+    print_command tar -xOzf "$temporary_file" rtk
+    if tar -xOzf "$temporary_file" rtk >"$temporary_binary"; then
+        :
+    else
+        fail "The verified RTK archive could not be extracted."
+    fi
+    [ -s "$temporary_binary" ] || fail "The verified RTK executable was empty."
+    run chmod +x "$temporary_binary"
+    run mv "$temporary_binary" "$rtk_install_directory/rtk"
+    temporary_binary=""
+    rm -f "$temporary_file"
+    temporary_file=""
+}
+
+ensure_rtk() {
+    if command -v rtk >/dev/null 2>&1; then
+        printf 'RTK already found on PATH; verifying it without updating it.\n'
+    else
+        install_rtk
+        add_known_bin_directories
+    fi
+
+    verify_rtk_command
+}
+
+run_rtk_init() {
+    print_command env RTK_TELEMETRY_DISABLED=1 rtk "$@"
+    if [ "$dry_run" -eq 1 ]; then
+        return 0
+    fi
+
+    if RTK_TELEMETRY_DISABLED=1 "$rtk_path" "$@"; then
+        return 0
+    else
+        status=$?
+    fi
+
+    fail "RTK configuration failed with exit code $status. Correct the reported RTK error, then rerun the installer."
+}
+
+ensure_rtk_claude_config_directory() {
+    if [ -n "${CLAUDE_CONFIG_DIR:-}" ]; then
+        rtk_claude_config_directory=$CLAUDE_CONFIG_DIR
+    else
+        [ -n "${HOME:-}" ] || fail "HOME is required to configure RTK for Claude Code."
+        rtk_claude_config_directory="$HOME/.claude"
+    fi
+    run mkdir -p "$rtk_claude_config_directory"
+}
+
+configure_rtk_for_selected_agents() {
+    [ "$enable_rtk" -eq 1 ] || return 0
+
+    step "Installing and configuring RTK token optimization"
+    ensure_rtk
+
+    if [ "$install_claude" -eq 1 ]; then
+        ensure_rtk_claude_config_directory
+        run_rtk_init init --global --auto-patch
+    fi
+    if [ "$install_codex" -eq 1 ]; then
+        run_rtk_init init --global --codex
+    fi
+    if [ "$install_pi" -eq 1 ] && [ "$pi_available" -eq 1 ]; then
+        run_rtk_init init --global --agent pi
+    fi
 }
 
 ensure_claude() {
@@ -522,6 +705,9 @@ parse_args() {
             --torch-backend=*)
                 torch_backend=${1#*=}
                 [ -n "$torch_backend" ] || fail "--torch-backend requires a non-empty value."
+                ;;
+            --rtk)
+                enable_rtk=1
                 ;;
             --dry-run)
                 dry_run=1
@@ -719,8 +905,17 @@ if [ "$install_claude" -eq 1 ]; then
 fi
 require_command sh
 require_command mktemp
+if [ "$enable_rtk" -eq 1 ] && ! command -v rtk >/dev/null 2>&1; then
+    require_command tar
+    if [ "$dry_run" -eq 0 ] &&
+        ! command -v sha256sum >/dev/null 2>&1 &&
+        ! command -v shasum >/dev/null 2>&1; then
+        fail "RTK installation requires sha256sum or shasum for checksum verification."
+    fi
+fi
 
 ensure_selected_coding_agents
+configure_rtk_for_selected_agents
 
 step "Ensuring uv $MIN_UV_VERSION or newer is installed"
 ensure_uv

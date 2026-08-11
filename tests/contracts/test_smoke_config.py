@@ -57,6 +57,7 @@ def _settings(**overrides):
         "cerebras_api_key": "",
         "ollama_api_key": "",
         "fireworks_api_key": "",
+        "novita_api_key": "",
         "cloudflare_api_token": "",
         "cloudflare_account_id": "",
         "lm_studio_base_url": "",

@@ -12,7 +12,7 @@ from tests.providers.support import (
 )
 
 
-@pytest.mark.parametrize("provider_id", ["opencode", "opencode_go"])
+@pytest.mark.parametrize("provider_id", ["opencode_zen", "opencode_go"])
 def test_build_request_body_replays_tool_reasoning_natively(
     provider_id: str,
 ) -> None:
@@ -76,7 +76,7 @@ def test_build_request_body_replays_tool_reasoning_natively(
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("provider_id", ["opencode", "opencode_go"])
+@pytest.mark.parametrize("provider_id", ["opencode_zen", "opencode_go"])
 async def test_tool_only_history_sends_empty_reasoning_content_on_wire(
     provider_id: str,
 ) -> None:

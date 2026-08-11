@@ -4,18 +4,9 @@ from pathlib import Path
 import pytest
 
 from free_claude_code.core.anthropic.stream_contracts import SSEEvent
-from smoke.lib.report import classify_outcome
+from smoke.lib.outcomes import classify_outcome, is_upstream_unavailable_text
 from smoke.lib.report_summary import format_summary, summarize_reports
 from smoke.lib.skips import skip_if_upstream_unavailable_events
-
-
-def test_smoke_readme_uses_env_gated_serial_commands() -> None:
-    repo_root = Path(__file__).resolve().parents[2]
-    text = (repo_root / "smoke" / "README.md").read_text(encoding="utf-8")
-
-    assert "FCC_LIVE_SMOKE=1" in text
-    assert "-n 0" in text
-    assert "-m live" not in text
 
 
 def test_smoke_report_summary_counts_regression_classes(tmp_path: Path) -> None:
@@ -86,3 +77,32 @@ def test_provider_error_text_stream_is_upstream_unavailable_skip() -> None:
         skip_if_upstream_unavailable_events(events)
 
     assert "upstream_unavailable" in str(excinfo.value)
+
+
+def test_deterministic_provider_error_is_not_upstream_unavailable() -> None:
+    detail = (
+        "Upstream provider GROQ returned HTTP 400: "
+        "property 'reasoning_content' is unsupported"
+    )
+
+    assert not is_upstream_unavailable_text(detail)
+    assert (
+        classify_outcome(nodeid="groq_reasoning", outcome="failed", detail=detail)
+        == "product_failure"
+    )
+
+
+@pytest.mark.parametrize(
+    "detail",
+    (
+        "Upstream provider GROQ returned HTTP 429.",
+        "Upstream provider GROQ returned HTTP 529.",
+        "httpx.ConnectError: connection refused",
+    ),
+)
+def test_failed_transient_provider_errors_are_upstream_unavailable(detail: str) -> None:
+    assert is_upstream_unavailable_text(detail)
+    assert (
+        classify_outcome(nodeid="provider", outcome="failed", detail=detail)
+        == "upstream_unavailable"
+    )

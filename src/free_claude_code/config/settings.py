@@ -16,7 +16,9 @@ from .nim import NimSettings
 from .provider_catalog import (
     BEDROCK_DEFAULT_BASE,
     MINIMAX_DEFAULT_BASE,
+    NARAROUTE_DEFAULT_BASE,
     SUPPORTED_PROVIDER_IDS,
+    TOKENROUTER_DEFAULT_BASE,
 )
 from .reasoning import ReasoningPreference
 
@@ -61,7 +63,7 @@ class Settings(BaseSettings):
     )
 
     # ==================== OpenCode Zen / OpenCode Go ====================
-    # Same key from opencode.ai/auth; zen uses prefix ``opencode/``, Go uses ``opencode_go/``.
+    # Same key from opencode.ai/auth; Zen uses ``opencode_zen/``, Go uses ``opencode_go/``.
     opencode_api_key: str = Field(default="", validation_alias="OPENCODE_API_KEY")
 
     # ==================== Vercel AI Gateway ====================
@@ -96,8 +98,25 @@ class Settings(BaseSettings):
     # ==================== Z.ai Config ====================
     zai_api_key: str = Field(default="", validation_alias="ZAI_API_KEY")
 
+    # ==================== TokenRouter Config ====================
+    tokenrouter_api_key: str = Field(default="", validation_alias="TOKENROUTER_API_KEY")
+    tokenrouter_base_url: str = Field(
+        default=TOKENROUTER_DEFAULT_BASE,
+        validation_alias="TOKENROUTER_BASE_URL",
+    )
+
+    # ==================== NaraRoute Config ====================
+    nararoute_api_key: str = Field(default="", validation_alias="NARAROUTE_API_KEY")
+    nararoute_base_url: str = Field(
+        default=NARAROUTE_DEFAULT_BASE,
+        validation_alias="NARAROUTE_BASE_URL",
+    )
+
     # ==================== Fireworks AI Config ====================
     fireworks_api_key: str = Field(default="", validation_alias="FIREWORKS_API_KEY")
+
+    # ==================== Novita AI Config ====================
+    novita_api_key: str = Field(default="", validation_alias="NOVITA_API_KEY")
 
     # ==================== Cloudflare Workers AI Config ====================
     cloudflare_api_token: str = Field(
@@ -181,7 +200,7 @@ class Settings(BaseSettings):
     kimi_code_proxy: str = Field(default="", validation_alias="KIMI_CODE_PROXY")
     wafer_proxy: str = Field(default="", validation_alias="WAFER_PROXY")
     minimax_proxy: str = Field(default="", validation_alias="MINIMAX_PROXY")
-    opencode_proxy: str = Field(default="", validation_alias="OPENCODE_PROXY")
+    opencode_zen_proxy: str = Field(default="", validation_alias="OPENCODE_ZEN_PROXY")
     opencode_go_proxy: str = Field(default="", validation_alias="OPENCODE_GO_PROXY")
     vercel_ai_gateway_proxy: str = Field(
         default="", validation_alias="VERCEL_AI_GATEWAY_PROXY"
@@ -193,7 +212,10 @@ class Settings(BaseSettings):
     sambanova_proxy: str = Field(default="", validation_alias="SAMBANOVA_PROXY")
     kilo_proxy: str = Field(default="", validation_alias="KILO_PROXY")
     zai_proxy: str = Field(default="", validation_alias="ZAI_PROXY")
+    tokenrouter_proxy: str = Field(default="", validation_alias="TOKENROUTER_PROXY")
+    nararoute_proxy: str = Field(default="", validation_alias="NARAROUTE_PROXY")
     fireworks_proxy: str = Field(default="", validation_alias="FIREWORKS_PROXY")
+    novita_proxy: str = Field(default="", validation_alias="NOVITA_PROXY")
     cloudflare_proxy: str = Field(default="", validation_alias="CLOUDFLARE_PROXY")
     gemini_proxy: str = Field(default="", validation_alias="GEMINI_PROXY")
     vertex_proxy: str = Field(default="", validation_alias="VERTEX_PROXY")

@@ -45,11 +45,25 @@ class DeepSeekProvider(OpenAIChatProvider):
         )
 
     def _anthropic_usage_fields(self, usage_info: Any) -> dict[str, int]:
-        usage_fields: dict[str, int] = {}
         cache_hit_tokens = usage_int(usage_info, "prompt_cache_hit_tokens")
-        if cache_hit_tokens is not None:
-            usage_fields["cache_read_input_tokens"] = cache_hit_tokens
         cache_miss_tokens = usage_int(usage_info, "prompt_cache_miss_tokens")
-        if cache_miss_tokens is not None:
-            usage_fields["cache_creation_input_tokens"] = cache_miss_tokens
-        return usage_fields
+        if (
+            cache_hit_tokens is None
+            or cache_hit_tokens < 0
+            or cache_miss_tokens is None
+            or cache_miss_tokens < 0
+        ):
+            return {}
+
+        prompt_tokens = usage_int(usage_info, "prompt_tokens")
+        if (
+            prompt_tokens is not None
+            and prompt_tokens >= 0
+            and prompt_tokens != cache_hit_tokens + cache_miss_tokens
+        ):
+            return {}
+
+        return {
+            "input_tokens": cache_miss_tokens,
+            "cache_read_input_tokens": cache_hit_tokens,
+        }

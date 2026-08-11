@@ -6,11 +6,14 @@ from free_claude_code.config.env_migrations import (
     HUGGINGFACE_API_KEY_ENV,
     HUGGINGFACE_TOKEN_MIGRATION,
     LEGACY_HUGGINGFACE_TOKEN_ENV,
+    LEGACY_OPENCODE_PROXY_ENV,
+    OPENCODE_ZEN_MODEL_REF_MIGRATIONS,
+    OPENCODE_ZEN_PROXY_ENV,
     REASONING_MIGRATIONS,
     env_text_needs_migration,
     explicit_env_file_migration_warning,
-    migrate_env_key_in_file,
-    migrate_env_key_in_text,
+    migrate_env_setting_in_file,
+    migrate_env_setting_in_text,
     migrate_owned_env_files,
 )
 
@@ -18,7 +21,7 @@ from free_claude_code.config.env_migrations import (
 def test_migrate_env_key_in_text_renames_legacy_hf_token() -> None:
     text = "# comment\nHF_TOKEN=old-token\nMODEL=nvidia_nim/model\n"
 
-    migrated, changed = migrate_env_key_in_text(text, HUGGINGFACE_TOKEN_MIGRATION)
+    migrated, changed = migrate_env_setting_in_text(text, HUGGINGFACE_TOKEN_MIGRATION)
 
     assert changed is True
     assert migrated == (
@@ -29,7 +32,7 @@ def test_migrate_env_key_in_text_renames_legacy_hf_token() -> None:
 def test_migrate_env_key_in_text_preserves_existing_huggingface_api_key() -> None:
     text = "HF_TOKEN=old-token\nHUGGINGFACE_API_KEY=new-token\n"
 
-    migrated, changed = migrate_env_key_in_text(text, HUGGINGFACE_TOKEN_MIGRATION)
+    migrated, changed = migrate_env_setting_in_text(text, HUGGINGFACE_TOKEN_MIGRATION)
 
     assert changed is False
     assert migrated == text
@@ -38,7 +41,7 @@ def test_migrate_env_key_in_text_preserves_existing_huggingface_api_key() -> Non
 def test_migrate_env_key_in_text_ignores_comments() -> None:
     text = "# HF_TOKEN=old-token\n"
 
-    migrated, changed = migrate_env_key_in_text(text, HUGGINGFACE_TOKEN_MIGRATION)
+    migrated, changed = migrate_env_setting_in_text(text, HUGGINGFACE_TOKEN_MIGRATION)
 
     assert changed is False
     assert migrated == text
@@ -49,7 +52,7 @@ def test_migrate_env_key_in_file_rewrites_dotenv(tmp_path: Path) -> None:
     env_file = tmp_path / ".env"
     env_file.write_text("export HF_TOKEN = quoted-token\n", encoding="utf-8")
 
-    assert migrate_env_key_in_file(env_file, HUGGINGFACE_TOKEN_MIGRATION) is True
+    assert migrate_env_setting_in_file(env_file, HUGGINGFACE_TOKEN_MIGRATION) is True
 
     assert env_file.read_text(encoding="utf-8") == (
         "export HUGGINGFACE_API_KEY = quoted-token\n"
@@ -95,6 +98,85 @@ def test_explicit_env_file_migration_warning_does_not_rewrite(
     assert explicit.read_text(encoding="utf-8") == "HF_TOKEN=explicit-token\n"
 
 
+def test_opencode_zen_migration_rewrites_owned_model_refs_and_keys(
+    monkeypatch,
+    tmp_path: Path,
+) -> None:
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    env_file = repo / ".env"
+    env_file.write_text(
+        "MODEL=opencode/kimi-k2.6\n"
+        'MODEL_FABLE = "opencode/model-a" # keep\n'
+        "MODEL_OPUS='opencode/model-b'\n"
+        "MODEL_SONNET=opencode_go/model-c\n"
+        "MODEL_HAIKU=open_router/opencode/model-d\n"
+        "FCC_SMOKE_MODEL_OPENCODE=opencode/smoke\n"
+        "OPENCODE_PROXY=http://proxy.example\n",
+        encoding="utf-8",
+    )
+    monkeypatch.chdir(repo)
+    monkeypatch.setenv("HOME", str(tmp_path))
+    monkeypatch.setenv("USERPROFILE", str(tmp_path))
+
+    assert migrate_owned_env_files() == (env_file,)
+    assert env_file.read_text(encoding="utf-8") == (
+        "MODEL=opencode_zen/kimi-k2.6\n"
+        'MODEL_FABLE = "opencode_zen/model-a" # keep\n'
+        "MODEL_OPUS='opencode_zen/model-b'\n"
+        "MODEL_SONNET=opencode_go/model-c\n"
+        "MODEL_HAIKU=open_router/opencode/model-d\n"
+        "FCC_SMOKE_MODEL_OPENCODE_ZEN=opencode_zen/smoke\n"
+        "OPENCODE_ZEN_PROXY=http://proxy.example\n"
+    )
+    assert migrate_owned_env_files() == ()
+
+
+def test_opencode_zen_value_migration_ignores_comments_and_other_values() -> None:
+    text = (
+        "# MODEL=opencode/commented\n"
+        "MODEL=opencode_go/model\n"
+        "MODEL_OPUS=open_router/opencode/model\n"
+    )
+
+    migrated = text
+    changed = False
+    for migration in OPENCODE_ZEN_MODEL_REF_MIGRATIONS:
+        migrated, migration_changed = migrate_env_setting_in_text(
+            migrated,
+            migration,
+        )
+        changed = changed or migration_changed
+
+    assert changed is False
+    assert migrated == text
+    assert not any(
+        env_text_needs_migration(text, migration)
+        for migration in OPENCODE_ZEN_MODEL_REF_MIGRATIONS
+    )
+
+
+def test_explicit_env_file_warns_for_opencode_zen_migrations(
+    tmp_path: Path,
+) -> None:
+    explicit = tmp_path / "custom.env"
+    explicit.write_text(
+        "MODEL=opencode/model\nOPENCODE_PROXY=http://proxy.example\n",
+        encoding="utf-8",
+    )
+
+    warning = explicit_env_file_migration_warning({"FCC_ENV_FILE": str(explicit)})
+
+    assert warning is not None
+    assert LEGACY_OPENCODE_PROXY_ENV in warning
+    assert OPENCODE_ZEN_PROXY_ENV in warning
+    assert "opencode/" in warning
+    assert "opencode_zen/" in warning
+    assert explicit.read_text(encoding="utf-8") == (
+        "MODEL=opencode/model\nOPENCODE_PROXY=http://proxy.example\n"
+    )
+
+
 def test_reasoning_migrations_rename_and_map_boolean_values() -> None:
     text = (
         "ENABLE_MODEL_THINKING=false\n"
@@ -103,7 +185,7 @@ def test_reasoning_migrations_rename_and_map_boolean_values() -> None:
     )
 
     for migration in REASONING_MIGRATIONS:
-        text, _ = migrate_env_key_in_text(text, migration)
+        text, _ = migrate_env_setting_in_text(text, migration)
 
     assert text == (
         "REASONING_POLICY=off\nREASONING_FABLE=client\nREASONING_OPUS=inherit\n"
@@ -133,7 +215,7 @@ def test_reasoning_migration_accepts_every_legacy_boolean_spelling(
 ) -> None:
     text = f"ENABLE_MODEL_THINKING={legacy_value}\n"
 
-    migrated, changed = migrate_env_key_in_text(text, REASONING_MIGRATIONS[0])
+    migrated, changed = migrate_env_setting_in_text(text, REASONING_MIGRATIONS[0])
 
     assert changed is True
     assert migrated == f"REASONING_POLICY={expected}\n"

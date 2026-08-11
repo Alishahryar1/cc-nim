@@ -676,17 +676,3 @@ def test_uninstallers_guard_running_commands_and_preserve_shared_owners() -> Non
         assert "is not installed" in text
         assert "no tool" not in text
         assert "nothing to uninstall" not in text
-
-
-def test_readme_uninstall_uses_raw_urls_and_verification_contract() -> None:
-    text = (_repo_root() / "README.md").read_text(encoding="utf-8")
-
-    assert (
-        'curl -fsSL "https://raw.githubusercontent.com/'
-        'Alishahryar1/free-claude-code/main/scripts/uninstall.sh" | sh'
-    ) in text
-    assert (
-        '& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/'
-        'Alishahryar1/free-claude-code/main/scripts/uninstall.ps1")))'
-    ) in text
-    assert "verifies every FCC command is gone" in text

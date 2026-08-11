@@ -346,7 +346,39 @@ def test_serve_migrates_hf_token_before_loading_settings(
     get_settings.assert_called_once_with()
 
 
-def test_config_env_key_migration_warns_for_explicit_env_file(
+def test_serve_migrates_opencode_zen_prefix_before_loading_settings(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from free_claude_code.cli import commands
+
+    repo = tmp_path / "repo"
+    repo.mkdir()
+    env_file = repo / ".env"
+    env_file.write_text("MODEL=opencode/model\n", encoding="utf-8")
+    settings = _launcher_settings()
+
+    def load_settings() -> Settings:
+        assert env_file.read_text(encoding="utf-8") == ("MODEL=opencode_zen/model\n")
+        return settings
+
+    get_settings = MagicMock(side_effect=load_settings)
+    get_settings.cache_clear = MagicMock()
+    monkeypatch.chdir(repo)
+
+    with (
+        patch("pathlib.Path.home", return_value=tmp_path),
+        patch.object(commands, "get_settings", get_settings),
+        patch.object(commands.ServerSupervisor, "_run_once", return_value=False),
+        patch.object(commands, "kill_all_best_effort"),
+        patch.object(commands, "explicit_env_file_migration_warning"),
+    ):
+        commands.serve()
+
+    get_settings.assert_called_once_with()
+
+
+def test_config_env_migration_warns_for_explicit_env_file(
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -356,7 +388,7 @@ def test_config_env_key_migration_warns_for_explicit_env_file(
     explicit.write_text("HF_TOKEN=legacy-hf\n", encoding="utf-8")
 
     with patch.dict(commands.os.environ, {"FCC_ENV_FILE": str(explicit)}):
-        migrated = commands._migrate_config_env_keys()
+        migrated = commands._migrate_config_env()
 
     assert migrated == ()
     assert "HF_TOKEN" in capsys.readouterr().err
@@ -563,7 +595,10 @@ def test_launch_codex_passes_responses_config_and_child_env(
     assert command[0] == "resolved-codex.cmd"
     assert 'model_provider="fcc"' in command
     assert 'model_providers.fcc.base_url="http://127.0.0.1:9191/v1"' in command
+    assert 'model_providers.fcc.auth.command="fcc-codex"' in command
+    assert 'model_providers.fcc.auth.args=["--print-proxy-auth-token"]' in command
     assert 'model_providers.fcc.wire_api="responses"' in command
+    assert not any("model_providers.fcc.env_key" in arg for arg in command)
     assert f"model_catalog_json={json.dumps(str(catalog_path))}" in command
     assert command[-2:] == ["exec", "hello"]
     assert len(requests) == 1
@@ -577,7 +612,7 @@ def test_launch_codex_passes_responses_config_and_child_env(
         "nvidia_nim/provider-model"
     ]
     child_env = popen.call_args.kwargs["env"]
-    assert child_env["FCC_CODEX_API_KEY"] == "proxy-token"
+    assert "FCC_CODEX_API_KEY" not in child_env
     assert child_env["CODEX_HOME"] == "keep-home"
     assert child_env["NO_PROXY"] == "127.0.0.1,localhost,::1"
     assert child_env["no_proxy"] == child_env["NO_PROXY"]
@@ -589,6 +624,38 @@ def test_launch_codex_passes_responses_config_and_child_env(
     assert "OPENAI_BASE_URL" not in child_env
     register_pid.assert_called_once_with(12345)
     unregister_pid.assert_called_once_with(12345)
+
+
+@pytest.mark.parametrize(
+    ("configured_token", "expected_token"),
+    [
+        (" proxy-token ", "proxy-token"),
+        ("", "fcc-no-auth"),
+    ],
+)
+def test_codex_proxy_auth_command_prints_only_current_token(
+    configured_token: str,
+    expected_token: str,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from free_claude_code.cli.launchers import codex
+
+    settings = _launcher_settings(token=configured_token)
+    with (
+        patch.object(codex, "get_settings", return_value=settings) as get_settings,
+        patch.object(codex, "preflight_proxy") as preflight_proxy,
+        patch.object(codex, "resolve_client_binary") as resolve_client_binary,
+        patch.object(codex, "open_local_request") as open_local_request,
+        patch.object(codex, "run_client_process") as run_client_process,
+    ):
+        codex.launch(["--print-proxy-auth-token"])
+
+    assert capsys.readouterr() == (f"{expected_token}\n", "")
+    get_settings.assert_called_once_with()
+    preflight_proxy.assert_not_called()
+    resolve_client_binary.assert_not_called()
+    open_local_request.assert_not_called()
+    run_client_process.assert_not_called()
 
 
 def test_launch_codex_catalog_failure_warns_and_continues(

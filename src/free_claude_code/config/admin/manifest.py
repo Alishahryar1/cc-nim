@@ -640,7 +640,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         advanced=True,
     ),
     ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_OPENCODE",
+        "FCC_SMOKE_MODEL_OPENCODE_ZEN",
         "Smoke OpenCode Zen Model",
         "smoke",
         advanced=True,
@@ -688,6 +688,12 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         advanced=True,
     ),
     ConfigFieldSpec(
+        "FCC_SMOKE_MODEL_NARAROUTE",
+        "Smoke NaraRoute Model",
+        "smoke",
+        advanced=True,
+    ),
+    ConfigFieldSpec(
         "FCC_SMOKE_MODEL_FIREWORKS",
         "Smoke Fireworks Model",
         "smoke",
@@ -720,6 +726,12 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
     ConfigFieldSpec(
         "FCC_SMOKE_MODEL_CEREBRAS",
         "Smoke Cerebras Model",
+        "smoke",
+        advanced=True,
+    ),
+    ConfigFieldSpec(
+        "FCC_SMOKE_MODEL_TOKENROUTER",
+        "Smoke TokenRouter Model",
         "smoke",
         advanced=True,
     ),

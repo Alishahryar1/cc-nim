@@ -156,8 +156,8 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         _policy("CODESTRAL", ReasoningReplayMode.THINK_TAGS),
         NO_REASONING,
     ),
-    "opencode": OpenAIChatProfile(
-        _policy("OPENCODE", ReasoningReplayMode.REASONING_CONTENT),
+    "opencode_zen": OpenAIChatProfile(
+        _policy("OPENCODE_ZEN", ReasoningReplayMode.REASONING_CONTENT),
         NO_REASONING,
     ),
     "opencode_go": OpenAIChatProfile(
@@ -281,23 +281,6 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         ),
         reasoning_delta_field="reasoning",
     ),
-    "groq": OpenAIChatProfile(
-        _policy(
-            "GROQ",
-            ReasoningReplayMode.REASONING_CONTENT,
-            include_extra_body=True,
-            extra_body_validator=validate_extra_body_does_not_override_reasoning_fields,
-            max_tokens_field="max_completion_tokens",
-            strip_message_names=True,
-            unsupported_body_keys=frozenset({"logprobs", "logit_bias", "top_logprobs"}),
-            normalize_n_to_one=True,
-        ),
-        NamedEffortReasoning(
-            _LOW_MEDIUM_HIGH,
-            disabled_value="none",
-            enabled_value="medium",
-        ),
-    ),
     "sambanova": OpenAIChatProfile(
         _policy(
             "SAMBANOVA",
@@ -332,6 +315,22 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             budget_field="reasoning_effort",
         ),
     ),
+    "novita": OpenAIChatProfile(
+        _policy(
+            "NOVITA",
+            ReasoningReplayMode.REASONING_CONTENT,
+            include_extra_body=True,
+            extra_body_validator=validate_extra_body_does_not_override_reasoning_fields,
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        NamedEffortReasoning(
+            (),
+            disabled_value=False,
+            enabled_value=True,
+            field="enable_thinking",
+            use_extra_body=True,
+        ),
+    ),
     "zai": OpenAIChatProfile(
         _policy(
             "ZAI",
@@ -346,6 +345,17 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             disabled={"type": "disabled"},
         ),
     ),
+    "nararoute": OpenAIChatProfile(
+        _policy(
+            "NARAROUTE",
+            ReasoningReplayMode.DISABLED,
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        NamedEffortReasoning(
+            _LOW_MEDIUM_HIGH,
+            enabled_value="medium",
+        ),
+    ),
     "ollama_cloud": OpenAIChatProfile(
         _policy(
             "OLLAMA_CLOUD",
@@ -358,6 +368,13 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             enabled_value="high",
         ),
         reasoning_delta_field="reasoning",
+    ),
+    "tokenrouter": OpenAIChatProfile(
+        _policy(
+            "TOKENROUTER",
+            ReasoningReplayMode.DISABLED,
+        ),
+        NO_REASONING,
     ),
     "llamacpp": OpenAIChatProfile(
         _policy(

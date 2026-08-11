@@ -59,7 +59,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "kimi_code": "kimi_code/k3",
     "wafer": "wafer/DeepSeek-V4-Pro",
     "minimax": "minimax/MiniMax-M3",
-    "opencode": "opencode/gpt-5.3-codex",
+    "opencode_zen": "opencode_zen/gpt-5.3-codex",
     "opencode_go": "opencode_go/minimax-m2.7",
     "vercel": "vercel/openai/gpt-5.5",
     "bedrock": "bedrock/openai.gpt-oss-120b",
@@ -73,7 +73,10 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "sambanova": "sambanova/Meta-Llama-3.3-70B-Instruct",
     "kilo": "kilo/kilo-auto/free",
     "cerebras": "cerebras/llama3.1-8b",
+    "novita": "novita/deepseek/deepseek-v4-flash-0731",
     "cloudflare": "cloudflare/@cf/moonshotai/kimi-k2.6",
+    "tokenrouter": "tokenrouter/moonshotai/kimi-k3-free",
+    "nararoute": "nararoute/kimi-k3-free",
 }
 MISTRAL_REASONING_SMOKE_DEFAULT_MODEL = "mistral/mistral-medium-3-5"
 

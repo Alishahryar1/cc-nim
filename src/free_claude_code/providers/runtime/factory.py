@@ -135,6 +135,16 @@ def _create_github_models(
     return GitHubModelsProvider(config, admission=admission)
 
 
+def _create_groq(
+    config: ProviderConfig,
+    _settings: Settings,
+    admission: ProviderAdmissionController,
+) -> BaseProvider:
+    from free_claude_code.providers.groq import GroqProvider
+
+    return GroqProvider(config, admission=admission)
+
+
 _SPECIAL_PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "nvidia_nim": _create_nvidia_nim,
     "open_router": _create_open_router,
@@ -146,6 +156,7 @@ _SPECIAL_PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "gemini": _create_gemini,
     "vertex": _create_vertex,
     "github_models": _create_github_models,
+    "groq": _create_groq,
 }
 _INJECTED_PROVIDER_IDS = {"openai"}
 
