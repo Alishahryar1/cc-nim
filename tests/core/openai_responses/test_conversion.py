@@ -525,6 +525,45 @@ def test_responses_reasoning_between_tool_call_and_output_attaches_to_tool_messa
     assert payload["messages"][1]["content"][0]["tool_use_id"] == "call_1"
 
 
+def test_responses_encrypted_reasoning_attaches_before_tool_call() -> None:
+    payload = _to_anthropic_payload(
+        {
+            "model": "openai/gpt-test",
+            "input": [
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "Need the result."}],
+                    "encrypted_content": "opaque-reasoning",
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "echo",
+                    "arguments": '{"value":"FCC"}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "FCC",
+                },
+            ],
+        }
+    )
+
+    assistant = payload["messages"][0]
+    assert assistant["reasoning_content"] == "Need the result."
+    assert assistant["content"] == [
+        {"type": "redacted_thinking", "data": "opaque-reasoning"},
+        {
+            "type": "tool_use",
+            "id": "call_1",
+            "name": "echo",
+            "input": {"value": "FCC"},
+        },
+    ]
+    assert payload["messages"][1]["content"][0]["tool_use_id"] == "call_1"
+
+
 def test_responses_empty_reasoning_attaches_to_prior_tool_call() -> None:
     payload = _to_anthropic_payload(
         {

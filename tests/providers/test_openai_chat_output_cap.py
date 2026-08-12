@@ -11,12 +11,13 @@ import pytest
 
 from free_claude_code.config.provider_catalog import GROQ_DEFAULT_BASE
 from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.groq import GroqProvider
 from free_claude_code.providers.openai_chat.output_cap import (
     clamp_output_tokens,
     parse_output_token_cap,
 )
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import immediate_admission, profiled_provider
+from tests.providers.support import immediate_admission
 
 
 class _BadRequest(Exception):
@@ -35,10 +36,11 @@ class _BadRequest(Exception):
 
 def test_parse_cap_from_groq_message():
     error = _BadRequest(
-        "max_completion_tokens must be less than or equal to 40960, the maximum "
-        "value for max_completion_tokens is less than the context_window for this model"
+        "`max_completion_tokens` must be less than or equal to `16384`, the maximum "
+        "value for `max_completion_tokens` is less than the `context_window` for this "
+        "model"
     )
-    assert parse_output_token_cap(error) == 40960
+    assert parse_output_token_cap(error) == 16384
 
 
 @pytest.mark.parametrize(
@@ -112,8 +114,7 @@ def test_clamp_ignores_bool_values():
 
 @pytest.fixture
 def groq_provider():
-    return profiled_provider(
-        "groq",
+    return GroqProvider(
         ProviderConfig(
             api_key="test_groq_key",
             base_url=GROQ_DEFAULT_BASE,
@@ -136,7 +137,18 @@ async def test_create_stream_clamps_and_learns_on_cap_rejection(groq_provider):
     assert body["max_completion_tokens"] == 64000
     model = body["model"]
 
-    error = _BadRequest("max_completion_tokens must be less than or equal to 40960")
+    error = _BadRequest(
+        "invalid request",
+        body={
+            "message": (
+                "`max_completion_tokens` must be less than or equal to `16384`, "
+                "the maximum value for `max_completion_tokens` is less than the "
+                "`context_window` for this model"
+            ),
+            "type": "invalid_request_error",
+            "param": "max_completion_tokens",
+        },
+    )
     create = AsyncMock(side_effect=[error, object()])
 
     with patch.object(groq_provider._client.chat.completions, "create", create):
@@ -147,9 +159,9 @@ async def test_create_stream_clamps_and_learns_on_cap_rejection(groq_provider):
         await attempt.aclose()
 
     assert create.call_count == 2
-    assert create.call_args_list[1].kwargs["max_completion_tokens"] == 40960
-    assert used_body["max_completion_tokens"] == 40960
-    assert groq_provider._model_output_caps[model] == 40960
+    assert create.call_args_list[1].kwargs["max_completion_tokens"] == 16384
+    assert used_body["max_completion_tokens"] == 16384
+    assert groq_provider._model_output_caps[model] == 16384
 
 
 @pytest.mark.asyncio

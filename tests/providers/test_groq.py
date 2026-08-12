@@ -6,8 +6,9 @@ import pytest
 
 from free_claude_code.config.provider_catalog import GROQ_DEFAULT_BASE
 from free_claude_code.providers.base import ProviderConfig
+from free_claude_code.providers.groq import GroqProvider
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import immediate_admission, profiled_provider
+from tests.providers.support import immediate_admission
 
 
 def make_request(**overrides):
@@ -26,7 +27,7 @@ def groq_config():
 
 @pytest.fixture
 def groq_provider(groq_config):
-    return profiled_provider("groq", groq_config, admission=immediate_admission())
+    return GroqProvider(groq_config, admission=immediate_admission())
 
 
 def test_init(groq_config):
@@ -34,9 +35,7 @@ def test_init(groq_config):
     with patch(
         "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
     ) as mock_openai:
-        provider = profiled_provider(
-            "groq", groq_config, admission=immediate_admission()
-        )
+        provider = GroqProvider(groq_config, admission=immediate_admission())
         assert provider._api_key == "test_groq_key"
         assert provider._base_url == GROQ_DEFAULT_BASE
         mock_openai.assert_called_once()
@@ -56,9 +55,58 @@ def test_build_request_body_basic(groq_provider):
     assert "max_completion_tokens" in body
 
 
+def test_build_request_body_replays_reasoning_as_tagged_content(groq_provider):
+    request = make_request(
+        messages=[
+            {"role": "user", "content": "Inspect the file."},
+            {
+                "role": "assistant",
+                "content": [
+                    {"type": "thinking", "thinking": "I need to read it first."},
+                    {"type": "text", "text": "I will inspect the file."},
+                    {
+                        "type": "tool_use",
+                        "id": "toolu_1",
+                        "name": "read_file",
+                        "input": {"path": "example.py"},
+                    },
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": "toolu_1",
+                        "content": "print('hello')",
+                    }
+                ],
+            },
+        ]
+    )
+
+    body = groq_provider._build_request_body(request)
+
+    assistant = next(
+        message for message in body["messages"] if message["role"] == "assistant"
+    )
+    assert assistant["content"] == (
+        "<think>\nI need to read it first.\n</think>\n\nI will inspect the file."
+    )
+    assert assistant["tool_calls"][0]["id"] == "toolu_1"
+    assert body["messages"][-1] == {
+        "role": "tool",
+        "tool_call_id": "toolu_1",
+        "content": "print('hello')",
+    }
+    assert all(
+        "reasoning_content" not in message and "reasoning" not in message
+        for message in body["messages"]
+    )
+
+
 def test_build_request_body_global_disable_blocks_reasoning_mapping():
-    provider = profiled_provider(
-        "groq",
+    provider = GroqProvider(
         ProviderConfig(
             api_key="test_groq_key",
             base_url=GROQ_DEFAULT_BASE,

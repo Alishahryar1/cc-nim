@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, patch
 
 import pytest
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_catalog import BEDROCK_DEFAULT_BASE
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
@@ -137,7 +138,10 @@ async def test_model_discovery_uses_mantle_openai_models_endpoint() -> None:
         )
     )
 
-    assert await provider.list_model_ids() == frozenset(
-        {"openai.gpt-oss-120b", "amazon.nova-pro-v1:0"}
+    assert await provider.list_model_infos() == frozenset(
+        {
+            ProviderModelInfo("openai.gpt-oss-120b"),
+            ProviderModelInfo("amazon.nova-pro-v1:0"),
+        }
     )
     provider._client.models.list.assert_awaited_once_with()

@@ -1,6 +1,5 @@
 name: Feature request
 description: Suggest an improvement to Free Claude Code.
-title: "[Feature]: "
 labels:
   - enhancement
 body:

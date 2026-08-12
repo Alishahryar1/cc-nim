@@ -27,14 +27,12 @@ def model_infos_from_ids(
     )
 
 
-def extract_openai_model_ids(payload: Any, *, provider_name: str) -> frozenset[str]:
-    """Extract model ids from an OpenAI-compatible ``/models`` response."""
-    data = _field(payload, "data")
-    if not _is_sequence(data):
-        raise _malformed(provider_name, "expected top-level data array")
-
+def extract_openai_model_infos(
+    payload: Any, *, provider_name: str
+) -> frozenset[_ProviderModelInfo]:
+    """Extract model metadata from an OpenAI-compatible ``/models`` response."""
     model_ids: set[str] = set()
-    for item in data:
+    for item in model_list_items(payload, provider_name=provider_name):
         model_id = _field(item, "id")
         if not isinstance(model_id, str) or not model_id.strip():
             raise _malformed(provider_name, "expected every data item to include id")
@@ -42,28 +40,14 @@ def extract_openai_model_ids(payload: Any, *, provider_name: str) -> frozenset[s
 
     if not model_ids:
         raise _malformed(provider_name, "response did not include any model ids")
-    return frozenset(model_ids)
+    return model_infos_from_ids(model_ids)
 
 
-def extract_openrouter_tool_model_ids(
-    payload: Any, *, provider_name: str
-) -> frozenset[str]:
-    """Extract OpenRouter model ids that advertise tool-use support."""
-    return frozenset(
-        info.model_id
-        for info in extract_openrouter_tool_model_infos(
-            payload, provider_name=provider_name
-        )
-    )
-
-
-def extract_openrouter_tool_model_infos(
+def extract_tool_capable_model_infos(
     payload: Any, *, provider_name: str
 ) -> frozenset[_ProviderModelInfo]:
-    """Extract OpenRouter tool-capable model ids with thinking capability metadata."""
-    data = _field(payload, "data")
-    if not _is_sequence(data):
-        raise _malformed(provider_name, "expected top-level data array")
+    """Extract tool-capable models with ``supported_parameters`` metadata."""
+    data = model_list_items(payload, provider_name=provider_name)
 
     model_infos: set[_ProviderModelInfo] = set()
     for item in data:
@@ -87,6 +71,14 @@ def extract_openrouter_tool_model_infos(
         )
 
     return frozenset(model_infos)
+
+
+def model_list_items(payload: Any, *, provider_name: str) -> tuple[Any, ...]:
+    """Return a validated OpenAI-shaped model-list data array."""
+    data = _field(payload, "data")
+    if not _is_sequence(data):
+        raise _malformed(provider_name, "expected top-level data array")
+    return tuple(data)
 
 
 def _field(item: Any, name: str) -> Any:

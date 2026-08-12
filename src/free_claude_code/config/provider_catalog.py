@@ -5,6 +5,7 @@ provider implementation imports (see contract tests).
 """
 
 from dataclasses import dataclass
+from enum import StrEnum
 
 # Default upstream base URLs are owned here with the provider catalog.
 NVIDIA_NIM_DEFAULT_BASE = "https://integrate.api.nvidia.com/v1"
@@ -17,6 +18,7 @@ MINIMAX_DEFAULT_BASE = "https://api.minimax.io/v1"
 # DeepSeek Chat Completions API; cache usage is reported on this endpoint.
 DEEPSEEK_DEFAULT_BASE = "https://api.deepseek.com"
 FIREWORKS_DEFAULT_BASE = "https://api.fireworks.ai/inference/v1"
+NOVITA_DEFAULT_BASE = "https://api.novita.ai/openai/v1"
 # Cloudflare account-scoped AI REST root; provider appends /accounts/{id}/ai/v1.
 CLOUDFLARE_AI_REST_ROOT = "https://api.cloudflare.com/client/v4"
 OPENROUTER_DEFAULT_BASE = "https://openrouter.ai/api/v1"
@@ -27,7 +29,7 @@ LMSTUDIO_DEFAULT_BASE = "http://localhost:1234/v1"
 LLAMACPP_DEFAULT_BASE = "http://localhost:8080/v1"
 OLLAMA_DEFAULT_BASE = "http://localhost:11434"
 OLLAMA_CLOUD_DEFAULT_BASE = "https://ollama.com/v1"
-OPENCODE_DEFAULT_BASE = "https://opencode.ai/zen/v1"
+OPENCODE_ZEN_DEFAULT_BASE = "https://opencode.ai/zen/v1"
 OPENCODE_GO_DEFAULT_BASE = "https://opencode.ai/zen/go/v1"
 VERCEL_AI_GATEWAY_DEFAULT_BASE = "https://ai-gateway.vercel.sh/v1"
 # Amazon Bedrock Mantle OpenAI-compatible endpoint. The base URL remains
@@ -45,6 +47,20 @@ VERTEX_AI_API_ROOT = "https://aiplatform.googleapis.com"
 GROQ_DEFAULT_BASE = "https://api.groq.com/openai/v1"
 CEREBRAS_DEFAULT_BASE = "https://api.cerebras.ai/v1"
 SAMBANOVA_DEFAULT_BASE = "https://api.sambanova.ai/v1"
+# Kilo.ai gateway OpenAI-compatible Chat Completions API.
+KILO_DEFAULT_BASE = "https://api.kilo.ai/api/gateway"
+OPENAI_CODEX_DEFAULT_BASE = "https://chatgpt.com/backend-api/codex"
+# TokenRouter OpenAI-compatible Chat Completions gateway.
+TOKENROUTER_DEFAULT_BASE = "https://api.tokenrouter.com/v1"
+# NaraRoute OpenAI-compatible Chat Completions gateway.
+NARAROUTE_DEFAULT_BASE = "https://router.bynara.id/v1"
+
+
+class ProviderAuthKind(StrEnum):
+    """How a customer makes one provider available."""
+
+    CONFIGURATION = "configuration"
+    CONNECTED_ACCOUNT = "connected_account"
 
 
 @dataclass(frozen=True, slots=True)
@@ -53,6 +69,7 @@ class ProviderDescriptor:
 
     provider_id: str
     display_name: str
+    auth_kind: ProviderAuthKind = ProviderAuthKind.CONFIGURATION
     local: bool = False
     credential_env: str | None = None
     credential_url: str | None = None
@@ -92,6 +109,35 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="open_router_api_key",
         default_base_url=OPENROUTER_DEFAULT_BASE,
         proxy_attr="open_router_proxy",
+    ),
+    "groq": ProviderDescriptor(
+        provider_id="groq",
+        display_name="Groq",
+        credential_env="GROQ_API_KEY",
+        credential_url="https://console.groq.com/keys",
+        credential_attr="groq_api_key",
+        default_base_url=GROQ_DEFAULT_BASE,
+        proxy_attr="groq_proxy",
+    ),
+    "openai": ProviderDescriptor(
+        provider_id="openai",
+        display_name="OpenAI / ChatGPT",
+        auth_kind=ProviderAuthKind.CONNECTED_ACCOUNT,
+        default_base_url=OPENAI_CODEX_DEFAULT_BASE,
+        proxy_attr="openai_proxy",
+    ),
+    "azure_openai": ProviderDescriptor(
+        provider_id="azure_openai",
+        display_name="Azure OpenAI",
+        credential_env="AZURE_OPENAI_API_KEY",
+        credential_url="https://ai.azure.com/",
+        credential_attr="azure_openai_api_key",
+        base_url_attr="azure_openai_base_url",
+        proxy_attr="azure_openai_proxy",
+        required_settings_attrs=(
+            "azure_openai_api_key",
+            "azure_openai_base_url",
+        ),
     ),
     "gemini": ProviderDescriptor(
         provider_id="gemini",
@@ -139,14 +185,14 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         default_base_url=CODESTRAL_DEFAULT_BASE,
         proxy_attr="codestral_proxy",
     ),
-    "opencode": ProviderDescriptor(
-        provider_id="opencode",
+    "opencode_zen": ProviderDescriptor(
+        provider_id="opencode_zen",
         display_name="OpenCode Zen",
         credential_env="OPENCODE_API_KEY",
         credential_url="https://opencode.ai/auth",
         credential_attr="opencode_api_key",
-        default_base_url=OPENCODE_DEFAULT_BASE,
-        proxy_attr="opencode_proxy",
+        default_base_url=OPENCODE_ZEN_DEFAULT_BASE,
+        proxy_attr="opencode_zen_proxy",
     ),
     "opencode_go": ProviderDescriptor(
         provider_id="opencode_go",
@@ -230,6 +276,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         default_base_url=KIMI_CODE_DEFAULT_BASE,
         proxy_attr="kimi_code_proxy",
     ),
+    "kilo": ProviderDescriptor(
+        provider_id="kilo",
+        display_name="Kilo.ai",
+        credential_env="KILO_API_KEY",
+        credential_url="https://app.kilo.ai",
+        credential_attr="kilo_api_key",
+        default_base_url=KILO_DEFAULT_BASE,
+        proxy_attr="kilo_proxy",
+    ),
     "minimax": ProviderDescriptor(
         provider_id="minimax",
         display_name="MiniMax",
@@ -248,15 +303,6 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         default_base_url=CEREBRAS_DEFAULT_BASE,
         proxy_attr="cerebras_proxy",
     ),
-    "groq": ProviderDescriptor(
-        provider_id="groq",
-        display_name="Groq",
-        credential_env="GROQ_API_KEY",
-        credential_url="https://console.groq.com/keys",
-        credential_attr="groq_api_key",
-        default_base_url=GROQ_DEFAULT_BASE,
-        proxy_attr="groq_proxy",
-    ),
     "sambanova": ProviderDescriptor(
         provider_id="sambanova",
         display_name="SambaNova",
@@ -274,6 +320,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="fireworks_api_key",
         default_base_url=FIREWORKS_DEFAULT_BASE,
         proxy_attr="fireworks_proxy",
+    ),
+    "novita": ProviderDescriptor(
+        provider_id="novita",
+        display_name="Novita AI",
+        credential_env="NOVITA_API_KEY",
+        credential_url="https://novita.ai/settings/key-management",
+        credential_attr="novita_api_key",
+        default_base_url=NOVITA_DEFAULT_BASE,
+        proxy_attr="novita_proxy",
     ),
     "cloudflare": ProviderDescriptor(
         provider_id="cloudflare",
@@ -295,6 +350,26 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="zai_api_key",
         default_base_url=ZAI_DEFAULT_BASE,
         proxy_attr="zai_proxy",
+    ),
+    "tokenrouter": ProviderDescriptor(
+        provider_id="tokenrouter",
+        display_name="TokenRouter",
+        credential_env="TOKENROUTER_API_KEY",
+        credential_url="https://www.tokenrouter.com/",
+        credential_attr="tokenrouter_api_key",
+        default_base_url=TOKENROUTER_DEFAULT_BASE,
+        base_url_attr="tokenrouter_base_url",
+        proxy_attr="tokenrouter_proxy",
+    ),
+    "nararoute": ProviderDescriptor(
+        provider_id="nararoute",
+        display_name="NaraRoute",
+        credential_env="NARAROUTE_API_KEY",
+        credential_url="https://router.bynara.id/keys",
+        credential_attr="nararoute_api_key",
+        default_base_url=NARAROUTE_DEFAULT_BASE,
+        base_url_attr="nararoute_base_url",
+        proxy_attr="nararoute_proxy",
     ),
     "ollama_cloud": ProviderDescriptor(
         provider_id="ollama_cloud",
@@ -334,7 +409,8 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
 }
 
 # Key order:
-# NVIDIA NIM first (README default), DeepSeek fourth, OpenCode gateways adjacent,
+# NVIDIA NIM, OpenRouter, and Groq lead the customer-facing ranking;
+# OpenCode gateways remain adjacent,
 # Vercel / Hugging Face / Cohere / GitHub Models follow gateway-style remotes,
 # then cloud gateways, Ollama Cloud, and local providers per project plan
 # (github.com/cheahjs/free-llm-api-resources Free Providers TOC as rough guide

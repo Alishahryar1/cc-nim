@@ -118,11 +118,12 @@ class ConversationDriver:
         headers: dict[str, str] | None = None,
     ) -> ConversationTurn:
         request_headers = headers or auth_headers()
+        stream_payload = {**payload, "stream": True}
         with httpx.stream(
             "POST",
             f"{self.server.base_url}/v1/messages",
             headers=request_headers,
-            json=payload,
+            json=stream_payload,
             timeout=self.config.timeout_s,
         ) as response:
             if response.status_code != 200:
@@ -132,7 +133,7 @@ class ConversationDriver:
                 )
             events = parse_sse_lines(response.iter_lines())
         assert_anthropic_stream_contract(events)
-        turn = ConversationTurn(payload, events)
+        turn = ConversationTurn(stream_payload, events)
         self.turns.append(turn)
         return turn
 

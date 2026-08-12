@@ -5,7 +5,10 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
-from free_claude_code.application.errors import UnknownProviderError
+from free_claude_code.application.errors import (
+    ApplicationUnavailableError,
+    UnknownProviderError,
+)
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.config.provider_catalog import (
     BEDROCK_DEFAULT_BASE,
@@ -14,9 +17,11 @@ from free_claude_code.config.provider_catalog import (
     HUGGINGFACE_DEFAULT_BASE,
     KIMI_CODE_DEFAULT_BASE,
     MINIMAX_DEFAULT_BASE,
+    NARAROUTE_DEFAULT_BASE,
     OLLAMA_CLOUD_DEFAULT_BASE,
     PROVIDER_CATALOG,
     SUPPORTED_PROVIDER_IDS,
+    TOKENROUTER_DEFAULT_BASE,
     VERCEL_AI_GATEWAY_DEFAULT_BASE,
     ZAI_DEFAULT_BASE,
 )
@@ -25,6 +30,8 @@ from free_claude_code.providers.cloudflare import CloudflareProvider
 from free_claude_code.providers.deepseek import DeepSeekProvider
 from free_claude_code.providers.gemini import GeminiProvider
 from free_claude_code.providers.github_models import GitHubModelsProvider
+from free_claude_code.providers.groq import GroqProvider
+from free_claude_code.providers.kilo import KiloProvider
 from free_claude_code.providers.lmstudio import LMStudioProvider
 from free_claude_code.providers.mistral import MistralProvider
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
@@ -33,6 +40,7 @@ from free_claude_code.providers.openai_chat import (
     OPENAI_CHAT_PROFILES,
     OpenAIChatProvider,
 )
+from free_claude_code.providers.openai_codex import OpenAICodexProvider
 from free_claude_code.providers.runtime import (
     ProviderRuntime,
     build_provider_config,
@@ -48,6 +56,8 @@ def _make_settings(**overrides):
     mock.model_opus = None
     mock.model_sonnet = None
     mock.model_haiku = None
+    mock.azure_openai_api_key = "test_azure_openai_key"
+    mock.azure_openai_base_url = "https://test-resource.openai.azure.com/openai/v1/"
     mock.nvidia_nim_api_key = "test_key"
     mock.open_router_api_key = "test_openrouter_key"
     mock.mistral_api_key = "test_mistral_key"
@@ -63,6 +73,10 @@ def _make_settings(**overrides):
     mock.cohere_api_key = "test_cohere_key"
     mock.github_models_token = "test_github_models_token"
     mock.zai_api_key = "test_zai_key"
+    mock.tokenrouter_api_key = "test_tokenrouter_key"
+    mock.tokenrouter_base_url = TOKENROUTER_DEFAULT_BASE
+    mock.nararoute_api_key = "test_nararoute_key"
+    mock.nararoute_base_url = NARAROUTE_DEFAULT_BASE
     mock.lm_studio_base_url = "http://localhost:1234/v1"
     mock.llamacpp_base_url = "http://localhost:8080/v1"
     mock.ollama_base_url = "http://localhost:11434"
@@ -79,7 +93,7 @@ def _make_settings(**overrides):
     mock.kimi_code_api_key = "test_kimi_code_key"
     mock.wafer_proxy = ""
     mock.minimax_proxy = ""
-    mock.opencode_proxy = ""
+    mock.opencode_zen_proxy = ""
     mock.opencode_go_proxy = ""
     mock.vercel_ai_gateway_proxy = ""
     mock.bedrock_proxy = ""
@@ -87,8 +101,12 @@ def _make_settings(**overrides):
     mock.cohere_proxy = ""
     mock.github_models_proxy = ""
     mock.zai_proxy = ""
+    mock.tokenrouter_proxy = ""
+    mock.nararoute_proxy = ""
     mock.fireworks_proxy = ""
     mock.fireworks_api_key = "test_fireworks_key"
+    mock.novita_proxy = ""
+    mock.novita_api_key = "test_novita_key"
     mock.cloudflare_api_token = "test_cloudflare_token"
     mock.cloudflare_account_id = "test_cloudflare_account"
     mock.cloudflare_proxy = ""
@@ -102,6 +120,10 @@ def _make_settings(**overrides):
     mock.cerebras_api_key = ""
     mock.cerebras_proxy = ""
     mock.ollama_cloud_proxy = ""
+    mock.kilo_api_key = "test_kilo_key"
+    mock.kilo_proxy = ""
+    mock.openai_proxy = ""
+    mock.azure_openai_proxy = ""
     mock.provider_rate_limit = 40
     mock.provider_rate_window = 60
     mock.provider_max_concurrency = 5
@@ -185,6 +207,42 @@ def test_bedrock_provider_config_uses_regional_base_key_and_proxy() -> None:
     assert config.api_key == "bedrock-token"
     assert config.base_url == "https://bedrock-mantle.eu-west-1.api.aws/v1"
     assert config.proxy == "http://proxy.test:8080"
+
+
+def test_azure_openai_provider_config_uses_resource_base_key_and_proxy() -> None:
+    descriptor = PROVIDER_CATALOG["azure_openai"]
+    settings = _make_settings(
+        azure_openai_api_key="azure-token",
+        azure_openai_base_url=("https://resource.openai.azure.com/openai/v1/"),
+        azure_openai_proxy="http://proxy.test:8080",
+    )
+
+    config = build_provider_config(descriptor, settings)
+
+    assert descriptor.default_base_url is None
+    assert descriptor.configuration_attrs() == (
+        "azure_openai_api_key",
+        "azure_openai_base_url",
+    )
+    assert config.api_key == "azure-token"
+    assert config.base_url == "https://resource.openai.azure.com/openai/v1/"
+    assert config.proxy == "http://proxy.test:8080"
+
+
+def test_azure_openai_provider_config_reports_missing_resource_url() -> None:
+    descriptor = PROVIDER_CATALOG["azure_openai"]
+
+    with pytest.raises(
+        ApplicationUnavailableError,
+        match="AZURE_OPENAI_BASE_URL is not set",
+    ):
+        build_provider_config(
+            descriptor,
+            _make_settings(
+                azure_openai_api_key="azure-token",
+                azure_openai_base_url="",
+            ),
+        )
 
 
 @pytest.mark.parametrize(
@@ -271,6 +329,16 @@ def test_create_cloudflare_provider_uses_account_scoped_base_url():
     assert provider._base_url == (
         "https://api.cloudflare.com/client/v4/accounts/test-account/ai/v1"
     )
+
+
+def test_opencode_zen_provider_config_uses_explicit_id_and_name():
+    with patch("httpx.AsyncClient"):
+        provider = create_provider("opencode_zen", _make_settings())
+
+    assert isinstance(provider, OpenAIChatProvider)
+    assert provider._base_url == "https://opencode.ai/zen/v1"
+    assert provider._provider_name == "OPENCODE_ZEN"
+    assert provider._api_key == "test_opencode_key"
 
 
 def test_opencode_go_provider_config_uses_correct_base_url_and_name():
@@ -397,6 +465,7 @@ def test_create_provider_instantiates_each_builtin():
         groq_api_key="test_groq_key",
         cerebras_api_key="test_cerebras_key",
         fireworks_api_key="test_fireworks_key",
+        novita_api_key="test_novita_key",
         cloudflare_api_token="test_cloudflare_token",
         cloudflare_account_id="test_cloudflare_account",
         vercel_ai_gateway_api_key="test_vercel_key",
@@ -413,6 +482,8 @@ def test_create_provider_instantiates_each_builtin():
     )
     cases = {
         "nvidia_nim": NvidiaNimProvider,
+        "openai": OpenAICodexProvider,
+        "azure_openai": OpenAIChatProvider,
         "open_router": OpenRouterProvider,
         "mistral": MistralProvider,
         "mistral_codestral": OpenAIChatProvider,
@@ -421,13 +492,14 @@ def test_create_provider_instantiates_each_builtin():
         "kimi_code": OpenAIChatProvider,
         "minimax": OpenAIChatProvider,
         "fireworks": OpenAIChatProvider,
+        "novita": OpenAIChatProvider,
         "cloudflare": CloudflareProvider,
         "lmstudio": LMStudioProvider,
         "llamacpp": OpenAIChatProvider,
         "ollama": OpenAIChatProvider,
         "ollama_cloud": OpenAIChatProvider,
         "wafer": OpenAIChatProvider,
-        "opencode": OpenAIChatProvider,
+        "opencode_zen": OpenAIChatProvider,
         "opencode_go": OpenAIChatProvider,
         "vercel": OpenAIChatProvider,
         "bedrock": OpenAIChatProvider,
@@ -435,13 +507,24 @@ def test_create_provider_instantiates_each_builtin():
         "cohere": OpenAIChatProvider,
         "github_models": GitHubModelsProvider,
         "zai": OpenAIChatProvider,
+        "tokenrouter": OpenAIChatProvider,
+        "nararoute": OpenAIChatProvider,
         "gemini": GeminiProvider,
         "vertex": VertexProvider,
-        "groq": OpenAIChatProvider,
+        "groq": GroqProvider,
         "sambanova": OpenAIChatProvider,
+        "kilo": KiloProvider,
         "cerebras": OpenAIChatProvider,
     }
     sentinel_admission = MagicMock(spec=ProviderAdmissionController)
+    auth = MagicMock()
+    injected_factories = {
+        "openai": lambda config, _settings, admission: OpenAICodexProvider(
+            config,
+            auth=auth,
+            admission=admission,
+        )
+    }
 
     with (
         patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"),
@@ -452,7 +535,11 @@ def test_create_provider_instantiates_each_builtin():
         ) as admission_factory,
     ):
         for provider_id, provider_cls in cases.items():
-            provider = create_provider(provider_id, settings)
+            provider = create_provider(
+                provider_id,
+                settings,
+                injected_factories=injected_factories,
+            )
 
             assert isinstance(provider, provider_cls)
             assert provider._admission is sentinel_admission

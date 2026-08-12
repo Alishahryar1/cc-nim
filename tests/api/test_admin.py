@@ -5,6 +5,11 @@ import httpx
 import pytest
 from fastapi.testclient import TestClient
 
+from free_claude_code.application.connected_accounts import (
+    ConnectedAccountLoginMode,
+    ConnectedAccountState,
+    ConnectedAccountStatus,
+)
 from free_claude_code.application.model_metadata import (
     ProviderModelInfo,
     ProviderModelRefreshResult,
@@ -150,6 +155,113 @@ def test_admin_api_fetches_bypass_browser_cache():
     )
 
     assert 'cache: "no-store"' in script
+
+
+def test_admin_connected_account_login_preopens_sign_in_window():
+    script = Path("src/free_claude_code/api/admin_static/admin.js").read_text(
+        encoding="utf-8"
+    )
+
+    assert 'window.open("about:blank", "_blank")' in script
+    assert "popup.location.replace(target)" in script
+    assert "if (popup) popup.close()" in script
+    assert '"Reconnect"' in script
+    assert '"Copy code"' in script
+    assert "Restart your agent to refresh its model picker." in script
+    assert 'window.confirm("Disconnect this ChatGPT account from FCC?")' in script
+
+
+class _FakeConnectedAccount:
+    def __init__(self) -> None:
+        self.connected = False
+        self.revision = 0
+        self.cancelled = False
+
+    def is_connected(self) -> bool:
+        return self.connected
+
+    def status(self) -> ConnectedAccountStatus:
+        return ConnectedAccountStatus(
+            provider_id="openai",
+            state=(
+                ConnectedAccountState.CONNECTED
+                if self.connected
+                else ConnectedAccountState.DISCONNECTED
+            ),
+            connected=self.connected,
+            revision=self.revision,
+            email="safe@example.com" if self.connected else None,
+        )
+
+    async def start_login(
+        self, mode: ConnectedAccountLoginMode
+    ) -> ConnectedAccountStatus:
+        return ConnectedAccountStatus(
+            provider_id="openai",
+            state=ConnectedAccountState.CONNECTING,
+            connected=False,
+            revision=self.revision,
+            attempt_id="login_safe",
+            mode=mode,
+            authorization_url="https://auth.openai.com/safe",
+        )
+
+    async def cancel_login(self) -> ConnectedAccountStatus:
+        self.cancelled = True
+        return self.status()
+
+    async def disconnect(self) -> ConnectedAccountStatus:
+        self.connected = False
+        self.revision += 1
+        return self.status()
+
+    async def close(self) -> None:
+        return None
+
+
+def test_admin_connected_account_routes_are_safe_loopback_only_and_uncached(
+    monkeypatch, tmp_path
+):
+    _set_home(monkeypatch, tmp_path)
+    account = _FakeConnectedAccount()
+    app = create_test_app(connected_accounts={"openai": account})
+    client = _local_client(app)
+
+    status_response = client.get("/admin/api/providers/openai/auth")
+    login_response = client.post(
+        "/admin/api/providers/openai/auth/login",
+        json={"mode": "browser"},
+    )
+    cancel_response = client.post("/admin/api/providers/openai/auth/cancel")
+
+    assert status_response.status_code == 200
+    assert status_response.headers["cache-control"] == "no-store"
+    assert status_response.json()["state"] == "disconnected"
+    assert login_response.status_code == 200
+    assert login_response.json() == {
+        "provider_id": "openai",
+        "state": "connecting",
+        "connected": False,
+        "revision": 0,
+        "attempt_id": "login_safe",
+        "mode": "browser",
+        "authorization_url": "https://auth.openai.com/safe",
+    }
+    assert "token" not in login_response.text.lower()
+    assert cancel_response.status_code == 200
+    assert account.cancelled is True
+    remote = TestClient(app, client=("203.0.113.10", 50000))
+    assert remote.get("/admin/api/providers/openai/auth").status_code == 403
+
+
+def test_admin_rejects_auth_routes_for_non_connected_provider(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+
+    response = _local_client(create_test_app()).get(
+        "/admin/api/providers/nvidia_nim/auth"
+    )
+
+    assert response.status_code == 404
 
 
 def test_admin_provider_cards_support_non_key_configuration():

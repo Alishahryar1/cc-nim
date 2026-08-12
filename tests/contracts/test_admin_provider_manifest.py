@@ -1,7 +1,10 @@
 """Ensure admin UI manifest exposes every catalog credential/proxy binding."""
 
 from free_claude_code.config.admin.manifest import FIELD_BY_KEY
-from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
+from free_claude_code.config.provider_catalog import (
+    PROVIDER_CATALOG,
+    ProviderAuthKind,
+)
 from free_claude_code.config.settings import Settings
 
 
@@ -107,7 +110,13 @@ def test_provider_catalog_display_names_are_admin_status_source() -> None:
     assert set(status_by_provider) == set(PROVIDER_CATALOG)
     for provider_id, desc in PROVIDER_CATALOG.items():
         assert status_by_provider[provider_id]["display_name"] == desc.display_name
-        expected_kind = "local" if desc.local else "remote"
+        expected_kind = (
+            "connected_account"
+            if desc.auth_kind is ProviderAuthKind.CONNECTED_ACCOUNT
+            else "local"
+            if desc.local
+            else "remote"
+        )
         assert status_by_provider[provider_id]["kind"] == expected_kind
 
 
@@ -146,3 +155,40 @@ def test_vertex_admin_status_uses_project_configuration_not_an_api_key() -> None
     assert vertex_status("")["label"] == "Missing configuration"
     assert vertex_status("")["configuration"] == "VERTEX_PROJECT_ID"
     assert vertex_status("vertex-project")["status"] == "configured"
+
+
+def test_azure_openai_admin_status_distinguishes_key_and_url() -> None:
+    from free_claude_code.config.admin.status import provider_config_status
+
+    def azure_status(api_key: str, base_url: str) -> dict[str, object]:
+        statuses = provider_config_status(
+            {
+                "AZURE_OPENAI_API_KEY": {"value": api_key},
+                "AZURE_OPENAI_BASE_URL": {"value": base_url},
+            }
+        )
+        return next(
+            status for status in statuses if status["provider_id"] == "azure_openai"
+        )
+
+    missing_key = azure_status(
+        "",
+        "https://resource.openai.azure.com/openai/v1/",
+    )
+    assert missing_key["status"] == "missing_key"
+    assert missing_key["label"] == "Missing key"
+
+    missing_url = azure_status("azure-key", "")
+    assert missing_url["status"] == "missing_config"
+    assert missing_url["label"] == "Missing configuration"
+    assert missing_url["configuration"] == (
+        "AZURE_OPENAI_API_KEY + AZURE_OPENAI_BASE_URL"
+    )
+
+    assert (
+        azure_status(
+            "azure-key",
+            "https://resource.openai.azure.com/openai/v1/",
+        )["status"]
+        == "configured"
+    )

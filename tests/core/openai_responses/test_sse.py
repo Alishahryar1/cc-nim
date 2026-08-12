@@ -551,7 +551,7 @@ async def test_anthropic_error_stream_converts_to_response_failed_event() -> Non
 
 
 @pytest.mark.asyncio
-async def test_split_usage_deltas_are_accumulated() -> None:
+async def test_split_usage_deltas_sum_latest_anthropic_input_categories() -> None:
     response = await _completed_response_from_sse(
         _aiter(
             [
@@ -561,7 +561,11 @@ async def test_split_usage_deltas_are_accumulated() -> None:
                     {
                         "type": "message_delta",
                         "delta": {"stop_reason": "end_turn"},
-                        "usage": {"input_tokens": 11},
+                        "usage": {
+                            "input_tokens": 20,
+                            "cache_creation_input_tokens": 5,
+                            "cache_read_input_tokens": 10,
+                        },
                     },
                 ),
                 format_sse_event(
@@ -569,7 +573,10 @@ async def test_split_usage_deltas_are_accumulated() -> None:
                     {
                         "type": "message_delta",
                         "delta": {},
-                        "usage": {"output_tokens": 7},
+                        "usage": {
+                            "cache_read_input_tokens": 11,
+                            "output_tokens": 7,
+                        },
                     },
                 ),
                 format_sse_event("message_stop", {"type": "message_stop"}),
@@ -579,11 +586,55 @@ async def test_split_usage_deltas_are_accumulated() -> None:
     )
 
     assert response["usage"] == {
-        "input_tokens": 11,
+        "input_tokens": 36,
         "output_tokens": 7,
-        "total_tokens": 18,
+        "total_tokens": 43,
     }
     assert "stop_reason" not in response
+
+
+@pytest.mark.asyncio
+async def test_usage_ignores_invalid_anthropic_input_categories() -> None:
+    response = await _completed_response_from_sse(
+        _aiter(
+            [
+                *_anthropic_text_stream("usage")[:-2],
+                format_sse_event(
+                    "message_delta",
+                    {
+                        "type": "message_delta",
+                        "delta": {"stop_reason": "end_turn"},
+                        "usage": {
+                            "input_tokens": 20,
+                            "cache_creation_input_tokens": 5,
+                            "cache_read_input_tokens": 10,
+                        },
+                    },
+                ),
+                format_sse_event(
+                    "message_delta",
+                    {
+                        "type": "message_delta",
+                        "delta": {},
+                        "usage": {
+                            "input_tokens": -1,
+                            "cache_creation_input_tokens": -2,
+                            "cache_read_input_tokens": True,
+                            "output_tokens": 7,
+                        },
+                    },
+                ),
+                format_sse_event("message_stop", {"type": "message_stop"}),
+            ]
+        ),
+        {"model": "nvidia_nim/test-model", "stream": True},
+    )
+
+    assert response["usage"] == {
+        "input_tokens": 35,
+        "output_tokens": 7,
+        "total_tokens": 42,
+    }
 
 
 @pytest.mark.asyncio

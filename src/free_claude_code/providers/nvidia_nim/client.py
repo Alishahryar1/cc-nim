@@ -24,6 +24,7 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProvider,
 )
 
+from .native_tool_stream import normalize_nim_native_tool_stream
 from .request_options import NIM_REQUEST_POLICY, build_nim_request_body
 from .retry import (
     clone_body_without_chat_template,
@@ -80,6 +81,10 @@ class NvidiaNimProvider(OpenAIChatProvider):
         """Strip private request metadata before calling NVIDIA NIM."""
         return body_without_nim_tool_argument_aliases(body)
 
+    def _normalize_stream(self, stream: Any, _body: Mapping[str, Any]) -> Any:
+        """Repair model-native MiniMax tool markup leaked by NVIDIA NIM."""
+        return normalize_nim_native_tool_stream(stream, _body)
+
     def _tool_argument_aliases(self, body: dict[str, Any]) -> dict[str, dict[str, str]]:
         """Return NIM tool argument aliases captured while building this request."""
         return nim_tool_argument_aliases_from_body(body)
@@ -130,15 +135,18 @@ class NvidiaNimProvider(OpenAIChatProvider):
         return None
 
     def _provider_failure_override(self, error: Exception) -> ExecutionFailure | None:
-        """Classify NVIDIA-specific 400 responses by their actual semantics."""
-        if not isinstance(error, openai.BadRequestError):
+        """Classify NVIDIA-specific 400/500 responses by their actual semantics."""
+        if not isinstance(error, openai.BadRequestError | openai.InternalServerError):
             return None
-        if getattr(error, "status_code", None) != 400:
+        status = getattr(error, "status_code", None)
+        if status not in (400, 500):
             return None
         bodies = _nim_error_bodies(error)
         if any(_is_context_window_exhaustion(body) for body in bodies):
             return context_window_exceeded_provider_failure()
-        if any(_is_degraded_function(body) for body in bodies):
+        if isinstance(error, openai.BadRequestError) and any(
+            _is_degraded_function(body) for body in bodies
+        ):
             return overloaded_provider_failure()
         return None
 

@@ -6,6 +6,22 @@ from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.settings import Settings
 
 _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
+    "OPENAI_PROXY": {
+        "description": (
+            "Optional proxy used for OpenAI sign-in and ChatGPT Codex requests. "
+            "Changing it restarts FCC."
+        ),
+        "restart_required": True,
+    },
+    "AZURE_OPENAI_API_KEY": {
+        "description": "API key for the Azure OpenAI resource.",
+    },
+    "AZURE_OPENAI_BASE_URL": {
+        "description": (
+            "Resource-specific OpenAI v1 base URL, for example "
+            "https://YOUR-RESOURCE-NAME.openai.azure.com/openai/v1/."
+        ),
+    },
     "NVIDIA_NIM_API_KEY": {
         "label": "NVIDIA NIM API Key",
         "description": "Used by NVIDIA NIM chat and optional NIM voice transcription.",
@@ -76,6 +92,13 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
         "label": "Fireworks API Key",
         "description": "Fireworks AI inference API key.",
     },
+    "NOVITA_API_KEY": {
+        "label": "Novita AI API Key",
+        "description": (
+            "Novita AI OpenAI-compatible API key (create at "
+            "[novita.ai/settings/key-management](https://novita.ai/settings/key-management))."
+        ),
+    },
     "MINIMAX_API_KEY": {
         "label": "MiniMax API Key",
         "description": (
@@ -132,6 +155,31 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
     "OLLAMA_API_KEY": {
         "description": (
             "Ollama API key for direct OpenAI-compatible Cloud access at ollama.com/v1."
+        ),
+    },
+    "TOKENROUTER_API_KEY": {
+        "label": "TokenRouter API Key",
+        "description": (
+            "TokenRouter OpenAI-compatible gateway API key for api.tokenrouter.com/v1."
+        ),
+    },
+    "TOKENROUTER_BASE_URL": {
+        "description": (
+            "TokenRouter OpenAI-compatible Chat Completions base URL. "
+            "Defaults to https://api.tokenrouter.com/v1."
+        ),
+    },
+    "NARAROUTE_API_KEY": {
+        "label": "NaraRoute API Key",
+        "description": (
+            "NaraRoute OpenAI-compatible gateway API key for router.bynara.id/v1. "
+            "Keys begin with sk-nry-; create one at router.bynara.id/keys."
+        ),
+    },
+    "NARAROUTE_BASE_URL": {
+        "description": (
+            "NaraRoute OpenAI-compatible Chat Completions base URL. "
+            "Defaults to https://router.bynara.id/v1."
         ),
     },
 }

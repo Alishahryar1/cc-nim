@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock
 import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from free_claude_code.config.provider_catalog import KIMI_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
@@ -97,7 +98,9 @@ async def test_model_list_uses_openai_client_models_endpoint(kimi_provider):
         return_value=SimpleNamespace(data=[SimpleNamespace(id="kimi-k2.5")])
     )
 
-    assert await kimi_provider.list_model_ids() == frozenset({"kimi-k2.5"})
+    assert await kimi_provider.list_model_infos() == frozenset(
+        {ProviderModelInfo("kimi-k2.5")}
+    )
 
     kimi_provider._client.models.list.assert_awaited_once_with()
 

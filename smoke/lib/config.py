@@ -9,6 +9,7 @@ from free_claude_code.config.model_refs import parse_model_name, parse_provider_
 from free_claude_code.config.provider_catalog import (
     PROVIDER_CATALOG,
     SUPPORTED_PROVIDER_IDS,
+    ProviderAuthKind,
 )
 from free_claude_code.config.settings import Settings, get_settings
 from free_claude_code.providers.runtime.config import has_provider_configuration
@@ -46,6 +47,7 @@ SECRET_KEY_PARTS = ("KEY", "TOKEN", "SECRET", "WEBHOOK", "AUTH")
 
 PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "nvidia_nim": "nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
+    "azure_openai": "azure_openai/gpt-5.1",
     "open_router": "open_router/moonshotai/kimi-k2.6:free",
     "mistral": "mistral/devstral-small-latest",
     "mistral_codestral": "mistral_codestral/codestral-latest",
@@ -57,7 +59,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "kimi_code": "kimi_code/k3",
     "wafer": "wafer/DeepSeek-V4-Pro",
     "minimax": "minimax/MiniMax-M3",
-    "opencode": "opencode/gpt-5.3-codex",
+    "opencode_zen": "opencode_zen/gpt-5.3-codex",
     "opencode_go": "opencode_go/minimax-m2.7",
     "vercel": "vercel/openai/gpt-5.5",
     "bedrock": "bedrock/openai.gpt-oss-120b",
@@ -69,8 +71,12 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "vertex": "vertex/google/gemini-3.5-flash",
     "groq": "groq/llama-3.3-70b-versatile",
     "sambanova": "sambanova/Meta-Llama-3.3-70B-Instruct",
+    "kilo": "kilo/kilo-auto/free",
     "cerebras": "cerebras/llama3.1-8b",
+    "novita": "novita/deepseek/deepseek-v4-flash-0731",
     "cloudflare": "cloudflare/@cf/moonshotai/kimi-k2.6",
+    "tokenrouter": "tokenrouter/moonshotai/kimi-k3-free",
+    "nararoute": "nararoute/kimi-k3-free",
 }
 MISTRAL_REASONING_SMOKE_DEFAULT_MODEL = "mistral/mistral-medium-3-5"
 
@@ -78,6 +84,7 @@ NVIDIA_NIM_CLI_DEFAULT_MODELS: tuple[str, ...] = (
     "z-ai/glm-5.2",
     "moonshotai/kimi-k2.6",
     "minimaxai/minimax-m2.7",
+    "minimaxai/minimax-m3",
     "nvidia/nemotron-3-super-120b-a12b",
     "deepseek-ai/deepseek-v4-pro",
     "deepseek-ai/deepseek-v4-flash",
@@ -257,6 +264,8 @@ class SmokeConfig:
         descriptor = PROVIDER_CATALOG.get(provider)
         if descriptor is None:
             return False
+        if descriptor.auth_kind is ProviderAuthKind.CONNECTED_ACCOUNT:
+            return bool(os.getenv(f"FCC_SMOKE_MODEL_{provider.upper()}"))
         return has_provider_configuration(descriptor, self.settings)
 
 
@@ -298,17 +307,8 @@ def _normalize_provider_model(provider: str, raw_model: str) -> str:
     if not model:
         msg = f"FCC_SMOKE_MODEL_{provider.upper()} must not be empty"
         raise ValueError(msg)
-    if "/" not in model:
-        return f"{provider}/{model}"
-    prefix = parse_provider_type(model)
-    if prefix == provider:
+    if "/" in model and parse_provider_type(model) == provider:
         return model
-    if prefix in SUPPORTED_PROVIDER_IDS:
-        msg = (
-            f"FCC_SMOKE_MODEL_{provider.upper()} must use provider prefix "
-            f"{provider!r}, got {model!r}"
-        )
-        raise ValueError(msg)
     return f"{provider}/{model}"
 
 

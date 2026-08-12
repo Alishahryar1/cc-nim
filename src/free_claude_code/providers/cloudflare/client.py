@@ -16,8 +16,7 @@ from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.http import maybe_await_aclose
 from free_claude_code.providers.model_listing import (
     ModelListResponseError,
-    extract_openai_model_ids,
-    model_infos_from_ids,
+    extract_openai_model_infos,
 )
 from free_claude_code.providers.openai_chat import (
     ChatTemplateReasoning,
@@ -96,12 +95,8 @@ class CloudflareProvider(OpenAIChatProvider):
         await super().cleanup()
         await self._model_list_client.aclose()
 
-    async def list_model_ids(self) -> frozenset[str]:
-        """Return Cloudflare Workers AI model ids from account model search."""
-        return frozenset(info.model_id for info in await self.list_model_infos())
-
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
-        """Return Cloudflare Workers AI model ids from account model search."""
+        """Return Cloudflare Workers AI metadata from account model search."""
 
         async def request() -> httpx.Response:
             response = await self._model_list_client.get(
@@ -124,9 +119,7 @@ class CloudflareProvider(OpenAIChatProvider):
                 raise ModelListResponseError(
                     "CLOUDFLARE model-list response is malformed: invalid JSON"
                 ) from exc
-            return model_infos_from_ids(
-                extract_openai_model_ids(payload, provider_name="CLOUDFLARE")
-            )
+            return extract_openai_model_infos(payload, provider_name="CLOUDFLARE")
         finally:
             await maybe_await_aclose(response)
 

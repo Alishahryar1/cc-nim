@@ -11,6 +11,7 @@ from free_claude_code.application.errors import (
     ApplicationUnavailableError,
     InvalidRequestError,
 )
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.settings import Settings
 from free_claude_code.messaging.transcription import TranscriptionService
 from free_claude_code.providers.nvidia_nim.client import NvidiaNimProvider
@@ -73,7 +74,11 @@ async def test_runtime_startup_logs_admin_url_without_printed_server_banner():
 
     with (
         patch("builtins.print") as printed,
-        patch.object(manager, "validate_configured_models", new=AsyncMock()),
+        patch.object(
+            manager,
+            "warm_referenced_model_cache",
+            new=AsyncMock(),
+        ) as warm_cache,
         patch.object(manager, "start_model_list_refresh") as start_refresh,
         patch.object(manager, "close", new=AsyncMock()),
         patch(
@@ -86,6 +91,7 @@ async def test_runtime_startup_logs_admin_url_without_printed_server_banner():
         await runtime.close()
 
     printed.assert_not_called()
+    warm_cache.assert_awaited_once()
     start_refresh.assert_called_once()
     get_logger.assert_any_call("uvicorn.error")
     uvicorn_logger.info.assert_called_once_with(
@@ -166,15 +172,29 @@ def test_general_exception_default_log_excludes_exception_message():
 
 
 @pytest.mark.asyncio
-async def test_model_validation_failure_does_not_block_runtime_startup():
+async def test_runtime_startup_warms_catalog_before_background_refresh():
     settings = _settings(messaging_platform="none")
     manager = ProviderRuntimeManager(settings)
     runtime = ApplicationRuntime(manager, transcriber=None)
-    validation = AsyncMock(side_effect=ApplicationUnavailableError("bad model"))
+    events: list[str] = []
+
+    async def warm_cache() -> None:
+        events.append("warm")
+
+    def start_refresh() -> None:
+        events.append("background")
 
     with (
-        patch.object(manager, "validate_configured_models", new=validation),
-        patch.object(manager, "start_model_list_refresh") as start_refresh,
+        patch.object(
+            manager,
+            "warm_referenced_model_cache",
+            side_effect=warm_cache,
+        ) as warm,
+        patch.object(
+            manager,
+            "start_model_list_refresh",
+            side_effect=start_refresh,
+        ) as refresh,
         patch.object(manager, "close", new=AsyncMock()),
         patch(
             "free_claude_code.runtime.application.messaging_platform_factory.create_messaging_components",
@@ -184,8 +204,9 @@ async def test_model_validation_failure_does_not_block_runtime_startup():
         await runtime.start()
         await runtime.close()
 
-    validation.assert_awaited_once()
-    start_refresh.assert_called_once()
+    warm.assert_awaited_once()
+    refresh.assert_called_once()
+    assert events == ["warm", "background"]
 
 
 def test_startup_failure_message_preserves_existing_concise_contract():
@@ -313,6 +334,28 @@ def test_bootstrap_configures_default_log_and_publishes_only_services(tmp_path):
     )
     api_app = cast(FastAPI, asgi_app.app)
     assert set(api_app.state._state) == {"services"}
+
+
+def test_bootstrap_wires_the_codex_catalog_publisher() -> None:
+    publisher = MagicMock()
+
+    with (
+        patch("free_claude_code.runtime.bootstrap.configure_logging"),
+        patch(
+            "free_claude_code.runtime.bootstrap.CodexModelCatalogPublisher",
+            return_value=publisher,
+        ) as publisher_type,
+    ):
+        asgi_app = build_asgi_app(_settings())
+
+    manager = asgi_app.runtime.provider_manager
+    manager.cache_model_infos(
+        "nvidia_nim",
+        {ProviderModelInfo("published-model")},
+    )
+
+    publisher_type.assert_called_once_with()
+    publisher.publish.assert_called_once_with(manager)
 
 
 def test_bootstrap_honors_process_log_file_override(monkeypatch, tmp_path):

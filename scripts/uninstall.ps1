@@ -11,6 +11,8 @@ $ErrorActionPreference = "Stop"
 $PackageName = "free-claude-code"
 $FccHomeDirname = ".fcc"
 $FccCommands = @(
+    # Include retired entry points so older installations are fully stopped and removed.
+    "fcc-desktop",
     "fcc-server",
     "fcc-claude",
     "fcc-codex",
@@ -209,6 +211,67 @@ function Confirm-FccCommandsRemoved {
     }
 }
 
+function Test-EquivalentPath {
+    param(
+        [string] $Left,
+        [string] $Right
+    )
+
+    if ([string]::IsNullOrWhiteSpace($Left) -or [string]::IsNullOrWhiteSpace($Right)) {
+        return $false
+    }
+    try {
+        return [string]::Equals(
+            [IO.Path]::GetFullPath($Left),
+            [IO.Path]::GetFullPath($Right),
+            [StringComparison]::OrdinalIgnoreCase
+        )
+    }
+    catch {
+        return $false
+    }
+}
+
+function Test-FccDesktopShortcutTarget {
+    param([string] $TargetPath)
+
+    foreach ($extension in @("", ".exe", ".cmd", ".bat", ".ps1")) {
+        $expectedTarget = Join-Path $script:UvToolBin "fcc-desktop$extension"
+        if (Test-EquivalentPath -Left $TargetPath -Right $expectedTarget) {
+            return $true
+        }
+    }
+    return $false
+}
+
+function Remove-FccDesktopShortcuts {
+    $shortcutPaths = @(
+        (Join-Path $env:USERPROFILE "Desktop\Free Claude Code.lnk"),
+        (Join-Path $env:APPDATA "Microsoft\Windows\Start Menu\Programs\Free Claude Code.lnk")
+    )
+    $shell = New-Object -ComObject WScript.Shell
+    foreach ($shortcutPath in $shortcutPaths) {
+        if (-not (Test-Path -LiteralPath $shortcutPath)) {
+            continue
+        }
+        try {
+            $shortcut = $shell.CreateShortcut($shortcutPath)
+            $isFccShortcut = Test-FccDesktopShortcutTarget -TargetPath $shortcut.TargetPath
+        }
+        catch {
+            $isFccShortcut = $false
+        }
+        if (-not $isFccShortcut) {
+            Write-Host "A shortcut not managed by Free Claude Code exists at $shortcutPath; leaving it unchanged."
+            continue
+        }
+        Write-Host "+ Remove-Item -LiteralPath $(Format-Argument $shortcutPath) -Force"
+        if (-not $DryRun) {
+            Remove-Item -LiteralPath $shortcutPath -Force
+        }
+    }
+}
+
 function Purge-FccHome {
     $fccHome = Join-Path $env:USERPROFILE $FccHomeDirname
     if (-not (Test-Path -LiteralPath $fccHome)) {
@@ -257,6 +320,9 @@ Uninstall-FreeClaudeCode
 
 Write-Step "Verifying Free Claude Code entry points were removed"
 Confirm-FccCommandsRemoved
+
+Write-Step "Removing Free Claude Code desktop shortcuts"
+Remove-FccDesktopShortcuts
 
 Write-Step "Purging FCC config and data from ~/.fcc"
 Purge-FccHome

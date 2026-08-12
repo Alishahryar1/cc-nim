@@ -60,10 +60,6 @@ class GitHubModelsProvider(OpenAIChatProvider):
         await super().cleanup()
         await self._model_list_client.aclose()
 
-    async def list_model_ids(self) -> frozenset[str]:
-        """Return GitHub Models ids that support FCC's streaming tool workflow."""
-        return frozenset(info.model_id for info in await self.list_model_infos())
-
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
         """Return stream/tool-capable GitHub Models catalog ids."""
 

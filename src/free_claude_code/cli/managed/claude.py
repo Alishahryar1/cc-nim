@@ -107,6 +107,7 @@ def build_managed_claude_env(
         auth_token=auth_token,
         base_env=base_env,
     )
+    env["DISABLE_TELEMETRY"] = "1"
     env["TERM"] = "dumb"
     env["PYTHONIOENCODING"] = "utf-8"
     return env

@@ -7,14 +7,21 @@ from urllib.parse import urlsplit
 
 import httpx
 from fastapi import APIRouter, BackgroundTasks, Depends, HTTPException, Request
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, JSONResponse
 from pydantic import BaseModel, Field
 
+from free_claude_code.application.connected_accounts import (
+    ConnectedAccountLoginMode,
+)
 from free_claude_code.application.model_metadata import ProviderModelRefreshResult
 from free_claude_code.config.admin.manifest import FIELD_BY_KEY
 from free_claude_code.config.admin.persistence import validate_updates
 from free_claude_code.config.admin.values import load_config_response
 from free_claude_code.config.model_refs import configured_chat_model_refs
+from free_claude_code.config.provider_catalog import (
+    PROVIDER_CATALOG,
+    ProviderAuthKind,
+)
 
 from .dependencies import get_services
 from .ports import ApiServices
@@ -33,6 +40,12 @@ class AdminConfigPayload(BaseModel):
     """Partial config update submitted by the admin UI."""
 
     values: dict[str, Any] = Field(default_factory=dict)
+
+
+class ConnectedAccountLoginPayload(BaseModel):
+    """Interactive connected-account login selection."""
+
+    mode: ConnectedAccountLoginMode = ConnectedAccountLoginMode.BROWSER
 
 
 def _is_loopback_host(host: str | None) -> bool:
@@ -145,6 +158,63 @@ async def test_provider(
     return await services.admin.test_provider(provider_id)
 
 
+@router.get("/admin/api/providers/{provider_id}/auth")
+async def connected_account_status(
+    provider_id: str,
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    require_loopback_admin(request)
+    _require_connected_account_provider(provider_id)
+    status = await services.admin.connected_account_status(provider_id)
+    return _no_store(status.as_dict())
+
+
+@router.post("/admin/api/providers/{provider_id}/auth/login")
+async def start_connected_account_login(
+    provider_id: str,
+    payload: ConnectedAccountLoginPayload,
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    require_loopback_admin(request)
+    _require_connected_account_provider(provider_id)
+    try:
+        status = await services.admin.start_connected_account_login(
+            provider_id, payload.mode
+        )
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=(f"Could not start connected-account login ({type(exc).__name__})."),
+        ) from exc
+    return _no_store(status.as_dict())
+
+
+@router.post("/admin/api/providers/{provider_id}/auth/cancel")
+async def cancel_connected_account_login(
+    provider_id: str,
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    require_loopback_admin(request)
+    _require_connected_account_provider(provider_id)
+    status = await services.admin.cancel_connected_account_login(provider_id)
+    return _no_store(status.as_dict())
+
+
+@router.delete("/admin/api/providers/{provider_id}/auth")
+async def disconnect_connected_account(
+    provider_id: str,
+    request: Request,
+    services: ApiServices = Depends(get_services),
+):
+    require_loopback_admin(request)
+    _require_connected_account_provider(provider_id)
+    status = await services.admin.disconnect_connected_account(provider_id)
+    return _no_store(status.as_dict())
+
+
 @router.get("/admin/api/models")
 async def models(
     request: Request,
@@ -231,3 +301,19 @@ async def _check_local_provider(
             "base_url": base_url,
             "error_type": type(exc).__name__,
         }
+
+
+def _require_connected_account_provider(provider_id: str) -> None:
+    descriptor = PROVIDER_CATALOG.get(provider_id)
+    if (
+        descriptor is None
+        or descriptor.auth_kind is not ProviderAuthKind.CONNECTED_ACCOUNT
+    ):
+        raise HTTPException(
+            status_code=404,
+            detail="Provider does not support connected-account login.",
+        )
+
+
+def _no_store(payload: Any) -> JSONResponse:
+    return JSONResponse(payload, headers={"Cache-Control": "no-store"})

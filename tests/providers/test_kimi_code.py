@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock
 import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_catalog import KIMI_CODE_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.base import ProviderConfig
@@ -161,7 +162,11 @@ async def test_model_list_uses_subscription_models_endpoint(kimi_code_provider):
         )
     )
 
-    assert await kimi_code_provider.list_model_ids() == frozenset(
-        {"k3", "kimi-for-coding", "kimi-for-coding-highspeed"}
+    assert await kimi_code_provider.list_model_infos() == frozenset(
+        {
+            ProviderModelInfo("k3"),
+            ProviderModelInfo("kimi-for-coding"),
+            ProviderModelInfo("kimi-for-coding-highspeed"),
+        }
     )
     kimi_code_provider._client.models.list.assert_awaited_once_with()

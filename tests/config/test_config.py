@@ -364,6 +364,24 @@ class TestSettings:
         assert settings.cloudflare_account_id == "cf-account"
         assert settings.cloudflare_proxy == "http://proxy.test:8080"
 
+    def test_azure_openai_settings_from_env(self, monkeypatch):
+        """Azure OpenAI key, resource URL, and proxy load into settings."""
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.setenv("AZURE_OPENAI_API_KEY", "azure-key")
+        monkeypatch.setenv(
+            "AZURE_OPENAI_BASE_URL",
+            "https://resource.openai.azure.com/openai/v1/",
+        )
+        monkeypatch.setenv("AZURE_OPENAI_PROXY", "http://proxy.test:8080")
+        settings = Settings()
+
+        assert settings.azure_openai_api_key == "azure-key"
+        assert settings.azure_openai_base_url == (
+            "https://resource.openai.azure.com/openai/v1/"
+        )
+        assert settings.azure_openai_proxy == "http://proxy.test:8080"
+
     def test_vertex_settings_from_env(self, monkeypatch):
         """Vertex project, location, and proxy env vars load into settings."""
         from free_claude_code.config.settings import Settings
@@ -1159,10 +1177,8 @@ class TestPerModelMapping:
         )
         assert parse_model_name("cerebras/llama3.1-8b") == "llama3.1-8b"
 
-    def test_configured_chat_model_refs_collects_unique_models_with_sources(
-        self, monkeypatch
-    ):
-        """Startup validation model collection is limited to configured chat refs."""
+    def test_configured_chat_model_refs_collects_unique_models(self, monkeypatch):
+        """Model discovery is limited to configured chat references."""
         from free_claude_code.config.settings import Settings
 
         monkeypatch.setenv("FCC_SMOKE_MODEL_NVIDIA_NIM", "nvidia_nim/smoke")
@@ -1183,13 +1199,10 @@ class TestPerModelMapping:
         ]
         assert refs[0].provider_id == "nvidia_nim"
         assert refs[0].model_id == "fallback"
-        assert refs[0].sources == ("MODEL", "MODEL_SONNET")
         assert refs[1].provider_id == "open_router"
         assert refs[1].model_id == "anthropic/claude-fable-5"
-        assert refs[1].sources == ("MODEL_FABLE",)
         assert refs[2].provider_id == "open_router"
         assert refs[2].model_id == "anthropic/claude-opus"
-        assert refs[2].sources == ("MODEL_OPUS",)
 
 
 def test_anthropic_proxy_setting() -> None:

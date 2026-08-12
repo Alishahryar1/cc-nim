@@ -126,9 +126,19 @@ def make_text_recovery_body(
     partial_thinking: str = "",
 ) -> dict[str, Any]:
     """Build a text-only continuation request for an OpenAI-chat upstream."""
-    recovery = deepcopy(body)
+    recovery = make_response_recovery_body(body, partial_text, partial_thinking)
     recovery.pop("tools", None)
     recovery.pop("tool_choice", None)
+    return recovery
+
+
+def make_response_recovery_body(
+    body: dict[str, Any],
+    partial_text: str,
+    partial_thinking: str = "",
+) -> dict[str, Any]:
+    """Build a continuation request that retains the original tool contract."""
+    recovery = deepcopy(body)
     messages = _copied_messages(recovery)
     if partial_text:
         messages.append({"role": "assistant", "content": partial_text})

@@ -7,7 +7,7 @@ from free_claude_code.config.settings import Settings
 from free_claude_code.messaging.platforms.factory import create_messaging_components
 from free_claude_code.providers.runtime import build_provider_config
 from smoke.lib.child_process import (
-    cmd_free_claude_code_serve,
+    cmd_fcc_server,
     cmd_python_c,
     run_captured_text,
 )
@@ -178,7 +178,7 @@ def test_entrypoint_server_e2e(smoke_config: SmokeConfig) -> None:
     with SmokeServerDriver(
         smoke_config,
         name="product-entrypoint",
-        command=cmd_free_claude_code_serve(),
+        command=cmd_fcc_server(),
         env_overrides={"MESSAGING_PLATFORM": "none"},
     ).run() as server:
         assert server.process.poll() is None

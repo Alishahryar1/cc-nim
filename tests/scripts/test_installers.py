@@ -1,12 +1,18 @@
+import hashlib
+import io
 import os
 import shutil
 import subprocess
+import sys
+import tarfile
+import zipfile
 from dataclasses import dataclass
 from pathlib import Path
 
 import pytest
 
 FCC_COMMANDS = (
+    "fcc-desktop",
     "fcc-server",
     "fcc-claude",
     "fcc-codex",
@@ -95,6 +101,7 @@ if [ "${{1:-}}" = "tool" ] && [ "${{2:-}}" = "install" ]; then
     fi
     mkdir -p "$FAKE_TOOL_BIN"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-server"
+    cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-desktop"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-claude"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-pi"
     if [ "$FAIL_STEP" != "fcc-missing" ]; then
@@ -114,6 +121,28 @@ if [ "${{1:-}}" = "tool" ] && [ "${{2:-}}" = "dir" ] && [ "${{3:-}}" = "--bin" ]
     exit 0
 fi
 exit 35
+"""
+
+
+def _posix_rtk_command() -> str:
+    return """#!/bin/sh
+echo "rtk:$*:telemetry=${RTK_TELEMETRY_DISABLED:-}" >> "$CALL_LOG"
+if [ "$*" = "init --global --auto-patch" ]; then
+    claude_config_directory=${CLAUDE_CONFIG_DIR:-$HOME/.claude}
+    [ -d "$claude_config_directory" ] || exit 77
+fi
+case "${1:-}:$FAIL_STEP" in
+    --version:rtk-verify|gain:rtk-verify) exit 72 ;;
+esac
+case "$*:$FAIL_STEP" in
+    "init --global --auto-patch:rtk-init-claude") exit 73 ;;
+    "init --global --codex:rtk-init-codex") exit 74 ;;
+    "init --global --agent pi:rtk-init-pi") exit 75 ;;
+esac
+if [ "${1:-}" = "--version" ]; then
+    echo "rtk 0.44.2"
+fi
+exit 0
 """
 
 
@@ -140,6 +169,19 @@ class PosixHarness:
     def add_uv(self, version: str) -> None:
         _write_executable(self.bin_dir / "uv", _posix_uv_command(version))
 
+    def add_rtk(self) -> None:
+        _write_executable(self.bin_dir / "rtk", _posix_rtk_command())
+
+    def add_unrelated_rtk(self) -> None:
+        _write_executable(
+            self.bin_dir / "rtk",
+            """#!/bin/sh
+echo "unrelated-rtk:$*" >> "$CALL_LOG"
+[ "${1:-}" = "--version" ] && echo "rtk 1.0.0" && exit 0
+exit 76
+""",
+        )
+
     def use_process_list_fallback(self, process_line: str) -> None:
         fallback_bin = self.root / "fallback-bin"
         fallback_bin.mkdir()
@@ -164,6 +206,77 @@ printf '%s\n' "$FCC_PS_OUTPUT"
             capture_output=True,
             text=True,
             env=env,
+        )
+
+    def run_interactive(
+        self,
+        answers: str,
+        *args: str,
+        fail_step: str = "",
+    ) -> subprocess.CompletedProcess[str]:
+        import errno
+        import pty
+        import select
+        import time
+
+        env = self.env | {
+            "FAIL_STEP": fail_step,
+            "FCC_INSTALLER": str(_repo_root() / "scripts" / "install.sh"),
+        }
+        command = [
+            "/bin/sh",
+            "-c",
+            'cat "$FCC_INSTALLER" | /bin/sh -s -- "$@"',
+            "fcc-installer",
+            *args,
+        ]
+        fork = vars(pty)["fork"]
+        wait_without_blocking = vars(os)["WNOHANG"]
+        child_pid, master_fd = fork()
+        if child_pid == 0:
+            os.execve(command[0], command, env)
+
+        output = bytearray()
+        status: int | None = None
+        deadline = time.monotonic() + 30
+        try:
+            os.write(master_fd, answers.encode())
+            while status is None:
+                readable, _, _ = select.select([master_fd], [], [], 0.1)
+                if readable:
+                    try:
+                        output.extend(os.read(master_fd, 65536))
+                    except OSError as error:
+                        if error.errno != errno.EIO:
+                            raise
+
+                waited_pid, wait_status = os.waitpid(child_pid, wait_without_blocking)
+                if waited_pid == child_pid:
+                    status = wait_status
+                elif time.monotonic() >= deadline:
+                    os.kill(child_pid, 9)
+                    os.waitpid(child_pid, 0)
+                    raise AssertionError("Interactive installer did not finish")
+
+            while True:
+                readable, _, _ = select.select([master_fd], [], [], 0)
+                if not readable:
+                    break
+                try:
+                    output.extend(os.read(master_fd, 65536))
+                except OSError as error:
+                    if error.errno == errno.EIO:
+                        break
+                    raise
+        finally:
+            os.close(master_fd)
+
+        assert status is not None
+        return subprocess.CompletedProcess(
+            command,
+            os.waitstatus_to_exitcode(status),
+            output.decode(errors="replace"),
+            "",
         )
 
     def calls(self) -> list[str]:
@@ -217,7 +330,7 @@ while [ "$#" -gt 0 ]; do
 done
 echo "download:$url" >> "$CALL_LOG"
 case "$url:$FAIL_STEP" in
-    *claude.ai*:claude-download|*chatgpt.com*:codex-download|*pi.dev*:pi-download|*astral.sh*:uv-download)
+    *claude.ai*:claude-download|*chatgpt.com*:codex-download|*pi.dev*:pi-download|*rtk-ai*:rtk-download|*astral.sh*:uv-download)
         exit 41
         ;;
 esac
@@ -225,6 +338,13 @@ case "$url" in
     *claude.ai*) source="$FAKE_FIXTURES/claude-installer.sh" ;;
     *chatgpt.com*) source="$FAKE_FIXTURES/codex-installer.sh" ;;
     *pi.dev*) source="$FAKE_FIXTURES/pi-installer.sh" ;;
+    *rtk-ai*)
+        if [ "$FAIL_STEP" = "rtk-install" ]; then
+            printf 'invalid archive\n' > "$output"
+            exit 0
+        fi
+        source="$FAKE_FIXTURES/rtk-x86_64-unknown-linux-musl.tar.gz"
+        ;;
     *astral.sh*) source="$FAKE_FIXTURES/uv-installer.sh" ;;
     *) exit 42 ;;
 esac
@@ -256,6 +376,7 @@ chmod +x "$HOME/.local/bin/codex"
         """#!/bin/sh
 echo "pi-install" >> "$CALL_LOG"
 [ "$FAIL_STEP" = "pi-install" ] && exit 24
+[ "$FAIL_STEP" = "pi-skip" ] && exit 0
 if [ -n "${FAKE_NPM_PREFIX:-}" ]; then
     pi_bin="$FAKE_NPM_PREFIX/bin"
 else
@@ -279,6 +400,14 @@ chmod +x "$HOME/.local/bin/uv"
     _write_executable(fixtures / "claude-command.sh", _posix_command("claude"))
     _write_executable(fixtures / "codex-command.sh", _posix_command("codex"))
     _write_executable(fixtures / "pi-command.sh", _posix_command("pi"))
+    rtk_command = _posix_rtk_command().encode()
+    with tarfile.open(
+        fixtures / "rtk-x86_64-unknown-linux-musl.tar.gz", "w:gz"
+    ) as archive:
+        metadata = tarfile.TarInfo("rtk")
+        metadata.mode = 0o755
+        metadata.size = len(rtk_command)
+        archive.addfile(metadata, io.BytesIO(rtk_command))
     _write_executable(fixtures / "uv-command.sh", _posix_uv_command("0.11.28"))
     _write_executable(
         fixtures / "fcc-command.sh",
@@ -288,9 +417,35 @@ echo "$name:$*" >> "$CALL_LOG"
 if [ "$FAIL_STEP" = "fcc-verify" ]; then
     exit 36
 fi
+if [ "$name" = "fcc-desktop" ] && [ "${1:-}" = "--export-icon" ]; then
+    [ "$FAIL_STEP" = "desktop-icon-export" ] && exit 37
+    mkdir -p "$(dirname "$2")"
+    printf 'fake icon\n' > "$2"
+fi
 if [ "$name" = "fcc-server" ] && [ "${1:-}" = "--version" ]; then
     echo "free-claude-code 3.5.18"
 fi
+""",
+    )
+    _write_executable(
+        bin_dir / "uname",
+        """#!/bin/sh
+case "${1:-}" in
+    -m) printf '%s\n' "${FAKE_UNAME_MACHINE:-x86_64}" ;;
+    *) printf '%s\n' "${FAKE_UNAME:-Linux}" ;;
+esac
+""",
+    )
+    _write_executable(
+        bin_dir / "sha256sum",
+        """#!/bin/sh
+echo "sha256sum:$*" >> "$CALL_LOG"
+if [ "$FAIL_STEP" = "rtk-checksum" ]; then
+    checksum="0000000000000000000000000000000000000000000000000000000000000000"
+else
+    checksum="d94cc2a3e57fa534892b5235a726e7eeb7523f205a5f8f48f853bfcae7be7e33"
+fi
+printf '%s  %s\n' "$checksum" "$1"
 """,
     )
 
@@ -305,6 +460,8 @@ fi
             "FCC_PROCESS_MARKER": str(tmp_path / "fcc-process-ready"),
             "FCC_RUNNING_COMMAND": "",
             "FCC_RUNNING_PHASE": "early",
+            "FAKE_UNAME": "Linux",
+            "CLAUDE_CONFIG_DIR": "",
             "FAIL_STEP": "",
         }
     )
@@ -336,6 +493,247 @@ def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> No
         "uv:tool dir --bin",
         "fcc-server:--version",
     ]
+
+
+def test_install_sh_installs_and_configures_rtk_for_selected_agents(
+    posix_harness: PosixHarness,
+) -> None:
+    result = posix_harness.run("--rtk")
+
+    assert result.returncode == 0, result.stderr
+    calls = posix_harness.calls()
+    assert (
+        "download:https://github.com/rtk-ai/rtk/releases/download/v0.44.2/rtk-x86_64-unknown-linux-musl.tar.gz"
+        in calls
+    )
+    assert any(call.startswith("sha256sum:") for call in calls)
+    assert calls.index("rtk:--version:telemetry=1") > next(
+        index for index, call in enumerate(calls) if call.startswith("sha256sum:")
+    )
+    assert calls.index("rtk:--version:telemetry=1") < calls.index(
+        "rtk:gain:telemetry=1"
+    )
+    assert [call for call in calls if call.startswith("rtk:init")] == [
+        "rtk:init --global --auto-patch:telemetry=1",
+        "rtk:init --global --codex:telemetry=1",
+        "rtk:init --global --agent pi:telemetry=1",
+    ]
+    assert calls.index("rtk:init --global --agent pi:telemetry=1") < calls.index(
+        "uv-install"
+    )
+    assert (Path(posix_harness.env["HOME"]) / ".claude").is_dir()
+
+
+def test_install_sh_prepares_custom_claude_config_directory_for_rtk(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.add_rtk()
+    custom_config = posix_harness.root / "custom-claude"
+    posix_harness.env["CLAUDE_CONFIG_DIR"] = str(custom_config)
+
+    result = posix_harness.run("--rtk")
+
+    assert result.returncode == 0, result.stderr
+    assert custom_config.is_dir()
+    assert not (Path(posix_harness.env["HOME"]) / ".claude").exists()
+
+
+@pytest.mark.parametrize(
+    ("system", "machine", "asset"),
+    [
+        ("Linux", "x86_64", "rtk-x86_64-unknown-linux-musl.tar.gz"),
+        ("Linux", "aarch64", "rtk-aarch64-unknown-linux-gnu.tar.gz"),
+        ("Darwin", "x86_64", "rtk-x86_64-apple-darwin.tar.gz"),
+        ("Darwin", "arm64", "rtk-aarch64-apple-darwin.tar.gz"),
+    ],
+)
+def test_install_sh_selects_pinned_rtk_release_for_platform(
+    posix_harness: PosixHarness,
+    system: str,
+    machine: str,
+    asset: str,
+) -> None:
+    posix_harness.env["FAKE_UNAME"] = system
+    posix_harness.env["FAKE_UNAME_MACHINE"] = machine
+
+    result = posix_harness.run("--rtk", "--dry-run")
+
+    assert result.returncode == 0, result.stderr
+    assert f"rtk-ai/rtk/releases/download/v0.44.2/{asset}" in result.stdout
+    assert "raw.githubusercontent.com/rtk-ai/rtk" not in result.stdout
+
+
+def test_install_sh_rejects_unsupported_rtk_platform(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.env["FAKE_UNAME"] = "FreeBSD"
+    posix_harness.env["FAKE_UNAME_MACHINE"] = "riscv64"
+
+    result = posix_harness.run("--rtk", "--dry-run")
+
+    assert result.returncode != 0
+    assert "does not provide a release for FreeBSD riscv64" in result.stderr
+
+
+def test_install_sh_preserves_existing_rtk_and_configures_only_selected_agent(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.add_rtk()
+
+    result = posix_harness.run_interactive("n\ny\nn\ny\n")
+
+    assert result.returncode == 0, result.stdout
+    assert "verifying it without updating it" in result.stdout
+    assert not any("rtk-ai/rtk" in call for call in posix_harness.calls())
+    assert [call for call in posix_harness.calls() if call.startswith("rtk:init")] == [
+        "rtk:init --global --codex:telemetry=1"
+    ]
+
+
+def test_install_sh_rejects_conflicting_rtk_command(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.add_unrelated_rtk()
+
+    result = posix_harness.run("--rtk")
+
+    assert result.returncode != 0
+    assert "not a compatible Rust Token Killer installation" in result.stderr
+    assert not any("rtk-ai/rtk" in call for call in posix_harness.calls())
+    assert not any("astral.sh" in call for call in posix_harness.calls())
+
+
+@pytest.mark.parametrize(
+    "failure",
+    [
+        "rtk-download",
+        "rtk-checksum",
+        "rtk-install",
+        "rtk-verify",
+        "rtk-init-claude",
+    ],
+)
+def test_install_sh_stops_when_rtk_setup_fails(
+    posix_harness: PosixHarness,
+    failure: str,
+) -> None:
+    result = posix_harness.run("--rtk", fail_step=failure)
+
+    assert result.returncode != 0
+    assert "Free Claude Code is installed and verified." not in result.stdout
+    assert not any("astral.sh" in call for call in posix_harness.calls())
+
+
+def test_install_sh_reprompts_then_installs_only_selected_agent(
+    posix_harness: PosixHarness,
+) -> None:
+    result = posix_harness.run_interactive("n\nn\nn\nn\ny\nn\nn\n")
+
+    assert result.returncode == 0, result.stdout
+    assert "Select at least one coding agent." in result.stdout
+    assert "Run Codex with: fcc-codex" in result.stdout
+    assert "Run Claude Code with: fcc-claude" not in result.stdout
+    assert "Run Pi with: fcc-pi" not in result.stdout
+    calls = posix_harness.calls()
+    assert "codex-install:1" in calls
+    assert not any("claude.ai" in call for call in calls)
+    assert not any("pi.dev" in call for call in calls)
+    assert not any("rtk-ai/rtk" in call for call in calls)
+
+
+def test_install_sh_rejects_uninstalled_only_selection(
+    posix_harness: PosixHarness,
+) -> None:
+    result = posix_harness.run_interactive("n\nn\ny\nn\n", fail_step="pi-skip")
+
+    assert result.returncode != 0
+    assert "No selected coding agent was installed." in result.stdout
+    assert not any("astral.sh" in call for call in posix_harness.calls())
+
+
+def test_install_sh_creates_native_macos_app_and_desktop_link(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.env["FAKE_UNAME"] = "Darwin"
+    tool_bin = posix_harness.root / "tool's bin"
+    posix_harness.env["FAKE_TOOL_BIN"] = str(tool_bin)
+
+    result = posix_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    app = posix_harness.root / "home" / "Applications" / "Free Claude Code.app"
+    plist = app / "Contents" / "Info.plist"
+    owner_file = app / "Contents" / ".free-claude-code-owner"
+    launcher = app / "Contents" / "MacOS" / "fcc-desktop"
+    icon = app / "Contents" / "Resources" / "AppIcon.icns"
+    desktop_link = posix_harness.root / "home" / "Desktop" / "Free Claude Code.app"
+    assert owner_file.read_text(encoding="utf-8").strip() == (
+        "io.github.alishahryar1.free-claude-code"
+    )
+    plist_text = plist.read_text(encoding="utf-8")
+    assert "<key>CFBundleIconFile</key>" in plist_text
+    assert "<string>AppIcon</string>" in plist_text
+    assert "<key>LSUIElement</key>" in plist_text
+    assert "<key>LSMultipleInstancesProhibited</key>" in plist_text
+    assert icon.read_bytes() == b"fake icon\n"
+    assert launcher.stat().st_mode & 0o111
+    expected_command = str(tool_bin / "fcc-desktop").replace("'", "'\\''")
+    assert f"exec '{expected_command}'" in launcher.read_text(encoding="utf-8")
+    assert desktop_link.is_symlink()
+    assert desktop_link.readlink() == app
+    assert any(
+        call == f"fcc-desktop:--export-icon {icon}" for call in posix_harness.calls()
+    )
+
+
+def test_install_sh_stops_if_macos_icon_export_fails(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.env["FAKE_UNAME"] = "Darwin"
+
+    result = posix_harness.run(fail_step="desktop-icon-export")
+
+    assert result.returncode != 0
+    assert "Command failed with exit code 37" in result.stderr
+    assert not (
+        posix_harness.root / "home" / "Desktop" / "Free Claude Code.app"
+    ).exists()
+
+
+def test_install_sh_rejects_unowned_macos_app_bundle(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.env["FAKE_UNAME"] = "Darwin"
+    app = posix_harness.root / "home" / "Applications" / "Free Claude Code.app"
+    contents = app / "Contents"
+    contents.mkdir(parents=True)
+    plist = contents / "Info.plist"
+    plist.write_text("foreign app", encoding="utf-8")
+
+    result = posix_harness.run()
+
+    assert result.returncode != 0
+    assert "not managed by Free Claude Code" in result.stderr
+    assert plist.read_text(encoding="utf-8") == "foreign app"
+    assert not (contents / ".free-claude-code-owner").exists()
+
+
+def test_install_sh_preserves_unrelated_macos_desktop_link(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.env["FAKE_UNAME"] = "Darwin"
+    desktop = posix_harness.root / "home" / "Desktop"
+    desktop.mkdir()
+    unrelated = posix_harness.root / "Unrelated.app"
+    unrelated.mkdir()
+    desktop_link = desktop / "Free Claude Code.app"
+    desktop_link.symlink_to(unrelated, target_is_directory=True)
+
+    result = posix_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "non-FCC link" in result.stdout
+    assert desktop_link.readlink() == unrelated
 
 
 @pytest.mark.parametrize("uv_version", ("0.11.16", "0.11.16+build.1"))
@@ -385,6 +783,59 @@ def test_install_sh_discovers_custom_pi_npm_prefix(
     assert "npm:prefix -g" in calls
     assert "pi:--help" in calls
     assert "pi:--version" in calls
+
+
+def test_install_sh_continues_when_pi_is_not_installed(
+    posix_harness: PosixHarness,
+) -> None:
+    result = posix_harness.run(fail_step="pi-skip")
+
+    assert result.returncode == 0, result.stderr
+    assert "Pi was not installed; continuing without it." in result.stdout
+    assert "Run Pi with: fcc-pi" not in result.stdout
+    calls = posix_harness.calls()
+    assert "pi-install" in calls
+    assert not any(call.startswith("pi:") for call in calls)
+    assert "uv-install" in calls
+    assert "fcc-server:--version" in calls
+
+
+def test_install_sh_continues_when_unrelated_pi_is_unchanged(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.add_unrelated_pi()
+
+    result = posix_harness.run(fail_step="pi-skip")
+
+    assert result.returncode == 0, result.stderr
+    assert "Pi was not installed; continuing without it." in result.stdout
+    assert "Run Pi with: fcc-pi" not in result.stdout
+    calls = posix_harness.calls()
+    assert "unrelated-pi:--help" in calls
+    assert "unrelated-pi:--version" not in calls
+    assert "fcc-server:--version" in calls
+
+
+def test_install_sh_continues_when_pi_resolution_changes_to_unrelated_command(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.add_unrelated_pi()
+    npm_prefix = posix_harness.root / "custom-npm"
+    posix_harness.add_npm_prefix(npm_prefix)
+    _write_executable(
+        npm_prefix / "bin" / "pi",
+        _posix_command("other-unrelated-pi"),
+    )
+
+    result = posix_harness.run(fail_step="pi-skip")
+
+    assert result.returncode == 0, result.stderr
+    assert "Pi was not installed; continuing without it." in result.stdout
+    assert "Run Pi with: fcc-pi" not in result.stdout
+    calls = posix_harness.calls()
+    assert "other-unrelated-pi:--help" in calls
+    assert "other-unrelated-pi:--version" not in calls
+    assert "fcc-server:--version" in calls
 
 
 def test_install_sh_replaces_obsolete_uv(posix_harness: PosixHarness) -> None:
@@ -593,6 +1044,127 @@ def _powershells() -> tuple[str, ...]:
     return tuple(dict.fromkeys(path for path in candidates if path is not None))
 
 
+def test_install_ps1_waits_for_gui_icon_export() -> None:
+    installer = (_repo_root() / "scripts" / "install.ps1").read_text(encoding="utf-8")
+    body = _braced_body(installer, "function Export-FccDesktopIcon")
+
+    assert "Start-Process" in body
+    assert "-WindowStyle Hidden" in body
+    assert "-Wait" in body
+    assert "-PassThru" in body
+    assert "$process.ExitCode" in body
+
+
+@pytest.mark.parametrize(
+    "powershell",
+    _powershells() or (None,),
+    ids=lambda path: Path(path).name if path is not None else "unavailable",
+)
+def test_install_ps1_gui_icon_export_completes_before_returning(
+    powershell: str | None,
+    tmp_path: Path,
+) -> None:
+    if powershell is None or os.name != "nt":
+        pytest.skip("PowerShell GUI process behavior runs on Windows hosts")
+
+    installer = (_repo_root() / "scripts" / "install.ps1").read_text(encoding="utf-8")
+    function_declarations = (
+        "function Format-Argument",
+        "function Format-Command",
+        "function Export-FccDesktopIcon",
+    )
+    functions = "\n".join(
+        f"{declaration} {{{_braced_body(installer, declaration)}}}"
+        for declaration in function_declarations
+    )
+    installed_desktop_command = Path(sys.executable).with_name("fcc-desktop.exe")
+    desktop_command = tmp_path / "icon-exporter.exe"
+    shutil.copy2(installed_desktop_command, desktop_command)
+    destination = tmp_path / "profile with spaces" / ".fcc" / "app-icon.ico"
+    env = os.environ | {
+        "FCC_TEST_DESKTOP_COMMAND": str(desktop_command),
+        "FCC_TEST_ICON_PATH": str(destination),
+    }
+    script = "\n".join(
+        (
+            '$ErrorActionPreference = "Stop"',
+            "$DryRun = $false",
+            functions,
+            (
+                "Export-FccDesktopIcon "
+                "-DesktopCommand $env:FCC_TEST_DESKTOP_COMMAND "
+                "-IconPath $env:FCC_TEST_ICON_PATH"
+            ),
+        )
+    )
+
+    completed = subprocess.run(
+        [powershell, "-NoProfile", "-Command", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    assert completed.returncode == 0, completed.stderr
+    assert (
+        destination.read_bytes()
+        == (
+            _repo_root() / "src" / "free_claude_code" / "assets" / "app-icon.ico"
+        ).read_bytes()
+    )
+
+
+def _create_windows_shortcut(
+    powershell: str,
+    shortcut_path: Path,
+    target_path: Path,
+) -> None:
+    shortcut_path.parent.mkdir(parents=True, exist_ok=True)
+    env = os.environ | {
+        "FCC_TEST_SHORTCUT": str(shortcut_path),
+        "FCC_TEST_TARGET": str(target_path),
+    }
+    subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-Command",
+            (
+                "$shell = New-Object -ComObject WScript.Shell; "
+                "$shortcut = $shell.CreateShortcut($env:FCC_TEST_SHORTCUT); "
+                "$shortcut.TargetPath = $env:FCC_TEST_TARGET; "
+                "$shortcut.Save()"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+
+def _windows_shortcut_icon(powershell: str, shortcut_path: Path) -> str:
+    env = os.environ | {"FCC_TEST_SHORTCUT": str(shortcut_path)}
+    completed = subprocess.run(
+        [
+            powershell,
+            "-NoProfile",
+            "-Command",
+            (
+                "$shell = New-Object -ComObject WScript.Shell; "
+                "$shortcut = $shell.CreateShortcut($env:FCC_TEST_SHORTCUT); "
+                "[Console]::Out.Write($shortcut.IconLocation)"
+            ),
+        ],
+        check=True,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+    return completed.stdout
+
+
 def _batch_client(name: str) -> str:
     help_output = (
         "echo   --extension, -e ^<path^>  Load an extension\n"
@@ -637,6 +1209,7 @@ exit /b 0
 if "%FAIL_STEP%"=="fcc-install" exit /b 53
 if not exist "%FAKE_TOOL_BIN%" mkdir "%FAKE_TOOL_BIN%"
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-server.cmd" >nul
+copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-desktop.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-claude.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-pi.cmd" >nul
 if not "%FAIL_STEP%"=="fcc-missing" copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-codex.cmd" >nul
@@ -646,6 +1219,21 @@ if "%FAIL_STEP%"=="path-update" exit /b 54
 exit /b 0
 :tool_bin
 echo %FAKE_TOOL_BIN%
+exit /b 0
+"""
+
+
+def _batch_rtk() -> str:
+    return r"""@echo off
+>>"%CALL_LOG%" echo rtk:%*:telemetry=%RTK_TELEMETRY_DISABLED%
+if "%*"=="init --global --auto-patch" if defined CLAUDE_CONFIG_DIR if not exist "%CLAUDE_CONFIG_DIR%" exit /b 77
+if "%*"=="init --global --auto-patch" if not defined CLAUDE_CONFIG_DIR if not exist "%USERPROFILE%\.claude" exit /b 77
+if "%FAIL_STEP%"=="rtk-verify" if "%1"=="--version" exit /b 72
+if "%FAIL_STEP%"=="rtk-verify" if "%1"=="gain" exit /b 72
+if "%FAIL_STEP%"=="rtk-init-claude" if "%*"=="init --global --auto-patch" exit /b 73
+if "%FAIL_STEP%"=="rtk-init-codex" if "%*"=="init --global --codex" exit /b 74
+if "%FAIL_STEP%"=="rtk-init-pi" if "%*"=="init --global --agent pi" exit /b 75
+if "%1"=="--version" echo rtk 0.44.2
 exit /b 0
 """
 
@@ -674,6 +1262,22 @@ class PowerShellHarness:
 
     def add_uv(self, version: str) -> None:
         _write_executable(self.bin_dir / "uv.cmd", _batch_uv(version))
+
+    def add_rtk(self) -> None:
+        _write_executable(self.bin_dir / "rtk.cmd", _batch_rtk())
+
+    def add_unrelated_rtk(self) -> None:
+        _write_executable(
+            self.bin_dir / "rtk.cmd",
+            r"""@echo off
+echo unrelated-rtk:%*>>"%CALL_LOG%"
+if "%1"=="--version" (
+    echo rtk 1.0.0
+    exit /b 0
+)
+exit /b 76
+""",
+        )
 
     def run(self, *args: str, fail_step: str = "") -> subprocess.CompletedProcess[str]:
         env = self.env | {"FAIL_STEP": fail_step}
@@ -728,12 +1332,18 @@ def powershell_harness(
         _batch_client("codex"), encoding="utf-8"
     )
     (fixtures / "pi-command.cmd").write_text(_batch_client("pi"), encoding="utf-8")
+    (fixtures / "rtk-command.cmd").write_text(_batch_rtk(), encoding="utf-8")
     (fixtures / "uv-command.cmd").write_text(_batch_uv("0.11.28"), encoding="utf-8")
     (fixtures / "fcc-command.cmd").write_text(
         """@echo off
 for %%I in ("%~f0") do set "FCC_NAME=%%~nI"
 echo %FCC_NAME%:%*>>"%CALL_LOG%"
 if "%FAIL_STEP%"=="fcc-verify" exit /b 55
+if "%FCC_NAME%"=="fcc-desktop" if "%1"=="--export-icon" if "%FAIL_STEP%"=="desktop-icon-export" exit /b 56
+if "%FCC_NAME%"=="fcc-desktop" if "%1"=="--export-icon" (
+    if not exist "%~dp2" mkdir "%~dp2"
+    echo fake icon>"%~2"
+)
 if "%FCC_NAME%"=="fcc-server" if "%1"=="--version" echo free-claude-code 3.5.18
 exit /b 0
 """,
@@ -759,6 +1369,10 @@ Add-Content -LiteralPath $env:CALL_LOG -Value "codex-install:$env:CODEX_NON_INTE
     )
     (fixtures / "pi-installer.ps1").write_text(
         r"""if ($env:FAIL_STEP -eq "pi-install") { exit 64 }
+if ($env:FAIL_STEP -eq "pi-skip") {
+    Add-Content -LiteralPath $env:CALL_LOG -Value "pi-install"
+    return
+}
 $bin = if ($env:FAKE_NPM_PREFIX) { $env:FAKE_NPM_PREFIX } else { Join-Path $env:APPDATA "npm" }
 New-Item -ItemType Directory -Force -Path $bin | Out-Null
 Copy-Item (Join-Path $env:FAKE_FIXTURES "pi-command.cmd") (Join-Path $bin "pi.cmd") -Force
@@ -775,6 +1389,9 @@ Add-Content -LiteralPath $env:CALL_LOG -Value "uv-install"
 """,
         encoding="utf-8",
     )
+    rtk_archive = fixtures / "rtk-x86_64-pc-windows-msvc.zip"
+    with zipfile.ZipFile(rtk_archive, "w") as archive:
+        archive.writestr("rtk.exe", b"fake RTK executable")
 
     wrapper = tmp_path / "run-installer.ps1"
     wrapper.write_text(
@@ -789,6 +1406,7 @@ function Invoke-RestMethod {
         ($env:FAIL_STEP -eq "claude-download" -and $Uri.Contains("claude.ai")) -or
         ($env:FAIL_STEP -eq "codex-download" -and $Uri.Contains("chatgpt.com")) -or
         ($env:FAIL_STEP -eq "pi-download" -and $Uri.Contains("pi.dev")) -or
+        ($env:FAIL_STEP -eq "rtk-download" -and $Uri.Contains("rtk-ai/rtk")) -or
         ($env:FAIL_STEP -eq "uv-download" -and $Uri.Contains("astral.sh"))
     ) {
         throw "simulated download failure"
@@ -801,6 +1419,9 @@ function Invoke-RestMethod {
     }
     elseif ($Uri.Contains("pi.dev")) {
         $source = Join-Path $env:FAKE_FIXTURES "pi-installer.ps1"
+    }
+    elseif ($Uri.EndsWith("rtk-x86_64-pc-windows-msvc.zip")) {
+        $source = Join-Path $env:FAKE_FIXTURES "rtk-x86_64-pc-windows-msvc.zip"
     }
     elseif ($Uri.Contains("astral.sh")) {
         $source = Join-Path $env:FAKE_FIXTURES "uv-installer.ps1"
@@ -847,6 +1468,7 @@ $installer = [scriptblock]::Create([IO.File]::ReadAllText($env:FCC_INSTALLER))
             "LOCALAPPDATA": str(local_app_data),
             "APPDATA": str(app_data),
             "CALL_LOG": str(log),
+            "CLAUDE_CONFIG_DIR": "",
             "FAKE_FIXTURES": str(fixtures),
             "FAKE_TOOL_BIN": str(tool_bin),
             "FCC_INSTALLER": str(_repo_root() / "scripts" / "install.ps1"),
@@ -876,17 +1498,198 @@ def test_install_ps1_fresh_install_is_verified(
     assert any(
         call.startswith(
             "uv:tool install --force --refresh-package free-claude-code "
-            '--python 3.14.0 "free-claude-code @ '
+            "--python cpython-3.14.0-windows-x86_64-none "
+            '"free-claude-code @ '
             'https://github.com/Alishahryar1/free-claude-code/archive/refs/heads/main.zip"'
         )
         for call in calls
     )
     assert not any(call.startswith("git:") for call in calls)
-    assert calls[-3:] == [
+    assert calls[-4:-1] == [
         "uv:tool update-shell",
         "uv:tool dir --bin",
         "fcc-server:--version",
     ]
+    home = Path(powershell_harness.env["USERPROFILE"])
+    app_data = Path(powershell_harness.env["APPDATA"])
+    icon = home / ".fcc" / "app-icon.ico"
+    assert icon.read_text(encoding="utf-8").strip() == "fake icon"
+    assert calls[-1] == f'fcc-desktop:--export-icon "{icon}"'
+    desktop_shortcut = home / "Desktop" / "Free Claude Code.lnk"
+    assert desktop_shortcut.is_file()
+    assert (
+        _windows_shortcut_icon(
+            powershell_harness.powershell,
+            desktop_shortcut,
+        )
+        == f"{icon},0"
+    )
+    assert (
+        app_data
+        / "Microsoft"
+        / "Windows"
+        / "Start Menu"
+        / "Programs"
+        / "Free Claude Code.lnk"
+    ).is_file()
+
+
+def test_install_ps1_preserves_existing_rtk_and_configures_selected_agents(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    powershell_harness.add_rtk()
+
+    result = powershell_harness.run("-Rtk")
+
+    assert result.returncode == 0, result.stderr
+    assert "verifying it without updating it" in result.stdout
+    calls = powershell_harness.calls()
+    assert not any("rtk-ai/rtk" in call for call in calls)
+    assert "rtk:--version:telemetry=1" in calls
+    assert "rtk:gain:telemetry=1" in calls
+    assert [call for call in calls if call.startswith("rtk:init")] == [
+        "rtk:init --global --auto-patch:telemetry=1",
+        "rtk:init --global --codex:telemetry=1",
+        "rtk:init --global --agent pi:telemetry=1",
+    ]
+    assert (Path(powershell_harness.env["USERPROFILE"]) / ".claude").is_dir()
+
+
+def test_install_ps1_prepares_custom_claude_config_directory_for_rtk(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    powershell_harness.add_rtk()
+    custom_config = powershell_harness.root / "custom-claude"
+    powershell_harness.env["CLAUDE_CONFIG_DIR"] = str(custom_config)
+
+    result = powershell_harness.run("-Rtk")
+
+    assert result.returncode == 0, result.stderr
+    assert custom_config.is_dir()
+    assert not (Path(powershell_harness.env["USERPROFILE"]) / ".claude").exists()
+
+
+def test_install_ps1_rejects_conflicting_rtk_command(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    powershell_harness.add_unrelated_rtk()
+
+    result = powershell_harness.run("-Rtk")
+
+    assert result.returncode != 0
+    assert "not a compatible Rust Token Killer installation" in result.stderr
+    assert not any("rtk-ai/rtk" in call for call in powershell_harness.calls())
+    assert not any("astral.sh" in call for call in powershell_harness.calls())
+
+
+def test_install_ps1_rtk_dry_run_prints_install_and_agent_setup(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    result = powershell_harness.run("-Rtk", "-DryRun")
+
+    assert result.returncode == 0, result.stderr
+    assert powershell_harness.calls() == []
+    assert "releases/download/v0.44.2/rtk-x86_64-pc-windows-msvc.zip" in result.stdout
+    assert "RTK_TELEMETRY_DISABLED=1 rtk init --global --auto-patch" in result.stdout
+    assert "RTK_TELEMETRY_DISABLED=1 rtk init --global --codex" in result.stdout
+    assert "RTK_TELEMETRY_DISABLED=1 rtk init --global --agent pi" in result.stdout
+
+
+@pytest.mark.parametrize(
+    "powershell",
+    _powershells() or (None,),
+    ids=lambda path: Path(path).name if path is not None else "unavailable",
+)
+@pytest.mark.parametrize("valid_checksum", [True, False])
+def test_install_ps1_installs_only_checksum_verified_rtk_archive(
+    powershell: str | None,
+    tmp_path: Path,
+    valid_checksum: bool,
+) -> None:
+    if powershell is None or os.name != "nt":
+        pytest.skip("PowerShell RTK archive installation runs on Windows hosts")
+
+    asset_name = "rtk-x86_64-pc-windows-msvc.zip"
+    archive_path = tmp_path / asset_name
+    with zipfile.ZipFile(archive_path, "w") as archive:
+        archive.writestr("rtk.exe", b"verified RTK executable")
+    checksum = hashlib.sha256(archive_path.read_bytes()).hexdigest()
+    if not valid_checksum:
+        checksum = "0" * 64
+
+    installer = (_repo_root() / "scripts" / "install.ps1").read_text(encoding="utf-8")
+    format_argument = _braced_body(installer, "function Format-Argument")
+    install_rtk = _braced_body(installer, "function Install-Rtk")
+    script = f"""Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+$DryRun = $false
+$RtkReleaseBaseUrl = "https://example.test/releases/download/v0.44.2"
+$RtkWindowsAssetName = "{asset_name}"
+$RtkWindowsAssetSha256 = "{checksum}"
+function Format-Argument {{{format_argument}}}
+function Invoke-RestMethod {{
+    [CmdletBinding()]
+    param([string] $Uri, [string] $OutFile)
+    Copy-Item -LiteralPath $env:RTK_TEST_ARCHIVE -Destination $OutFile
+}}
+function Install-Rtk {{{install_rtk}}}
+Install-Rtk
+"""
+    home = tmp_path / "home"
+    home.mkdir()
+    env = os.environ | {
+        "USERPROFILE": str(home),
+        "RTK_TEST_ARCHIVE": str(archive_path),
+    }
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-Command", script],
+        check=False,
+        capture_output=True,
+        text=True,
+        env=env,
+    )
+
+    installed = home / ".local" / "bin" / "rtk.exe"
+    if valid_checksum:
+        assert result.returncode == 0, result.stderr
+        assert installed.read_bytes() == b"verified RTK executable"
+    else:
+        assert result.returncode != 0
+        assert "checksum verification failed" in result.stderr
+        assert not installed.exists()
+
+
+def test_install_ps1_stops_if_windows_icon_export_fails(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    result = powershell_harness.run(fail_step="desktop-icon-export")
+
+    assert result.returncode != 0
+    assert "Command failed with exit code 56" in result.stderr
+    home = Path(powershell_harness.env["USERPROFILE"])
+    assert not (home / "Desktop" / "Free Claude Code.lnk").exists()
+
+
+def test_install_ps1_preserves_unowned_desktop_shortcut(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    desktop_shortcut = (
+        Path(powershell_harness.env["USERPROFILE"]) / "Desktop" / "Free Claude Code.lnk"
+    )
+    unrelated_target = powershell_harness.root / "unrelated.cmd"
+    unrelated_target.write_text("@echo off\n", encoding="utf-8")
+    _create_windows_shortcut(
+        powershell_harness.powershell,
+        desktop_shortcut,
+        unrelated_target,
+    )
+    original_shortcut = desktop_shortcut.read_bytes()
+
+    result = powershell_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "not managed by Free Claude Code" in result.stdout
+    assert desktop_shortcut.read_bytes() == original_shortcut
 
 
 @pytest.mark.parametrize("uv_version", ("0.11.16", "0.11.16+build.1"))
@@ -936,6 +1739,59 @@ def test_install_ps1_discovers_custom_pi_npm_prefix(
     assert "npm:prefix -g" in calls
     assert "pi:--help" in calls
     assert "pi:--version" in calls
+
+
+def test_install_ps1_continues_when_pi_is_not_installed(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    result = powershell_harness.run(fail_step="pi-skip")
+
+    assert result.returncode == 0, result.stderr
+    assert "Pi was not installed; continuing without it." in result.stdout
+    assert "Run Pi with: fcc-pi" not in result.stdout
+    calls = powershell_harness.calls()
+    assert "pi-install" in calls
+    assert not any(call.startswith("pi:") for call in calls)
+    assert "uv-install" in calls
+    assert "fcc-server:--version" in calls
+
+
+def test_install_ps1_continues_when_unrelated_pi_is_unchanged(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    powershell_harness.add_unrelated_pi()
+
+    result = powershell_harness.run(fail_step="pi-skip")
+
+    assert result.returncode == 0, result.stderr
+    assert "Pi was not installed; continuing without it." in result.stdout
+    assert "Run Pi with: fcc-pi" not in result.stdout
+    calls = powershell_harness.calls()
+    assert "unrelated-pi:--help" in calls
+    assert "unrelated-pi:--version" not in calls
+    assert "fcc-server:--version" in calls
+
+
+def test_install_ps1_continues_when_pi_resolution_changes_to_unrelated_command(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    powershell_harness.add_unrelated_pi()
+    npm_prefix = powershell_harness.root / "custom-npm"
+    powershell_harness.add_npm_prefix(npm_prefix)
+    _write_executable(
+        npm_prefix / "pi.cmd",
+        _batch_client("other-unrelated-pi"),
+    )
+
+    result = powershell_harness.run(fail_step="pi-skip")
+
+    assert result.returncode == 0, result.stderr
+    assert "Pi was not installed; continuing without it." in result.stdout
+    assert "Run Pi with: fcc-pi" not in result.stdout
+    calls = powershell_harness.calls()
+    assert "other-unrelated-pi:--help" in calls
+    assert "other-unrelated-pi:--version" not in calls
+    assert "fcc-server:--version" in calls
 
 
 def test_install_ps1_replaces_obsolete_uv(
@@ -1152,14 +2008,199 @@ def test_installers_use_native_clients_and_single_python_selection() -> None:
     assert "https://pi.dev/install.ps1" in powershell
 
 
-def test_readme_install_section_has_no_manual_git_prerequisite() -> None:
-    readme = (_repo_root() / "README.md").read_text(encoding="utf-8")
-    install_section = readme.split("### 1. Install Or Update", 1)[1].split(
-        "### 2. Start The Server", 1
-    )[0]
+def test_install_ps1_uses_x64_python_for_windows_arm_compatibility() -> None:
+    powershell = (_repo_root() / "scripts" / "install.ps1").read_text(encoding="utf-8")
 
-    assert "Install Git" not in install_section
-    assert "official native installers" not in install_section
+    assert '$PythonRequest = "cpython-3.14.0-windows-x86_64-none"' in powershell
+
+
+@pytest.mark.parametrize("powershell", _powershells())
+def test_install_ps1_rejects_invalid_download_before_execution(
+    powershell: str,
+) -> None:
+    text = (_repo_root() / "scripts" / "install.ps1").read_text(encoding="utf-8")
+    body = _braced_body(text, "function Invoke-DownloadedPowerShellInstaller")
+    script = f"""Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+$DryRun = $false
+function Format-Argument {{ param([string] $Value) return $Value }}
+function Invoke-RestMethod {{
+    [CmdletBinding()]
+    param([string] $Uri, [string] $OutFile)
+    [IO.File]::WriteAllText($OutFile, "<style>div#box {{")
+}}
+function Get-PowerShellExecutable {{ throw "invalid installer reached execution" }}
+function Invoke-DownloadedPowerShellInstaller {{{body}}}
+Invoke-DownloadedPowerShellInstaller `
+    -Url "https://example.test/install.ps1" `
+    -Name "Example"
+"""
+
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-Command", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert (
+        "Example installer from 'https://example.test/install.ps1' is not valid PowerShell"
+        in result.stderr
+    )
+    assert "network proxy or filter" in result.stderr
+    assert "invalid installer reached execution" not in result.stderr
+
+
+@pytest.mark.parametrize("powershell", _powershells())
+@pytest.mark.parametrize(
+    ("answers", "expected", "expected_messages"),
+    [
+        (("", "", "", ""), "True,True,True,False", ()),
+        (
+            ("maybe", "n", "n", "n", "n", "y", "n", "y"),
+            "False,True,False,True",
+            ("Please answer Y or N.", "Select at least one coding agent."),
+        ),
+    ],
+)
+def test_install_ps1_selects_at_least_one_coding_agent(
+    powershell: str,
+    answers: tuple[str, ...],
+    expected: str,
+    expected_messages: tuple[str, ...],
+) -> None:
+    text = (_repo_root() / "scripts" / "install.ps1").read_text(encoding="utf-8")
+    read_yes_no = _braced_body(text, "function Read-YesNo")
+    select_agents = _braced_body(text, "function Select-CodingAgents")
+    answer_array = ", ".join(repr(answer) for answer in answers)
+    script = f"""Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+$script:Answers = @({answer_array})
+$script:AnswerIndex = 0
+$script:InstallClaudeCode = $true
+$script:InstallCodex = $true
+$script:InstallPi = $true
+$script:EnableRtk = $false
+function Read-Host {{
+    param([string] $Prompt)
+    $answer = $script:Answers[$script:AnswerIndex]
+    $script:AnswerIndex += 1
+    return $answer
+}}
+function Read-YesNo {{{read_yes_no}}}
+function Select-CodingAgents {{{select_agents}}}
+Select-CodingAgents
+Write-Output "selection:$($script:InstallClaudeCode),$($script:InstallCodex),$($script:InstallPi),$($script:EnableRtk)"
+"""
+
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-Command", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert f"selection:{expected}" in result.stdout
+    for message in expected_messages:
+        assert message in result.stdout
+
+
+@pytest.mark.parametrize("powershell", _powershells())
+def test_install_ps1_runs_only_selected_coding_agents(powershell: str) -> None:
+    text = (_repo_root() / "scripts" / "install.ps1").read_text(encoding="utf-8")
+    body = _braced_body(text, "function Ensure-SelectedCodingAgents")
+    script = f"""Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+$script:InstallClaudeCode = $false
+$script:InstallCodex = $true
+$script:InstallPi = $false
+$script:PiAvailable = $false
+$script:Calls = @()
+function Write-Step {{ param([string] $Message) }}
+function Ensure-ClaudeCode {{ $script:Calls += "claude" }}
+function Ensure-Codex {{ $script:Calls += "codex" }}
+function Ensure-Pi {{ $script:Calls += "pi"; $script:PiAvailable = $true }}
+function Ensure-SelectedCodingAgents {{{body}}}
+Ensure-SelectedCodingAgents
+Write-Output "calls:$($script:Calls -join ',')"
+"""
+
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-Command", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "calls:codex" in result.stdout
+
+
+@pytest.mark.parametrize("powershell", _powershells())
+def test_install_ps1_configures_rtk_only_for_available_selected_agents(
+    powershell: str,
+) -> None:
+    text = (_repo_root() / "scripts" / "install.ps1").read_text(encoding="utf-8")
+    body = _braced_body(text, "function Configure-RtkForSelectedAgents")
+    script = f"""Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+$script:EnableRtk = $true
+$script:InstallClaudeCode = $false
+$script:InstallCodex = $true
+$script:InstallPi = $true
+$script:PiAvailable = $false
+$script:Calls = @()
+function Write-Step {{ param([string] $Message) }}
+function Ensure-Rtk {{ $script:Calls += "ensure" }}
+function Invoke-RtkCommand {{
+    param([string[]] $Arguments)
+    $script:Calls += ($Arguments -join " ")
+}}
+function Configure-RtkForSelectedAgents {{{body}}}
+Configure-RtkForSelectedAgents
+Write-Output "calls:$($script:Calls -join ',')"
+"""
+
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-Command", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "calls:ensure,init --global --codex" in result.stdout
+
+
+@pytest.mark.parametrize("powershell", _powershells())
+def test_install_ps1_rejects_uninstalled_only_selection(powershell: str) -> None:
+    text = (_repo_root() / "scripts" / "install.ps1").read_text(encoding="utf-8")
+    body = _braced_body(text, "function Ensure-SelectedCodingAgents")
+    script = f"""Set-StrictMode -Version Latest
+$ErrorActionPreference = "Stop"
+$script:InstallClaudeCode = $false
+$script:InstallCodex = $false
+$script:InstallPi = $true
+$script:PiAvailable = $false
+function Write-Step {{ param([string] $Message) }}
+function Ensure-ClaudeCode {{ }}
+function Ensure-Codex {{ }}
+function Ensure-Pi {{ }}
+function Ensure-SelectedCodingAgents {{{body}}}
+Ensure-SelectedCodingAgents
+"""
+
+    result = subprocess.run(
+        [powershell, "-NoProfile", "-Command", script],
+        check=False,
+        capture_output=True,
+        text=True,
+    )
+
+    assert result.returncode != 0
+    assert "No selected coding agent was installed." in result.stderr
 
 
 @pytest.mark.parametrize("powershell", _powershells())

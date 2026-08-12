@@ -147,11 +147,16 @@ OPTIMIZATION_HANDLERS = [
 
 
 def try_optimizations(
-    request_data: MessagesRequest, settings: Settings
+    request_data: MessagesRequest,
+    settings: Settings,
+    *,
+    response_model: str | None = None,
 ) -> MessagesResponse | None:
     """Run optimization handlers in order. Returns first match or None."""
     for handler in OPTIMIZATION_HANDLERS:
         result = handler(request_data, settings)
         if result is not None:
-            return result
+            if response_model is None:
+                return result
+            return result.model_copy(update={"model": response_model})
     return None

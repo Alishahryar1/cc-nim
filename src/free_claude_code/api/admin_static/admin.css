@@ -337,6 +337,13 @@ textarea:focus-visible,
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
+.provider-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.55rem;
+  align-items: center;
+}
+
 /* Button & Form Controls styling */
 .test-button,
 .ghost-button,

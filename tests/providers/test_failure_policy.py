@@ -76,6 +76,39 @@ _CASES = (
         False,
     ),
     _ClassificationCase(
+        "openai_permission_denied",
+        lambda: _openai_status_error(
+            openai.PermissionDeniedError,
+            status_code=403,
+            message="Forbidden",
+        ),
+        FailureKind.PERMISSION,
+        403,
+        False,
+    ),
+    _ClassificationCase(
+        "generic_openai_401",
+        lambda: _openai_status_error(
+            openai.APIStatusError,
+            status_code=401,
+            message="Unauthorized",
+        ),
+        FailureKind.AUTHENTICATION,
+        401,
+        False,
+    ),
+    _ClassificationCase(
+        "generic_openai_403",
+        lambda: _openai_status_error(
+            openai.APIStatusError,
+            status_code=403,
+            message="Forbidden",
+        ),
+        FailureKind.PERMISSION,
+        403,
+        False,
+    ),
+    _ClassificationCase(
         "openai_rate_limit",
         lambda: _openai_status_error(
             openai.RateLimitError,
@@ -150,10 +183,17 @@ _CASES = (
         False,
     ),
     _ClassificationCase(
-        "http_403_keeps_authentication_quirk",
-        lambda: _http_status_error(403, "Forbidden"),
+        "http_401_maps_authentication",
+        lambda: _http_status_error(401, "Unauthorized"),
         FailureKind.AUTHENTICATION,
         401,
+        False,
+    ),
+    _ClassificationCase(
+        "http_403_maps_permission",
+        lambda: _http_status_error(403, "Forbidden"),
+        FailureKind.PERMISSION,
+        403,
         False,
     ),
     _ClassificationCase(
@@ -275,6 +315,39 @@ def test_auth_failure_preserves_model_error_body_instead_of_masking_it() -> None
     assert "Provider authentication failed. Check API key." in failure.message
     assert "Model qwen3.7-max is not supported for format oa-compat" in failure.message
     assert "Request ID: req_model" in failure.message
+
+
+def test_permission_failure_preserves_actionable_upstream_diagnostic() -> None:
+    error = _openai_status_error(
+        openai.PermissionDeniedError,
+        status_code=403,
+        message="Forbidden",
+        body={
+            "status": 403,
+            "title": "Forbidden",
+            "detail": "Authorization failed",
+        },
+    )
+
+    failure = classify_provider_failure(
+        error,
+        provider_name="NIM",
+        read_timeout_s=60.0,
+        request_id="req_permission",
+    )
+
+    assert failure.kind is FailureKind.PERMISSION
+    assert failure.status_code == 403
+    assert failure.retryable is False
+    assert not is_retryable_provider_error(error)
+    assert "Upstream provider NIM returned HTTP 403." in failure.message
+    assert "Category: permission" in failure.message
+    assert (
+        "Mapped message: Provider denied access. "
+        "Check credential permissions and model access."
+    ) in failure.message
+    assert '"detail":"Authorization failed"' in failure.message
+    assert "Request ID: req_permission" in failure.message
 
 
 def test_empty_http_error_body_is_reported_explicitly() -> None:

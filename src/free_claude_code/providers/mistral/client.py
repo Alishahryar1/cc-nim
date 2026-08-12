@@ -1,5 +1,6 @@
 """Mistral La Plateforme provider implementation (OpenAI-compatible chat completions)."""
 
+from collections.abc import Mapping
 from typing import Any
 
 from loguru import logger
@@ -69,5 +70,5 @@ class MistralProvider(OpenAIChatProvider):
         )
         return retry_body
 
-    def _normalize_stream(self, stream: Any) -> Any:
+    def _normalize_stream(self, stream: Any, _body: Mapping[str, Any]) -> Any:
         return normalize_mistral_stream(stream)

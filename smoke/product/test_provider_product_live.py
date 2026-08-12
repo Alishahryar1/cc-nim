@@ -86,6 +86,15 @@ def test_provider_tool_result_continuation_e2e(
 
 
 @pytest.mark.smoke_target("tools")
+def test_provider_interrupted_tool_turn_resume_e2e(
+    smoke_config: SmokeConfig, provider_model: ProviderModel
+) -> None:
+    _run_provider_scenario(
+        smoke_config, provider_model, _scenario_interrupted_tool_turn_resume
+    )
+
+
+@pytest.mark.smoke_target("tools")
 def test_gemini_thought_signature_tool_continuation_e2e(
     smoke_config: SmokeConfig, provider_model: ProviderModel
 ) -> None:
@@ -441,6 +450,51 @@ def _scenario_tool_result_continuation(
         second = driver.stream(second_payload)
     _assert_provider_product_stream(first.events)
     _assert_provider_product_stream(second.events)
+
+
+def _scenario_interrupted_tool_turn_resume(
+    smoke_config: SmokeConfig, provider_model: ProviderModel
+) -> None:
+    tool_id = "toolu_interrupted123456789"
+    payload = {
+        "model": "claude-sonnet-4-5-20250929",
+        "max_tokens": 32,
+        "stream": True,
+        "messages": [
+            {"role": "user", "content": "Use echo_smoke with value FCC_INTERRUPTED."},
+            {
+                "role": "assistant",
+                "content": [
+                    {
+                        "type": "tool_use",
+                        "id": tool_id,
+                        "name": "echo_smoke",
+                        "input": {"value": "FCC_INTERRUPTED"},
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": [
+                    {
+                        "type": "tool_result",
+                        "tool_use_id": tool_id,
+                        "content": "FCC_INTERRUPTED",
+                    }
+                ],
+            },
+            {
+                "role": "user",
+                "content": "Reply exactly OK without calling tools.",
+            },
+        ],
+        "tools": [echo_tool_schema()],
+    }
+    with _server_for_provider(
+        smoke_config, provider_model, "interrupted-tool-turn"
+    ) as server:
+        turn = ConversationDriver(server, smoke_config).stream(payload)
+    _assert_provider_product_stream(turn.events)
 
 
 def _scenario_gemini_thought_signature_tool_continuation(

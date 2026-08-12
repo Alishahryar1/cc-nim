@@ -177,7 +177,7 @@ class RecoveryController:
 
 def is_retryable_stream_error(exc: BaseException) -> bool:
     """Return whether one stream failure qualifies for retry or recovery."""
-    if isinstance(exc, TruncatedProviderStreamError):
+    if isinstance(exc, RetryableProviderProtocolError):
         return True
     if isinstance(exc, ExecutionFailure):
         return exc.retryable

@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
+from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from free_claude_code.config.provider_catalog import MINIMAX_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import Message, MessagesRequest, Tool
@@ -131,8 +132,8 @@ async def test_lists_models_from_openai_models_endpoint(minimax_provider):
         )
     )
 
-    assert await minimax_provider.list_model_ids() == frozenset(
-        {"MiniMax-M3", "MiniMax-M2.7"}
+    assert await minimax_provider.list_model_infos() == frozenset(
+        {ProviderModelInfo("MiniMax-M3"), ProviderModelInfo("MiniMax-M2.7")}
     )
 
 
