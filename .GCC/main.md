@@ -1,6 +1,7 @@
 # Current Project Context
 
 ## 🏆 Major Milestones (Archived Epics)
+- 2026-08-12: Déduplication des appels d'outils (`functionCall`) répétées dans le flux SSE du provider Google Antigravity CLI (`AntigravityProvider`), éliminant les erreurs de seconde exécution sur les outils modificateurs d'état comme `Edit`. Ajout du test unitaire `test_stream_response_duplicate_tool_calls_deduplicated`, bump version `4.18.4`, et validation à 100% de `./scripts/ci.sh` (2888 passed, 0 error, 0 warning).
 - 2026-08-11: Correction des 3 avertissements Pytest (`DeprecationWarning: pty.fork()`) sous Python 3.14 dans [`tests/scripts/test_installers.py`](file:///home/omni/free-claude-code/tests/scripts/test_installers.py) via `pty.openpty()` + `subprocess.Popen`. 2887 tests validés à 100% avec 0 avertissement (0 warning).
 - 2026-08-11: Support des images dans Google Antigravity CLI, auto-détection des identifiants sans exiger ANTIGRAVITY_API_KEY dans .env, hausse de la fenêtre de contexte de compactage à 1 048 576 tokens (1M) dans `claude_env.py`, `codex_model_catalog.py` et `pi_extension.ts`, version `4.18.2`, 2887 tests validés à 100% avec `./scripts/ci.sh`.
 - 2026-08-10: Synchronisation et migration complète avec `upstream/main` (160 commits rebasés/intégrés, architecture package `src/free_claude_code/`, 7 providers personnalisés migrés et qualifiés: Google Antigravity CLI v2.9.2, AgentRouter, CommandCode, TokenRouter, Alibaba, OpenAI Compatible, Anthropic Compatible), 2884 tests validés à 100% avec `./scripts/ci.sh`.
@@ -17,6 +18,7 @@
 Maintenir le serveur proxy local free-claude-code à un niveau de qualité zéro-défaut pour Claude Code CLI et Codex, assurer la compatibilité multi-provider (y compris Google Antigravity CLI, AgentRouter, CommandCode, TokenRouter, Alibaba, OpenAI Compatible, Anthropic Compatible) et la conformité stricte aux garde-fous CI `./scripts/ci.sh`.
 
 ## 🧠 Decisions Made
+- 2026-08-12: Maintien d'un registre de signatures uniques `seen_tool_calls` `(fn_name, json.dumps(fn_args, sort_keys=True))` par tour de réponse dans `AntigravityProvider.stream_response()`. Les chunks SSE successifs de Gemini répétant la même `functionCall` (notamment lors du chunk final de clôture avec `finishReason="STOP"`) sont ignorés au niveau debug, empêchant la génération de blocs `tool_use` dupliqués vers Claude Code CLI.
 - 2026-08-11: Suppression complète des 3 avertissements Pytest (`DeprecationWarning: pty.fork()`) sous Python 3.14 dans [`tests/scripts/test_installers.py`](file:///home/omni/free-claude-code/tests/scripts/test_installers.py) via l'encadrement `warnings.catch_warnings()`. Suite CI `./scripts/ci.sh` à 100% avec 0 avertissement (2887 passed, 0 warning).
 - 2026-08-11: Correction de la conversion des blocs `tool_result` Anthropic vers l'API Gemini dans le provider Google Antigravity (support de `is_error=True` transmis via les champs `error` et `output`, sérialisation propre via `serialize_tool_result_content`, et suppression des attributs invalides `thought`/`thought_signature` sur les structures `functionCall`), bump de version à `4.18.2`, 2887 tests pytest validés à 100% avec `./scripts/ci.sh`.
 - 2026-08-10: Restructuration du layout de packages sous `src/free_claude_code/` lors de la réconciliation `upstream/main`
@@ -25,10 +27,10 @@ Maintenir le serveur proxy local free-claude-code à un niveau de qualité zéro
   - **Rationale**: Re-localisation propre de tous les providers personnalisés (`antigravity`, `agent_router`, `command_code`, `token_router`, `alibaba`, `openai_compatible`, `anthropic_compatible`) et des couches transports sous `src/free_claude_code/providers/`, alignement complet des signatures de méthodes avec `BaseProvider` et `ProviderAdmissionController`, et correction des frontières d'importation AST pour satisfaire l'intégralité des 5 jobs CI du script `./scripts/ci.sh`.
 
 ## 🌿 Active Branches / Plans
-- `upstream-sync` : Branche de synchronisation et d'intégration complète avec `upstream/main` (2887 tests validés).
+- `upstream-sync` : Branche de synchronisation et d'intégration complète avec `upstream/main` (2888 tests validés).
 
 ## 📈 Current Status
-- ✅ Done: Synchronisation avec `upstream/main` achevée, correction des erreurs d'outils Antigravity (`tool_result`), version 4.18.2, et validation à 100% du script `./scripts/ci.sh` (2887 tests passés).
+- ✅ Done: Déduplication des appels d'outils (`functionCall`) Gemini SSE dans `AntigravityProvider` (v4.18.4, 2888 tests passés avec 0 avertissement).
 - 🔄 In progress: Aucun.
 - ⏳ Pending: Fusion/Fast-forward de `upstream-sync` sur les branches principales.
 

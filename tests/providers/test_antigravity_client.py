@@ -297,6 +297,45 @@ async def test_stream_response_tool_use(antigravity_provider):
         assert "main.py" in full_stream
 
 
+@pytest.mark.asyncio
+async def test_stream_response_duplicate_tool_calls_deduplicated(antigravity_provider):
+    req = MockRequest()
+
+    # Simulate Gemini streaming where chunk 1 delivers functionCall and chunk 2 repeats identical functionCall
+    sse_lines = [
+        'data: {"candidates": [{"content": {"role": "model", "parts": [{"functionCall": {"name": "Edit", "args": {"old_string": "foo", "new_string": "bar"}}}]}}]}\n\n',
+        'data: {"candidates": [{"content": {"role": "model", "parts": [{"functionCall": {"name": "Edit", "args": {"old_string": "foo", "new_string": "bar"}}}]}, "finishReason": "STOP"}]}\n\n',
+    ]
+
+    async def mock_aiter_lines():
+        for line in sse_lines:
+            yield line
+
+    mock_resp = AsyncMock()
+    mock_resp.status_code = 200
+    mock_resp.aiter_lines = mock_aiter_lines
+
+    class MockStreamContext:
+        async def __aenter__(self):
+            return mock_resp
+
+        async def __aexit__(self, exc_type, exc_val, exc_tb):
+            pass
+
+    with patch.object(
+        antigravity_provider._client, "stream", return_value=MockStreamContext()
+    ):
+        events = [chunk async for chunk in antigravity_provider.stream_response(req)]
+        full_stream = "".join(events)
+
+        # Count occurrences of tool_use content_block_start
+        tool_use_count = full_stream.count('"type": "tool_use"')
+        assert tool_use_count == 1, f"Expected 1 tool_use block, got {tool_use_count}"
+        assert "Edit" in full_stream
+        assert "foo" in full_stream
+        assert "bar" in full_stream
+
+
 def test_extract_error_message_google_quota_exhausted():
     raw_json = """{
   "error": {

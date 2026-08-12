@@ -681,6 +681,7 @@ class AntigravityProvider(BaseProvider):
 
                 active_tool_index: int | None = None
                 tool_call_count = 0
+                seen_tool_calls: set[tuple[str, str]] = set()
 
                 async for line in response.aiter_lines():
                     if not line or not line.startswith("data:"):
@@ -738,6 +739,20 @@ class AntigravityProvider(BaseProvider):
                             fn_call = part["functionCall"]
                             fn_name = fn_call.get("name", "tool")
                             fn_args = fn_call.get("args", {})
+                            args_key = (
+                                json.dumps(fn_args, sort_keys=True)
+                                if isinstance(fn_args, dict)
+                                else str(fn_args)
+                            )
+                            tool_sig = (fn_name, args_key)
+                            if tool_sig in seen_tool_calls:
+                                logger.debug(
+                                    "Ignoring duplicate functionCall in stream: name=%s",
+                                    fn_name,
+                                )
+                                continue
+                            seen_tool_calls.add(tool_sig)
+
                             args_str = (
                                 json.dumps(fn_args)
                                 if isinstance(fn_args, dict)
