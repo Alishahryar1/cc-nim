@@ -679,9 +679,8 @@ class AntigravityProvider(BaseProvider):
                 yield ledger.message_start()
                 sent_any_event = True
 
-                active_tool_index: int | None = None
+                active_tool_by_name: dict[str, dict[str, Any]] = {}
                 tool_call_count = 0
-                seen_tool_calls: set[tuple[str, str]] = set()
 
                 async for line in response.aiter_lines():
                     if not line or not line.startswith("data:"):
@@ -739,39 +738,57 @@ class AntigravityProvider(BaseProvider):
                             fn_call = part["functionCall"]
                             fn_name = fn_call.get("name", "tool")
                             fn_args = fn_call.get("args", {})
-                            args_key = (
-                                json.dumps(fn_args, sort_keys=True)
-                                if isinstance(fn_args, dict)
-                                else str(fn_args)
-                            )
-                            tool_sig = (fn_name, args_key)
-                            if tool_sig in seen_tool_calls:
-                                logger.debug(
-                                    "Ignoring duplicate functionCall in stream: name=%s",
-                                    fn_name,
-                                )
-                                continue
-                            seen_tool_calls.add(tool_sig)
-
                             args_str = (
                                 json.dumps(fn_args)
                                 if isinstance(fn_args, dict)
                                 else str(fn_args)
                             )
 
+                            existing = active_tool_by_name.get(fn_name)
+                            if existing is not None:
+                                last_args = existing["last_args"]
+                                if last_args == fn_args:
+                                    logger.debug(
+                                        "Ignoring duplicate functionCall in stream: name=%s",
+                                        fn_name,
+                                    )
+                                    continue
+                                elif not last_args and fn_args:
+                                    existing["last_args"] = fn_args
+                                    yield ledger.emit_tool_delta(
+                                        existing["tool_idx"], args_str
+                                    )
+                                    if not existing["stopped"]:
+                                        yield ledger.stop_tool_block(
+                                            existing["tool_idx"]
+                                        )
+                                        existing["stopped"] = True
+                                    continue
+                                elif not existing["stopped"]:
+                                    yield ledger.stop_tool_block(existing["tool_idx"])
+                                    existing["stopped"] = True
+
                             tool_call_count += 1
                             tool_id = f"call_{uuid.uuid4().hex[:8]}"
-
-                            if active_tool_index is not None:
-                                yield ledger.stop_tool_block(active_tool_index)
-
                             tool_idx = ledger.blocks.allocate_index()
-                            yield ledger.start_tool_block(tool_idx, tool_id, fn_name)
-                            active_tool_index = tool_idx
 
-                            yield ledger.emit_tool_delta(active_tool_index, args_str)
-                            yield ledger.stop_tool_block(active_tool_index)
-                            active_tool_index = None
+                            for ev in ledger.close_content_blocks():
+                                yield ev
+
+                            yield ledger.start_tool_block(tool_idx, tool_id, fn_name)
+
+                            stopped = False
+                            if fn_args:
+                                yield ledger.emit_tool_delta(tool_idx, args_str)
+                                yield ledger.stop_tool_block(tool_idx)
+                                stopped = True
+
+                            active_tool_by_name[fn_name] = {
+                                "tool_id": tool_id,
+                                "tool_idx": tool_idx,
+                                "last_args": fn_args,
+                                "stopped": stopped,
+                            }
 
                     finish_reason = candidate.get("finishReason")
                     if finish_reason:
@@ -781,6 +798,11 @@ class AntigravityProvider(BaseProvider):
                         elif tool_call_count > 0:
                             stop_reason = "tool_use"
                         ledger.stop_reason = stop_reason
+
+                for tool_state in active_tool_by_name.values():
+                    if not tool_state["stopped"]:
+                        yield ledger.stop_tool_block(tool_state["tool_idx"])
+                        tool_state["stopped"] = True
 
                 has_emitted_tool = ledger.has_emitted_tool_block()
                 has_content_blocks = (
