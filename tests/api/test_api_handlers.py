@@ -4,6 +4,7 @@ from typing import Any
 from unittest.mock import MagicMock, patch
 
 import pytest
+from fastapi import HTTPException
 from fastapi.responses import JSONResponse, StreamingResponse
 
 from free_claude_code.api.handlers import (
@@ -18,11 +19,16 @@ from free_claude_code.core.anthropic.models import (
     Message,
     MessagesRequest,
     TokenCountRequest,
+    Tool,
 )
 from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import ReasoningPolicy
+from free_claude_code.providers.anthropic_tokens import (
+    AnthropicTokenCountUnavailable,
+    count_tokens_via_anthropic_api,
+)
 
 _CLASSIFIER_SYSTEM = (
     "You are a security monitor. Respond with <block>yes</block> or <block>no</block>."
@@ -575,3 +581,191 @@ def test_token_count_handler_routes_and_counts_tokens() -> None:
     assert all(
         call.kwargs["request_id"] == "req_ingress" for call in trace.call_args_list
     )
+
+
+def test_token_count_handler_uses_exact_counter_when_api_key_set() -> None:
+    exact_counter = MagicMock(return_value=17)
+    handler = TokenCountHandler(
+        Settings(ANTHROPIC_API_KEY="sk-test"),
+        token_counter=lambda messages, system, tools: 999,
+        exact_token_counter=exact_counter,
+    )
+
+    response = handler.count(
+        TokenCountRequest(
+            model="nvidia_nim/test-model",
+            messages=[Message(role="user", content="hi")],
+        )
+    )
+
+    assert response.input_tokens == 17
+    exact_counter.assert_called_once()
+    assert exact_counter.call_args.kwargs["api_key"] == "sk-test"
+    assert exact_counter.call_args.kwargs["model"] == "nvidia_nim/test-model"
+
+
+def test_token_count_handler_falls_back_when_exact_counter_fails() -> None:
+    exact_counter = MagicMock(
+        side_effect=AnthropicTokenCountUnavailable("upstream unavailable")
+    )
+    handler = TokenCountHandler(
+        Settings(ANTHROPIC_API_KEY="sk-test"),
+        token_counter=lambda messages, system, tools: 42,
+        exact_token_counter=exact_counter,
+    )
+
+    response = handler.count(
+        TokenCountRequest(
+            model="nvidia_nim/test-model",
+            messages=[Message(role="user", content="hi")],
+        )
+    )
+
+    assert response.input_tokens == 42
+    exact_counter.assert_called_once()
+
+
+def test_token_count_handler_skips_exact_counter_without_api_key() -> None:
+    exact_counter = MagicMock(return_value=17)
+    handler = TokenCountHandler(
+        Settings(),
+        token_counter=lambda messages, system, tools: 42,
+        exact_token_counter=exact_counter,
+    )
+
+    response = handler.count(
+        TokenCountRequest(
+            model="nvidia_nim/test-model",
+            messages=[Message(role="user", content="hi")],
+        )
+    )
+
+    assert response.input_tokens == 42
+    exact_counter.assert_not_called()
+
+
+def test_token_count_handler_treats_whitespace_only_api_key_as_unset() -> None:
+    """A whitespace-only ANTHROPIC_API_KEY is stripped and treated as absent."""
+    exact_counter = MagicMock(return_value=17)
+    handler = TokenCountHandler(
+        Settings(ANTHROPIC_API_KEY="   "),
+        token_counter=lambda messages, system, tools: 42,
+        exact_token_counter=exact_counter,
+    )
+
+    response = handler.count(
+        TokenCountRequest(
+            model="nvidia_nim/test-model",
+            messages=[Message(role="user", content="hi")],
+        )
+    )
+
+    assert response.input_tokens == 42
+    exact_counter.assert_not_called()
+
+
+def test_token_count_handler_exact_counter_receives_original_request_fields() -> None:
+    """The exact counter is called with the raw request's system/tools/messages."""
+    exact_counter = MagicMock(return_value=5)
+    handler = TokenCountHandler(
+        Settings(ANTHROPIC_API_KEY="sk-test"),
+        token_counter=lambda messages, system, tools: 999,
+        exact_token_counter=exact_counter,
+    )
+    messages = [Message(role="user", content="hi")]
+    tools = [Tool(name="lookup", input_schema={"type": "object"})]
+
+    handler.count(
+        TokenCountRequest(
+            model="nvidia_nim/test-model",
+            messages=messages,
+            system="Be concise.",
+            tools=tools,
+        )
+    )
+
+    exact_counter.assert_called_once()
+    call_kwargs = exact_counter.call_args.kwargs
+    assert call_kwargs["messages"] == messages
+    assert call_kwargs["system"] == "Be concise."
+    assert call_kwargs["tools"] == tools
+    assert call_kwargs["timeout"] == Settings().http_read_timeout
+
+
+def test_token_count_handler_default_wiring_calls_real_anthropic_api() -> None:
+    """Wired with the real exact counter, the handler calls the real Anthropic
+    SDK client (production wiring happens in runtime/bootstrap.py, not as a
+    class-level default, so the api package stays provider-free)."""
+    handler = TokenCountHandler(
+        Settings(ANTHROPIC_API_KEY="sk-test"),
+        exact_token_counter=count_tokens_via_anthropic_api,
+    )
+
+    with patch(
+        "free_claude_code.providers.anthropic_tokens.httpx.Client"
+    ) as mock_anthropic:
+        mock_client = MagicMock()
+        mock_client.__enter__.return_value = mock_client
+        mock_response = MagicMock()
+        mock_response.json.return_value = {"input_tokens": 7}
+        mock_client.post.return_value = mock_response
+        mock_anthropic.return_value = mock_client
+
+        response = handler.count(
+            TokenCountRequest(
+                model="nvidia_nim/test-model",
+                messages=[Message(role="user", content="hi")],
+            )
+        )
+
+    assert response.input_tokens == 7
+    mock_anthropic.assert_called_once_with(
+        proxy=None, timeout=Settings().http_read_timeout
+    )
+
+
+def test_token_count_handler_logs_warning_when_exact_counter_fails() -> None:
+    """A failed exact count is logged (without raising) before falling back."""
+    exact_counter = MagicMock(
+        side_effect=AnthropicTokenCountUnavailable("upstream unavailable")
+    )
+    handler = TokenCountHandler(
+        Settings(ANTHROPIC_API_KEY="sk-test"),
+        token_counter=lambda messages, system, tools: 42,
+        exact_token_counter=exact_counter,
+    )
+
+    with patch("free_claude_code.api.handlers.token_count.logger") as logger_mock:
+        response = handler.count(
+            TokenCountRequest(
+                model="nvidia_nim/test-model",
+                messages=[Message(role="user", content="hi")],
+            )
+        )
+
+    assert response.input_tokens == 42
+    logger_mock.warning.assert_called_once()
+    assert "upstream unavailable" in logger_mock.warning.call_args.args[1]
+
+
+def test_token_count_handler_does_not_hide_unexpected_exact_counter_error() -> None:
+    """An unexpected (non-AnthropicTokenCountUnavailable) error surfaces as a
+    500, per the handler's existing catch-all — it is not silently swallowed
+    into a fallback token count."""
+    exact_counter = MagicMock(side_effect=RuntimeError("programming error"))
+    handler = TokenCountHandler(
+        Settings(ANTHROPIC_API_KEY="sk-test"),
+        token_counter=lambda messages, system, tools: 42,
+        exact_token_counter=exact_counter,
+    )
+
+    with pytest.raises(HTTPException) as exc_info:
+        handler.count(
+            TokenCountRequest(
+                model="claude-sonnet-4-5-20250929",
+                messages=[Message(role="user", content="hi")],
+            )
+        )
+
+    assert exc_info.value.status_code == 500
+    assert "programming error" in exc_info.value.detail

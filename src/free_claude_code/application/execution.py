@@ -26,7 +26,17 @@ TokenCounter = Callable[
     [list[Message], str | list[SystemContent] | None, list[Tool] | None],
     int,
 ]
+ExactTokenCounter = Callable[..., int]
 WireApi = Literal["messages", "responses"]
+
+
+class AnthropicTokenCountUnavailable(Exception):
+    """Raised when an exact upstream token count cannot be obtained.
+
+    Callers of an :data:`ExactTokenCounter` catch this to fall back to a
+    local estimate. Defined here (not in ``providers``) so ``api`` handlers
+    can catch it without depending on a concrete provider implementation.
+    """
 
 
 class ProviderExecutor:

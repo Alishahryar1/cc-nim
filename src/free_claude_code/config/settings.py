@@ -137,6 +137,12 @@ class Settings(BaseSettings):
     # ==================== Ollama Cloud ====================
     ollama_api_key: str = Field(default="", validation_alias="OLLAMA_API_KEY")
 
+    # ==================== Anthropic API (exact token counting) ====================
+    # Optional. When set, /v1/messages/count_tokens calls the real Anthropic
+    # API for an exact count instead of the local tiktoken-based estimate.
+    anthropic_api_key: str = Field(default="", validation_alias="ANTHROPIC_API_KEY")
+    anthropic_proxy: str = Field(default="", validation_alias="ANTHROPIC_PROXY")
+
     # ==================== Messaging Platform Selection ====================
     # Valid: "telegram" | "discord" | "none"
     messaging_platform: str = Field(
