@@ -1,7 +1,8 @@
 """Tests for the DeepInfra OpenAI-chat profile and model catalog."""
 
 from types import SimpleNamespace
-from unittest.mock import AsyncMock
+from typing import Any
+from unittest.mock import AsyncMock, patch
 
 import httpx
 import pytest
@@ -25,6 +26,38 @@ from tests.providers.support import (
 )
 
 _CATALOG_URL = "https://api.deepinfra.com/models/list"
+_MODEL = "deepseek-ai/DeepSeek-V4-Flash"
+_MISSING = object()
+
+
+def _request(**overrides: Any) -> MessagesRequest:
+    payload: dict[str, Any] = {
+        "model": _MODEL,
+        "messages": [{"role": "user", "content": "Hello"}],
+    }
+    payload.update(overrides)
+    return MessagesRequest.model_validate(payload)
+
+
+def _catalog_model(
+    model_name: object = "model",
+    *,
+    reported_type: object = "text-generation",
+    deprecated: object = None,
+    tags: object = (),
+) -> dict[str, object]:
+    item: dict[str, object] = {}
+    for field, value in (
+        ("model_name", model_name),
+        ("reported_type", reported_type),
+        ("deprecated", deprecated),
+        ("tags", tags),
+    ):
+        if value is not _MISSING:
+            item[field] = (
+                list(value) if field == "tags" and isinstance(value, tuple) else value
+            )
+    return item
 
 
 @pytest.fixture
@@ -119,12 +152,7 @@ def test_build_request_body_encodes_documented_reasoning_effort(
     reasoning: ReasoningPolicy,
     expected: str,
 ) -> None:
-    request = MessagesRequest.model_validate(
-        {
-            "model": "deepseek-ai/DeepSeek-V4-Flash",
-            "messages": [{"role": "user", "content": "Hello"}],
-        }
-    )
+    request = _request()
 
     body = deepinfra_provider._build_request_body(request, reasoning=reasoning)
 
@@ -134,13 +162,7 @@ def test_build_request_body_encodes_documented_reasoning_effort(
 def test_build_request_body_preserves_extra_body_without_reasoning_override(
     deepinfra_provider: OpenAIChatProvider,
 ) -> None:
-    request = MessagesRequest.model_validate(
-        {
-            "model": "deepseek-ai/DeepSeek-V4-Flash",
-            "messages": [{"role": "user", "content": "Hello"}],
-            "extra_body": {"service_tier": "priority"},
-        }
-    )
+    request = _request(extra_body={"service_tier": "priority"})
 
     body = deepinfra_provider._build_request_body(request, reasoning=REASONING_ON)
 
@@ -155,13 +177,7 @@ def test_build_request_body_rejects_caller_reasoning_override(
     deepinfra_provider: OpenAIChatProvider,
     field: str,
 ) -> None:
-    request = MessagesRequest.model_validate(
-        {
-            "model": "deepseek-ai/DeepSeek-V4-Flash",
-            "messages": [{"role": "user", "content": "Hello"}],
-            "extra_body": {field: "caller-owned"},
-        }
-    )
+    request = _request(extra_body={field: "caller-owned"})
 
     with pytest.raises(InvalidRequestError, match="must not override reasoning"):
         deepinfra_provider._build_request_body(request, reasoning=REASONING_ON)
@@ -211,42 +227,16 @@ async def test_lists_only_active_text_models_with_thinking_metadata(
 ) -> None:
     deepinfra_provider._client.get = AsyncMock(
         return_value=[
-            {
-                "model_name": "reasoning-model",
-                "reported_type": "text-generation",
-                "deprecated": None,
-                "tags": ["openai", "reasoning", "tools"],
-            },
-            {
-                "model_name": "plain-model",
-                "reported_type": "text-generation",
-                "deprecated": None,
-                "tags": ["openai", "non-reasoning", "tools"],
-            },
-            {
-                "model_name": "hybrid-model",
-                "reported_type": "text-generation",
-                "deprecated": None,
-                "tags": ["reasoning", "non-reasoning"],
-            },
-            {
-                "model_name": "unknown-model",
-                "reported_type": "text-generation",
-                "deprecated": None,
-                "tags": ["openai"],
-            },
-            {
-                "model_name": "deprecated-model",
-                "reported_type": "text-generation",
-                "deprecated": 1_700_000_000,
-                "tags": ["reasoning"],
-            },
-            {
-                "model_name": "image-model",
-                "reported_type": "text-to-image",
-                "deprecated": None,
-                "tags": [],
-            },
+            _catalog_model("reasoning-model", tags=("openai", "reasoning", "tools")),
+            _catalog_model("plain-model", tags=("openai", "non-reasoning", "tools")),
+            _catalog_model("hybrid-model", tags=("reasoning", "non-reasoning")),
+            _catalog_model("unknown-model", tags=("openai",)),
+            _catalog_model(
+                "deprecated-model",
+                deprecated=1_700_000_000,
+                tags=("reasoning",),
+            ),
+            _catalog_model("image-model", reported_type="text-to-image"),
         ]
     )
 
@@ -267,36 +257,40 @@ async def test_lists_only_active_text_models_with_thinking_metadata(
 
 
 @pytest.mark.asyncio
-async def test_model_catalog_uses_absolute_public_url(
-    deepinfra_provider: OpenAIChatProvider,
-) -> None:
+async def test_model_catalog_uses_absolute_public_url() -> None:
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         return httpx.Response(
             200,
-            json=[
-                {
-                    "model_name": "deepseek-ai/DeepSeek-V4-Flash",
-                    "reported_type": "text-generation",
-                    "deprecated": None,
-                    "tags": ["reasoning", "tools"],
-                }
-            ],
+            json=[_catalog_model(_MODEL, tags=("reasoning", "tools"))],
         )
 
-    await deepinfra_provider._client.close()
-    deepinfra_provider._client = AsyncOpenAI(
-        api_key="wire-deepinfra-key",
-        base_url=DEEPINFRA_DEFAULT_BASE,
-        max_retries=0,
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
-    )
+    http_client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+
+    def build_client(*args: Any, **kwargs: Any) -> AsyncOpenAI:
+        kwargs["http_client"] = http_client
+        return AsyncOpenAI(*args, **kwargs)
+
+    with patch(
+        "free_claude_code.providers.openai_chat.provider.AsyncOpenAI",
+        side_effect=build_client,
+    ):
+        provider = profiled_provider(
+            "deepinfra",
+            ProviderConfig(
+                api_key="wire-deepinfra-key",
+                base_url=DEEPINFRA_DEFAULT_BASE,
+                rate_limit=10,
+                rate_window=60,
+            ),
+            admission=immediate_admission(provider_name="deepinfra"),
+        )
     try:
-        model_infos = await deepinfra_provider.list_model_infos()
+        model_infos = await provider.list_model_infos()
     finally:
-        await deepinfra_provider.cleanup()
+        await provider.cleanup()
 
     assert model_infos == frozenset(
         {
@@ -315,71 +309,19 @@ async def test_model_catalog_uses_absolute_public_url(
     ("payload", "message"),
     [
         ({"data": []}, "expected root array"),
-        (
-            [{"reported_type": "text-generation", "deprecated": None, "tags": []}],
-            "include model_name",
-        ),
-        (
-            [{"model_name": "model", "deprecated": None, "tags": []}],
-            "include string reported_type",
-        ),
-        (
-            [
-                {
-                    "model_name": "model",
-                    "reported_type": 7,
-                    "deprecated": None,
-                    "tags": [],
-                }
-            ],
-            "include string reported_type",
-        ),
-        (
-            [{"model_name": "model", "reported_type": "text-generation", "tags": []}],
-            "include deprecated",
-        ),
-        (
-            [
-                {
-                    "model_name": "model",
-                    "reported_type": "text-generation",
-                    "deprecated": None,
-                }
-            ],
-            "include tags string array",
-        ),
-        (
-            [
-                {
-                    "model_name": "model",
-                    "reported_type": "text-generation",
-                    "deprecated": None,
-                    "tags": [7],
-                }
-            ],
-            "include tags string array",
-        ),
+        ([_catalog_model(model_name=_MISSING)], "include model_name"),
+        ([_catalog_model(reported_type=_MISSING)], "include string reported_type"),
+        ([_catalog_model(reported_type=7)], "include string reported_type"),
+        ([_catalog_model(deprecated=_MISSING)], "include deprecated"),
+        ([_catalog_model(tags=_MISSING)], "include tags string array"),
+        ([_catalog_model(tags=[7])], "include tags string array"),
         ([], "did not include any model ids"),
         (
-            [
-                {
-                    "model_name": "image",
-                    "reported_type": "text-to-image",
-                    "deprecated": None,
-                    "tags": [],
-                }
-            ],
+            [_catalog_model("image", reported_type="text-to-image")],
             "did not include any model ids",
         ),
         (
-            [
-                {
-                    "model_name": "old",
-                    "reported_type": "text-generation",
-                    "deprecated": 1,
-                    "tags": [],
-                }
-            ],
+            [_catalog_model("old", deprecated=1)],
             "did not include any model ids",
         ),
     ],
@@ -410,14 +352,7 @@ async def test_model_catalog_uses_shared_retry_admission(
     deepinfra_provider._client.get = AsyncMock(
         side_effect=[
             rate_limit_error,
-            [
-                {
-                    "model_name": "deepseek-ai/DeepSeek-V4-Flash",
-                    "reported_type": "text-generation",
-                    "deprecated": None,
-                    "tags": ["reasoning", "tools"],
-                }
-            ],
+            [_catalog_model(_MODEL, tags=("reasoning", "tools"))],
         ]
     )
 
