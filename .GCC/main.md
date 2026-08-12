@@ -43,13 +43,13 @@ Maintenir le serveur proxy local free-claude-code à un niveau de qualité zéro
   - **Rationale**: Re-localisation propre de tous les providers personnalisés (`antigravity`, `agent_router`, `command_code`, `token_router`, `alibaba`, `openai_compatible`, `anthropic_compatible`) et des couches transports sous `src/free_claude_code/providers/`, alignement complet des signatures de méthodes avec `BaseProvider` et `ProviderAdmissionController`, et correction des frontières d'importation AST pour satisfaire l'intégralité des 5 jobs CI du script `./scripts/ci.sh`.
 
 ## 🌿 Active Branches / Plans
-- `plan_fix_installer_tests` : Update installer unit test assertions in tests/scripts/test_installers.py to omni01-Cell
+- `plan_upstream_sync` : Reconcile upstream updates (5 new commits: Together AI, QwenCloud, xAI Grok, Novita AI, NaraRoute) on upstream-sync branch. [Plan](file:///home/omni/free-claude-code/.GCC/branches/plan_upstream_sync.md)
 - `main` : Branche principale qualifiée à 100% avec 2908 tests passés.
 
 ## 📈 Current Status
-- ✅ Done: Publication et push complet de la version `v4.20.1` sur `origin/main` (`omni01-Cell/free-claude-code`) incluant la suite d'installateurs, la documentation Windows et la Connected Account Antigravity (2908 tests passés à 100%).
-- 🔄 In progress: Aucun projet bloquant en cours.
-- ⏳ Pending: Mises à jour amont à venir (`upstream/main`).
+- ✅ Done: Publication et push complet de la version `v4.20.1` sur `origin/main` (`omni01-Cell/free-claude-code`).
+- 🔄 In progress: Synchronisation des modifications de `upstream/main` sur la branche `upstream-sync`.
+- ⏳ Pending: Merger sur `main` et valider 100% CI.
 
 ## 👉 Next Session Direction
-Récupérer et réconcilier les dernières mises à jour amont (`git fetch upstream` / rebase `upstream/main`), intégrer d'éventuels nouveaux providers ou correctifs amont sur le fork `omni01-Cell/free-claude-code`, et valider l'intégrité 100% CI avec `./scripts/ci.sh`.
+Finaliser la fusion des commits upstream sur `upstream-sync`, s'assurer qu'aucun provider local ou fonctionnalité n'est régressé, exécuter `./scripts/ci.sh` et pousser sur GitHub.
