@@ -3,11 +3,11 @@ import json
 import httpx
 import pytest
 
+from free_claude_code.api.speech import MiniMaxSpeechRequest
 from free_claude_code.providers.minimax import (
     MINIMAX_TTS_ENDPOINTS,
     MiniMaxSpeechClient,
     MiniMaxSpeechError,
-    MiniMaxSpeechRequest,
 )
 
 
@@ -37,7 +37,7 @@ async def test_speech_request_uses_china_endpoint_and_decodes_hex_audio() -> Non
         voice_setting={"voice_id": "English_expressive_narrator"},
     )
 
-    assert await client.synthesize(request) == b"ID3"
+    assert await client.synthesize(request.upstream_payload()) == b"ID3"
     assert seen_request is not None
     assert str(seen_request.url) == MINIMAX_TTS_ENDPOINTS["china"]
     assert seen_request.headers["authorization"] == "Bearer test-key"
@@ -96,7 +96,8 @@ async def test_speech_stream_collects_chunks_until_terminal_status() -> None:
         transport=httpx.MockTransport(handler),
     )
 
-    audio = await client.synthesize(MiniMaxSpeechRequest(text="Hello", stream=True))
+    request = MiniMaxSpeechRequest(text="Hello", stream=True)
+    audio = await client.synthesize(request.upstream_payload())
 
     assert audio == b"ID3"
 
@@ -118,4 +119,5 @@ async def test_speech_response_rejects_upstream_status_error() -> None:
     )
 
     with pytest.raises(MiniMaxSpeechError, match="rejected"):
-        await client.synthesize(MiniMaxSpeechRequest(text="Hello"))
+        request = MiniMaxSpeechRequest(text="Hello")
+        await client.synthesize(request.upstream_payload())

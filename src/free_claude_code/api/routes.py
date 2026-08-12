@@ -1,10 +1,9 @@
 """FastAPI route handlers."""
 
-import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from loguru import logger
 
-from free_claude_code.application.errors import ApplicationError
+from free_claude_code.application.errors import ApplicationError, SpeechSynthesisError
 from free_claude_code.application.ports import ProviderResolver, RequestRuntimeLease
 from free_claude_code.config.model_refs import parse_provider_type
 from free_claude_code.config.settings import Settings
@@ -15,11 +14,6 @@ from free_claude_code.core.anthropic import (
 )
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.trace import trace_event
-from free_claude_code.providers.minimax import (
-    MiniMaxSpeechClient,
-    MiniMaxSpeechError,
-    MiniMaxSpeechRequest,
-)
 
 from .dependencies import (
     get_services,
@@ -33,6 +27,7 @@ from .ports import ApiServices
 from .request_errors import ordinary_application_error_response
 from .request_ids import get_request_id
 from .response_streams import bind_response_lifetime
+from .speech import MiniMaxSpeechRequest
 
 router = APIRouter()
 
@@ -151,6 +146,7 @@ async def probe_responses(_auth=Depends(require_proxy_auth)):
 @router.post("/v1/audio/speech")
 async def create_speech(
     request_data: MiniMaxSpeechRequest,
+    services: ApiServices = Depends(get_services),
     settings: Settings = Depends(get_settings),
     _auth=Depends(require_proxy_auth),
 ):
@@ -160,21 +156,12 @@ async def create_speech(
             status_code=503,
             detail="MINIMAX_API_KEY is required for speech synthesis.",
         )
-    timeout = httpx.Timeout(
-        connect=settings.http_connect_timeout,
-        read=settings.http_read_timeout,
-        write=settings.http_write_timeout,
-        pool=settings.http_connect_timeout,
-    )
-    client = MiniMaxSpeechClient(
-        api_key=settings.minimax_api_key,
-        region=settings.minimax_tts_region,
-        proxy=settings.minimax_proxy,
-        timeout=timeout,
-    )
     try:
-        audio = await client.synthesize(request_data)
-    except MiniMaxSpeechError as exc:
+        audio = await services.speech.synthesize(
+            request_data.upstream_payload(),
+            settings,
+        )
+    except SpeechSynthesisError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return Response(content=audio, media_type=request_data.media_type)
 

@@ -99,19 +99,14 @@ def test_speech_requires_minimax_api_key():
 
 
 def test_speech_returns_decoded_audio_from_selected_region():
+    speech_service = MagicMock()
+    speech_service.synthesize = AsyncMock(return_value=b"RIFF")
     speech_app = create_test_app(
-        Settings(MINIMAX_API_KEY="test-key", MINIMAX_TTS_REGION="china")
+        Settings(MINIMAX_API_KEY="test-key", MINIMAX_TTS_REGION="china"),
+        speech=speech_service,
     )
-    speech_client = MagicMock()
-    speech_client.synthesize = AsyncMock(return_value=b"RIFF")
 
-    with (
-        patch(
-            "free_claude_code.api.routes.MiniMaxSpeechClient",
-            return_value=speech_client,
-        ) as client_type,
-        TestClient(speech_app) as test_client,
-    ):
+    with TestClient(speech_app) as test_client:
         response = test_client.post(
             "/v1/audio/speech",
             json={
@@ -124,7 +119,30 @@ def test_speech_returns_decoded_audio_from_selected_region():
     assert response.status_code == 200
     assert response.content == b"RIFF"
     assert response.headers["content-type"] == "audio/wav"
-    assert client_type.call_args.kwargs["region"] == "china"
+    request, settings = speech_service.synthesize.call_args.args
+    assert request["audio_setting"]["format"] == "wav"
+    assert settings.minimax_tts_region == "china"
+
+
+def test_speech_rejects_unsupported_audio_format():
+    speech_service = MagicMock()
+    speech_app = create_test_app(
+        Settings(MINIMAX_API_KEY="test-key"),
+        speech=speech_service,
+    )
+
+    with TestClient(speech_app) as speech_client:
+        response = speech_client.post(
+            "/v1/audio/speech",
+            json={
+                "model": "speech-2.8-hd",
+                "text": "Hello",
+                "audio_setting": {"format": "not-a-real-audio-format"},
+            },
+        )
+
+    assert response.status_code == 422
+    speech_service.synthesize.assert_not_called()
 
 
 def test_models_list(client: TestClient):

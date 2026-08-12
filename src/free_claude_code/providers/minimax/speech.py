@@ -1,10 +1,13 @@
 """MiniMax synchronous text-to-speech transport and response parsing."""
 
 import json
+from collections.abc import Mapping
 from typing import Any, Final, Literal
 
 import httpx
-from pydantic import BaseModel, ConfigDict, Field
+
+from free_claude_code.application.errors import SpeechSynthesisError
+from free_claude_code.config.settings import Settings
 
 MINIMAX_TTS_ENDPOINTS: Final = {
     "global": "https://api.minimax.io/v1/t2a_v2",
@@ -20,52 +23,10 @@ MINIMAX_SPEECH_MODELS: Final = (
     "speech-01-hd",
     "speech-01-turbo",
 )
-_AUDIO_MEDIA_TYPES: Final = {
-    "mp3": "audio/mpeg",
-    "wav": "audio/wav",
-    "flac": "audio/flac",
-    "pcm": "audio/L16",
-}
 
 
-class MiniMaxSpeechError(RuntimeError):
+class MiniMaxSpeechError(SpeechSynthesisError):
     """A safe speech synthesis failure without upstream response contents."""
-
-
-class MiniMaxSpeechRequest(BaseModel):
-    """Supported request fields for the synchronous MiniMax T2A operation."""
-
-    model_config = ConfigDict(extra="forbid")
-
-    model: Literal[
-        "speech-2.8-hd",
-        "speech-2.8-turbo",
-        "speech-2.6-hd",
-        "speech-2.6-turbo",
-        "speech-02-hd",
-        "speech-02-turbo",
-        "speech-01-hd",
-        "speech-01-turbo",
-    ] = "speech-2.8-hd"
-    text: str = Field(min_length=1, max_length=10_000)
-    stream: bool = False
-    language_boost: str | None = None
-    output_format: Literal["hex"] = "hex"
-    voice_setting: dict[str, Any] | None = None
-    pronunciation_dict: dict[str, Any] | None = None
-    audio_setting: dict[str, Any] | None = None
-    voice_modify: dict[str, Any] | None = None
-    subtitle_enable: bool | None = None
-
-    @property
-    def media_type(self) -> str:
-        """Return the response media type requested through ``audio_setting``."""
-        audio_format = (self.audio_setting or {}).get("format", "mp3")
-        return _AUDIO_MEDIA_TYPES.get(str(audio_format), "application/octet-stream")
-
-    def upstream_payload(self) -> dict[str, Any]:
-        """Serialize only documented request fields for the upstream API."""
-        return self.model_dump(exclude_none=True)
 
 
 class MiniMaxSpeechClient:
@@ -93,7 +54,7 @@ class MiniMaxSpeechClient:
         """Return the selected regional endpoint."""
         return self._endpoint
 
-    async def synthesize(self, request: MiniMaxSpeechRequest) -> bytes:
+    async def synthesize(self, payload: Mapping[str, Any]) -> bytes:
         """Generate audio and decode non-streaming JSON or streaming SSE chunks."""
         try:
             async with httpx.AsyncClient(
@@ -107,7 +68,7 @@ class MiniMaxSpeechClient:
                         "Authorization": f"Bearer {self._api_key}",
                         "Content-Type": "application/json",
                     },
-                    json=request.upstream_payload(),
+                    json=dict(payload),
                 )
                 response.raise_for_status()
         except httpx.HTTPError as exc:
@@ -136,6 +97,29 @@ class MiniMaxSpeechClient:
         if not terminal or not audio_parts:
             raise MiniMaxSpeechError("MiniMax returned an incomplete speech response.")
         return b"".join(audio_parts)
+
+
+class MiniMaxSpeechService:
+    """Construct request-scoped MiniMax clients from the current settings."""
+
+    async def synthesize(
+        self,
+        payload: Mapping[str, Any],
+        settings: Settings,
+    ) -> bytes:
+        timeout = httpx.Timeout(
+            connect=settings.http_connect_timeout,
+            read=settings.http_read_timeout,
+            write=settings.http_write_timeout,
+            pool=settings.http_connect_timeout,
+        )
+        client = MiniMaxSpeechClient(
+            api_key=settings.minimax_api_key,
+            region=settings.minimax_tts_region,
+            proxy=settings.minimax_proxy,
+            timeout=timeout,
+        )
+        return await client.synthesize(payload)
 
 
 def _response_payloads(response: httpx.Response) -> list[dict[str, Any]]:

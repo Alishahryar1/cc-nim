@@ -4,12 +4,12 @@ from .speech import (
     MINIMAX_TTS_ENDPOINTS,
     MiniMaxSpeechClient,
     MiniMaxSpeechError,
-    MiniMaxSpeechRequest,
+    MiniMaxSpeechService,
 )
 
 __all__ = [
     "MINIMAX_TTS_ENDPOINTS",
     "MiniMaxSpeechClient",
     "MiniMaxSpeechError",
-    "MiniMaxSpeechRequest",
+    "MiniMaxSpeechService",
 ]

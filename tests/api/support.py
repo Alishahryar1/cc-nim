@@ -5,10 +5,11 @@ from collections.abc import Mapping, MutableMapping
 from fastapi import FastAPI
 
 from free_claude_code.api.app import create_app
-from free_claude_code.api.ports import ApiServices
+from free_claude_code.api.ports import ApiServices, SpeechSynthesisPort
 from free_claude_code.application.connected_accounts import ConnectedAccountPort
 from free_claude_code.config.settings import Settings
 from free_claude_code.providers.base import BaseProvider
+from free_claude_code.providers.minimax import MiniMaxSpeechService
 from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.runtime.application import ApplicationRuntime, RestartCallback
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
@@ -20,6 +21,7 @@ def create_test_app(
     providers: MutableMapping[str, BaseProvider] | None = None,
     restart_callback: RestartCallback | None = None,
     connected_accounts: Mapping[str, ConnectedAccountPort] | None = None,
+    speech: SpeechSynthesisPort | None = None,
 ) -> FastAPI:
     """Build an API app with explicit in-memory runtime services."""
     settings = settings or Settings()
@@ -57,6 +59,7 @@ def create_test_app(
             requests=manager,
             admin=runtime,
             tasks=runtime,
+            speech=speech or MiniMaxSpeechService(),
         )
     )
 

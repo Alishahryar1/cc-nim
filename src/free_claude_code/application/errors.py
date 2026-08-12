@@ -39,3 +39,10 @@ class ApplicationUnavailableError(ApplicationError):
 
     kind = FailureKind.UNAVAILABLE
     status_code = 503
+
+
+class SpeechSynthesisError(ApplicationError):
+    """An upstream speech request failed without exposing response contents."""
+
+    kind = FailureKind.UPSTREAM
+    status_code = 502
