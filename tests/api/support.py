@@ -8,6 +8,7 @@ from free_claude_code.api.app import create_app
 from free_claude_code.api.ports import ApiServices
 from free_claude_code.application.connected_accounts import ConnectedAccountPort
 from free_claude_code.config.settings import Settings
+from free_claude_code.providers.anthropic_tokens import count_tokens_via_anthropic_api
 from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.runtime.application import ApplicationRuntime, RestartCallback
@@ -57,6 +58,7 @@ def create_test_app(
             requests=manager,
             admin=runtime,
             tasks=runtime,
+            exact_token_counter=count_tokens_via_anthropic_api,
         )
     )
 

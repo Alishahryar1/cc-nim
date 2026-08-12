@@ -1,7 +1,5 @@
 """Anthropic token-count API product flow."""
 
-from collections.abc import Callable
-
 from fastapi import HTTPException
 from loguru import logger
 
@@ -12,7 +10,11 @@ from free_claude_code.api.request_errors import (
 )
 from free_claude_code.api.request_ids import new_request_id
 from free_claude_code.application.errors import ApplicationError
-from free_claude_code.application.execution import TokenCounter
+from free_claude_code.application.execution import (
+    AnthropicTokenCountUnavailable,
+    ExactTokenCounter,
+    TokenCounter,
+)
 from free_claude_code.application.routing import ModelRouter, RoutedTokenCountRequest
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import (
@@ -23,12 +25,6 @@ from free_claude_code.core.anthropic import (
 )
 from free_claude_code.core.diagnostics import safe_exception_message
 from free_claude_code.core.trace import trace_event
-from free_claude_code.providers.anthropic_tokens import (
-    AnthropicTokenCountUnavailable,
-    count_tokens_via_anthropic_api,
-)
-
-ExactTokenCounter = Callable[..., int]
 
 
 class TokenCountHandler:
@@ -40,7 +36,7 @@ class TokenCountHandler:
         *,
         model_router: ModelRouter | None = None,
         token_counter: TokenCounter = get_token_count,
-        exact_token_counter: ExactTokenCounter = count_tokens_via_anthropic_api,
+        exact_token_counter: ExactTokenCounter | None = None,
     ) -> None:
         self._settings = settings
         self._model_router = model_router or ModelRouter(settings)
@@ -101,7 +97,7 @@ class TokenCountHandler:
     ) -> int:
         """Prefer an exact Anthropic-API count; fall back to the local estimate."""
         api_key = self._settings.anthropic_api_key.strip()
-        if api_key:
+        if api_key and self._exact_token_counter is not None:
             try:
                 return self._exact_token_counter(
                     api_key=api_key,

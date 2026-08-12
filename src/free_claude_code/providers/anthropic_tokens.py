@@ -5,18 +5,17 @@ from typing import Any
 import httpx
 from loguru import logger
 
+from free_claude_code.application.execution import AnthropicTokenCountUnavailable
 from free_claude_code.core.anthropic.models import Message, SystemContent, Tool
 from free_claude_code.core.diagnostics import (
     exception_cause_types,
     safe_exception_message,
 )
 
+__all__ = ["AnthropicTokenCountUnavailable", "count_tokens_via_anthropic_api"]
+
 _COUNT_TOKENS_URL = "https://api.anthropic.com/v1/messages/count_tokens"
 _ANTHROPIC_VERSION = "2023-06-01"
-
-
-class AnthropicTokenCountUnavailable(Exception):
-    """Raised when the exact Anthropic token count is unavailable."""
 
 
 def count_tokens_via_anthropic_api(

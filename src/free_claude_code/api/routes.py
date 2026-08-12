@@ -149,10 +149,15 @@ async def count_tokens(
     request: Request,
     request_data: TokenCountRequest,
     settings: Settings = Depends(get_settings),
+    services: ApiServices = Depends(get_services),
     _auth=Depends(require_proxy_auth),
 ):
     """Count tokens for a request."""
-    handler = TokenCountHandler(settings, token_counter=get_token_count)
+    handler = TokenCountHandler(
+        settings,
+        token_counter=get_token_count,
+        exact_token_counter=services.exact_token_counter,
+    )
     return await asyncio.to_thread(
         handler.count, request_data, request_id=get_request_id(request)
     )

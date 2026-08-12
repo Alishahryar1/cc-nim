@@ -25,7 +25,10 @@ from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import ReasoningPolicy
-from free_claude_code.providers.anthropic_tokens import AnthropicTokenCountUnavailable
+from free_claude_code.providers.anthropic_tokens import (
+    AnthropicTokenCountUnavailable,
+    count_tokens_via_anthropic_api,
+)
 
 _CLASSIFIER_SYSTEM = (
     "You are a security monitor. Respond with <block>yes</block> or <block>no</block>."
@@ -690,8 +693,13 @@ def test_token_count_handler_exact_counter_receives_original_request_fields() ->
 
 
 def test_token_count_handler_default_wiring_calls_real_anthropic_api() -> None:
-    """Without an override, the handler calls the real Anthropic SDK client."""
-    handler = TokenCountHandler(Settings(ANTHROPIC_API_KEY="sk-test"))
+    """Wired with the real exact counter, the handler calls the real Anthropic
+    SDK client (production wiring happens in runtime/bootstrap.py, not as a
+    class-level default, so the api package stays provider-free)."""
+    handler = TokenCountHandler(
+        Settings(ANTHROPIC_API_KEY="sk-test"),
+        exact_token_counter=count_tokens_via_anthropic_api,
+    )
 
     with patch(
         "free_claude_code.providers.anthropic_tokens.httpx.Client"

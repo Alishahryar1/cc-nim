@@ -12,6 +12,7 @@ from free_claude_code.config.settings import Settings
 from free_claude_code.messaging.transcription import TranscriptionService
 from free_claude_code.messaging.voice import Transcriber
 from free_claude_code.providers.admission import ProviderAdmissionController
+from free_claude_code.providers.anthropic_tokens import count_tokens_via_anthropic_api
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.nvidia_nim.voice import NvidiaNimTranscriber
 from free_claude_code.providers.openai_codex import (
@@ -64,6 +65,7 @@ def build_asgi_app(
         requests=provider_manager,
         admin=runtime,
         tasks=runtime,
+        exact_token_counter=count_tokens_via_anthropic_api,
     )
     return RuntimeASGIApp(create_app(services), runtime)
 
