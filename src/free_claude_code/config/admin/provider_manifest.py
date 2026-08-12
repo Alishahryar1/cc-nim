@@ -92,6 +92,13 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
         "label": "Fireworks API Key",
         "description": "Fireworks AI inference API key.",
     },
+    "NOVITA_API_KEY": {
+        "label": "Novita AI API Key",
+        "description": (
+            "Novita AI OpenAI-compatible API key (create at "
+            "[novita.ai/settings/key-management](https://novita.ai/settings/key-management))."
+        ),
+    },
     "MINIMAX_API_KEY": {
         "label": "MiniMax API Key",
         "description": (
@@ -130,6 +137,28 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "[OpenAI compatibility docs](https://console.groq.com/docs/openai)."
         ),
     },
+    "XAI_API_KEY": {
+        "label": "xAI API Key",
+        "description": (
+            "xAI OpenAI-compatible API key for Grok chat and image-understanding "
+            "models."
+        ),
+    },
+    "QWENCLOUD_API_KEY": {
+        "label": "QwenCloud Token Plan API Key",
+        "description": (
+            "Dedicated QwenCloud Token Plan key (sk-sp-...). Token Plan, Coding "
+            "Plan, and pay-as-you-go keys use separate endpoints and cannot be "
+            "mixed."
+        ),
+    },
+    "TOGETHER_API_KEY": {
+        "label": "Together AI API Key",
+        "description": (
+            "Together AI OpenAI-compatible API key for serverless and dedicated "
+            "chat models."
+        ),
+    },
     "SAMBANOVA_API_KEY": {
         "label": "SambaNova API Key",
         "description": (
@@ -160,6 +189,19 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
         "description": (
             "TokenRouter OpenAI-compatible Chat Completions base URL. "
             "Defaults to https://api.tokenrouter.com/v1."
+        ),
+    },
+    "NARAROUTE_API_KEY": {
+        "label": "NaraRoute API Key",
+        "description": (
+            "NaraRoute OpenAI-compatible gateway API key for router.bynara.id/v1. "
+            "Keys begin with sk-nry-; create one at router.bynara.id/keys."
+        ),
+    },
+    "NARAROUTE_BASE_URL": {
+        "description": (
+            "NaraRoute OpenAI-compatible Chat Completions base URL. "
+            "Defaults to https://router.bynara.id/v1."
         ),
     },
 }

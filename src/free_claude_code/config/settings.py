@@ -15,6 +15,7 @@ from .env_files import (
 from .nim import NimSettings
 from .provider_catalog import (
     BEDROCK_DEFAULT_BASE,
+    NARAROUTE_DEFAULT_BASE,
     SUPPORTED_PROVIDER_IDS,
     TOKENROUTER_DEFAULT_BASE,
 )
@@ -150,8 +151,18 @@ class Settings(BaseSettings):
         default="", validation_alias="ANTHROPIC_COMPATIBLE_PROXY"
     )
 
+    # ==================== NaraRoute Config ====================
+    nararoute_api_key: str = Field(default="", validation_alias="NARAROUTE_API_KEY")
+    nararoute_base_url: str = Field(
+        default=NARAROUTE_DEFAULT_BASE,
+        validation_alias="NARAROUTE_BASE_URL",
+    )
+
     # ==================== Fireworks AI Config ====================
     fireworks_api_key: str = Field(default="", validation_alias="FIREWORKS_API_KEY")
+
+    # ==================== Novita AI Config ====================
+    novita_api_key: str = Field(default="", validation_alias="NOVITA_API_KEY")
 
     # ==================== Cloudflare Workers AI Config ====================
     cloudflare_api_token: str = Field(
@@ -170,6 +181,15 @@ class Settings(BaseSettings):
 
     # ==================== Groq (OpenAI-compatible) ====================
     groq_api_key: str = Field(default="", validation_alias="GROQ_API_KEY")
+
+    # ==================== xAI / Grok (OpenAI-compatible) ====================
+    xai_api_key: str = Field(default="", validation_alias="XAI_API_KEY")
+
+    # ==================== QwenCloud Token Plan (OpenAI-compatible) ====================
+    qwencloud_api_key: str = Field(default="", validation_alias="QWENCLOUD_API_KEY")
+
+    # ==================== Together AI (OpenAI-compatible) ====================
+    together_api_key: str = Field(default="", validation_alias="TOGETHER_API_KEY")
 
     # ==================== Cerebras Inference (OpenAI-compatible) ====================
     cerebras_api_key: str = Field(default="", validation_alias="CEREBRAS_API_KEY")
@@ -224,6 +244,9 @@ class Settings(BaseSettings):
 
     # ==================== Per-Provider Proxy ====================
     openai_proxy: str = Field(default="", validation_alias="OPENAI_PROXY")
+    xai_proxy: str = Field(default="", validation_alias="XAI_PROXY")
+    qwencloud_proxy: str = Field(default="", validation_alias="QWENCLOUD_PROXY")
+    together_proxy: str = Field(default="", validation_alias="TOGETHER_PROXY")
     azure_openai_proxy: str = Field(default="", validation_alias="AZURE_OPENAI_PROXY")
     nvidia_nim_proxy: str = Field(default="", validation_alias="NVIDIA_NIM_PROXY")
     open_router_proxy: str = Field(default="", validation_alias="OPENROUTER_PROXY")
@@ -248,7 +271,9 @@ class Settings(BaseSettings):
     kilo_proxy: str = Field(default="", validation_alias="KILO_PROXY")
     zai_proxy: str = Field(default="", validation_alias="ZAI_PROXY")
     tokenrouter_proxy: str = Field(default="", validation_alias="TOKENROUTER_PROXY")
+    nararoute_proxy: str = Field(default="", validation_alias="NARAROUTE_PROXY")
     fireworks_proxy: str = Field(default="", validation_alias="FIREWORKS_PROXY")
+    novita_proxy: str = Field(default="", validation_alias="NOVITA_PROXY")
     cloudflare_proxy: str = Field(default="", validation_alias="CLOUDFLARE_PROXY")
     gemini_proxy: str = Field(default="", validation_alias="GEMINI_PROXY")
     vertex_proxy: str = Field(default="", validation_alias="VERTEX_PROXY")

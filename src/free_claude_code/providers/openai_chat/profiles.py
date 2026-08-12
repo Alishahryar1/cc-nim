@@ -55,6 +55,16 @@ _KIMI_CODE_EFFORTS = (
 
 
 @dataclass(frozen=True, slots=True)
+class OpenAIModelListing:
+    """Declarative model-list endpoint and response shape."""
+
+    path: str | None = None
+    collection_field: str | None = "data"
+    aliases_field: str | None = None
+    field_equals: tuple[str, str] | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class OpenAIChatProfile:
     """Immutable transport and reasoning behavior for one provider."""
 
@@ -62,6 +72,7 @@ class OpenAIChatProfile:
     reasoning: ReasoningEncoder
     postprocessors: tuple[OpenAIChatPostprocessor, ...] = ()
     model_ids_are_routable: bool = True
+    model_listing: OpenAIModelListing = OpenAIModelListing()
     normalize_base_url: bool = False
     reasoning_delta_field: Literal["reasoning_content", "reasoning"] = (
         "reasoning_content"
@@ -139,6 +150,41 @@ def _policy(
 
 
 OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
+    "xai": OpenAIChatProfile(
+        _policy(
+            "XAI",
+            ReasoningReplayMode.REASONING_CONTENT,
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        NO_REASONING,
+        model_listing=OpenAIModelListing(
+            path="/language-models",
+            collection_field="models",
+            aliases_field="aliases",
+        ),
+    ),
+    "qwencloud": OpenAIChatProfile(
+        _policy(
+            "QWENCLOUD",
+            ReasoningReplayMode.REASONING_CONTENT,
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        NO_REASONING,
+    ),
+    "together": OpenAIChatProfile(
+        _policy(
+            "TOGETHER",
+            ReasoningReplayMode.REASONING,
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        NO_REASONING,
+        model_listing=OpenAIModelListing(
+            path="/models",
+            collection_field=None,
+            field_equals=("type", "chat"),
+        ),
+        reasoning_delta_field="reasoning",
+    ),
     "azure_openai": OpenAIChatProfile(
         _policy(
             "AZURE_OPENAI",
@@ -315,6 +361,22 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             budget_field="reasoning_effort",
         ),
     ),
+    "novita": OpenAIChatProfile(
+        _policy(
+            "NOVITA",
+            ReasoningReplayMode.REASONING_CONTENT,
+            include_extra_body=True,
+            extra_body_validator=validate_extra_body_does_not_override_reasoning_fields,
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        NamedEffortReasoning(
+            (),
+            disabled_value=False,
+            enabled_value=True,
+            field="enable_thinking",
+            use_extra_body=True,
+        ),
+    ),
     "zai": OpenAIChatProfile(
         _policy(
             "ZAI",
@@ -327,6 +389,17 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         ThinkingObjectReasoning(
             enabled={"type": "enabled", "clear_thinking": False},
             disabled={"type": "disabled"},
+        ),
+    ),
+    "nararoute": OpenAIChatProfile(
+        _policy(
+            "NARAROUTE",
+            ReasoningReplayMode.DISABLED,
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        NamedEffortReasoning(
+            _LOW_MEDIUM_HIGH,
+            enabled_value="medium",
         ),
     ),
     "ollama_cloud": OpenAIChatProfile(

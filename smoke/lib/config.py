@@ -70,11 +70,16 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "gemini": "gemini/models/gemini-3.1-flash-lite",
     "vertex": "vertex/google/gemini-3.5-flash",
     "groq": "groq/llama-3.3-70b-versatile",
+    "xai": "xai/grok-4.5",
+    "qwencloud": "qwencloud/qwen3.7-plus",
+    "together": "together/zai-org/GLM-5.2",
     "sambanova": "sambanova/Meta-Llama-3.3-70B-Instruct",
     "kilo": "kilo/kilo-auto/free",
     "cerebras": "cerebras/llama3.1-8b",
+    "novita": "novita/deepseek/deepseek-v4-flash-0731",
     "cloudflare": "cloudflare/@cf/moonshotai/kimi-k2.6",
     "tokenrouter": "tokenrouter/moonshotai/kimi-k3-free",
+    "nararoute": "nararoute/kimi-k3-free",
 }
 MISTRAL_REASONING_SMOKE_DEFAULT_MODEL = "mistral/mistral-medium-3-5"
 

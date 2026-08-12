@@ -18,6 +18,7 @@ MINIMAX_DEFAULT_BASE = "https://api.minimax.io/v1"
 # DeepSeek Chat Completions API; cache usage is reported on this endpoint.
 DEEPSEEK_DEFAULT_BASE = "https://api.deepseek.com"
 FIREWORKS_DEFAULT_BASE = "https://api.fireworks.ai/inference/v1"
+NOVITA_DEFAULT_BASE = "https://api.novita.ai/openai/v1"
 # Cloudflare account-scoped AI REST root; provider appends /accounts/{id}/ai/v1.
 CLOUDFLARE_AI_REST_ROOT = "https://api.cloudflare.com/client/v4"
 OPENROUTER_DEFAULT_BASE = "https://openrouter.ai/api/v1"
@@ -49,6 +50,14 @@ SAMBANOVA_DEFAULT_BASE = "https://api.sambanova.ai/v1"
 # Kilo.ai gateway OpenAI-compatible Chat Completions API.
 KILO_DEFAULT_BASE = "https://api.kilo.ai/api/gateway"
 OPENAI_CODEX_DEFAULT_BASE = "https://chatgpt.com/backend-api/codex"
+# xAI OpenAI-compatible Chat Completions API.
+XAI_DEFAULT_BASE = "https://api.x.ai/v1"
+# QwenCloud Token Plan OpenAI-compatible Chat Completions API.
+QWENCLOUD_DEFAULT_BASE = (
+    "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+)
+# Together AI OpenAI-compatible Chat Completions API.
+TOGETHER_DEFAULT_BASE = "https://api.together.ai/v1"
 # TokenRouter OpenAI-compatible Chat Completions gateway.
 TOKENROUTER_DEFAULT_BASE = "https://api.tokenrouter.com/v1"
 ANTIGRAVITY_DEFAULT_BASE = "https://cloudcode-pa.googleapis.com"
@@ -57,6 +66,8 @@ COMMANDCODE_DEFAULT_BASE = "https://api.commandcode.ai/provider/v1"
 ALIBABA_DEFAULT_BASE = "https://dashscope-intl.aliyuncs.com/compatible-mode/v1"
 OPENAI_COMPATIBLE_DEFAULT_BASE = "https://api.openai.com/v1"
 ANTHROPIC_COMPATIBLE_DEFAULT_BASE = "https://api.anthropic.com/v1"
+# NaraRoute OpenAI-compatible Chat Completions gateway.
+NARAROUTE_DEFAULT_BASE = "https://router.bynara.id/v1"
 
 
 class ProviderAuthKind(StrEnum):
@@ -128,6 +139,33 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         auth_kind=ProviderAuthKind.CONNECTED_ACCOUNT,
         default_base_url=OPENAI_CODEX_DEFAULT_BASE,
         proxy_attr="openai_proxy",
+    ),
+    "xai": ProviderDescriptor(
+        provider_id="xai",
+        display_name="xAI (Grok)",
+        credential_env="XAI_API_KEY",
+        credential_url="https://console.x.ai/team/default/api-keys",
+        credential_attr="xai_api_key",
+        default_base_url=XAI_DEFAULT_BASE,
+        proxy_attr="xai_proxy",
+    ),
+    "qwencloud": ProviderDescriptor(
+        provider_id="qwencloud",
+        display_name="QwenCloud Token Plan",
+        credential_env="QWENCLOUD_API_KEY",
+        credential_url="https://home.qwencloud.com/api-keys",
+        credential_attr="qwencloud_api_key",
+        default_base_url=QWENCLOUD_DEFAULT_BASE,
+        proxy_attr="qwencloud_proxy",
+    ),
+    "together": ProviderDescriptor(
+        provider_id="together",
+        display_name="Together AI",
+        credential_env="TOGETHER_API_KEY",
+        credential_url="https://api.together.ai/settings/api-keys",
+        credential_attr="together_api_key",
+        default_base_url=TOGETHER_DEFAULT_BASE,
+        proxy_attr="together_proxy",
     ),
     "azure_openai": ProviderDescriptor(
         provider_id="azure_openai",
@@ -324,6 +362,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         default_base_url=FIREWORKS_DEFAULT_BASE,
         proxy_attr="fireworks_proxy",
     ),
+    "novita": ProviderDescriptor(
+        provider_id="novita",
+        display_name="Novita AI",
+        credential_env="NOVITA_API_KEY",
+        credential_url="https://novita.ai/settings/key-management",
+        credential_attr="novita_api_key",
+        default_base_url=NOVITA_DEFAULT_BASE,
+        proxy_attr="novita_proxy",
+    ),
     "cloudflare": ProviderDescriptor(
         provider_id="cloudflare",
         display_name="Cloudflare",
@@ -406,6 +453,16 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         default_base_url=ANTHROPIC_COMPATIBLE_DEFAULT_BASE,
         base_url_attr="anthropic_compatible_base_url",
         proxy_attr="anthropic_compatible_proxy",
+    ),
+    "nararoute": ProviderDescriptor(
+        provider_id="nararoute",
+        display_name="NaraRoute",
+        credential_env="NARAROUTE_API_KEY",
+        credential_url="https://router.bynara.id/keys",
+        credential_attr="nararoute_api_key",
+        default_base_url=NARAROUTE_DEFAULT_BASE,
+        base_url_attr="nararoute_base_url",
+        proxy_attr="nararoute_proxy",
     ),
     "ollama_cloud": ProviderDescriptor(
         provider_id="ollama_cloud",
