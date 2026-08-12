@@ -47,9 +47,9 @@ Maintenir le serveur proxy local free-claude-code à un niveau de qualité zéro
 - `main` : Branche principale qualifiée à 100% avec 2908 tests passés.
 
 ## 📈 Current Status
-- ✅ Done: Implémentation complète et qualification du provider Google Antigravity CLI comme Connected Account dans l'Admin UI (`v4.20.0`, 2908 tests passés à 100%).
+- ✅ Done: Publication et push complet de la version `v4.20.1` sur `origin/main` (`omni01-Cell/free-claude-code`) incluant la suite d'installateurs, la documentation Windows et la Connected Account Antigravity (2908 tests passés à 100%).
 - 🔄 In progress: Aucun projet bloquant en cours.
-- ⏳ Pending: Suivi continu et maintenance du proxy.
+- ⏳ Pending: Mises à jour amont à venir (`upstream/main`).
 
 ## 👉 Next Session Direction
-Maintenir le serveur proxy et répondre aux prochaines demandes d'évolutions.
+Récupérer et réconcilier les dernières mises à jour amont (`git fetch upstream` / rebase `upstream/main`), intégrer d'éventuels nouveaux providers ou correctifs amont sur le fork `omni01-Cell/free-claude-code`, et valider l'intégrité 100% CI avec `./scripts/ci.sh`.

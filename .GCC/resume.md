@@ -1,29 +1,23 @@
 # Session Handoff
 
 ## ⚡ Accomplishments This Session
-- **Correction et qualification des scripts d'installation du fork (`v4.20.1`)** :
-  1. Mise à jour de [`scripts/install.sh`](file:///home/omni/free-claude-code/scripts/install.sh) (`REPO_ARCHIVE_URL`) et [`scripts/install.ps1`](file:///home/omni/free-claude-code/scripts/install.ps1) (`$RepoArchiveUrl`) pour pointer directement sur les archives ZIP du fork `omni01-Cell/free-claude-code`.
-  2. Garantie d'installation automatique de 100% du code source du fork (providers Antigravity, AgentRouter, CommandCode, TokenRouter, Alibaba, OpenAI/Anthropic Compatible, lanceur `fcc-codex-desktop`).
-  3. Bump semver `v4.20.1` dans [`pyproject.toml`](file:///home/omni/free-claude-code/pyproject.toml) et mise à jour de [`uv.lock`](file:///home/omni/free-claude-code/uv.lock).
-  4. Validation 100% de la suite CI (`./scripts/ci.sh` : 2908 tests passés, 0 erreur, 0 avertissement).
+- **Publication & Push complet sur `origin/main` (`v4.20.1`)** :
+  1. Synchronisation et push des commits `v4.20.1` vers `origin/main` et `origin/upstream-sync` (`https://github.com/omni01-Cell/free-claude-code.git`).
+  2. Scripts d'installation [`scripts/install.sh`](file:///home/omni/free-claude-code/scripts/install.sh) et [`scripts/install.ps1`](file:///home/omni/free-claude-code/scripts/install.ps1) validés et pointant sur l'archive du fork `omni01-Cell`.
+  3. Guide complet d'utilisation Windows [`docs/WINDOWS_GUIDE.md`](file:///home/omni/free-claude-code/docs/WINDOWS_GUIDE.md) documentant le mode automatique (script) et le mode manuel source (`pip install -e .` / `uv sync`).
+  4. Integration Connected Account Google Antigravity CLI, lanceur `fcc-codex-desktop`, et suite CI 100% verte (2908 tests passés).
 
 ## 🛠️ Codebase Health & Compile Status
 - **Modified Files**:
-  - [`scripts/install.sh`](file:///home/omni/free-claude-code/scripts/install.sh)
-  - [`scripts/install.ps1`](file:///home/omni/free-claude-code/scripts/install.ps1)
-  - [`pyproject.toml`](file:///home/omni/free-claude-code/pyproject.toml)
-  - [`uv.lock`](file:///home/omni/free-claude-code/uv.lock)
-  - [`docs/WINDOWS_GUIDE.md`](file:///home/omni/free-claude-code/docs/WINDOWS_GUIDE.md)
   - [`.GCC/main.md`](file:///home/omni/free-claude-code/.GCC/main.md)
   - [`.GCC/resume.md`](file:///home/omni/free-claude-code/.GCC/resume.md)
-- **Verification Command Run**: `./scripts/ci.sh`
-- **Status Output**: `2908 passed, 69 skipped in 112.45s. All selected CI checks passed.`
+- **Verification Command Run**: `git push origin main`
+- **Status Output**: `6113f45..cef7bc2 main -> main (Clean)`
 
 ## 🚧 Unfinished Work & Friction Points
-- Aucun. Les scripts d'installation du fork téléchargeant désormais le paquet complet du projet `omni01-Cell`, toutes les fonctionnalités sont présevées et déployées à 100%.
+- Aucun. La version `v4.20.1` est entièrement déployée sur GitHub `omni01-Cell/free-claude-code`.
 
 ## 👉 Directives for the Next Agent
-1. **Target File**: [`scripts/install.ps1`](file:///home/omni/free-claude-code/scripts/install.ps1)
-2. **PR Amont**: Lors de la préparation d'une Pull Request vers `upstream/main`, créer une branche dédiée et restaurer les URL des scripts d'installation amont.
-3. **Immediate Action**: Attendre les nouvelles directives de l'utilisateur.
-4. **Precautions**: Conserver la suite de tests `./scripts/ci.sh` à 100% pour toute modification ultérieure.
+1. **Action principale** : Exécuter `git fetch upstream` pour récupérer les derniers commits amont depuis `Alishahryar1/free-claude-code`.
+2. **Rebase / Sync** : Réconcilier les nouveaux commits et nouveaux providers éventuels d'upstream sur la branche principale `main` du fork `omni01-Cell/free-claude-code`.
+3. **Validation CI** : Exécuter `./scripts/ci.sh` pour s'assurer que tous les tests (2900+) restent à 100% verts après l'intégration des mises à jour amont.
