@@ -7,35 +7,47 @@
 ## 🛠️ Step-by-Step Sequence
 
 ### Step 1: Switch to `upstream-sync` branch and sync with `main`
-- [ ] **Action**: `git checkout upstream-sync && git merge main`
-- [ ] **Verify**: `git status`
+- [x] **Action**: `git checkout upstream-sync && git merge main`
+- [x] **Verify**: `git status`
 - **Verification Proof**:
 ```text
-[Pending]
+Basculement sur la branche 'upstream-sync'
+Mise à jour cef7bc2..628e906
+Fast-forward
+ .GCC/branches/plan_upstream_sync.md | 43 +++++++++++++++++++++++++++++++++++++
+ .GCC/main.md                        | 10 ++++-----
+ .GCC/resume.md                      | 28 ++++++++++--------------
+ 3 files changed, 59 insertions(+), 22 deletions(-)
 ```
 
 ### Step 2: Merge `upstream/main` into `upstream-sync`
-- [ ] **Action**: `git merge upstream/main`
-- [ ] **Verify**: Check for conflicts; resolve if any exist cleanly.
+- [x] **Action**: `git merge upstream/main`
+- [x] **Verify**: Check for conflicts; resolve if any exist cleanly.
 - **Verification Proof**:
 ```text
-[Pending]
+[upstream-sync d13327b] Merge remote-tracking branch 'upstream/main' into upstream-sync
+Resolved conflicts in: pyproject.toml, src/free_claude_code/config/provider_catalog.py, src/free_claude_code/config/settings.py, tests/contracts/test_provider_catalog_order.py, tests/providers/test_provider_runtime.py, uv.lock.
 ```
 
 ### Step 3: Run full CI test suite and linters
-- [ ] **Action**: `./scripts/ci.sh`
-- [ ] **Verify**: 100% pass across all 5 check jobs (suppression grep, ruff-format, ruff-check, ty, pytest).
+- [x] **Action**: `./scripts/ci.sh`
+- [x] **Verify**: 100% pass across all 5 check jobs (suppression grep, ruff-format, ruff-check, ty, pytest).
 - **Verification Proof**:
 ```text
-[Pending]
+==> Ban suppressions and legacy annotations
+==> ruff format: 546 files left unchanged
+==> ruff check --fix: All checks passed!
+==> ty check: All checks passed!
+==> pytest: 2968 passed, 69 skipped in 89.60s (0:01:29)
+All selected CI checks passed.
 ```
 
 ### Step 4: Merge `upstream-sync` into `main`, bump semver if needed, update `uv.lock`, and push to `origin`
-- [ ] **Action**: `git checkout main && git merge upstream-sync && git push origin main && git push origin upstream-sync`
-- [ ] **Verify**: `git status && git log -n 5 --oneline`
+- [x] **Action**: `git checkout main && git merge upstream-sync && git push origin main && git push origin upstream-sync`
+- [x] **Verify**: `git status && git log -n 5 --oneline`
 - **Verification Proof**:
 ```text
-[Pending]
+Merged upstream-sync into main successfully and pushed to origin/main and origin/upstream-sync.
 ```
 
 ## ⚠️ Mitigations & Edge Cases
