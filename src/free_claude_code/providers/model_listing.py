@@ -31,11 +31,13 @@ def extract_openai_model_infos(
     payload: Any,
     *,
     provider_name: str,
-    collection_field: str = "data",
+    collection_field: str | None = "data",
     aliases_field: str | None = None,
+    field_equals: tuple[str, str] | None = None,
 ) -> frozenset[_ProviderModelInfo]:
     """Extract routable IDs from an OpenAI-compatible model-list response."""
     model_ids: set[str] = set()
+    item_location = collection_field or "root-array"
     for item in model_list_items(
         payload,
         provider_name=provider_name,
@@ -45,15 +47,26 @@ def extract_openai_model_infos(
         if not isinstance(model_id, str) or not model_id.strip():
             raise _malformed(
                 provider_name,
-                f"expected every {collection_field} item to include id",
+                f"expected every {item_location} item to include id",
             )
+        if field_equals is not None:
+            field_name, expected_value = field_equals
+            field_value = _field(item, field_name)
+            if not isinstance(field_value, str):
+                raise _malformed(
+                    provider_name,
+                    f"expected every {item_location} item to include "
+                    f"string {field_name}",
+                )
+            if field_value != expected_value:
+                continue
         model_ids.add(model_id)
         if aliases_field is not None:
             aliases = _field(item, aliases_field)
             if not _is_sequence(aliases):
                 raise _malformed(
                     provider_name,
-                    f"expected every {collection_field} item to include "
+                    f"expected every {item_location} item to include "
                     f"{aliases_field} array",
                 )
             for alias in aliases:
@@ -103,14 +116,19 @@ def model_list_items(
     payload: Any,
     *,
     provider_name: str,
-    collection_field: str = "data",
+    collection_field: str | None = "data",
 ) -> tuple[Any, ...]:
     """Return a validated OpenAI-shaped model-list data array."""
-    data = _field(payload, collection_field)
+    data = payload if collection_field is None else _field(payload, collection_field)
     if not _is_sequence(data):
+        location = (
+            "root array"
+            if collection_field is None
+            else (f"top-level {collection_field} array")
+        )
         raise _malformed(
             provider_name,
-            f"expected top-level {collection_field} array",
+            f"expected {location}",
         )
     return tuple(data)
 

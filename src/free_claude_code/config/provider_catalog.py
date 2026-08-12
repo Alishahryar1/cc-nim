@@ -56,6 +56,8 @@ XAI_DEFAULT_BASE = "https://api.x.ai/v1"
 QWENCLOUD_DEFAULT_BASE = (
     "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
 )
+# Together AI OpenAI-compatible Chat Completions API.
+TOGETHER_DEFAULT_BASE = "https://api.together.ai/v1"
 # TokenRouter OpenAI-compatible Chat Completions gateway.
 TOKENROUTER_DEFAULT_BASE = "https://api.tokenrouter.com/v1"
 # NaraRoute OpenAI-compatible Chat Completions gateway.
@@ -149,6 +151,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="qwencloud_api_key",
         default_base_url=QWENCLOUD_DEFAULT_BASE,
         proxy_attr="qwencloud_proxy",
+    ),
+    "together": ProviderDescriptor(
+        provider_id="together",
+        display_name="Together AI",
+        credential_env="TOGETHER_API_KEY",
+        credential_url="https://api.together.ai/settings/api-keys",
+        credential_attr="together_api_key",
+        default_base_url=TOGETHER_DEFAULT_BASE,
+        proxy_attr="together_proxy",
     ),
     "azure_openai": ProviderDescriptor(
         provider_id="azure_openai",

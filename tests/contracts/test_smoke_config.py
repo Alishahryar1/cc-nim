@@ -55,6 +55,7 @@ def _settings(**overrides):
         "groq_api_key": "",
         "xai_api_key": "",
         "qwencloud_api_key": "",
+        "together_api_key": "",
         "sambanova_api_key": "",
         "cerebras_api_key": "",
         "ollama_api_key": "",
@@ -184,6 +185,23 @@ def test_qwencloud_provider_smoke_uses_current_coding_model(monkeypatch) -> None
 
     assert [model.provider for model in models] == ["qwencloud"]
     assert models[0].full_model == "qwencloud/qwen3.7-plus"
+    assert models[0].source == "provider_default"
+
+
+def test_together_provider_smoke_uses_current_coding_model(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_TOGETHER", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            together_api_key="together-key",
+        )
+    )
+
+    models = config.provider_smoke_models()
+
+    assert [model.provider for model in models] == ["together"]
+    assert models[0].full_model == "together/zai-org/GLM-5.2"
     assert models[0].source == "provider_default"
 
 

@@ -22,6 +22,7 @@ from free_claude_code.config.provider_catalog import (
     PROVIDER_CATALOG,
     QWENCLOUD_DEFAULT_BASE,
     SUPPORTED_PROVIDER_IDS,
+    TOGETHER_DEFAULT_BASE,
     TOKENROUTER_DEFAULT_BASE,
     VERCEL_AI_GATEWAY_DEFAULT_BASE,
     XAI_DEFAULT_BASE,
@@ -64,6 +65,7 @@ def _make_settings(**overrides):
     mock.open_router_api_key = "test_openrouter_key"
     mock.xai_api_key = "test_xai_key"
     mock.qwencloud_api_key = "test_qwencloud_key"
+    mock.together_api_key = "test_together_key"
     mock.mistral_api_key = "test_mistral_key"
     mock.codestral_api_key = "test_codestral_key"
     mock.deepseek_api_key = "test_deepseek_key"
@@ -129,6 +131,7 @@ def _make_settings(**overrides):
     mock.openai_proxy = ""
     mock.xai_proxy = ""
     mock.qwencloud_proxy = ""
+    mock.together_proxy = ""
     mock.azure_openai_proxy = ""
     mock.provider_rate_limit = 40
     mock.provider_rate_window = 60
@@ -232,6 +235,25 @@ def test_qwencloud_provider_config_uses_key_base_and_proxy() -> None:
     assert descriptor.credential_env == "QWENCLOUD_API_KEY"
     assert config.api_key == "qwencloud-token"
     assert config.base_url == QWENCLOUD_DEFAULT_BASE
+    assert config.proxy == "http://proxy.test:8080"
+    assert isinstance(provider, OpenAIChatProvider)
+
+
+def test_together_provider_config_uses_key_base_and_proxy() -> None:
+    descriptor = PROVIDER_CATALOG["together"]
+    settings = _make_settings(
+        together_api_key="together-token",
+        together_proxy="http://proxy.test:8080",
+    )
+
+    config = build_provider_config(descriptor, settings)
+    with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
+        provider = create_provider("together", settings)
+
+    assert descriptor.display_name == "Together AI"
+    assert descriptor.credential_env == "TOGETHER_API_KEY"
+    assert config.api_key == "together-token"
+    assert config.base_url == TOGETHER_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
 
@@ -529,6 +551,7 @@ def test_create_provider_instantiates_each_builtin():
         "openai": OpenAICodexProvider,
         "xai": OpenAIChatProvider,
         "qwencloud": OpenAIChatProvider,
+        "together": OpenAIChatProvider,
         "azure_openai": OpenAIChatProvider,
         "open_router": OpenRouterProvider,
         "mistral": MistralProvider,

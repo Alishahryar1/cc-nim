@@ -59,8 +59,9 @@ class OpenAIModelListing:
     """Declarative model-list endpoint and response shape."""
 
     path: str | None = None
-    collection_field: str = "data"
+    collection_field: str | None = "data"
     aliases_field: str | None = None
+    field_equals: tuple[str, str] | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -169,6 +170,20 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
         ),
         NO_REASONING,
+    ),
+    "together": OpenAIChatProfile(
+        _policy(
+            "TOGETHER",
+            ReasoningReplayMode.REASONING,
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        NO_REASONING,
+        model_listing=OpenAIModelListing(
+            path="/models",
+            collection_field=None,
+            field_equals=("type", "chat"),
+        ),
+        reasoning_delta_field="reasoning",
     ),
     "azure_openai": OpenAIChatProfile(
         _policy(

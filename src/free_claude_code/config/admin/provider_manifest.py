@@ -152,6 +152,13 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "mixed."
         ),
     },
+    "TOGETHER_API_KEY": {
+        "label": "Together AI API Key",
+        "description": (
+            "Together AI OpenAI-compatible API key for serverless and dedicated "
+            "chat models."
+        ),
+    },
     "SAMBANOVA_API_KEY": {
         "label": "SambaNova API Key",
         "description": (
