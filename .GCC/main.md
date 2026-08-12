@@ -1,6 +1,9 @@
 # Current Project Context
 
 ### 🏆 Major Milestones (Archived Epics)
+- 2026-08-12: Correction des URL d'archives d'installation dans [`scripts/install.sh`](file:///home/omni/free-claude-code/scripts/install.sh) et [`scripts/install.ps1`](file:///home/omni/free-claude-code/scripts/install.ps1) pointant directement sur le fork `omni01-Cell/free-claude-code`, garantissant l'installation de 100% des providers et fonctionnalités du fork. Bump version `v4.20.1`, mise à jour de `uv.lock` et validation 100% CI (2908 tests passés avec `./scripts/ci.sh`).
+- 2026-08-12: Enrichissement de la documentation Windows [`docs/WINDOWS_GUIDE.md`](file:///home/omni/free-claude-code/docs/WINDOWS_GUIDE.md) avec la totalité des fonctionnalités et providers personnalisés du fork `omni01-Cell/free-claude-code`.
+- 2026-08-12: Création de la documentation d'utilisation Windows complète dans [`docs/WINDOWS_GUIDE.md`](file:///home/omni/free-claude-code/docs/WINDOWS_GUIDE.md) couvrant l'installation PowerShell (`install.ps1`), le démarrage en System Tray et CLI (`fcc-server`), la configuration des clients (Claude Code CLI, Codex Desktop, VS Code, JetBrains), les variables et chemins `%USERPROFILE%`, ainsi que l'exécution CI (`ci.ps1`).
 - 2026-08-12: Intégration de Google Antigravity CLI en tant que Connected Account dans l'Admin UI (`v4.20.0`). Implémentation de `AntigravityAuthManager` (`ConnectedAccountPort`), déclaration `ProviderAuthKind.CONNECTED_ACCOUNT` dans `provider_catalog.py`, câblage dans `bootstrap.py` et validation 100% CI (2908 tests passés avec `./scripts/ci.sh`).
 - 2026-08-12: Lanceur hybride Codex Desktop / ChatGPT GUI (`fcc-codex-desktop`) v4.19.3. Résolution des exécutables officiels OpenAI Linux (`/usr/bin/chatgpt`, `/usr/lib/chatgpt/codex-launcher`, `/usr/lib/chatgpt/ChatGPT`), support des drapeaux `--setup` et `--reset`/`--restore`, et fallback persistant sans crash. Qualifié à 100% par la boucle d'agents Worker <-> Critic (2902 tests passés avec `./scripts/ci.sh`).
 - 2026-08-12: Résolution stricte de l'application GUI Codex Desktop dans `src/free_claude_code/cli/launchers/codex_desktop.py` avec élimination de tout fallback silencieux vers le CLI terminal `codex` (`/snap/bin/codex`, `CODEX_PATH`). Version `4.19.2`, 2902 tests validés à 100% avec `./scripts/ci.sh`.
@@ -24,6 +27,7 @@
 Maintenir le serveur proxy local free-claude-code à un niveau de qualité zéro-défaut pour Claude Code CLI et Codex, assurer la compatibilité multi-provider (y compris Google Antigravity CLI, AgentRouter, CommandCode, TokenRouter, Alibaba, OpenAI Compatible, Anthropic Compatible) et la conformité stricte aux garde-fous CI `./scripts/ci.sh`.
 
 ## 🧠 Decisions Made
+- 2026-08-12: **Procédure de Pull Request amont** : En vue d'une future PR vers le dépôt amont (`upstream/main`), une branche dédiée sera créée pour réinstaller/restaurer les URL d'archives d'installation d'origine tout en conservant les améliorations du fork sur la branche principale `main`.
 - 2026-08-12: Intégration de Google Antigravity comme `CONNECTED_ACCOUNT` dans `provider_catalog.py` et création du gestionnaire `AntigravityAuthManager` dans `src/free_claude_code/providers/antigravity/auth.py` gérant le flux OAuth 2.0 PKCE / Authorization Code sur serveur web loopback court `AntigravityBrowserAuthorization`.
 - 2026-08-12: Intégration des candidats d'exécutables officiels OpenAI Linux (`/usr/bin/chatgpt`, `/usr/lib/chatgpt/codex-launcher`, `/usr/lib/chatgpt/ChatGPT`) issus du paquet `chatgpt_amd64.deb` dans `resolve_codex_desktop_binary()`. Maintien de l'approche hybride éphémère / persistant avec drapeaux `--setup` et `--reset`/`--restore`.
 - 2026-08-12: Spécification du mode hybride éphémère / persistant pour `fcc-codex-desktop`. Lancement direct éphémère si le binaire GUI est présent. Si le binaire GUI n'est pas dans le PATH, basculement automatique sur le mode persistant avec message d'instruction en anglais et commande `--reset` pour annuler. Support explicite des drapeaux `--setup` et `--reset`/`--restore`.
@@ -39,6 +43,7 @@ Maintenir le serveur proxy local free-claude-code à un niveau de qualité zéro
   - **Rationale**: Re-localisation propre de tous les providers personnalisés (`antigravity`, `agent_router`, `command_code`, `token_router`, `alibaba`, `openai_compatible`, `anthropic_compatible`) et des couches transports sous `src/free_claude_code/providers/`, alignement complet des signatures de méthodes avec `BaseProvider` et `ProviderAdmissionController`, et correction des frontières d'importation AST pour satisfaire l'intégralité des 5 jobs CI du script `./scripts/ci.sh`.
 
 ## 🌿 Active Branches / Plans
+- `plan_fix_installer_tests` : Update installer unit test assertions in tests/scripts/test_installers.py to omni01-Cell
 - `main` : Branche principale qualifiée à 100% avec 2908 tests passés.
 
 ## 📈 Current Status
