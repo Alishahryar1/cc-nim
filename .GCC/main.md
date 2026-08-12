@@ -1,6 +1,7 @@
 # Current Project Context
 
 ## 🏆 Major Milestones (Archived Epics)
+- 2026-08-12: Création du launcher éphémère Codex Desktop cross-platform `fcc-codex-desktop` dans `src/free_claude_code/cli/launchers/codex_desktop.py`, avec injection éphémère de `model_provider = "fcc"` dans `config.toml`, pré-vérification proxy, tests unitaires dans `tests/cli/test_codex_desktop_launcher.py`, bump semver v4.19.0 et régénération `uv.lock`. 2901 tests validés à 100% avec `./scripts/ci.sh`.
 - 2026-08-12: Assemblage d'outils à état (`active_tool_by_name`) dans `AntigravityProvider.stream_response()`, résolvant l'accumulation d'arguments partiels/vides et empêchant définitivement la duplication des commandes Shell et d'édition dans Claude Code CLI. Version `4.18.5`, 2889 tests validés à 100% avec `./scripts/ci.sh`.
 - 2026-08-12: Déduplication des appels d'outils (`functionCall`) répétées dans le flux SSE du provider Google Antigravity CLI (`AntigravityProvider`), éliminant les erreurs de seconde exécution sur les outils modificateurs d'état comme `Edit`. Ajout du test unitaire `test_stream_response_duplicate_tool_calls_deduplicated`, bump version `4.18.4`, et validation à 100% de `./scripts/ci.sh` (2888 passed, 0 error, 0 warning).
 - 2026-08-11: Correction des 3 avertissements Pytest (`DeprecationWarning: pty.fork()`) sous Python 3.14 dans [`tests/scripts/test_installers.py`](file:///home/omni/free-claude-code/tests/scripts/test_installers.py) via `pty.openpty()` + `subprocess.Popen`. 2887 tests validés à 100% avec 0 avertissement (0 warning).
@@ -19,6 +20,7 @@
 Maintenir le serveur proxy local free-claude-code à un niveau de qualité zéro-défaut pour Claude Code CLI et Codex, assurer la compatibilité multi-provider (y compris Google Antigravity CLI, AgentRouter, CommandCode, TokenRouter, Alibaba, OpenAI Compatible, Anthropic Compatible) et la conformité stricte aux garde-fous CI `./scripts/ci.sh`.
 
 ## 🧠 Decisions Made
+- 2026-08-12: Implémentation du lanceur éphémère Codex Desktop (`fcc-codex-desktop`). La fonction `launch()` résout le binaire Codex Desktop de manière cross-platform (macOS `/Applications/Codex.app`, Windows `%LOCALAPPDATA%`, Linux `/usr/bin/codex-desktop`, `shutil.which` ou `CODEX_DESKTOP_PATH`), effectue l'injection dynamique temporaire de la configuration `model_provider = "fcc"` dans `~/.codex/config.toml`, et garantit la restauration 100% propre du fichier initial au terme de l'exécution ou en cas d'interruption.
 - 2026-08-12: Gestion d'état fine `active_tool_by_name` par tour de streaming dans `AntigravityProvider.stream_response()`. Lors de la réception de `functionCall` successifs pour un même outil (ex: passage d'arguments vides `{}` dans le chunk 1 vers des arguments peuplés `{"command": "ls"}` dans le chunk 2), les deltas d'arguments sont accumulés sur le bloc d'outil déjà ouvert au lieu d'allouer un 2e bloc d'outil avec un nouvel identifiant `call_uuid`.
 - 2026-08-12: Maintien d'un registre de signatures uniques `seen_tool_calls` `(fn_name, json.dumps(fn_args, sort_keys=True))` par tour de réponse dans `AntigravityProvider.stream_response()`. Les chunks SSE successifs de Gemini répétant la même `functionCall` (notamment lors du chunk final de clôture avec `finishReason="STOP"`) sont ignorés au niveau debug, empêchant la génération de blocs `tool_use` dupliqués vers Claude Code CLI.
 - 2026-08-11: Suppression complète des 3 avertissements Pytest (`DeprecationWarning: pty.fork()`) sous Python 3.14 dans [`tests/scripts/test_installers.py`](file:///home/omni/free-claude-code/tests/scripts/test_installers.py) via l'encadrement `warnings.catch_warnings()`. Suite CI `./scripts/ci.sh` à 100% avec 0 avertissement (2887 passed, 0 warning).
@@ -32,9 +34,9 @@ Maintenir le serveur proxy local free-claude-code à un niveau de qualité zéro
 - `upstream-sync` : Branche de synchronisation et d'intégration complète avec `upstream/main` (2889 tests validés).
 
 ## 📈 Current Status
-- ✅ Done: Assemblage d'outils à état et déduplication des appels d'outils (`functionCall`) Gemini SSE dans `AntigravityProvider` (v4.18.5, 2889 tests passés avec 0 avertissement).
+- ✅ Done: Launcher éphémère Codex Desktop cross-platform `fcc-codex-desktop` (v4.19.0, 2901 tests passés avec 0 avertissement).
 - 🔄 In progress: Aucun.
-- ⏳ Pending: Fusion/Fast-forward de `upstream-sync` sur les branches principales.
+- ⏳ Pending: Fusion/Fast-forward sur les branches principales.
 
 ## 👉 Next Session Direction
 Finaliser le merge de `upstream-sync` sur la branche principale si demandé.
