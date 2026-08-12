@@ -20,6 +20,7 @@ class OpenAIResponsesRequest(BaseModel):
     temperature: float | None = None
     top_p: float | None = None
     max_output_tokens: int | None = None
+    client_metadata: Any = None
     metadata: dict[str, Any] | None = None
     reasoning: dict[str, Any] | None = None
     previous_response_id: str | None = None

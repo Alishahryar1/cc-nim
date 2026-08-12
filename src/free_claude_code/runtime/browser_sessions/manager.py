@@ -3,18 +3,18 @@
 import asyncio
 import copy
 import os
+import secrets
 from collections.abc import Awaitable, Callable
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from uuid import uuid4
-
-from loguru import logger
+from uuid import UUID, uuid4
 
 from free_claude_code.application.browser_sessions import (
     BrowserSessionConflictError,
     BrowserSessionError,
     BrowserSessionHarness,
+    BrowserSessionIdentityObservation,
     BrowserSessionNotFoundError,
     BrowserSessionSnapshot,
     BrowserSessionState,
@@ -24,8 +24,12 @@ from free_claude_code.application.browser_sessions import (
     BrowserTerminalPort,
     TerminalEvent,
 )
+from free_claude_code.application.errors import (
+    ApplicationConflictError,
+    ApplicationUnavailableError,
+)
 
-from .drivers import HarnessDriver, HarnessDriverRegistry, terminal_environment
+from .drivers import HarnessDriverRegistry, terminal_environment
 from .pty import TerminalProcess, TerminalProcessFactory, TerminalSpawner
 from .store import (
     BrowserSessionStore,
@@ -50,6 +54,9 @@ class _SessionRuntime:
     output: bytearray = field(default_factory=bytearray)
     attachment: _TerminalAttachment | None = None
     stop_requested: bool = False
+    binding_token: str | None = None
+    observed_root_id: UUID | None = None
+    latest_turn_id: UUID | None = None
 
 
 class _TerminalAttachment(BrowserTerminalPort):
@@ -129,10 +136,9 @@ class BrowserSessionManager:
         self._close_lock = asyncio.Lock()
         self._closed = False
         self._close_complete = False
-        self._busy_paths: set[str] = set()
         self._deleting_sessions: set[str] = set()
-        self._creation_tasks: set[asyncio.Task[object]] = set()
         self._start_tasks: dict[str, asyncio.Task[object]] = {}
+        self._binding_tokens: dict[str, str] = {}
         self._unavailable_message: str | None = None
         try:
             self._catalog = store.load()
@@ -162,15 +168,9 @@ class BrowserSessionManager:
         name: str | None = None,
     ) -> BrowserSessionView:
         canonical = _canonical_directory(path)
-        path_key = _directory_key(canonical)
         driver = self._drivers.driver(harness)
-        operation = asyncio.current_task()
         async with self._lock:
             self._ensure_available()
-            if path_key in self._busy_paths:
-                raise BrowserSessionConflictError(
-                    "Another session is currently being created for this folder."
-                )
             clean_name = (
                 _default_session_name(self._catalog, canonical)
                 if name is None
@@ -182,47 +182,80 @@ class BrowserSessionManager:
                 raise BrowserSessionUnavailableError(
                     availability.message or "That harness is unavailable."
                 )
-            self._busy_paths.add(path_key)
-            if operation is not None:
-                self._creation_tasks.add(operation)
-
-        try:
-            native_id = await driver.create_native_id(canonical)
+            native_id = driver.initial_native_id()
             session_id = f"ses_{uuid4().hex}"
-            committed = False
-            try:
-                async with self._lock:
-                    self._ensure_available()
-                    _ensure_unique_name(self._catalog, canonical, clean_name)
-                    updated = copy.deepcopy(self._catalog)
-                    updated.sessions.append(
-                        SessionRecord(
-                            session_id=session_id,
-                            path=str(canonical),
-                            name=clean_name,
-                            harness=harness,
-                            native_id=native_id,
-                        )
-                    )
-                    self._commit(updated)
-                    committed = True
-                    self._runtime[session_id] = _SessionRuntime()
-            except Exception, asyncio.CancelledError:
-                if not committed:
-                    await asyncio.shield(
-                        self._discard_native_identity(
-                            driver,
-                            native_id,
-                            canonical,
-                        )
-                    )
-                raise
-        finally:
-            async with self._lock:
-                self._busy_paths.discard(path_key)
-                if operation is not None:
-                    self._creation_tasks.discard(operation)
+            updated = copy.deepcopy(self._catalog)
+            updated.sessions.append(
+                SessionRecord(
+                    session_id=session_id,
+                    path=str(canonical),
+                    name=clean_name,
+                    harness=harness,
+                    native_id=native_id,
+                )
+            )
+            self._commit(updated)
+            self._runtime[session_id] = _SessionRuntime()
         return await self.start_session(session_id)
+
+    async def observe_identity(
+        self, observation: BrowserSessionIdentityObservation
+    ) -> None:
+        """Validate one launch token and durably follow a newer Codex root."""
+
+        async with self._lock:
+            session_id = self._binding_tokens.get(observation.binding_token)
+            if session_id is None:
+                raise ApplicationConflictError(
+                    "Codex browser session is no longer active."
+                )
+            runtime = self._runtime.get(session_id)
+            if (
+                runtime is None
+                or runtime.binding_token != observation.binding_token
+                or self._closed
+                or session_id in self._deleting_sessions
+                or runtime.state
+                not in {BrowserSessionState.STARTING, BrowserSessionState.RUNNING}
+            ):
+                raise ApplicationConflictError(
+                    "Codex browser session is no longer active."
+                )
+            session = self._session(session_id)
+            if session.harness is not BrowserSessionHarness.CODEX:
+                raise ApplicationConflictError(
+                    "Browser session correlation does not match Codex."
+                )
+            if observation.turn_id is None:
+                return
+            native_id = observation.native_id
+            if native_id is None:
+                raise ApplicationConflictError("Codex turn identity is incomplete.")
+            latest_turn_id = runtime.latest_turn_id
+            if latest_turn_id is not None:
+                if observation.turn_id.int < latest_turn_id.int:
+                    raise ApplicationConflictError(
+                        "Codex turn identity is older than the active conversation."
+                    )
+                if observation.turn_id == latest_turn_id:
+                    if runtime.observed_root_id == native_id:
+                        return
+                    raise ApplicationConflictError(
+                        "Codex turn identity changed during a retry."
+                    )
+
+            native_id_text = str(native_id)
+            if session.native_id != native_id_text or not session.started_once:
+                updated = copy.deepcopy(self._catalog)
+                updated_session = _session_in(updated, session_id)
+                updated_session.native_id = native_id_text
+                updated_session.started_once = True
+                try:
+                    self._commit(updated)
+                except BrowserSessionUnavailableError as exc:
+                    raise ApplicationUnavailableError(str(exc)) from exc
+            runtime.observed_root_id = native_id
+            runtime.latest_turn_id = observation.turn_id
 
     async def rename_session(self, session_id: str, name: str) -> BrowserSessionView:
         clean_name = _session_name(name)
@@ -259,10 +292,16 @@ class BrowserSessionManager:
                 )
             project_path = _existing_session_path(session.path)
             driver = self._drivers.driver(session.harness)
+            binding_token = (
+                self._new_binding_token()
+                if session.harness is BrowserSessionHarness.CODEX
+                else None
+            )
             try:
                 command = driver.command(
                     session.native_id,
                     started_once=session.started_once,
+                    binding_token=binding_token,
                 )
             except BrowserSessionUnavailableError as exc:
                 runtime.state = BrowserSessionState.FAILED
@@ -273,6 +312,11 @@ class BrowserSessionManager:
             runtime.detail = None
             runtime.output.clear()
             runtime.stop_requested = False
+            runtime.observed_root_id = None
+            runtime.latest_turn_id = None
+            if binding_token is not None:
+                runtime.binding_token = binding_token
+                self._binding_tokens[binding_token] = session_id
             start_task = asyncio.current_task()
             if start_task is not None:
                 self._start_tasks[session_id] = start_task
@@ -297,6 +341,7 @@ class BrowserSessionManager:
         except Exception as exc:
             async with self._lock:
                 runtime = self._runtime[session_id]
+                self._clear_binding(runtime)
                 runtime.state = BrowserSessionState.FAILED
                 runtime.detail = (
                     f"Could not start {session.harness.value} ({type(exc).__name__})."
@@ -312,7 +357,10 @@ class BrowserSessionManager:
                     should_terminate = False
                     runtime = self._runtime[session_id]
                     runtime.process = process
-                    if not session.started_once:
+                    if (
+                        session.harness is not BrowserSessionHarness.CODEX
+                        and not session.started_once
+                    ):
                         updated = copy.deepcopy(self._catalog)
                         updated_session = _session_in(updated, session_id)
                         updated_session.started_once = True
@@ -338,6 +386,7 @@ class BrowserSessionManager:
         async with self._lock:
             runtime = self._runtime.get(session_id)
             if runtime is not None:
+                self._clear_binding(runtime)
                 runtime.process = None
                 runtime.state = BrowserSessionState.FAILED
                 runtime.detail = "Session startup could not be committed."
@@ -359,6 +408,7 @@ class BrowserSessionManager:
                 BrowserSessionState.EXITED,
                 BrowserSessionState.FAILED,
             }:
+                self._clear_binding(runtime)
                 runtime.state = BrowserSessionState.STOPPED
                 runtime.detail = None
                 self._publish_state(runtime)
@@ -368,6 +418,7 @@ class BrowserSessionManager:
             else:
                 start_task = None
             if start_task is not None:
+                self._clear_binding(runtime)
                 process = None
                 task = None
             else:
@@ -375,6 +426,7 @@ class BrowserSessionManager:
                 task = runtime.reader_task
                 runtime.stop_requested = True
                 runtime.state = BrowserSessionState.STOPPING
+                self._clear_binding(runtime)
                 self._publish_state(runtime)
 
         if start_task is not None:
@@ -459,9 +511,6 @@ class BrowserSessionManager:
                 if self._close_complete:
                     return
                 self._closed = True
-                creation_tasks = tuple(self._creation_tasks)
-            if creation_tasks:
-                await asyncio.gather(*creation_tasks, return_exceptions=True)
             async with self._lock:
                 session_ids = list(self._runtime)
             for session_id in session_ids:
@@ -520,6 +569,7 @@ class BrowserSessionManager:
             async with self._lock:
                 runtime = self._runtime.get(session_id)
                 if runtime is not None and runtime.process is process:
+                    self._clear_binding(runtime)
                     runtime.process = None
                     runtime.reader_task = None
                     if runtime.stop_requested:
@@ -585,6 +635,7 @@ class BrowserSessionManager:
         async with self._lock:
             runtime = self._runtime.get(session_id)
             if runtime is not None and runtime.state == BrowserSessionState.STARTING:
+                self._clear_binding(runtime)
                 if process is not None and runtime.process is process:
                     runtime.process = None
                 runtime.state = BrowserSessionState.FAILED
@@ -598,22 +649,6 @@ class BrowserSessionManager:
                 raise BrowserSessionConflictError("Session is not running.")
             process = runtime.process
         await asyncio.to_thread(process.write, data)
-
-    async def _discard_native_identity(
-        self,
-        driver: HarnessDriver,
-        native_id: str,
-        project_path: Path,
-    ) -> None:
-        try:
-            await driver.discard_native_id(native_id, project_path)
-        except Exception as exc:
-            logger.warning(
-                "Could not discard uncommitted {} browser session {} ({}).",
-                driver.harness.value,
-                native_id,
-                type(exc).__name__,
-            )
 
     async def _resize_terminal(
         self, session_id: str, token: str, columns: int, rows: int
@@ -649,6 +684,20 @@ class BrowserSessionManager:
     ) -> None:
         if self._start_tasks.get(session_id) is completed:
             self._start_tasks.pop(session_id, None)
+
+    def _new_binding_token(self) -> str:
+        while True:
+            token = secrets.token_urlsafe(32)
+            if token not in self._binding_tokens:
+                return token
+
+    def _clear_binding(self, runtime: _SessionRuntime) -> None:
+        token = runtime.binding_token
+        if token is not None:
+            self._binding_tokens.pop(token, None)
+        runtime.binding_token = None
+        runtime.observed_root_id = None
+        runtime.latest_turn_id = None
 
     def _publish_state(self, runtime: _SessionRuntime) -> None:
         if runtime.attachment is not None:
@@ -725,10 +774,6 @@ def _same_directory(left: Path, right: Path) -> bool:
         return os.path.normcase(str(left.resolve())) == os.path.normcase(
             str(right.resolve())
         )
-
-
-def _directory_key(path: Path) -> str:
-    return os.path.normcase(str(path))
 
 
 def _session_name(value: str) -> str:

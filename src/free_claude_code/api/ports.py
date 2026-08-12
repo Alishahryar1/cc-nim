@@ -4,7 +4,10 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from typing import Any, Protocol
 
-from free_claude_code.application.browser_sessions import BrowserSessionPort
+from free_claude_code.application.browser_sessions import (
+    BrowserSessionIdentityPort,
+    BrowserSessionPort,
+)
 from free_claude_code.application.connected_accounts import (
     ConnectedAccountLoginMode,
     ConnectedAccountStatus,
@@ -55,3 +58,4 @@ class ApiServices:
     admin: AdminRuntimePort
     tasks: TaskController
     sessions: BrowserSessionPort
+    session_identities: BrowserSessionIdentityPort

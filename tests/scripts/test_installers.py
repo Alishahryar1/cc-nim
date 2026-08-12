@@ -1144,8 +1144,12 @@ def _create_windows_shortcut(
     )
 
 
-def _windows_shortcut_icon(powershell: str, shortcut_path: Path) -> str:
-    env = os.environ | {"FCC_TEST_SHORTCUT": str(shortcut_path)}
+def _windows_shortcut_icon(
+    powershell: str,
+    shortcut_path: Path,
+    base_env: dict[str, str],
+) -> str:
+    env = base_env | {"FCC_TEST_SHORTCUT": str(shortcut_path)}
     completed = subprocess.run(
         [
             powershell,
@@ -1521,6 +1525,7 @@ def test_install_ps1_fresh_install_is_verified(
         _windows_shortcut_icon(
             powershell_harness.powershell,
             desktop_shortcut,
+            powershell_harness.env,
         )
         == f"{icon},0"
     )
@@ -1879,21 +1884,7 @@ def test_install_ps1_stops_without_success_on_each_failure(
 def test_install_ps1_dry_run_never_executes_commands(
     powershell_harness: PowerShellHarness,
 ) -> None:
-    result = subprocess.run(
-        [
-            powershell_harness.powershell,
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(_repo_root() / "scripts" / "install.ps1"),
-            "-DryRun",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=powershell_harness.env,
-    )
+    result = powershell_harness.run("-DryRun")
 
     assert result.returncode == 0, result.stderr
     assert powershell_harness.calls() == []

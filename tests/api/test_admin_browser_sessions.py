@@ -101,6 +101,7 @@ def session_app(stub: StubSessions):
             admin=services.admin,
             tasks=services.tasks,
             sessions=stub,
+            session_identities=services.session_identities,
         )
     )
 

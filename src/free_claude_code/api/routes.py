@@ -15,6 +15,7 @@ from free_claude_code.core.anthropic import (
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.trace import trace_event
 
+from .codex_session_identity import observe_correlated_codex_identity
 from .dependencies import (
     get_services,
     get_settings,
@@ -71,8 +72,23 @@ async def _create_responses_response(
     services: ApiServices,
     request_data: OpenAIResponsesRequest,
     *,
+    request: Request,
     request_id: str,
 ) -> object:
+    try:
+        await observe_correlated_codex_identity(
+            request,
+            request_data,
+            services.session_identities,
+        )
+    except ApplicationError as exc:
+        return ordinary_application_error_response(
+            exc,
+            wire_api="responses",
+            request_id=request_id,
+            client_should_retry=(False if exc.status_code in {400, 409} else None),
+        )
+
     lease: RequestRuntimeLease | None = None
     try:
         lease = await services.requests.acquire()
@@ -133,6 +149,7 @@ async def create_response(
     return await _create_responses_response(
         services,
         request_data,
+        request=request,
         request_id=get_request_id(request),
     )
 

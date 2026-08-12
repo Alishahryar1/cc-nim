@@ -477,6 +477,16 @@ exit /b 0
     wrapper.write_text(
         r"""Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
+function Get-Process {
+    [CmdletBinding()]
+    param([string[]] $Name)
+
+    foreach ($requestedName in $Name) {
+        if ($requestedName -eq $env:FCC_RUNNING_COMMAND) {
+            [pscustomobject] @{ Id = 4242; ProcessName = $requestedName }
+        }
+    }
+}
 function Remove-Item {
     [CmdletBinding()]
     param(
@@ -534,6 +544,7 @@ else {
             "CALL_LOG": str(log),
             "FAKE_TOOL_BIN": str(tool_bin),
             "FCC_UNINSTALLER": str(_repo_root() / "scripts" / "uninstall.ps1"),
+            "FCC_RUNNING_COMMAND": "",
             "FAIL_STEP": "",
             "UNINSTALL_DRY_RUN": "0",
         }
@@ -657,6 +668,21 @@ def test_uninstall_ps1_dry_run_is_non_mutating(
     )
     assert powershell_uninstall_harness.calls() == []
     assert "Dry run complete. No changes were made." in result.stdout
+
+
+@pytest.mark.parametrize("command_name", FCC_COMMANDS)
+def test_uninstall_ps1_rejects_running_fcc_before_mutation(
+    powershell_uninstall_harness: PowerShellUninstallHarness,
+    command_name: str,
+) -> None:
+    powershell_uninstall_harness.env["FCC_RUNNING_COMMAND"] = command_name
+
+    result = powershell_uninstall_harness.run()
+
+    assert result.returncode != 0
+    assert powershell_uninstall_harness.fcc_home.exists()
+    assert powershell_uninstall_harness.calls() == []
+    assert command_name in result.stderr
 
 
 def test_uninstallers_guard_running_commands_and_preserve_shared_owners() -> None:

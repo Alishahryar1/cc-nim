@@ -18,7 +18,7 @@ class SessionRecord:
     path: str
     name: str
     harness: BrowserSessionHarness
-    native_id: str
+    native_id: str | None
     started_once: bool = False
 
 
@@ -71,6 +71,12 @@ class BrowserSessionStore:
 
 
 def _encode_catalog(catalog: SessionCatalog) -> dict[str, object]:
+    for session in catalog.sessions:
+        _validate_identity_state(
+            session.harness,
+            session.native_id,
+            session.started_once,
+        )
     return {
         "version": SCHEMA_VERSION,
         "sessions": [
@@ -112,13 +118,18 @@ def _decode_catalog(payload: object) -> SessionCatalog:
         started_once = session.get("started_once")
         if not isinstance(started_once, bool):
             raise SessionStoreError("session.started_once must be a boolean")
+        native_value = session.get("native_id")
+        native_id = (
+            None if native_value is None else _string(native_value, "session.native_id")
+        )
+        _validate_identity_state(harness, native_id, started_once)
         sessions.append(
             SessionRecord(
                 session_id=session_id,
                 path=_string(session.get("path"), "session.path"),
                 name=_string(session.get("name"), "session.name"),
                 harness=harness,
-                native_id=_string(session.get("native_id"), "session.native_id"),
+                native_id=native_id,
                 started_once=started_once,
             )
         )
@@ -135,3 +146,16 @@ def _string(value: object, name: str) -> str:
     if not isinstance(value, str) or not value:
         raise SessionStoreError(f"{name} must be a non-empty string")
     return value
+
+
+def _validate_identity_state(
+    harness: BrowserSessionHarness,
+    native_id: str | None,
+    started_once: bool,
+) -> None:
+    if harness is BrowserSessionHarness.CODEX:
+        if (native_id is None) != (not started_once):
+            raise SessionStoreError("Invalid Codex session identity state")
+        return
+    if native_id is None:
+        raise SessionStoreError("Native session identity is required")

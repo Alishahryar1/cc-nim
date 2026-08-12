@@ -279,18 +279,25 @@ same-directory atomic replacement, and unreadable or unknown schemas disable
 Sessions without replacing the customer's file or preventing the proxy from
 starting.
 
-Drivers own native continuity. FCC assigns Claude and Pi UUIDs under their
-documented session flags. Codex assigns its own thread ID: the Codex driver uses
-one bounded stdio `app-server` `thread/start` exchange, records the returned ID,
-closes stdin, requires a clean helper exit so Codex commits that ID, and launches
-the ordinary TUI with `fcc-codex resume`. Session creation is an FCC-owned
-transaction: if metadata cannot commit after a native identity is returned, the
-driver disposes only that uncommitted identity. Claude and Pi creation has
-nothing to dispose before first launch; Codex uses the stable App Server
-`thread/delete` method. Once FCC metadata commits, normal FCC deletion preserves
-the harness-native conversation history.
-FCC does not inspect private transcript files, parse terminal output for IDs, or
-use the experimental App Server WebSocket transport.
+Drivers own native launch construction while each harness owns its conversation
+history. FCC assigns Claude and Pi UUIDs under their documented session flags.
+A new Codex record is initially unbound: FCC launches the ordinary native TUI,
+and Codex creates and persists its own thread. The manager supplies one opaque,
+launch-scoped correlation header through Codex's invocation-only provider
+configuration. Before provider acquisition, the Responses adapter validates
+Codex's canonical turn metadata and asks the manager to atomically bind the FCC
+record to the root `session-id`. A newer UUIDv7 turn may replace that root after
+native `/new`, `/clear`, `/resume`, or `/fork`; delayed older turns cannot roll
+the record back. Prewarm, compaction, and detached memory requests validate the
+active launch but never mutate identity.
+
+The Admin session port and the internal identity-observation port are separate
+application boundaries implemented by the same manager. Native IDs and launch
+tokens never enter public session views. Tokens are process-local and expire on
+stop, exit, delete, or shutdown; the captured native ID is the only durable
+binding. FCC does not create or delete Codex threads through App Server, inspect
+private transcript/state files, parse terminal output for IDs, or use hooks.
+Deleting FCC metadata preserves every harness-native conversation history.
 
 The long-lived process is always the existing `fcc-claude`, `fcc-codex`, or
 `fcc-pi` wrapper under a real ConPTY/PTY. It is launched directly as argv in the
@@ -301,7 +308,9 @@ continuously drains output into a bounded in-memory ring, admits one browser
 controller per session, and disconnects a slow browser instead of blocking the
 harness. Browser disconnect only detaches. Explicit stop/delete and
 `ApplicationRuntime` shutdown terminate the complete owned process tree before
-provider shutdown.
+provider shutdown. A harness exit—including Codex's native double-`Ctrl+C`
+exit—ends the root PTY; there is no shell in which the customer can replace the
+persisted session's immutable harness.
 
 Every browser-session HTTP request and WebSocket upgrade reuses the Admin
 loopback client and local-Origin checks. Terminal input and dimensions are

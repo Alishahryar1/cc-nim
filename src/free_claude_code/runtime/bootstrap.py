@@ -71,6 +71,7 @@ def build_asgi_app(
         admin=runtime,
         tasks=runtime,
         sessions=browser_sessions,
+        session_identities=browser_sessions,
     )
     return RuntimeASGIApp(create_app(services), runtime)
 

@@ -30,6 +30,7 @@ _SECRET_VALUE_KEYS = frozenset(
         "bearer_token",
         "openapi_token",
         "nvidia-api-key",
+        "x-fcc-browser-session",
     )
 )
 
