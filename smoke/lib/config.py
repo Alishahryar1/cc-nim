@@ -71,6 +71,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "vertex": "vertex/google/gemini-3.5-flash",
     "groq": "groq/llama-3.3-70b-versatile",
     "xai": "xai/grok-4.5",
+    "qwencloud": "qwencloud/qwen3.7-plus",
     "sambanova": "sambanova/Meta-Llama-3.3-70B-Instruct",
     "kilo": "kilo/kilo-auto/free",
     "cerebras": "cerebras/llama3.1-8b",

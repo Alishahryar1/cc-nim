@@ -162,6 +162,14 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             aliases_field="aliases",
         ),
     ),
+    "qwencloud": OpenAIChatProfile(
+        _policy(
+            "QWENCLOUD",
+            ReasoningReplayMode.REASONING_CONTENT,
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        NO_REASONING,
+    ),
     "azure_openai": OpenAIChatProfile(
         _policy(
             "AZURE_OPENAI",

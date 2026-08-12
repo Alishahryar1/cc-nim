@@ -134,6 +134,9 @@ class Settings(BaseSettings):
     # ==================== xAI / Grok (OpenAI-compatible) ====================
     xai_api_key: str = Field(default="", validation_alias="XAI_API_KEY")
 
+    # ==================== QwenCloud Token Plan (OpenAI-compatible) ====================
+    qwencloud_api_key: str = Field(default="", validation_alias="QWENCLOUD_API_KEY")
+
     # ==================== Cerebras Inference (OpenAI-compatible) ====================
     cerebras_api_key: str = Field(default="", validation_alias="CEREBRAS_API_KEY")
 
@@ -188,6 +191,7 @@ class Settings(BaseSettings):
     # ==================== Per-Provider Proxy ====================
     openai_proxy: str = Field(default="", validation_alias="OPENAI_PROXY")
     xai_proxy: str = Field(default="", validation_alias="XAI_PROXY")
+    qwencloud_proxy: str = Field(default="", validation_alias="QWENCLOUD_PROXY")
     azure_openai_proxy: str = Field(default="", validation_alias="AZURE_OPENAI_PROXY")
     nvidia_nim_proxy: str = Field(default="", validation_alias="NVIDIA_NIM_PROXY")
     open_router_proxy: str = Field(default="", validation_alias="OPENROUTER_PROXY")

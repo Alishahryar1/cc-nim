@@ -144,6 +144,14 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "models."
         ),
     },
+    "QWENCLOUD_API_KEY": {
+        "label": "QwenCloud Token Plan API Key",
+        "description": (
+            "Dedicated QwenCloud Token Plan key (sk-sp-...). Token Plan, Coding "
+            "Plan, and pay-as-you-go keys use separate endpoints and cannot be "
+            "mixed."
+        ),
+    },
     "SAMBANOVA_API_KEY": {
         "label": "SambaNova API Key",
         "description": (

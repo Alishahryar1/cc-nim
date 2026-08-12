@@ -52,6 +52,10 @@ KILO_DEFAULT_BASE = "https://api.kilo.ai/api/gateway"
 OPENAI_CODEX_DEFAULT_BASE = "https://chatgpt.com/backend-api/codex"
 # xAI OpenAI-compatible Chat Completions API.
 XAI_DEFAULT_BASE = "https://api.x.ai/v1"
+# QwenCloud Token Plan OpenAI-compatible Chat Completions API.
+QWENCLOUD_DEFAULT_BASE = (
+    "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
+)
 # TokenRouter OpenAI-compatible Chat Completions gateway.
 TOKENROUTER_DEFAULT_BASE = "https://api.tokenrouter.com/v1"
 # NaraRoute OpenAI-compatible Chat Completions gateway.
@@ -136,6 +140,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="xai_api_key",
         default_base_url=XAI_DEFAULT_BASE,
         proxy_attr="xai_proxy",
+    ),
+    "qwencloud": ProviderDescriptor(
+        provider_id="qwencloud",
+        display_name="QwenCloud Token Plan",
+        credential_env="QWENCLOUD_API_KEY",
+        credential_url="https://home.qwencloud.com/api-keys",
+        credential_attr="qwencloud_api_key",
+        default_base_url=QWENCLOUD_DEFAULT_BASE,
+        proxy_attr="qwencloud_proxy",
     ),
     "azure_openai": ProviderDescriptor(
         provider_id="azure_openai",

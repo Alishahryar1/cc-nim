@@ -54,6 +54,7 @@ def _settings(**overrides):
         "vertex_location": "global",
         "groq_api_key": "",
         "xai_api_key": "",
+        "qwencloud_api_key": "",
         "sambanova_api_key": "",
         "cerebras_api_key": "",
         "ollama_api_key": "",
@@ -166,6 +167,23 @@ def test_xai_provider_smoke_uses_current_grok_model(monkeypatch) -> None:
 
     assert [model.provider for model in models] == ["xai"]
     assert models[0].full_model == "xai/grok-4.5"
+    assert models[0].source == "provider_default"
+
+
+def test_qwencloud_provider_smoke_uses_current_coding_model(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_QWENCLOUD", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            qwencloud_api_key="qwencloud-key",
+        )
+    )
+
+    models = config.provider_smoke_models()
+
+    assert [model.provider for model in models] == ["qwencloud"]
+    assert models[0].full_model == "qwencloud/qwen3.7-plus"
     assert models[0].source == "provider_default"
 
 
