@@ -153,6 +153,34 @@ def test_prepare_codex_config_content_existing() -> None:
     assert parsed["model_providers"]["fcc"]["base_url"] == "http://127.0.0.1:8311/v1"
 
 
+def test_prepare_codex_config_content_complex_quoted_keys() -> None:
+    complex_existing = """approvals_reviewer = "user"
+model = "gpt-5.6-luna"
+
+[projects."/home/omni/Code/HIVE-MIND-RAILWAY"]
+trust_level = "trusted"
+
+[plugins."google-calendar@openai-curated"]
+enabled = true
+"""
+    content = prepare_codex_config_content(
+        complex_existing,
+        api_url="http://127.0.0.1:8311/v1",
+    )
+
+    # Must parse without syntax errors
+    parsed = tomllib.loads(content)
+
+    assert (
+        parsed["projects"]["/home/omni/Code/HIVE-MIND-RAILWAY"]["trust_level"]
+        == "trusted"
+    )
+    assert parsed["plugins"]["google-calendar@openai-curated"]["enabled"] is True
+    assert parsed["model_provider"] == "fcc"
+    assert '[projects."/home/omni/Code/HIVE-MIND-RAILWAY"]' in content
+    assert '[plugins."google-calendar@openai-curated"]' in content
+
+
 def test_ephemeral_codex_config_creation_and_cleanup(tmp_path: Path) -> None:
     config_file = tmp_path / ".codex" / "config.toml"
     assert not config_file.exists()

@@ -1,6 +1,7 @@
 # Current Project Context
 
 ## 🏆 Major Milestones (Archived Epics)
+- 2026-08-12: Correctif de sérialisation TOML `_format_toml_key()` dans `src/free_claude_code/cli/launchers/codex_desktop.py` échappant entre guillemets les clés contenant des caractères spéciaux/chemins (`[projects."/home/omni/..."]`), résolvant l'erreur d'analyse TOML au lancement de `fcc-codex-desktop`. Version `4.19.1`, 2902 tests validés à 100% avec `./scripts/ci.sh`.
 - 2026-08-12: Création du launcher éphémère Codex Desktop cross-platform `fcc-codex-desktop` dans `src/free_claude_code/cli/launchers/codex_desktop.py`, avec injection éphémère de `model_provider = "fcc"` dans `config.toml`, pré-vérification proxy, tests unitaires dans `tests/cli/test_codex_desktop_launcher.py`, bump semver v4.19.0 et régénération `uv.lock`. 2901 tests validés à 100% avec `./scripts/ci.sh`.
 - 2026-08-12: Assemblage d'outils à état (`active_tool_by_name`) dans `AntigravityProvider.stream_response()`, résolvant l'accumulation d'arguments partiels/vides et empêchant définitivement la duplication des commandes Shell et d'édition dans Claude Code CLI. Version `4.18.5`, 2889 tests validés à 100% avec `./scripts/ci.sh`.
 - 2026-08-12: Déduplication des appels d'outils (`functionCall`) répétées dans le flux SSE du provider Google Antigravity CLI (`AntigravityProvider`), éliminant les erreurs de seconde exécution sur les outils modificateurs d'état comme `Edit`. Ajout du test unitaire `test_stream_response_duplicate_tool_calls_deduplicated`, bump version `4.18.4`, et validation à 100% de `./scripts/ci.sh` (2888 passed, 0 error, 0 warning).
@@ -34,7 +35,7 @@ Maintenir le serveur proxy local free-claude-code à un niveau de qualité zéro
 - `upstream-sync` : Branche de synchronisation et d'intégration complète avec `upstream/main` (2889 tests validés).
 
 ## 📈 Current Status
-- ✅ Done: Launcher éphémère Codex Desktop cross-platform `fcc-codex-desktop` (v4.19.0, 2901 tests passés avec 0 avertissement).
+- ✅ Done: Sérialisation TOML conforme pour `fcc-codex-desktop` avec échappement des chemins d'accès (v4.19.1, 2902 tests passés avec 0 avertissement).
 - 🔄 In progress: Aucun.
 - ⏳ Pending: Fusion/Fast-forward sur les branches principales.
 

@@ -2,6 +2,7 @@
 
 import json
 import os
+import re
 import shutil
 import sys
 import tomllib
@@ -197,28 +198,39 @@ def prepare_codex_config_content(
     return dump_toml(data)
 
 
+_BARE_KEY_RE = re.compile(r"^[A-Za-z0-9_-]+$")
+
+
+def _format_toml_key(key: str) -> str:
+    """Format key as bare TOML key or quoted TOML key if it contains special characters."""
+
+    if _BARE_KEY_RE.match(key):
+        return key
+    return json.dumps(key)
+
+
 def dump_toml(data: dict[str, Any]) -> str:
-    """Serialize a dictionary of basic primitive types and sub-dicts into TOML format."""
+    """Serialize a dictionary of basic primitive types and sub-dicts into valid TOML format."""
 
     lines: list[str] = []
 
     for k, v in data.items():
         if not isinstance(v, dict):
-            lines.append(f"{k} = {json.dumps(v)}")
+            lines.append(f"{_format_toml_key(k)} = {json.dumps(v)}")
 
     def _write_table(prefix: str, table: dict[str, Any]) -> None:
         lines.append("")
         lines.append(f"[{prefix}]")
         for k, v in table.items():
             if not isinstance(v, dict):
-                lines.append(f"{k} = {json.dumps(v)}")
+                lines.append(f"{_format_toml_key(k)} = {json.dumps(v)}")
         for k, v in table.items():
             if isinstance(v, dict):
-                _write_table(f"{prefix}.{k}", v)
+                _write_table(f"{prefix}.{_format_toml_key(k)}", v)
 
     for k, v in data.items():
         if isinstance(v, dict):
-            _write_table(k, v)
+            _write_table(_format_toml_key(k), v)
 
     return "\n".join(lines).strip() + "\n"
 
