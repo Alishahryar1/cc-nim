@@ -3,16 +3,12 @@
 from dataclasses import dataclass
 from enum import StrEnum
 from typing import Protocol
-from uuid import UUID
-
-BROWSER_SESSION_HEADER = "x-fcc-browser-session"
 
 
 class BrowserSessionHarness(StrEnum):
     """Native coding harnesses supported by the browser terminal."""
 
     CLAUDE = "claude"
-    CODEX = "codex"
     PI = "pi"
 
 
@@ -95,15 +91,6 @@ class TerminalEvent:
     detail: str | None = None
 
 
-@dataclass(frozen=True, slots=True)
-class BrowserSessionIdentityObservation:
-    """Validated native identity observed from one correlated harness request."""
-
-    binding_token: str
-    native_id: UUID | None = None
-    turn_id: UUID | None = None
-
-
 class BrowserTerminalPort(Protocol):
     """One exclusive browser attachment to a managed terminal."""
 
@@ -145,14 +132,6 @@ class BrowserSessionLifecyclePort(Protocol):
     """Runtime-owned cleanup needed by the application resource graph."""
 
     async def close(self) -> None: ...
-
-
-class BrowserSessionIdentityPort(Protocol):
-    """Internal request-ingress capability for native session correlation."""
-
-    async def observe_identity(
-        self, observation: BrowserSessionIdentityObservation
-    ) -> None: ...
 
 
 class BrowserSessionError(Exception):

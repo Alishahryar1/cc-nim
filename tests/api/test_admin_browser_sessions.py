@@ -51,9 +51,9 @@ class StubSessions:
         self.terminal = StubTerminal()
         self.created: list[tuple[str, BrowserSessionHarness, str | None]] = []
         self.session = BrowserSessionView(
-            session_id="ses_one",
+            session_id="019f0000-0000-4000-8000-000000000001",
             name="Review",
-            harness=BrowserSessionHarness.CODEX,
+            harness=BrowserSessionHarness.CLAUDE,
             state=BrowserSessionState.RUNNING,
             project_name="project",
             path="C:\\project",
@@ -65,7 +65,6 @@ class StubSessions:
             sessions=(self.session,),
             harnesses=(
                 HarnessAvailability(BrowserSessionHarness.CLAUDE, True),
-                HarnessAvailability(BrowserSessionHarness.CODEX, True),
                 HarnessAvailability(BrowserSessionHarness.PI, True),
             ),
         )
@@ -101,12 +100,11 @@ def session_app(stub: StubSessions):
             admin=services.admin,
             tasks=services.tasks,
             sessions=stub,
-            session_identities=services.session_identities,
         )
     )
 
 
-def test_sessions_catalog_is_local_only_no_store_and_redacts_native_ids():
+def test_sessions_catalog_is_local_only_no_store_and_returns_public_fields():
     app = session_app(StubSessions())
     local = TestClient(app, client=("127.0.0.1", 50000))
     remote = TestClient(app, client=("203.0.113.8", 50000))
@@ -115,10 +113,14 @@ def test_sessions_catalog_is_local_only_no_store_and_redacts_native_ids():
 
     assert response.status_code == 200
     assert response.headers["cache-control"] == "no-store"
+    assert [harness["id"] for harness in response.json()["harnesses"]] == [
+        "claude",
+        "pi",
+    ]
     assert response.json()["sessions"][0] == {
-        "id": "ses_one",
+        "id": "019f0000-0000-4000-8000-000000000001",
         "name": "Review",
-        "harness": "codex",
+        "harness": "claude",
         "state": "running",
         "project_name": "project",
         "path": "C:\\project",
@@ -133,11 +135,24 @@ def test_sessions_domain_validation_maps_to_customer_400():
 
     response = client.post(
         "/admin/api/sessions",
-        json={"path": "bad", "harness": "codex", "name": None},
+        json={"path": "bad", "harness": "claude", "name": None},
     )
 
     assert response.status_code == 400
     assert response.json() == {"detail": "Project path is invalid."}
+
+
+def test_session_creation_rejects_codex_before_calling_the_manager():
+    stub = StubSessions()
+    client = TestClient(session_app(stub), client=("127.0.0.1", 50000))
+
+    response = client.post(
+        "/admin/api/sessions",
+        json={"path": "C:\\project", "harness": "codex"},
+    )
+
+    assert response.status_code == 422
+    assert stub.created == []
 
 
 def test_session_creation_accepts_an_optional_name_without_project_registration():
@@ -236,6 +251,8 @@ def test_sessions_is_the_first_default_admin_view_and_assets_are_local():
     assert 'id="newSessionPath"' in page.text
     assert 'id="sessionTabs"' not in page.text
     assert 'id="projectDialog"' not in page.text
+    assert "Run Claude Code or Pi" in page.text
+    assert "Codex" not in page.text
     for path in (
         "/admin/assets/admin-api.js",
         "/admin/assets/sessions.js",
@@ -246,3 +263,5 @@ def test_sessions_is_the_first_default_admin_view_and_assets_are_local():
         response = client.get(path)
         assert response.status_code == 200
         assert response.headers["cache-control"] == "no-store"
+        if path.endswith("sessions.js"):
+            assert 'codex: "Codex"' not in response.text

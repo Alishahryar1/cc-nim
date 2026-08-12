@@ -70,7 +70,6 @@ def create_test_app(
             admin=runtime,
             tasks=runtime,
             sessions=browser_sessions,
-            session_identities=browser_sessions,
         )
     )
 

@@ -56,11 +56,7 @@ class ResponsesHandler:
     ) -> object:
         """Create a streaming OpenAI Responses-compatible response."""
         request_id = request_id or new_request_id()
-        request_payload = request_data.model_dump(
-            mode="json",
-            exclude_none=True,
-            exclude={"client_metadata"},
-        )
+        request_payload = request_data.model_dump(mode="json", exclude_none=True)
         if request_data.stream is False:
             raise InvalidRequestError(
                 "FCC /v1/responses supports streaming only; omit stream or set stream=true."

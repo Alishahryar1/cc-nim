@@ -161,7 +161,6 @@ def test_stop_cli_with_messaging_workflow(client):
         admin=services.admin,
         tasks=session_control,
         sessions=services.sessions,
-        session_identities=services.session_identities,
     )
 
     response = client.post("/stop")
@@ -180,7 +179,6 @@ def test_stop_cli_fallback_to_manager(client):
         admin=services.admin,
         tasks=session_control,
         sessions=services.sessions,
-        session_identities=services.session_identities,
     )
 
     response = client.post("/stop")

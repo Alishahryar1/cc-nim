@@ -23,13 +23,6 @@ class InvalidRequestError(ApplicationError):
     status_code = 400
 
 
-class ApplicationConflictError(ApplicationError):
-    """The request conflicts with current application-owned state."""
-
-    kind = FailureKind.INVALID_REQUEST
-    status_code = 409
-
-
 class UnknownProviderError(InvalidRequestError):
     """The configured provider identifier is not registered."""
 

@@ -34,29 +34,24 @@ def ordinary_application_error_response(
     *,
     wire_api: WireApi,
     request_id: str,
-    client_should_retry: bool | None = None,
 ) -> JSONResponse:
-    """Serialize a deterministic application error with explicit retry policy."""
+    """Serialize a deterministic application error without terminal headers."""
     if wire_api == "responses":
-        response = JSONResponse(
+        return JSONResponse(
             status_code=error.status_code,
             content=openai_error_payload(
                 message=error.message,
                 error_type=openai_error_type_for_failure(error.kind),
             ),
         )
-    else:
-        response = JSONResponse(
-            status_code=error.status_code,
-            content=anthropic_error_payload(
-                error_type=anthropic_error_type_for_failure(error.kind),
-                message=error.message,
-                request_id=request_id,
-            ),
-        )
-    if client_should_retry is not None:
-        response.headers["x-should-retry"] = str(client_should_retry).lower()
-    return response
+    return JSONResponse(
+        status_code=error.status_code,
+        content=anthropic_error_payload(
+            error_type=anthropic_error_type_for_failure(error.kind),
+            message=error.message,
+            request_id=request_id,
+        ),
+    )
 
 
 def http_status_for_unexpected_api_exception(_exc: BaseException) -> int:

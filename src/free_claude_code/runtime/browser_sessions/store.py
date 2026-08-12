@@ -5,7 +5,7 @@ import os
 from contextlib import suppress
 from dataclasses import dataclass, field
 from pathlib import Path
-from uuid import uuid4
+from uuid import UUID, uuid4
 
 from free_claude_code.application.browser_sessions import BrowserSessionHarness
 
@@ -18,7 +18,6 @@ class SessionRecord:
     path: str
     name: str
     harness: BrowserSessionHarness
-    native_id: str | None
     started_once: bool = False
 
 
@@ -72,11 +71,7 @@ class BrowserSessionStore:
 
 def _encode_catalog(catalog: SessionCatalog) -> dict[str, object]:
     for session in catalog.sessions:
-        _validate_identity_state(
-            session.harness,
-            session.native_id,
-            session.started_once,
-        )
+        _canonical_uuid(session.session_id, "session.id")
     return {
         "version": SCHEMA_VERSION,
         "sessions": [
@@ -85,7 +80,6 @@ def _encode_catalog(catalog: SessionCatalog) -> dict[str, object]:
                 "path": session.path,
                 "name": session.name,
                 "harness": session.harness.value,
-                "native_id": session.native_id,
                 "started_once": session.started_once,
             }
             for session in catalog.sessions
@@ -105,7 +99,9 @@ def _decode_catalog(payload: object) -> SessionCatalog:
     session_ids: set[str] = set()
     for session_value in sessions_value:
         session = _object(session_value, "session")
-        session_id = _string(session.get("id"), "session.id")
+        session_id = _canonical_uuid(
+            _string(session.get("id"), "session.id"), "session.id"
+        )
         if session_id in session_ids:
             raise SessionStoreError("Duplicate session id")
         session_ids.add(session_id)
@@ -118,18 +114,12 @@ def _decode_catalog(payload: object) -> SessionCatalog:
         started_once = session.get("started_once")
         if not isinstance(started_once, bool):
             raise SessionStoreError("session.started_once must be a boolean")
-        native_value = session.get("native_id")
-        native_id = (
-            None if native_value is None else _string(native_value, "session.native_id")
-        )
-        _validate_identity_state(harness, native_id, started_once)
         sessions.append(
             SessionRecord(
                 session_id=session_id,
                 path=_string(session.get("path"), "session.path"),
                 name=_string(session.get("name"), "session.name"),
                 harness=harness,
-                native_id=native_id,
                 started_once=started_once,
             )
         )
@@ -148,14 +138,11 @@ def _string(value: object, name: str) -> str:
     return value
 
 
-def _validate_identity_state(
-    harness: BrowserSessionHarness,
-    native_id: str | None,
-    started_once: bool,
-) -> None:
-    if harness is BrowserSessionHarness.CODEX:
-        if (native_id is None) != (not started_once):
-            raise SessionStoreError("Invalid Codex session identity state")
-        return
-    if native_id is None:
-        raise SessionStoreError("Native session identity is required")
+def _canonical_uuid(value: str, name: str) -> str:
+    try:
+        parsed = UUID(value)
+    except ValueError as exc:
+        raise SessionStoreError(f"{name} must be a UUID") from exc
+    if str(parsed) != value:
+        raise SessionStoreError(f"{name} must be a canonical UUID")
+    return value

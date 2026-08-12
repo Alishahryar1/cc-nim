@@ -521,7 +521,7 @@
   }
 
   function harnessLabel(harness) {
-    return { claude: "Claude Code", codex: "Codex", pi: "Pi" }[harness] || harness;
+    return { claude: "Claude Code", pi: "Pi" }[harness] || harness;
   }
 
   function statusKind(status) {

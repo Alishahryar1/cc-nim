@@ -1,25 +1,21 @@
-"""Harness-owned initial identities and native launch commands."""
+"""Harness-owned native launch commands."""
 
-import json
 import os
 import shutil
 import sys
 from collections.abc import Mapping, Sequence
 from pathlib import Path
-from uuid import uuid4
 
 from free_claude_code.application.browser_sessions import (
-    BROWSER_SESSION_HEADER,
     BrowserSessionHarness,
     BrowserSessionUnavailableError,
     HarnessAvailability,
 )
 from free_claude_code.cli.launchers.claude import claude_binary_name
-from free_claude_code.cli.launchers.codex import codex_binary_name
 
 
 class HarnessDriver:
-    """Own one harness's executable discovery, initial ID, and argv contract."""
+    """Own one harness's executable discovery and argv contract."""
 
     harness: BrowserSessionHarness
     wrapper_name: str
@@ -40,17 +36,11 @@ class HarnessDriver:
             )
         return HarnessAvailability(self.harness, True)
 
-    def initial_native_id(self) -> str | None:
-        """Return an FCC-assigned ID, or defer native identity to the harness."""
-
-        return str(uuid4())
-
     def command(
         self,
-        native_id: str | None,
+        session_id: str,
         *,
         started_once: bool,
-        binding_token: str | None = None,
     ) -> list[str]:
         raise NotImplementedError
 
@@ -74,15 +64,12 @@ class ClaudeDriver(HarnessDriver):
 
     def command(
         self,
-        native_id: str | None,
+        session_id: str,
         *,
         started_once: bool,
-        binding_token: str | None = None,
     ) -> list[str]:
-        if native_id is None:
-            raise BrowserSessionUnavailableError("Claude session identity is missing.")
         flag = "--resume" if started_once else "--session-id"
-        return [self._wrapper(), flag, native_id]
+        return [self._wrapper(), flag, session_id]
 
 
 class PiDriver(HarnessDriver):
@@ -92,55 +79,18 @@ class PiDriver(HarnessDriver):
 
     def command(
         self,
-        native_id: str | None,
+        session_id: str,
         *,
         started_once: bool,
-        binding_token: str | None = None,
     ) -> list[str]:
-        if native_id is None:
-            raise BrowserSessionUnavailableError("Pi session identity is missing.")
-        return [self._wrapper(), "--session-id", native_id]
-
-
-class CodexDriver(HarnessDriver):
-    harness = BrowserSessionHarness.CODEX
-    wrapper_name = "fcc-codex"
-    client_name = codex_binary_name()
-
-    def initial_native_id(self) -> None:
-        """Let the native Codex CLI create and persist its own thread."""
-
-        return None
-
-    def command(
-        self,
-        native_id: str | None,
-        *,
-        started_once: bool,
-        binding_token: str | None = None,
-    ) -> list[str]:
-        if binding_token is None:
-            raise BrowserSessionUnavailableError(
-                "Codex browser-session correlation is unavailable."
-            )
-        command = [
-            self._wrapper(),
-            "-c",
-            _toml_assignment(
-                f"model_providers.fcc.http_headers.{BROWSER_SESSION_HEADER}",
-                binding_token,
-            ),
-        ]
-        if native_id is not None:
-            command.extend(["resume", native_id])
-        return command
+        return [self._wrapper(), "--session-id", session_id]
 
 
 class HarnessDriverRegistry:
-    """Fixed registry for the three customer-facing native harnesses."""
+    """Fixed registry for the two browser-session harnesses."""
 
     def __init__(self, drivers: Sequence[HarnessDriver] | None = None) -> None:
-        selected = drivers or (ClaudeDriver(), CodexDriver(), PiDriver())
+        selected = drivers or (ClaudeDriver(), PiDriver())
         self._drivers = {driver.harness: driver for driver in selected}
 
     def driver(self, harness: BrowserSessionHarness) -> HarnessDriver:
@@ -174,7 +124,3 @@ def _resolve_command(name: str) -> str | None:
     if os.name == "nt":
         candidates.insert(0, scripts_dir / f"{name}.exe")
     return next((str(path) for path in candidates if path.is_file()), None)
-
-
-def _toml_assignment(key: str, value: str) -> str:
-    return f"{key}={json.dumps(value)}"
