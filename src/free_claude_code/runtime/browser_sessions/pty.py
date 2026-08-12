@@ -3,6 +3,7 @@
 import importlib
 import os
 import signal
+import threading
 from collections.abc import Mapping, Sequence
 from typing import Any, Protocol
 
@@ -55,6 +56,7 @@ class NativeTerminalProcess:
         self._process = process
         self._pid = int(process.pid)
         self._closed = False
+        self._lifecycle_lock = threading.Lock()
         register_pid(self._pid)
 
     @property
@@ -78,21 +80,23 @@ class NativeTerminalProcess:
         return int(exit_status) if isinstance(exit_status, int) else 0
 
     def terminate_tree(self) -> None:
-        if IS_WINDOWS:
-            kill_pid_tree_best_effort(self._pid)
-            return
-        try:
-            os.killpg(self._pid, signal.SIGTERM)
-        except ProcessLookupError:
-            return
+        with self._lifecycle_lock:
+            if self._closed:
+                return
+            if IS_WINDOWS:
+                kill_pid_tree_best_effort(self._pid)
+                return
+            try:
+                os.killpg(self._pid, signal.SIGTERM)
+            except ProcessLookupError:
+                return
 
     def close(self) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        try:
+        with self._lifecycle_lock:
+            if self._closed:
+                return
             self._process.close(force=True)
-        finally:
+            self._closed = True
             unregister_pid(self._pid)
 
 

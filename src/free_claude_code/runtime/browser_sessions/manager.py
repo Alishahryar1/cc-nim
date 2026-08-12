@@ -3,10 +3,10 @@
 import asyncio
 import copy
 import os
-from collections.abc import Awaitable, Callable
-from contextlib import suppress
+from collections.abc import Awaitable, Callable, Coroutine
 from dataclasses import dataclass, field
 from pathlib import Path
+from typing import Any
 from uuid import uuid4
 
 from free_claude_code.application.browser_sessions import (
@@ -22,6 +22,7 @@ from free_claude_code.application.browser_sessions import (
     BrowserTerminalPort,
     TerminalEvent,
 )
+from free_claude_code.core.trace import trace_event
 
 from .drivers import HarnessDriverRegistry, terminal_environment
 from .pty import TerminalProcess, TerminalProcessFactory, TerminalSpawner
@@ -37,6 +38,42 @@ ATTACHMENT_QUEUE_LIMIT = 256
 DEFAULT_COLUMNS = 120
 DEFAULT_ROWS = 32
 PROCESS_STOP_TIMEOUT_SECONDS = 5.0
+PROCESS_CLEANUP_INCOMPLETE_DETAIL = "Terminal cleanup is incomplete. Use Stop to retry."
+
+
+async def _await_owned_task[T](
+    task: asyncio.Task[T],
+) -> tuple[T, asyncio.CancelledError | None]:
+    """Finish an owned task before returning any caller cancellation."""
+    cancellation: asyncio.CancelledError | None = None
+    current = asyncio.current_task()
+    while True:
+        cancelling_before = current.cancelling() if current is not None else 0
+        try:
+            return await asyncio.shield(task), cancellation
+        except asyncio.CancelledError as exc:
+            if current is None or (
+                current.cancelling() <= cancelling_before and task.done()
+            ):
+                raise
+            cancellation = cancellation or exc
+
+
+async def _finish_owned_operation[T](
+    operation: Coroutine[Any, Any, T],
+    *,
+    name: str,
+) -> T:
+    """Finish a lifecycle transition before restoring caller cancellation."""
+    task = asyncio.create_task(operation, name=name)
+    result, cancellation = await _await_owned_task(task)
+    if cancellation is not None:
+        raise cancellation
+    return result
+
+
+async def _drain_task(task: asyncio.Task[object]) -> None:
+    await asyncio.gather(task, return_exceptions=True)
 
 
 @dataclass(slots=True)
@@ -211,6 +248,10 @@ class BrowserSessionManager:
             if session_id in self._deleting_sessions:
                 raise BrowserSessionConflictError("That session is being deleted.")
             runtime = self._runtime[session_id]
+            if runtime.process is not None:
+                raise BrowserSessionConflictError(
+                    "Session cleanup is incomplete. Use Stop before starting it."
+                )
             if runtime.state not in {
                 BrowserSessionState.STOPPED,
                 BrowserSessionState.EXITED,
@@ -247,6 +288,7 @@ class BrowserSessionManager:
 
         try:
             process = await self._spawn_terminal(
+                session_id,
                 command,
                 cwd=str(project_path),
                 env=terminal_environment(),
@@ -268,12 +310,12 @@ class BrowserSessionManager:
 
         try:
             async with self._lock:
+                runtime = self._runtime[session_id]
+                runtime.process = process
                 if self._closed or session_id in self._deleting_sessions:
                     should_terminate = True
                 else:
                     should_terminate = False
-                    runtime = self._runtime[session_id]
-                    runtime.process = process
                     if not session.started_once:
                         updated = copy.deepcopy(self._catalog)
                         updated_session = _session_in(updated, session_id)
@@ -291,19 +333,26 @@ class BrowserSessionManager:
                         )
                         self._publish_state(runtime)
                         return self._session_view(session)
-
-            await self._terminate_process(process)
         except asyncio.CancelledError:
-            await asyncio.shield(self._terminate_process(process))
-            await self._mark_cancelled_start(session_id, process)
+            await _finish_owned_operation(
+                self._rollback_start(
+                    session_id,
+                    process,
+                    detail="Session start was cancelled.",
+                ),
+                name=f"fcc-browser-session-{session_id}-cancel-start",
+            )
             raise
+
+        await _finish_owned_operation(
+            self._rollback_start(
+                session_id,
+                process,
+                detail="Session startup could not be committed.",
+            ),
+            name=f"fcc-browser-session-{session_id}-rollback-start",
+        )
         async with self._lock:
-            runtime = self._runtime.get(session_id)
-            if runtime is not None:
-                runtime.process = None
-                runtime.state = BrowserSessionState.FAILED
-                runtime.detail = "Session startup could not be committed."
-                self._publish_state(runtime)
             if self._closed:
                 raise BrowserSessionUnavailableError(
                     "Browser Sessions is shutting down."
@@ -316,11 +365,15 @@ class BrowserSessionManager:
             self._ensure_available(allow_closed=True)
             session = self._session(session_id)
             runtime = self._runtime[session_id]
-            if runtime.state in {
-                BrowserSessionState.STOPPED,
-                BrowserSessionState.EXITED,
-                BrowserSessionState.FAILED,
-            }:
+            if (
+                runtime.state
+                in {
+                    BrowserSessionState.STOPPED,
+                    BrowserSessionState.EXITED,
+                    BrowserSessionState.FAILED,
+                }
+                and runtime.process is None
+            ):
                 runtime.state = BrowserSessionState.STOPPED
                 runtime.detail = None
                 self._publish_state(runtime)
@@ -340,30 +393,16 @@ class BrowserSessionManager:
                 self._publish_state(runtime)
 
         if start_task is not None:
-            await asyncio.shield(start_task)
+            await _finish_owned_operation(
+                _drain_task(start_task),
+                name=f"fcc-browser-session-{session_id}-drain-start",
+            )
             return await self.stop_session(session_id)
 
-        if process is not None:
-            await self._terminate_process(process)
-        if task is not None:
-            try:
-                await asyncio.wait_for(
-                    asyncio.shield(task), timeout=PROCESS_STOP_TIMEOUT_SECONDS
-                )
-            except TimeoutError:
-                task.cancel()
-                await asyncio.gather(task, return_exceptions=True)
-
-        async with self._lock:
-            session = self._session(session_id)
-            runtime = self._runtime[session_id]
-            runtime.process = None
-            runtime.reader_task = None
-            runtime.stop_requested = False
-            runtime.state = BrowserSessionState.STOPPED
-            runtime.detail = None
-            self._publish_state(runtime)
-            return self._session_view(session)
+        return await _finish_owned_operation(
+            self._stop_owned_process(session_id, process, task),
+            name=f"fcc-browser-session-{session_id}-stop",
+        )
 
     async def delete_session(self, session_id: str) -> None:
         async with self._lock:
@@ -437,10 +476,25 @@ class BrowserSessionManager:
                             )
                         )
                         runtime.attachment = None
-                self._close_complete = True
+                cleanup_incomplete = any(
+                    runtime.process is not None or runtime.reader_task is not None
+                    for runtime in self._runtime.values()
+                ) or any(
+                    self._runtime[session_id].state is BrowserSessionState.STARTING
+                    and not task.done()
+                    for session_id, task in self._start_tasks.items()
+                    if session_id in self._runtime
+                )
+                if not cleanup_incomplete:
+                    self._close_complete = True
+            if cleanup_incomplete:
+                raise BrowserSessionUnavailableError(
+                    "Browser Sessions shutdown is incomplete."
+                )
 
     async def _read_terminal(self, session_id: str, process: TerminalProcess) -> None:
         read_error: Exception | None = None
+        cancelled = False
         try:
             while True:
                 try:
@@ -465,35 +519,62 @@ class BrowserSessionManager:
                     ):
                         runtime.attachment = None
         except asyncio.CancelledError:
+            cancelled = True
             raise
         except Exception as exc:
             read_error = exc
         finally:
-            if read_error is not None:
-                await asyncio.to_thread(process.terminate_tree)
-            try:
-                exit_code = await asyncio.to_thread(process.wait)
-            except Exception:
+            async with self._lock:
+                runtime = self._runtime.get(session_id)
+                stop_requested = bool(
+                    runtime is not None
+                    and runtime.process is process
+                    and runtime.stop_requested
+                )
+            terminate = cancelled or read_error is not None or stop_requested
+            if terminate:
+                released = await self._release_process(
+                    session_id,
+                    process,
+                    terminate=True,
+                )
+            if terminate and not released:
                 exit_code = -1
-            await asyncio.to_thread(process.close)
+            else:
+                try:
+                    exit_code = await asyncio.to_thread(process.wait)
+                except Exception:
+                    exit_code = -1
+            if not terminate:
+                released = await self._release_process(
+                    session_id,
+                    process,
+                    terminate=False,
+                )
             async with self._lock:
                 runtime = self._runtime.get(session_id)
                 if runtime is not None and runtime.process is process:
-                    runtime.process = None
                     runtime.reader_task = None
-                    if runtime.stop_requested:
+                    if not released:
+                        runtime.state = BrowserSessionState.FAILED
+                        runtime.detail = PROCESS_CLEANUP_INCOMPLETE_DETAIL
+                    elif runtime.stop_requested:
+                        runtime.process = None
                         runtime.state = BrowserSessionState.STOPPED
                         runtime.detail = None
                     elif read_error is not None:
+                        runtime.process = None
                         runtime.state = BrowserSessionState.FAILED
                         runtime.detail = (
                             "Terminal ended unexpectedly "
                             f"({type(read_error).__name__})."
                         )
                     elif exit_code == 0:
+                        runtime.process = None
                         runtime.state = BrowserSessionState.EXITED
                         runtime.detail = "Harness exited."
                     else:
+                        runtime.process = None
                         runtime.state = BrowserSessionState.FAILED
                         runtime.detail = f"Harness exited with code {exit_code}."
                     if runtime.attachment is not None:
@@ -505,12 +586,135 @@ class BrowserSessionManager:
                             )
                         )
 
-    async def _terminate_process(self, process: TerminalProcess) -> None:
-        await asyncio.to_thread(process.terminate_tree)
-        await asyncio.to_thread(process.close)
+    async def _stop_owned_process(
+        self,
+        session_id: str,
+        process: TerminalProcess | None,
+        reader_task: asyncio.Task[None] | None,
+    ) -> BrowserSessionView:
+        released = process is None
+        if process is not None:
+            released = await self._release_process(
+                session_id,
+                process,
+                terminate=True,
+            )
+        if reader_task is not None:
+            done, _pending = await asyncio.wait(
+                {reader_task},
+                timeout=PROCESS_STOP_TIMEOUT_SECONDS,
+            )
+            if not done:
+                reader_task.cancel()
+            await asyncio.gather(reader_task, return_exceptions=True)
+
+        async with self._lock:
+            session = self._session(session_id)
+            runtime = self._runtime[session_id]
+            if process is not None and runtime.process is not process:
+                released = True
+            if released:
+                if runtime.process is process:
+                    runtime.process = None
+                runtime.reader_task = None
+                runtime.stop_requested = False
+                runtime.state = BrowserSessionState.STOPPED
+                runtime.detail = None
+            else:
+                if runtime.reader_task is reader_task:
+                    runtime.reader_task = None
+                runtime.stop_requested = False
+                runtime.state = BrowserSessionState.FAILED
+                runtime.detail = PROCESS_CLEANUP_INCOMPLETE_DETAIL
+            self._publish_state(runtime)
+            view = self._session_view(session)
+
+        if not released:
+            raise BrowserSessionUnavailableError(PROCESS_CLEANUP_INCOMPLETE_DETAIL)
+        return view
+
+    async def _rollback_start(
+        self,
+        session_id: str,
+        process: TerminalProcess,
+        *,
+        detail: str,
+    ) -> None:
+        async with self._lock:
+            runtime = self._runtime.get(session_id)
+            if runtime is not None:
+                runtime.process = process
+
+        released = await self._release_process(
+            session_id,
+            process,
+            terminate=True,
+        )
+
+        async with self._lock:
+            runtime = self._runtime.get(session_id)
+            if runtime is None or runtime.process is not process:
+                return
+            if released:
+                runtime.process = None
+                runtime.detail = detail
+            else:
+                runtime.detail = PROCESS_CLEANUP_INCOMPLETE_DETAIL
+            runtime.reader_task = None
+            runtime.stop_requested = False
+            runtime.state = BrowserSessionState.FAILED
+            self._publish_state(runtime)
+
+    async def _release_process(
+        self,
+        session_id: str,
+        process: TerminalProcess,
+        *,
+        terminate: bool,
+    ) -> bool:
+        if terminate:
+            try:
+                await asyncio.to_thread(process.terminate_tree)
+            except Exception as exc:
+                self._trace_cleanup_failure(
+                    session_id,
+                    process,
+                    operation="terminate_tree",
+                    exc=exc,
+                )
+        try:
+            await asyncio.to_thread(process.close)
+        except Exception as exc:
+            self._trace_cleanup_failure(
+                session_id,
+                process,
+                operation="close",
+                exc=exc,
+            )
+            return False
+        return True
+
+    @staticmethod
+    def _trace_cleanup_failure(
+        session_id: str,
+        process: TerminalProcess,
+        *,
+        operation: str,
+        exc: Exception,
+    ) -> None:
+        trace_event(
+            stage="runtime",
+            event="browser_session.process_cleanup_failed",
+            source="runtime",
+            session_id=session_id,
+            process_id=process.pid,
+            operation=operation,
+            exc_type=type(exc).__name__,
+        )
 
     async def _spawn_terminal(
         self,
+        session_id: str,
         command: list[str],
         *,
         cwd: str,
@@ -528,24 +732,23 @@ class BrowserSessionManager:
                 rows=rows,
             )
         )
-        try:
-            return await asyncio.shield(spawn_task)
-        except asyncio.CancelledError:
-            process: TerminalProcess | None = None
-            with suppress(Exception):
-                process = await asyncio.shield(spawn_task)
-            if process is not None:
-                await asyncio.shield(self._terminate_process(process))
-            raise
+        process, cancellation = await _await_owned_task(spawn_task)
+        if cancellation is None:
+            return process
+        await _finish_owned_operation(
+            self._rollback_start(
+                session_id,
+                process,
+                detail="Session start was cancelled.",
+            ),
+            name=f"fcc-browser-session-{session_id}-cancelled-spawn",
+        )
+        raise cancellation
 
-    async def _mark_cancelled_start(
-        self, session_id: str, process: TerminalProcess | None = None
-    ) -> None:
+    async def _mark_cancelled_start(self, session_id: str) -> None:
         async with self._lock:
             runtime = self._runtime.get(session_id)
             if runtime is not None and runtime.state == BrowserSessionState.STARTING:
-                if process is not None and runtime.process is process:
-                    runtime.process = None
                 runtime.state = BrowserSessionState.FAILED
                 runtime.detail = "Session start was cancelled."
                 self._publish_state(runtime)

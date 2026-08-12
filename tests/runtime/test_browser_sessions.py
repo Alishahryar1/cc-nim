@@ -69,6 +69,10 @@ class FakeTerminalProcess:
         self.resizes: list[tuple[int, int]] = []
         self.terminated = False
         self.closed = False
+        self.terminate_calls = 0
+        self.close_calls = 0
+        self.terminate_error: Exception | None = None
+        self.close_error: Exception | None = None
         self.exit_code = 0
         self._chunks: Queue[str | Exception | None] = Queue()
 
@@ -90,10 +94,16 @@ class FakeTerminalProcess:
         return self.exit_code
 
     def terminate_tree(self) -> None:
+        self.terminate_calls += 1
+        if self.terminate_error is not None:
+            raise self.terminate_error
         self.terminated = True
         self._chunks.put(None)
 
     def close(self) -> None:
+        self.close_calls += 1
+        if self.close_error is not None:
+            raise self.close_error
         if not self.closed:
             self.closed = True
             self._chunks.put(None)
@@ -113,9 +123,15 @@ class FakeProcessFactory:
     def __init__(self) -> None:
         self.processes: list[FakeTerminalProcess] = []
         self.spawns: list[tuple[list[str], str, int, int]] = []
+        self.next_terminate_error: Exception | None = None
+        self.next_close_error: Exception | None = None
 
     def spawn(self, command, *, cwd, env, columns, rows):
         process = FakeTerminalProcess(1000 + len(self.processes))
+        process.terminate_error = self.next_terminate_error
+        process.close_error = self.next_close_error
+        self.next_terminate_error = None
+        self.next_close_error = None
         self.processes.append(process)
         self.spawns.append((list(command), cwd, columns, rows))
         return process
@@ -448,6 +464,118 @@ async def test_first_start_commit_failure_terminates_the_uncommitted_process(
 
 
 @pytest.mark.asyncio
+async def test_start_rollback_closes_and_reconciles_after_termination_failure(
+    monkeypatch, tmp_path
+):
+    registry, _drivers = fake_drivers()
+    factory = FakeProcessFactory()
+    factory.next_terminate_error = OSError("tree termination failed")
+    store = BrowserSessionStore(tmp_path / "sessions.json")
+    original_save = store.save
+    save_count = 0
+
+    def fail_second_save(catalog):
+        nonlocal save_count
+        save_count += 1
+        if save_count == 2:
+            raise SessionStoreError("Browser Sessions metadata could not be saved.")
+        original_save(catalog)
+
+    monkeypatch.setattr(store, "save", fail_second_save)
+    manager = BrowserSessionManager(
+        store,
+        drivers=registry,
+        process_factory=factory,
+    )
+
+    session = await manager.create_session(
+        str(tmp_path), BrowserSessionHarness.CLAUDE, "Termination failure"
+    )
+    process = factory.processes[0]
+
+    assert session.state is BrowserSessionState.FAILED
+    assert session.detail == "Session startup could not be committed."
+    assert process.terminate_calls == 1
+    assert process.close_calls == 1
+    assert process.closed is True
+
+    restarted = await manager.start_session(session.session_id)
+    assert restarted.state is BrowserSessionState.RUNNING
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_start_rollback_retains_an_unclosed_process_for_stop_retry(
+    monkeypatch, tmp_path
+):
+    registry, _drivers = fake_drivers()
+    factory = FakeProcessFactory()
+    factory.next_close_error = OSError("pty close failed")
+    store = BrowserSessionStore(tmp_path / "sessions.json")
+    original_save = store.save
+    save_count = 0
+
+    def fail_second_save(catalog):
+        nonlocal save_count
+        save_count += 1
+        if save_count == 2:
+            raise SessionStoreError("Browser Sessions metadata could not be saved.")
+        original_save(catalog)
+
+    monkeypatch.setattr(store, "save", fail_second_save)
+    manager = BrowserSessionManager(
+        store,
+        drivers=registry,
+        process_factory=factory,
+    )
+
+    session = await manager.create_session(
+        str(tmp_path), BrowserSessionHarness.PI, "Close failure"
+    )
+    process = factory.processes[0]
+
+    assert session.state is BrowserSessionState.FAILED
+    assert session.detail == "Terminal cleanup is incomplete. Use Stop to retry."
+    assert process.closed is False
+    with pytest.raises(BrowserSessionConflictError, match="cleanup is incomplete"):
+        await manager.start_session(session.session_id)
+
+    process.close_error = None
+    stopped = await manager.stop_session(session.session_id)
+    assert stopped.state is BrowserSessionState.STOPPED
+    assert process.closed is True
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_manager_close_retries_incomplete_terminal_cleanup(tmp_path):
+    registry, _drivers = fake_drivers()
+    factory = FakeProcessFactory()
+    manager = BrowserSessionManager(
+        BrowserSessionStore(tmp_path / "sessions.json"),
+        drivers=registry,
+        process_factory=factory,
+    )
+    await manager.create_session(
+        str(tmp_path), BrowserSessionHarness.CLAUDE, "Shutdown retry"
+    )
+    process = factory.processes[0]
+    process.close_error = OSError("pty close failed")
+
+    with pytest.raises(BrowserSessionUnavailableError, match="shutdown is incomplete"):
+        await manager.close()
+
+    session = (await manager.snapshot()).sessions[0]
+    assert session.state is BrowserSessionState.FAILED
+    assert session.detail == "Terminal cleanup is incomplete. Use Stop to retry."
+    assert process.closed is False
+
+    process.close_error = None
+    await manager.close()
+    assert process.closed is True
+
+
+@pytest.mark.asyncio
 async def test_native_exit_leaves_no_shell_and_keeps_harness_lock(tmp_path):
     registry, drivers = fake_drivers()
     factory = FakeProcessFactory()
@@ -675,6 +803,7 @@ class FakeNativePty:
         self.writes: list[str] = []
         self.dimensions: list[tuple[int, int]] = []
         self.close_calls: list[bool] = []
+        self.close_error: Exception | None = None
 
     def read(self, size: int) -> str:
         return f"read-{size}"
@@ -690,6 +819,8 @@ class FakeNativePty:
 
     def close(self, *, force: bool) -> None:
         self.close_calls.append(force)
+        if self.close_error is not None:
+            raise self.close_error
 
 
 def test_native_terminal_process_normalizes_io_cleanup_and_exit_status(monkeypatch):
@@ -723,12 +854,45 @@ def test_native_terminal_process_normalizes_io_cleanup_and_exit_status(monkeypat
     process.terminate_tree()
     process.close()
     process.close()
+    process.terminate_tree()
 
     assert registered == [4242]
     assert native.writes == ["hello"]
     assert native.dimensions == [(30, 100)]
     assert terminated == [4242]
     assert native.close_calls == [True]
+    assert unregistered == [4242]
+
+
+def test_native_terminal_process_retries_close_before_releasing_registration(
+    monkeypatch,
+):
+    registered: list[int] = []
+    unregistered: list[int] = []
+    monkeypatch.setattr(
+        "free_claude_code.runtime.browser_sessions.pty.register_pid",
+        registered.append,
+    )
+    monkeypatch.setattr(
+        "free_claude_code.runtime.browser_sessions.pty.unregister_pid",
+        unregistered.append,
+    )
+    native = FakeNativePty()
+    native.close_error = OSError("pty close failed")
+    process = NativeTerminalProcess(native)
+
+    with pytest.raises(OSError, match="pty close failed"):
+        process.close()
+
+    assert native.close_calls == [True]
+    assert unregistered == []
+
+    native.close_error = None
+    process.close()
+    process.close()
+
+    assert registered == [4242]
+    assert native.close_calls == [True, True]
     assert unregistered == [4242]
 
 
