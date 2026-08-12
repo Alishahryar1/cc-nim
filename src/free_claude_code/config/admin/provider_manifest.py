@@ -101,10 +101,7 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
     },
     "MINIMAX_API_KEY": {
         "label": "MiniMax API Key",
-        "description": (
-            "MiniMax API key for the OpenAI-compatible Chat Completions API at "
-            "free_claude_code.api.minimax.io/v1."
-        ),
+        "description": ("MiniMax API key for chat and text-to-speech requests."),
     },
     "KIMI_CODE_API_KEY": {
         "label": "Kimi Code API Key",

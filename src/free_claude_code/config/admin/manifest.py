@@ -133,6 +133,20 @@ SECTIONS: tuple[ConfigSectionSpec, ...] = (
 
 _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
     ConfigFieldSpec(
+        "MINIMAX_TTS_REGION",
+        "MiniMax Speech Region",
+        "voice",
+        "select",
+        settings_attr="minimax_tts_region",
+        default="global",
+        options=(
+            ConfigOptionSpec("global", "Global"),
+            ConfigOptionSpec("china", "China"),
+        ),
+        restart_required=True,
+        description="Regional MiniMax endpoint used by /v1/audio/speech.",
+    ),
+    ConfigFieldSpec(
         "MODEL",
         "Default Model",
         "models",

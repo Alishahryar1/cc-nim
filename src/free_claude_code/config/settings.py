@@ -1,7 +1,7 @@
 """Flat application settings schema loaded by Pydantic Settings."""
 
 from functools import lru_cache
-from typing import Any
+from typing import Any, Literal
 
 from pydantic import Field, field_validator, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -56,6 +56,9 @@ class Settings(BaseSettings):
 
     # ==================== MiniMax Config ====================
     minimax_api_key: str = Field(default="", validation_alias="MINIMAX_API_KEY")
+    minimax_tts_region: Literal["global", "china"] = Field(
+        default="global", validation_alias="MINIMAX_TTS_REGION"
+    )
 
     # ==================== OpenCode Zen / OpenCode Go ====================
     # Same key from opencode.ai/auth; Zen uses ``opencode_zen/``, Go uses ``opencode_go/``.

@@ -1,5 +1,6 @@
 """FastAPI route handlers."""
 
+import httpx
 from fastapi import APIRouter, Depends, HTTPException, Request, Response
 from loguru import logger
 
@@ -14,6 +15,11 @@ from free_claude_code.core.anthropic import (
 )
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.trace import trace_event
+from free_claude_code.providers.minimax import (
+    MiniMaxSpeechClient,
+    MiniMaxSpeechError,
+    MiniMaxSpeechRequest,
+)
 
 from .dependencies import (
     get_services,
@@ -139,6 +145,42 @@ async def create_response(
 
 @router.api_route("/v1/responses", methods=["HEAD", "OPTIONS"])
 async def probe_responses(_auth=Depends(require_proxy_auth)):
+    return _probe_response("POST, HEAD, OPTIONS")
+
+
+@router.post("/v1/audio/speech")
+async def create_speech(
+    request_data: MiniMaxSpeechRequest,
+    settings: Settings = Depends(get_settings),
+    _auth=Depends(require_proxy_auth),
+):
+    """Synthesize speech with MiniMax and return the requested audio format."""
+    if not settings.minimax_api_key.strip():
+        raise HTTPException(
+            status_code=503,
+            detail="MINIMAX_API_KEY is required for speech synthesis.",
+        )
+    timeout = httpx.Timeout(
+        connect=settings.http_connect_timeout,
+        read=settings.http_read_timeout,
+        write=settings.http_write_timeout,
+        pool=settings.http_connect_timeout,
+    )
+    client = MiniMaxSpeechClient(
+        api_key=settings.minimax_api_key,
+        region=settings.minimax_tts_region,
+        proxy=settings.minimax_proxy,
+        timeout=timeout,
+    )
+    try:
+        audio = await client.synthesize(request_data)
+    except MiniMaxSpeechError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return Response(content=audio, media_type=request_data.media_type)
+
+
+@router.api_route("/v1/audio/speech", methods=["HEAD", "OPTIONS"])
+async def probe_speech(_auth=Depends(require_proxy_auth)):
     return _probe_response("POST, HEAD, OPTIONS")
 
 

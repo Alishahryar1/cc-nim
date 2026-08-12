@@ -1,8 +1,9 @@
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 from fastapi.testclient import TestClient
 
+from free_claude_code.config.settings import Settings
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
@@ -81,6 +82,49 @@ def test_health(client: TestClient):
     assert response.status_code == 200
     assert response.json()["status"] == "healthy"
     assert response.headers["request-id"].startswith("req_")
+
+
+def test_speech_requires_minimax_api_key():
+    speech_app = create_test_app(Settings(MINIMAX_API_KEY=""))
+    with TestClient(speech_app) as speech_client:
+        response = speech_client.post(
+            "/v1/audio/speech",
+            json={"model": "speech-2.8-hd", "text": "Hello"},
+        )
+
+    assert response.status_code == 503
+    assert response.json()["detail"] == (
+        "MINIMAX_API_KEY is required for speech synthesis."
+    )
+
+
+def test_speech_returns_decoded_audio_from_selected_region():
+    speech_app = create_test_app(
+        Settings(MINIMAX_API_KEY="test-key", MINIMAX_TTS_REGION="china")
+    )
+    speech_client = MagicMock()
+    speech_client.synthesize = AsyncMock(return_value=b"RIFF")
+
+    with (
+        patch(
+            "free_claude_code.api.routes.MiniMaxSpeechClient",
+            return_value=speech_client,
+        ) as client_type,
+        TestClient(speech_app) as test_client,
+    ):
+        response = test_client.post(
+            "/v1/audio/speech",
+            json={
+                "model": "speech-2.8-hd",
+                "text": "Hello",
+                "audio_setting": {"format": "wav"},
+            },
+        )
+
+    assert response.status_code == 200
+    assert response.content == b"RIFF"
+    assert response.headers["content-type"] == "audio/wav"
+    assert client_type.call_args.kwargs["region"] == "china"
 
 
 def test_models_list(client: TestClient):

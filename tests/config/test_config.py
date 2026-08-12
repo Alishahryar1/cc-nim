@@ -323,9 +323,11 @@ class TestSettings:
 
         monkeypatch.setenv("MINIMAX_API_KEY", "minimax-key")
         monkeypatch.setenv("MINIMAX_PROXY", "http://proxy.test:8080")
+        monkeypatch.setenv("MINIMAX_TTS_REGION", "china")
         settings = Settings()
         assert settings.minimax_api_key == "minimax-key"
         assert settings.minimax_proxy == "http://proxy.test:8080"
+        assert settings.minimax_tts_region == "china"
 
     def test_cloudflare_settings_from_env(self, monkeypatch):
         """Cloudflare token, account, and proxy env vars load into settings."""
