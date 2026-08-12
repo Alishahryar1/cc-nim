@@ -56,6 +56,7 @@ def _settings(**overrides):
         "xai_api_key": "",
         "qwencloud_api_key": "",
         "together_api_key": "",
+        "deepinfra_api_key": "",
         "sambanova_api_key": "",
         "cerebras_api_key": "",
         "ollama_api_key": "",
@@ -202,6 +203,23 @@ def test_together_provider_smoke_uses_current_coding_model(monkeypatch) -> None:
 
     assert [model.provider for model in models] == ["together"]
     assert models[0].full_model == "together/zai-org/GLM-5.2"
+    assert models[0].source == "provider_default"
+
+
+def test_deepinfra_provider_smoke_uses_current_coding_model(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_DEEPINFRA", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            deepinfra_api_key="deepinfra-key",
+        )
+    )
+
+    models = config.provider_smoke_models()
+
+    assert [model.provider for model in models] == ["deepinfra"]
+    assert models[0].full_model == "deepinfra/deepseek-ai/DeepSeek-V4-Flash"
     assert models[0].source == "provider_default"
 
 

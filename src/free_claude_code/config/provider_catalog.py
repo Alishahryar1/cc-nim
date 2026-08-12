@@ -58,6 +58,8 @@ QWENCLOUD_DEFAULT_BASE = (
 )
 # Together AI OpenAI-compatible Chat Completions API.
 TOGETHER_DEFAULT_BASE = "https://api.together.ai/v1"
+# DeepInfra OpenAI-compatible Chat Completions API.
+DEEPINFRA_DEFAULT_BASE = "https://api.deepinfra.com/v1/openai"
 # TokenRouter OpenAI-compatible Chat Completions gateway.
 TOKENROUTER_DEFAULT_BASE = "https://api.tokenrouter.com/v1"
 # NaraRoute OpenAI-compatible Chat Completions gateway.
@@ -160,6 +162,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="together_api_key",
         default_base_url=TOGETHER_DEFAULT_BASE,
         proxy_attr="together_proxy",
+    ),
+    "deepinfra": ProviderDescriptor(
+        provider_id="deepinfra",
+        display_name="DeepInfra",
+        credential_env="DEEPINFRA_API_KEY",
+        credential_url="https://deepinfra.com/dash/api_keys",
+        credential_attr="deepinfra_api_key",
+        default_base_url=DEEPINFRA_DEFAULT_BASE,
+        proxy_attr="deepinfra_proxy",
     ),
     "azure_openai": ProviderDescriptor(
         provider_id="azure_openai",

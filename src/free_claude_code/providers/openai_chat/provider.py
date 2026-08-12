@@ -148,8 +148,13 @@ class OpenAIChatProvider(BaseProvider):
             payload,
             provider_name=self._provider_name,
             collection_field=listing.collection_field,
+            id_field=listing.id_field,
             aliases_field=listing.aliases_field,
             field_equals=listing.field_equals,
+            required_null_field=listing.required_null_field,
+            tags_field=listing.tags_field,
+            thinking_tag=listing.thinking_tag,
+            non_thinking_tag=listing.non_thinking_tag,
         )
 
     async def _list_models_payload(self) -> Any:

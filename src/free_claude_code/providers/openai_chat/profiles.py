@@ -60,8 +60,13 @@ class OpenAIModelListing:
 
     path: str | None = None
     collection_field: str | None = "data"
+    id_field: str = "id"
     aliases_field: str | None = None
     field_equals: tuple[str, str] | None = None
+    required_null_field: str | None = None
+    tags_field: str | None = None
+    thinking_tag: str = "reasoning"
+    non_thinking_tag: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -184,6 +189,30 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             field_equals=("type", "chat"),
         ),
         reasoning_delta_field="reasoning",
+    ),
+    "deepinfra": OpenAIChatProfile(
+        _policy(
+            "DEEPINFRA",
+            ReasoningReplayMode.REASONING_CONTENT,
+            include_extra_body=True,
+            extra_body_validator=validate_extra_body_does_not_override_reasoning_fields,
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        NamedEffortReasoning(
+            _ALL_EFFORTS,
+            disabled_value="none",
+            enabled_value="high",
+            use_extra_body=True,
+        ),
+        model_listing=OpenAIModelListing(
+            path="https://api.deepinfra.com/models/list",
+            collection_field=None,
+            id_field="model_name",
+            field_equals=("reported_type", "text-generation"),
+            required_null_field="deprecated",
+            tags_field="tags",
+            non_thinking_tag="non-reasoning",
+        ),
     ),
     "azure_openai": OpenAIChatProfile(
         _policy(

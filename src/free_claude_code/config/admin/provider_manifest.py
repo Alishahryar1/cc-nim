@@ -159,6 +159,12 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "chat models."
         ),
     },
+    "DEEPINFRA_API_KEY": {
+        "label": "DeepInfra API Key",
+        "description": (
+            "DeepInfra API key for OpenAI-compatible chat and reasoning models."
+        ),
+    },
     "SAMBANOVA_API_KEY": {
         "label": "SambaNova API Key",
         "description": (

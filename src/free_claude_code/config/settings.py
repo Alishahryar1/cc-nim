@@ -140,6 +140,9 @@ class Settings(BaseSettings):
     # ==================== Together AI (OpenAI-compatible) ====================
     together_api_key: str = Field(default="", validation_alias="TOGETHER_API_KEY")
 
+    # ==================== DeepInfra (OpenAI-compatible) ====================
+    deepinfra_api_key: str = Field(default="", validation_alias="DEEPINFRA_API_KEY")
+
     # ==================== Cerebras Inference (OpenAI-compatible) ====================
     cerebras_api_key: str = Field(default="", validation_alias="CEREBRAS_API_KEY")
 
@@ -196,6 +199,7 @@ class Settings(BaseSettings):
     xai_proxy: str = Field(default="", validation_alias="XAI_PROXY")
     qwencloud_proxy: str = Field(default="", validation_alias="QWENCLOUD_PROXY")
     together_proxy: str = Field(default="", validation_alias="TOGETHER_PROXY")
+    deepinfra_proxy: str = Field(default="", validation_alias="DEEPINFRA_PROXY")
     azure_openai_proxy: str = Field(default="", validation_alias="AZURE_OPENAI_PROXY")
     nvidia_nim_proxy: str = Field(default="", validation_alias="NVIDIA_NIM_PROXY")
     open_router_proxy: str = Field(default="", validation_alias="OPENROUTER_PROXY")

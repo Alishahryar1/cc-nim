@@ -32,23 +32,29 @@ def extract_openai_model_infos(
     *,
     provider_name: str,
     collection_field: str | None = "data",
+    id_field: str = "id",
     aliases_field: str | None = None,
     field_equals: tuple[str, str] | None = None,
+    required_null_field: str | None = None,
+    tags_field: str | None = None,
+    thinking_tag: str = "reasoning",
+    non_thinking_tag: str | None = None,
 ) -> frozenset[_ProviderModelInfo]:
     """Extract routable IDs from an OpenAI-compatible model-list response."""
-    model_ids: set[str] = set()
+    model_infos: set[_ProviderModelInfo] = set()
     item_location = collection_field or "root-array"
     for item in model_list_items(
         payload,
         provider_name=provider_name,
         collection_field=collection_field,
     ):
-        model_id = _field(item, "id")
+        model_id = _field(item, id_field)
         if not isinstance(model_id, str) or not model_id.strip():
             raise _malformed(
                 provider_name,
-                f"expected every {item_location} item to include id",
+                f"expected every {item_location} item to include {id_field}",
             )
+        included = True
         if field_equals is not None:
             field_name, expected_value = field_equals
             field_value = _field(item, field_name)
@@ -59,8 +65,44 @@ def extract_openai_model_infos(
                     f"string {field_name}",
                 )
             if field_value != expected_value:
-                continue
-        model_ids.add(model_id)
+                included = False
+
+        if required_null_field is not None:
+            if not _has_field(item, required_null_field):
+                raise _malformed(
+                    provider_name,
+                    f"expected every {item_location} item to include "
+                    f"{required_null_field}",
+                )
+            if _field(item, required_null_field) is not None:
+                included = False
+
+        supports_thinking: bool | None = None
+        if tags_field is not None:
+            tags_value = _field(item, tags_field)
+            if not _is_sequence(tags_value) or any(
+                not isinstance(tag, str) or not tag.strip() for tag in tags_value
+            ):
+                raise _malformed(
+                    provider_name,
+                    f"expected every {item_location} item to include "
+                    f"{tags_field} string array",
+                )
+            tags = frozenset(tags_value)
+            if thinking_tag in tags:
+                supports_thinking = True
+            elif non_thinking_tag is not None and non_thinking_tag in tags:
+                supports_thinking = False
+
+        if not included:
+            continue
+
+        model_infos.add(
+            _ProviderModelInfo(
+                model_id=model_id,
+                supports_thinking=supports_thinking,
+            )
+        )
         if aliases_field is not None:
             aliases = _field(item, aliases_field)
             if not _is_sequence(aliases):
@@ -75,11 +117,16 @@ def extract_openai_model_infos(
                         provider_name,
                         f"expected every {aliases_field} item to be a model id",
                     )
-                model_ids.add(alias)
+                model_infos.add(
+                    _ProviderModelInfo(
+                        model_id=alias,
+                        supports_thinking=supports_thinking,
+                    )
+                )
 
-    if not model_ids:
+    if not model_infos:
         raise _malformed(provider_name, "response did not include any model ids")
-    return model_infos_from_ids(model_ids)
+    return frozenset(model_infos)
 
 
 def extract_tool_capable_model_infos(
@@ -137,6 +184,12 @@ def _field(item: Any, name: str) -> Any:
     if isinstance(item, Mapping):
         return item.get(name)
     return getattr(item, name, None)
+
+
+def _has_field(item: Any, name: str) -> bool:
+    if isinstance(item, Mapping):
+        return name in item
+    return hasattr(item, name)
 
 
 def _is_sequence(value: Any) -> bool:
