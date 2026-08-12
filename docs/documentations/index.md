@@ -17,7 +17,7 @@ The codebase is organized into four core domains under `src/free_claude_code/`:
 
 ## 📚 Documentation Organization (Diátaxis Framework)
 
-This documentation suite is structured according to the **Diátaxis** framework into four distinct domains:
+This documentation suite is structured into four distinct domains:
 
 ### 1. API & Web Server Tools (`docs/api/`)
 * **[API Domain Index](api/index.md)**: Overview of API endpoints and request lifecycles.
