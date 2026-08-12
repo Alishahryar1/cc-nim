@@ -12,6 +12,7 @@ from free_claude_code.config.settings import Settings
 from free_claude_code.messaging.transcription import TranscriptionService
 from free_claude_code.messaging.voice import Transcriber
 from free_claude_code.providers.admission import ProviderAdmissionController
+from free_claude_code.providers.antigravity import AntigravityAuthManager
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.nvidia_nim.voice import NvidiaNimTranscriber
 from free_claude_code.providers.openai_codex import (
@@ -39,6 +40,7 @@ def build_asgi_app(
         verbose_third_party=settings.log_raw_api_payloads,
     )
     openai_auth = OpenAIAuthManager(proxy=settings.openai_proxy)
+    antigravity_auth = AntigravityAuthManager(proxy=settings.antigravity_proxy)
     openai_factory = partial(_create_openai_provider, auth=openai_auth)
     provider_constructor = partial(
         create_provider,
@@ -48,17 +50,27 @@ def build_asgi_app(
         ProviderRuntime,
         provider_constructor=provider_constructor,
     )
+
+    def connected_provider_ids() -> tuple[str, ...]:
+        return (
+            openai_auth.connected_provider_ids()
+            + antigravity_auth.connected_provider_ids()
+        )
+
     provider_manager = ProviderRuntimeManager(
         settings,
         runtime_factory=runtime_factory,
-        connected_provider_ids=openai_auth.connected_provider_ids,
+        connected_provider_ids=connected_provider_ids,
         model_catalog_publisher=CodexModelCatalogPublisher(),
     )
     runtime = ApplicationRuntime(
         provider_manager,
         transcriber=_create_transcriber(settings),
         restart_callback=restart_callback,
-        connected_accounts={"openai": openai_auth},
+        connected_accounts={
+            "openai": openai_auth,
+            "antigravity": antigravity_auth,
+        },
     )
     services = ApiServices(
         requests=provider_manager,

@@ -1,16 +1,27 @@
 """Antigravity CLI OAuth authentication and auto-discovery module."""
 
+import asyncio
 import base64
 import json
 import logging
 import os
 import time
+import urllib.parse
+import uuid
+from contextlib import suppress
+from dataclasses import dataclass
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
 
 import httpx
+from aiohttp import web
 
+from free_claude_code.application.connected_accounts import (
+    ConnectedAccountLoginMode,
+    ConnectedAccountState,
+    ConnectedAccountStatus,
+)
 from free_claude_code.providers.exceptions import AuthenticationError
 
 logger = logging.getLogger(__name__)
@@ -664,3 +675,390 @@ class AntigravityAuth:
         proj_id = await load_code_assist_async(access_token, base_url=self.base_url)
         self._cached_project_id = proj_id
         return proj_id
+
+
+@dataclass(frozen=True, slots=True, repr=False)
+class AntigravityAuthorizationGrant:
+    """OAuth authorization code and redirect URI."""
+
+    code: str
+    redirect_uri: str
+
+
+class AntigravityBrowserAuthorization:
+    """Short-lived loopback callback server for Google Antigravity OAuth login."""
+
+    def __init__(
+        self,
+        *,
+        auth_url: str,
+        redirect_uri: str,
+        runner: web.AppRunner,
+        result: asyncio.Future[AntigravityAuthorizationGrant],
+    ) -> None:
+        self.auth_url = auth_url
+        self.redirect_uri = redirect_uri
+        self._runner = runner
+        self._result = result
+        self._closed = False
+
+    @classmethod
+    async def start(cls) -> AntigravityBrowserAuthorization:
+        loop = asyncio.get_running_loop()
+        result: asyncio.Future[AntigravityAuthorizationGrant] = loop.create_future()
+        runner: web.AppRunner | None = None
+        redirect_uri = ""
+        for port in (8085, 8086, 8087, 8088):
+            candidate_uri = f"http://localhost:{port}/oauth/callback"
+            app = web.Application()
+
+            async def callback(
+                request: web.Request, cb_uri: str = candidate_uri
+            ) -> web.Response:
+                if error := request.query.get("error"):
+                    desc = request.query.get("error_description", error)
+                    if not result.done():
+                        result.set_exception(
+                            AuthenticationError(f"Google OAuth failed: {desc}")
+                        )
+                    return web.Response(
+                        status=400,
+                        text=f"Authentication failed: {desc}",
+                        content_type="text/html",
+                    )
+                code = request.query.get("code")
+                if not code:
+                    if not result.done():
+                        result.set_exception(
+                            AuthenticationError("Missing code parameter")
+                        )
+                    return web.Response(
+                        status=400,
+                        text="Missing code parameter",
+                        content_type="text/html",
+                    )
+                if not result.done():
+                    result.set_result(
+                        AntigravityAuthorizationGrant(code=code, redirect_uri=cb_uri)
+                    )
+                success_html = (
+                    "<html><head><title>Antigravity Authentication Successful</title></head>"
+                    '<body style="font-family: sans-serif; text-align: center; padding-top: 50px;">'
+                    '<h1 style="color: #4CAF50;">Authentication Successful!</h1>'
+                    "<p>Your Google Antigravity OAuth credentials have been generated.</p>"
+                    "<p>You may close this tab and return to the application.</p>"
+                    "</body></html>"
+                )
+                return web.Response(text=success_html, content_type="text/html")
+
+            app.router.add_get("/oauth/callback", callback)
+            candidate_runner = web.AppRunner(app)
+            try:
+                await candidate_runner.setup()
+                site = web.TCPSite(candidate_runner, "localhost", port)
+                await site.start()
+                runner = candidate_runner
+                redirect_uri = candidate_uri
+                break
+            except Exception:
+                await candidate_runner.cleanup()
+
+        if runner is None:
+            raise AuthenticationError(
+                "Could not bind local port for Google OAuth callback."
+            )
+
+        scopes = [
+            "https://www.googleapis.com/auth/cloud-platform",
+            "https://www.googleapis.com/auth/userinfo.email",
+            "openid",
+        ]
+        params = {
+            "client_id": DEFAULT_ANTIGRAVITY_CLIENT_ID,
+            "redirect_uri": redirect_uri,
+            "response_type": "code",
+            "scope": " ".join(scopes),
+            "access_type": "offline",
+            "prompt": "consent",
+        }
+        auth_url = f"https://accounts.google.com/o/oauth2/v2/auth?{urllib.parse.urlencode(params)}"
+        return cls(
+            auth_url=auth_url,
+            redirect_uri=redirect_uri,
+            runner=runner,
+            result=result,
+        )
+
+    async def wait(self) -> AntigravityAuthorizationGrant:
+        return await self._result
+
+    async def close(self) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        if not self._result.done():
+            self._result.cancel()
+        await self._runner.cleanup()
+
+
+class AntigravityAuthManager:
+    """Own Antigravity credentials, interactive OAuth login, refresh, and revocation."""
+
+    provider_id = "antigravity"
+
+    def __init__(
+        self,
+        *,
+        proxy: str = "",
+        token_path: Path | None = None,
+        client: httpx.AsyncClient | None = None,
+    ) -> None:
+        self._explicit_token_path = token_path is not None
+        self._token_path = (
+            Path(token_path).expanduser() if token_path else PRIMARY_TOKEN_PATH
+        )
+        self._client = client or httpx.AsyncClient(
+            proxy=proxy or None,
+            timeout=httpx.Timeout(30.0),
+            headers={"User-Agent": ANTIGRAVITY_USER_AGENT},
+        )
+        self._owns_client = client is None
+        self._revision = 0
+        self._operation_lock = asyncio.Lock()
+        self._state_lock = asyncio.Lock()
+        self._login_task: asyncio.Task[None] | None = None
+        self._browser_login: AntigravityBrowserAuthorization | None = None
+        self._attempt_id: str | None = None
+        self._mode: ConnectedAccountLoginMode | None = None
+        self._authorization_url: str | None = None
+        self._expires_at: int | None = None
+        self._last_error: str | None = None
+        self._closed = False
+        if self.is_connected():
+            self._revision = 1
+
+    def is_connected(self) -> bool:
+        """Return whether valid or renewable Antigravity credentials are present."""
+        if os.environ.get("ANTIGRAVITY_ACCESS_TOKEN"):
+            return True
+        if self._token_path.is_file():
+            data = load_token_from_file(self._token_path)
+            if data and (data.get("access_token") or data.get("refresh_token")):
+                return True
+        if not self._explicit_token_path:
+            for candidate in get_candidate_token_files():
+                data = load_token_from_file(candidate)
+                if data and (data.get("access_token") or data.get("refresh_token")):
+                    return True
+        return False
+
+    def connected_provider_ids(self) -> tuple[str, ...]:
+        """Return the provider availability contributed by this manager."""
+        return (self.provider_id,) if self.is_connected() else ()
+
+    def status(self) -> ConnectedAccountStatus:
+        """Return a credential-free snapshot safe for local Admin API."""
+        connected = self.is_connected()
+        connecting = self._login_task is not None and not self._login_task.done()
+        if connecting:
+            state = ConnectedAccountState.CONNECTING
+        elif self._last_error:
+            state = ConnectedAccountState.ERROR
+        elif connected:
+            state = ConnectedAccountState.CONNECTED
+        else:
+            state = ConnectedAccountState.DISCONNECTED
+
+        email: str | None = None
+        if connected:
+            try:
+                data = (
+                    load_token_from_file(self._token_path) or load_antigravity_token()
+                )
+                id_token = data.get("id_token")
+                if id_token:
+                    claims = decode_jwt_payload(id_token)
+                    email = claims.get("email")
+            except Exception:
+                pass
+
+        return ConnectedAccountStatus(
+            provider_id=self.provider_id,
+            state=state,
+            connected=connected,
+            revision=self._revision,
+            attempt_id=self._attempt_id if connecting else None,
+            email=email,
+            mode=self._mode if connecting else None,
+            authorization_url=self._authorization_url if connecting else None,
+            expires_at=self._expires_at if connecting else None,
+            message=self._last_error,
+        )
+
+    async def start_login(
+        self, mode: ConnectedAccountLoginMode
+    ) -> ConnectedAccountStatus:
+        """Start browser OAuth authorization without exposing secrets."""
+        async with self._operation_lock:
+            async with self._state_lock:
+                self._ensure_open()
+                if self._login_task is not None and not self._login_task.done():
+                    return self.status()
+                self._clear_attempt()
+                self._last_error = None
+                self._attempt_id = f"login_{uuid.uuid4().hex}"
+                self._mode = mode
+            browser: AntigravityBrowserAuthorization | None = None
+            try:
+                browser = await AntigravityBrowserAuthorization.start()
+                async with self._state_lock:
+                    self._browser_login = browser
+                    self._authorization_url = browser.auth_url
+                    self._expires_at = int(time.time()) + 15 * 60
+                    self._login_task = asyncio.create_task(
+                        self._complete_browser_login(browser),
+                        name="antigravity-browser-login",
+                    )
+                    return self.status()
+            except asyncio.CancelledError:
+                if browser is not None:
+                    with suppress(Exception):
+                        await browser.close()
+                async with self._state_lock:
+                    self._clear_attempt()
+                raise
+            except Exception as exc:
+                if browser is not None:
+                    with suppress(Exception):
+                        await browser.close()
+                async with self._state_lock:
+                    self._clear_attempt()
+                    self._last_error = f"Antigravity sign-in could not start: {exc}"
+                raise
+
+    async def cancel_login(self) -> ConnectedAccountStatus:
+        """Cancel a pending login while preserving current credentials."""
+        async with self._operation_lock:
+            async with self._state_lock:
+                login = self._detach_login_locked()
+                self._last_error = None
+            await self._close_detached_login(*login)
+            return self.status()
+
+    async def disconnect(self) -> ConnectedAccountStatus:
+        """Remove FCC-owned Antigravity credentials."""
+        async with self._operation_lock:
+            async with self._state_lock:
+                self._ensure_open()
+                login = self._detach_login_locked()
+            await self._close_detached_login(*login)
+            async with self._state_lock:
+                if self._token_path.is_file():
+                    self._token_path.unlink(missing_ok=True)
+                for candidate in get_candidate_token_files():
+                    candidate.unlink(missing_ok=True)
+                self._revision += 1
+                self._last_error = None
+                return self.status()
+
+    async def close(self) -> None:
+        """Cancel login resources and close owned HTTP client."""
+        async with self._operation_lock:
+            async with self._state_lock:
+                if self._closed:
+                    return
+                self._closed = True
+                login = self._detach_login_locked()
+            await self._close_detached_login(*login)
+            if self._owns_client:
+                await self._client.aclose()
+
+    async def _complete_browser_login(
+        self, browser: AntigravityBrowserAuthorization
+    ) -> None:
+        try:
+            grant = await browser.wait()
+            token_json = await self._exchange_code(grant)
+            await self._save_tokens(token_json)
+        except asyncio.CancelledError:
+            raise
+        except Exception as exc:
+            async with self._state_lock:
+                self._last_error = f"Antigravity sign-in failed: {exc}"
+        else:
+            async with self._state_lock:
+                self._revision += 1
+                self._last_error = None
+        finally:
+            async with self._state_lock:
+                if self._login_task is asyncio.current_task():
+                    self._login_task = None
+                    self._browser_login = None
+                    self._clear_attempt()
+
+    async def _exchange_code(
+        self, grant: AntigravityAuthorizationGrant
+    ) -> dict[str, Any]:
+        data = {
+            "client_id": DEFAULT_ANTIGRAVITY_CLIENT_ID,
+            "client_secret": DEFAULT_ANTIGRAVITY_CLIENT_SECRET,
+            "code": grant.code,
+            "grant_type": "authorization_code",
+            "redirect_uri": grant.redirect_uri,
+        }
+        resp = await self._client.post(OAUTH_TOKEN_URL, data=data, timeout=15.0)
+        resp.raise_for_status()
+        return resp.json()
+
+    async def _save_tokens(self, token_json: dict[str, Any]) -> None:
+        access_token = token_json.get("access_token")
+        refresh_token = token_json.get("refresh_token")
+        expires_in = token_json.get("expires_in", 3600)
+        expiry_timestamp = time.time() + float(expires_in)
+
+        save_payload = {
+            "access_token": access_token,
+            "refresh_token": refresh_token,
+            "expiry": time.strftime(
+                "%Y-%m-%dT%H:%M:%SZ", time.gmtime(expiry_timestamp)
+            ),
+            "expiry_date": int(expiry_timestamp * 1000),
+            "token_type": "Bearer",
+            "auth_method": "consumer",
+            "client_id": DEFAULT_ANTIGRAVITY_CLIENT_ID,
+            "client_secret": DEFAULT_ANTIGRAVITY_CLIENT_SECRET,
+            "id_token": token_json.get("id_token"),
+        }
+        save_token_to_file(self._token_path, save_payload)
+
+    def _detach_login_locked(
+        self,
+    ) -> tuple[asyncio.Task[None] | None, AntigravityBrowserAuthorization | None]:
+        task = self._login_task
+        browser = self._browser_login
+        self._login_task = None
+        self._browser_login = None
+        self._clear_attempt()
+        return task, browser
+
+    @staticmethod
+    async def _close_detached_login(
+        task: asyncio.Task[None] | None,
+        browser: AntigravityBrowserAuthorization | None,
+    ) -> None:
+        if task is not None and not task.done():
+            task.cancel()
+        if task is not None:
+            await asyncio.gather(task, return_exceptions=True)
+        if browser is not None:
+            await browser.close()
+
+    def _clear_attempt(self) -> None:
+        self._attempt_id = None
+        self._mode = None
+        self._authorization_url = None
+        self._expires_at = None
+
+    def _ensure_open(self) -> None:
+        if self._closed:
+            raise AuthenticationError("Antigravity authentication is shutting down.")

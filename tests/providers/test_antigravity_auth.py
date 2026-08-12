@@ -4,7 +4,7 @@ import json
 import time
 from datetime import UTC, datetime
 from pathlib import Path
-from unittest.mock import MagicMock, patch
+from unittest.mock import AsyncMock, MagicMock, patch
 
 import pytest
 
@@ -297,3 +297,65 @@ def test_antigravity_auth_class(tmp_path: Path):
     ):
         token = auth.get_access_token(force_refresh=True)
         assert token == "fresh_access_token_xyz"
+
+
+@pytest.mark.asyncio
+async def test_antigravity_auth_manager_lifecycle(tmp_path: Path):
+    token_file = tmp_path / "antigravity-oauth-token"
+    from free_claude_code.application.connected_accounts import (
+        ConnectedAccountLoginMode,
+        ConnectedAccountState,
+    )
+    from free_claude_code.providers.antigravity.auth import AntigravityAuthManager
+
+    # Disconnected initially
+    manager = AntigravityAuthManager(token_path=token_file)
+    assert not manager.is_connected()
+    assert manager.connected_provider_ids() == ()
+    status = manager.status()
+    assert status.provider_id == "antigravity"
+    assert status.state == ConnectedAccountState.DISCONNECTED
+    assert status.connected is False
+
+    # Simulate saved credentials
+    token_payload = {
+        "access_token": "test_access_token_999",
+        "refresh_token": "test_refresh_token_999",
+        "expiry": "2026-12-31T23:59:59Z",
+        "token_type": "Bearer",
+        "auth_method": "consumer",
+    }
+    token_file.write_text(json.dumps(token_payload), encoding="utf-8")
+
+    assert manager.is_connected()
+    assert manager.connected_provider_ids() == ("antigravity",)
+    status = manager.status()
+    assert status.state == ConnectedAccountState.CONNECTED
+    assert status.connected is True
+
+    # Start login (mocking browser server)
+    mock_browser = MagicMock()
+    mock_browser.auth_url = "https://accounts.google.com/o/oauth2/v2/auth?mock=1"
+    mock_browser.close = AsyncMock()
+
+    with patch(
+        "free_claude_code.providers.antigravity.auth.AntigravityBrowserAuthorization.start",
+        return_value=mock_browser,
+    ):
+        start_status = await manager.start_login(ConnectedAccountLoginMode.BROWSER)
+        assert start_status.state == ConnectedAccountState.CONNECTING
+        assert (
+            start_status.authorization_url
+            == "https://accounts.google.com/o/oauth2/v2/auth?mock=1"
+        )
+
+        cancel_status = await manager.cancel_login()
+        assert cancel_status.state == ConnectedAccountState.CONNECTED
+
+    # Disconnect removes file
+    disc_status = await manager.disconnect()
+    assert disc_status.state == ConnectedAccountState.DISCONNECTED
+    assert not token_file.exists()
+    assert not manager.is_connected()
+
+    await manager.close()

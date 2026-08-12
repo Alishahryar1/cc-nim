@@ -1,6 +1,7 @@
 # Current Project Context
 
 ### 🏆 Major Milestones (Archived Epics)
+- 2026-08-12: Intégration de Google Antigravity CLI en tant que Connected Account dans l'Admin UI (`v4.20.0`). Implémentation de `AntigravityAuthManager` (`ConnectedAccountPort`), déclaration `ProviderAuthKind.CONNECTED_ACCOUNT` dans `provider_catalog.py`, câblage dans `bootstrap.py` et validation 100% CI (2908 tests passés avec `./scripts/ci.sh`).
 - 2026-08-12: Lanceur hybride Codex Desktop / ChatGPT GUI (`fcc-codex-desktop`) v4.19.3. Résolution des exécutables officiels OpenAI Linux (`/usr/bin/chatgpt`, `/usr/lib/chatgpt/codex-launcher`, `/usr/lib/chatgpt/ChatGPT`), support des drapeaux `--setup` et `--reset`/`--restore`, et fallback persistant sans crash. Qualifié à 100% par la boucle d'agents Worker <-> Critic (2902 tests passés avec `./scripts/ci.sh`).
 - 2026-08-12: Résolution stricte de l'application GUI Codex Desktop dans `src/free_claude_code/cli/launchers/codex_desktop.py` avec élimination de tout fallback silencieux vers le CLI terminal `codex` (`/snap/bin/codex`, `CODEX_PATH`). Version `4.19.2`, 2902 tests validés à 100% avec `./scripts/ci.sh`.
 - 2026-08-12: Correctif de sérialisation TOML `_format_toml_key()` dans `src/free_claude_code/cli/launchers/codex_desktop.py` échappant entre guillemets les clés contenant des caractères spéciaux/chemins (`[projects."/home/omni/..."]`), résolvant l'erreur d'analyse TOML au lancement de `fcc-codex-desktop`. Version `4.19.1`, 2902 tests validés à 100% avec `./scripts/ci.sh`.
@@ -23,11 +24,12 @@
 Maintenir le serveur proxy local free-claude-code à un niveau de qualité zéro-défaut pour Claude Code CLI et Codex, assurer la compatibilité multi-provider (y compris Google Antigravity CLI, AgentRouter, CommandCode, TokenRouter, Alibaba, OpenAI Compatible, Anthropic Compatible) et la conformité stricte aux garde-fous CI `./scripts/ci.sh`.
 
 ## 🧠 Decisions Made
+- 2026-08-12: Intégration de Google Antigravity comme `CONNECTED_ACCOUNT` dans `provider_catalog.py` et création du gestionnaire `AntigravityAuthManager` dans `src/free_claude_code/providers/antigravity/auth.py` gérant le flux OAuth 2.0 PKCE / Authorization Code sur serveur web loopback court `AntigravityBrowserAuthorization`.
 - 2026-08-12: Intégration des candidats d'exécutables officiels OpenAI Linux (`/usr/bin/chatgpt`, `/usr/lib/chatgpt/codex-launcher`, `/usr/lib/chatgpt/ChatGPT`) issus du paquet `chatgpt_amd64.deb` dans `resolve_codex_desktop_binary()`. Maintien de l'approche hybride éphémère / persistant avec drapeaux `--setup` et `--reset`/`--restore`.
 - 2026-08-12: Spécification du mode hybride éphémère / persistant pour `fcc-codex-desktop`. Lancement direct éphémère si le binaire GUI est présent. Si le binaire GUI n'est pas dans le PATH, basculement automatique sur le mode persistant avec message d'instruction en anglais et commande `--reset` pour annuler. Support explicite des drapeaux `--setup` et `--reset`/`--restore`.
 - 2026-08-12: Suppression de tout fallback silencieux vers le CLI terminal `codex` dans `resolve_codex_desktop_binary()`. `fcc-codex-desktop` recherche exclusivement les binaires GUI officiels de Codex Desktop (`codex-desktop`, `Codex Desktop`, `Codex.app`, `Codex.exe`).
 - 2026-08-12: Implémentation du lanceur éphémère Codex Desktop (`fcc-codex-desktop`). La fonction `launch()` résout le binaire Codex Desktop de manière cross-platform (macOS `/Applications/Codex.app`, Windows `%LOCALAPPDATA%`, Linux `/usr/bin/codex-desktop`, `shutil.which` ou `CODEX_DESKTOP_PATH`), effectue l'injection dynamique temporaire de la configuration `model_provider = "fcc"` dans `~/.codex/config.toml`, et garantit la restauration 100% propre du fichier initial au terme de l'exécution ou en cas d'interruption.
-- 2026-08-12: Gestion d'état fine `active_tool_by_name` par tour de streaming dans `AntigravityProvider.stream_response()`. Lors de la réception de `functionCall` successifs pour un même outil (ex: passage d'arguments vides `{}` dans le chunk 1 vers des arguments peuplés `{"command": "ls"}` dans le chunk 2), les deltas d'arguments sont accumulés sur le bloc d'outil déjà ouvert au lieu d'allouer un 2e bloc d'outil avec un nouvel identifiant `call_uuid`.
+- 2026-08-12: Gestion d'état fine `active_tool_by_name` par tour de streaming dans `AntigravityProvider.stream_response()`. Lors de la réception de `functionCall` successifs pour un même outil (ex: passage d'arguments vides `{}` dans le chunk 1 vers des arguments peuplés `{"command": "ls"}` dans le chunk 2), les deltas d'arguments sont accumulés sur le bloc d'outil déjà ouvert au lieu d'allouer un 2e bloc d me d'outil avec un nouvel identifiant `call_uuid`.
 - 2026-08-12: Maintien d'un registre de signatures uniques `seen_tool_calls` `(fn_name, json.dumps(fn_args, sort_keys=True))` par tour de réponse dans `AntigravityProvider.stream_response()`. Les chunks SSE successifs de Gemini répétant la même `functionCall` (notamment lors du chunk final de clôture avec `finishReason="STOP"`) sont ignorés au niveau debug, empêchant la génération de blocs `tool_use` dupliqués vers Claude Code CLI.
 - 2026-08-11: Suppression complète des 3 avertissements Pytest (`DeprecationWarning: pty.fork()`) sous Python 3.14 dans [`tests/scripts/test_installers.py`](file:///home/omni/free-claude-code/tests/scripts/test_installers.py) via l'encadrement `warnings.catch_warnings()`. Suite CI `./scripts/ci.sh` à 100% avec 0 avertissement (2887 passed, 0 warning).
 - 2026-08-11: Correction de la conversion des blocs `tool_result` Anthropic vers l'API Gemini dans le provider Google Antigravity (support de `is_error=True` transmis via les champs `error` et `output`, sérialisation propre via `serialize_tool_result_content`, et suppression des attributs invalides `thought`/`thought_signature` sur les structures `functionCall`), bump de version à `4.18.2`, 2887 tests pytest validés à 100% avec `./scripts/ci.sh`.
@@ -37,12 +39,12 @@ Maintenir le serveur proxy local free-claude-code à un niveau de qualité zéro
   - **Rationale**: Re-localisation propre de tous les providers personnalisés (`antigravity`, `agent_router`, `command_code`, `token_router`, `alibaba`, `openai_compatible`, `anthropic_compatible`) et des couches transports sous `src/free_claude_code/providers/`, alignement complet des signatures de méthodes avec `BaseProvider` et `ProviderAdmissionController`, et correction des frontières d'importation AST pour satisfaire l'intégralité des 5 jobs CI du script `./scripts/ci.sh`.
 
 ## 🌿 Active Branches / Plans
-- `upstream-sync` : Branche de synchronisation et d'intégration complète avec `upstream/main` (2902 tests validés).
+- `main` : Branche principale qualifiée à 100% avec 2908 tests passés.
 
 ## 📈 Current Status
-- ✅ Done: Implémentation complète et qualifiée du lanceur hybride `fcc-codex-desktop` v4.19.3 avec résolution du binaire OpenAI `/usr/bin/chatgpt`, drapeaux `--setup` / `--reset` et fallback persistant gracieux (2902 tests passés à 100%).
-- 🔄 In progress: Aucun.
-- ⏳ Pending: Fusion/Fast-forward sur les branches principales.
+- ✅ Done: Implémentation complète et qualification du provider Google Antigravity CLI comme Connected Account dans l'Admin UI (`v4.20.0`, 2908 tests passés à 100%).
+- 🔄 In progress: Aucun projet bloquant en cours.
+- ⏳ Pending: Suivi continu et maintenance du proxy.
 
 ## 👉 Next Session Direction
-Finaliser le merge de `upstream-sync` sur la branche principale si demandé.
+Maintenir le serveur proxy et répondre aux prochaines demandes d'évolutions.
