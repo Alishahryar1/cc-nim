@@ -1,1 +1,0 @@
-- Communique en français — les instructions, questions et réponses doivent être rédigées en français, sauf indication explicite contraire. Confidence: 0.95
