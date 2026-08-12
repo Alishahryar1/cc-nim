@@ -130,9 +130,7 @@ class BrowserSessionPort(Protocol):
 
 
 class BrowserSessionLifecyclePort(Protocol):
-    """Browser-session work owned by the application resource graph."""
-
-    async def start(self) -> None: ...
+    """Runtime-owned cleanup needed by the application resource graph."""
 
     async def close(self) -> None: ...
 

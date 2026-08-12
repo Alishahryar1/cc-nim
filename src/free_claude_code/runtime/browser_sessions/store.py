@@ -23,16 +23,8 @@ class SessionRecord:
 
 
 @dataclass(slots=True)
-class PendingNativeCleanup:
-    harness: BrowserSessionHarness
-    native_id: str
-    path: str
-
-
-@dataclass(slots=True)
 class SessionCatalog:
     sessions: list[SessionRecord] = field(default_factory=list)
-    pending_native_cleanups: list[PendingNativeCleanup] = field(default_factory=list)
 
 
 class SessionStoreError(Exception):
@@ -92,14 +84,6 @@ def _encode_catalog(catalog: SessionCatalog) -> dict[str, object]:
             }
             for session in catalog.sessions
         ],
-        "pending_native_cleanups": [
-            {
-                "harness": cleanup.harness.value,
-                "native_id": cleanup.native_id,
-                "path": cleanup.path,
-            }
-            for cleanup in catalog.pending_native_cleanups
-        ],
     }
 
 
@@ -110,13 +94,9 @@ def _decode_catalog(payload: object) -> SessionCatalog:
     sessions_value = root.get("sessions")
     if not isinstance(sessions_value, list):
         raise SessionStoreError("sessions must be a list")
-    pending_cleanups_value = root.get("pending_native_cleanups", [])
-    if not isinstance(pending_cleanups_value, list):
-        raise SessionStoreError("pending_native_cleanups must be a list")
 
     sessions: list[SessionRecord] = []
     session_ids: set[str] = set()
-    native_ids: set[str] = set()
     for session_value in sessions_value:
         session = _object(session_value, "session")
         session_id = _string(session.get("id"), "session.id")
@@ -132,47 +112,17 @@ def _decode_catalog(payload: object) -> SessionCatalog:
         started_once = session.get("started_once")
         if not isinstance(started_once, bool):
             raise SessionStoreError("session.started_once must be a boolean")
-        native_id = _string(session.get("native_id"), "session.native_id")
-        if native_id in native_ids:
-            raise SessionStoreError("Duplicate native session id")
-        native_ids.add(native_id)
         sessions.append(
             SessionRecord(
                 session_id=session_id,
                 path=_string(session.get("path"), "session.path"),
                 name=_string(session.get("name"), "session.name"),
                 harness=harness,
-                native_id=native_id,
+                native_id=_string(session.get("native_id"), "session.native_id"),
                 started_once=started_once,
             )
         )
-
-    pending_native_cleanups: list[PendingNativeCleanup] = []
-    for cleanup_value in pending_cleanups_value:
-        cleanup = _object(cleanup_value, "pending_native_cleanup")
-        try:
-            harness = BrowserSessionHarness(
-                _string(cleanup.get("harness"), "pending_native_cleanup.harness")
-            )
-        except ValueError as exc:
-            raise SessionStoreError("Unknown pending cleanup harness") from exc
-        native_id = _string(
-            cleanup.get("native_id"), "pending_native_cleanup.native_id"
-        )
-        if native_id in native_ids:
-            raise SessionStoreError("Duplicate native session id")
-        native_ids.add(native_id)
-        pending_native_cleanups.append(
-            PendingNativeCleanup(
-                harness=harness,
-                native_id=native_id,
-                path=_string(cleanup.get("path"), "pending_native_cleanup.path"),
-            )
-        )
-    return SessionCatalog(
-        sessions=sessions,
-        pending_native_cleanups=pending_native_cleanups,
-    )
+    return SessionCatalog(sessions=sessions)
 
 
 def _object(value: object, name: str) -> dict[str, object]:

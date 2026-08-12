@@ -155,8 +155,6 @@ class ApplicationRuntime:
         logger.info("Starting Claude Code Proxy...")
         try:
             warn_if_process_auth_token(self.settings)
-            if self._browser_sessions is not None:
-                await self._browser_sessions.start()
             await self.provider_manager.warm_referenced_model_cache()
             self.provider_manager.start_model_list_refresh()
             await self._start_messaging_if_configured()

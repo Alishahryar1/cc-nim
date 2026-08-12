@@ -36,7 +36,6 @@ class HarnessDriver:
     harness: BrowserSessionHarness
     wrapper_name: str
     client_name: str
-    allocates_native_session: bool = False
 
     def availability(self) -> HarnessAvailability:
         if _resolve_command(self.wrapper_name) is None:
@@ -98,7 +97,6 @@ class CodexDriver(HarnessDriver):
     harness = BrowserSessionHarness.CODEX
     wrapper_name = "fcc-codex"
     client_name = codex_binary_name()
-    allocates_native_session = True
 
     async def create_native_id(self, project_path: Path) -> str:
         wrapper = self._wrapper()
@@ -114,10 +112,9 @@ class CodexDriver(HarnessDriver):
 
     async def discard_native_id(self, native_id: str, project_path: Path) -> None:
         wrapper = self._wrapper()
-        operation_path = project_path if project_path.is_dir() else Path.home()
         try:
             await asyncio.wait_for(
-                _delete_codex_thread(wrapper, operation_path, native_id),
+                _delete_codex_thread(wrapper, project_path, native_id),
                 timeout=CODEX_CREATE_TIMEOUT_SECONDS,
             )
         except TimeoutError as exc:
