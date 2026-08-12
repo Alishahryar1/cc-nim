@@ -35,14 +35,24 @@ def test_resolve_codex_desktop_binary_env_override(
     monkeypatch.setenv("CODEX_DESKTOP_PATH", str(fake_exe))
     assert resolve_codex_desktop_binary() == str(fake_exe)
 
-    monkeypatch.delenv("CODEX_DESKTOP_PATH", raising=False)
-    monkeypatch.setenv("CODEX_PATH", str(fake_exe))
-    assert resolve_codex_desktop_binary() == str(fake_exe)
 
-
-def test_resolve_codex_desktop_binary_darwin(
+def test_resolve_codex_desktop_binary_rejects_codex_cli(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
+    monkeypatch.delenv("CODEX_DESKTOP_PATH", raising=False)
+    monkeypatch.delenv("CODEX_PATH", raising=False)
+    monkeypatch.setattr(sys, "platform", "linux")
+    monkeypatch.setattr(Path, "home", lambda: tmp_path)
+
+    # Fake `codex` CLI in PATH or snap, but NO `codex-desktop` or `chatgpt`
+    monkeypatch.setattr(
+        "shutil.which",
+        lambda name: "/usr/bin/codex" if name == "codex" else None,
+    )
+    monkeypatch.setattr(Path, "is_file", lambda self: False)
+
+    assert resolve_codex_desktop_binary() is None
+
     monkeypatch.delenv("CODEX_DESKTOP_PATH", raising=False)
     monkeypatch.delenv("CODEX_PATH", raising=False)
     monkeypatch.setattr(sys, "platform", "darwin")
@@ -95,27 +105,68 @@ def test_resolve_codex_desktop_binary_linux(
     fake_bin.parent.mkdir(parents=True, exist_ok=True)
     fake_bin.touch()
 
+    original_is_file = Path.is_file
+
+    def mock_is_file(self: Path) -> bool:
+        if str(self) == str(fake_bin):
+            return True
+        if str(self).startswith(str(tmp_path)):
+            return original_is_file(self)
+        return False
+
+    monkeypatch.setattr(Path, "is_file", mock_is_file)
+
     assert resolve_codex_desktop_binary() == str(fake_bin)
 
 
+def test_resolve_codex_desktop_binary_chatgpt_linux(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CODEX_DESKTOP_PATH", raising=False)
+    monkeypatch.setattr(sys, "platform", "linux")
+
+    original_is_file = Path.is_file
+
+    def mock_is_file(self: Path) -> bool:
+        if str(self) == "/usr/bin/chatgpt":
+            return True
+        return original_is_file(self)
+
+    monkeypatch.setattr(Path, "is_file", mock_is_file)
+    assert resolve_codex_desktop_binary() == "/usr/bin/chatgpt"
+
+
+def test_resolve_codex_desktop_binary_chatgpt_mac(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.delenv("CODEX_DESKTOP_PATH", raising=False)
+    monkeypatch.setattr(sys, "platform", "darwin")
+
+    original_is_file = Path.is_file
+
+    def mock_is_file(self: Path) -> bool:
+        if str(self) == "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT":
+            return True
+        return original_is_file(self)
+
+    monkeypatch.setattr(Path, "is_file", mock_is_file)
+    assert (
+        resolve_codex_desktop_binary()
+        == "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT"
+    )
+
+
 def test_resolve_codex_desktop_binary_missing(
-    monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     monkeypatch.delenv("CODEX_DESKTOP_PATH", raising=False)
     monkeypatch.delenv("CODEX_PATH", raising=False)
     monkeypatch.setattr(sys, "platform", "linux")
     monkeypatch.setattr(Path, "home", lambda: Path("/nonexistent/home"))
     monkeypatch.setattr("shutil.which", lambda name: None)
-
     monkeypatch.setattr(Path, "is_file", lambda self: False)
 
-    with pytest.raises(SystemExit) as exc_info:
-        resolve_codex_desktop_binary()
-
-    assert exc_info.value.code == 127
-    stderr = capsys.readouterr().err
-    assert "Could not find Codex Desktop command: codex-desktop" in stderr
-    assert "Install Codex Desktop" in stderr
+    assert resolve_codex_desktop_binary() is None
 
 
 def test_prepare_codex_config_content_new() -> None:
@@ -261,3 +312,105 @@ def test_launch_success(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None
     assert kwargs["command"] == ["/usr/bin/codex-desktop", "--project", "my-app"]
     assert kwargs["display_name"] == "Codex Desktop"
     assert not config_file.exists()  # Cleaned up after launch process finished
+
+
+def test_launch_setup_flag(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config_file = tmp_path / ".codex" / "config.toml"
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+    config_file.write_text('theme = "dark"\n', encoding="utf-8")
+
+    monkeypatch.setattr(
+        "free_claude_code.cli.launchers.codex_desktop.codex_config_path",
+        lambda: config_file,
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        launch(["--setup"])
+
+    assert exc_info.value.code == 0
+    backup_file = tmp_path / ".codex" / "config.toml.fccbak"
+    assert backup_file.exists()
+    assert backup_file.read_text(encoding="utf-8") == 'theme = "dark"\n'
+
+    content = config_file.read_text(encoding="utf-8")
+    parsed = tomllib.loads(content)
+    assert parsed["model_provider"] == "fcc"
+    assert parsed["theme"] == "dark"
+
+    captured = capsys.readouterr().out
+    assert "Persistent configuration applied to" in captured
+    assert "Setup completed!" in captured
+    assert "fcc-codex-desktop --reset" in captured
+
+
+def test_launch_reset_and_restore_flags(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config_file = tmp_path / ".codex" / "config.toml"
+    backup_file = tmp_path / ".codex" / "config.toml.fccbak"
+    config_file.parent.mkdir(parents=True, exist_ok=True)
+
+    original_text = 'theme = "light"\nmodel_provider = "openai"\n'
+    backup_file.write_text(original_text, encoding="utf-8")
+    config_file.write_text('model_provider = "fcc"\n', encoding="utf-8")
+
+    monkeypatch.setattr(
+        "free_claude_code.cli.launchers.codex_desktop.codex_config_path",
+        lambda: config_file,
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        launch(["--reset"])
+
+    assert exc_info.value.code == 0
+    assert not backup_file.exists()
+    assert config_file.read_text(encoding="utf-8") == original_text
+
+    captured = capsys.readouterr().out
+    assert "[Free Claude Code] Configuration reset successfully!" in captured
+    assert "Codex Desktop configuration restored to original settings." in captured
+
+    # Test --restore flag as well
+    backup_file.write_text(original_text, encoding="utf-8")
+    config_file.write_text('model_provider = "fcc"\n', encoding="utf-8")
+
+    with pytest.raises(SystemExit) as exc_info:
+        launch(["--restore"])
+
+    assert exc_info.value.code == 0
+    assert not backup_file.exists()
+    assert config_file.read_text(encoding="utf-8") == original_text
+
+
+def test_launch_fallback_persistent(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, capsys: pytest.CaptureFixture[str]
+) -> None:
+    config_file = tmp_path / ".codex" / "config.toml"
+    monkeypatch.setattr(
+        "free_claude_code.cli.launchers.codex_desktop.codex_config_path",
+        lambda: config_file,
+    )
+    monkeypatch.setattr(
+        "free_claude_code.cli.launchers.codex_desktop.resolve_codex_desktop_binary",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        "free_claude_code.cli.launchers.codex_desktop.preflight_proxy",
+        lambda url: None,
+    )
+
+    with pytest.raises(SystemExit) as exc_info:
+        launch([])
+
+    assert exc_info.value.code == 0
+    assert config_file.exists()
+    parsed = tomllib.loads(config_file.read_text(encoding="utf-8"))
+    assert parsed["model_provider"] == "fcc"
+
+    captured = capsys.readouterr().out
+    assert (
+        "Codex Desktop / ChatGPT GUI binary was not found in standard PATH." in captured
+    )
+    assert "Persistent configuration applied to" in captured

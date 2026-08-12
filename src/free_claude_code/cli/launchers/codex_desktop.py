@@ -25,10 +25,27 @@ _DEFAULT_BINARY = "codex-desktop"
 _INSTALL_HINT = "Install Codex Desktop from https://openai.com/codex or add codex-desktop to your PATH."
 
 
+def _display_path(p: Path) -> str:
+    """Format path relative to home directory with ~ if possible."""
+    try:
+        return f"~/{p.relative_to(Path.home())}"
+    except ValueError:
+        return str(p)
+
+
 def launch(argv: Sequence[str] | None = None) -> None:
     """Launch Codex Desktop with Free Claude Code proxy configuration."""
 
     args = list(sys.argv[1:] if argv is None else argv)
+
+    if "--setup" in args:
+        setup_persistent_config(is_fallback=False)
+        raise SystemExit(0)
+
+    if "--reset" in args or "--restore" in args:
+        reset_persistent_config()
+        raise SystemExit(0)
+
     settings = get_settings()
 
     proxy_root_url = local_proxy_root_url(settings)
@@ -41,6 +58,10 @@ def launch(argv: Sequence[str] | None = None) -> None:
         raise SystemExit(1)
 
     binary_path = resolve_codex_desktop_binary()
+    if binary_path is None:
+        setup_persistent_config(is_fallback=True)
+        raise SystemExit(0)
+
     config_path = codex_config_path()
 
     env = build_codex_launcher_env(
@@ -70,29 +91,33 @@ def codex_config_path() -> Path:
     return Path.home() / ".codex" / "config.toml"
 
 
-def resolve_codex_desktop_binary() -> str:
+def resolve_codex_desktop_binary() -> str | None:
     """Resolve the Codex Desktop executable path across Linux, Windows, and macOS."""
 
-    for env_var in ("CODEX_DESKTOP_PATH", "CODEX_PATH"):
-        if (override := os.environ.get(env_var)) and Path(override).is_file():
-            return override
+    if (override := os.environ.get("CODEX_DESKTOP_PATH")) and Path(override).is_file():
+        return override
 
     candidates: list[str] = []
     if sys.platform == "darwin":
+        home = Path.home()
         candidates.extend(
             [
+                "/Applications/ChatGPT.app/Contents/MacOS/ChatGPT",
                 "/Applications/Codex.app/Contents/MacOS/Codex",
                 "/Applications/Codex Desktop.app/Contents/MacOS/Codex Desktop",
                 str(
-                    Path.home()
+                    home
                     / "Applications"
-                    / "Codex.app"
+                    / "ChatGPT.app"
                     / "Contents"
                     / "MacOS"
-                    / "Codex"
+                    / "ChatGPT"
                 ),
                 str(
-                    Path.home()
+                    home / "Applications" / "Codex.app" / "Contents" / "MacOS" / "Codex"
+                ),
+                str(
+                    home
                     / "Applications"
                     / "Codex Desktop.app"
                     / "Contents"
@@ -109,6 +134,7 @@ def resolve_codex_desktop_binary() -> str:
         if local_app_data:
             candidates.extend(
                 [
+                    str(Path(local_app_data) / "Programs" / "ChatGPT" / "ChatGPT.exe"),
                     str(Path(local_app_data) / "Programs" / "Codex" / "Codex.exe"),
                     str(
                         Path(local_app_data)
@@ -119,24 +145,42 @@ def resolve_codex_desktop_binary() -> str:
                 ]
             )
         if app_data:
-            candidates.append(str(Path(app_data) / "Codex" / "Codex.exe"))
+            candidates.extend(
+                [
+                    str(Path(app_data) / "ChatGPT" / "ChatGPT.exe"),
+                    str(Path(app_data) / "Codex" / "Codex.exe"),
+                ]
+            )
         if program_files:
-            candidates.append(str(Path(program_files) / "Codex" / "Codex.exe"))
+            candidates.extend(
+                [
+                    str(Path(program_files) / "ChatGPT" / "ChatGPT.exe"),
+                    str(Path(program_files) / "Codex" / "Codex.exe"),
+                ]
+            )
         if program_files_x86:
-            candidates.append(str(Path(program_files_x86) / "Codex" / "Codex.exe"))
+            candidates.extend(
+                [
+                    str(Path(program_files_x86) / "ChatGPT" / "ChatGPT.exe"),
+                    str(Path(program_files_x86) / "Codex" / "Codex.exe"),
+                ]
+            )
     else:
         # Linux and other Unix platforms
         home = Path.home()
         candidates.extend(
             [
+                "/usr/bin/chatgpt",
+                "/usr/lib/chatgpt/codex-launcher",
+                "/usr/lib/chatgpt/ChatGPT",
+                "/opt/chatgpt/chatgpt",
                 "/usr/bin/codex-desktop",
                 "/usr/local/bin/codex-desktop",
                 "/snap/bin/codex-desktop",
-                "/snap/bin/codex",
+                str(home / ".local" / "bin" / "chatgpt"),
                 str(home / ".local" / "bin" / "codex-desktop"),
-                str(home / ".local" / "bin" / "codex"),
                 "/opt/Codex/codex-desktop",
-                "/opt/codex/codex",
+                "/opt/codex-desktop/codex-desktop",
             ]
         )
 
@@ -145,20 +189,102 @@ def resolve_codex_desktop_binary() -> str:
             return candidate
 
     binary_names = (
-        ["codex-desktop.exe", "codex-desktop", "codex.exe", "codex"]
+        ["chatgpt.exe", "chatgpt", "codex-desktop.exe", "codex-desktop"]
         if sys.platform == "win32"
-        else ["codex-desktop", "codex"]
+        else ["chatgpt", "codex-desktop"]
     )
     for name in binary_names:
         if found := shutil.which(name):
             return found
 
-    print(
-        f"Could not find {_DISPLAY_NAME} command: {_DEFAULT_BINARY}",
-        file=sys.stderr,
+    return None
+
+
+def setup_persistent_config(*, is_fallback: bool = False) -> None:
+    """Apply persistent Free Claude Code configuration to Codex config.toml."""
+
+    config_path = codex_config_path()
+    backup_path = config_path.parent / f"{config_path.name}.fccbak"
+
+    original_content: str | None = None
+    if config_path.exists():
+        try:
+            original_content = config_path.read_text(encoding="utf-8")
+        except OSError:
+            original_content = None
+
+        if not backup_path.exists() and original_content is not None:
+            try:
+                backup_path.parent.mkdir(parents=True, exist_ok=True)
+                backup_path.write_text(original_content, encoding="utf-8")
+            except OSError:
+                pass
+
+    settings = get_settings()
+    proxy_root_url = local_proxy_root_url(settings)
+    api_url = _ensure_v1_url(proxy_root_url)
+    model = getattr(settings, "model", None)
+
+    new_content = prepare_codex_config_content(
+        original_content,
+        api_url=api_url,
+        model=model,
     )
-    print(_INSTALL_HINT, file=sys.stderr)
-    raise SystemExit(127)
+
+    config_path.parent.mkdir(parents=True, exist_ok=True)
+    config_path.write_text(new_content, encoding="utf-8")
+
+    disp_path = _display_path(config_path)
+    if is_fallback:
+        print(
+            "[Free Claude Code] Codex Desktop / ChatGPT GUI binary was not found in standard PATH."
+        )
+    print(f"[Free Claude Code] Persistent configuration applied to {disp_path}.\n")
+    print(
+        "Setup completed! Please launch ChatGPT / Codex Desktop from your application menu or shortcut.\n"
+    )
+    print("To restore your original configuration at any time, run:")
+    print("  fcc-codex-desktop --reset")
+
+
+def reset_persistent_config() -> None:
+    """Restore Codex config.toml to its original state or remove injected FCC settings."""
+
+    config_path = codex_config_path()
+    backup_path = config_path.parent / f"{config_path.name}.fccbak"
+
+    if backup_path.exists():
+        try:
+            backup_content = backup_path.read_text(encoding="utf-8")
+            config_path.write_text(backup_content, encoding="utf-8")
+            backup_path.unlink()
+        except OSError:
+            pass
+    elif config_path.exists():
+        try:
+            content = config_path.read_text(encoding="utf-8")
+            data = tomllib.loads(content)
+            modified = False
+            if data.get("model_provider") == "fcc":
+                del data["model_provider"]
+                modified = True
+            if "model_providers" in data and isinstance(data["model_providers"], dict):
+                if "fcc" in data["model_providers"]:
+                    del data["model_providers"]["fcc"]
+                    modified = True
+                if not data["model_providers"]:
+                    del data["model_providers"]
+                    modified = True
+            if modified:
+                if not data:
+                    config_path.unlink()
+                else:
+                    config_path.write_text(dump_toml(data), encoding="utf-8")
+        except Exception:
+            pass
+
+    print("[Free Claude Code] Configuration reset successfully!")
+    print("Codex Desktop configuration restored to original settings.")
 
 
 def prepare_codex_config_content(
