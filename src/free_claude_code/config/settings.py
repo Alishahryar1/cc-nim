@@ -131,6 +131,9 @@ class Settings(BaseSettings):
     # ==================== Groq (OpenAI-compatible) ====================
     groq_api_key: str = Field(default="", validation_alias="GROQ_API_KEY")
 
+    # ==================== xAI / Grok (OpenAI-compatible) ====================
+    xai_api_key: str = Field(default="", validation_alias="XAI_API_KEY")
+
     # ==================== Cerebras Inference (OpenAI-compatible) ====================
     cerebras_api_key: str = Field(default="", validation_alias="CEREBRAS_API_KEY")
 
@@ -184,6 +187,7 @@ class Settings(BaseSettings):
 
     # ==================== Per-Provider Proxy ====================
     openai_proxy: str = Field(default="", validation_alias="OPENAI_PROXY")
+    xai_proxy: str = Field(default="", validation_alias="XAI_PROXY")
     azure_openai_proxy: str = Field(default="", validation_alias="AZURE_OPENAI_PROXY")
     nvidia_nim_proxy: str = Field(default="", validation_alias="NVIDIA_NIM_PROXY")
     open_router_proxy: str = Field(default="", validation_alias="OPENROUTER_PROXY")

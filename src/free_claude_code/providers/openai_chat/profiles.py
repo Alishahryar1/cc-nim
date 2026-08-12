@@ -55,6 +55,15 @@ _KIMI_CODE_EFFORTS = (
 
 
 @dataclass(frozen=True, slots=True)
+class OpenAIModelListing:
+    """Declarative model-list endpoint and response shape."""
+
+    path: str | None = None
+    collection_field: str = "data"
+    aliases_field: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
 class OpenAIChatProfile:
     """Immutable transport and reasoning behavior for one provider."""
 
@@ -62,6 +71,7 @@ class OpenAIChatProfile:
     reasoning: ReasoningEncoder
     postprocessors: tuple[OpenAIChatPostprocessor, ...] = ()
     model_ids_are_routable: bool = True
+    model_listing: OpenAIModelListing = OpenAIModelListing()
     normalize_base_url: bool = False
     reasoning_delta_field: Literal["reasoning_content", "reasoning"] = (
         "reasoning_content"
@@ -139,6 +149,19 @@ def _policy(
 
 
 OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
+    "xai": OpenAIChatProfile(
+        _policy(
+            "XAI",
+            ReasoningReplayMode.REASONING_CONTENT,
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        NO_REASONING,
+        model_listing=OpenAIModelListing(
+            path="/language-models",
+            collection_field="models",
+            aliases_field="aliases",
+        ),
+    ),
     "azure_openai": OpenAIChatProfile(
         _policy(
             "AZURE_OPENAI",

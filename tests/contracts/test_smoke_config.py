@@ -53,6 +53,7 @@ def _settings(**overrides):
         "vertex_project_id": "",
         "vertex_location": "global",
         "groq_api_key": "",
+        "xai_api_key": "",
         "sambanova_api_key": "",
         "cerebras_api_key": "",
         "ollama_api_key": "",
@@ -148,6 +149,23 @@ def test_provider_smoke_models_cover_configured_providers_independent_of_model_m
 
     assert [model.provider for model in models] == ["deepseek"]
     assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["deepseek"]
+    assert models[0].source == "provider_default"
+
+
+def test_xai_provider_smoke_uses_current_grok_model(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_XAI", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            xai_api_key="xai-key",
+        )
+    )
+
+    models = config.provider_smoke_models()
+
+    assert [model.provider for model in models] == ["xai"]
+    assert models[0].full_model == "xai/grok-4.5"
     assert models[0].source == "provider_default"
 
 

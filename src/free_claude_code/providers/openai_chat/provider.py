@@ -143,15 +143,28 @@ class OpenAIChatProvider(BaseProvider):
         payload = await self._list_models_payload()
         if not self._profile.model_ids_are_routable:
             return frozenset()
-        return extract_openai_model_infos(payload, provider_name=self._provider_name)
+        listing = self._profile.model_listing
+        return extract_openai_model_infos(
+            payload,
+            provider_name=self._provider_name,
+            collection_field=listing.collection_field,
+            aliases_field=listing.aliases_field,
+        )
 
     async def _list_models_payload(self) -> Any:
         """Fetch one OpenAI-compatible model-list payload with shared retries."""
         payload = await self._admission.run_with_retry(
-            self._client.models.list,
+            self._fetch_models_payload,
             provider_failure_override=self._provider_failure_override,
         )
         return payload
+
+    async def _fetch_models_payload(self) -> Any:
+        """Fetch the profile-selected model-list endpoint once."""
+        path = self._profile.model_listing.path
+        if path is None:
+            return await self._client.models.list()
+        return await self._client.get(path, cast_to=object)
 
     def _build_request_body(
         self,
