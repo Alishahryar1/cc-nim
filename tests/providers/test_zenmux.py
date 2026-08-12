@@ -296,6 +296,12 @@ def test_reasoning_delta_prefers_reasoning_and_falls_back_to_reasoning_content(
         )
         == "fallback"
     )
+    assert (
+        profile.reasoning_delta(
+            SimpleNamespace(reasoning="", reasoning_content="fallback")
+        )
+        == "fallback"
+    )
 
 
 @pytest.mark.asyncio

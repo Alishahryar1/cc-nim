@@ -109,13 +109,15 @@ class OpenAIChatProfile:
 
     def reasoning_delta(self, delta: Any) -> str | None:
         value = getattr(delta, self.reasoning_delta_field, None)
-        if isinstance(value, str):
+        if isinstance(value, str) and value:
             return value
         fallback = self.reasoning_delta_fallback_field
         if fallback is None:
-            return None
+            return value if isinstance(value, str) else None
         fallback_value = getattr(delta, fallback, None)
-        return fallback_value if isinstance(fallback_value, str) else None
+        if isinstance(fallback_value, str):
+            return fallback_value
+        return value if isinstance(value, str) else None
 
     def apply_reasoning(
         self,
