@@ -758,16 +758,21 @@ fallback retry when an upstream request rejects reasoning fields.
 NIM reasoning budget control is also treated as a provider-owned best-effort
 downgrade: if an upstream NIM deployment rejects explicit budget control, FCC
 retries without the budget while preserving thinking enablement.
-NIM also owns response normalization for model-native tool markup exposed in
-chat-completion text. The normalizer recognizes the native protocol signature
-only when tools are declared, validates one complete tool block against the
-request schemas, and converts it into ordinary OpenAI tool-call deltas before
-the shared stream runner can commit visible text. Native structured tool-call
+The shared OpenAI-chat transport owns normalization of exact textual tool-call
+protocols exposed by otherwise OpenAI-compatible endpoints. The recognizer is
+enabled only when tools are declared, keys off the complete protocol signature
+rather than provider or model names, validates decoded arguments against the
+request schemas, and emits ordinary OpenAI tool-call deltas before the stream
+runner can commit control markup as visible text. Native structured tool-call
 deltas remain authoritative when both forms appear; incomplete or invalid
-native markup is a retryable upstream protocol failure rather than user-visible
-assistant text. NIM argument-property aliases remain keyed by the original tool
-identity: shared OpenAI output restores the tool name first, then NIM restores
-arguments and validates the original schema.
+control markup is a retryable upstream protocol failure.
+NIM additionally owns its MiniMax namespaced tool dialect and repairs NIM
+streams that publish terminal metadata before their final content chunk. It
+holds that terminal metadata until source exhaustion and emits one terminal
+chunk, allowing the provider-specific MiniMax pass and shared textual-tool pass
+to compose without finalizing either parser early. NIM argument-property aliases
+remain keyed by the original tool identity: shared OpenAI output restores the
+tool name first, then NIM restores arguments and validates the original schema.
 
 ### Reasoning Ownership
 

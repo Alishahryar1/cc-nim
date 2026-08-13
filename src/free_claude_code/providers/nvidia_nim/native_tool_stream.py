@@ -8,10 +8,14 @@ from enum import StrEnum
 from types import SimpleNamespace
 from typing import Any
 
-import jsonschema
-
 from free_claude_code.providers.failure_policy import RetryableToolProtocolError
 from free_claude_code.providers.http import maybe_await_aclose
+from free_claude_code.providers.native_tool_schema import (
+    arguments_match_schema,
+    coerce_text_argument,
+    openai_tool_schemas,
+    schema_type,
+)
 
 _NAMESPACE = "]<]minimax[>["
 _TOOL_BLOCK_START = f"{_NAMESPACE}<tool_call>"
@@ -198,15 +202,22 @@ def normalize_nim_native_tool_stream(
     body: Mapping[str, Any],
 ) -> AsyncIterator[Any]:
     """Convert leaked MiniMax-M3 markup into ordinary OpenAI tool-call chunks."""
-    schemas = _openai_tool_schemas(body)
+    schemas = openai_tool_schemas(body)
 
     async def _iter() -> AsyncIterator[Any]:
         content_framer = _MiniMaxM3ToolFramer()
         reasoning_framer = _MiniMaxM3ToolFramer()
         structured_tool_calls_seen = False
         finalized = False
+        defer_terminal = bool(schemas)
+        terminal_seen = False
+        terminal_finish_reason: Any = None
+        terminal_usage: Any = None
 
         async for chunk in stream:
+            chunk_usage = getattr(chunk, "usage", None)
+            if defer_terminal and chunk_usage is not None:
+                terminal_usage = chunk_usage
             choices = getattr(chunk, "choices", None)
             if not choices:
                 yield chunk
@@ -234,7 +245,10 @@ def normalize_nim_native_tool_stream(
             )
             finish_reason = getattr(choice, "finish_reason", None)
             generated_calls: tuple[_NativeToolCall, ...] = ()
-            if finish_reason is not None:
+            if finish_reason is not None and defer_terminal:
+                terminal_seen = True
+                terminal_finish_reason = finish_reason
+            elif finish_reason is not None:
                 safe_content, safe_reasoning, generated_calls = (
                     _finish_native_tool_framers(
                         content_framer,
@@ -254,12 +268,34 @@ def normalize_nim_native_tool_stream(
                 content=safe_content,
                 reasoning_content=safe_reasoning,
                 generated_calls=generated_calls,
-                terminal=finish_reason is not None,
+                terminal=finish_reason is not None and not defer_terminal,
+                force_rebuild=finish_reason is not None and defer_terminal,
             )
             for normalized_chunk in normalized:
                 yield normalized_chunk
 
-        if not finalized:
+        if defer_terminal:
+            content, reasoning, generated_calls = _finish_native_tool_framers(
+                content_framer,
+                reasoning_framer,
+                content=None,
+                reasoning_content=None,
+                schemas=schemas,
+                structured_tool_calls_seen=structured_tool_calls_seen,
+            )
+            chunks = _synthetic_chunks(
+                content=content,
+                reasoning_content=reasoning,
+                generated_calls=generated_calls,
+            )
+            if terminal_seen:
+                if not chunks:
+                    chunks.append(_chunk())
+                chunks[-1].choices[0].finish_reason = terminal_finish_reason
+                chunks[-1].usage = terminal_usage
+            for normalized_chunk in chunks:
+                yield normalized_chunk
+        elif not finalized:
             content, reasoning, generated_calls = _finish_native_tool_framers(
                 content_framer,
                 reasoning_framer,
@@ -288,6 +324,7 @@ def _normalized_chunks(
     reasoning_content: Any,
     generated_calls: tuple[_NativeToolCall, ...],
     terminal: bool,
+    force_rebuild: bool = False,
 ) -> list[Any]:
     source_content = getattr(source_delta, "content", None)
     source_reasoning = getattr(source_delta, "reasoning_content", None)
@@ -296,7 +333,8 @@ def _normalized_chunks(
     source_usage = getattr(source_chunk, "usage", None)
 
     if (
-        not generated_calls
+        not force_rebuild
+        and not generated_calls
         and content == source_content
         and reasoning_content == source_reasoning
     ):
@@ -598,9 +636,9 @@ def _elements_to_object(
 
 
 def _element_value(element: _Element, schema: Mapping[str, Any]) -> Any:
-    schema_type = _schema_type(schema)
+    declared_type = schema_type(schema)
     if element.children:
-        if schema_type == "array":
+        if declared_type == "array":
             item_schema = schema.get("items")
             if not isinstance(item_schema, Mapping):
                 item_schema = {}
@@ -614,82 +652,12 @@ def _element_value(element: _Element, schema: Mapping[str, Any]) -> Any:
             result[mixed_name] = element.text
         return result
 
-    return _coerce_leaf(element.text, schema_type, schema)
-
-
-def _coerce_leaf(
-    value: str,
-    schema_type: str | None,
-    schema: Mapping[str, Any],
-) -> Any:
-    enum_values = schema.get("enum")
-    if isinstance(enum_values, list):
-        for enum_value in enum_values:
-            if str(enum_value) == value:
-                return enum_value
-    if "const" in schema and str(schema["const"]) == value:
-        return schema["const"]
-
-    stripped = value.strip()
     try:
-        if schema_type == "integer":
-            return int(stripped)
-        if schema_type == "number":
-            number = json.loads(stripped)
-            if isinstance(number, int | float) and not isinstance(number, bool):
-                return number
-            raise ValueError
-        if schema_type == "boolean":
-            if stripped.lower() == "true":
-                return True
-            if stripped.lower() == "false":
-                return False
-            raise ValueError
-        if schema_type == "null":
-            if stripped.lower() == "null":
-                return None
-            raise ValueError
-        if schema_type == "array":
-            parsed = json.loads(stripped)
-            if isinstance(parsed, list):
-                return parsed
-            raise ValueError
-        if schema_type == "object":
-            parsed = json.loads(stripped)
-            if isinstance(parsed, dict):
-                return parsed
-            raise ValueError
-    except json.JSONDecodeError, ValueError:
+        return coerce_text_argument(element.text, schema)
+    except ValueError:
         raise NimNativeToolProtocolError(
             "NVIDIA NIM returned a native MiniMax argument with the wrong type."
         ) from None
-    return value
-
-
-def _schema_type(schema: Mapping[str, Any]) -> str | None:
-    declared = schema.get("type")
-    if isinstance(declared, str):
-        return declared
-    if isinstance(declared, list):
-        non_null = [
-            item for item in declared if isinstance(item, str) and item != "null"
-        ]
-        if len(non_null) == 1:
-            return non_null[0]
-
-    for keyword in ("oneOf", "anyOf"):
-        alternatives = schema.get(keyword)
-        if not isinstance(alternatives, list):
-            continue
-        types = {
-            nested_type
-            for alternative in alternatives
-            if isinstance(alternative, Mapping)
-            if (nested_type := _schema_type(alternative)) not in (None, "null")
-        }
-        if len(types) == 1:
-            return types.pop()
-    return None
 
 
 def _validate_arguments(
@@ -697,36 +665,10 @@ def _validate_arguments(
     arguments: dict[str, Any],
     schema: dict[str, Any],
 ) -> None:
-    try:
-        validator_type = jsonschema.validators.validator_for(schema)
-        validator_type.check_schema(schema)
-        validator_type(schema).validate(arguments)
-    except jsonschema.exceptions.SchemaError:
-        return
-    except jsonschema.exceptions.ValidationError:
+    if not arguments_match_schema(arguments, schema):
         raise NimNativeToolProtocolError(
             f"NVIDIA NIM returned schema-invalid arguments for tool {tool_name!r}."
-        ) from None
-
-
-def _openai_tool_schemas(body: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
-    tools = body.get("tools")
-    if not isinstance(tools, list):
-        return {}
-
-    schemas: dict[str, dict[str, Any]] = {}
-    for tool in tools:
-        if not isinstance(tool, Mapping):
-            continue
-        function = tool.get("function")
-        if not isinstance(function, Mapping):
-            continue
-        name = function.get("name")
-        if not isinstance(name, str) or not name:
-            continue
-        parameters = function.get("parameters")
-        schemas[name] = dict(parameters) if isinstance(parameters, Mapping) else {}
-    return schemas
+        )
 
 
 def _append_object_value(output: dict[str, Any], name: str, value: Any) -> None:

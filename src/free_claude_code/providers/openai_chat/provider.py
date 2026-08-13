@@ -64,6 +64,7 @@ from .output_cap import clamp_output_tokens, parse_output_token_cap
 from .profiles import OpenAIChatProfile
 from .reasoning_details import StructuredReasoningStream
 from .request_policy import build_openai_chat_request_body
+from .text_tool_stream import normalize_openai_text_tool_stream
 from .tool_calls import (
     OpenAIToolCallAssembler,
     OpenAIToolCallCollector,
@@ -298,6 +299,7 @@ class OpenAIChatProvider(BaseProvider):
                     stream=True,
                 )
                 stream = self._normalize_stream(stream, body)
+                stream = normalize_openai_text_tool_stream(stream, body)
                 retain_attempt = True
                 return stream, body, attempt
             except asyncio.CancelledError:

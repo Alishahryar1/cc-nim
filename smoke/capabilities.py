@@ -221,6 +221,17 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
     ),
     CapabilityContract(
         "streaming_conversion",
+        "textual_tool_protocols",
+        "heuristic_tool_parser",
+        "free_claude_code.providers.openai_chat.text_tool_stream",
+        "exact textual tool-call envelopes from OpenAI-compatible endpoints",
+        "schema-valid OpenAI tool-call deltas",
+        "retryable protocol failure before malformed control text is committed",
+        ("tests/providers/test_openai_chat_text_tool_stream.py",),
+        ("test_nvidia_nim_stepfun_text_tool_call_e2e",),
+    ),
+    CapabilityContract(
+        "streaming_conversion",
         "subagent_task_control",
         "subagent_control",
         "free_claude_code.core.anthropic.streaming.AnthropicStreamLedger",
