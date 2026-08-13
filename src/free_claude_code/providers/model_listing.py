@@ -49,7 +49,7 @@ def extract_openai_model_infos(
     thinking_boolean_path: tuple[str, ...] | None = None,
 ) -> frozenset[_ProviderModelInfo]:
     """Extract routable IDs from an OpenAI-compatible model-list response."""
-    model_infos: set[_ProviderModelInfo] = set()
+    model_infos: dict[str, _ProviderModelInfo] = {}
     item_location = collection_field or "root-array"
     for item in model_list_items(
         payload,
@@ -142,11 +142,9 @@ def extract_openai_model_infos(
         if not included:
             continue
 
-        model_infos.add(
-            _ProviderModelInfo(
-                model_id=model_id,
-                supports_thinking=supports_thinking,
-            )
+        model_infos.setdefault(
+            model_id,
+            _ProviderModelInfo(model_id=model_id, supports_thinking=supports_thinking),
         )
         if aliases_field is not None:
             aliases = _field(item, aliases_field)
@@ -162,16 +160,16 @@ def extract_openai_model_infos(
                         provider_name,
                         f"expected every {aliases_field} item to be a model id",
                     )
-                model_infos.add(
+                model_infos.setdefault(
+                    alias,
                     _ProviderModelInfo(
-                        model_id=alias,
-                        supports_thinking=supports_thinking,
-                    )
+                        model_id=alias, supports_thinking=supports_thinking
+                    ),
                 )
 
     if not model_infos:
         raise _malformed(provider_name, "response did not include any model ids")
-    return frozenset(model_infos)
+    return frozenset(model_infos.values())
 
 
 def extract_tool_capable_model_infos(
@@ -223,6 +221,71 @@ def model_list_items(
             f"expected {location}",
         )
     return tuple(data)
+
+
+def validate_model_list_page(
+    payload: Any,
+    *,
+    provider_name: str,
+    expected_page: int,
+    current_page_path: tuple[str, ...],
+    total_pages_path: tuple[str, ...],
+    max_pages: int,
+    expected_total_pages: int | None = None,
+) -> int:
+    """Validate numbered pagination metadata and return the total page count."""
+    current_page = _path(payload, current_page_path)
+    if type(current_page) is not int:
+        raise _malformed(
+            provider_name,
+            f"expected {'.'.join(current_page_path)} to be an integer",
+        )
+    if current_page != expected_page:
+        raise _malformed(
+            provider_name,
+            f"expected {'.'.join(current_page_path)} to be {expected_page}",
+        )
+
+    total_pages = _path(payload, total_pages_path)
+    if type(total_pages) is not int:
+        raise _malformed(
+            provider_name,
+            f"expected {'.'.join(total_pages_path)} to be an integer",
+        )
+    if total_pages < 1 or total_pages > max_pages:
+        raise _malformed(
+            provider_name,
+            f"expected {'.'.join(total_pages_path)} between 1 and {max_pages}",
+        )
+    if expected_total_pages is not None and total_pages != expected_total_pages:
+        raise _malformed(
+            provider_name,
+            f"expected {'.'.join(total_pages_path)} to remain {expected_total_pages}",
+        )
+    return total_pages
+
+
+def merge_model_list_pages(
+    payloads: Iterable[Any],
+    *,
+    provider_name: str,
+    collection_field: str | None,
+) -> tuple[Any, ...] | dict[str, tuple[Any, ...]]:
+    """Combine complete model-list pages before strict record parsing."""
+    merged: list[Any] = []
+    for payload in payloads:
+        merged.extend(
+            model_list_items(
+                payload,
+                provider_name=provider_name,
+                collection_field=collection_field,
+            )
+        )
+
+    items = tuple(merged)
+    if collection_field is None:
+        return items
+    return {collection_field: items}
 
 
 def _field(item: Any, name: str) -> Any:

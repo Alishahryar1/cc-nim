@@ -186,6 +186,13 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "tool-capable models."
         ),
     },
+    "FEATHERLESS_API_KEY": {
+        "label": "Featherless AI API Key",
+        "description": (
+            "Featherless AI API key for plan-available OpenAI-compatible chat, "
+            "reasoning, and tool-capable models."
+        ),
+    },
     "SAMBANOVA_API_KEY": {
         "label": "SambaNova API Key",
         "description": (

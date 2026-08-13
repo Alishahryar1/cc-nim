@@ -66,6 +66,8 @@ SILICONFLOW_DEFAULT_BASE = "https://api.siliconflow.com/v1"
 NEBIUS_DEFAULT_BASE = "https://api.tokenfactory.nebius.com/v1"
 # Chutes OpenAI-compatible Chat Completions API.
 CHUTES_DEFAULT_BASE = "https://llm.chutes.ai/v1"
+# Featherless AI OpenAI-compatible Chat Completions API.
+FEATHERLESS_DEFAULT_BASE = "https://api.featherless.ai/v1"
 # TokenRouter OpenAI-compatible Chat Completions gateway.
 TOKENROUTER_DEFAULT_BASE = "https://api.tokenrouter.com/v1"
 # NaraRoute OpenAI-compatible Chat Completions gateway.
@@ -208,6 +210,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="chutes_api_key",
         default_base_url=CHUTES_DEFAULT_BASE,
         proxy_attr="chutes_proxy",
+    ),
+    "featherless": ProviderDescriptor(
+        provider_id="featherless",
+        display_name="Featherless AI",
+        credential_env="FEATHERLESS_API_KEY",
+        credential_url="https://featherless.ai/account/api-keys",
+        credential_attr="featherless_api_key",
+        default_base_url=FEATHERLESS_DEFAULT_BASE,
+        proxy_attr="featherless_proxy",
     ),
     "agnes": ProviderDescriptor(
         provider_id="agnes",

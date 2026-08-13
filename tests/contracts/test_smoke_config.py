@@ -60,6 +60,7 @@ def _settings(**overrides):
         "siliconflow_api_key": "",
         "nebius_api_key": "",
         "chutes_api_key": "",
+        "featherless_api_key": "",
         "sambanova_api_key": "",
         "cerebras_api_key": "",
         "ollama_api_key": "",
@@ -274,6 +275,23 @@ def test_chutes_provider_smoke_uses_documented_agent_model(monkeypatch) -> None:
 
     assert [model.provider for model in models] == ["chutes"]
     assert models[0].full_model == "chutes/Qwen/Qwen3-32B-TEE"
+    assert models[0].source == "provider_default"
+
+
+def test_featherless_provider_smoke_uses_documented_agent_model(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_FEATHERLESS", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            featherless_api_key="featherless-key",
+        )
+    )
+
+    models = config.provider_smoke_models()
+
+    assert [model.provider for model in models] == ["featherless"]
+    assert models[0].full_model == "featherless/Qwen/Qwen3-32B"
     assert models[0].source == "provider_default"
 
 

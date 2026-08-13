@@ -17,6 +17,7 @@ _EXPECTED_PROVIDER_ORDER: tuple[str, ...] = (
     "siliconflow",
     "nebius",
     "chutes",
+    "featherless",
     "agnes",
     "zenmux",
     "azure_openai",

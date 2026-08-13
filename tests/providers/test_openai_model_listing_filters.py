@@ -68,3 +68,21 @@ def test_required_path_values_reject_an_empty_included_set() -> None:
             provider_name="TEST",
             required_path_values=((("type",), ("chat",)),),
         )
+
+
+def test_duplicate_model_ids_preserve_first_validated_capability() -> None:
+    model_infos = extract_openai_model_infos(
+        {
+            "data": [
+                {"id": "overlap", "features": ["reasoning"]},
+                {"id": "overlap", "features": ["non-reasoning"]},
+            ]
+        },
+        provider_name="TEST",
+        tags_field="features",
+        non_thinking_tag="non-reasoning",
+    )
+
+    assert model_infos == frozenset(
+        {ProviderModelInfo("overlap", supports_thinking=True)}
+    )

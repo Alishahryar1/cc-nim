@@ -48,7 +48,11 @@ from free_claude_code.providers.http import (
     close_provider_stream,
     maybe_await_aclose,
 )
-from free_claude_code.providers.model_listing import extract_openai_model_infos
+from free_claude_code.providers.model_listing import (
+    extract_openai_model_infos,
+    merge_model_list_pages,
+    validate_model_list_page,
+)
 from free_claude_code.providers.stream_recovery import (
     RecoveryController,
     RecoveryFailureAction,
@@ -174,6 +178,8 @@ class OpenAIChatProvider(BaseProvider):
         path = listing.path
         if path is None:
             return await self._client.models.list()
+        if listing.pagination is not None:
+            return await self._fetch_paginated_models_payload(path)
         if listing.query_params:
             return await self._client.get(
                 path,
@@ -181,6 +187,42 @@ class OpenAIChatProvider(BaseProvider):
                 options={"params": dict(listing.query_params)},
             )
         return await self._client.get(path, cast_to=object)
+
+    async def _fetch_paginated_models_payload(self, path: str) -> Any:
+        """Fetch one complete bounded model catalog within a retry attempt."""
+        listing = self._profile.model_listing
+        pagination = listing.pagination
+        if pagination is None:
+            raise RuntimeError("paginated model fetch requires a pagination policy")
+
+        payloads: list[Any] = []
+        total_pages: int | None = None
+        page = pagination.first_page
+        while total_pages is None or page < pagination.first_page + total_pages:
+            params = dict(listing.query_params)
+            params[pagination.page_param] = str(page)
+            payload = await self._client.get(
+                path,
+                cast_to=object,
+                options={"params": params},
+            )
+            total_pages = validate_model_list_page(
+                payload,
+                provider_name=self._provider_name,
+                expected_page=page,
+                current_page_path=pagination.current_page_path,
+                total_pages_path=pagination.total_pages_path,
+                max_pages=pagination.max_pages,
+                expected_total_pages=total_pages,
+            )
+            payloads.append(payload)
+            page += 1
+
+        return merge_model_list_pages(
+            payloads,
+            provider_name=self._provider_name,
+            collection_field=listing.collection_field,
+        )
 
     def _build_request_body(
         self,

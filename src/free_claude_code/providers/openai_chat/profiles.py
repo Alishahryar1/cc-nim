@@ -66,6 +66,17 @@ _KIMI_CODE_EFFORTS = (
 
 
 @dataclass(frozen=True, slots=True)
+class OpenAIModelPagination:
+    """Bounded numbered-pagination metadata for a model-list endpoint."""
+
+    page_param: str = "page"
+    first_page: int = 1
+    current_page_path: tuple[str, ...] = ("pagination", "current_page")
+    total_pages_path: tuple[str, ...] = ("pagination", "total_pages")
+    max_pages: int = 100
+
+
+@dataclass(frozen=True, slots=True)
 class OpenAIModelListing:
     """Declarative model-list endpoint and response shape."""
 
@@ -82,6 +93,7 @@ class OpenAIModelListing:
     thinking_tag: str = "reasoning"
     non_thinking_tag: str | None = None
     thinking_boolean_path: tuple[str, ...] | None = None
+    pagination: OpenAIModelPagination | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -287,6 +299,31 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             ),
             exclude_missing_sequence_fields=True,
             tags_field="supported_features",
+        ),
+    ),
+    "featherless": OpenAIChatProfile(
+        _policy(
+            "FEATHERLESS",
+            ReasoningReplayMode.REASONING_CONTENT,
+            include_extra_body=True,
+            extra_body_validator=validate_extra_body_does_not_override_reasoning_fields,
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        ChatTemplateReasoning(field="enable_thinking"),
+        model_listing=OpenAIModelListing(
+            path="/models",
+            query_params=(
+                ("capabilities", "chat,tool-use"),
+                ("available_on_current_plan", "true"),
+                ("status", "active"),
+                ("per_page", "1000"),
+            ),
+            required_path_values=(
+                (("features", "tool_use"), (True,)),
+                (("is_gated",), (False,)),
+                (("available_on_current_plan",), (True,)),
+            ),
+            pagination=OpenAIModelPagination(),
         ),
     ),
     "agnes": OpenAIChatProfile(
