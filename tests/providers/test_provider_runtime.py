@@ -20,6 +20,7 @@ from free_claude_code.config.provider_catalog import (
     KIMI_CODE_DEFAULT_BASE,
     MINIMAX_DEFAULT_BASE,
     NARAROUTE_DEFAULT_BASE,
+    NEBIUS_DEFAULT_BASE,
     OLLAMA_CLOUD_DEFAULT_BASE,
     PROVIDER_CATALOG,
     QWENCLOUD_DEFAULT_BASE,
@@ -72,6 +73,7 @@ def _make_settings(**overrides):
     mock.together_api_key = "test_together_key"
     mock.deepinfra_api_key = "test_deepinfra_key"
     mock.siliconflow_api_key = "test_siliconflow_key"
+    mock.nebius_api_key = "test_nebius_key"
     mock.mistral_api_key = "test_mistral_key"
     mock.codestral_api_key = "test_codestral_key"
     mock.deepseek_api_key = "test_deepseek_key"
@@ -144,6 +146,7 @@ def _make_settings(**overrides):
     mock.together_proxy = ""
     mock.deepinfra_proxy = ""
     mock.siliconflow_proxy = ""
+    mock.nebius_proxy = ""
     mock.azure_openai_proxy = ""
     mock.provider_rate_limit = 40
     mock.provider_rate_window = 60
@@ -305,6 +308,29 @@ def test_siliconflow_provider_config_uses_key_base_and_proxy() -> None:
     assert descriptor.base_url_attr is None
     assert config.api_key == "siliconflow-token"
     assert config.base_url == SILICONFLOW_DEFAULT_BASE
+    assert config.proxy == "http://proxy.test:8080"
+    assert isinstance(provider, OpenAIChatProvider)
+
+
+def test_nebius_provider_config_uses_key_base_and_proxy() -> None:
+    descriptor = PROVIDER_CATALOG["nebius"]
+    settings = _make_settings(
+        nebius_api_key="nebius-token",
+        nebius_proxy="http://proxy.test:8080",
+    )
+
+    config = build_provider_config(descriptor, settings)
+    with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
+        provider = create_provider("nebius", settings)
+
+    assert descriptor.display_name == "Nebius Token Factory"
+    assert descriptor.credential_env == "NEBIUS_API_KEY"
+    assert descriptor.credential_url == (
+        "https://tokenfactory.nebius.com/project/api-keys"
+    )
+    assert descriptor.base_url_attr is None
+    assert config.api_key == "nebius-token"
+    assert config.base_url == NEBIUS_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
 
@@ -645,6 +671,7 @@ def test_create_provider_instantiates_each_builtin():
         "together": OpenAIChatProvider,
         "deepinfra": OpenAIChatProvider,
         "siliconflow": OpenAIChatProvider,
+        "nebius": OpenAIChatProvider,
         "azure_openai": OpenAIChatProvider,
         "open_router": OpenRouterProvider,
         "mistral": MistralProvider,

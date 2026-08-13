@@ -7,6 +7,11 @@ from free_claude_code.application.model_metadata import (
     ProviderModelInfo as _ProviderModelInfo,
 )
 
+type ModelListScalar = str | bool
+type RequiredPathValues = tuple[
+    tuple[tuple[str, ...], tuple[ModelListScalar, ...]], ...
+]
+
 
 class ModelListResponseError(ValueError):
     """A provider model-list response cannot be parsed safely."""
@@ -34,7 +39,7 @@ def extract_openai_model_infos(
     collection_field: str | None = "data",
     id_field: str = "id",
     aliases_field: str | None = None,
-    field_equals: tuple[str, str] | None = None,
+    required_path_values: RequiredPathValues = (),
     required_null_field: str | None = None,
     required_sequence_items: tuple[tuple[str, str], ...] = (),
     tags_field: str | None = None,
@@ -57,16 +62,23 @@ def extract_openai_model_infos(
                 f"expected every {item_location} item to include {id_field}",
             )
         included = True
-        if field_equals is not None:
-            field_name, expected_value = field_equals
-            field_value = _field(item, field_name)
-            if not isinstance(field_value, str):
+        for path, allowed_values in required_path_values:
+            path_value = _path(item, path)
+            matching_types = tuple(
+                allowed
+                for allowed in allowed_values
+                if type(path_value) is type(allowed)
+            )
+            if path_value is _MISSING or not matching_types:
+                expected_types = "/".join(
+                    dict.fromkeys(_scalar_type_name(value) for value in allowed_values)
+                )
                 raise _malformed(
                     provider_name,
                     f"expected every {item_location} item to include "
-                    f"string {field_name}",
+                    f"{'.'.join(path)} as {expected_types}",
                 )
-            if field_value != expected_value:
+            if path_value not in matching_types:
                 included = False
 
         if required_null_field is not None:
@@ -233,6 +245,10 @@ def _is_sequence(value: Any) -> bool:
     return isinstance(value, Sequence) and not isinstance(
         value, str | bytes | bytearray
     )
+
+
+def _scalar_type_name(value: ModelListScalar) -> str:
+    return type(value).__name__
 
 
 def _malformed(provider_name: str, reason: str) -> ModelListResponseError:

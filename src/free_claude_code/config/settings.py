@@ -146,6 +146,9 @@ class Settings(BaseSettings):
     # ==================== SiliconFlow (OpenAI-compatible) ====================
     siliconflow_api_key: str = Field(default="", validation_alias="SILICONFLOW_API_KEY")
 
+    # ==================== Nebius Token Factory (OpenAI-compatible) ====================
+    nebius_api_key: str = Field(default="", validation_alias="NEBIUS_API_KEY")
+
     # ==================== Agnes AI (OpenAI-compatible) ====================
     agnes_api_key: str = Field(default="", validation_alias="AGNES_API_KEY")
 
@@ -210,6 +213,7 @@ class Settings(BaseSettings):
     together_proxy: str = Field(default="", validation_alias="TOGETHER_PROXY")
     deepinfra_proxy: str = Field(default="", validation_alias="DEEPINFRA_PROXY")
     siliconflow_proxy: str = Field(default="", validation_alias="SILICONFLOW_PROXY")
+    nebius_proxy: str = Field(default="", validation_alias="NEBIUS_PROXY")
     agnes_proxy: str = Field(default="", validation_alias="AGNES_PROXY")
     zenmux_proxy: str = Field(default="", validation_alias="ZENMUX_PROXY")
     azure_openai_proxy: str = Field(default="", validation_alias="AZURE_OPENAI_PROXY")

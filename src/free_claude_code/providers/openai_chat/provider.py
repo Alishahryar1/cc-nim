@@ -150,7 +150,7 @@ class OpenAIChatProvider(BaseProvider):
             collection_field=listing.collection_field,
             id_field=listing.id_field,
             aliases_field=listing.aliases_field,
-            field_equals=listing.field_equals,
+            required_path_values=listing.required_path_values,
             required_null_field=listing.required_null_field,
             required_sequence_items=listing.required_sequence_items,
             tags_field=listing.tags_field,

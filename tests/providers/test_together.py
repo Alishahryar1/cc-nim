@@ -232,8 +232,8 @@ async def test_model_catalog_uses_configured_base_url_and_auth(
     [
         ({"data": []}, "expected root array"),
         ([{"type": "chat"}], "include id"),
-        ([{"id": "model"}], "include string type"),
-        ([{"id": "model", "type": 7}], "include string type"),
+        ([{"id": "model"}], "include type as str"),
+        ([{"id": "model", "type": 7}], "include type as str"),
         ([], "did not include any model ids"),
         (
             [{"id": "black-forest-labs/FLUX.2-dev", "type": "image"}],

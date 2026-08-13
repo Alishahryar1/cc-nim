@@ -10,6 +10,7 @@ from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKEN
 from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
+from free_claude_code.providers.model_listing import RequiredPathValues
 
 from .base_url import openai_v1_base_url
 from .extra_body import (
@@ -73,7 +74,7 @@ class OpenAIModelListing:
     collection_field: str | None = "data"
     id_field: str = "id"
     aliases_field: str | None = None
-    field_equals: tuple[str, str] | None = None
+    required_path_values: RequiredPathValues = ()
     required_null_field: str | None = None
     required_sequence_items: tuple[tuple[str, str], ...] = ()
     tags_field: str | None = None
@@ -210,7 +211,7 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         model_listing=OpenAIModelListing(
             path="/models",
             collection_field=None,
-            field_equals=("type", "chat"),
+            required_path_values=((("type",), ("chat",)),),
         ),
         reasoning_delta_field="reasoning",
     ),
@@ -232,7 +233,7 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             path="https://api.deepinfra.com/models/list",
             collection_field=None,
             id_field="model_name",
-            field_equals=("reported_type", "text-generation"),
+            required_path_values=((("reported_type",), ("text-generation",)),),
             required_null_field="deprecated",
             tags_field="tags",
             non_thinking_tag="non-reasoning",
@@ -250,6 +251,23 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         model_listing=OpenAIModelListing(
             path="/models",
             query_params=(("sub_type", "chat"),),
+        ),
+    ),
+    "nebius": OpenAIChatProfile(
+        _policy(
+            "NEBIUS",
+            ReasoningReplayMode.REASONING_CONTENT,
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        NamedEffortReasoning(
+            _MINIMAL_TO_XHIGH,
+            disabled_value="none",
+            enabled_value="xhigh",
+        ),
+        model_listing=OpenAIModelListing(
+            path="/models",
+            query_params=(("verbose", "true"),),
+            required_path_values=((("architecture", "modality"), ("text->text",)),),
         ),
     ),
     "agnes": OpenAIChatProfile(

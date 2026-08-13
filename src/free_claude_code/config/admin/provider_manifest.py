@@ -172,6 +172,13 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "vision models."
         ),
     },
+    "NEBIUS_API_KEY": {
+        "label": "Nebius Token Factory API Key",
+        "description": (
+            "Nebius Token Factory API key for OpenAI-compatible chat, reasoning, "
+            "and tool-capable models."
+        ),
+    },
     "SAMBANOVA_API_KEY": {
         "label": "SambaNova API Key",
         "description": (

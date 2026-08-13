@@ -62,6 +62,8 @@ TOGETHER_DEFAULT_BASE = "https://api.together.ai/v1"
 DEEPINFRA_DEFAULT_BASE = "https://api.deepinfra.com/v1/openai"
 # SiliconFlow OpenAI-compatible Chat Completions API.
 SILICONFLOW_DEFAULT_BASE = "https://api.siliconflow.com/v1"
+# Nebius Token Factory OpenAI-compatible Chat Completions API.
+NEBIUS_DEFAULT_BASE = "https://api.tokenfactory.nebius.com/v1"
 # TokenRouter OpenAI-compatible Chat Completions gateway.
 TOKENROUTER_DEFAULT_BASE = "https://api.tokenrouter.com/v1"
 # NaraRoute OpenAI-compatible Chat Completions gateway.
@@ -186,6 +188,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="siliconflow_api_key",
         default_base_url=SILICONFLOW_DEFAULT_BASE,
         proxy_attr="siliconflow_proxy",
+    ),
+    "nebius": ProviderDescriptor(
+        provider_id="nebius",
+        display_name="Nebius Token Factory",
+        credential_env="NEBIUS_API_KEY",
+        credential_url="https://tokenfactory.nebius.com/project/api-keys",
+        credential_attr="nebius_api_key",
+        default_base_url=NEBIUS_DEFAULT_BASE,
+        proxy_attr="nebius_proxy",
     ),
     "agnes": ProviderDescriptor(
         provider_id="agnes",

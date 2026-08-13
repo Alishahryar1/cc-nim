@@ -310,8 +310,8 @@ async def test_model_catalog_uses_absolute_public_url() -> None:
     [
         ({"data": []}, "expected root array"),
         ([_catalog_model(model_name=_MISSING)], "include model_name"),
-        ([_catalog_model(reported_type=_MISSING)], "include string reported_type"),
-        ([_catalog_model(reported_type=7)], "include string reported_type"),
+        ([_catalog_model(reported_type=_MISSING)], "include reported_type as str"),
+        ([_catalog_model(reported_type=7)], "include reported_type as str"),
         ([_catalog_model(deprecated=_MISSING)], "include deprecated"),
         ([_catalog_model(tags=_MISSING)], "include tags string array"),
         ([_catalog_model(tags=[7])], "include tags string array"),
