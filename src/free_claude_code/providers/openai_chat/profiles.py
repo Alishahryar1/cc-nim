@@ -29,6 +29,7 @@ from .reasoning import (
 )
 from .reasoning_details import apply_reasoning_details_replay
 from .request_policy import OpenAIChatPostprocessor, OpenAIChatRequestPolicy
+from .text_tool_stream import OpenAITextToolDialect
 
 _ALL_EFFORTS = tuple((effort, effort.value) for effort in ReasoningEffort)
 _LOW_MEDIUM_HIGH = (
@@ -113,6 +114,7 @@ class OpenAIChatProfile:
         None
     )
     structured_reasoning_details: bool = False
+    text_tool_dialect: OpenAITextToolDialect | None = None
     user_agent: str | None = None
 
     @property

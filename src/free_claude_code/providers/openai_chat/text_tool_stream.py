@@ -22,11 +22,22 @@ _FUNCTION_START = "<function="
 _FUNCTION_END = "</function>"
 _PARAMETER_START = "<parameter="
 _PARAMETER_END = "</parameter>"
+_REASONING_END = "</think>"
 _MAX_TEXT_TOOL_BLOCK_CHARS = 4 * 1024 * 1024
 
 
 class OpenAITextToolProtocolError(RetryableToolProtocolError):
-    """An OpenAI-compatible endpoint leaked malformed textual tool markup."""
+    """A reserved textual tool call violated its declared tool contract."""
+
+
+class OpenAITextToolDialect(StrEnum):
+    """Textual tool protocols explicitly enabled by a provider profile."""
+
+    FUNCTION_TAGS = "function_tags"
+
+
+class _TextToolSyntaxError(Exception):
+    """Candidate text does not form the reserved function-tag protocol."""
 
 
 class _NormalizedTextToolStream(AsyncIterator[Any]):
@@ -60,6 +71,12 @@ class _TextToolCall:
     arguments: dict[str, Any]
 
 
+@dataclass(frozen=True, slots=True)
+class _RawTextToolCall:
+    name: str
+    arguments: dict[str, str]
+
+
 class _FramingMode(StrEnum):
     TEXT = "text"
     CONTROL = "control"
@@ -74,6 +91,8 @@ class _TextToolFramer:
         self._text_tail = ""
         self._control_parts: list[str] = []
         self._control_length = 0
+        self._visible_has_non_whitespace = False
+        self._visible_suffix = ""
 
     @property
     def control(self) -> str | None:
@@ -89,25 +108,31 @@ class _TextToolFramer:
         if not text:
             return ""
         if self._mode is _FramingMode.CONTROL:
-            self._append_control(text)
-            return ""
+            visible = self._append_control(text)
+            if visible:
+                self._record_visible(visible)
+            return visible
 
         candidate = "".join((self._text_tail, text))
-        marker_index = candidate.find(_TOOL_BLOCK_START)
+        marker_index = self._control_marker_index(candidate)
         if marker_index >= 0:
             visible = candidate[:marker_index]
             self._text_tail = ""
             self._mode = _FramingMode.CONTROL
-            self._append_control(candidate[marker_index:])
-            return visible
+            fallback = self._append_control(candidate[marker_index:])
+            combined_visible = "".join((visible, fallback))
+            self._record_visible(combined_visible)
+            return combined_visible
 
         held_length = _partial_marker_suffix_length(candidate, _TOOL_BLOCK_START)
         if held_length:
             visible = candidate[:-held_length]
             self._text_tail = candidate[-held_length:]
+            self._record_visible(visible)
             return visible
 
         self._text_tail = ""
+        self._record_visible(candidate)
         return candidate
 
     def finish(self) -> str:
@@ -120,27 +145,64 @@ class _TextToolFramer:
         self._text_tail = ""
         return tail
 
-    def _append_control(self, text: str) -> None:
+    def _append_control(self, text: str) -> str:
+        if not text:
+            return ""
+        self._control_length += len(text)
+        self._control_parts.append(text)
+        if self._control_length <= _MAX_TEXT_TOOL_BLOCK_CHARS:
+            return ""
+
+        visible = "".join(self._control_parts)
+        self._mode = _FramingMode.TEXT
+        self._control_parts.clear()
+        self._control_length = 0
+        return visible
+
+    def _control_marker_index(self, text: str) -> int:
+        search_from = 0
+        while True:
+            marker_index = text.find(_TOOL_BLOCK_START, search_from)
+            if marker_index < 0:
+                return -1
+            if self._is_control_boundary(text[:marker_index]):
+                return marker_index
+            search_from = marker_index + len(_TOOL_BLOCK_START)
+
+    def _is_control_boundary(self, pending_visible: str) -> bool:
+        has_non_whitespace = self._visible_has_non_whitespace or bool(
+            pending_visible.strip()
+        )
+        if not has_non_whitespace:
+            return True
+        suffix = "".join((self._visible_suffix, pending_visible)).rstrip()
+        return suffix.endswith(_REASONING_END)
+
+    def _record_visible(self, text: str) -> None:
         if not text:
             return
-        self._control_length += len(text)
-        if self._control_length > _MAX_TEXT_TOOL_BLOCK_CHARS:
-            raise OpenAITextToolProtocolError(
-                "OpenAI-compatible provider returned oversized textual tool markup."
-            )
-        self._control_parts.append(text)
+        self._visible_has_non_whitespace = self._visible_has_non_whitespace or bool(
+            text.strip()
+        )
+        self._visible_suffix = "".join((self._visible_suffix, text)).rstrip()[
+            -len(_REASONING_END) :
+        ]
 
 
 def normalize_openai_text_tool_stream(
     stream: Any,
     body: Mapping[str, Any],
+    *,
+    dialect: OpenAITextToolDialect,
 ) -> Any:
-    """Convert exact textual tool envelopes into ordinary OpenAI tool deltas.
+    """Convert one explicitly selected textual dialect into OpenAI tool deltas.
 
-    This recognizer is enabled only when the request declared tools and only for
-    the complete ``<tool_call><function=...>`` protocol signature. Ordinary text
-    remains untouched, while structured upstream tool calls stay authoritative.
+    The function-tag dialect reserves a complete control-only response, either at
+    output start or after its reasoning boundary. Ordinary prose remains text,
+    while structured upstream tool calls stay authoritative.
     """
+    if dialect is not OpenAITextToolDialect.FUNCTION_TAGS:
+        raise ValueError(f"Unsupported OpenAI text-tool dialect: {dialect!r}")
     schemas = openai_tool_schemas(body)
     if not schemas:
         return stream
@@ -236,150 +298,148 @@ def _finish_framers(
         reasoning_content,
         reasoning_framer.finish(),
     )
+    controls: list[tuple[str, tuple[_RawTextToolCall, ...]]] = []
+    for field, control in (
+        ("content", content_framer.control),
+        ("reasoning_content", reasoning_framer.control),
+    ):
+        if control is None:
+            continue
+        raw_calls = _parse_control_syntax(control)
+        if raw_calls is None:
+            if field == "content":
+                content = _join_optional_text(content, control)
+            else:
+                reasoning_content = _join_optional_text(reasoning_content, control)
+            continue
+        controls.append((field, raw_calls))
+
     if structured_tool_calls_seen:
         return content, reasoning_content, ()
-
-    controls = tuple(
-        control
-        for control in (content_framer.control, reasoning_framer.control)
-        if control is not None
-    )
     if len(controls) > 1:
         raise OpenAITextToolProtocolError(
             "OpenAI-compatible provider returned textual tool calls in multiple "
             "output fields."
         )
-    calls = _parse_control_sequence(controls[0], schemas) if controls else ()
+    calls = _validate_control_calls(controls[0][1], schemas) if controls else ()
     return content, reasoning_content, calls
 
 
-def _parse_control_sequence(
-    text: str,
-    schemas: Mapping[str, dict[str, Any]],
-) -> tuple[_TextToolCall, ...]:
+def _parse_control_syntax(text: str) -> tuple[_RawTextToolCall, ...] | None:
+    try:
+        return _parse_control_sequence(text)
+    except _TextToolSyntaxError:
+        return None
+
+
+def _parse_control_sequence(text: str) -> tuple[_RawTextToolCall, ...]:
     cursor = 0
-    calls: list[_TextToolCall] = []
+    calls: list[_RawTextToolCall] = []
     while True:
         cursor = _skip_whitespace(text, cursor)
         if cursor == len(text):
             break
         if not text.startswith(_TOOL_BLOCK_START, cursor):
-            if calls:
-                raise OpenAITextToolProtocolError(
-                    "OpenAI-compatible provider returned content after textual "
-                    "tool markup."
-                )
-            raise OpenAITextToolProtocolError(
-                "OpenAI-compatible provider returned malformed textual tool markup."
-            )
+            raise _TextToolSyntaxError
 
         block_start = cursor + len(_TOOL_BLOCK_START)
         block_end = text.find(_TOOL_BLOCK_END, block_start)
         if block_end < 0:
-            raise OpenAITextToolProtocolError(
-                "OpenAI-compatible provider returned an incomplete textual tool call."
-            )
-        name, arguments = _parse_tool_block(text[block_start:block_end], schemas)
-        calls.append(_TextToolCall(index=len(calls), name=name, arguments=arguments))
+            raise _TextToolSyntaxError
+        name, arguments = _parse_tool_block(text[block_start:block_end])
+        calls.append(_RawTextToolCall(name=name, arguments=arguments))
         cursor = block_end + len(_TOOL_BLOCK_END)
 
     if not calls:
-        raise OpenAITextToolProtocolError(
-            "OpenAI-compatible provider returned empty textual tool markup."
-        )
+        raise _TextToolSyntaxError
     return tuple(calls)
 
 
-def _parse_tool_block(
-    block: str,
-    schemas: Mapping[str, dict[str, Any]],
-) -> tuple[str, dict[str, Any]]:
+def _parse_tool_block(block: str) -> tuple[str, dict[str, str]]:
     cursor = _skip_whitespace(block, 0)
     if not block.startswith(_FUNCTION_START, cursor):
-        raise OpenAITextToolProtocolError(
-            "OpenAI-compatible provider returned malformed textual function markup."
-        )
+        raise _TextToolSyntaxError
     name_end = block.find(">", cursor + len(_FUNCTION_START))
     if name_end < 0:
-        raise OpenAITextToolProtocolError(
-            "OpenAI-compatible provider returned an incomplete textual function tag."
-        )
+        raise _TextToolSyntaxError
     name = block[cursor + len(_FUNCTION_START) : name_end]
     if not _valid_tag_name(name):
-        raise OpenAITextToolProtocolError(
-            "OpenAI-compatible provider returned an invalid textual tool name."
-        )
-    schema = schemas.get(name)
-    if schema is None:
-        raise OpenAITextToolProtocolError(
-            "OpenAI-compatible provider returned a call for an undeclared tool."
-        )
+        raise _TextToolSyntaxError
 
-    properties = schema.get("properties")
-    property_schemas = properties if isinstance(properties, Mapping) else {}
-    arguments: dict[str, Any] = {}
+    arguments: dict[str, str] = {}
     cursor = name_end + 1
     while True:
         cursor = _skip_whitespace(block, cursor)
         if block.startswith(_FUNCTION_END, cursor):
             cursor += len(_FUNCTION_END)
             break
-        if cursor == len(block):
-            raise OpenAITextToolProtocolError(
-                "OpenAI-compatible provider returned an incomplete textual function."
-            )
-        if not block.startswith(_PARAMETER_START, cursor):
-            raise OpenAITextToolProtocolError(
-                "OpenAI-compatible provider returned malformed textual parameters."
-            )
+        if cursor == len(block) or not block.startswith(_PARAMETER_START, cursor):
+            raise _TextToolSyntaxError
 
         parameter_name_end = block.find(">", cursor + len(_PARAMETER_START))
         if parameter_name_end < 0:
-            raise OpenAITextToolProtocolError(
-                "OpenAI-compatible provider returned an incomplete parameter tag."
-            )
+            raise _TextToolSyntaxError
         parameter_name = block[cursor + len(_PARAMETER_START) : parameter_name_end]
-        if not _valid_tag_name(parameter_name):
-            raise OpenAITextToolProtocolError(
-                "OpenAI-compatible provider returned an invalid parameter name."
-            )
-        if parameter_name in arguments:
-            raise OpenAITextToolProtocolError(
-                "OpenAI-compatible provider returned a duplicate textual parameter."
-            )
+        if not _valid_tag_name(parameter_name) or parameter_name in arguments:
+            raise _TextToolSyntaxError
 
         value_start = parameter_name_end + 1
         value_end = block.find(_PARAMETER_END, value_start)
         if value_end < 0:
-            raise OpenAITextToolProtocolError(
-                "OpenAI-compatible provider returned an incomplete parameter value."
-            )
-        value = _unwrap_template_newlines(block[value_start:value_end])
-        parameter_schema = property_schemas.get(parameter_name)
-        if not isinstance(parameter_schema, Mapping):
-            parameter_schema = {}
-        try:
-            arguments[parameter_name] = coerce_text_argument(
-                value,
-                parameter_schema,
-            )
-        except ValueError:
-            raise OpenAITextToolProtocolError(
-                "OpenAI-compatible provider returned a textual parameter with the "
-                "wrong type."
-            ) from None
+            raise _TextToolSyntaxError
+        arguments[parameter_name] = _unwrap_template_newlines(
+            block[value_start:value_end]
+        )
         cursor = value_end + len(_PARAMETER_END)
 
     if block[cursor:].strip():
-        raise OpenAITextToolProtocolError(
-            "OpenAI-compatible provider returned content after a textual function."
-        )
-    if not arguments_match_schema(arguments, schema):
-        raise OpenAITextToolProtocolError(
-            f"OpenAI-compatible provider returned schema-invalid arguments for "
-            f"tool {name!r}."
-        )
+        raise _TextToolSyntaxError
     return name, arguments
+
+
+def _validate_control_calls(
+    raw_calls: tuple[_RawTextToolCall, ...],
+    schemas: Mapping[str, dict[str, Any]],
+) -> tuple[_TextToolCall, ...]:
+    calls: list[_TextToolCall] = []
+    for index, raw_call in enumerate(raw_calls):
+        schema = schemas.get(raw_call.name)
+        if schema is None:
+            raise OpenAITextToolProtocolError(
+                "OpenAI-compatible provider returned a call for an undeclared tool."
+            )
+
+        properties = schema.get("properties")
+        property_schemas = properties if isinstance(properties, Mapping) else {}
+        arguments: dict[str, Any] = {}
+        for parameter_name, value in raw_call.arguments.items():
+            parameter_schema = property_schemas.get(parameter_name)
+            if not isinstance(parameter_schema, Mapping):
+                parameter_schema = {}
+            try:
+                arguments[parameter_name] = coerce_text_argument(
+                    value,
+                    parameter_schema,
+                )
+            except ValueError:
+                raise OpenAITextToolProtocolError(
+                    "OpenAI-compatible provider returned a textual parameter with "
+                    "the wrong type."
+                ) from None
+
+        if not arguments_match_schema(arguments, schema):
+            raise OpenAITextToolProtocolError(
+                "OpenAI-compatible provider returned schema-invalid arguments for "
+                f"tool {raw_call.name!r}."
+            )
+        calls.append(
+            _TextToolCall(
+                index=index,
+                name=raw_call.name,
+                arguments=arguments,
+            )
+        )
+    return tuple(calls)
 
 
 def _normalized_chunks(

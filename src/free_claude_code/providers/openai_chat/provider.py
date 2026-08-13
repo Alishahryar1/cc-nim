@@ -299,7 +299,12 @@ class OpenAIChatProvider(BaseProvider):
                     stream=True,
                 )
                 stream = self._normalize_stream(stream, body)
-                stream = normalize_openai_text_tool_stream(stream, body)
+                if self._profile.text_tool_dialect is not None:
+                    stream = normalize_openai_text_tool_stream(
+                        stream,
+                        body,
+                        dialect=self._profile.text_tool_dialect,
+                    )
                 retain_attempt = True
                 return stream, body, attempt
             except asyncio.CancelledError:
