@@ -179,6 +179,13 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "and tool-capable models."
         ),
     },
+    "CHUTES_API_KEY": {
+        "label": "Chutes API Key",
+        "description": (
+            "Chutes API key for OpenAI-compatible chat, reasoning, and "
+            "tool-capable models."
+        ),
+    },
     "SAMBANOVA_API_KEY": {
         "label": "SambaNova API Key",
         "description": (

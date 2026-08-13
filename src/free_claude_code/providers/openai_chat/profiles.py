@@ -77,6 +77,7 @@ class OpenAIModelListing:
     required_path_values: RequiredPathValues = ()
     required_null_field: str | None = None
     required_sequence_items: tuple[tuple[str, str], ...] = ()
+    exclude_missing_sequence_fields: bool = False
     tags_field: str | None = None
     thinking_tag: str = "reasoning"
     non_thinking_tag: str | None = None
@@ -268,6 +269,24 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             path="/models",
             query_params=(("verbose", "true"),),
             required_path_values=((("architecture", "modality"), ("text->text",)),),
+        ),
+    ),
+    "chutes": OpenAIChatProfile(
+        _policy(
+            "CHUTES",
+            ReasoningReplayMode.DISABLED,
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        NO_REASONING,
+        model_listing=OpenAIModelListing(
+            path="/models",
+            required_sequence_items=(
+                ("input_modalities", "text"),
+                ("output_modalities", "text"),
+                ("supported_features", "tools"),
+            ),
+            exclude_missing_sequence_fields=True,
+            tags_field="supported_features",
         ),
     ),
     "agnes": OpenAIChatProfile(

@@ -64,6 +64,8 @@ DEEPINFRA_DEFAULT_BASE = "https://api.deepinfra.com/v1/openai"
 SILICONFLOW_DEFAULT_BASE = "https://api.siliconflow.com/v1"
 # Nebius Token Factory OpenAI-compatible Chat Completions API.
 NEBIUS_DEFAULT_BASE = "https://api.tokenfactory.nebius.com/v1"
+# Chutes OpenAI-compatible Chat Completions API.
+CHUTES_DEFAULT_BASE = "https://llm.chutes.ai/v1"
 # TokenRouter OpenAI-compatible Chat Completions gateway.
 TOKENROUTER_DEFAULT_BASE = "https://api.tokenrouter.com/v1"
 # NaraRoute OpenAI-compatible Chat Completions gateway.
@@ -197,6 +199,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="nebius_api_key",
         default_base_url=NEBIUS_DEFAULT_BASE,
         proxy_attr="nebius_proxy",
+    ),
+    "chutes": ProviderDescriptor(
+        provider_id="chutes",
+        display_name="Chutes",
+        credential_env="CHUTES_API_KEY",
+        credential_url="https://chutes.ai/docs/getting-started/authentication",
+        credential_attr="chutes_api_key",
+        default_base_url=CHUTES_DEFAULT_BASE,
+        proxy_attr="chutes_proxy",
     ),
     "agnes": ProviderDescriptor(
         provider_id="agnes",

@@ -13,6 +13,7 @@ from free_claude_code.config.nim import NimSettings
 from free_claude_code.config.provider_catalog import (
     AGNES_DEFAULT_BASE,
     BEDROCK_DEFAULT_BASE,
+    CHUTES_DEFAULT_BASE,
     COHERE_DEFAULT_BASE,
     DEEPINFRA_DEFAULT_BASE,
     GITHUB_MODELS_DEFAULT_BASE,
@@ -74,6 +75,7 @@ def _make_settings(**overrides):
     mock.deepinfra_api_key = "test_deepinfra_key"
     mock.siliconflow_api_key = "test_siliconflow_key"
     mock.nebius_api_key = "test_nebius_key"
+    mock.chutes_api_key = "test_chutes_key"
     mock.mistral_api_key = "test_mistral_key"
     mock.codestral_api_key = "test_codestral_key"
     mock.deepseek_api_key = "test_deepseek_key"
@@ -147,6 +149,7 @@ def _make_settings(**overrides):
     mock.deepinfra_proxy = ""
     mock.siliconflow_proxy = ""
     mock.nebius_proxy = ""
+    mock.chutes_proxy = ""
     mock.azure_openai_proxy = ""
     mock.provider_rate_limit = 40
     mock.provider_rate_window = 60
@@ -331,6 +334,29 @@ def test_nebius_provider_config_uses_key_base_and_proxy() -> None:
     assert descriptor.base_url_attr is None
     assert config.api_key == "nebius-token"
     assert config.base_url == NEBIUS_DEFAULT_BASE
+    assert config.proxy == "http://proxy.test:8080"
+    assert isinstance(provider, OpenAIChatProvider)
+
+
+def test_chutes_provider_config_uses_key_base_and_proxy() -> None:
+    descriptor = PROVIDER_CATALOG["chutes"]
+    settings = _make_settings(
+        chutes_api_key="chutes-token",
+        chutes_proxy="http://proxy.test:8080",
+    )
+
+    config = build_provider_config(descriptor, settings)
+    with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
+        provider = create_provider("chutes", settings)
+
+    assert descriptor.display_name == "Chutes"
+    assert descriptor.credential_env == "CHUTES_API_KEY"
+    assert descriptor.credential_url == (
+        "https://chutes.ai/docs/getting-started/authentication"
+    )
+    assert descriptor.base_url_attr is None
+    assert config.api_key == "chutes-token"
+    assert config.base_url == CHUTES_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
 
@@ -672,6 +698,7 @@ def test_create_provider_instantiates_each_builtin():
         "deepinfra": OpenAIChatProvider,
         "siliconflow": OpenAIChatProvider,
         "nebius": OpenAIChatProvider,
+        "chutes": OpenAIChatProvider,
         "azure_openai": OpenAIChatProvider,
         "open_router": OpenRouterProvider,
         "mistral": MistralProvider,

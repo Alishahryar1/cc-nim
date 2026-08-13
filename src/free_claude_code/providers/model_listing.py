@@ -42,6 +42,7 @@ def extract_openai_model_infos(
     required_path_values: RequiredPathValues = (),
     required_null_field: str | None = None,
     required_sequence_items: tuple[tuple[str, str], ...] = (),
+    exclude_missing_sequence_fields: bool = False,
     tags_field: str | None = None,
     thinking_tag: str = "reasoning",
     non_thinking_tag: str | None = None,
@@ -91,8 +92,12 @@ def extract_openai_model_infos(
             if _field(item, required_null_field) is not None:
                 included = False
 
+        missing_sequence_field = False
         for field_name, required_item in required_sequence_items:
             values = _field(item, field_name)
+            if values is None and exclude_missing_sequence_fields:
+                missing_sequence_field = True
+                break
             if not _is_sequence(values) or any(
                 not isinstance(value, str) or not value.strip() for value in values
             ):
@@ -103,6 +108,9 @@ def extract_openai_model_infos(
                 )
             if required_item not in values:
                 included = False
+
+        if missing_sequence_field:
+            continue
 
         supports_thinking: bool | None = None
         if tags_field is not None:

@@ -76,6 +76,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "deepinfra": "deepinfra/deepseek-ai/DeepSeek-V4-Flash",
     "siliconflow": "siliconflow/Qwen/Qwen3-32B",
     "nebius": "nebius/Qwen/Qwen3-30B-A3B",
+    "chutes": "chutes/Qwen/Qwen3-32B-TEE",
     "sambanova": "sambanova/Meta-Llama-3.3-70B-Instruct",
     "kilo": "kilo/kilo-auto/free",
     "cerebras": "cerebras/llama3.1-8b",
