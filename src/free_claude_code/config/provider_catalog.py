@@ -60,6 +60,8 @@ QWENCLOUD_DEFAULT_BASE = (
 TOGETHER_DEFAULT_BASE = "https://api.together.ai/v1"
 # DeepInfra OpenAI-compatible Chat Completions API.
 DEEPINFRA_DEFAULT_BASE = "https://api.deepinfra.com/v1/openai"
+# SiliconFlow OpenAI-compatible Chat Completions API.
+SILICONFLOW_DEFAULT_BASE = "https://api.siliconflow.com/v1"
 # TokenRouter OpenAI-compatible Chat Completions gateway.
 TOKENROUTER_DEFAULT_BASE = "https://api.tokenrouter.com/v1"
 # NaraRoute OpenAI-compatible Chat Completions gateway.
@@ -175,6 +177,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="deepinfra_api_key",
         default_base_url=DEEPINFRA_DEFAULT_BASE,
         proxy_attr="deepinfra_proxy",
+    ),
+    "siliconflow": ProviderDescriptor(
+        provider_id="siliconflow",
+        display_name="SiliconFlow",
+        credential_env="SILICONFLOW_API_KEY",
+        credential_url="https://cloud.siliconflow.com/account/ak",
+        credential_attr="siliconflow_api_key",
+        default_base_url=SILICONFLOW_DEFAULT_BASE,
+        proxy_attr="siliconflow_proxy",
     ),
     "agnes": ProviderDescriptor(
         provider_id="agnes",

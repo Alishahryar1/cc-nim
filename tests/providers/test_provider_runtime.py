@@ -23,6 +23,7 @@ from free_claude_code.config.provider_catalog import (
     OLLAMA_CLOUD_DEFAULT_BASE,
     PROVIDER_CATALOG,
     QWENCLOUD_DEFAULT_BASE,
+    SILICONFLOW_DEFAULT_BASE,
     SUPPORTED_PROVIDER_IDS,
     TOGETHER_DEFAULT_BASE,
     TOKENROUTER_DEFAULT_BASE,
@@ -70,6 +71,7 @@ def _make_settings(**overrides):
     mock.qwencloud_api_key = "test_qwencloud_key"
     mock.together_api_key = "test_together_key"
     mock.deepinfra_api_key = "test_deepinfra_key"
+    mock.siliconflow_api_key = "test_siliconflow_key"
     mock.mistral_api_key = "test_mistral_key"
     mock.codestral_api_key = "test_codestral_key"
     mock.deepseek_api_key = "test_deepseek_key"
@@ -141,6 +143,7 @@ def _make_settings(**overrides):
     mock.qwencloud_proxy = ""
     mock.together_proxy = ""
     mock.deepinfra_proxy = ""
+    mock.siliconflow_proxy = ""
     mock.azure_openai_proxy = ""
     mock.provider_rate_limit = 40
     mock.provider_rate_window = 60
@@ -282,6 +285,26 @@ def test_deepinfra_provider_config_uses_key_base_and_proxy() -> None:
     assert descriptor.credential_env == "DEEPINFRA_API_KEY"
     assert config.api_key == "deepinfra-token"
     assert config.base_url == DEEPINFRA_DEFAULT_BASE
+    assert config.proxy == "http://proxy.test:8080"
+    assert isinstance(provider, OpenAIChatProvider)
+
+
+def test_siliconflow_provider_config_uses_key_base_and_proxy() -> None:
+    descriptor = PROVIDER_CATALOG["siliconflow"]
+    settings = _make_settings(
+        siliconflow_api_key="siliconflow-token",
+        siliconflow_proxy="http://proxy.test:8080",
+    )
+
+    config = build_provider_config(descriptor, settings)
+    with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
+        provider = create_provider("siliconflow", settings)
+
+    assert descriptor.display_name == "SiliconFlow"
+    assert descriptor.credential_env == "SILICONFLOW_API_KEY"
+    assert descriptor.base_url_attr is None
+    assert config.api_key == "siliconflow-token"
+    assert config.base_url == SILICONFLOW_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
 
@@ -621,6 +644,7 @@ def test_create_provider_instantiates_each_builtin():
         "qwencloud": OpenAIChatProvider,
         "together": OpenAIChatProvider,
         "deepinfra": OpenAIChatProvider,
+        "siliconflow": OpenAIChatProvider,
         "azure_openai": OpenAIChatProvider,
         "open_router": OpenRouterProvider,
         "mistral": MistralProvider,

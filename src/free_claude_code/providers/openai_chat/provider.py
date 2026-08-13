@@ -169,9 +169,16 @@ class OpenAIChatProvider(BaseProvider):
 
     async def _fetch_models_payload(self) -> Any:
         """Fetch the profile-selected model-list endpoint once."""
-        path = self._profile.model_listing.path
+        listing = self._profile.model_listing
+        path = listing.path
         if path is None:
             return await self._client.models.list()
+        if listing.query_params:
+            return await self._client.get(
+                path,
+                cast_to=object,
+                options={"params": dict(listing.query_params)},
+            )
         return await self._client.get(path, cast_to=object)
 
     def _build_request_body(

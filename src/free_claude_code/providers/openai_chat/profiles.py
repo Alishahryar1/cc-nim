@@ -69,6 +69,7 @@ class OpenAIModelListing:
     """Declarative model-list endpoint and response shape."""
 
     path: str | None = None
+    query_params: tuple[tuple[str, str], ...] = ()
     collection_field: str | None = "data"
     id_field: str = "id"
     aliases_field: str | None = None
@@ -235,6 +236,20 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             required_null_field="deprecated",
             tags_field="tags",
             non_thinking_tag="non-reasoning",
+        ),
+    ),
+    "siliconflow": OpenAIChatProfile(
+        _policy(
+            "SILICONFLOW",
+            ReasoningReplayMode.REASONING_CONTENT,
+            include_extra_body=True,
+            extra_body_validator=validate_extra_body_does_not_override_reasoning_fields,
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        NO_REASONING,
+        model_listing=OpenAIModelListing(
+            path="/models",
+            query_params=(("sub_type", "chat"),),
         ),
     ),
     "agnes": OpenAIChatProfile(

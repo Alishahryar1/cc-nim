@@ -57,6 +57,7 @@ def _settings(**overrides):
         "qwencloud_api_key": "",
         "together_api_key": "",
         "deepinfra_api_key": "",
+        "siliconflow_api_key": "",
         "sambanova_api_key": "",
         "cerebras_api_key": "",
         "ollama_api_key": "",
@@ -220,6 +221,23 @@ def test_deepinfra_provider_smoke_uses_current_coding_model(monkeypatch) -> None
 
     assert [model.provider for model in models] == ["deepinfra"]
     assert models[0].full_model == "deepinfra/deepseek-ai/DeepSeek-V4-Flash"
+    assert models[0].source == "provider_default"
+
+
+def test_siliconflow_provider_smoke_uses_documented_chat_model(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_SILICONFLOW", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            siliconflow_api_key="siliconflow-key",
+        )
+    )
+
+    models = config.provider_smoke_models()
+
+    assert [model.provider for model in models] == ["siliconflow"]
+    assert models[0].full_model == "siliconflow/Qwen/Qwen3-32B"
     assert models[0].source == "provider_default"
 
 

@@ -165,6 +165,13 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "DeepInfra API key for OpenAI-compatible chat and reasoning models."
         ),
     },
+    "SILICONFLOW_API_KEY": {
+        "label": "SiliconFlow API Key",
+        "description": (
+            "SiliconFlow API key for OpenAI-compatible chat, reasoning, and "
+            "vision models."
+        ),
+    },
     "SAMBANOVA_API_KEY": {
         "label": "SambaNova API Key",
         "description": (
