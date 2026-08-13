@@ -97,7 +97,7 @@ def extract_openai_model_infos(
             values = _field(item, field_name)
             if values is None and exclude_missing_sequence_fields:
                 missing_sequence_field = True
-                break
+                continue
             if not _is_sequence(values) or any(
                 not isinstance(value, str) or not value.strip() for value in values
             ):

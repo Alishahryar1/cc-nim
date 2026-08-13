@@ -191,6 +191,35 @@ async def test_rejects_malformed_or_unusable_catalog_atomically(
         await chutes_provider.list_model_infos()
 
 
+@pytest.mark.parametrize(
+    "supported_features",
+    [("tools", 7), "tools"],
+)
+@pytest.mark.asyncio
+async def test_incomplete_record_cannot_bypass_later_metadata_validation(
+    chutes_provider: OpenAIChatProvider,
+    supported_features: object,
+) -> None:
+    chutes_provider._client.get = AsyncMock(
+        return_value={
+            "data": [
+                _catalog_model(),
+                {
+                    "id": "incomplete-malformed-model",
+                    "output_modalities": ["text"],
+                    "supported_features": supported_features,
+                },
+            ]
+        }
+    )
+
+    with pytest.raises(
+        ModelListResponseError,
+        match="supported_features string array",
+    ):
+        await chutes_provider.list_model_infos()
+
+
 @pytest.mark.asyncio
 async def test_model_catalog_uses_documented_url_and_bearer_auth(
     chutes_provider: OpenAIChatProvider,
