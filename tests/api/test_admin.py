@@ -1195,6 +1195,52 @@ def test_admin_first_apply_migrates_repo_env(monkeypatch, tmp_path):
     assert "DEEPSEEK_API_KEY=deepseek-secret" in managed_text
 
 
+def test_admin_apply_repairs_empty_select_fields_from_repo_env(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "MESSAGING_PLATFORM=\nWHISPER_DEVICE=\n",
+        encoding="utf-8",
+    )
+    app = create_test_app()
+
+    response = _local_client(app).post(
+        "/admin/api/config/apply",
+        json={"values": {"NVIDIA_NIM_API_KEY": "nim-secret"}},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["applied"] is True
+    assert body["errors"] == []
+    managed_text = (tmp_path / ".fcc" / ".env").read_text("utf-8")
+    assert "NVIDIA_NIM_API_KEY=nim-secret" in managed_text
+    assert "MESSAGING_PLATFORM=discord" in managed_text
+    assert "WHISPER_DEVICE=nvidia_nim" in managed_text
+
+
+def test_admin_validate_accepts_key_with_empty_select_fields(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    monkeypatch.chdir(tmp_path)
+    (tmp_path / ".env").write_text(
+        "MESSAGING_PLATFORM=\nWHISPER_DEVICE=\n",
+        encoding="utf-8",
+    )
+    app = create_test_app()
+
+    response = _local_client(app).post(
+        "/admin/api/config/validate",
+        json={"values": {"NVIDIA_NIM_API_KEY": "nim-secret"}},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["valid"] is True
+    assert body["errors"] == []
+
+
 def test_admin_local_provider_status_reports_reachable(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)

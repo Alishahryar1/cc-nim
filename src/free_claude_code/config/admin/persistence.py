@@ -55,6 +55,20 @@ class PreparedAdminUpdate:
         }
 
 
+def _resolve_empty_to_default(values: dict[str, str]) -> dict[str, str]:
+    """Replace empty field values with their manifest default when one exists.
+
+    An empty string is never valid for a field that carries a non-empty default
+    (e.g. select fields such as MESSAGING_PLATFORM or WHISPER_DEVICE). Treat it
+    as unset so stale or partial dotenv files cannot break admin validation.
+    """
+
+    for field in FIELDS:
+        if values.get(field.key) == "" and field.default:
+            values[field.key] = field.default
+    return values
+
+
 def target_values_with_updates(updates: Mapping[str, Any]) -> dict[str, str]:
     """Return managed env values after applying admin updates."""
 
@@ -85,7 +99,7 @@ def target_values_with_updates(updates: Mapping[str, Any]) -> dict[str, str]:
 
     for field in FIELDS:
         values.setdefault(field.key, field.default)
-    return values
+    return _resolve_empty_to_default(values)
 
 
 def effective_values_for_validation(
@@ -97,7 +111,7 @@ def effective_values_for_validation(
     for key, entry in load_value_state().items():
         if is_locked_source(entry["source"]):
             values[key] = str(entry["value"])
-    return values
+    return _resolve_empty_to_default(values)
 
 
 def validate_updates(updates: Mapping[str, Any]) -> dict[str, Any]:
