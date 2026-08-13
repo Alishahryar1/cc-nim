@@ -761,8 +761,8 @@ retries without the budget while preserving thinking enablement.
 The shared OpenAI-chat transport offers normalization for exact textual
 tool-call dialects, but a provider profile must explicitly select one. Declared
 tools alone are not evidence that arbitrary response text is control data. The
-function-tag dialect recognizes only a complete control-only response at output
-start or immediately after its reasoning boundary; prose, code examples,
+function-tag dialect recognizes only a complete control-only response immediately
+after its reasoning boundary; output-start envelopes, prose, code examples,
 incomplete markup, and content outside the envelope remain ordinary text. Once
 that reserved grammar is recognized, arguments are validated against the
 request schemas and emitted as ordinary OpenAI tool-call deltas. Native

@@ -91,7 +91,6 @@ class _TextToolFramer:
         self._text_tail = ""
         self._control_parts: list[str] = []
         self._control_length = 0
-        self._visible_has_non_whitespace = False
         self._visible_suffix = ""
 
     @property
@@ -170,20 +169,12 @@ class _TextToolFramer:
             search_from = marker_index + len(_TOOL_BLOCK_START)
 
     def _is_control_boundary(self, pending_visible: str) -> bool:
-        has_non_whitespace = self._visible_has_non_whitespace or bool(
-            pending_visible.strip()
-        )
-        if not has_non_whitespace:
-            return True
         suffix = "".join((self._visible_suffix, pending_visible)).rstrip()
         return suffix.endswith(_REASONING_END)
 
     def _record_visible(self, text: str) -> None:
         if not text:
             return
-        self._visible_has_non_whitespace = self._visible_has_non_whitespace or bool(
-            text.strip()
-        )
         self._visible_suffix = "".join((self._visible_suffix, text)).rstrip()[
             -len(_REASONING_END) :
         ]
@@ -197,9 +188,9 @@ def normalize_openai_text_tool_stream(
 ) -> Any:
     """Convert one explicitly selected textual dialect into OpenAI tool deltas.
 
-    The function-tag dialect reserves a complete control-only response, either at
-    output start or after its reasoning boundary. Ordinary prose remains text,
-    while structured upstream tool calls stay authoritative.
+    The function-tag dialect reserves a complete control-only response after its
+    reasoning boundary. Ordinary prose remains text, while structured upstream
+    tool calls stay authoritative.
     """
     if dialect is not OpenAITextToolDialect.FUNCTION_TAGS:
         raise ValueError(f"Unsupported OpenAI text-tool dialect: {dialect!r}")

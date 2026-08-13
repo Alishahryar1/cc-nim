@@ -15,6 +15,8 @@ from free_claude_code.providers.openai_chat.text_tool_stream import (
     normalize_openai_text_tool_stream,
 )
 
+_CONTROL_PREFIX = "Thinking.</think>\n"
+
 
 def _chunk(
     *,
@@ -147,7 +149,7 @@ async def test_normalizer_preserves_stream_without_declared_tools() -> None:
 async def test_normalizer_converts_step_xml_to_structured_tool_call(
     field: str,
 ) -> None:
-    raw = _tool_block("Bash", command="ls -la")
+    raw = _CONTROL_PREFIX + _tool_block("Bash", command="ls -la")
     body = _body(
         _function(
             "Bash",
@@ -168,7 +170,7 @@ async def test_normalizer_converts_step_xml_to_structured_tool_call(
     )
 
     visible = _content(normalized) if field == "content" else _reasoning(normalized)
-    assert visible == ""
+    assert visible == _CONTROL_PREFIX
     assert "<tool_call>" not in _content(normalized)
     assert "<tool_call>" not in _reasoning(normalized)
     calls = _tool_calls(normalized)
@@ -176,6 +178,20 @@ async def test_normalizer_converts_step_xml_to_structured_tool_call(
     assert calls[0].function.name == "Bash"
     assert json.loads(calls[0].function.arguments) == {"command": "ls -la"}
     assert normalized[-1].choices[0].finish_reason == "stop"
+
+
+@pytest.mark.asyncio
+async def test_normalizer_preserves_valid_envelope_without_reasoning_boundary() -> None:
+    raw = _tool_block("Bash", command="rm -rf example")
+    body = _body(_function("Bash", {"command": {"type": "string"}}, ["command"]))
+
+    normalized = await _normalize(
+        [_chunk(content=raw, finish_reason="stop")],
+        body,
+    )
+
+    assert _content(normalized) == raw
+    assert not _tool_calls(normalized)
 
 
 @pytest.mark.asyncio
@@ -246,7 +262,10 @@ async def test_nim_and_text_normalizers_recover_live_terminal_order() -> None:
         [
             _chunk(finish_reason="stop"),
             usage_chunk,
-            _chunk(content=_tool_block("Bash", command="ls"), finish_reason="stop"),
+            _chunk(
+                content=_CONTROL_PREFIX + _tool_block("Bash", command="ls"),
+                finish_reason="stop",
+            ),
         ]
     )
 
@@ -260,7 +279,7 @@ async def test_nim_and_text_normalizers_recover_live_terminal_order() -> None:
         )
     ]
 
-    assert _content(normalized) == ""
+    assert _content(normalized) == _CONTROL_PREFIX
     calls = _tool_calls(normalized)
     assert len(calls) == 1
     assert json.loads(calls[0].function.arguments) == {"command": "ls"}
@@ -275,7 +294,7 @@ async def test_nim_and_text_normalizers_recover_live_terminal_order() -> None:
 
 @pytest.mark.asyncio
 async def test_normalizer_handles_tool_block_split_at_every_character() -> None:
-    raw = _tool_block("Read", file_path="README.md")
+    raw = _CONTROL_PREFIX + _tool_block("Read", file_path="README.md")
     chunks = [_chunk(content=character) for character in raw]
     chunks.append(_chunk(finish_reason="stop"))
     body = _body(
@@ -288,7 +307,7 @@ async def test_normalizer_handles_tool_block_split_at_every_character() -> None:
 
     normalized = await _normalize(chunks, body)
 
-    assert _content(normalized) == ""
+    assert _content(normalized) == _CONTROL_PREFIX
     calls = _tool_calls(normalized)
     assert len(calls) == 1
     assert json.loads(calls[0].function.arguments) == {"file_path": "README.md"}
@@ -309,7 +328,7 @@ async def test_normalizer_preserves_partial_control_marker_as_text() -> None:
 
 @pytest.mark.asyncio
 async def test_normalizer_decodes_typed_parameters_and_parallel_calls() -> None:
-    raw = "\n".join(
+    raw = _CONTROL_PREFIX + "\n".join(
         (
             _tool_block(
                 "Search",
@@ -343,6 +362,7 @@ async def test_normalizer_decodes_typed_parameters_and_parallel_calls() -> None:
         [_chunk(content=raw, finish_reason="tool_calls")], body
     )
 
+    assert _content(normalized) == _CONTROL_PREFIX
     calls = _tool_calls(normalized)
     assert [call.index for call in calls] == [0, 1]
     assert [call.function.name for call in calls] == ["Search", "Read"]
@@ -356,7 +376,7 @@ async def test_normalizer_decodes_typed_parameters_and_parallel_calls() -> None:
 
 @pytest.mark.asyncio
 async def test_normalizer_prefers_structured_calls_and_strips_text_duplicate() -> None:
-    raw = _tool_block("Read", file_path="README.md")
+    raw = _CONTROL_PREFIX + _tool_block("Read", file_path="README.md")
     structured = _structured_call("Read", '{"file_path":"README.md"}')
     body = _body(
         _function(
@@ -374,7 +394,7 @@ async def test_normalizer_prefers_structured_calls_and_strips_text_duplicate() -
         body,
     )
 
-    assert _content(normalized) == ""
+    assert _content(normalized) == _CONTROL_PREFIX
     assert _tool_calls(normalized) == [structured]
 
 
@@ -396,12 +416,13 @@ async def test_normalizer_preserves_malformed_control_lookalikes(raw: str) -> No
         )
     )
 
+    output = _CONTROL_PREFIX + raw
     normalized = await _normalize(
-        [_chunk(content=raw, finish_reason="stop")],
+        [_chunk(content=output, finish_reason="stop")],
         body,
     )
 
-    assert _content(normalized) == raw
+    assert _content(normalized) == output
     assert not _tool_calls(normalized)
 
 
@@ -426,7 +447,10 @@ async def test_normalizer_rejects_schema_invalid_control_protocol(
     )
 
     with pytest.raises(OpenAITextToolProtocolError, match=message):
-        await _normalize([_chunk(content=raw, finish_reason="stop")], body)
+        await _normalize(
+            [_chunk(content=_CONTROL_PREFIX + raw, finish_reason="stop")],
+            body,
+        )
 
 
 @pytest.mark.asyncio
@@ -443,12 +467,16 @@ async def test_normalizer_preserves_oversized_control_candidate(
     )
     monkeypatch.setattr(text_tool_stream, "_MAX_TEXT_TOOL_BLOCK_CHARS", len(raw))
 
-    await _normalize([_chunk(content=raw, finish_reason="stop")], body)
+    await _normalize(
+        [_chunk(content=_CONTROL_PREFIX + raw, finish_reason="stop")],
+        body,
+    )
     oversized = f"{raw[: -len('</tool_call>')]}x</tool_call>"
+    output = _CONTROL_PREFIX + oversized
     normalized = await _normalize(
-        [_chunk(content=oversized, finish_reason="stop")],
+        [_chunk(content=output, finish_reason="stop")],
         body,
     )
 
-    assert _content(normalized) == oversized
+    assert _content(normalized) == output
     assert not _tool_calls(normalized)
