@@ -215,6 +215,14 @@ class TestSettings:
         settings = Settings()
         assert settings.lm_studio_base_url == "http://custom:5678/v1"
 
+    def test_minimax_base_url_from_env(self, monkeypatch):
+        """MINIMAX_BASE_URL selects the regional OpenAI-compatible endpoint."""
+        from free_claude_code.config.settings import Settings
+
+        monkeypatch.setenv("MINIMAX_BASE_URL", "https://api.minimaxi.com/v1")
+
+        assert Settings().minimax_base_url == "https://api.minimaxi.com/v1"
+
     def test_ollama_base_url_defaults_to_root(self, monkeypatch):
         """OLLAMA_BASE_URL keeps the customer-facing Ollama root default."""
         from free_claude_code.config.settings import Settings

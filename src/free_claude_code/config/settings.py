@@ -15,6 +15,7 @@ from .env_files import (
 from .nim import NimSettings
 from .provider_catalog import (
     BEDROCK_DEFAULT_BASE,
+    MINIMAX_DEFAULT_BASE,
     NARAROUTE_DEFAULT_BASE,
     SUPPORTED_PROVIDER_IDS,
     TOKENROUTER_DEFAULT_BASE,
@@ -56,6 +57,10 @@ class Settings(BaseSettings):
 
     # ==================== MiniMax Config ====================
     minimax_api_key: str = Field(default="", validation_alias="MINIMAX_API_KEY")
+    minimax_base_url: str = Field(
+        default=MINIMAX_DEFAULT_BASE,
+        validation_alias="MINIMAX_BASE_URL",
+    )
 
     # ==================== OpenCode Zen / OpenCode Go ====================
     # Same key from opencode.ai/auth; Zen uses ``opencode_zen/``, Go uses ``opencode_go/``.
