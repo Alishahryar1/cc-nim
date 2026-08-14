@@ -49,8 +49,7 @@ def require_proxy_auth(
     settings: Settings = Depends(get_settings),
 ) -> None:
     """Require the configured proxy token as HTTP bearer authorization."""
-    anthropic_auth_token = settings.anthropic_auth_token.strip()
-    if not anthropic_auth_token:
+    if not settings.proxy_auth_enabled:
         return
 
     authorization = request.headers.get("authorization")
@@ -70,7 +69,7 @@ def require_proxy_auth(
 
     if not token or not secrets.compare_digest(
         token.encode("utf-8"),
-        anthropic_auth_token.encode("utf-8"),
+        settings.proxy_auth_token.encode("utf-8"),
     ):
         raise HTTPException(
             status_code=401,

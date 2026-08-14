@@ -309,68 +309,71 @@ retain the model list they loaded at startup.
 
 ## Configuration Model
 
-[config/settings.py](src/free_claude_code/config/settings.py) owns the flat Pydantic Settings schema:
-raw env fields, validation, and `get_settings()`. It should not own routing,
-model-ref parsing, launcher defaults, or web-tool policy. Dotenv discovery lives
-in [config/env_files.py](src/free_claude_code/config/env_files.py) and uses this order:
+[config/settings.py](src/free_claude_code/config/settings.py) is a pure Pydantic
+schema. It owns field types, canonical defaults, normalization, and cross-field
+validation, but it never reads process state or files. Required strings are
+always non-empty. Optional strings have exactly one absent state, `None`; blank
+input is normalized to that state before validation.
 
-1. repo-local `.env`;
-2. managed `~/.fcc/.env`;
-3. optional `FCC_ENV_FILE`, appended when present.
+[config/loader.py](src/free_claude_code/config/loader.py) owns external source
+composition and provenance. The live precedence is Settings defaults, then the
+managed `~/.fcc/.env`, then process environment. The one intentional exception
+is `ANTHROPIC_AUTH_TOKEN`: a non-empty managed value wins over an inherited stale
+process token so FCC-launched clients and the server cannot disagree. Every
+entrypoint uses this loader, and cached settings are invalidated only through
+its public cache accessor.
 
-Later dotenv files override earlier dotenv files. Process environment variables
-also participate through Pydantic settings resolution. `ANTHROPIC_AUTH_TOKEN`
-has an extra guard after settings are built: if any configured dotenv file
-defines it, that dotenv value replaces a stale inherited shell token. Auth-token
-source detection for startup warnings also belongs to `src/free_claude_code/config/env_files.py`.
+[config/env_migrations.py](src/free_claude_code/config/env_migrations.py) owns a
+locked, atomic schema-1 consolidation before the first load. When the managed
+file is not yet schema 1, migration selects one base source: existing managed
+state, otherwise a legacy home file, otherwise a verified FCC source-checkout
+file. A legacy `FCC_ENV_FILE` may overlay that base once. Recognized effective
+values are written to the managed file; imported files remain untouched. Once
+the managed schema marker exists, checkout files and `FCC_ENV_FILE` are inert
+and are not live configuration sources.
 
-[config/paths.py](src/free_claude_code/config/paths.py) defines managed paths:
+[config/paths.py](src/free_claude_code/config/paths.py) defines the managed
+config, lock, model catalog, messaging workspace, and log locations under
+`~/.fcc`. Arbitrary current-working-directory `.env` files are never read.
 
-- config directory: `~/.fcc`;
-- managed env file: `~/.fcc/.env`;
-- generated Codex model catalog: `~/.fcc/codex-model-catalog.json`;
-- messaging state directory: `~/.fcc/agent_workspace`;
-- server log: `~/.fcc/logs/server.log`.
+Proxy authentication has two independent settings:
 
-Model routing configuration is tiered:
+- `PROXY_AUTH_ENABLED` controls whether FCC validates incoming bearer tokens;
+- `ANTHROPIC_AUTH_TOKEN` is a retained, non-empty client credential, exposed
+  internally as `proxy_auth_token`.
 
-- `MODEL` is the fallback provider-prefixed model ref.
-- `MODEL_FABLE`, `MODEL_OPUS`, `MODEL_SONNET`, and `MODEL_HAIKU` override Claude model tiers.
-- `REASONING_POLICY` selects `off`, `client`, `low`, `medium`, `high`, `xhigh`,
-  or `max` for the fallback route.
-- `REASONING_FABLE`, `REASONING_OPUS`, `REASONING_SONNET`, and
-  `REASONING_HAIKU` accept the same values plus `inherit`.
+Disabling authentication does not erase or replace the token. Claude, Codex,
+Pi, managed messaging, and local model-catalog calls all receive the retained
+token. The API boundary checks the boolean first and uses constant-time token
+comparison only when enforcement is enabled.
 
-[config/reasoning.py](src/free_claude_code/config/reasoning.py) owns the typed
-configuration vocabulary. FCC-owned dotenv files receive one-time migrations
-for retired configuration keys and values before Settings loads them. Explicit
-`FCC_ENV_FILE` files are never rewritten and instead receive an actionable
-startup warning.
+Model routing remains tiered: `MODEL` is the fallback route;
+`MODEL_FABLE`, `MODEL_OPUS`, `MODEL_SONNET`, and `MODEL_HAIKU` are optional
+overrides. [config/model_refs.py](src/free_claude_code/config/model_refs.py) owns
+model-ref parsing, while [config/reasoning.py](src/free_claude_code/config/reasoning.py)
+owns the typed reasoning vocabulary.
 
-[config/model_refs.py](src/free_claude_code/config/model_refs.py) owns provider-prefixed model ref
-parsing and configured `MODEL*` inventory. API routing and provider validation
-depend on those helpers instead of adding behavior methods to Settings.
+[config/admin/](src/free_claude_code/config/admin/) owns the Admin manifest,
+presentation, validation, and sparse managed-file persistence. Settings
+metadata supplies runtime defaults; provider and smoke fields are generated
+from [config/provider_catalog.py](src/free_claude_code/config/provider_catalog.py).
+Admin requests are partial updates: omitted keys stay unchanged, `null` removes
+an optional assignment, and required/defaulted values reject `null` or blank
+input. False and zero remain real values. Masked or blank secret submissions
+mean unchanged; an explicit remove action is available only for optional
+secrets. Preview and Apply validate the same prospective Settings snapshot, and
+Apply atomically writes only configured values plus preserved unknown managed
+assignments. Process-owned fields are visible but locked.
 
-[config/admin/](src/free_claude_code/config/admin/) owns the Admin UI config manifest and
-managed env writes. Provider credential, configurable base URL, proxy, and display-name
-metadata is generated from [config/provider_catalog.py](src/free_claude_code/config/provider_catalog.py);
-admin-only help text stays beside the admin manifest. The package splits source
-loading, value presentation, validation, persistence, and provider status into
-separate modules. [api/admin_routes.py](src/free_claude_code/api/admin_routes.py) exposes local-only
-admin endpoints that load and validate config, then delegate runtime operations
-through `AdminRuntimePort`. Provider-only Apply prepares prospective settings,
-atomically commits the managed env, and publishes a new provider generation.
-Restart-required changes preserve the existing supervisor restart flow and do
-not publish an in-process generation first.
+The provider composition root narrows optional Settings into provider-ready
+state. Static-key providers receive a non-empty key, Vertex receives renewable
+ADC with `api_key=None`, and optional proxies remain `None` until configured.
+Resolved [ProviderConfig](src/free_claude_code/providers/base.py) has no second
+set of Settings defaults.
 
-[.env.example](.env.example) is the single Admin UI template source. It is
-packaged as a [src/free_claude_code/config/](src/free_claude_code/config/) resource for Admin UI defaults;
-runtime settings do not read it as a live config file. The Admin UI creates and
-atomically replaces `~/.fcc/.env` when configuration is applied; server startup
-only migrates legacy env files when the managed file is absent.
-
-Admin routes call `require_loopback_admin()`, which rejects non-loopback clients
-and non-local origins.
+[.env.example](.env.example) is documentation only. It is neither packaged nor
+read at runtime. Admin routes call `require_loopback_admin()`, which rejects
+non-loopback clients and non-local origins.
 
 ## HTTP Request Flow
 
@@ -1103,18 +1106,13 @@ adds the configured FCC host and standard loopback names to both `NO_PROXY` and
 `no_proxy`. Provider-specific upstream proxies remain provider-owned and do not
 participate in this local boundary.
 
-[cli/proxy_auth.py](src/free_claude_code/cli/proxy_auth.py) owns the neutral
-proxy-auth token policy shared by client launchers. A blank configured token
-becomes the local-only `fcc-no-auth` sentinel so clients cross their login gates
-while FCC continues to run without API authentication.
-
 [cli/claude_env.py](src/free_claude_code/cli/claude_env.py) owns the canonical
 Claude Code proxy environment used by every FCC-launched Claude process. It
 strips inherited `ANTHROPIC_*` variables, sets `ANTHROPIC_BASE_URL`, enables
 gateway model discovery, configures the auto-compact window, disables
-nonessential Anthropic traffic, and always sets `ANTHROPIC_AUTH_TOKEN`. Blank
-proxy auth uses the shared local-only sentinel so Claude Code reaches the proxy
-instead of stopping at its login gate.
+nonessential Anthropic traffic, and always sets the retained non-empty
+`ANTHROPIC_AUTH_TOKEN`. Server-side authentication enablement does not alter the
+client environment.
 
 [cli/launchers/claude.py](src/free_claude_code/cli/launchers/claude.py) owns the installed
 `fcc-claude` launcher:

@@ -101,7 +101,7 @@ def run_claude_cli(
 
     env = build_claude_proxy_env(
         proxy_root_url=server.base_url,
-        auth_token=config.settings.anthropic_auth_token,
+        auth_token=config.settings.proxy_auth_token,
         base_env=os.environ,
     )
     env["TERM"] = "dumb"

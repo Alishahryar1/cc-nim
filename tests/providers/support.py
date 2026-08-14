@@ -20,6 +20,36 @@ REASONING_ON = ReasoningPolicy.on()
 REASONING_OFF = ReasoningPolicy.off()
 
 
+def make_provider_config(
+    api_key: str | None,
+    base_url: str,
+    rate_limit: int = 1_000_000,
+    rate_window: int = 1,
+    max_concurrency: int = 1_000,
+    http_read_timeout: float = 120.0,
+    http_write_timeout: float = 10.0,
+    http_connect_timeout: float = 10.0,
+    proxy: str | None = None,
+    log_raw_sse_events: bool = False,
+    log_api_error_tracebacks: bool = False,
+) -> ProviderConfig:
+    """Build a complete resolved config for isolated provider tests."""
+
+    return ProviderConfig(
+        api_key=api_key,
+        base_url=base_url,
+        rate_limit=rate_limit,
+        rate_window=rate_window,
+        max_concurrency=max_concurrency,
+        http_read_timeout=http_read_timeout,
+        http_write_timeout=http_write_timeout,
+        http_connect_timeout=http_connect_timeout,
+        proxy=proxy,
+        log_raw_sse_events=log_raw_sse_events,
+        log_api_error_tracebacks=log_api_error_tracebacks,
+    )
+
+
 async def capture_openai_chat_wire_body(body: dict) -> dict:
     """Return the JSON body serialized by the OpenAI chat client."""
     captured: list[dict] = []

@@ -16,7 +16,12 @@ from free_claude_code.config.settings import Settings
 from tests.api.support import create_test_app
 
 
-def _request(*, headers: dict[str, str], token: str) -> tuple[Request, Settings]:
+def _request(
+    *,
+    headers: dict[str, str],
+    token: str = "freecc",
+    enabled: bool = True,
+) -> tuple[Request, Settings]:
     request = Request(
         {
             "type": "http",
@@ -27,7 +32,10 @@ def _request(*, headers: dict[str, str], token: str) -> tuple[Request, Settings]
             ],
         }
     )
-    settings = Settings.model_construct(anthropic_auth_token=token)
+    settings = Settings.model_construct(
+        proxy_auth_enabled=enabled,
+        proxy_auth_token=token,
+    )
     return request, settings
 
 
@@ -55,7 +63,8 @@ def test_get_settings_reads_current_request_runtime_settings() -> None:
     app = create_test_app(
         Settings.model_construct(
             model="deepseek/test-model",
-            anthropic_auth_token="",
+            proxy_auth_enabled=False,
+            proxy_auth_token="freecc",
         )
     )
 
@@ -106,8 +115,8 @@ def test_resolve_provider_unrelated_error_is_not_reclassified() -> None:
         resolve_provider("nvidia_nim", lease=lease)
 
 
-def test_require_proxy_auth_allows_when_no_token_configured():
-    request, settings = _request(headers={}, token="")
+def test_require_proxy_auth_allows_when_disabled_with_retained_token():
+    request, settings = _request(headers={}, enabled=False)
 
     require_proxy_auth(request, settings)
 

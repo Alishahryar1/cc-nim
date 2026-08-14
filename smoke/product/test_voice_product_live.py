@@ -50,14 +50,15 @@ async def test_voice_nim_backend_e2e(smoke_config: SmokeConfig, tmp_path: Path) 
         pytest.skip("missing_env: set FCC_SMOKE_RUN_VOICE=1 to run voice product smoke")
     if smoke_config.settings.whisper_device != "nvidia_nim":
         pytest.skip("missing_env: WHISPER_DEVICE must be nvidia_nim")
-    if not smoke_config.settings.nvidia_nim_api_key.strip():
+    api_key = smoke_config.settings.nvidia_nim_api_key
+    if api_key is None:
         pytest.skip("missing_env: NVIDIA_NIM_API_KEY is required")
 
     wav_path = tmp_path / "voice-nim-product.wav"
     VoiceFixtureDriver.write_tone_wav(wav_path)
     transcriber = NvidiaNimTranscriber(
         model=smoke_config.settings.whisper_model,
-        api_key=smoke_config.settings.nvidia_nim_api_key,
+        api_key=api_key,
     )
     try:
         text = await transcriber.transcribe(wav_path)

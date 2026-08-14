@@ -14,11 +14,11 @@ from free_claude_code.core.anthropic.stream_contracts import (
     text_content,
     thinking_content,
 )
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.support import (
     REASONING_OFF,
     immediate_admission,
+    make_provider_config,
     profiled_provider,
     reasoning_for,
 )
@@ -44,7 +44,7 @@ class AsyncStream:
 def minimax_provider():
     return profiled_provider(
         "minimax",
-        ProviderConfig(
+        make_provider_config(
             api_key="test-minimax-key",
             base_url=MINIMAX_DEFAULT_BASE,
             rate_limit=10,

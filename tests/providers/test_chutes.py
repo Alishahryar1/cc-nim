@@ -10,13 +10,13 @@ from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_catalog import CHUTES_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.reasoning import ReasoningPolicy
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
     immediate_admission,
+    make_provider_config,
     profiled_provider,
     reasoning_for,
 )
@@ -28,7 +28,7 @@ _MODEL = "Qwen/Qwen3-32B-TEE"
 def chutes_provider() -> OpenAIChatProvider:
     return profiled_provider(
         "chutes",
-        ProviderConfig(
+        make_provider_config(
             api_key="test-chutes-key",
             base_url=CHUTES_DEFAULT_BASE,
             rate_limit=10,

@@ -639,7 +639,7 @@ def _server_for_provider(
 
 def _openai_auth_headers(smoke_config: SmokeConfig) -> dict[str, str]:
     headers = {"content-type": "application/json"}
-    token = smoke_config.settings.anthropic_auth_token
+    token = smoke_config.settings.proxy_auth_token
     if token:
         headers["authorization"] = f"Bearer {token}"
     return headers

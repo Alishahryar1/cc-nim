@@ -7,7 +7,7 @@ import subprocess
 import time
 import uuid
 import wave
-from collections.abc import AsyncGenerator, Awaitable, Callable, Iterator
+from collections.abc import AsyncGenerator, Awaitable, Callable, Iterable, Iterator
 from contextlib import contextmanager
 from dataclasses import dataclass, field
 from pathlib import Path
@@ -59,11 +59,13 @@ class SmokeServerDriver:
         *,
         name: str,
         env_overrides: dict[str, str] | None = None,
+        env_unset: Iterable[str] = (),
         command: list[str] | None = None,
     ) -> None:
         self.config = config
         self.name = name
         self.env_overrides = env_overrides
+        self.env_unset = tuple(env_unset)
         self.command = command
 
     @contextmanager
@@ -71,6 +73,7 @@ class SmokeServerDriver:
         with start_server(
             self.config,
             env_overrides=self.env_overrides,
+            env_unset=self.env_unset,
             command=self.command,
             name=self.name,
         ) as server:
@@ -278,7 +281,7 @@ class ClientProtocolDriver:
     ) -> subprocess.CompletedProcess[str]:
         env = build_claude_proxy_env(
             proxy_root_url=server.base_url,
-            auth_token=config.settings.anthropic_auth_token,
+            auth_token=config.settings.proxy_auth_token,
             base_env=os.environ,
         )
         command = [

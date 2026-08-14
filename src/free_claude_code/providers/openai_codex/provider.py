@@ -75,7 +75,7 @@ class OpenAICodexProvider(BaseProvider):
         }
         self._client = client or httpx.AsyncClient(
             base_url=f"{config.base_url.rstrip('/')}/",
-            proxy=config.proxy or None,
+            proxy=config.proxy,
             timeout=httpx.Timeout(
                 config.http_read_timeout,
                 connect=config.http_connect_timeout,

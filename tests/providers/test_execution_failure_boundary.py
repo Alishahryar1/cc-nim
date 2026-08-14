@@ -10,11 +10,13 @@ from free_claude_code.config.nim import NimSettings
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.core.async_iterators import AsyncCloseable
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.http import close_provider_stream
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import immediate_admission
+from tests.providers.support import (
+    immediate_admission,
+    make_provider_config,
+)
 
 
 class _FailingStream:
@@ -53,7 +55,7 @@ def _chunk(*, content: str | None = None, finish_reason: str | None = None) -> o
 
 def _provider() -> NvidiaNimProvider:
     return NvidiaNimProvider(
-        ProviderConfig(
+        make_provider_config(
             api_key="test_key",
             base_url="https://test.api.nvidia.com/v1",
             rate_limit=10,

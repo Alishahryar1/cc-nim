@@ -10,13 +10,13 @@ from free_claude_code.core.anthropic.stream_contracts import (
     text_content,
 )
 from free_claude_code.providers.admission import ProviderAdmissionController
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_codex.auth import (
     OpenAIAccess,
     OpenAIAuthManager,
 )
 from free_claude_code.providers.openai_codex.provider import OpenAICodexProvider
 from tests.api.support import create_test_app
+from tests.providers.support import make_provider_config
 
 
 class _FakeOpenAIAuth(OpenAIAuthManager):
@@ -71,7 +71,7 @@ async def test_messages_accepts_current_claude_controls_for_openai_provider() ->
         transport=httpx.MockTransport(handler),
     )
     provider = OpenAICodexProvider(
-        ProviderConfig(
+        make_provider_config(
             api_key="",
             base_url="https://chatgpt.com/backend-api/codex",
             rate_limit=100,

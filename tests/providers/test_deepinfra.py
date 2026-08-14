@@ -14,13 +14,13 @@ from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKEN
 from free_claude_code.config.provider_catalog import DEEPINFRA_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
     immediate_admission,
+    make_provider_config,
     profiled_provider,
     reasoning_for,
 )
@@ -64,7 +64,7 @@ def _catalog_model(
 def deepinfra_provider() -> OpenAIChatProvider:
     return profiled_provider(
         "deepinfra",
-        ProviderConfig(
+        make_provider_config(
             api_key="test-deepinfra-key",
             base_url=DEEPINFRA_DEFAULT_BASE,
             rate_limit=10,
@@ -279,7 +279,7 @@ async def test_model_catalog_uses_absolute_public_url() -> None:
     ):
         provider = profiled_provider(
             "deepinfra",
-            ProviderConfig(
+            make_provider_config(
                 api_key="wire-deepinfra-key",
                 base_url=DEEPINFRA_DEFAULT_BASE,
                 rate_limit=10,

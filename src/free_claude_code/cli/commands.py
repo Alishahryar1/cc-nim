@@ -1,28 +1,17 @@
 """Implementations for installed Free Claude Code commands."""
 
-import os
-import shutil
-import sys
 import threading
 import time
 import webbrowser
 from enum import StrEnum
-from pathlib import Path
 
 import uvicorn
 
 from free_claude_code.cli.launchers.common import preflight_proxy
 from free_claude_code.cli.process_registry import kill_all_best_effort
-from free_claude_code.config.env_migrations import (
-    explicit_env_file_migration_warning,
-    migrate_owned_env_files,
-)
-from free_claude_code.config.paths import (
-    legacy_env_paths,
-    managed_env_path,
-)
+from free_claude_code.config.loader import clear_settings_cache, get_settings
 from free_claude_code.config.server_urls import local_admin_url, local_proxy_root_url
-from free_claude_code.config.settings import Settings, get_settings
+from free_claude_code.config.settings import Settings
 from free_claude_code.runtime.bootstrap import build_asgi_app
 
 SERVER_GRACEFUL_SHUTDOWN_SECONDS = 5
@@ -108,7 +97,7 @@ class ServerSupervisor:
                     ):
                         return
                     opened_admin_browser = opened_admin_browser or should_open_admin
-                    get_settings.cache_clear()
+                    clear_settings_cache()
             except KeyboardInterrupt:
                 return
         finally:
@@ -189,10 +178,8 @@ class ServerSupervisor:
 
 
 def load_server_settings() -> Settings:
-    """Apply owned config migrations before returning the cached settings."""
+    """Return the canonical cached settings."""
 
-    _migrate_legacy_env_if_missing()
-    _migrate_config_env()
     return get_settings()
 
 
@@ -218,30 +205,3 @@ def schedule_open_admin_browser(settings: Settings) -> None:
         name="fcc-open-admin-browser",
         daemon=True,
     ).start()
-
-
-def _migrate_legacy_env_if_missing() -> Path | None:
-    """Copy a legacy user env into the managed config path when absent."""
-
-    env_file = managed_env_path()
-    if env_file.exists():
-        return None
-
-    # TODO: Remove after the ~/.fcc/.env migration has had a release cycle.
-    for legacy_env in legacy_env_paths():
-        if not legacy_env.is_file():
-            continue
-        env_file.parent.mkdir(parents=True, exist_ok=True)
-        shutil.copyfile(legacy_env, env_file)
-        return legacy_env
-
-    return None
-
-
-def _migrate_config_env() -> tuple[Path, ...]:
-    """Apply dotenv migrations before Settings loads config."""
-
-    migrated = migrate_owned_env_files()
-    if warning := explicit_env_file_migration_warning(os.environ):
-        print(warning, file=sys.stderr)
-    return migrated

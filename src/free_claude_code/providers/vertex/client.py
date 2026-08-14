@@ -57,7 +57,7 @@ class VertexProvider(GoogleOpenAIProvider):
             access_token_provider or GoogleAccessTokenProvider(proxy=config.proxy)
         )
         self._model_list_client = httpx.AsyncClient(
-            proxy=config.proxy or None,
+            proxy=config.proxy,
             timeout=httpx.Timeout(
                 config.http_read_timeout,
                 connect=config.http_connect_timeout,

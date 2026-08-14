@@ -7,13 +7,16 @@ import pytest
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.provider_catalog import GEMINI_DEFAULT_BASE
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.gemini import GeminiProvider
 from free_claude_code.providers.google_openai import (
     GOOGLE_SKIP_THOUGHT_SIGNATURE_VALIDATOR,
 )
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import immediate_admission, reasoning_for
+from tests.providers.support import (
+    immediate_admission,
+    make_provider_config,
+    reasoning_for,
+)
 
 
 def make_request(**overrides):
@@ -41,7 +44,7 @@ def _google_thinking_config(wire: dict) -> dict | None:
 
 @pytest.fixture
 def gemini_config():
-    return ProviderConfig(
+    return make_provider_config(
         api_key="test_gemini_key",
         base_url=GEMINI_DEFAULT_BASE,
         rate_limit=10,
@@ -115,7 +118,7 @@ def test_build_request_body_sdk_wire_json_has_literal_extra_body(gemini_provider
 def test_build_request_body_reasoning_off_sets_reasoning_none():
     """When thinking is off, Gemini uses reasoning_effort none (Gemini 2.5 convention)."""
     provider = GeminiProvider(
-        ProviderConfig(
+        make_provider_config(
             api_key="test_gemini_key",
             base_url=GEMINI_DEFAULT_BASE,
             rate_limit=10,

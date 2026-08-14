@@ -10,14 +10,16 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from free_claude_code.config.provider_catalog import GROQ_DEFAULT_BASE
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.groq import GroqProvider
 from free_claude_code.providers.openai_chat.output_cap import (
     clamp_output_tokens,
     parse_output_token_cap,
 )
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import immediate_admission
+from tests.providers.support import (
+    immediate_admission,
+    make_provider_config,
+)
 
 
 class _BadRequest(Exception):
@@ -115,7 +117,7 @@ def test_clamp_ignores_bool_values():
 @pytest.fixture
 def groq_provider():
     return GroqProvider(
-        ProviderConfig(
+        make_provider_config(
             api_key="test_groq_key",
             base_url=GROQ_DEFAULT_BASE,
             rate_limit=10,

@@ -458,13 +458,13 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     ),
     FeatureCoverage(
         "config_env_precedence",
-        "FCC_ENV_FILE, dotenv, and process env precedence are deterministic",
-        ("tests/config/test_config.py",),
+        "Managed config, process env, and one-time legacy import are deterministic",
+        ("tests/config/test_config.py", "tests/config/test_env_migrations.py"),
         (),
         ("test_env_precedence_e2e",),
         ("config",),
         (),
-        "always runnable with isolated env files",
+        "always runnable with an isolated managed home",
     ),
     FeatureCoverage(
         "removed_env_migration",

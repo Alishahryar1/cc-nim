@@ -136,7 +136,7 @@ def test_vertex_project_and_location_are_admin_provider_fields() -> None:
     assert project.section_id == "providers"
     assert project.secret is False
     assert location.settings_attr == "vertex_location"
-    assert location.default == "global"
+    assert location.resolved_default() == "global"
 
 
 def test_vertex_admin_status_uses_project_configuration_not_an_api_key() -> None:

@@ -5,13 +5,14 @@ from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
+from free_claude_code.config.loader import clear_settings_cache, get_settings
 from free_claude_code.config.model_refs import parse_model_name, parse_provider_type
 from free_claude_code.config.provider_catalog import (
     PROVIDER_CATALOG,
     SUPPORTED_PROVIDER_IDS,
     ProviderAuthKind,
 )
-from free_claude_code.config.settings import Settings, get_settings
+from free_claude_code.config.settings import Settings
 from free_claude_code.providers.runtime.config import has_provider_configuration
 
 DEFAULT_TARGETS = frozenset(
@@ -169,7 +170,7 @@ class SmokeConfig:
     @classmethod
     def load(cls) -> SmokeConfig:
         root = Path(__file__).resolve().parents[2]
-        get_settings.cache_clear()
+        clear_settings_cache()
         settings = get_settings()
         return cls(
             root=root,
@@ -388,7 +389,7 @@ def openrouter_free_cli_model_refs(
 
 def auth_headers(token: str | None = None) -> dict[str, str]:
     settings = get_settings()
-    resolved = token if token is not None else settings.anthropic_auth_token
+    resolved = token if token is not None else settings.proxy_auth_token
     headers = {
         "anthropic-version": "2023-06-01",
         "content-type": "application/json",

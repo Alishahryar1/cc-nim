@@ -6,10 +6,13 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import immediate_admission, profiled_provider
+from tests.providers.support import (
+    immediate_admission,
+    make_provider_config,
+    profiled_provider,
+)
 
 AZURE_OPENAI_BASE_URL = "https://example-resource.openai.azure.com/openai/v1/"
 AZURE_OPENAI_DEPLOYMENT = "gpt-5.1"
@@ -18,7 +21,7 @@ AZURE_OPENAI_DEPLOYMENT = "gpt-5.1"
 def _provider() -> OpenAIChatProvider:
     return profiled_provider(
         "azure_openai",
-        ProviderConfig(
+        make_provider_config(
             api_key="azure-key",
             base_url=AZURE_OPENAI_BASE_URL,
         ),

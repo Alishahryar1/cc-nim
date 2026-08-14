@@ -9,10 +9,12 @@ from httpx import Request, Response
 
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.core.failures import ExecutionFailure
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import immediate_admission
+from tests.providers.support import (
+    immediate_admission,
+    make_provider_config,
+)
 
 
 def _internal_5xx(code: int) -> openai.InternalServerError:
@@ -34,7 +36,7 @@ def _connection_error(message: str = "connect failed") -> openai.APIConnectionEr
 @pytest.mark.parametrize("status_code", [500, 502, 503, 504])
 @pytest.mark.asyncio
 async def test_nim_stream_retries_on_openai_5xx_then_streams(status_code):
-    config = ProviderConfig(
+    config = make_provider_config(
         api_key="test_key",
         base_url="https://test.api.nvidia.com/v1",
         rate_limit=100,
@@ -78,7 +80,7 @@ async def test_nim_stream_retries_on_openai_5xx_then_streams(status_code):
 
 @pytest.mark.asyncio
 async def test_nim_stream_retries_on_pre_stream_connection_error_then_streams():
-    config = ProviderConfig(
+    config = make_provider_config(
         api_key="test_key",
         base_url="https://test.api.nvidia.com/v1",
         rate_limit=100,
@@ -122,7 +124,7 @@ async def test_nim_stream_retries_on_pre_stream_connection_error_then_streams():
 
 @pytest.mark.asyncio
 async def test_nim_stream_connection_error_exhausted_emits_cause_chain():
-    config = ProviderConfig(
+    config = make_provider_config(
         api_key="test_key",
         base_url="https://test.api.nvidia.com/v1",
         rate_limit=100,
@@ -177,7 +179,7 @@ async def test_nim_stream_openai_5xx_exhausted_emits_user_message(
     status_code,
     expect_substr,
 ):
-    config = ProviderConfig(
+    config = make_provider_config(
         api_key="test_key",
         base_url="https://test.api.nvidia.com/v1",
         rate_limit=100,

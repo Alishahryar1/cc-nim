@@ -121,7 +121,8 @@ uv run pytest smoke/product -n 0 -s --tb=short
 
 ## Environment
 
-- `FCC_ENV_FILE`: explicit dotenv path for startup/config scenarios.
+- Runtime settings use the isolated managed `~/.fcc/.env`; `FCC_ENV_FILE` is
+  exercised only by the one-time legacy migration smoke.
 - `FCC_LIVE_SMOKE=1`: enables live smoke execution.
 - `FCC_ALLOW_NO_PROVIDER_SMOKE=1`: permits no-provider live smoke for harness work.
 - `FCC_SMOKE_TARGETS`: comma-separated targets, or `all`.

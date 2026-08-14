@@ -12,12 +12,12 @@ from free_claude_code.core.anthropic.stream_contracts import (
     parse_sse_text,
     thinking_content,
 )
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     REASONING_OFF,
     immediate_admission,
+    make_provider_config,
     profiled_provider,
     reasoning_for,
 )
@@ -29,7 +29,7 @@ OLLAMA_CLOUD_MODEL = "qwen3-coder:480b"
 def _provider(base_url: str = OLLAMA_DEFAULT_BASE) -> OpenAIChatProvider:
     return profiled_provider(
         "ollama",
-        ProviderConfig(api_key="ollama", base_url=base_url),
+        make_provider_config(api_key="ollama", base_url=base_url),
         admission=immediate_admission(),
     )
 
@@ -37,7 +37,7 @@ def _provider(base_url: str = OLLAMA_DEFAULT_BASE) -> OpenAIChatProvider:
 def _cloud_provider() -> OpenAIChatProvider:
     return profiled_provider(
         "ollama_cloud",
-        ProviderConfig(
+        make_provider_config(
             api_key="ollama-cloud-key",
             base_url=OLLAMA_CLOUD_DEFAULT_BASE,
         ),

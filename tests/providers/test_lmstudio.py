@@ -9,13 +9,13 @@ from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.provider_catalog import LMSTUDIO_DEFAULT_BASE
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.lmstudio import LMStudioProvider
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
     immediate_admission,
+    make_provider_config,
 )
 
 
@@ -25,7 +25,7 @@ def make_request(**overrides):
 
 @pytest.fixture
 def lmstudio_config():
-    return ProviderConfig(
+    return make_provider_config(
         api_key="lm-studio",
         base_url=LMSTUDIO_DEFAULT_BASE,
         rate_limit=10,

@@ -29,14 +29,11 @@ from free_claude_code.config.admin.persistence import (
 )
 from free_claude_code.config.admin.status import provider_config_status
 from free_claude_code.config.admin.values import load_value_state
-from free_claude_code.config.env_files import (
-    ANTHROPIC_AUTH_TOKEN_ENV,
-    process_env_key_is_effective,
-)
+from free_claude_code.config.loader import clear_settings_cache
 from free_claude_code.config.model_refs import parse_provider_type
 from free_claude_code.config.paths import messaging_state_dir_path
 from free_claude_code.config.server_urls import local_admin_url, local_proxy_root_url
-from free_claude_code.config.settings import Settings, get_settings
+from free_claude_code.config.settings import Settings
 from free_claude_code.messaging.platforms import factory as messaging_platform_factory
 from free_claude_code.messaging.platforms.factory import MessagingPlatformOptions
 from free_claude_code.messaging.platforms.ports import (
@@ -81,18 +78,6 @@ async def best_effort(
             )
         return False
     return True
-
-
-def warn_if_process_auth_token(settings: Settings) -> None:
-    """Warn when server auth was implicitly inherited from the shell."""
-    model_config = getattr(settings, "model_config", Settings.model_config)
-    if process_env_key_is_effective(model_config, ANTHROPIC_AUTH_TOKEN_ENV):
-        logger.warning(
-            "ANTHROPIC_AUTH_TOKEN is set in the process environment but not in "
-            "a configured .env file. The proxy will require that token. Add "
-            "ANTHROPIC_AUTH_TOKEN= to .env to disable proxy auth, or set the "
-            "same token in .env to make server auth explicit."
-        )
 
 
 def startup_failure_message(settings: Settings, exc: Exception) -> str:
@@ -150,7 +135,6 @@ class ApplicationRuntime:
             return
         logger.info("Starting Claude Code Proxy...")
         try:
-            warn_if_process_auth_token(self.settings)
             await self.provider_manager.warm_referenced_model_cache()
             self.provider_manager.start_model_list_refresh()
             await self._start_messaging_if_configured()
@@ -327,7 +311,7 @@ class ApplicationRuntime:
         prepared: PreparedAdminUpdate,
     ) -> dict[str, Any]:
         result = commit_prepared_admin_update(prepared)
-        get_settings.cache_clear()
+        clear_settings_cache()
         return result
 
     def _restart_metadata(
@@ -411,7 +395,7 @@ class ApplicationRuntime:
             workspace_path=workspace,
             proxy_root_url=local_proxy_root_url(settings),
             allowed_dirs=allowed_dirs,
-            auth_token=settings.anthropic_auth_token,
+            auth_token=settings.proxy_auth_token,
             log_raw_cli_diagnostics=settings.log_raw_cli_diagnostics,
             log_messaging_error_details=settings.log_messaging_error_details,
         )

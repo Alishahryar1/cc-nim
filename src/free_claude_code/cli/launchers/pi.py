@@ -7,9 +7,8 @@ from collections.abc import Mapping, Sequence
 from pathlib import Path
 
 from free_claude_code.cli.local_http import with_local_proxy_bypass
-from free_claude_code.cli.proxy_auth import proxy_auth_token
+from free_claude_code.config.loader import get_settings
 from free_claude_code.config.server_urls import local_proxy_root_url
-from free_claude_code.config.settings import get_settings
 
 from .common import preflight_proxy, resolve_client_binary, run_client_process
 
@@ -80,7 +79,7 @@ def launch(argv: Sequence[str] | None = None) -> None:
         ),
         env=build_pi_launcher_env(
             proxy_root_url=proxy_root_url,
-            auth_token=settings.anthropic_auth_token,
+            auth_token=settings.proxy_auth_token,
             base_env=os.environ,
         ),
         binary_name=_BINARY_NAME,
@@ -124,7 +123,7 @@ def build_pi_launcher_env(
         proxy_root_url=proxy_root_url,
     )
     env[_BASE_URL_ENV] = proxy_root_url.rstrip("/")
-    env[_API_KEY_ENV] = proxy_auth_token(auth_token)
+    env[_API_KEY_ENV] = auth_token
     return env
 
 

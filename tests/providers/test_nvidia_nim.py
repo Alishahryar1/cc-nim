@@ -20,6 +20,7 @@ from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
     immediate_admission,
+    make_provider_config,
     reasoning_for,
 )
 
@@ -146,9 +147,8 @@ async def test_init(provider_config):
 @pytest.mark.asyncio
 async def test_init_uses_configurable_timeouts():
     """Test that provider passes configurable read/write/connect timeouts to client."""
-    from free_claude_code.providers.base import ProviderConfig
 
-    config = ProviderConfig(
+    config = make_provider_config(
         api_key="test_key",
         base_url="https://test.api.nvidia.com/v1",
         http_read_timeout=600.0,

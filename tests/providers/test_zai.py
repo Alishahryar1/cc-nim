@@ -8,10 +8,10 @@ from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from free_claude_code.config.provider_catalog import ZAI_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.support import (
     immediate_admission,
+    make_provider_config,
     profiled_provider,
     reasoning_for,
 )
@@ -21,7 +21,7 @@ from tests.providers.support import (
 def zai_provider():
     return profiled_provider(
         "zai",
-        ProviderConfig(
+        make_provider_config(
             api_key="test_zai_key",
             base_url=ZAI_DEFAULT_BASE,
             rate_limit=10,

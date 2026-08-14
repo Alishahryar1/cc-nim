@@ -9,6 +9,7 @@ const state = {
 };
 
 const MASKED_SECRET = "********";
+const NULL_VALUE = "__FCC_NULL__";
 const VIEW_GROUPS = [
   {
     id: "providers",
@@ -38,10 +39,7 @@ const byId = (id) => document.getElementById(id);
 function sourceLabel(source) {
   const labels = {
     default: "default",
-    template: "template",
-    repo_env: "repo .env",
     managed_env: "",
-    explicit_env_file: "FCC_ENV_FILE",
     process: "process env",
   };
   return Object.prototype.hasOwnProperty.call(labels, source) ? labels[source] : source;
@@ -513,13 +511,18 @@ function renderField(field) {
   const input = inputForField(field);
   input.id = `field-${field.key}`;
   input.dataset.key = field.key;
-  input.dataset.original = field.value || "";
+  input.dataset.original = comparableValue(field.value);
   input.dataset.secret = field.secret ? "true" : "false";
   input.dataset.configured = field.configured ? "true" : "false";
+  input.dataset.nullable = field.nullable ? "true" : "false";
+  input.dataset.remove = "false";
   input.dataset.fieldType = field.type;
   input.disabled = field.locked;
   input.addEventListener("input", updateDirtyState);
   input.addEventListener("change", updateDirtyState);
+  input.addEventListener("input", () => {
+    input.dataset.remove = "false";
+  });
   if (field.type === "optional_model") {
     input.addEventListener("blur", () => {
       if (!input.value.trim() || input.value.trim().toLowerCase() === "none") {
@@ -534,6 +537,20 @@ function renderField(field) {
       ? new ModelCombobox(input, field).element
       : input;
   wrapper.append(label, control);
+  if (field.secret && field.nullable && field.configured && !field.locked) {
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "ghost-button secret-remove";
+    removeButton.textContent = "Remove";
+    removeButton.addEventListener("click", () => {
+      const removing = input.dataset.remove !== "true";
+      input.dataset.remove = removing ? "true" : "false";
+      input.readOnly = removing;
+      removeButton.textContent = removing ? "Undo removal" : "Remove";
+      updateDirtyState();
+    });
+    wrapper.appendChild(removeButton);
+  }
   if (field.description) {
     const description = document.createElement("div");
     description.className = "field-description";
@@ -779,16 +796,22 @@ function option(value, label) {
 
 function readFieldValue(input) {
   if (input.type === "checkbox") return input.checked ? "true" : "false";
+  if (input.dataset.remove === "true") return null;
   if (
     input.dataset.fieldType === "optional_model" &&
     input.value.trim().toLowerCase() === "none"
   ) {
-    return "";
+    return null;
   }
   if (input.dataset.secret === "true" && input.dataset.configured === "true") {
     return input.value ? input.value : MASKED_SECRET;
   }
+  if (input.dataset.nullable === "true" && !input.value.trim()) return null;
   return input.value;
+}
+
+function comparableValue(value) {
+  return value === null ? NULL_VALUE : String(value);
 }
 
 function changedValues() {
@@ -796,7 +819,7 @@ function changedValues() {
   document.querySelectorAll("[data-key]").forEach((input) => {
     if (input.disabled || !input.matches("input, select, textarea")) return;
     const value = readFieldValue(input);
-    if (value !== input.dataset.original) {
+    if (comparableValue(value) !== input.dataset.original) {
       values[input.dataset.key] = value;
     }
   });

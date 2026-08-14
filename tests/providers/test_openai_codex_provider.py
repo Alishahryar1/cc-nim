@@ -22,6 +22,7 @@ from free_claude_code.providers.openai_codex.auth import (
     OpenAIAuthManager,
 )
 from free_claude_code.providers.openai_codex.provider import OpenAICodexProvider
+from tests.providers.support import make_provider_config
 
 
 class _FakeAuth(OpenAIAuthManager):
@@ -42,7 +43,7 @@ class _FakeAuth(OpenAIAuthManager):
 
 
 def _config() -> ProviderConfig:
-    return ProviderConfig(
+    return make_provider_config(
         api_key="",
         base_url="https://chatgpt.com/backend-api/codex",
         rate_limit=100,

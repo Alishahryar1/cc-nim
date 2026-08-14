@@ -16,12 +16,16 @@ from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.github_models import GitHubModelsProvider
 from free_claude_code.providers.github_models.client import GITHUB_MODELS_CATALOG_URL
 from free_claude_code.providers.model_listing import ModelListResponseError
-from tests.providers.support import REASONING_ON, immediate_admission
+from tests.providers.support import (
+    REASONING_ON,
+    immediate_admission,
+    make_provider_config,
+)
 
 
 @pytest.fixture
 def github_models_config() -> ProviderConfig:
-    return ProviderConfig(
+    return make_provider_config(
         api_key="test-github-models-token",
         base_url=GITHUB_MODELS_DEFAULT_BASE,
         rate_limit=10,

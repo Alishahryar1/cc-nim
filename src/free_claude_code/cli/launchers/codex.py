@@ -10,10 +10,10 @@ from free_claude_code.cli.local_http import (
     open_local_request,
     with_local_proxy_bypass,
 )
-from free_claude_code.cli.proxy_auth import proxy_auth_token
+from free_claude_code.config.loader import get_settings
 from free_claude_code.config.paths import codex_model_catalog_path
 from free_claude_code.config.server_urls import local_proxy_root_url
-from free_claude_code.config.settings import Settings, get_settings
+from free_claude_code.config.settings import Settings
 
 from .codex_model_catalog import build_codex_model_catalog, write_codex_model_catalog
 from .common import (
@@ -50,7 +50,7 @@ def launch(argv: Sequence[str] | None = None) -> None:
     args = list(sys.argv[1:] if argv is None else argv)
     settings = get_settings()
     if args == [_PRINT_PROXY_AUTH_TOKEN_FLAG]:
-        print(proxy_auth_token(settings.anthropic_auth_token))
+        print(settings.proxy_auth_token)
         return
 
     proxy_root_url = local_proxy_root_url(settings)
@@ -139,7 +139,7 @@ def codex_model_catalog_config_args(
 
     try:
         models_response = fetch_proxy_models_response(
-            proxy_root_url, settings.anthropic_auth_token
+            proxy_root_url, settings.proxy_auth_token
         )
         catalog = build_codex_model_catalog(models_response)
         models = catalog.get("models")
@@ -169,9 +169,7 @@ def fetch_proxy_models_response(
     """Fetch the local proxy `/v1/models` response for Codex catalog generation."""
 
     url = f"{proxy_root_url.rstrip('/')}/v1/models"
-    headers: dict[str, str] = {}
-    if token := auth_token.strip():
-        headers["Authorization"] = f"Bearer {token}"
+    headers = {"Authorization": f"Bearer {auth_token}"}
 
     request = Request(url, headers=headers, method="GET")
     with open_local_request(

@@ -14,13 +14,13 @@ from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKEN
 from free_claude_code.config.provider_catalog import SILICONFLOW_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
     immediate_admission,
+    make_provider_config,
     profiled_provider,
     reasoning_for,
 )
@@ -42,7 +42,7 @@ def _request(**overrides: Any) -> MessagesRequest:
 def siliconflow_provider() -> OpenAIChatProvider:
     return profiled_provider(
         "siliconflow",
-        ProviderConfig(
+        make_provider_config(
             api_key="test-siliconflow-key",
             base_url=SILICONFLOW_DEFAULT_BASE,
             rate_limit=10,
@@ -230,7 +230,7 @@ async def test_model_catalog_uses_documented_endpoint_query_and_auth() -> None:
     ):
         provider = profiled_provider(
             "siliconflow",
-            ProviderConfig(
+            make_provider_config(
                 api_key="wire-siliconflow-key",
                 base_url=SILICONFLOW_DEFAULT_BASE,
                 rate_limit=10,

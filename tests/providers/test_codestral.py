@@ -5,9 +5,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from free_claude_code.config.provider_catalog import CODESTRAL_DEFAULT_BASE
-from free_claude_code.providers.base import ProviderConfig
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import immediate_admission, profiled_provider
+from tests.providers.support import (
+    immediate_admission,
+    make_provider_config,
+    profiled_provider,
+)
 
 
 def make_request(**overrides):
@@ -16,7 +19,7 @@ def make_request(**overrides):
 
 @pytest.fixture
 def codestral_config():
-    return ProviderConfig(
+    return make_provider_config(
         api_key="test_codestral_key",
         base_url=CODESTRAL_DEFAULT_BASE,
         rate_limit=10,
@@ -63,7 +66,7 @@ def test_build_request_body_global_disable_blocks_reasoning_mapping():
     """Global disable disables reasoning replay in the converter."""
     provider = profiled_provider(
         "mistral_codestral",
-        ProviderConfig(
+        make_provider_config(
             api_key="test_codestral_key",
             base_url=CODESTRAL_DEFAULT_BASE,
             rate_limit=10,

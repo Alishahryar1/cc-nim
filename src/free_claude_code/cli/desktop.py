@@ -12,9 +12,9 @@ from free_claude_code.cli.commands import (
     schedule_open_admin_browser,
 )
 from free_claude_code.cli.launchers.common import preflight_proxy
+from free_claude_code.config.loader import get_settings
 from free_claude_code.config.paths import config_dir_path
 from free_claude_code.config.server_urls import local_proxy_root_url
-from free_claude_code.config.settings import get_settings
 from free_claude_code.core.interprocess_lock import InterprocessFileLock
 
 

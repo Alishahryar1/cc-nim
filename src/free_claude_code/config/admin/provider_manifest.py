@@ -299,7 +299,6 @@ def _base_url_field_specs() -> tuple[dict[str, Any], ...]:
             "label": f"{descriptor.display_name} Base URL",
             "section_id": "providers",
             "settings_attr": descriptor.base_url_attr,
-            "default": descriptor.default_base_url or "",
         }
         spec.update(_PROVIDER_FIELD_OVERRIDES.get(key, {}))
         specs.append(spec)
@@ -337,7 +336,6 @@ def _vertex_field_specs() -> tuple[dict[str, Any], ...]:
             "label": "Vertex AI Location",
             "section_id": "providers",
             "settings_attr": "vertex_location",
-            "default": "global",
             "description": (
                 "Use global for the global Vertex AI endpoint or a region such as "
                 "us-central1."

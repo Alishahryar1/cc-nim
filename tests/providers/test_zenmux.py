@@ -19,11 +19,11 @@ from free_claude_code.core.anthropic.stream_contracts import (
     thinking_content,
 )
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.support import (
     immediate_admission,
+    make_provider_config,
     profiled_provider,
     reasoning_for,
 )
@@ -33,7 +33,7 @@ from tests.providers.support import (
 def zenmux_provider() -> OpenAIChatProvider:
     return profiled_provider(
         "zenmux",
-        ProviderConfig(
+        make_provider_config(
             api_key="test-zenmux-key",
             base_url=ZENMUX_DEFAULT_BASE,
             rate_limit=10,
@@ -435,7 +435,7 @@ async def test_model_catalog_uses_documented_endpoint_and_auth() -> None:
     ):
         provider = profiled_provider(
             "zenmux",
-            ProviderConfig(
+            make_provider_config(
                 api_key="wire-zenmux-key",
                 base_url=ZENMUX_DEFAULT_BASE,
                 rate_limit=10,

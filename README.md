@@ -99,6 +99,10 @@ Use the port shown in your terminal if it differs from `8082`.
 4. Leave `MODEL` on the default `nvidia_nim/nvidia/nemotron-3-super-120b-a12b`, or search the model dropdown and select another model.
 5. Click **Validate**, then **Apply**.
 
+FCC stores Admin settings in `~/.fcc/.env`. To require a bearer token on the
+proxy API, enable **Proxy Authentication** in Admin; disabling enforcement keeps
+the same token available to FCC launchers.
+
 <div align="center">
   <img src="assets/admin-page.png" alt="Free Claude Code Admin UI" width="700">
 </div>

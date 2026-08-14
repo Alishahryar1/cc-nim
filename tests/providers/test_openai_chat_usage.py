@@ -12,7 +12,6 @@ from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import (
     OpenAIChatProfile,
     OpenAIChatProvider,
@@ -26,13 +25,16 @@ from free_claude_code.providers.openai_chat.usage import (
     usage_int,
 )
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import immediate_admission
+from tests.providers.support import (
+    immediate_admission,
+    make_provider_config,
+)
 
 
 class _UsageTestProvider(OpenAIChatProvider):
     def __init__(self):
         super().__init__(
-            ProviderConfig(
+            make_provider_config(
                 api_key="test_key",
                 base_url="https://provider.example/v1",
                 rate_limit=100,

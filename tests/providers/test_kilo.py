@@ -16,19 +16,19 @@ from free_claude_code.core.anthropic.stream_contracts import (
     thinking_content,
 )
 from free_claude_code.core.reasoning import ReasoningPolicy
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.kilo import KiloProvider
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.support import (
     immediate_admission,
+    make_provider_config,
     reasoning_for,
 )
 
 
 @pytest.fixture
 def kilo_config():
-    return ProviderConfig(
+    return make_provider_config(
         api_key="test_kilo_key",
         base_url=KILO_DEFAULT_BASE,
         rate_limit=10,

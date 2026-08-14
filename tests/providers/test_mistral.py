@@ -9,12 +9,12 @@ from httpx import Request, Response
 
 from free_claude_code.config.provider_catalog import MISTRAL_DEFAULT_BASE
 from free_claude_code.core.failures import ExecutionFailure
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.mistral import MistralProvider
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     REASONING_OFF,
     immediate_admission,
+    make_provider_config,
     reasoning_for,
 )
 
@@ -25,7 +25,7 @@ def make_request(**overrides):
 
 @pytest.fixture
 def mistral_config():
-    return ProviderConfig(
+    return make_provider_config(
         api_key="test_mistral_key",
         base_url=MISTRAL_DEFAULT_BASE,
         rate_limit=10,
@@ -138,7 +138,7 @@ def test_build_request_body_preserves_tools_tool_choice_and_params(mistral_provi
 
 def test_build_request_body_reasoning_off_uses_native_none():
     provider = MistralProvider(
-        ProviderConfig(
+        make_provider_config(
             api_key="test_mistral_key",
             base_url=MISTRAL_DEFAULT_BASE,
             rate_limit=10,
@@ -155,7 +155,7 @@ def test_build_request_body_reasoning_off_uses_native_none():
 
 def test_reasoning_off_keeps_replay_separate_from_new_turn_compute():
     provider = MistralProvider(
-        ProviderConfig(
+        make_provider_config(
             api_key="test_mistral_key",
             base_url=MISTRAL_DEFAULT_BASE,
             rate_limit=10,

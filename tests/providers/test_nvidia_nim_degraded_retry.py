@@ -20,13 +20,14 @@ from free_claude_code.providers.failure_policy import (
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.open_router import OpenRouterProvider
 from tests.providers.request_factory import make_messages_request
+from tests.providers.support import make_provider_config
 
 _FUNCTION_ID = "87ea0ddc-cff1-4bca-bf8b-3bd98a35ddd0"
 _DEGRADED_DETAIL = f"Function id '{_FUNCTION_ID}': DEGRADED function cannot be invoked"
 
 
 def _config(base_url: str) -> ProviderConfig:
-    return ProviderConfig(
+    return make_provider_config(
         api_key="test_key",
         base_url=base_url,
         rate_limit=1_000_000,

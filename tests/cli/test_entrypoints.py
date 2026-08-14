@@ -22,10 +22,11 @@ def _launcher_settings(
     token: str = "freecc",
     open_admin_browser: bool = True,
 ) -> Settings:
-    return Settings.model_construct(
+    return Settings(
         host="0.0.0.0",
         port=port,
-        anthropic_auth_token=token,
+        proxy_auth_enabled=False,
+        proxy_auth_token=token,
         model="nvidia_nim/test-model",
         open_admin_browser=open_admin_browser,
     )
@@ -43,42 +44,6 @@ class _JsonResponse:
 
     def read(self) -> bytes:
         return json.dumps(self._payload).encode("utf-8")
-
-
-def test_legacy_env_migration_supports_xdg_path(tmp_path: Path) -> None:
-    """Server startup preserves config from ~/.config/free-claude-code/.env."""
-    from free_claude_code.cli.commands import _migrate_legacy_env_if_missing
-
-    legacy_env = tmp_path / ".config" / "free-claude-code" / ".env"
-    legacy_env.parent.mkdir(parents=True)
-    legacy_env.write_text("MODEL=open_router/free-model\n", encoding="utf-8")
-
-    with patch("pathlib.Path.home", return_value=tmp_path):
-        migrated_from = _migrate_legacy_env_if_missing()
-
-    env_file = tmp_path / ".fcc" / ".env"
-    assert migrated_from == legacy_env
-    assert env_file.read_text("utf-8") == "MODEL=open_router/free-model\n"
-
-
-def test_legacy_env_migration_does_not_overwrite_managed_env(
-    tmp_path: Path,
-) -> None:
-    """Legacy migration never overwrites an existing ~/.fcc/.env."""
-    from free_claude_code.cli.commands import _migrate_legacy_env_if_missing
-
-    managed_env = tmp_path / ".fcc" / ".env"
-    managed_env.parent.mkdir(parents=True)
-    managed_env.write_text("MODEL=nvidia_nim/current\n", encoding="utf-8")
-    legacy_env = tmp_path / "free-claude-code" / ".env"
-    legacy_env.parent.mkdir(parents=True)
-    legacy_env.write_text("MODEL=deepseek/legacy\n", encoding="utf-8")
-
-    with patch("pathlib.Path.home", return_value=tmp_path):
-        migrated_from = _migrate_legacy_env_if_missing()
-
-    assert migrated_from is None
-    assert managed_env.read_text("utf-8") == "MODEL=nvidia_nim/current\n"
 
 
 def test_cli_scripts_are_registered() -> None:
@@ -186,7 +151,6 @@ def test_serve_skips_admin_browser_when_setting_is_disabled() -> None:
 
     settings = _launcher_settings(open_admin_browser=False)
     get_settings = MagicMock(return_value=settings)
-    get_settings.cache_clear = MagicMock()
 
     with (
         patch.object(commands, "get_settings", get_settings),
@@ -209,7 +173,6 @@ def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
 
     settings = _launcher_settings()
     get_settings = MagicMock(side_effect=[settings, settings])
-    get_settings.cache_clear = MagicMock()
     servers: list[object] = []
     restart_callbacks: list[Callable[[], None]] = []
 
@@ -242,13 +205,14 @@ def test_serve_supervisor_restarts_when_app_requests_restart() -> None:
         patch.object(commands.uvicorn, "Server", side_effect=FakeServer),
         patch.object(commands, "build_asgi_app", side_effect=build_asgi_app),
         patch.object(commands, "schedule_open_admin_browser") as schedule_open_admin,
+        patch.object(commands, "clear_settings_cache") as clear_settings_cache,
         patch.object(commands, "kill_all_best_effort") as kill_all,
     ):
         commands.serve()
 
     assert len(servers) == 2
     schedule_open_admin.assert_called_once_with(settings)
-    get_settings.cache_clear.assert_called_once()
+    clear_settings_cache.assert_called_once()
     kill_all.assert_called_once()
 
 
@@ -257,7 +221,6 @@ def test_serve_supervisor_refuses_restart_after_incomplete_shutdown() -> None:
 
     settings = _launcher_settings()
     get_settings = MagicMock(return_value=settings)
-    get_settings.cache_clear = MagicMock()
     servers: list[object] = []
     restart_callbacks: list[Callable[[], None]] = []
 
@@ -284,115 +247,14 @@ def test_serve_supervisor_refuses_restart_after_incomplete_shutdown() -> None:
         patch.object(commands.uvicorn, "Server", side_effect=FakeServer),
         patch.object(commands, "build_asgi_app", side_effect=build_asgi_app),
         patch.object(commands, "schedule_open_admin_browser"),
+        patch.object(commands, "clear_settings_cache") as clear_settings_cache,
         patch.object(commands, "kill_all_best_effort") as kill_all,
     ):
         commands.serve()
 
     assert len(servers) == 1
-    get_settings.cache_clear.assert_not_called()
+    clear_settings_cache.assert_not_called()
     kill_all.assert_called_once()
-
-
-def test_serve_migrates_legacy_env_before_loading_settings(tmp_path: Path) -> None:
-    from free_claude_code.cli import commands
-
-    legacy_env = tmp_path / "free-claude-code" / ".env"
-    legacy_env.parent.mkdir(parents=True)
-    legacy_env.write_text("MODEL=deepseek/deepseek-chat\n", encoding="utf-8")
-    settings = _launcher_settings()
-    get_settings = MagicMock(return_value=settings)
-    get_settings.cache_clear = MagicMock()
-
-    with (
-        patch("pathlib.Path.home", return_value=tmp_path),
-        patch.object(commands, "get_settings", get_settings),
-        patch.object(commands.ServerSupervisor, "_run_once", return_value=False),
-        patch.object(commands, "kill_all_best_effort"),
-    ):
-        commands.serve()
-
-    assert (tmp_path / ".fcc" / ".env").read_text("utf-8") == (
-        "MODEL=deepseek/deepseek-chat\n"
-    )
-    get_settings.assert_called_once_with()
-
-
-def test_serve_migrates_hf_token_before_loading_settings(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    from free_claude_code.cli import commands
-
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    (repo / ".env").write_text("HF_TOKEN=legacy-hf\n", encoding="utf-8")
-    settings = _launcher_settings()
-    get_settings = MagicMock(return_value=settings)
-    get_settings.cache_clear = MagicMock()
-    monkeypatch.chdir(repo)
-
-    with (
-        patch("pathlib.Path.home", return_value=tmp_path),
-        patch.object(commands, "get_settings", get_settings),
-        patch.object(commands.ServerSupervisor, "_run_once", return_value=False),
-        patch.object(commands, "kill_all_best_effort"),
-        patch.object(commands, "explicit_env_file_migration_warning"),
-    ):
-        commands.serve()
-
-    assert (repo / ".env").read_text(encoding="utf-8") == (
-        "HUGGINGFACE_API_KEY=legacy-hf\n"
-    )
-    get_settings.assert_called_once_with()
-
-
-def test_serve_migrates_opencode_zen_prefix_before_loading_settings(
-    monkeypatch: pytest.MonkeyPatch,
-    tmp_path: Path,
-) -> None:
-    from free_claude_code.cli import commands
-
-    repo = tmp_path / "repo"
-    repo.mkdir()
-    env_file = repo / ".env"
-    env_file.write_text("MODEL=opencode/model\n", encoding="utf-8")
-    settings = _launcher_settings()
-
-    def load_settings() -> Settings:
-        assert env_file.read_text(encoding="utf-8") == ("MODEL=opencode_zen/model\n")
-        return settings
-
-    get_settings = MagicMock(side_effect=load_settings)
-    get_settings.cache_clear = MagicMock()
-    monkeypatch.chdir(repo)
-
-    with (
-        patch("pathlib.Path.home", return_value=tmp_path),
-        patch.object(commands, "get_settings", get_settings),
-        patch.object(commands.ServerSupervisor, "_run_once", return_value=False),
-        patch.object(commands, "kill_all_best_effort"),
-        patch.object(commands, "explicit_env_file_migration_warning"),
-    ):
-        commands.serve()
-
-    get_settings.assert_called_once_with()
-
-
-def test_config_env_migration_warns_for_explicit_env_file(
-    tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
-) -> None:
-    from free_claude_code.cli import commands
-
-    explicit = tmp_path / "custom.env"
-    explicit.write_text("HF_TOKEN=legacy-hf\n", encoding="utf-8")
-
-    with patch.dict(commands.os.environ, {"FCC_ENV_FILE": str(explicit)}):
-        migrated = commands._migrate_config_env()
-
-    assert migrated == ()
-    assert "HF_TOKEN" in capsys.readouterr().err
-    assert explicit.read_text(encoding="utf-8") == "HF_TOKEN=legacy-hf\n"
 
 
 def test_serve_handles_keyboard_interrupt_without_traceback() -> None:
@@ -400,7 +262,6 @@ def test_serve_handles_keyboard_interrupt_without_traceback() -> None:
 
     settings = _launcher_settings()
     get_settings = MagicMock(return_value=settings)
-    get_settings.cache_clear = MagicMock()
 
     with (
         patch.object(commands, "get_settings", get_settings),
@@ -409,11 +270,12 @@ def test_serve_handles_keyboard_interrupt_without_traceback() -> None:
             "_run_once",
             side_effect=KeyboardInterrupt,
         ),
+        patch.object(commands, "clear_settings_cache") as clear_settings_cache,
         patch.object(commands, "kill_all_best_effort") as kill_all,
     ):
         commands.serve()
 
-    get_settings.cache_clear.assert_not_called()
+    clear_settings_cache.assert_not_called()
     kill_all.assert_called_once()
 
 
@@ -422,7 +284,7 @@ def test_claude_child_env_targets_current_proxy_config() -> None:
 
     env = build_claude_proxy_env(
         proxy_root_url="http://127.0.0.1:9090",
-        auth_token=" proxy-token ",
+        auth_token="proxy-token",
         base_env={
             "PATH": "keep",
             "ANTHROPIC_API_URL": "https://api.anthropic.com/v1",
@@ -452,22 +314,6 @@ def test_claude_child_env_targets_current_proxy_config() -> None:
     assert "ANTHROPIC_API_URL" not in env
     assert "ANTHROPIC_API_KEY" not in env
     assert "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC" not in env
-
-
-def test_claude_child_env_uses_sentinel_for_blank_configured_auth_token() -> None:
-    from free_claude_code.cli.claude_env import build_claude_proxy_env
-
-    env = build_claude_proxy_env(
-        proxy_root_url="http://127.0.0.1:8082",
-        auth_token="",
-        base_env={
-            "ANTHROPIC_AUTH_TOKEN": "inherited-token",
-            "ANTHROPIC_API_KEY": "official-key",
-        },
-    )
-
-    assert env["ANTHROPIC_AUTH_TOKEN"] == "fcc-no-auth"
-    assert "ANTHROPIC_API_KEY" not in env
 
 
 def test_launch_claude_passes_args_and_child_env(
@@ -626,21 +472,12 @@ def test_launch_codex_passes_responses_config_and_child_env(
     unregister_pid.assert_called_once_with(12345)
 
 
-@pytest.mark.parametrize(
-    ("configured_token", "expected_token"),
-    [
-        (" proxy-token ", "proxy-token"),
-        ("", "fcc-no-auth"),
-    ],
-)
 def test_codex_proxy_auth_command_prints_only_current_token(
-    configured_token: str,
-    expected_token: str,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
     from free_claude_code.cli.launchers import codex
 
-    settings = _launcher_settings(token=configured_token)
+    settings = _launcher_settings(token=" proxy-token ")
     with (
         patch.object(codex, "get_settings", return_value=settings) as get_settings,
         patch.object(codex, "preflight_proxy") as preflight_proxy,
@@ -650,7 +487,7 @@ def test_codex_proxy_auth_command_prints_only_current_token(
     ):
         codex.launch(["--print-proxy-auth-token"])
 
-    assert capsys.readouterr() == (f"{expected_token}\n", "")
+    assert capsys.readouterr() == ("proxy-token\n", "")
     get_settings.assert_called_once_with()
     preflight_proxy.assert_not_called()
     resolve_client_binary.assert_not_called()
@@ -714,7 +551,7 @@ def test_pi_launcher_builds_scoped_session_command_and_proxy_env(
     extension = tmp_path / "pi_extension.ts"
     env = build_pi_launcher_env(
         proxy_root_url="http://127.0.0.1:9191/",
-        auth_token=" proxy-token ",
+        auth_token="proxy-token",
         base_env={
             "PATH": "keep",
             "ANTHROPIC_API_KEY": "native-pi-credential",
@@ -744,18 +581,6 @@ def test_pi_launcher_builds_scoped_session_command_and_proxy_env(
         "FCC_PI_BASE_URL": "http://127.0.0.1:9191",
         "FCC_PI_API_KEY": "proxy-token",
     }
-
-
-def test_pi_launcher_uses_no_auth_sentinel_for_blank_token() -> None:
-    from free_claude_code.cli.launchers.pi import build_pi_launcher_env
-
-    env = build_pi_launcher_env(
-        proxy_root_url="http://127.0.0.1:8082",
-        auth_token="",
-        base_env={},
-    )
-
-    assert env["FCC_PI_API_KEY"] == "fcc-no-auth"
 
 
 def test_launch_pi_registers_bundled_extension_for_sessions(

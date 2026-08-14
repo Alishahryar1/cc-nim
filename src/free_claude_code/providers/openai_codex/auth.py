@@ -136,7 +136,7 @@ class OpenAIAuthManager:
     def __init__(
         self,
         *,
-        proxy: str = "",
+        proxy: str | None = None,
         credential_path: Path | None = None,
         lock_path: Path | None = None,
         client: httpx.AsyncClient | None = None,
@@ -144,7 +144,7 @@ class OpenAIAuthManager:
         self._credential_path = credential_path or openai_auth_path()
         self._lock_path = lock_path or openai_auth_lock_path()
         self._client = client or httpx.AsyncClient(
-            proxy=proxy or None,
+            proxy=proxy,
             timeout=httpx.Timeout(30.0),
             headers={"originator": OPENAI_CODEX_ORIGINATOR},
         )

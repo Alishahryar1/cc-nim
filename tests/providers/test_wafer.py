@@ -8,13 +8,13 @@ from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from free_claude_code.config.provider_catalog import WAFER_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import Message, MessagesRequest, Tool
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import (
     OpenAIChatProvider,
 )
 from tests.providers.support import (
     REASONING_OFF,
     immediate_admission,
+    make_provider_config,
     profiled_provider,
     reasoning_for,
 )
@@ -22,7 +22,7 @@ from tests.providers.support import (
 
 @pytest.fixture
 def wafer_config():
-    return ProviderConfig(
+    return make_provider_config(
         api_key="test-wafer-key",
         base_url=WAFER_DEFAULT_BASE,
         rate_limit=10,

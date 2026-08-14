@@ -9,10 +9,10 @@ from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_catalog import KIMI_CODE_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.support import (
     immediate_admission,
+    make_provider_config,
     profiled_provider,
     reasoning_for,
 )
@@ -31,7 +31,7 @@ def _request(**overrides) -> MessagesRequest:
 def kimi_code_provider() -> OpenAIChatProvider:
     return profiled_provider(
         "kimi_code",
-        ProviderConfig(
+        make_provider_config(
             api_key="test-subscription-key",
             base_url=KIMI_CODE_DEFAULT_BASE,
             rate_limit=10,

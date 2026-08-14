@@ -8,9 +8,12 @@ import pytest
 from free_claude_code.config.provider_catalog import HUGGINGFACE_DEFAULT_BASE
 from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
-from free_claude_code.providers.base import ProviderConfig
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import immediate_admission, profiled_provider
+from tests.providers.support import (
+    immediate_admission,
+    make_provider_config,
+    profiled_provider,
+)
 
 
 def make_request(**overrides):
@@ -19,7 +22,7 @@ def make_request(**overrides):
 
 @pytest.fixture
 def huggingface_config():
-    return ProviderConfig(
+    return make_provider_config(
         api_key="test_hf_key",
         base_url=HUGGINGFACE_DEFAULT_BASE,
         rate_limit=10,

@@ -26,9 +26,12 @@ async def test_voice_transcription_backend_when_explicitly_enabled(
     _write_tone_wav(wav_path)
     transcriber: Transcriber
     if smoke_config.settings.whisper_device == "nvidia_nim":
+        api_key = smoke_config.settings.nvidia_nim_api_key
+        if api_key is None:
+            pytest.skip("NVIDIA_NIM_API_KEY is required")
         transcriber = NvidiaNimTranscriber(
             model=smoke_config.settings.whisper_model,
-            api_key=smoke_config.settings.nvidia_nim_api_key,
+            api_key=api_key,
         )
     else:
         transcriber = TranscriptionService(

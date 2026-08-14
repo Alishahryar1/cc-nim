@@ -8,8 +8,8 @@ from free_claude_code.cli.claude_env import (
     CLAUDE_BINARY_NAME,
     build_claude_proxy_env,
 )
+from free_claude_code.config.loader import get_settings
 from free_claude_code.config.server_urls import local_proxy_root_url
-from free_claude_code.config.settings import get_settings
 
 from .common import preflight_proxy, resolve_client_binary, run_client_process
 
@@ -41,7 +41,7 @@ def launch(argv: Sequence[str] | None = None) -> None:
         command=build_claude_launcher_command(binary_path=binary_path, argv=args),
         env=build_claude_proxy_env(
             proxy_root_url=proxy_root_url,
-            auth_token=settings.anthropic_auth_token,
+            auth_token=settings.proxy_auth_token,
             base_env=os.environ,
         ),
         binary_name=binary_name,

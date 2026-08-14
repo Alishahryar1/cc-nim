@@ -24,8 +24,8 @@ class ManagedClaudeSessionManager:
         proxy_root_url: str,
         allowed_dirs: list[str] | None = None,
         claude_bin: str = CLAUDE_BINARY_NAME,
-        auth_token: str = "",
         *,
+        auth_token: str,
         log_raw_cli_diagnostics: bool = False,
         log_messaging_error_details: bool = False,
     ):

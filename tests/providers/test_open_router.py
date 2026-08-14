@@ -14,13 +14,13 @@ from free_claude_code.core.anthropic.stream_contracts import (
     text_content,
     thinking_content,
 )
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.open_router import OpenRouterProvider
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     REASONING_OFF,
     immediate_admission,
+    make_provider_config,
     reasoning_for,
 )
 
@@ -48,7 +48,7 @@ def make_request(**overrides):
 @pytest.fixture
 def open_router_provider():
     return OpenRouterProvider(
-        ProviderConfig(
+        make_provider_config(
             api_key="test_openrouter_key",
             base_url="https://openrouter.ai/api/v1",
             rate_limit=10,

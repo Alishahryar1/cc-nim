@@ -84,10 +84,16 @@ def _create_transcriber(settings: Settings) -> Transcriber | None:
     if settings.whisper_device == "nvidia_nim":
         return NvidiaNimTranscriber(
             model=settings.whisper_model,
-            api_key=settings.nvidia_nim_api_key,
+            api_key=_required_voice_key(settings.nvidia_nim_api_key),
         )
     return TranscriptionService(
         model=settings.whisper_model,
         device=settings.whisper_device,
         huggingface_api_key=settings.huggingface_api_key,
     )
+
+
+def _required_voice_key(api_key: str | None) -> str:
+    if api_key is None:
+        raise AssertionError("NIM voice settings were not validated")
+    return api_key

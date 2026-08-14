@@ -11,13 +11,13 @@ from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from free_claude_code.config.provider_catalog import QWENCLOUD_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
     immediate_admission,
+    make_provider_config,
     profiled_provider,
     reasoning_for,
 )
@@ -27,7 +27,7 @@ from tests.providers.support import (
 def qwencloud_provider() -> OpenAIChatProvider:
     return profiled_provider(
         "qwencloud",
-        ProviderConfig(
+        make_provider_config(
             api_key="test-qwencloud-key",
             base_url=QWENCLOUD_DEFAULT_BASE,
             rate_limit=10,

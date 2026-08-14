@@ -8,11 +8,11 @@ from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from free_claude_code.config.provider_catalog import FIREWORKS_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.support import (
     REASONING_OFF,
     immediate_admission,
+    make_provider_config,
     profiled_provider,
     reasoning_for,
 )
@@ -22,7 +22,7 @@ from tests.providers.support import (
 def fireworks_provider():
     return profiled_provider(
         "fireworks",
-        ProviderConfig(
+        make_provider_config(
             api_key="test_fireworks_key",
             base_url=FIREWORKS_DEFAULT_BASE,
             rate_limit=10,
@@ -78,7 +78,7 @@ def test_build_request_body_default_max_tokens(fireworks_provider):
 def test_replay_is_independent_of_current_turn_reasoning_control():
     provider = profiled_provider(
         "fireworks",
-        ProviderConfig(
+        make_provider_config(
             api_key="k",
             base_url=FIREWORKS_DEFAULT_BASE,
             rate_limit=1,

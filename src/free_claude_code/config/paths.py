@@ -13,6 +13,7 @@ CODEX_MODEL_CATALOG_FILENAME = "codex-model-catalog.json"
 AUTH_DIRNAME = "auth"
 OPENAI_AUTH_FILENAME = "openai.json"
 OPENAI_AUTH_LOCK_FILENAME = "openai.lock"
+CONFIG_LOCK_FILENAME = "config.lock"
 
 
 def config_dir_path() -> Path:
@@ -25,6 +26,12 @@ def managed_env_path() -> Path:
     """Return the default user-managed env file path."""
 
     return config_dir_path() / FCC_ENV_FILENAME
+
+
+def config_lock_path() -> Path:
+    """Return the cross-process managed-config migration lock path."""
+
+    return config_dir_path() / CONFIG_LOCK_FILENAME
 
 
 def legacy_env_paths() -> tuple[Path, ...]:

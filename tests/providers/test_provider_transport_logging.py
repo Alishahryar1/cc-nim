@@ -9,15 +9,17 @@ import pytest
 
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.core.failures import ExecutionFailure
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import immediate_admission
+from tests.providers.support import (
+    immediate_admission,
+    make_provider_config,
+)
 
 
 def _provider(*, verbose: bool = False) -> NvidiaNimProvider:
     return NvidiaNimProvider(
-        ProviderConfig(
+        make_provider_config(
             api_key="k",
             base_url="http://localhost:1/v1",
             log_api_error_tracebacks=verbose,

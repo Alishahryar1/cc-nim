@@ -16,20 +16,20 @@ from free_claude_code.core.anthropic.models import (
     Tool,
 )
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.deepseek import DeepSeekProvider
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
     capture_openai_chat_wire_body,
     immediate_admission,
+    make_provider_config,
     reasoning_for,
 )
 
 
 @pytest.fixture
 def deepseek_config():
-    return ProviderConfig(
+    return make_provider_config(
         api_key="test_deepseek_key",
         base_url=DEEPSEEK_DEFAULT_BASE,
         rate_limit=10,
@@ -258,7 +258,7 @@ def test_build_request_body_forced_tool_choice_downgrades_to_auto(
 
 def test_build_request_body_encodes_reasoning_off():
     provider = DeepSeekProvider(
-        ProviderConfig(
+        make_provider_config(
             api_key="k",
             base_url=DEEPSEEK_DEFAULT_BASE,
             rate_limit=1,
@@ -570,7 +570,7 @@ def test_tool_history_with_empty_top_level_reasoning_preserves_reasoning_state(
 
 def test_thinking_off_strips_thinking_history():
     provider = DeepSeekProvider(
-        ProviderConfig(
+        make_provider_config(
             api_key="k",
             base_url=DEEPSEEK_DEFAULT_BASE,
             rate_limit=1,
@@ -599,7 +599,7 @@ def test_thinking_off_strips_thinking_history():
 
 def test_thinking_off_still_replays_required_tool_reasoning():
     provider = DeepSeekProvider(
-        ProviderConfig(
+        make_provider_config(
             api_key="k",
             base_url=DEEPSEEK_DEFAULT_BASE,
             rate_limit=1,
@@ -700,7 +700,7 @@ def test_preflight_strips_user_image():
         ],
     )
     provider = DeepSeekProvider(
-        ProviderConfig(
+        make_provider_config(
             api_key="k",
             base_url=DEEPSEEK_DEFAULT_BASE,
             rate_limit=1,
@@ -723,7 +723,7 @@ def test_preflight_rejects_mcp_servers():
         mcp_servers=[{"type": "url", "url": "https://x"}],
     )
     provider = DeepSeekProvider(
-        ProviderConfig(
+        make_provider_config(
             api_key="k",
             base_url=DEEPSEEK_DEFAULT_BASE,
             rate_limit=1,
@@ -742,7 +742,7 @@ def test_preflight_rejects_listed_server_tools_in_tools_list():
         tools=[Tool(name="web_search", type="web_search_20250305", input_schema={})],
     )
     provider = DeepSeekProvider(
-        ProviderConfig(
+        make_provider_config(
             api_key="k",
             base_url=DEEPSEEK_DEFAULT_BASE,
             rate_limit=1,
@@ -779,7 +779,7 @@ def test_preflight_rejects_server_tool_result_blocks():
         }
     )
     provider = DeepSeekProvider(
-        ProviderConfig(
+        make_provider_config(
             api_key="k",
             base_url=DEEPSEEK_DEFAULT_BASE,
             rate_limit=1,

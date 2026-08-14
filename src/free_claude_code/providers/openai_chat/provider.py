@@ -147,6 +147,10 @@ class OpenAIChatProvider(BaseProvider):
         super().__init__(config)
         self._profile = profile
         self._provider_name = profile.provider_name
+        if config.api_key is None and api_key_provider is None:
+            raise ValueError(
+                f"{profile.provider_name} requires an API key or credential provider"
+            )
         self._api_key = config.api_key
         self._base_url = profile.base_url(config.base_url).rstrip("/")
         # Learned per-model output-token caps from upstream 400 rejections, so

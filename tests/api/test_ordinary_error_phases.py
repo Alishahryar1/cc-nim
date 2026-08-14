@@ -39,7 +39,7 @@ _PRODUCT_REQUESTS = (
 def _settings(**updates: object) -> Settings:
     return Settings().model_copy(
         update={
-            "anthropic_auth_token": "",
+            "proxy_auth_enabled": False,
             "log_api_error_tracebacks": False,
             **updates,
         }
@@ -101,7 +101,7 @@ def test_missing_provider_credential_is_protocol_specific_503_without_terminal_h
     payload: dict[str, object],
 ) -> None:
     message = (
-        "OPENROUTER_API_KEY is not set. Add it to your .env file. "
+        "OPENROUTER_API_KEY is not set. Add it in the Admin UI. "
         "Get a key at https://openrouter.ai/keys"
     )
     app = create_test_app(
@@ -241,7 +241,7 @@ def test_proxy_auth_preserves_ingress_detail_contract(
     headers: dict[str, str],
     detail: str,
 ) -> None:
-    app = create_test_app(_settings(anthropic_auth_token="secret"))
+    app = create_test_app(_settings(proxy_auth_enabled=True, proxy_auth_token="secret"))
 
     with TestClient(app) as client:
         response = client.post(path, json=payload, headers=headers)

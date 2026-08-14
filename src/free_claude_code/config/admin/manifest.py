@@ -2,8 +2,10 @@
 
 from collections.abc import Iterable
 from dataclasses import dataclass
+from enum import Enum
 from typing import Literal
 
+from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.reasoning import (
     ROOT_REASONING_PREFERENCES,
     ROUTE_REASONING_PREFERENCES,
@@ -44,13 +46,34 @@ class ConfigFieldSpec:
     section_id: str
     field_type: FieldType = "text"
     settings_attr: str | None = None
-    default: str = ""
     options: tuple[str | ConfigOptionSpec, ...] = ()
     secret: bool = False
     advanced: bool = False
     restart_required: bool = False
     session_sensitive: bool = False
     description: str = ""
+
+    def resolved_default(self) -> str | None:
+        """Return the Settings-owned default or Admin-only fallback."""
+
+        if self.settings_attr is None:
+            return None
+        value = Settings.model_fields[self.settings_attr].get_default(
+            call_default_factory=True
+        )
+        if value is None:
+            return None
+        if isinstance(value, bool):
+            return "true" if value else "false"
+        if isinstance(value, Enum):
+            return str(value.value)
+        return str(value)
+
+    @property
+    def nullable(self) -> bool:
+        """Return whether Admin may explicitly remove this setting."""
+
+        return self.settings_attr is None or self.resolved_default() is None
 
 
 @dataclass(frozen=True, slots=True)
@@ -138,7 +161,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "models",
         "model",
         settings_attr="model",
-        default="nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
         description="Fallback provider/model route for all Claude model names.",
     ),
     ConfigFieldSpec(
@@ -179,7 +201,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "reasoning",
         "select",
         settings_attr="reasoning_policy",
-        default="client",
         options=_reasoning_options(ROOT_REASONING_PREFERENCES),
         description=(
             "From client preserves CLI effort. Providers translate only the controls "
@@ -192,7 +213,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "reasoning",
         "select",
         settings_attr="reasoning_fable",
-        default="inherit",
         options=_reasoning_options(ROUTE_REASONING_PREFERENCES),
     ),
     ConfigFieldSpec(
@@ -201,7 +221,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "reasoning",
         "select",
         settings_attr="reasoning_opus",
-        default="inherit",
         options=_reasoning_options(ROUTE_REASONING_PREFERENCES),
     ),
     ConfigFieldSpec(
@@ -210,7 +229,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "reasoning",
         "select",
         settings_attr="reasoning_sonnet",
-        default="inherit",
         options=_reasoning_options(ROUTE_REASONING_PREFERENCES),
     ),
     ConfigFieldSpec(
@@ -219,19 +237,29 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "reasoning",
         "select",
         settings_attr="reasoning_haiku",
-        default="inherit",
         options=_reasoning_options(ROUTE_REASONING_PREFERENCES),
+    ),
+    ConfigFieldSpec(
+        "PROXY_AUTH_ENABLED",
+        "Require API Authentication",
+        "runtime",
+        "boolean",
+        settings_attr="proxy_auth_enabled",
+        restart_required=True,
+        description="Require the retained API/CLI token on FCC API routes.",
     ),
     ConfigFieldSpec(
         "ANTHROPIC_AUTH_TOKEN",
         "API/CLI Auth Token",
         "runtime",
         "secret",
-        settings_attr="anthropic_auth_token",
-        default="freecc",
+        settings_attr="proxy_auth_token",
         secret=True,
         restart_required=True,
-        description="Bearer token protecting Claude/API access. It is not admin-page login.",
+        description=(
+            "Retained non-empty token passed to every harness. Authentication can be "
+            "disabled without clearing it."
+        ),
     ),
     ConfigFieldSpec(
         "PROVIDER_RATE_LIMIT",
@@ -239,7 +267,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "number",
         settings_attr="provider_rate_limit",
-        default="1",
     ),
     ConfigFieldSpec(
         "PROVIDER_RATE_WINDOW",
@@ -247,7 +274,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "number",
         settings_attr="provider_rate_window",
-        default="3",
     ),
     ConfigFieldSpec(
         "PROVIDER_MAX_CONCURRENCY",
@@ -255,7 +281,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "number",
         settings_attr="provider_max_concurrency",
-        default="5",
     ),
     ConfigFieldSpec(
         "HTTP_READ_TIMEOUT",
@@ -263,7 +288,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "number",
         settings_attr="http_read_timeout",
-        default="300",
     ),
     ConfigFieldSpec(
         "HTTP_WRITE_TIMEOUT",
@@ -271,7 +295,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "number",
         settings_attr="http_write_timeout",
-        default="60",
     ),
     ConfigFieldSpec(
         "HTTP_CONNECT_TIMEOUT",
@@ -279,14 +302,12 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "number",
         settings_attr="http_connect_timeout",
-        default="60",
     ),
     ConfigFieldSpec(
         "HOST",
         "Server Host",
         "runtime",
         settings_attr="host",
-        default="0.0.0.0",
         restart_required=True,
     ),
     ConfigFieldSpec(
@@ -295,7 +316,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "number",
         settings_attr="port",
-        default="8082",
         restart_required=True,
     ),
     ConfigFieldSpec(
@@ -304,7 +324,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "boolean",
         settings_attr="open_admin_browser",
-        default="true",
         description="Open the Admin UI after the next fcc-server launch becomes healthy.",
     ),
     ConfigFieldSpec(
@@ -313,7 +332,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "messaging",
         "select",
         settings_attr="messaging_platform",
-        default="discord",
         options=("telegram", "discord", "none"),
         session_sensitive=True,
     ),
@@ -323,7 +341,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "messaging",
         "number",
         settings_attr="messaging_rate_limit",
-        default="1",
         session_sensitive=True,
     ),
     ConfigFieldSpec(
@@ -332,7 +349,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "messaging",
         "number",
         settings_attr="messaging_rate_window",
-        default="1",
         session_sensitive=True,
     ),
     ConfigFieldSpec(
@@ -399,7 +415,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "voice",
         "boolean",
         settings_attr="voice_note_enabled",
-        default="false",
         session_sensitive=True,
     ),
     ConfigFieldSpec(
@@ -408,7 +423,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "voice",
         "select",
         settings_attr="whisper_device",
-        default="nvidia_nim",
         options=("cpu", "cuda", "nvidia_nim"),
         session_sensitive=True,
     ),
@@ -417,7 +431,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "Whisper Model",
         "voice",
         settings_attr="whisper_model",
-        default="openai/whisper-large-v3",
         session_sensitive=True,
     ),
     ConfigFieldSpec(
@@ -426,7 +439,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "boolean",
         settings_attr="fast_prefix_detection",
-        default="true",
         advanced=True,
     ),
     ConfigFieldSpec(
@@ -435,7 +447,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "boolean",
         settings_attr="enable_network_probe_mock",
-        default="true",
         advanced=True,
     ),
     ConfigFieldSpec(
@@ -444,7 +455,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "boolean",
         settings_attr="enable_title_generation_skip",
-        default="true",
         advanced=True,
     ),
     ConfigFieldSpec(
@@ -453,7 +463,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "boolean",
         settings_attr="enable_suggestion_mode_skip",
-        default="true",
         advanced=True,
     ),
     ConfigFieldSpec(
@@ -462,7 +471,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "runtime",
         "boolean",
         settings_attr="enable_filepath_extraction_mock",
-        default="true",
         advanced=True,
     ),
     ConfigFieldSpec(
@@ -471,14 +479,12 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "web_tools",
         "boolean",
         settings_attr="enable_web_server_tools",
-        default="true",
     ),
     ConfigFieldSpec(
         "WEB_FETCH_ALLOWED_SCHEMES",
         "Allowed Web Fetch Schemes",
         "web_tools",
         settings_attr="web_fetch_allowed_schemes",
-        default="http,https",
     ),
     ConfigFieldSpec(
         "WEB_FETCH_ALLOW_PRIVATE_NETWORKS",
@@ -486,7 +492,16 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "web_tools",
         "boolean",
         settings_attr="web_fetch_allow_private_networks",
-        default="false",
+    ),
+    ConfigFieldSpec(
+        "LOG_LEVEL",
+        "Log Level",
+        "diagnostics",
+        "select",
+        settings_attr="log_level",
+        options=("DEBUG", "INFO", "WARNING", "ERROR", "CRITICAL"),
+        advanced=True,
+        restart_required=True,
     ),
     ConfigFieldSpec(
         "DEBUG_PLATFORM_EDITS",
@@ -494,7 +509,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "diagnostics",
         "boolean",
         settings_attr="debug_platform_edits",
-        default="false",
         advanced=True,
         restart_required=True,
     ),
@@ -504,7 +518,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "diagnostics",
         "boolean",
         settings_attr="debug_subagent_stack",
-        default="false",
         advanced=True,
         restart_required=True,
     ),
@@ -514,7 +527,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "diagnostics",
         "boolean",
         settings_attr="log_raw_api_payloads",
-        default="false",
         advanced=True,
         restart_required=True,
     ),
@@ -524,7 +536,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "diagnostics",
         "boolean",
         settings_attr="log_raw_sse_events",
-        default="false",
         advanced=True,
     ),
     ConfigFieldSpec(
@@ -533,7 +544,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "diagnostics",
         "boolean",
         settings_attr="log_api_error_tracebacks",
-        default="false",
         advanced=True,
         restart_required=True,
     ),
@@ -543,7 +553,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "diagnostics",
         "boolean",
         settings_attr="log_raw_messaging_content",
-        default="false",
         advanced=True,
         restart_required=True,
     ),
@@ -553,7 +562,6 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "diagnostics",
         "boolean",
         settings_attr="log_raw_cli_diagnostics",
-        default="false",
         advanced=True,
         restart_required=True,
     ),
@@ -563,175 +571,12 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "diagnostics",
         "boolean",
         settings_attr="log_messaging_error_details",
-        default="false",
         advanced=True,
         restart_required=True,
     ),
     ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_NVIDIA_NIM",
-        "Smoke NVIDIA NIM Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_OPEN_ROUTER",
-        "Smoke OpenRouter Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_MISTRAL",
-        "Smoke Mistral Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_MISTRAL_CODESTRAL",
-        "Smoke Mistral Codestral Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_DEEPSEEK",
-        "Smoke DeepSeek Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_LMSTUDIO",
-        "Smoke LM Studio Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_LLAMACPP",
-        "Smoke llama.cpp Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_OLLAMA",
-        "Smoke Ollama Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_OLLAMA_CLOUD",
-        "Smoke Ollama Cloud Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_KIMI",
-        "Smoke Kimi Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_MINIMAX",
-        "Smoke MiniMax Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_WAFER",
-        "Smoke Wafer Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_OPENCODE_ZEN",
-        "Smoke OpenCode Zen Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_OPENCODE_GO",
-        "Smoke OpenCode Go Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_VERCEL",
-        "Smoke Vercel AI Gateway Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_BEDROCK",
-        "Smoke Amazon Bedrock Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_HUGGINGFACE",
-        "Smoke Hugging Face Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_COHERE",
-        "Smoke Cohere Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_GITHUB_MODELS",
-        "Smoke GitHub Models Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_ZAI",
-        "Smoke Z.ai Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_NARAROUTE",
-        "Smoke NaraRoute Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_FIREWORKS",
-        "Smoke Fireworks Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_CLOUDFLARE",
-        "Smoke Cloudflare Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_GEMINI",
-        "Smoke Gemini Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_GROQ",
-        "Smoke Groq Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_SAMBANOVA",
-        "Smoke SambaNova Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_CEREBRAS",
-        "Smoke Cerebras Model",
-        "smoke",
-        advanced=True,
-    ),
-    ConfigFieldSpec(
-        "FCC_SMOKE_MODEL_TOKENROUTER",
-        "Smoke TokenRouter Model",
+        "FCC_SMOKE_MODEL_MISTRAL_REASONING",
+        "Smoke Mistral Reasoning Model",
         "smoke",
         advanced=True,
     ),
@@ -762,9 +607,22 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
 )
 
 
+def _catalog_smoke_fields() -> tuple[ConfigFieldSpec, ...]:
+    return tuple(
+        ConfigFieldSpec(
+            key=f"FCC_SMOKE_MODEL_{provider_id.upper()}",
+            label=f"Smoke {descriptor.display_name} Model",
+            section_id="smoke",
+            advanced=True,
+        )
+        for provider_id, descriptor in PROVIDER_CATALOG.items()
+    )
+
+
 FIELDS: tuple[ConfigFieldSpec, ...] = (
     *(ConfigFieldSpec(**spec) for spec in provider_field_specs()),
     *_NON_PROVIDER_FIELDS,
+    *_catalog_smoke_fields(),
 )
 FIELD_BY_KEY = {field.key: field for field in FIELDS}
 

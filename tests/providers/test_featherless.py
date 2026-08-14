@@ -13,13 +13,13 @@ from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKEN
 from free_claude_code.config.provider_catalog import FEATHERLESS_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.reasoning import ReasoningPolicy
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
     immediate_admission,
+    make_provider_config,
     profiled_provider,
     reasoning_for,
 )
@@ -31,7 +31,7 @@ _MODEL = "Qwen/Qwen3-32B"
 def featherless_provider() -> OpenAIChatProvider:
     return profiled_provider(
         "featherless",
-        ProviderConfig(
+        make_provider_config(
             api_key="test-featherless-key",
             base_url=FEATHERLESS_DEFAULT_BASE,
             rate_limit=10,

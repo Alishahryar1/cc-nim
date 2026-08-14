@@ -7,8 +7,9 @@ import pytest
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
-from free_claude_code.providers.base import BaseProvider, ProviderConfig
+from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
+from tests.providers.support import make_provider_config
 
 
 class RecordingOpenAIProvider(OpenAIChatProvider):
@@ -48,7 +49,7 @@ class ProviderWithoutPreflight(BaseProvider):
 def test_provider_base_requires_an_explicit_preflight_implementation() -> None:
     with pytest.raises(TypeError, match="preflight_stream"):
         ProviderWithoutPreflight(
-            ProviderConfig(api_key="test", base_url="https://test.invalid")
+            make_provider_config(api_key="test", base_url="https://test.invalid")
         )
 
 

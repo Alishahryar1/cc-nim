@@ -54,7 +54,7 @@ def _cloudflare_account_api_url(api_root: str | None, account_id: str) -> str:
     stripped_account = account_id.strip()
     if not stripped_account:
         raise ApplicationUnavailableError(
-            "CLOUDFLARE_ACCOUNT_ID is not set. Add it to your .env file."
+            "CLOUDFLARE_ACCOUNT_ID is not set. Add it in the Admin UI."
         )
     root = (api_root or CLOUDFLARE_AI_REST_ROOT).rstrip("/")
     encoded_account = quote(stripped_account, safe="")
@@ -76,7 +76,7 @@ class CloudflareProvider(OpenAIChatProvider):
             config.base_url, account_id
         )
         self._model_list_client = httpx.AsyncClient(
-            proxy=config.proxy or None,
+            proxy=config.proxy,
             timeout=httpx.Timeout(
                 config.http_read_timeout,
                 connect=config.http_connect_timeout,
@@ -134,6 +134,8 @@ class CloudflareProvider(OpenAIChatProvider):
         yield ledger.emit_thinking_delta(reasoning)
 
     def _model_list_headers(self) -> dict[str, str]:
+        if self._api_key is None:
+            raise AssertionError("Cloudflare requires a static API token")
         return {"Authorization": f"Bearer {self._api_key}"}
 
 

@@ -5,10 +5,12 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from free_claude_code.config.provider_catalog import GROQ_DEFAULT_BASE
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.groq import GroqProvider
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import immediate_admission
+from tests.providers.support import (
+    immediate_admission,
+    make_provider_config,
+)
 
 
 def make_request(**overrides):
@@ -17,7 +19,7 @@ def make_request(**overrides):
 
 @pytest.fixture
 def groq_config():
-    return ProviderConfig(
+    return make_provider_config(
         api_key="test_groq_key",
         base_url=GROQ_DEFAULT_BASE,
         rate_limit=10,
@@ -107,7 +109,7 @@ def test_build_request_body_replays_reasoning_as_tagged_content(groq_provider):
 
 def test_build_request_body_global_disable_blocks_reasoning_mapping():
     provider = GroqProvider(
-        ProviderConfig(
+        make_provider_config(
             api_key="test_groq_key",
             base_url=GROQ_DEFAULT_BASE,
             rate_limit=10,

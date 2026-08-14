@@ -40,7 +40,7 @@ class GitHubModelsProvider(OpenAIChatProvider):
     ):
         self._catalog_url = GITHUB_MODELS_CATALOG_URL
         self._model_list_client = httpx.AsyncClient(
-            proxy=config.proxy or None,
+            proxy=config.proxy,
             timeout=httpx.Timeout(
                 config.http_read_timeout,
                 connect=config.http_connect_timeout,
@@ -90,6 +90,8 @@ class GitHubModelsProvider(OpenAIChatProvider):
             await maybe_await_aclose(response)
 
     def _model_list_headers(self) -> dict[str, str]:
+        if self._api_key is None:
+            raise AssertionError("GitHub Models requires a static API key")
         return _github_models_api_headers(self._api_key)
 
 

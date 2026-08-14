@@ -95,7 +95,7 @@ def _create_cloudflare(
 
     return CloudflareProvider(
         config,
-        account_id=settings.cloudflare_account_id,
+        account_id=_required_setting(settings, "cloudflare_account_id"),
         admission=admission,
     )
 
@@ -119,7 +119,7 @@ def _create_vertex(
 
     return VertexProvider(
         config,
-        project_id=settings.vertex_project_id,
+        project_id=_required_setting(settings, "vertex_project_id"),
         location=settings.vertex_location,
         admission=admission,
     )
@@ -160,6 +160,14 @@ _SPECIAL_PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
 }
 _INJECTED_PROVIDER_IDS = {"openai"}
 
+
+def _required_setting(settings: Settings, attr_name: str) -> str:
+    value = getattr(settings, attr_name, None)
+    if not isinstance(value, str) or not value:
+        raise AssertionError(f"Provider config did not validate {attr_name!r}")
+    return value
+
+
 _profiled_ids = set(OPENAI_CHAT_PROFILES)
 _special_ids = set(_SPECIAL_PROVIDER_FACTORIES)
 _construction_ids = _profiled_ids | _special_ids | _INJECTED_PROVIDER_IDS
@@ -190,8 +198,8 @@ def create_provider(
     config = build_provider_config(descriptor, settings)
     admission = ProviderAdmissionController(
         provider_name=provider_id,
-        rate_limit=config.rate_limit or 40,
-        rate_window=config.rate_window or 60.0,
+        rate_limit=config.rate_limit,
+        rate_window=config.rate_window,
         max_concurrency=config.max_concurrency,
     )
     factory = (injected_factories or {}).get(provider_id)

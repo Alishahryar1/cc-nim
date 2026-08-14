@@ -17,7 +17,6 @@ from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_catalog import VERTEX_AI_API_ROOT
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.vertex import VertexProvider
 from free_claude_code.providers.vertex.auth import GoogleAccessTokenProvider
@@ -28,7 +27,11 @@ from free_claude_code.providers.vertex.endpoint import (
 )
 from free_claude_code.providers.vertex.models import extract_vertex_model_page
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import immediate_admission, reasoning_for
+from tests.providers.support import (
+    immediate_admission,
+    make_provider_config,
+    reasoning_for,
+)
 
 _PROJECT_ID = "my-project"
 _GLOBAL_OPENAI_BASE = (
@@ -87,7 +90,7 @@ def _provider(
     token_provider: GoogleAccessTokenProvider | None = None,
 ) -> VertexProvider:
     return VertexProvider(
-        ProviderConfig(api_key="", base_url=VERTEX_AI_API_ROOT),
+        make_provider_config(api_key="", base_url=VERTEX_AI_API_ROOT),
         project_id=_PROJECT_ID,
         location=location,
         admission=immediate_admission(),

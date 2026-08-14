@@ -3,10 +3,10 @@
 import pytest
 
 from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.providers.base import ProviderConfig
 from tests.providers.support import (
     capture_openai_chat_wire_body,
     immediate_admission,
+    make_provider_config,
     profiled_provider,
     reasoning_for,
 )
@@ -18,7 +18,7 @@ def test_build_request_body_replays_tool_reasoning_natively(
 ) -> None:
     provider = profiled_provider(
         provider_id,
-        ProviderConfig(
+        make_provider_config(
             api_key="test_opencode_key",
             base_url="https://example.invalid/v1",
             rate_limit=1,
@@ -82,7 +82,7 @@ async def test_tool_only_history_sends_empty_reasoning_content_on_wire(
 ) -> None:
     provider = profiled_provider(
         provider_id,
-        ProviderConfig(
+        make_provider_config(
             api_key="test_opencode_key",
             base_url="https://example.invalid/v1",
             rate_limit=1,

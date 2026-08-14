@@ -7,10 +7,10 @@ import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.provider_catalog import COHERE_DEFAULT_BASE
-from free_claude_code.providers.base import ProviderConfig
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     immediate_admission,
+    make_provider_config,
     profiled_provider,
     reasoning_for,
 )
@@ -22,7 +22,7 @@ def make_request(**overrides):
 
 @pytest.fixture
 def cohere_config():
-    return ProviderConfig(
+    return make_provider_config(
         api_key="test_cohere_key",
         base_url=COHERE_DEFAULT_BASE,
         rate_limit=10,
@@ -143,7 +143,7 @@ def test_build_request_body_preserves_replayed_reasoning_content(cohere_provider
 def test_build_request_body_maps_reasoning_off_to_none():
     provider = profiled_provider(
         "cohere",
-        ProviderConfig(
+        make_provider_config(
             api_key="test_cohere_key",
             base_url=COHERE_DEFAULT_BASE,
             rate_limit=10,

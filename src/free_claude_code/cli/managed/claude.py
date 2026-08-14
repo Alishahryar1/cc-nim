@@ -40,9 +40,9 @@ class ManagedClaudeConfig:
 
     workspace_path: str
     proxy_root_url: str
+    auth_token: str
     allowed_dirs: list[str] = field(default_factory=list)
     claude_bin: str = CLAUDE_BINARY_NAME
-    auth_token: str = ""
 
 
 @dataclass(slots=True)

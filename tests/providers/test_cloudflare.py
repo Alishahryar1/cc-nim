@@ -17,7 +17,11 @@ from free_claude_code.providers.cloudflare import (
     CloudflareProvider,
     cloudflare_ai_base_url,
 )
-from tests.providers.support import immediate_admission, reasoning_for
+from tests.providers.support import (
+    immediate_admission,
+    make_provider_config,
+    reasoning_for,
+)
 
 _ACCOUNT_ID = "account-123"
 _BASE_URL = f"{CLOUDFLARE_AI_REST_ROOT}/accounts/{_ACCOUNT_ID}/ai/v1"
@@ -26,7 +30,7 @@ _MODEL_SEARCH_URL = f"{CLOUDFLARE_AI_REST_ROOT}/accounts/{_ACCOUNT_ID}/ai/models
 
 @pytest.fixture
 def cloudflare_config() -> ProviderConfig:
-    return ProviderConfig(
+    return make_provider_config(
         api_key="test-cloudflare-token",
         base_url=CLOUDFLARE_AI_REST_ROOT,
         rate_limit=10,

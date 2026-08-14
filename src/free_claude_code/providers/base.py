@@ -7,7 +7,6 @@ from dataclasses import dataclass
 from loguru import logger
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
-from free_claude_code.config.constants import HTTP_CONNECT_TIMEOUT_DEFAULT
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.diagnostics import (
     exception_cause_types,
@@ -25,17 +24,17 @@ class ProviderConfig:
     (e.g. NIM temperature, top_p) are passed by the provider constructor.
     """
 
-    api_key: str
+    api_key: str | None
     base_url: str
-    rate_limit: int | None = None
-    rate_window: int = 60
-    max_concurrency: int = 5
-    http_read_timeout: float = 300.0
-    http_write_timeout: float = 10.0
-    http_connect_timeout: float = HTTP_CONNECT_TIMEOUT_DEFAULT
-    proxy: str = ""
-    log_raw_sse_events: bool = False
-    log_api_error_tracebacks: bool = False
+    rate_limit: int
+    rate_window: int
+    max_concurrency: int
+    http_read_timeout: float
+    http_write_timeout: float
+    http_connect_timeout: float
+    proxy: str | None
+    log_raw_sse_events: bool
+    log_api_error_tracebacks: bool
 
 
 class BaseProvider(ABC):

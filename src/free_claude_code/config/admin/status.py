@@ -29,7 +29,7 @@ def provider_config_status(
             )
             continue
         if descriptor.local:
-            base_url = ""
+            base_url: str | None = None
             if descriptor.base_url_attr is not None:
                 base_url = _value_for_settings_attr(state, descriptor.base_url_attr)
             statuses.append(
@@ -37,8 +37,8 @@ def provider_config_status(
                     "provider_id": provider_id,
                     "display_name": descriptor.display_name,
                     "kind": "local",
-                    "status": "missing_url" if not base_url.strip() else "unknown",
-                    "label": "Missing URL" if not base_url.strip() else "Not checked",
+                    "status": "missing_url" if not base_url else "unknown",
+                    "label": "Missing URL" if not base_url else "Not checked",
                     "base_url": base_url or descriptor.default_base_url or "",
                 }
             )
@@ -48,7 +48,7 @@ def provider_config_status(
         missing_attrs = tuple(
             attr
             for attr in configuration_attrs
-            if not _value_for_settings_attr(state, attr).strip()
+            if not _value_for_settings_attr(state, attr)
         )
         configured = not missing_attrs
         configuration = " + ".join(
@@ -82,11 +82,12 @@ def provider_config_status(
 
 def _value_for_settings_attr(
     state: Mapping[str, Mapping[str, Any]], settings_attr: str
-) -> str:
+) -> str | None:
     for field in FIELDS:
         if field.settings_attr == settings_attr:
-            return str(state.get(field.key, {}).get("value", field.default))
-    return ""
+            value = state.get(field.key, {}).get("value", field.resolved_default())
+            return str(value) if value is not None else None
+    return None
 
 
 def _field_key_for_settings_attr(settings_attr: str) -> str:

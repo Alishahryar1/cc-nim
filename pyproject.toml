@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "free-claude-code"
-version = "4.30.2"
+version = "5.0.0"
 description = "Local proxy connecting coding agents to OpenAI-compatible AI providers"
 readme = "README.md"
 requires-python = ">=3.14.0"
@@ -18,7 +18,6 @@ dependencies = [
     "tiktoken>=0.13.0",
     "python-telegram-bot>=22.8",
     "discord.py>=2.7.1",
-    "pydantic-settings>=2.14.2",
     "openai>=2.53.0",
     "loguru>=0.7.0",
     "aiohttp>=3.14.3",
@@ -53,9 +52,6 @@ voice_local = [
 
 [tool.hatch.build.targets.wheel]
 packages = ["src/free_claude_code"]
-
-[tool.hatch.build.targets.wheel.force-include]
-".env.example" = "free_claude_code/config/env.example"
 
 [tool.uv]
 required-version = ">=0.11.16"

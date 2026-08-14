@@ -1,17 +1,18 @@
-"""Flat application settings schema loaded by Pydantic Settings."""
+"""Pure, validated application settings schema."""
 
-from functools import lru_cache
-from typing import Any
+from typing import Annotated, Any
 
-from pydantic import Field, field_validator, model_validator
-from pydantic_settings import BaseSettings, SettingsConfigDict
+from pydantic import (
+    BaseModel,
+    BeforeValidator,
+    ConfigDict,
+    Field,
+    StringConstraints,
+    field_validator,
+    model_validator,
+)
 
 from .constants import HTTP_CONNECT_TIMEOUT_DEFAULT
-from .env_files import (
-    ANTHROPIC_AUTH_TOKEN_ENV,
-    env_file_override,
-    settings_env_files,
-)
 from .nim import NimSettings
 from .provider_catalog import (
     BEDROCK_DEFAULT_BASE,
@@ -22,154 +23,246 @@ from .provider_catalog import (
 from .reasoning import ReasoningPreference
 
 
-class Settings(BaseSettings):
-    """Application settings loaded from environment variables."""
+def _empty_to_none(value: Any) -> Any:
+    if isinstance(value, str) and not value.strip():
+        return None
+    return value
+
+
+NonEmptyString = Annotated[
+    str,
+    StringConstraints(strip_whitespace=True, min_length=1),
+]
+OptionalNonEmptyString = Annotated[
+    NonEmptyString | None,
+    BeforeValidator(_empty_to_none),
+]
+
+
+class Settings(BaseModel):
+    """Validated application settings with no file or process I/O."""
+
+    model_config = ConfigDict(
+        validate_default=True,
+        populate_by_name=True,
+        extra="ignore",
+    )
 
     # ==================== Azure OpenAI ====================
-    azure_openai_api_key: str = Field(
-        default="", validation_alias="AZURE_OPENAI_API_KEY"
+    azure_openai_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="AZURE_OPENAI_API_KEY"
     )
-    azure_openai_base_url: str = Field(
-        default="", validation_alias="AZURE_OPENAI_BASE_URL"
+    azure_openai_base_url: OptionalNonEmptyString = Field(
+        default=None, validation_alias="AZURE_OPENAI_BASE_URL"
     )
 
     # ==================== OpenRouter Config ====================
-    open_router_api_key: str = Field(default="", validation_alias="OPENROUTER_API_KEY")
+    open_router_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="OPENROUTER_API_KEY"
+    )
 
     # ==================== Mistral La Plateforme ====================
-    mistral_api_key: str = Field(default="", validation_alias="MISTRAL_API_KEY")
+    mistral_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="MISTRAL_API_KEY"
+    )
 
     # ==================== Mistral Codestral (codestral.mistral.ai) ====================
-    codestral_api_key: str = Field(default="", validation_alias="CODESTRAL_API_KEY")
+    codestral_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="CODESTRAL_API_KEY"
+    )
 
     # ==================== DeepSeek Config ====================
-    deepseek_api_key: str = Field(default="", validation_alias="DEEPSEEK_API_KEY")
+    deepseek_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="DEEPSEEK_API_KEY"
+    )
 
     # ==================== Kimi Config ====================
-    kimi_api_key: str = Field(default="", validation_alias="KIMI_API_KEY")
+    kimi_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="KIMI_API_KEY"
+    )
 
     # ==================== Kimi Code Subscription ====================
-    kimi_code_api_key: str = Field(default="", validation_alias="KIMI_CODE_API_KEY")
+    kimi_code_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="KIMI_CODE_API_KEY"
+    )
 
     # ==================== Wafer Config ====================
-    wafer_api_key: str = Field(default="", validation_alias="WAFER_API_KEY")
+    wafer_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="WAFER_API_KEY"
+    )
 
     # ==================== MiniMax Config ====================
-    minimax_api_key: str = Field(default="", validation_alias="MINIMAX_API_KEY")
+    minimax_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="MINIMAX_API_KEY"
+    )
 
     # ==================== OpenCode Zen / OpenCode Go ====================
     # Same key from opencode.ai/auth; Zen uses ``opencode_zen/``, Go uses ``opencode_go/``.
-    opencode_api_key: str = Field(default="", validation_alias="OPENCODE_API_KEY")
+    opencode_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="OPENCODE_API_KEY"
+    )
 
     # ==================== Vercel AI Gateway ====================
-    vercel_ai_gateway_api_key: str = Field(
-        default="", validation_alias="AI_GATEWAY_API_KEY"
+    vercel_ai_gateway_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="AI_GATEWAY_API_KEY"
     )
 
     # ==================== Amazon Bedrock Mantle ====================
-    bedrock_api_key: str = Field(
-        default="", validation_alias="AWS_BEARER_TOKEN_BEDROCK"
+    bedrock_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="AWS_BEARER_TOKEN_BEDROCK"
     )
-    bedrock_base_url: str = Field(
+    bedrock_base_url: NonEmptyString = Field(
         default=BEDROCK_DEFAULT_BASE,
         validation_alias="BEDROCK_BASE_URL",
     )
 
     # ==================== Hugging Face Inference Providers ====================
-    huggingface_api_key: str = Field(default="", validation_alias="HUGGINGFACE_API_KEY")
+    huggingface_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="HUGGINGFACE_API_KEY"
+    )
 
     # ==================== Cohere Compatibility API ====================
-    cohere_api_key: str = Field(default="", validation_alias="COHERE_API_KEY")
+    cohere_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="COHERE_API_KEY"
+    )
 
     # ==================== GitHub Models ====================
-    github_models_token: str = Field(default="", validation_alias="GITHUB_MODELS_TOKEN")
+    github_models_token: OptionalNonEmptyString = Field(
+        default=None, validation_alias="GITHUB_MODELS_TOKEN"
+    )
 
     # ==================== SambaNova Cloud ====================
-    sambanova_api_key: str = Field(default="", validation_alias="SAMBANOVA_API_KEY")
+    sambanova_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="SAMBANOVA_API_KEY"
+    )
 
     # ==================== Kilo.ai Config ====================
-    kilo_api_key: str = Field(default="", validation_alias="KILO_API_KEY")
+    kilo_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="KILO_API_KEY"
+    )
 
     # ==================== Z.ai Config ====================
-    zai_api_key: str = Field(default="", validation_alias="ZAI_API_KEY")
+    zai_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="ZAI_API_KEY"
+    )
 
     # ==================== TokenRouter Config ====================
-    tokenrouter_api_key: str = Field(default="", validation_alias="TOKENROUTER_API_KEY")
-    tokenrouter_base_url: str = Field(
+    tokenrouter_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="TOKENROUTER_API_KEY"
+    )
+    tokenrouter_base_url: NonEmptyString = Field(
         default=TOKENROUTER_DEFAULT_BASE,
         validation_alias="TOKENROUTER_BASE_URL",
     )
 
     # ==================== NaraRoute Config ====================
-    nararoute_api_key: str = Field(default="", validation_alias="NARAROUTE_API_KEY")
-    nararoute_base_url: str = Field(
+    nararoute_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="NARAROUTE_API_KEY"
+    )
+    nararoute_base_url: NonEmptyString = Field(
         default=NARAROUTE_DEFAULT_BASE,
         validation_alias="NARAROUTE_BASE_URL",
     )
 
     # ==================== Fireworks AI Config ====================
-    fireworks_api_key: str = Field(default="", validation_alias="FIREWORKS_API_KEY")
+    fireworks_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="FIREWORKS_API_KEY"
+    )
 
     # ==================== Novita AI Config ====================
-    novita_api_key: str = Field(default="", validation_alias="NOVITA_API_KEY")
+    novita_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="NOVITA_API_KEY"
+    )
 
     # ==================== Cloudflare Workers AI Config ====================
-    cloudflare_api_token: str = Field(
-        default="", validation_alias="CLOUDFLARE_API_TOKEN"
+    cloudflare_api_token: OptionalNonEmptyString = Field(
+        default=None, validation_alias="CLOUDFLARE_API_TOKEN"
     )
-    cloudflare_account_id: str = Field(
-        default="", validation_alias="CLOUDFLARE_ACCOUNT_ID"
+    cloudflare_account_id: OptionalNonEmptyString = Field(
+        default=None, validation_alias="CLOUDFLARE_ACCOUNT_ID"
     )
 
     # ==================== Google Gemini (Google AI Studio) ====================
-    gemini_api_key: str = Field(default="", validation_alias="GEMINI_API_KEY")
+    gemini_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="GEMINI_API_KEY"
+    )
 
     # ==================== Google Vertex AI ====================
-    vertex_project_id: str = Field(default="", validation_alias="VERTEX_PROJECT_ID")
-    vertex_location: str = Field(default="global", validation_alias="VERTEX_LOCATION")
+    vertex_project_id: OptionalNonEmptyString = Field(
+        default=None, validation_alias="VERTEX_PROJECT_ID"
+    )
+    vertex_location: NonEmptyString = Field(
+        default="global", validation_alias="VERTEX_LOCATION"
+    )
 
     # ==================== Groq (OpenAI-compatible) ====================
-    groq_api_key: str = Field(default="", validation_alias="GROQ_API_KEY")
+    groq_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="GROQ_API_KEY"
+    )
 
     # ==================== xAI / Grok (OpenAI-compatible) ====================
-    xai_api_key: str = Field(default="", validation_alias="XAI_API_KEY")
+    xai_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="XAI_API_KEY"
+    )
 
     # ==================== QwenCloud Token Plan (OpenAI-compatible) ====================
-    qwencloud_api_key: str = Field(default="", validation_alias="QWENCLOUD_API_KEY")
+    qwencloud_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="QWENCLOUD_API_KEY"
+    )
 
     # ==================== Together AI (OpenAI-compatible) ====================
-    together_api_key: str = Field(default="", validation_alias="TOGETHER_API_KEY")
+    together_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="TOGETHER_API_KEY"
+    )
 
     # ==================== DeepInfra (OpenAI-compatible) ====================
-    deepinfra_api_key: str = Field(default="", validation_alias="DEEPINFRA_API_KEY")
+    deepinfra_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="DEEPINFRA_API_KEY"
+    )
 
     # ==================== SiliconFlow (OpenAI-compatible) ====================
-    siliconflow_api_key: str = Field(default="", validation_alias="SILICONFLOW_API_KEY")
+    siliconflow_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="SILICONFLOW_API_KEY"
+    )
 
     # ==================== Nebius Token Factory (OpenAI-compatible) ====================
-    nebius_api_key: str = Field(default="", validation_alias="NEBIUS_API_KEY")
+    nebius_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="NEBIUS_API_KEY"
+    )
 
     # ==================== Chutes (OpenAI-compatible) ====================
-    chutes_api_key: str = Field(default="", validation_alias="CHUTES_API_KEY")
+    chutes_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="CHUTES_API_KEY"
+    )
 
     # ==================== Featherless AI (OpenAI-compatible) ====================
-    featherless_api_key: str = Field(default="", validation_alias="FEATHERLESS_API_KEY")
+    featherless_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="FEATHERLESS_API_KEY"
+    )
 
     # ==================== Agnes AI (OpenAI-compatible) ====================
-    agnes_api_key: str = Field(default="", validation_alias="AGNES_API_KEY")
+    agnes_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="AGNES_API_KEY"
+    )
 
     # ==================== ZenMux (OpenAI-compatible) ====================
-    zenmux_api_key: str = Field(default="", validation_alias="ZENMUX_API_KEY")
+    zenmux_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="ZENMUX_API_KEY"
+    )
 
     # ==================== Cerebras Inference (OpenAI-compatible) ====================
-    cerebras_api_key: str = Field(default="", validation_alias="CEREBRAS_API_KEY")
+    cerebras_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="CEREBRAS_API_KEY"
+    )
 
     # ==================== Ollama Cloud ====================
-    ollama_api_key: str = Field(default="", validation_alias="OLLAMA_API_KEY")
+    ollama_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="OLLAMA_API_KEY"
+    )
 
     # ==================== Messaging Platform Selection ====================
     # Valid: "telegram" | "discord" | "none"
-    messaging_platform: str = Field(
+    messaging_platform: NonEmptyString = Field(
         default="discord", validation_alias="MESSAGING_PLATFORM"
     )
     messaging_rate_limit: int = Field(
@@ -180,22 +273,25 @@ class Settings(BaseSettings):
     )
 
     # ==================== NVIDIA NIM Config ====================
-    nvidia_nim_api_key: str = ""
+    nvidia_nim_api_key: OptionalNonEmptyString = Field(
+        default=None,
+        validation_alias="NVIDIA_NIM_API_KEY",
+    )
 
     # ==================== LM Studio Config ====================
-    lm_studio_base_url: str = Field(
+    lm_studio_base_url: NonEmptyString = Field(
         default="http://localhost:1234/v1",
         validation_alias="LM_STUDIO_BASE_URL",
     )
 
     # ==================== Llama.cpp Config ====================
-    llamacpp_base_url: str = Field(
+    llamacpp_base_url: NonEmptyString = Field(
         default="http://localhost:8080/v1",
         validation_alias="LLAMACPP_BASE_URL",
     )
 
     # ==================== Ollama Config ====================
-    ollama_base_url: str = Field(
+    ollama_base_url: NonEmptyString = Field(
         default="http://localhost:11434",
         validation_alias="OLLAMA_BASE_URL",
     )
@@ -203,68 +299,161 @@ class Settings(BaseSettings):
     # ==================== Model ====================
     # All Claude model requests are mapped to this single model (fallback)
     # Format: provider_type/model/name
-    model: str = "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
+    model: NonEmptyString = Field(
+        default="nvidia_nim/nvidia/nemotron-3-super-120b-a12b",
+        validation_alias="MODEL",
+    )
 
     # Per-model overrides (optional, falls back to MODEL)
     # Each can use a different provider
-    model_fable: str | None = Field(default=None, validation_alias="MODEL_FABLE")
-    model_opus: str | None = Field(default=None, validation_alias="MODEL_OPUS")
-    model_sonnet: str | None = Field(default=None, validation_alias="MODEL_SONNET")
-    model_haiku: str | None = Field(default=None, validation_alias="MODEL_HAIKU")
+    model_fable: OptionalNonEmptyString = Field(
+        default=None, validation_alias="MODEL_FABLE"
+    )
+    model_opus: OptionalNonEmptyString = Field(
+        default=None, validation_alias="MODEL_OPUS"
+    )
+    model_sonnet: OptionalNonEmptyString = Field(
+        default=None, validation_alias="MODEL_SONNET"
+    )
+    model_haiku: OptionalNonEmptyString = Field(
+        default=None, validation_alias="MODEL_HAIKU"
+    )
 
     # ==================== Per-Provider Proxy ====================
-    openai_proxy: str = Field(default="", validation_alias="OPENAI_PROXY")
-    xai_proxy: str = Field(default="", validation_alias="XAI_PROXY")
-    qwencloud_proxy: str = Field(default="", validation_alias="QWENCLOUD_PROXY")
-    together_proxy: str = Field(default="", validation_alias="TOGETHER_PROXY")
-    deepinfra_proxy: str = Field(default="", validation_alias="DEEPINFRA_PROXY")
-    siliconflow_proxy: str = Field(default="", validation_alias="SILICONFLOW_PROXY")
-    nebius_proxy: str = Field(default="", validation_alias="NEBIUS_PROXY")
-    chutes_proxy: str = Field(default="", validation_alias="CHUTES_PROXY")
-    featherless_proxy: str = Field(default="", validation_alias="FEATHERLESS_PROXY")
-    agnes_proxy: str = Field(default="", validation_alias="AGNES_PROXY")
-    zenmux_proxy: str = Field(default="", validation_alias="ZENMUX_PROXY")
-    azure_openai_proxy: str = Field(default="", validation_alias="AZURE_OPENAI_PROXY")
-    nvidia_nim_proxy: str = Field(default="", validation_alias="NVIDIA_NIM_PROXY")
-    open_router_proxy: str = Field(default="", validation_alias="OPENROUTER_PROXY")
-    mistral_proxy: str = Field(default="", validation_alias="MISTRAL_PROXY")
-    codestral_proxy: str = Field(default="", validation_alias="CODESTRAL_PROXY")
-    lmstudio_proxy: str = Field(default="", validation_alias="LMSTUDIO_PROXY")
-    llamacpp_proxy: str = Field(default="", validation_alias="LLAMACPP_PROXY")
-    kimi_proxy: str = Field(default="", validation_alias="KIMI_PROXY")
-    kimi_code_proxy: str = Field(default="", validation_alias="KIMI_CODE_PROXY")
-    wafer_proxy: str = Field(default="", validation_alias="WAFER_PROXY")
-    minimax_proxy: str = Field(default="", validation_alias="MINIMAX_PROXY")
-    opencode_zen_proxy: str = Field(default="", validation_alias="OPENCODE_ZEN_PROXY")
-    opencode_go_proxy: str = Field(default="", validation_alias="OPENCODE_GO_PROXY")
-    vercel_ai_gateway_proxy: str = Field(
-        default="", validation_alias="VERCEL_AI_GATEWAY_PROXY"
+    openai_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="OPENAI_PROXY"
     )
-    bedrock_proxy: str = Field(default="", validation_alias="BEDROCK_PROXY")
-    huggingface_proxy: str = Field(default="", validation_alias="HUGGINGFACE_PROXY")
-    cohere_proxy: str = Field(default="", validation_alias="COHERE_PROXY")
-    github_models_proxy: str = Field(default="", validation_alias="GITHUB_MODELS_PROXY")
-    sambanova_proxy: str = Field(default="", validation_alias="SAMBANOVA_PROXY")
-    kilo_proxy: str = Field(default="", validation_alias="KILO_PROXY")
-    zai_proxy: str = Field(default="", validation_alias="ZAI_PROXY")
-    tokenrouter_proxy: str = Field(default="", validation_alias="TOKENROUTER_PROXY")
-    nararoute_proxy: str = Field(default="", validation_alias="NARAROUTE_PROXY")
-    fireworks_proxy: str = Field(default="", validation_alias="FIREWORKS_PROXY")
-    novita_proxy: str = Field(default="", validation_alias="NOVITA_PROXY")
-    cloudflare_proxy: str = Field(default="", validation_alias="CLOUDFLARE_PROXY")
-    gemini_proxy: str = Field(default="", validation_alias="GEMINI_PROXY")
-    vertex_proxy: str = Field(default="", validation_alias="VERTEX_PROXY")
-    groq_proxy: str = Field(default="", validation_alias="GROQ_PROXY")
-    cerebras_proxy: str = Field(default="", validation_alias="CEREBRAS_PROXY")
-    ollama_cloud_proxy: str = Field(default="", validation_alias="OLLAMA_CLOUD_PROXY")
+    xai_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="XAI_PROXY"
+    )
+    qwencloud_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="QWENCLOUD_PROXY"
+    )
+    together_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="TOGETHER_PROXY"
+    )
+    deepinfra_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="DEEPINFRA_PROXY"
+    )
+    siliconflow_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="SILICONFLOW_PROXY"
+    )
+    nebius_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="NEBIUS_PROXY"
+    )
+    chutes_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="CHUTES_PROXY"
+    )
+    featherless_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="FEATHERLESS_PROXY"
+    )
+    agnes_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="AGNES_PROXY"
+    )
+    zenmux_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="ZENMUX_PROXY"
+    )
+    azure_openai_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="AZURE_OPENAI_PROXY"
+    )
+    nvidia_nim_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="NVIDIA_NIM_PROXY"
+    )
+    open_router_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="OPENROUTER_PROXY"
+    )
+    mistral_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="MISTRAL_PROXY"
+    )
+    codestral_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="CODESTRAL_PROXY"
+    )
+    lmstudio_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="LMSTUDIO_PROXY"
+    )
+    llamacpp_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="LLAMACPP_PROXY"
+    )
+    kimi_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="KIMI_PROXY"
+    )
+    kimi_code_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="KIMI_CODE_PROXY"
+    )
+    wafer_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="WAFER_PROXY"
+    )
+    minimax_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="MINIMAX_PROXY"
+    )
+    opencode_zen_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="OPENCODE_ZEN_PROXY"
+    )
+    opencode_go_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="OPENCODE_GO_PROXY"
+    )
+    vercel_ai_gateway_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="VERCEL_AI_GATEWAY_PROXY"
+    )
+    bedrock_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="BEDROCK_PROXY"
+    )
+    huggingface_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="HUGGINGFACE_PROXY"
+    )
+    cohere_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="COHERE_PROXY"
+    )
+    github_models_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="GITHUB_MODELS_PROXY"
+    )
+    sambanova_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="SAMBANOVA_PROXY"
+    )
+    kilo_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="KILO_PROXY"
+    )
+    zai_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="ZAI_PROXY"
+    )
+    tokenrouter_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="TOKENROUTER_PROXY"
+    )
+    nararoute_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="NARAROUTE_PROXY"
+    )
+    fireworks_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="FIREWORKS_PROXY"
+    )
+    novita_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="NOVITA_PROXY"
+    )
+    cloudflare_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="CLOUDFLARE_PROXY"
+    )
+    gemini_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="GEMINI_PROXY"
+    )
+    vertex_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="VERTEX_PROXY"
+    )
+    groq_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="GROQ_PROXY"
+    )
+    cerebras_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="CEREBRAS_PROXY"
+    )
+    ollama_cloud_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="OLLAMA_CLOUD_PROXY"
+    )
 
     # ==================== Provider Rate Limiting ====================
-    provider_rate_limit: int = Field(default=40, validation_alias="PROVIDER_RATE_LIMIT")
+    provider_rate_limit: int = Field(default=1, validation_alias="PROVIDER_RATE_LIMIT")
     provider_rate_window: int = Field(
-        default=60, validation_alias="PROVIDER_RATE_WINDOW"
+        default=2, validation_alias="PROVIDER_RATE_WINDOW"
     )
     provider_max_concurrency: int = Field(
-        default=5, validation_alias="PROVIDER_MAX_CONCURRENCY"
+        default=2, validation_alias="PROVIDER_MAX_CONCURRENCY"
     )
     reasoning_policy: ReasoningPreference = Field(
         default=ReasoningPreference.CLIENT,
@@ -300,13 +489,28 @@ class Settings(BaseSettings):
     )
 
     # ==================== Fast Prefix Detection ====================
-    fast_prefix_detection: bool = True
+    fast_prefix_detection: bool = Field(
+        default=True,
+        validation_alias="FAST_PREFIX_DETECTION",
+    )
 
     # ==================== Optimizations ====================
-    enable_network_probe_mock: bool = True
-    enable_title_generation_skip: bool = True
-    enable_suggestion_mode_skip: bool = True
-    enable_filepath_extraction_mock: bool = True
+    enable_network_probe_mock: bool = Field(
+        default=True,
+        validation_alias="ENABLE_NETWORK_PROBE_MOCK",
+    )
+    enable_title_generation_skip: bool = Field(
+        default=True,
+        validation_alias="ENABLE_TITLE_GENERATION_SKIP",
+    )
+    enable_suggestion_mode_skip: bool = Field(
+        default=True,
+        validation_alias="ENABLE_SUGGESTION_MODE_SKIP",
+    )
+    enable_filepath_extraction_mock: bool = Field(
+        default=True,
+        validation_alias="ENABLE_FILEPATH_EXTRACTION_MOCK",
+    )
 
     # ==================== Local web server tools (web_search / web_fetch) ====================
     # Off by default: these tools perform outbound HTTP from the proxy (SSRF risk).
@@ -314,7 +518,7 @@ class Settings(BaseSettings):
         default=False, validation_alias="ENABLE_WEB_SERVER_TOOLS"
     )
     # Comma-separated URL schemes allowed for web_fetch (default: http,https).
-    web_fetch_allowed_schemes: str = Field(
+    web_fetch_allowed_schemes: NonEmptyString = Field(
         default="http,https", validation_alias="WEB_FETCH_ALLOWED_SCHEMES"
     )
     # When true, skip private/loopback/link-local IP blocking for web_fetch (lab only).
@@ -324,7 +528,7 @@ class Settings(BaseSettings):
 
     # ==================== Debug / diagnostic logging (avoid sensitive content) ====================
     # Minimum log level for the JSON file sink (DEBUG, INFO, WARNING, ERROR, CRITICAL).
-    log_level: str = Field(default="INFO", validation_alias="LOG_LEVEL")
+    log_level: NonEmptyString = Field(default="INFO", validation_alias="LOG_LEVEL")
     # When false (default), API and SSE helpers log only metadata (counts, lengths, ids).
     log_raw_api_payloads: bool = Field(
         default=False, validation_alias="LOG_RAW_API_PAYLOADS"
@@ -365,53 +569,53 @@ class Settings(BaseSettings):
     # Device: "cpu" | "cuda" | "nvidia_nim"
     # - "cpu"/"cuda": local Whisper (requires voice_local extra: uv sync --extra voice_local)
     # - "nvidia_nim": NVIDIA NIM Whisper API (requires voice extra: uv sync --extra voice)
-    whisper_device: str = Field(default="cpu", validation_alias="WHISPER_DEVICE")
+    whisper_device: NonEmptyString = Field(
+        default="cpu", validation_alias="WHISPER_DEVICE"
+    )
     # Whisper model ID or short name (for local Whisper) or NVIDIA NIM model (for nvidia_nim)
     # Local Whisper: "tiny", "base", "small", "medium", "large-v2", "large-v3", "large-v3-turbo"
     # NVIDIA NIM: "nvidia/parakeet-ctc-1.1b-asr", "openai/whisper-large-v3", etc.
-    whisper_model: str = Field(default="base", validation_alias="WHISPER_MODEL")
+    whisper_model: NonEmptyString = Field(
+        default="base", validation_alias="WHISPER_MODEL"
+    )
     # ==================== Bot Wrapper Config ====================
-    telegram_bot_token: str | None = None
-    allowed_telegram_user_id: str | None = None
-    telegram_proxy_url: str = Field(default="", validation_alias="TELEGRAM_PROXY_URL")
-    discord_bot_token: str | None = Field(
+    telegram_bot_token: OptionalNonEmptyString = Field(
+        default=None,
+        validation_alias="TELEGRAM_BOT_TOKEN",
+    )
+    allowed_telegram_user_id: OptionalNonEmptyString = Field(
+        default=None,
+        validation_alias="ALLOWED_TELEGRAM_USER_ID",
+    )
+    telegram_proxy_url: OptionalNonEmptyString = Field(
+        default=None, validation_alias="TELEGRAM_PROXY_URL"
+    )
+    discord_bot_token: OptionalNonEmptyString = Field(
         default=None, validation_alias="DISCORD_BOT_TOKEN"
     )
-    allowed_discord_channels: str | None = Field(
+    allowed_discord_channels: OptionalNonEmptyString = Field(
         default=None, validation_alias="ALLOWED_DISCORD_CHANNELS"
     )
-    allowed_dir: str = ""
+    allowed_dir: OptionalNonEmptyString = Field(
+        default=None,
+        validation_alias="ALLOWED_DIR",
+    )
     max_message_log_entries_per_chat: int | None = Field(
         default=None, validation_alias="MAX_MESSAGE_LOG_ENTRIES_PER_CHAT"
     )
 
     # ==================== Server ====================
-    host: str = "0.0.0.0"
-    port: int = 8082
+    host: NonEmptyString = Field(default="0.0.0.0", validation_alias="HOST")
+    port: int = Field(default=8082, validation_alias="PORT")
     open_admin_browser: bool = Field(default=True, validation_alias="FCC_OPEN_BROWSER")
-    # Optional proxy bearer token protecting public API endpoints.
-    # Set via env `ANTHROPIC_AUTH_TOKEN`. When empty, no auth is required.
-    anthropic_auth_token: str = Field(
-        default="", validation_alias="ANTHROPIC_AUTH_TOKEN"
+    proxy_auth_enabled: bool = Field(
+        default=False,
+        validation_alias="PROXY_AUTH_ENABLED",
     )
-
-    # Handle empty strings for optional string fields
-    @field_validator(
-        "telegram_bot_token",
-        "allowed_telegram_user_id",
-        "discord_bot_token",
-        "allowed_discord_channels",
-        "model_fable",
-        "model_opus",
-        "model_sonnet",
-        "model_haiku",
-        mode="before",
+    proxy_auth_token: NonEmptyString = Field(
+        default="freecc",
+        validation_alias="ANTHROPIC_AUTH_TOKEN",
     )
-    @classmethod
-    def parse_optional_str(cls, v: Any) -> Any:
-        if v == "":
-            return None
-        return v
 
     @field_validator("max_message_log_entries_per_chat", mode="before")
     @classmethod
@@ -507,30 +711,10 @@ class Settings(BaseSettings):
         if (
             self.voice_note_enabled
             and self.whisper_device == "nvidia_nim"
-            and not self.nvidia_nim_api_key.strip()
+            and self.nvidia_nim_api_key is None
         ):
             raise ValueError(
                 "NVIDIA_NIM_API_KEY is required when WHISPER_DEVICE is 'nvidia_nim'. "
-                "Set it in your .env file."
+                "Set it in the Admin UI."
             )
         return self
-
-    @model_validator(mode="after")
-    def prefer_dotenv_anthropic_auth_token(self) -> Settings:
-        """Let explicit .env auth config override stale shell/client tokens."""
-        dotenv_value = env_file_override(self.model_config, ANTHROPIC_AUTH_TOKEN_ENV)
-        if dotenv_value is not None:
-            self.anthropic_auth_token = dotenv_value
-        return self
-
-    model_config = SettingsConfigDict(
-        env_file=settings_env_files(),
-        env_file_encoding="utf-8",
-        extra="ignore",
-    )
-
-
-@lru_cache
-def get_settings() -> Settings:
-    """Get cached settings instance."""
-    return Settings()

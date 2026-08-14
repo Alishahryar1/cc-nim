@@ -35,8 +35,8 @@ class ManagedClaudeSession:
         proxy_root_url: str,
         allowed_dirs: list[str] | None = None,
         claude_bin: str = "claude",
-        auth_token: str = "",
         *,
+        auth_token: str,
         log_raw_cli_diagnostics: bool = False,
     ):
         self.config = ManagedClaudeConfig(

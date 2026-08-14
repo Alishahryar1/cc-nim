@@ -15,6 +15,7 @@ from free_claude_code.application.model_metadata import (
     ProviderModelRefreshResult,
 )
 from free_claude_code.config.admin.values import MASKED_SECRET
+from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.server_urls import local_admin_url
 from free_claude_code.config.settings import Settings
 from tests.api.support import create_test_app, provider_manager_for_app
@@ -41,6 +42,7 @@ def _clear_process_config(monkeypatch) -> None:
         "BEDROCK_PROXY",
         "OLLAMA_API_KEY",
         "ANTHROPIC_AUTH_TOKEN",
+        "PROXY_AUTH_ENABLED",
         "TELEGRAM_PROXY_URL",
         "FCC_ENV_FILE",
         "CLOUDFLARE_API_TOKEN",
@@ -362,7 +364,7 @@ def test_admin_static_model_combobox_preserves_custom_slugs_and_none_semantics()
     assert '? ["None", ...state.modelOptions]' in script
     assert "You can still enter a custom slug." in script
     assert 'input.dataset.fieldType === "optional_model"' in script
-    assert 'return "";' in script
+    assert "return null;" in script
     assert "await hydrateModelOptions();" in script
     assert "Model fields remain editable" in script
     assert "result.failed_providers || []" in script
@@ -382,6 +384,8 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     assert "MODEL_FABLE" in keys
     assert "REASONING_FABLE" in keys
     assert "ANTHROPIC_AUTH_TOKEN" in keys
+    assert "PROXY_AUTH_ENABLED" in keys
+    assert "LOG_LEVEL" in keys
     assert "OPENROUTER_API_KEY" in keys
     assert "AWS_BEARER_TOKEN_BEDROCK" in keys
     assert "BEDROCK_BASE_URL" in keys
@@ -405,11 +409,27 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
     )
     assert auth_field["secret"] is True
     assert auth_field["value"] == MASKED_SECRET
-    assert auth_field["source"] == "template"
+    assert auth_field["source"] == "default"
+    assert auth_field["nullable"] is False
     telegram_proxy_field = next(
         field for field in body["fields"] if field["key"] == "TELEGRAM_PROXY_URL"
     )
     assert telegram_proxy_field["secret"] is True
+    assert telegram_proxy_field["value"] is None
+    assert telegram_proxy_field["configured"] is False
+    assert telegram_proxy_field["nullable"] is True
+    assert body["paths"] == {"managed": str(tmp_path / ".fcc" / ".env")}
+    catalog_smoke_keys = {
+        f"FCC_SMOKE_MODEL_{provider_id.upper()}" for provider_id in PROVIDER_CATALOG
+    }
+    actual_smoke_keys = {
+        field["key"]
+        for field in body["fields"]
+        if field["key"].startswith("FCC_SMOKE_MODEL_")
+    }
+    assert actual_smoke_keys == catalog_smoke_keys | {
+        "FCC_SMOKE_MODEL_MISTRAL_REASONING"
+    }
     open_browser_field = next(
         field for field in body["fields"] if field["key"] == "FCC_OPEN_BROWSER"
     )
@@ -602,6 +622,53 @@ def test_admin_apply_masks_telegram_proxy_credentials(monkeypatch, tmp_path):
     assert f"TELEGRAM_PROXY_URL={proxy_url}" in text
 
 
+def test_admin_apply_null_removes_optional_secret(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    env_file = tmp_path / ".fcc" / ".env"
+    env_file.parent.mkdir(parents=True)
+    env_file.write_text(
+        "FCC_CONFIG_SCHEMA=1\nTELEGRAM_PROXY_URL=https://secret.invalid\n",
+        encoding="utf-8",
+    )
+    app = create_test_app()
+
+    response = _local_client(app).post(
+        "/admin/api/config/apply",
+        json={"values": {"TELEGRAM_PROXY_URL": None}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["applied"] is True
+    assert "TELEGRAM_PROXY_URL=" not in env_file.read_text(encoding="utf-8")
+
+
+@pytest.mark.parametrize("submitted", [MASKED_SECRET, "", "   "])
+def test_admin_apply_masked_or_blank_secret_is_unchanged(
+    monkeypatch,
+    tmp_path,
+    submitted,
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    env_file = tmp_path / ".fcc" / ".env"
+    env_file.parent.mkdir(parents=True)
+    env_file.write_text(
+        "FCC_CONFIG_SCHEMA=1\nOPENROUTER_API_KEY=original-secret\n",
+        encoding="utf-8",
+    )
+    app = create_test_app()
+
+    response = _local_client(app).post(
+        "/admin/api/config/apply",
+        json={"values": {"OPENROUTER_API_KEY": submitted}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["applied"] is True
+    assert "OPENROUTER_API_KEY=original-secret" in env_file.read_text(encoding="utf-8")
+
+
 def test_admin_validate_rejects_bad_model_shape(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
@@ -643,7 +710,10 @@ def test_admin_apply_writes_complete_managed_env_and_masks_preview(
     text = env_file.read_text("utf-8")
     assert "MODEL=open_router/test-model" in text
     assert "OPENROUTER_API_KEY=router-secret" in text
-    assert "ANTHROPIC_AUTH_TOKEN=" in text
+    assert "ANTHROPIC_AUTH_TOKEN=" not in text
+    assert "PROXY_AUTH_ENABLED=" not in text
+    assert "HOST=" not in text
+    assert "PORT=" not in text
     assert body["restart"] == {
         "required": False,
         "automatic": False,
@@ -850,7 +920,7 @@ def test_admin_apply_writes_huggingface_key_and_masks_preview(monkeypatch, tmp_p
     assert response.status_code == 200
     body = response.json()
     assert body["applied"] is True
-    assert body["pending_fields"] == []
+    assert body["pending_fields"] == ["HUGGINGFACE_API_KEY"]
     assert "HUGGINGFACE_API_KEY=********" in body["env_preview"]
     env_file = tmp_path / ".fcc" / ".env"
     text = env_file.read_text(encoding="utf-8")
@@ -1035,7 +1105,7 @@ def test_admin_apply_preserves_hidden_diagnostics_and_smoke_values(
     assert "FCC_SMOKE_MODEL_ZAI=zai/smoke-model" in text
 
 
-def test_admin_apply_omits_stale_zai_base_url(monkeypatch, tmp_path):
+def test_admin_apply_preserves_unrecognized_managed_zai_base_url(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
     env_file = tmp_path / ".fcc" / ".env"
@@ -1063,10 +1133,10 @@ def test_admin_apply_omits_stale_zai_base_url(monkeypatch, tmp_path):
     assert body["applied"] is True
     text = env_file.read_text("utf-8")
     assert "ZAI_API_KEY=zai-secret" in text
-    assert "ZAI_BASE_URL" not in text
+    assert "ZAI_BASE_URL=https://custom.zai.invalid/v1" in text
 
 
-def test_admin_apply_omits_stale_fixed_claude_runtime_settings(monkeypatch, tmp_path):
+def test_admin_apply_preserves_unrecognized_managed_assignments(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
     env_file = tmp_path / ".fcc" / ".env"
@@ -1094,8 +1164,8 @@ def test_admin_apply_omits_stale_fixed_claude_runtime_settings(monkeypatch, tmp_
     assert body["applied"] is True
     text = env_file.read_text("utf-8")
     assert "MODEL=open_router/test-model" in text
-    assert "CLAUDE_WORKSPACE" not in text
-    assert "CLAUDE_CLI_BIN" not in text
+    assert "CLAUDE_WORKSPACE=C:/custom/workspace" in text
+    assert "CLAUDE_CLI_BIN=claude-custom" in text
 
 
 def test_admin_apply_restart_required_reports_automatic_restart(monkeypatch, tmp_path):
@@ -1169,7 +1239,7 @@ def test_admin_process_env_values_are_locked_and_not_written(monkeypatch, tmp_pa
     assert "deepseek/managed-model" not in env_file.read_text("utf-8")
 
 
-def test_admin_first_apply_migrates_repo_env(monkeypatch, tmp_path):
+def test_admin_never_reads_arbitrary_current_directory_env(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
     monkeypatch.chdir(tmp_path)
@@ -1181,8 +1251,8 @@ def test_admin_first_apply_migrates_repo_env(monkeypatch, tmp_path):
 
     config = _local_client(app).get("/admin/api/config").json()
     model_field = next(field for field in config["fields"] if field["key"] == "MODEL")
-    assert model_field["value"] == "deepseek/deepseek-chat"
-    assert model_field["source"] == "repo_env"
+    assert model_field["value"] == "nvidia_nim/nvidia/nemotron-3-super-120b-a12b"
+    assert model_field["source"] == "default"
 
     response = _local_client(app).post(
         "/admin/api/config/apply",
@@ -1191,18 +1261,20 @@ def test_admin_first_apply_migrates_repo_env(monkeypatch, tmp_path):
 
     assert response.status_code == 200
     managed_text = (tmp_path / ".fcc" / ".env").read_text("utf-8")
-    assert "MODEL=deepseek/deepseek-chat" in managed_text
-    assert "DEEPSEEK_API_KEY=deepseek-secret" in managed_text
+    assert "MODEL=deepseek/deepseek-chat" not in managed_text
+    assert "DEEPSEEK_API_KEY=deepseek-secret" not in managed_text
 
 
-def test_admin_first_apply_repairs_empty_select_repo_values(monkeypatch, tmp_path):
+def test_admin_migration_removes_blank_required_managed_values(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
-    app = create_test_app()
-    (tmp_path / ".env").write_text(
+    env_file = tmp_path / ".fcc" / ".env"
+    env_file.parent.mkdir(parents=True)
+    env_file.write_text(
         "MESSAGING_PLATFORM=\nWHISPER_DEVICE=\n",
         encoding="utf-8",
     )
+    app = create_test_app()
 
     response = _local_client(app).post(
         "/admin/api/config/apply",
@@ -1213,11 +1285,13 @@ def test_admin_first_apply_repairs_empty_select_repo_values(monkeypatch, tmp_pat
     assert response.json()["applied"] is True
     managed_text = (tmp_path / ".fcc" / ".env").read_text("utf-8")
     assert "NVIDIA_NIM_API_KEY=nim-secret" in managed_text
-    assert "MESSAGING_PLATFORM=discord" in managed_text
-    assert "WHISPER_DEVICE=nvidia_nim" in managed_text
+    assert "MESSAGING_PLATFORM=" not in managed_text
+    assert "WHISPER_DEVICE=" not in managed_text
 
 
-def test_admin_apply_preserves_empty_managed_auth_token(monkeypatch, tmp_path):
+def test_admin_migrates_empty_auth_token_to_explicit_disabled_state(
+    monkeypatch, tmp_path
+):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
     env_file = tmp_path / ".fcc" / ".env"
@@ -1236,11 +1310,25 @@ def test_admin_apply_preserves_empty_managed_auth_token(monkeypatch, tmp_path):
     assert response.status_code == 200
     assert response.json()["applied"] is True
     managed_lines = env_file.read_text("utf-8").splitlines()
-    assert "ANTHROPIC_AUTH_TOKEN=" in managed_lines
+    assert not any(line.startswith("ANTHROPIC_AUTH_TOKEN=") for line in managed_lines)
+    assert "PROXY_AUTH_ENABLED=false" in managed_lines
     assert "PROVIDER_RATE_LIMIT=2" in managed_lines
 
 
-def test_admin_apply_rejects_explicit_empty_select_update(monkeypatch, tmp_path):
+@pytest.mark.parametrize(
+    ("submitted", "message"),
+    [
+        (None, "this setting cannot be removed"),
+        ("", "this setting cannot be blank"),
+        ("   ", "this setting cannot be blank"),
+    ],
+)
+def test_admin_apply_rejects_missing_required_value_without_writing(
+    monkeypatch,
+    tmp_path,
+    submitted,
+    message,
+):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
     env_file = tmp_path / ".fcc" / ".env"
@@ -1248,50 +1336,42 @@ def test_admin_apply_rejects_explicit_empty_select_update(monkeypatch, tmp_path)
     original = "ANTHROPIC_AUTH_TOKEN=\nMESSAGING_PLATFORM=none\n"
     env_file.write_text(original, encoding="utf-8")
     app = create_test_app()
+    _local_client(app).get("/admin/api/config")
+    baseline = env_file.read_bytes()
 
     response = _local_client(app).post(
         "/admin/api/config/apply",
-        json={"values": {"MESSAGING_PLATFORM": ""}},
+        json={"values": {"MESSAGING_PLATFORM": submitted}},
     )
 
     assert response.status_code == 200
     body = response.json()
     assert body["applied"] is False
     assert body["valid"] is False
-    assert any(
-        "messaging_platform" in error and "got ''" in error for error in body["errors"]
-    )
-    assert env_file.read_text("utf-8") == original
+    assert f"MESSAGING_PLATFORM: {message}" in body["errors"]
+    assert env_file.read_bytes() == baseline
 
 
-@pytest.mark.parametrize("source", ("process", "explicit_env_file"))
-def test_admin_apply_rejects_empty_locked_select_value(
-    monkeypatch,
-    tmp_path,
-    source,
-):
+def test_admin_apply_preserves_false_and_numeric_zero(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
     app = create_test_app()
-    if source == "process":
-        monkeypatch.setenv("MESSAGING_PLATFORM", "")
-    else:
-        env_file = tmp_path / "locked.env"
-        env_file.write_text("MESSAGING_PLATFORM=\n", encoding="utf-8")
-        monkeypatch.setenv("FCC_ENV_FILE", str(env_file))
 
     response = _local_client(app).post(
         "/admin/api/config/apply",
-        json={"values": {"NVIDIA_NIM_API_KEY": "nim-secret"}},
+        json={
+            "values": {
+                "FCC_OPEN_BROWSER": False,
+                "HTTP_WRITE_TIMEOUT": 0,
+            }
+        },
     )
 
     assert response.status_code == 200
-    body = response.json()
-    assert body["applied"] is False
-    assert any(
-        "messaging_platform" in error and "got ''" in error for error in body["errors"]
-    )
-    assert not (tmp_path / ".fcc" / ".env").exists()
+    assert response.json()["applied"] is True
+    managed = (tmp_path / ".fcc" / ".env").read_text(encoding="utf-8")
+    assert "FCC_OPEN_BROWSER=false" in managed
+    assert "HTTP_WRITE_TIMEOUT=0" in managed
 
 
 def test_admin_local_provider_status_reports_reachable(monkeypatch, tmp_path):

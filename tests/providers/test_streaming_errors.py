@@ -21,7 +21,6 @@ from free_claude_code.core.anthropic.streaming import (
 from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.admission import UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS
-from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.openai_chat.provider import (
     _OpenAIChatStreamRunner,
@@ -34,7 +33,11 @@ from free_claude_code.providers.openai_chat.tool_calls import (
 )
 from free_claude_code.providers.stream_recovery import TruncatedProviderStreamError
 from tests.providers.request_factory import make_messages_request
-from tests.providers.support import REASONING_OFF, immediate_admission
+from tests.providers.support import (
+    REASONING_OFF,
+    immediate_admission,
+    make_provider_config,
+)
 
 
 class AsyncStreamMock:
@@ -75,7 +78,7 @@ class ClosableAsyncStreamMock(AsyncStreamMock):
 
 def _make_provider():
     """Create a provider instance for testing."""
-    config = ProviderConfig(
+    config = make_provider_config(
         api_key="test_key",
         base_url="https://test.api.nvidia.com/v1",
         rate_limit=10,

@@ -75,7 +75,9 @@ class RecordingModelCatalogPublisher:
 
 
 def _settings(model: str) -> Settings:
-    return Settings().model_copy(update={"model": model})
+    return Settings().model_copy(
+        update={"model": model, "nvidia_nim_api_key": "test-key"}
+    )
 
 
 @pytest.mark.asyncio

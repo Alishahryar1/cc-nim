@@ -29,7 +29,10 @@ def _smoke_config(tmp_path: Path) -> SmokeConfig:
         prompt="Reply with exactly: FCC_SMOKE_PONG",
         claude_bin="claude",
         worker_id="test-worker",
-        settings=Settings.model_construct(anthropic_auth_token=""),
+        settings=Settings.model_construct(
+            proxy_auth_enabled=False,
+            proxy_auth_token="freecc",
+        ),
     )
 
 

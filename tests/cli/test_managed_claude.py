@@ -127,14 +127,14 @@ def test_managed_claude_uses_native_plan_storage() -> None:
     assert "--settings" not in invocation.argv
 
 
-def test_managed_claude_env_uses_sentinel_when_proxy_auth_blank() -> None:
+def test_managed_claude_env_forwards_retained_proxy_auth_token() -> None:
     env = build_managed_claude_env(
         proxy_root_url="http://localhost:8082",
-        auth_token="",
+        auth_token="freecc",
         base_env={"ANTHROPIC_AUTH_TOKEN": "stale"},
     )
 
-    assert env["ANTHROPIC_AUTH_TOKEN"] == "fcc-no-auth"
+    assert env["ANTHROPIC_AUTH_TOKEN"] == "freecc"
 
 
 def test_managed_claude_env_adds_noninteractive_process_policy() -> None:
