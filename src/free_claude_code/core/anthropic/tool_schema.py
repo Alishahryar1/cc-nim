@@ -1,4 +1,4 @@
-"""Schema helpers shared by provider-native textual tool-call dialects."""
+"""JSON Schema helpers for text-emitted Anthropic tool input."""
 
 import json
 from collections.abc import Mapping
@@ -7,29 +7,8 @@ from typing import Any
 import jsonschema
 
 
-def openai_tool_schemas(body: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
-    """Index declared OpenAI function schemas by tool name."""
-    tools = body.get("tools")
-    if not isinstance(tools, list):
-        return {}
-
-    schemas: dict[str, dict[str, Any]] = {}
-    for tool in tools:
-        if not isinstance(tool, Mapping):
-            continue
-        function = tool.get("function")
-        if not isinstance(function, Mapping):
-            continue
-        name = function.get("name")
-        if not isinstance(name, str) or not name:
-            continue
-        parameters = function.get("parameters")
-        schemas[name] = dict(parameters) if isinstance(parameters, Mapping) else {}
-    return schemas
-
-
 def schema_type(schema: Mapping[str, Any]) -> str | None:
-    """Resolve the single useful JSON type from a simple or union schema."""
+    """Resolve one useful non-null JSON type from a simple or union schema."""
     declared = schema.get("type")
     if isinstance(declared, str):
         return declared
@@ -56,12 +35,7 @@ def schema_type(schema: Mapping[str, Any]) -> str | None:
 
 
 def coerce_text_argument(value: str, schema: Mapping[str, Any]) -> Any:
-    """Decode a textual native-tool argument according to its JSON schema.
-
-    ``ValueError`` means the text cannot represent the declared type. Unknown or
-    invalid schemas intentionally leave the value as text; final schema validation
-    remains the authority.
-    """
+    """Decode a textual tool argument according to its declared JSON type."""
     enum_values = schema.get("enum")
     if isinstance(enum_values, list):
         for enum_value in enum_values:
@@ -105,13 +79,10 @@ def coerce_text_argument(value: str, schema: Mapping[str, Any]) -> Any:
     return value
 
 
-def arguments_match_schema(arguments: dict[str, Any], schema: dict[str, Any]) -> bool:
-    """Return whether arguments satisfy a valid schema.
-
-    Upstream tool declarations are trusted request input. If one contains an
-    invalid JSON Schema, native normalization must not invent stricter semantics
-    than the ordinary structured-tool path, so validation is skipped.
-    """
+def arguments_match_schema(
+    arguments: dict[str, Any], schema: Mapping[str, Any]
+) -> bool:
+    """Return whether arguments satisfy a valid JSON Schema."""
     try:
         validator_type = jsonschema.validators.validator_for(schema)
         validator_type.check_schema(schema)

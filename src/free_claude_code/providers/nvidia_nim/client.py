@@ -22,7 +22,6 @@ from free_claude_code.providers.openai_chat import (
     NO_REASONING,
     OpenAIChatProfile,
     OpenAIChatProvider,
-    OpenAITextToolDialect,
 )
 
 from .native_tool_stream import normalize_nim_native_tool_stream
@@ -45,7 +44,6 @@ _NEGATIVE_MAX_TOKENS_PATTERN = re.compile(
 _PROFILE = OpenAIChatProfile(
     NIM_REQUEST_POLICY,
     NO_REASONING,
-    text_tool_dialect=OpenAITextToolDialect.FUNCTION_TAGS,
 )
 
 

@@ -137,11 +137,7 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "heuristic_tool_parser",
         "Tool use and tool result continuation survive provider/client paths",
-        (
-            "tests/providers/test_parsers.py",
-            "tests/providers/test_openai_chat_text_tool_stream.py",
-            "tests/contracts/test_stream_contracts.py",
-        ),
+        ("tests/providers/test_parsers.py", "tests/contracts/test_stream_contracts.py"),
         ("test_live_tool_use_when_configured_model_supports_tools",),
         (
             "test_provider_interleaved_thinking_tool_e2e",
@@ -149,7 +145,7 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
             "test_provider_interrupted_tool_turn_resume_e2e",
             "test_gemini_thought_signature_tool_continuation_e2e",
             "test_provider_reasoning_tool_continuation_e2e",
-            "test_nvidia_nim_stepfun_text_tool_call_e2e",
+            "test_nvidia_nim_stepfun_tool_use_e2e",
         ),
         ("tools", "providers"),
         ("configured tool-capable provider",),

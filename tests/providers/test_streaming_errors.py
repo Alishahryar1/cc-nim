@@ -729,6 +729,235 @@ class TestStreamingExceptionHandling:
         )
 
     @pytest.mark.asyncio
+    async def test_function_tag_tool_stream_becomes_one_anthropic_tool_use(self):
+        """Exact control-only function tags use the established tool lifecycle."""
+        provider = _make_provider()
+        request = _make_request(
+            tools=[
+                {
+                    "name": "Bash",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"command": {"type": "string"}},
+                        "required": ["command"],
+                        "additionalProperties": False,
+                    },
+                }
+            ]
+        )
+        raw_call = (
+            "<think>Use the requested command.</think>"
+            "I will invoke Bash now.\n"
+            "<tool_call>\n<function=Bash>\n<parameter=command>\n"
+            "printf FCC_STEP_TOOL\n</parameter>\n</function>\n</tool_call>"
+        )
+        stream_mock = AsyncStreamMock(
+            [
+                _make_chunk(content=raw_call[:43]),
+                _make_chunk(content=raw_call[43:]),
+                _make_chunk(finish_reason="stop"),
+            ]
+        )
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            return_value=stream_mock,
+        ):
+            events = await _collect_stream(provider, request)
+
+        parsed = parse_sse_text("".join(events))
+        starts = [
+            event.data["content_block"]
+            for event in parsed
+            if event.event == "content_block_start"
+        ]
+        tool_starts = [block for block in starts if block["type"] == "tool_use"]
+        input_json = "".join(
+            event.data.get("delta", {}).get("partial_json", "")
+            for event in parsed
+            if event.event == "content_block_delta"
+            and event.data.get("delta", {}).get("type") == "input_json_delta"
+        )
+        visible_text = "".join(
+            event.data.get("delta", {}).get("text", "")
+            for event in parsed
+            if event.event == "content_block_delta"
+            and event.data.get("delta", {}).get("type") == "text_delta"
+        )
+
+        assert [block["name"] for block in tool_starts] == ["Bash"]
+        assert json.loads(input_json) == {"command": "printf FCC_STEP_TOOL"}
+        assert visible_text == "I will invoke Bash now.\n"
+        assert any(
+            event.event == "content_block_delta"
+            and event.data.get("delta", {}).get("type") == "thinking_delta"
+            for event in parsed
+        )
+        assert any(
+            event.event == "message_delta"
+            and event.data.get("delta", {}).get("stop_reason") == "tool_use"
+            for event in parsed
+        )
+
+    @pytest.mark.asyncio
+    async def test_native_tool_call_disables_function_tag_recovery(self):
+        """Native structured calls win and release earlier candidate text in order."""
+        provider = _make_provider()
+        request = _make_request(
+            tools=[
+                {
+                    "name": "Bash",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"command": {"type": "string"}},
+                    },
+                }
+            ]
+        )
+        held_text = "<tool_call>\n<function=Bash>"
+        stream_mock = AsyncStreamMock(
+            [
+                _make_chunk(content=held_text),
+                _make_tool_calls_chunk(
+                    name="Bash",
+                    arguments='{"command":"printf native"}',
+                    tool_id="call_native",
+                ),
+                _make_chunk(finish_reason="tool_calls"),
+            ]
+        )
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            return_value=stream_mock,
+        ):
+            events = await _collect_stream(provider, request)
+
+        parsed = parse_sse_text("".join(events))
+        visible_text = "".join(
+            event.data.get("delta", {}).get("text", "")
+            for event in parsed
+            if event.event == "content_block_delta"
+            and event.data.get("delta", {}).get("type") == "text_delta"
+        )
+        tool_starts = [
+            event.data["content_block"]
+            for event in parsed
+            if event.event == "content_block_start"
+            and event.data.get("content_block", {}).get("type") == "tool_use"
+        ]
+
+        assert visible_text == held_text
+        assert [block["id"] for block in tool_starts] == ["call_native"]
+
+    @pytest.mark.asyncio
+    async def test_rejected_function_tag_candidate_bypasses_legacy_heuristics(self):
+        """Rejected reserved text is preserved without a second permissive parse."""
+        provider = _make_provider()
+        request = _make_request(
+            tools=[
+                {
+                    "name": "Bash",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"command": {"type": "string"}},
+                    },
+                }
+            ]
+        )
+        raw = (
+            "<tool_call><function=Unknown></function></tool_call>"
+            "● <function=Bash><parameter=command>printf unsafe</parameter>"
+        )
+        stream_mock = AsyncStreamMock(
+            [_make_chunk(content=raw), _make_chunk(finish_reason="stop")]
+        )
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            return_value=stream_mock,
+        ):
+            events = await _collect_stream(provider, request)
+
+        parsed = parse_sse_text("".join(events))
+        visible_text = "".join(
+            event.data.get("delta", {}).get("text", "")
+            for event in parsed
+            if event.event == "content_block_delta"
+            and event.data.get("delta", {}).get("type") == "text_delta"
+        )
+        tool_starts = [
+            event
+            for event in parsed
+            if event.event == "content_block_start"
+            and event.data.get("content_block", {}).get("type") == "tool_use"
+        ]
+
+        assert visible_text == raw
+        assert tool_starts == []
+
+    @pytest.mark.asyncio
+    async def test_function_tag_candidate_is_reset_before_early_retry(self):
+        """An abandoned textual candidate cannot leak or duplicate after retry."""
+        provider = _make_provider()
+        request = _make_request(
+            tools=[
+                {
+                    "name": "Bash",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"command": {"type": "string"}},
+                        "required": ["command"],
+                    },
+                }
+            ]
+        )
+        abandoned = "<tool_call>\n<function=Bash>"
+        complete = (
+            "<tool_call>\n<function=Bash>\n<parameter=command>\n"
+            "printf retry\n</parameter>\n</function>\n</tool_call>"
+        )
+        first_stream = AsyncStreamMock(
+            [_make_chunk(content=abandoned)],
+            error=httpx.ReadError("early cutoff"),
+        )
+        second_stream = AsyncStreamMock(
+            [_make_chunk(content=complete), _make_chunk(finish_reason="stop")]
+        )
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=[first_stream, second_stream],
+        ) as mock_create:
+            events = await _collect_stream(provider, request)
+
+        parsed = parse_sse_text("".join(events))
+        visible_text = "".join(
+            event.data.get("delta", {}).get("text", "")
+            for event in parsed
+            if event.event == "content_block_delta"
+            and event.data.get("delta", {}).get("type") == "text_delta"
+        )
+        tool_starts = [
+            event.data["content_block"]
+            for event in parsed
+            if event.event == "content_block_start"
+            and event.data.get("content_block", {}).get("type") == "tool_use"
+        ]
+
+        assert mock_create.await_count == 2
+        assert visible_text == ""
+        assert [block["name"] for block in tool_starts] == ["Bash"]
+
+    @pytest.mark.asyncio
     async def test_precommit_retry_emits_one_unduplicated_downstream_lifecycle(self):
         """An abandoned attempt contributes no frame to the successful replay."""
         provider = _make_provider()

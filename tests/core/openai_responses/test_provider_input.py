@@ -136,6 +136,50 @@ def test_build_responses_provider_request_accepts_claude_client_controls() -> No
     assert request.model_dump() == snapshot
 
 
+def test_build_responses_provider_request_materializes_auto_tool_choice() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "Use the echo tool."}],
+            "tools": [
+                {
+                    "name": "echo",
+                    "description": "Echo a value.",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"value": {"type": "string"}},
+                        "required": ["value"],
+                    },
+                }
+            ],
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.off(),
+    )
+
+    assert body["tool_choice"] == "auto"
+
+
+def test_build_responses_provider_request_omits_choice_without_tools() -> None:
+    request = MessagesRequest.model_validate(
+        {
+            "model": "gpt-test",
+            "messages": [{"role": "user", "content": "Hello"}],
+        }
+    )
+
+    body = build_responses_provider_request(
+        request,
+        reasoning=ReasoningPolicy.off(),
+    )
+
+    assert "tools" not in body
+    assert "tool_choice" not in body
+
+
 def test_build_responses_provider_request_uses_resolved_reasoning_policy() -> None:
     request = MessagesRequest.model_validate(
         {

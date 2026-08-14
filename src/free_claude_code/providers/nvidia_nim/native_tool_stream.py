@@ -8,14 +8,13 @@ from enum import StrEnum
 from types import SimpleNamespace
 from typing import Any
 
-from free_claude_code.providers.failure_policy import RetryableToolProtocolError
-from free_claude_code.providers.http import maybe_await_aclose
-from free_claude_code.providers.native_tool_schema import (
+from free_claude_code.core.anthropic.tool_schema import (
     arguments_match_schema,
     coerce_text_argument,
-    openai_tool_schemas,
     schema_type,
 )
+from free_claude_code.providers.failure_policy import RetryableToolProtocolError
+from free_claude_code.providers.http import maybe_await_aclose
 
 _NAMESPACE = "]<]minimax[>["
 _TOOL_BLOCK_START = f"{_NAMESPACE}<tool_call>"
@@ -202,22 +201,15 @@ def normalize_nim_native_tool_stream(
     body: Mapping[str, Any],
 ) -> AsyncIterator[Any]:
     """Convert leaked MiniMax-M3 markup into ordinary OpenAI tool-call chunks."""
-    schemas = openai_tool_schemas(body)
+    schemas = _openai_tool_schemas(body)
 
     async def _iter() -> AsyncIterator[Any]:
         content_framer = _MiniMaxM3ToolFramer()
         reasoning_framer = _MiniMaxM3ToolFramer()
         structured_tool_calls_seen = False
         finalized = False
-        defer_terminal = bool(schemas)
-        terminal_seen = False
-        terminal_finish_reason: Any = None
-        terminal_usage: Any = None
 
         async for chunk in stream:
-            chunk_usage = getattr(chunk, "usage", None)
-            if defer_terminal and chunk_usage is not None:
-                terminal_usage = chunk_usage
             choices = getattr(chunk, "choices", None)
             if not choices:
                 yield chunk
@@ -245,10 +237,7 @@ def normalize_nim_native_tool_stream(
             )
             finish_reason = getattr(choice, "finish_reason", None)
             generated_calls: tuple[_NativeToolCall, ...] = ()
-            if finish_reason is not None and defer_terminal:
-                terminal_seen = True
-                terminal_finish_reason = finish_reason
-            elif finish_reason is not None:
+            if finish_reason is not None:
                 safe_content, safe_reasoning, generated_calls = (
                     _finish_native_tool_framers(
                         content_framer,
@@ -268,34 +257,12 @@ def normalize_nim_native_tool_stream(
                 content=safe_content,
                 reasoning_content=safe_reasoning,
                 generated_calls=generated_calls,
-                terminal=finish_reason is not None and not defer_terminal,
-                force_rebuild=finish_reason is not None and defer_terminal,
+                terminal=finish_reason is not None,
             )
             for normalized_chunk in normalized:
                 yield normalized_chunk
 
-        if defer_terminal:
-            content, reasoning, generated_calls = _finish_native_tool_framers(
-                content_framer,
-                reasoning_framer,
-                content=None,
-                reasoning_content=None,
-                schemas=schemas,
-                structured_tool_calls_seen=structured_tool_calls_seen,
-            )
-            chunks = _synthetic_chunks(
-                content=content,
-                reasoning_content=reasoning,
-                generated_calls=generated_calls,
-            )
-            if terminal_seen:
-                if not chunks:
-                    chunks.append(_chunk())
-                chunks[-1].choices[0].finish_reason = terminal_finish_reason
-                chunks[-1].usage = terminal_usage
-            for normalized_chunk in chunks:
-                yield normalized_chunk
-        elif not finalized:
+        if not finalized:
             content, reasoning, generated_calls = _finish_native_tool_framers(
                 content_framer,
                 reasoning_framer,
@@ -324,7 +291,6 @@ def _normalized_chunks(
     reasoning_content: Any,
     generated_calls: tuple[_NativeToolCall, ...],
     terminal: bool,
-    force_rebuild: bool = False,
 ) -> list[Any]:
     source_content = getattr(source_delta, "content", None)
     source_reasoning = getattr(source_delta, "reasoning_content", None)
@@ -333,8 +299,7 @@ def _normalized_chunks(
     source_usage = getattr(source_chunk, "usage", None)
 
     if (
-        not force_rebuild
-        and not generated_calls
+        not generated_calls
         and content == source_content
         and reasoning_content == source_reasoning
     ):
@@ -669,6 +634,26 @@ def _validate_arguments(
         raise NimNativeToolProtocolError(
             f"NVIDIA NIM returned schema-invalid arguments for tool {tool_name!r}."
         )
+
+
+def _openai_tool_schemas(body: Mapping[str, Any]) -> dict[str, dict[str, Any]]:
+    tools = body.get("tools")
+    if not isinstance(tools, list):
+        return {}
+
+    schemas: dict[str, dict[str, Any]] = {}
+    for tool in tools:
+        if not isinstance(tool, Mapping):
+            continue
+        function = tool.get("function")
+        if not isinstance(function, Mapping):
+            continue
+        name = function.get("name")
+        if not isinstance(name, str) or not name:
+            continue
+        parameters = function.get("parameters")
+        schemas[name] = dict(parameters) if isinstance(parameters, Mapping) else {}
+    return schemas
 
 
 def _append_object_value(output: dict[str, Any], name: str, value: Any) -> None:

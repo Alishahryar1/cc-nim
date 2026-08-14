@@ -4,6 +4,7 @@ import json
 from typing import Any
 
 from free_claude_code.core.anthropic.content import get_block_attr, get_block_type
+from free_claude_code.core.anthropic.conversion import resolve_anthropic_tool_choice
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.anthropic.request_serialization import (
@@ -74,8 +75,9 @@ def build_responses_provider_request(
             }
             for tool in request.tools
         ]
-    if request.tool_choice is not None:
-        body["tool_choice"] = _tool_choice(request.tool_choice, tool_names=tool_names)
+    tool_choice = resolve_anthropic_tool_choice(request.tools, request.tool_choice)
+    if tool_choice is not None:
+        body["tool_choice"] = _tool_choice(tool_choice, tool_names=tool_names)
     if reasoning_config := _reasoning_config(reasoning):
         body["reasoning"] = reasoning_config
     return body

@@ -719,6 +719,21 @@ original identity before Anthropic tool state or schema validation. Valid names
 remain unchanged, while deterministic aliases keep retries, replay, and
 append-only prompt prefixes stable. This is target-protocol conversion, never a
 provider or model capability switch.
+When an Anthropic request declares tools but omits `tool_choice`, the conversion
+boundary resolves Anthropic's implicit `auto` intent once. Both upstream OpenAI
+Chat and OpenAI Responses encoders materialize that value explicitly, while
+preserving every client-supplied choice. OpenAI-origin `/v1/responses` ingress
+retains its own omission semantics; providers and models never choose this
+default.
+Some OpenAI-compatible upstreams expose their documented function-tag protocol
+through ordinary content instead of structured tool deltas. The shared
+Anthropic tool boundary recognizes that protocol only when tools were declared
+and the client did not explicitly choose `none`, and only when the response ends
+with one or more exact, schema-valid control blocks with no suffix. Any preceding
+content remains visible; all malformed or non-terminal lookalikes remain text.
+Native structured tool calls disable textual recovery and remain authoritative.
+This normalization is driven by the response grammar rather than provider or
+model identity; harness permissions remain the final authority for execution.
 Specialized provider packages remain only for true upstream quirks such as
 Gemini thought signatures, Groq reasoning-vocabulary negotiation, NIM
 tool-schema aliases, retry downgrades, and NVCF deployment-failure
@@ -758,23 +773,16 @@ fallback retry when an upstream request rejects reasoning fields.
 NIM reasoning budget control is also treated as a provider-owned best-effort
 downgrade: if an upstream NIM deployment rejects explicit budget control, FCC
 retries without the budget while preserving thinking enablement.
-The shared OpenAI-chat transport offers normalization for exact textual
-tool-call dialects, but a provider profile must explicitly select one. Declared
-tools alone are not evidence that arbitrary response text is control data. The
-function-tag dialect recognizes only a complete control-only response immediately
-after its reasoning boundary; output-start envelopes, prose, code examples,
-incomplete markup, and content outside the envelope remain ordinary text. Once
-that reserved grammar is recognized, arguments are validated against the
-request schemas and emitted as ordinary OpenAI tool-call deltas. Native
-structured tool-call deltas remain authoritative when both forms appear.
-NIM selects the function-tag dialect, additionally owns its MiniMax namespaced
-tool dialect, and repairs NIM streams that publish terminal metadata before
-their final content chunk. It holds that terminal metadata until source
-exhaustion and emits one terminal chunk, allowing the provider-specific MiniMax
-pass and selected textual-tool pass to compose without finalizing either parser
-early. NIM argument-property aliases remain keyed by the original tool identity:
-shared OpenAI output restores the tool name first, then NIM restores arguments
-and validates the original schema.
+NIM also owns response normalization for model-native tool markup exposed in
+chat-completion text. The normalizer recognizes the native protocol signature
+only when tools are declared, validates one complete tool block against the
+request schemas, and converts it into ordinary OpenAI tool-call deltas before
+the shared stream runner can commit visible text. Native structured tool-call
+deltas remain authoritative when both forms appear; incomplete or invalid
+native markup is a retryable upstream protocol failure rather than user-visible
+assistant text. NIM argument-property aliases remain keyed by the original tool
+identity: shared OpenAI output restores the tool name first, then NIM restores
+arguments and validates the original schema.
 
 ### Reasoning Ownership
 

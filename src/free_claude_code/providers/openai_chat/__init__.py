@@ -18,7 +18,6 @@ from .reasoning import (
 )
 from .reasoning_details import apply_reasoning_details_replay
 from .request_policy import OpenAIChatRequestPolicy, build_openai_chat_request_body
-from .text_tool_stream import OpenAITextToolDialect
 from .usage import usage_int
 
 
@@ -50,7 +49,6 @@ __all__ = [
     "OpenAIChatProfile",
     "OpenAIChatProvider",
     "OpenAIChatRequestPolicy",
-    "OpenAITextToolDialect",
     "ReasoningObject",
     "apply_reasoning_details_replay",
     "build_openai_chat_request_body",

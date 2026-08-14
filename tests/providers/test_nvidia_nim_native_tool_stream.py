@@ -97,8 +97,7 @@ def _content(chunks: list[SimpleNamespace]) -> str:
     return "".join(
         content
         for chunk in chunks
-        for choice in chunk.choices[:1]
-        if (content := getattr(choice.delta, "content", None)) is not None
+        if (content := getattr(chunk.choices[0].delta, "content", None)) is not None
     )
 
 
@@ -106,10 +105,9 @@ def _reasoning(chunks: list[SimpleNamespace]) -> str:
     return "".join(
         reasoning
         for chunk in chunks
-        for choice in chunk.choices[:1]
         if (
             reasoning := getattr(
-                choice.delta,
+                chunk.choices[0].delta,
                 "reasoning_content",
                 None,
             )
@@ -121,8 +119,6 @@ def _reasoning(chunks: list[SimpleNamespace]) -> str:
 def _tool_calls(chunks: list[SimpleNamespace]) -> list[SimpleNamespace]:
     calls: list[SimpleNamespace] = []
     for chunk in chunks:
-        if not chunk.choices:
-            continue
         value = getattr(chunk.choices[0].delta, "tool_calls", None)
         if isinstance(value, list):
             calls.extend(call for call in value if isinstance(call, SimpleNamespace))
@@ -169,39 +165,6 @@ async def test_normalizer_preserves_ordinary_stream_without_tool_schemas() -> No
 
     assert normalized == [source]
     assert normalized[0] is source
-
-
-@pytest.mark.asyncio
-async def test_normalizer_defers_premature_terminal_until_source_exhaustion() -> None:
-    usage = SimpleNamespace(prompt_tokens=11, completion_tokens=7)
-    usage_chunk = SimpleNamespace(choices=[], usage=usage)
-    body = _body(
-        _function(
-            "Bash",
-            {"command": {"type": "string"}},
-            ["command"],
-        )
-    )
-
-    normalized = await _normalize(
-        [
-            _chunk(finish_reason="stop"),
-            usage_chunk,
-            _chunk(content="late payload", finish_reason="stop"),
-        ],
-        body,
-    )
-
-    assert _content(normalized) == "late payload"
-    terminal = [
-        chunk
-        for chunk in normalized
-        if chunk.choices and chunk.choices[0].finish_reason is not None
-    ]
-    assert len(terminal) == 1
-    assert terminal[0] is normalized[-1]
-    assert terminal[0].choices[0].finish_reason == "stop"
-    assert terminal[0].usage is usage
 
 
 @pytest.mark.asyncio

@@ -14,6 +14,7 @@ from openai import AsyncOpenAI
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic import (
     ContentType,
+    FunctionTagToolParser,
     HeuristicToolParser,
     OpenAIToolNameCodec,
     ThinkTagParser,
@@ -64,7 +65,6 @@ from .output_cap import clamp_output_tokens, parse_output_token_cap
 from .profiles import OpenAIChatProfile
 from .reasoning_details import StructuredReasoningStream
 from .request_policy import build_openai_chat_request_body
-from .text_tool_stream import normalize_openai_text_tool_stream
 from .tool_calls import (
     OpenAIToolCallAssembler,
     OpenAIToolCallCollector,
@@ -89,6 +89,47 @@ class _CollectedRecoveryOutput:
     text: str
     thinking: str
     tool_calls: tuple[dict[str, Any], ...]
+
+
+def _iter_visible_text_events(
+    ledger: AnthropicStreamLedger,
+    text: str,
+) -> Iterator[str]:
+    yield from ledger.ensure_text_block()
+    yield ledger.emit_text_delta(text)
+
+
+def _iter_text_parser_events(
+    ledger: AnthropicStreamLedger,
+    parser: HeuristicToolParser,
+    text: str,
+    *,
+    tool_names: OpenAIToolNameCodec,
+) -> Iterator[str]:
+    """Route visible text through the established heuristic tool parser."""
+    filtered_text, detected_tools = parser.feed(text)
+    if filtered_text:
+        yield from _iter_visible_text_events(ledger, filtered_text)
+    for tool_use in detected_tools:
+        yield from iter_heuristic_tool_use_sse(
+            ledger,
+            tool_use,
+            tool_names=tool_names,
+        )
+
+
+def _iter_text_tool_use_events(
+    ledger: AnthropicStreamLedger,
+    tool_uses: tuple[dict[str, Any], ...] | list[dict[str, Any]],
+    *,
+    tool_names: OpenAIToolNameCodec,
+) -> Iterator[str]:
+    for tool_use in tool_uses:
+        yield from iter_heuristic_tool_use_sse(
+            ledger,
+            tool_use,
+            tool_names=tool_names,
+        )
 
 
 class OpenAIChatProvider(BaseProvider):
@@ -299,12 +340,6 @@ class OpenAIChatProvider(BaseProvider):
                     stream=True,
                 )
                 stream = self._normalize_stream(stream, body)
-                if self._profile.text_tool_dialect is not None:
-                    stream = normalize_openai_text_tool_stream(
-                        stream,
-                        body,
-                        dialect=self._profile.text_tool_dialect,
-                    )
                 retain_attempt = True
                 return stream, body, attempt
             except asyncio.CancelledError:
@@ -483,6 +518,7 @@ class _OpenAIChatStreamRunner:
         )
 
         think_parser = ThinkTagParser()
+        function_tag_parser = FunctionTagToolParser(self._request)
         heuristic_parser = HeuristicToolParser()
         finish_reason = None
         usage_info = None
@@ -555,6 +591,18 @@ class _OpenAIChatStreamRunner:
                         for out_event in hold_event(event):
                             yield out_event
 
+                    native_tool_calls = delta.tool_calls
+                    if native_tool_calls:
+                        released_text = function_tag_parser.disable()
+                        if released_text:
+                            for event in hold_events(
+                                _iter_visible_text_events(
+                                    ledger,
+                                    released_text,
+                                )
+                            ):
+                                yield event
+
                     if delta.content:
                         for part in think_parser.feed(delta.content):
                             if part.type == ContentType.THINKING:
@@ -569,34 +617,22 @@ class _OpenAIChatStreamRunner:
                                 ):
                                     yield event
                             else:
-                                (
-                                    filtered_text,
-                                    detected_tools,
-                                ) = heuristic_parser.feed(part.content)
-
-                                if filtered_text:
+                                safe_text = function_tag_parser.feed(part.content)
+                                if safe_text:
                                     for event in hold_events(
-                                        ledger.ensure_text_block()
-                                    ):
-                                        yield event
-                                    for event in hold_event(
-                                        ledger.emit_text_delta(filtered_text)
+                                        _iter_text_parser_events(
+                                            ledger,
+                                            heuristic_parser,
+                                            safe_text,
+                                            tool_names=self._tool_names,
+                                        )
                                     ):
                                         yield event
 
-                                for tool_use in detected_tools:
-                                    for event in iter_heuristic_tool_use_sse(
-                                        ledger,
-                                        tool_use,
-                                        tool_names=self._tool_names,
-                                    ):
-                                        for out_event in hold_event(event):
-                                            yield out_event
-
-                    if delta.tool_calls:
+                    if native_tool_calls:
                         for event in hold_events(ledger.close_content_blocks()):
                             yield event
-                        for tool_call in delta.tool_calls:
+                        for tool_call in native_tool_calls:
                             extra_content = tool_call_extra_content(tool_call)
                             tool_call_info = {
                                 "index": tool_call.index,
@@ -630,6 +666,55 @@ class _OpenAIChatStreamRunner:
                     raise TruncatedProviderStreamError(
                         "Provider stream ended with an incomplete tool name."
                     )
+
+                remaining = think_parser.flush()
+                if remaining:
+                    if remaining.type == ContentType.THINKING:
+                        if output_reasoning:
+                            for event in hold_events(ledger.ensure_thinking_block()):
+                                yield event
+                            for event in hold_event(
+                                ledger.emit_thinking_delta(remaining.content)
+                            ):
+                                yield event
+                    else:
+                        safe_text = function_tag_parser.feed(remaining.content)
+                        if safe_text:
+                            for event in hold_events(
+                                _iter_text_parser_events(
+                                    ledger,
+                                    heuristic_parser,
+                                    safe_text,
+                                    tool_names=self._tool_names,
+                                )
+                            ):
+                                yield event
+
+                fallback_text, function_tag_tools = function_tag_parser.finish()
+                if fallback_text:
+                    for event in hold_events(
+                        _iter_visible_text_events(
+                            ledger,
+                            fallback_text,
+                        )
+                    ):
+                        yield event
+                for event in hold_events(
+                    _iter_text_tool_use_events(
+                        ledger,
+                        function_tag_tools,
+                        tool_names=self._tool_names,
+                    )
+                ):
+                    yield event
+                for event in hold_events(
+                    _iter_text_tool_use_events(
+                        ledger,
+                        heuristic_parser.flush(),
+                        tool_names=self._tool_names,
+                    )
+                ):
+                    yield event
                 break
 
             except asyncio.CancelledError, GeneratorExit:
@@ -671,6 +756,7 @@ class _OpenAIChatStreamRunner:
                     )
                     ledger = self._new_ledger()
                     think_parser = ThinkTagParser()
+                    function_tag_parser = FunctionTagToolParser(self._request)
                     heuristic_parser = HeuristicToolParser()
                     finish_reason = None
                     usage_info = None
@@ -756,33 +842,6 @@ class _OpenAIChatStreamRunner:
                     )
                 if attempt is not None:
                     await attempt.aclose()
-
-        remaining = think_parser.flush()
-        if remaining:
-            if remaining.type == ContentType.THINKING:
-                if not output_reasoning:
-                    remaining = None
-                else:
-                    for event in hold_events(ledger.ensure_thinking_block()):
-                        yield event
-                    for event in hold_event(
-                        ledger.emit_thinking_delta(remaining.content)
-                    ):
-                        yield event
-            if remaining and remaining.type == ContentType.TEXT:
-                for event in hold_events(ledger.ensure_text_block()):
-                    yield event
-                for event in hold_event(ledger.emit_text_delta(remaining.content)):
-                    yield event
-
-        for tool_use in heuristic_parser.flush():
-            for event in iter_heuristic_tool_use_sse(
-                ledger,
-                tool_use,
-                tool_names=self._tool_names,
-            ):
-                for out_event in hold_event(event):
-                    yield out_event
 
         for event in self._tool_calls.flush_tool_name_buffers(
             ledger,

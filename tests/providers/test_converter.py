@@ -357,6 +357,44 @@ def test_convert_tool_choice(tool_choice, expected):
     assert result == expected
 
 
+def test_openai_build_materializes_auto_tool_choice_when_tools_are_declared():
+    request = MessagesRequest.model_validate(
+        {
+            "model": "model",
+            "messages": [{"role": "user", "content": "Use the echo tool."}],
+            "tools": [
+                {
+                    "name": "echo",
+                    "description": "Echo a value.",
+                    "input_schema": {
+                        "type": "object",
+                        "properties": {"value": {"type": "string"}},
+                        "required": ["value"],
+                    },
+                }
+            ],
+        }
+    )
+
+    body = build_base_request_body(request)
+
+    assert body["tool_choice"] == "auto"
+
+
+def test_openai_build_omits_tool_choice_when_tools_are_absent():
+    request = MessagesRequest.model_validate(
+        {
+            "model": "model",
+            "messages": [{"role": "user", "content": "Hello"}],
+        }
+    )
+
+    body = build_base_request_body(request)
+
+    assert "tools" not in body
+    assert "tool_choice" not in body
+
+
 # --- Message Conversion Tests: User ---
 
 
