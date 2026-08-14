@@ -251,6 +251,13 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "Create one at zenmux.ai/platform/pay-as-you-go."
         ),
     },
+    "WANDB_API_KEY": {
+        "label": "W&B Inference API Key",
+        "description": (
+            "W&B API key for Serverless Inference at api.inference.wandb.ai/v1. "
+            "Create one in [W&B User Settings](https://wandb.ai/settings)."
+        ),
+    },
 }
 
 

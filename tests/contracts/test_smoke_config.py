@@ -61,6 +61,7 @@ def _settings(**overrides):
         "nebius_api_key": "",
         "chutes_api_key": "",
         "featherless_api_key": "",
+        "wandb_api_key": "",
         "sambanova_api_key": "",
         "cerebras_api_key": "",
         "ollama_api_key": "",
@@ -327,6 +328,40 @@ def test_zenmux_provider_smoke_uses_current_free_model(monkeypatch) -> None:
     assert [model.provider for model in models] == ["zenmux"]
     assert models[0].full_model == "zenmux/deepseek/deepseek-v4-flash-free"
     assert models[0].source == "provider_default"
+
+
+def test_wandb_provider_smoke_uses_documented_tool_model(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_WANDB", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            wandb_api_key="wandb-key",
+        )
+    )
+
+    models = config.provider_smoke_models()
+
+    assert [model.provider for model in models] == ["wandb"]
+    assert models[0].full_model == "wandb/openai/gpt-oss-20b"
+    assert models[0].source == "provider_default"
+
+
+def test_wandb_provider_smoke_honors_model_override(monkeypatch) -> None:
+    monkeypatch.setenv("FCC_SMOKE_MODEL_WANDB", "deepseek-ai/DeepSeek-V4-Flash")
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            wandb_api_key="wandb-key",
+        )
+    )
+
+    models = config.provider_smoke_models()
+
+    assert [model.provider for model in models] == ["wandb"]
+    assert models[0].full_model == "wandb/deepseek-ai/DeepSeek-V4-Flash"
+    assert models[0].source == "FCC_SMOKE_MODEL_WANDB"
 
 
 def test_connected_account_provider_smoke_requires_explicit_model(

@@ -275,6 +275,8 @@ def _classify_provider_failure(
             return _failure(
                 FailureKind.AUTHENTICATION, 401, _AUTHENTICATION_MESSAGE, False
             )
+        if effective_status == 402:
+            return _failure(FailureKind.PERMISSION, 402, _PERMISSION_MESSAGE, False)
         if effective_status == 403:
             return _failure(FailureKind.PERMISSION, 403, _PERMISSION_MESSAGE, False)
         return _failure(
@@ -290,6 +292,8 @@ def _classify_provider_failure(
             return _failure(
                 FailureKind.AUTHENTICATION, 401, _AUTHENTICATION_MESSAGE, False
             )
+        if status == 402:
+            return _failure(FailureKind.PERMISSION, 402, _PERMISSION_MESSAGE, False)
         if status == 403:
             return _failure(FailureKind.PERMISSION, 403, _PERMISSION_MESSAGE, False)
         if status == 429:

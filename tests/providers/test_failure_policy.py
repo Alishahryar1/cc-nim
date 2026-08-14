@@ -98,6 +98,17 @@ _CASES = (
         False,
     ),
     _ClassificationCase(
+        "generic_openai_402",
+        lambda: _openai_status_error(
+            openai.APIStatusError,
+            status_code=402,
+            message="Inference credits exhausted",
+        ),
+        FailureKind.PERMISSION,
+        402,
+        False,
+    ),
+    _ClassificationCase(
         "generic_openai_403",
         lambda: _openai_status_error(
             openai.APIStatusError,
@@ -187,6 +198,13 @@ _CASES = (
         lambda: _http_status_error(401, "Unauthorized"),
         FailureKind.AUTHENTICATION,
         401,
+        False,
+    ),
+    _ClassificationCase(
+        "http_402_maps_billing_permission",
+        lambda: _http_status_error(402, "Inference credits exhausted"),
+        FailureKind.PERMISSION,
+        402,
         False,
     ),
     _ClassificationCase(

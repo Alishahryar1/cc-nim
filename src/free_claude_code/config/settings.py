@@ -250,6 +250,11 @@ class Settings(BaseModel):
         default=None, validation_alias="ZENMUX_API_KEY"
     )
 
+    # ==================== W&B Inference (OpenAI-compatible) ====================
+    wandb_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="WANDB_API_KEY"
+    )
+
     # ==================== Cerebras Inference (OpenAI-compatible) ====================
     cerebras_api_key: OptionalNonEmptyString = Field(
         default=None, validation_alias="CEREBRAS_API_KEY"
@@ -352,6 +357,9 @@ class Settings(BaseModel):
     )
     zenmux_proxy: OptionalNonEmptyString = Field(
         default=None, validation_alias="ZENMUX_PROXY"
+    )
+    wandb_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="WANDB_PROXY"
     )
     azure_openai_proxy: OptionalNonEmptyString = Field(
         default=None, validation_alias="AZURE_OPENAI_PROXY"

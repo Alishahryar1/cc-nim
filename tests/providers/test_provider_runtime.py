@@ -31,6 +31,7 @@ from free_claude_code.config.provider_catalog import (
     TOGETHER_DEFAULT_BASE,
     TOKENROUTER_DEFAULT_BASE,
     VERCEL_AI_GATEWAY_DEFAULT_BASE,
+    WANDB_INFERENCE_DEFAULT_BASE,
     XAI_DEFAULT_BASE,
     ZAI_DEFAULT_BASE,
     ZENMUX_DEFAULT_BASE,
@@ -97,6 +98,7 @@ def _make_settings(**overrides):
     mock.nararoute_base_url = NARAROUTE_DEFAULT_BASE
     mock.agnes_api_key = "test_agnes_key"
     mock.zenmux_api_key = "test_zenmux_key"
+    mock.wandb_api_key = "test_wandb_key"
     mock.lm_studio_base_url = "http://localhost:1234/v1"
     mock.llamacpp_base_url = "http://localhost:8080/v1"
     mock.ollama_base_url = "http://localhost:11434"
@@ -125,6 +127,7 @@ def _make_settings(**overrides):
     mock.nararoute_proxy = None
     mock.agnes_proxy = None
     mock.zenmux_proxy = None
+    mock.wandb_proxy = None
     mock.fireworks_proxy = None
     mock.fireworks_api_key = "test_fireworks_key"
     mock.novita_proxy = None
@@ -421,6 +424,27 @@ def test_zenmux_provider_config_uses_key_base_and_proxy() -> None:
     assert descriptor.base_url_attr is None
     assert config.api_key == "zenmux-token"
     assert config.base_url == ZENMUX_DEFAULT_BASE
+    assert config.proxy == "http://proxy.test:8080"
+    assert isinstance(provider, OpenAIChatProvider)
+
+
+def test_wandb_provider_config_uses_key_base_and_proxy() -> None:
+    descriptor = PROVIDER_CATALOG["wandb"]
+    settings = _make_settings(
+        wandb_api_key="wandb-token",
+        wandb_proxy="http://proxy.test:8080",
+    )
+
+    config = build_provider_config(descriptor, settings)
+    with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
+        provider = create_provider("wandb", settings)
+
+    assert descriptor.display_name == "W&B Inference"
+    assert descriptor.credential_env == "WANDB_API_KEY"
+    assert descriptor.credential_url == "https://wandb.ai/settings"
+    assert descriptor.base_url_attr is None
+    assert config.api_key == "wandb-token"
+    assert config.base_url == WANDB_INFERENCE_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
 
@@ -752,6 +776,7 @@ def test_create_provider_instantiates_each_builtin():
         "nararoute": OpenAIChatProvider,
         "agnes": OpenAIChatProvider,
         "zenmux": OpenAIChatProvider,
+        "wandb": OpenAIChatProvider,
         "gemini": GeminiProvider,
         "vertex": VertexProvider,
         "groq": GroqProvider,

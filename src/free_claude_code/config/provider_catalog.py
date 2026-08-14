@@ -76,6 +76,8 @@ NARAROUTE_DEFAULT_BASE = "https://router.bynara.id/v1"
 AGNES_DEFAULT_BASE = "https://apihub.agnes-ai.com/v1"
 # ZenMux OpenAI-compatible Chat Completions gateway.
 ZENMUX_DEFAULT_BASE = "https://zenmux.ai/api/v1"
+# W&B Serverless Inference OpenAI-compatible API.
+WANDB_INFERENCE_DEFAULT_BASE = "https://api.inference.wandb.ai/v1"
 
 
 class ProviderAuthKind(StrEnum):
@@ -237,6 +239,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="zenmux_api_key",
         default_base_url=ZENMUX_DEFAULT_BASE,
         proxy_attr="zenmux_proxy",
+    ),
+    "wandb": ProviderDescriptor(
+        provider_id="wandb",
+        display_name="W&B Inference",
+        credential_env="WANDB_API_KEY",
+        credential_url="https://wandb.ai/settings",
+        credential_attr="wandb_api_key",
+        default_base_url=WANDB_INFERENCE_DEFAULT_BASE,
+        proxy_attr="wandb_proxy",
     ),
     "azure_openai": ProviderDescriptor(
         provider_id="azure_openai",

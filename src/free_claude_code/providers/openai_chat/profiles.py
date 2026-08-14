@@ -358,6 +358,18 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         reasoning_delta_fallback_field="reasoning_content",
         structured_reasoning_details=True,
     ),
+    "wandb": OpenAIChatProfile(
+        _policy(
+            "WANDB",
+            ReasoningReplayMode.DISABLED,
+            include_extra_body=True,
+            extra_body_validator=validate_extra_body_does_not_override_reasoning_fields,
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+            max_tokens_field="max_completion_tokens",
+        ),
+        ChatTemplateReasoning(field="enable_thinking"),
+        reasoning_delta_field="reasoning",
+    ),
     "azure_openai": OpenAIChatProfile(
         _policy(
             "AZURE_OPENAI",
