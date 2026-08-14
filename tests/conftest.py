@@ -7,12 +7,14 @@ from unittest.mock import AsyncMock, MagicMock
 
 import pytest
 
+from free_claude_code.config import env_migrations, paths
+from free_claude_code.config.loader import clear_settings_cache
 from tests.providers.support import (
     immediate_admission,
     make_provider_config,
 )
 
-# Set mock environment BEFORE any imports that use Settings
+# Set deterministic process overrides before any test resolves Settings.
 os.environ.setdefault("NVIDIA_NIM_API_KEY", "test_key")
 os.environ.setdefault("MODEL", "nvidia_nim/test-model")
 os.environ["PTB_TIMEDELTA"] = "1"
@@ -23,9 +25,6 @@ os.environ["ANTHROPIC_AUTH_TOKEN"] = ""
 @pytest.fixture(autouse=True)
 def _isolate_managed_config(monkeypatch, tmp_path):
     """Keep every test away from real home, checkout, and running-server config."""
-
-    from free_claude_code.config import env_migrations, paths
-    from free_claude_code.config.loader import clear_settings_cache
 
     config_dir = tmp_path / ".fcc"
     monkeypatch.setattr(paths, "config_dir_path", lambda: config_dir)
