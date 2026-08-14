@@ -56,7 +56,7 @@ class PreparedAdminUpdate:
 
 
 def target_values_with_updates(updates: Mapping[str, Any]) -> dict[str, str]:
-    """Return managed env values after applying admin updates."""
+    """Return a managed target after repairing stored state and applying updates."""
 
     state = load_value_state()
     values = template_values()
@@ -73,6 +73,13 @@ def target_values_with_updates(updates: Mapping[str, Any]) -> dict[str, str]:
             if entry["source"] in {"repo_env", "template", "default"}:
                 values[key] = str(entry["value"])
 
+    # Repair stale editable state before applying the explicit request. Empty
+    # select updates then remain intact for normal Settings validation to reject.
+    for field in FIELDS:
+        values.setdefault(field.key, field.default)
+        if field.field_type == "select" and values[field.key] == "" and field.default:
+            values[field.key] = field.default
+
     for key, value in updates.items():
         field = FIELD_BY_KEY.get(key)
         if field is None:
@@ -83,10 +90,6 @@ def target_values_with_updates(updates: Mapping[str, Any]) -> dict[str, str]:
             continue
         values[key] = normalize_for_env(value)
 
-    for field in FIELDS:
-        values.setdefault(field.key, field.default)
-        if field.field_type == "select" and values[field.key] == "" and field.default:
-            values[field.key] = field.default
     return values
 
 
