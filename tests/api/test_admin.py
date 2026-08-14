@@ -1195,7 +1195,7 @@ def test_admin_first_apply_migrates_repo_env(monkeypatch, tmp_path):
     assert "DEEPSEEK_API_KEY=deepseek-secret" in managed_text
 
 
-def test_admin_first_apply_repairs_empty_defaulted_repo_values(monkeypatch, tmp_path):
+def test_admin_first_apply_repairs_empty_select_repo_values(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
     app = create_test_app()
@@ -1217,8 +1217,31 @@ def test_admin_first_apply_repairs_empty_defaulted_repo_values(monkeypatch, tmp_
     assert "WHISPER_DEVICE=nvidia_nim" in managed_text
 
 
+def test_admin_apply_preserves_empty_managed_auth_token(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    env_file = tmp_path / ".fcc" / ".env"
+    env_file.parent.mkdir(parents=True)
+    env_file.write_text(
+        "ANTHROPIC_AUTH_TOKEN=\nPROVIDER_RATE_LIMIT=1\n",
+        encoding="utf-8",
+    )
+    app = create_test_app()
+
+    response = _local_client(app).post(
+        "/admin/api/config/apply",
+        json={"values": {"PROVIDER_RATE_LIMIT": "2"}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["applied"] is True
+    managed_lines = env_file.read_text("utf-8").splitlines()
+    assert "ANTHROPIC_AUTH_TOKEN=" in managed_lines
+    assert "PROVIDER_RATE_LIMIT=2" in managed_lines
+
+
 @pytest.mark.parametrize("source", ("process", "explicit_env_file"))
-def test_admin_apply_rejects_empty_locked_defaulted_value(
+def test_admin_apply_rejects_empty_locked_select_value(
     monkeypatch,
     tmp_path,
     source,
