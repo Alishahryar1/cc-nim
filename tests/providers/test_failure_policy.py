@@ -61,6 +61,7 @@ class _ClassificationCase:
     kind: FailureKind
     status_code: int
     retryable: bool
+    message: str | None = None
 
 
 _CASES = (
@@ -107,6 +108,7 @@ _CASES = (
         FailureKind.PERMISSION,
         402,
         False,
+        "Provider requires payment or additional credits. Add credits or resolve billing.",
     ),
     _ClassificationCase(
         "generic_openai_403",
@@ -206,6 +208,7 @@ _CASES = (
         FailureKind.PERMISSION,
         402,
         False,
+        "Provider requires payment or additional credits. Add credits or resolve billing.",
     ),
     _ClassificationCase(
         "http_403_maps_permission",
@@ -282,6 +285,8 @@ def test_raw_provider_failure_maps_to_canonical_failure(
     assert failure.message.strip()
     assert "Request ID: req_classification" in failure.message
     assert "SECRET" not in failure.message
+    if case.message is not None:
+        assert case.message in failure.message
 
 
 def test_classification_preserves_useful_body_while_redacting_credentials() -> None:
