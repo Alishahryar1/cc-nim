@@ -1195,6 +1195,58 @@ def test_admin_first_apply_migrates_repo_env(monkeypatch, tmp_path):
     assert "DEEPSEEK_API_KEY=deepseek-secret" in managed_text
 
 
+def test_admin_first_apply_repairs_empty_defaulted_repo_values(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+    (tmp_path / ".env").write_text(
+        "MESSAGING_PLATFORM=\nWHISPER_DEVICE=\n",
+        encoding="utf-8",
+    )
+
+    response = _local_client(app).post(
+        "/admin/api/config/apply",
+        json={"values": {"NVIDIA_NIM_API_KEY": "nim-secret"}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["applied"] is True
+    managed_text = (tmp_path / ".fcc" / ".env").read_text("utf-8")
+    assert "NVIDIA_NIM_API_KEY=nim-secret" in managed_text
+    assert "MESSAGING_PLATFORM=discord" in managed_text
+    assert "WHISPER_DEVICE=nvidia_nim" in managed_text
+
+
+@pytest.mark.parametrize("source", ("process", "explicit_env_file"))
+def test_admin_apply_rejects_empty_locked_defaulted_value(
+    monkeypatch,
+    tmp_path,
+    source,
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+    if source == "process":
+        monkeypatch.setenv("MESSAGING_PLATFORM", "")
+    else:
+        env_file = tmp_path / "locked.env"
+        env_file.write_text("MESSAGING_PLATFORM=\n", encoding="utf-8")
+        monkeypatch.setenv("FCC_ENV_FILE", str(env_file))
+
+    response = _local_client(app).post(
+        "/admin/api/config/apply",
+        json={"values": {"NVIDIA_NIM_API_KEY": "nim-secret"}},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["applied"] is False
+    assert any(
+        "messaging_platform" in error and "got ''" in error for error in body["errors"]
+    )
+    assert not (tmp_path / ".fcc" / ".env").exists()
+
+
 def test_admin_local_provider_status_reports_reachable(monkeypatch, tmp_path):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)

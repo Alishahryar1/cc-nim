@@ -85,6 +85,8 @@ def target_values_with_updates(updates: Mapping[str, Any]) -> dict[str, str]:
 
     for field in FIELDS:
         values.setdefault(field.key, field.default)
+        if values[field.key] == "" and field.default:
+            values[field.key] = field.default
     return values
 
 

@@ -1144,8 +1144,12 @@ def _create_windows_shortcut(
     )
 
 
-def _windows_shortcut_icon(powershell: str, shortcut_path: Path) -> str:
-    env = os.environ | {"FCC_TEST_SHORTCUT": str(shortcut_path)}
+def _windows_shortcut_icon(
+    powershell: str,
+    shortcut_path: Path,
+    env: dict[str, str],
+) -> str:
+    process_env = env | {"FCC_TEST_SHORTCUT": str(shortcut_path)}
     completed = subprocess.run(
         [
             powershell,
@@ -1160,7 +1164,7 @@ def _windows_shortcut_icon(powershell: str, shortcut_path: Path) -> str:
         check=True,
         capture_output=True,
         text=True,
-        env=env,
+        env=process_env,
     )
     return completed.stdout
 
@@ -1521,6 +1525,7 @@ def test_install_ps1_fresh_install_is_verified(
         _windows_shortcut_icon(
             powershell_harness.powershell,
             desktop_shortcut,
+            powershell_harness.env,
         )
         == f"{icon},0"
     )
