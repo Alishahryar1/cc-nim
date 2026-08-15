@@ -3,6 +3,9 @@ from pathlib import Path
 
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.messaging.platforms.factory import create_messaging_components
+from free_claude_code.providers.azure_responses.provider import (
+    AzureResponsesProvider,
+)
 from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.cloudflare import CloudflareProvider
 from free_claude_code.providers.deepseek import DeepSeekProvider
@@ -76,6 +79,7 @@ def test_provider_and_platform_registries_include_builtins() -> None:
         "groq": GroqProvider,
         "gemini": GeminiProvider,
         "vertex": VertexProvider,
+        "azure_openai": AzureResponsesProvider,
     }
     assert set(OPENAI_CHAT_PROFILES).isdisjoint(specialized_provider_classes)
     assert set(PROVIDER_CATALOG) == (

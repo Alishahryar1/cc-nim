@@ -395,19 +395,6 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         ChatTemplateReasoning(field="enable_thinking"),
         reasoning_delta_field="reasoning",
     ),
-    "azure_openai": OpenAIChatProfile(
-        _policy(
-            "AZURE_OPENAI",
-            ReasoningReplayMode.THINK_TAGS,
-            max_tokens_field="max_completion_tokens",
-        ),
-        NamedEffortReasoning(
-            _LOW_MEDIUM_HIGH,
-            disabled_value="none",
-            enabled_value="medium",
-        ),
-        model_ids_are_routable=False,
-    ),
     "mistral_codestral": OpenAIChatProfile(
         _policy("CODESTRAL", ReasoningReplayMode.THINK_TAGS),
         NO_REASONING,
