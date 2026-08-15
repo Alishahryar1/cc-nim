@@ -145,6 +145,18 @@ def _create_groq(
     return GroqProvider(config, admission=admission)
 
 
+def _create_azure_openai(
+    config: ProviderConfig,
+    _settings: Settings,
+    admission: ProviderAdmissionController,
+) -> BaseProvider:
+    from free_claude_code.providers.azure_responses.provider import (
+        AzureResponsesProvider,
+    )
+
+    return AzureResponsesProvider(config, admission=admission)
+
+
 _SPECIAL_PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "nvidia_nim": _create_nvidia_nim,
     "open_router": _create_open_router,
@@ -157,6 +169,7 @@ _SPECIAL_PROVIDER_FACTORIES: dict[str, ProviderFactory] = {
     "vertex": _create_vertex,
     "github_models": _create_github_models,
     "groq": _create_groq,
+    "azure_openai": _create_azure_openai,
 }
 _INJECTED_PROVIDER_IDS = {"openai"}
 

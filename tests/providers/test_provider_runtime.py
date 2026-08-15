@@ -40,6 +40,9 @@ from free_claude_code.config.provider_catalog import (
     ZENMUX_DEFAULT_BASE,
 )
 from free_claude_code.providers.admission import ProviderAdmissionController
+from free_claude_code.providers.azure_responses.provider import (
+    AzureResponsesProvider,
+)
 from free_claude_code.providers.cloudflare import CloudflareProvider
 from free_claude_code.providers.deepseek import DeepSeekProvider
 from free_claude_code.providers.gemini import GeminiProvider
@@ -826,9 +829,9 @@ def test_create_provider_instantiates_each_builtin():
         "nebius": OpenAIChatProvider,
         "chutes": OpenAIChatProvider,
         "featherless": OpenAIChatProvider,
-        "azure_openai": OpenAIChatProvider,
         "open_router": OpenRouterProvider,
         "mistral": MistralProvider,
+        "azure_openai": AzureResponsesProvider,
         "mistral_codestral": OpenAIChatProvider,
         "deepseek": DeepSeekProvider,
         "kimi": OpenAIChatProvider,
