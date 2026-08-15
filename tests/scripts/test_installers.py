@@ -214,11 +214,6 @@ printf '%s\n' "$FCC_PS_OUTPUT"
         *args: str,
         fail_step: str = "",
     ) -> subprocess.CompletedProcess[str]:
-        import errno
-        import pty
-        import select
-        import time
-
         env = self.env | {
             "FAIL_STEP": fail_step,
             "FCC_INSTALLER": str(_repo_root() / "scripts" / "install.sh"),
@@ -230,53 +225,20 @@ printf '%s\n' "$FCC_PS_OUTPUT"
             "fcc-installer",
             *args,
         ]
-        fork = vars(pty)["fork"]
-        wait_without_blocking = vars(os)["WNOHANG"]
-        child_pid, master_fd = fork()
-        if child_pid == 0:
-            os.execve(command[0], command, env)
-
-        output = bytearray()
-        status: int | None = None
-        deadline = time.monotonic() + 30
-        try:
-            os.write(master_fd, answers.encode())
-            while status is None:
-                readable, _, _ = select.select([master_fd], [], [], 0.1)
-                if readable:
-                    try:
-                        output.extend(os.read(master_fd, 65536))
-                    except OSError as error:
-                        if error.errno != errno.EIO:
-                            raise
-
-                waited_pid, wait_status = os.waitpid(child_pid, wait_without_blocking)
-                if waited_pid == child_pid:
-                    status = wait_status
-                elif time.monotonic() >= deadline:
-                    os.kill(child_pid, 9)
-                    os.waitpid(child_pid, 0)
-                    raise AssertionError("Interactive installer did not finish")
-
-            while True:
-                readable, _, _ = select.select([master_fd], [], [], 0)
-                if not readable:
-                    break
-                try:
-                    output.extend(os.read(master_fd, 65536))
-                except OSError as error:
-                    if error.errno == errno.EIO:
-                        break
-                    raise
-        finally:
-            os.close(master_fd)
-
-        assert status is not None
-        return subprocess.CompletedProcess(
-            command,
-            os.waitstatus_to_exitcode(status),
-            output.decode(errors="replace"),
-            "",
+        return subprocess.run(
+            [
+                sys.executable,
+                "-W",
+                "error",
+                str(Path(__file__).with_name("_pty_runner.py")),
+                *command,
+            ],
+            input=answers,
+            check=False,
+            capture_output=True,
+            text=True,
+            env=env,
+            timeout=30,
         )
 
     def calls(self) -> list[str]:
