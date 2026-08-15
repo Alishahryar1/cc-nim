@@ -501,6 +501,20 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         ("test_pi_cli_prompt_e2e",),
     ),
     CapabilityContract(
+        "cli",
+        "opencode_cli_integration",
+        "opencode_cli_integration",
+        "free_claude_code.cli.launchers.opencode",
+        "OpenCode V1 binary, live FCC model catalog, and child-process config",
+        "Responses provider scoped to FCC with bearer authentication",
+        "version, proxy, config conflict, or catalog failure exits without fallback",
+        (
+            "tests/cli/test_opencode_launcher.py",
+            "tests/cli/test_model_catalog.py",
+        ),
+        ("test_opencode_cli_prompt_e2e",),
+    ),
+    CapabilityContract(
         "extensibility",
         "provider_platform_abcs",
         "extensible_provider_platform_abcs",

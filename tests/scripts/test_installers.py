@@ -17,6 +17,7 @@ FCC_COMMANDS = (
     "fcc-claude",
     "fcc-codex",
     "fcc-pi",
+    "fcc-opencode",
     "fcc-init",
     "free-claude-code",
 )
@@ -47,6 +48,7 @@ def _braced_body(text: str, declaration: str) -> str:
 
 
 def _posix_command(name: str) -> str:
+    version = "1.18.18" if name == "opencode" else "1.0.0"
     help_output = (
         '    echo "  --extension, -e <path>  Load an extension"\n'
         '    echo "  --models <patterns>     Scope models"'
@@ -59,7 +61,7 @@ if [ "$FAIL_STEP" = "{name}-verify" ]; then
     exit 31
 fi
 if [ "${{1:-}}" = "--version" ]; then
-    echo "{name} 1.0.0"
+    echo "{name} {version}"
 fi
 if [ "${{1:-}}" = "--help" ]; then
 {help_output}
@@ -104,6 +106,7 @@ if [ "${{1:-}}" = "tool" ] && [ "${{2:-}}" = "install" ]; then
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-desktop"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-claude"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-pi"
+    cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-opencode"
     if [ "$FAIL_STEP" != "fcc-missing" ]; then
         cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-codex"
     fi
@@ -138,6 +141,7 @@ case "$*:$FAIL_STEP" in
     "init --global --auto-patch:rtk-init-claude") exit 73 ;;
     "init --global --codex:rtk-init-codex") exit 74 ;;
     "init --global --agent pi:rtk-init-pi") exit 75 ;;
+    "init --global --opencode:rtk-init-opencode") exit 76 ;;
 esac
 if [ "${1:-}" = "--version" ]; then
     echo "rtk 0.44.2"
@@ -292,7 +296,7 @@ while [ "$#" -gt 0 ]; do
 done
 echo "download:$url" >> "$CALL_LOG"
 case "$url:$FAIL_STEP" in
-    *claude.ai*:claude-download|*chatgpt.com*:codex-download|*pi.dev*:pi-download|*rtk-ai*:rtk-download|*astral.sh*:uv-download)
+    *claude.ai*:claude-download|*chatgpt.com*:codex-download|*pi.dev*:pi-download|*opencode.ai*:opencode-download|*rtk-ai*:rtk-download|*astral.sh*:uv-download)
         exit 41
         ;;
 esac
@@ -300,6 +304,7 @@ case "$url" in
     *claude.ai*) source="$FAKE_FIXTURES/claude-installer.sh" ;;
     *chatgpt.com*) source="$FAKE_FIXTURES/codex-installer.sh" ;;
     *pi.dev*) source="$FAKE_FIXTURES/pi-installer.sh" ;;
+    *opencode.ai*) source="$FAKE_FIXTURES/opencode-installer.sh" ;;
     *rtk-ai*)
         if [ "$FAIL_STEP" = "rtk-install" ]; then
             printf 'invalid archive\n' > "$output"
@@ -350,6 +355,16 @@ chmod +x "$pi_bin/pi"
 """,
     )
     _write_executable(
+        fixtures / "opencode-installer.sh",
+        """#!/bin/sh
+echo "opencode-install" >> "$CALL_LOG"
+[ "$FAIL_STEP" = "opencode-install" ] && exit 25
+mkdir -p "$HOME/.opencode/bin"
+cp "$FAKE_FIXTURES/opencode-command.sh" "$HOME/.opencode/bin/opencode"
+chmod +x "$HOME/.opencode/bin/opencode"
+""",
+    )
+    _write_executable(
         fixtures / "uv-installer.sh",
         """#!/bin/sh
 echo "uv-install" >> "$CALL_LOG"
@@ -362,6 +377,7 @@ chmod +x "$HOME/.local/bin/uv"
     _write_executable(fixtures / "claude-command.sh", _posix_command("claude"))
     _write_executable(fixtures / "codex-command.sh", _posix_command("codex"))
     _write_executable(fixtures / "pi-command.sh", _posix_command("pi"))
+    _write_executable(fixtures / "opencode-command.sh", _posix_command("opencode"))
     rtk_command = _posix_rtk_command().encode()
     with tarfile.open(
         fixtures / "rtk-x86_64-unknown-linux-musl.tar.gz", "w:gz"
@@ -398,6 +414,7 @@ case "${1:-}" in
 esac
 """,
     )
+    _write_executable(bin_dir / "opencode", _posix_command("opencode"))
     _write_executable(
         bin_dir / "sha256sum",
         """#!/bin/sh
@@ -432,6 +449,7 @@ printf '%s  %s\n' "$checksum" "$1"
 
 
 def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> None:
+    (posix_harness.bin_dir / "opencode").unlink()
     result = posix_harness.run()
 
     assert result.returncode == 0, result.stderr
@@ -440,6 +458,7 @@ def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> No
     assert calls.index("claude-install") < calls.index("claude:--version")
     assert calls.index("codex-install:1") < calls.index("codex:--version")
     assert calls.index("pi-install") < calls.index("pi:--version")
+    assert calls.index("opencode-install") < calls.index("opencode:--version")
     assert calls.index("uv-install") < calls.index("uv:--version")
     assert any(
         call.startswith(
@@ -479,8 +498,9 @@ def test_install_sh_installs_and_configures_rtk_for_selected_agents(
         "rtk:init --global --auto-patch:telemetry=1",
         "rtk:init --global --codex:telemetry=1",
         "rtk:init --global --agent pi:telemetry=1",
+        "rtk:init --global --opencode:telemetry=1",
     ]
-    assert calls.index("rtk:init --global --agent pi:telemetry=1") < calls.index(
+    assert calls.index("rtk:init --global --opencode:telemetry=1") < calls.index(
         "uv-install"
     )
     assert (Path(posix_harness.env["HOME"]) / ".claude").is_dir()
@@ -542,7 +562,7 @@ def test_install_sh_preserves_existing_rtk_and_configures_only_selected_agent(
 ) -> None:
     posix_harness.add_rtk()
 
-    result = posix_harness.run_interactive("n\ny\nn\ny\n")
+    result = posix_harness.run_interactive("n\ny\nn\nn\ny\n")
 
     assert result.returncode == 0, result.stdout
     assert "verifying it without updating it" in result.stdout
@@ -589,13 +609,14 @@ def test_install_sh_stops_when_rtk_setup_fails(
 def test_install_sh_reprompts_then_installs_only_selected_agent(
     posix_harness: PosixHarness,
 ) -> None:
-    result = posix_harness.run_interactive("n\nn\nn\nn\ny\nn\nn\n")
+    result = posix_harness.run_interactive("n\nn\nn\nn\nn\ny\nn\nn\nn\n")
 
     assert result.returncode == 0, result.stdout
     assert "Select at least one coding agent." in result.stdout
     assert "Run Codex with: fcc-codex" in result.stdout
     assert "Run Claude Code with: fcc-claude" not in result.stdout
     assert "Run Pi with: fcc-pi" not in result.stdout
+    assert "Run OpenCode with: fcc-opencode" not in result.stdout
     calls = posix_harness.calls()
     assert "codex-install:1" in calls
     assert not any("claude.ai" in call for call in calls)
@@ -606,7 +627,7 @@ def test_install_sh_reprompts_then_installs_only_selected_agent(
 def test_install_sh_rejects_uninstalled_only_selection(
     posix_harness: PosixHarness,
 ) -> None:
-    result = posix_harness.run_interactive("n\nn\ny\nn\n", fail_step="pi-skip")
+    result = posix_harness.run_interactive("n\nn\ny\nn\nn\n", fail_step="pi-skip")
 
     assert result.returncode != 0
     assert "No selected coding agent was installed." in result.stdout
@@ -842,6 +863,9 @@ def test_install_sh_replaces_prerelease_uv(
         "pi-download",
         "pi-install",
         "pi-verify",
+        "opencode-download",
+        "opencode-install",
+        "opencode-verify",
         "uv-download",
         "uv-install",
         "uv-verify",
@@ -855,6 +879,8 @@ def test_install_sh_stops_without_success_on_each_failure(
     posix_harness: PosixHarness,
     failure: str,
 ) -> None:
+    if failure.startswith("opencode-"):
+        (posix_harness.bin_dir / "opencode").unlink()
     result = posix_harness.run(fail_step=failure)
 
     assert result.returncode != 0
@@ -869,6 +895,9 @@ def test_install_sh_stops_without_success_on_each_failure(
         "pi-download": "pi-install",
         "pi-install": "pi:--version",
         "pi-verify": "astral.sh",
+        "opencode-download": "opencode-install",
+        "opencode-install": "opencode:--version",
+        "opencode-verify": "astral.sh",
         "uv-download": "uv-install",
         "uv-install": "uv:--version",
         "uv-verify": "uv:tool install",
@@ -1132,6 +1161,7 @@ def _windows_shortcut_icon(
 
 
 def _batch_client(name: str) -> str:
+    version = "1.18.18" if name == "opencode" else "1.0.0"
     help_output = (
         "echo   --extension, -e ^<path^>  Load an extension\n"
         "echo   --models ^<patterns^>     Scope models"
@@ -1141,7 +1171,7 @@ def _batch_client(name: str) -> str:
     return f"""@echo off
 echo {name}:%*>>"%CALL_LOG%"
 if "%FAIL_STEP%"=="{name}-verify" exit /b 51
-if "%1"=="--version" echo {name} 1.0.0
+if "%1"=="--version" echo {name} {version}
 if "%1"=="--help" (
 {help_output}
 )
@@ -1178,6 +1208,7 @@ copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-server.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-desktop.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-claude.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-pi.cmd" >nul
+copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-opencode.cmd" >nul
 if not "%FAIL_STEP%"=="fcc-missing" copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-codex.cmd" >nul
 exit /b 0
 :update_shell
@@ -1199,6 +1230,7 @@ if "%FAIL_STEP%"=="rtk-verify" if "%1"=="gain" exit /b 72
 if "%FAIL_STEP%"=="rtk-init-claude" if "%*"=="init --global --auto-patch" exit /b 73
 if "%FAIL_STEP%"=="rtk-init-codex" if "%*"=="init --global --codex" exit /b 74
 if "%FAIL_STEP%"=="rtk-init-pi" if "%*"=="init --global --agent pi" exit /b 75
+if "%FAIL_STEP%"=="rtk-init-opencode" if "%*"=="init --global --opencode" exit /b 76
 if "%1"=="--version" echo rtk 0.44.2
 exit /b 0
 """
@@ -1298,6 +1330,9 @@ def powershell_harness(
         _batch_client("codex"), encoding="utf-8"
     )
     (fixtures / "pi-command.cmd").write_text(_batch_client("pi"), encoding="utf-8")
+    (fixtures / "opencode-command.cmd").write_text(
+        _batch_client("opencode"), encoding="utf-8"
+    )
     (fixtures / "rtk-command.cmd").write_text(_batch_rtk(), encoding="utf-8")
     (fixtures / "uv-command.cmd").write_text(_batch_uv("0.11.28"), encoding="utf-8")
     (fixtures / "fcc-command.cmd").write_text(
@@ -1358,6 +1393,18 @@ Add-Content -LiteralPath $env:CALL_LOG -Value "uv-install"
     rtk_archive = fixtures / "rtk-x86_64-pc-windows-msvc.zip"
     with zipfile.ZipFile(rtk_archive, "w") as archive:
         archive.writestr("rtk.exe", b"fake RTK executable")
+    for asset_name in (
+        "opencode-windows-x64-baseline.zip",
+        "opencode-windows-arm64.zip",
+    ):
+        with zipfile.ZipFile(
+            fixtures / asset_name, "w", zipfile.ZIP_DEFLATED
+        ) as archive:
+            archive.write(
+                Path(sys.executable).with_name("fcc-server.exe"),
+                arcname="opencode.exe",
+            )
+    (bin_dir / "opencode.cmd").write_text(_batch_client("opencode"), encoding="utf-8")
 
     wrapper = tmp_path / "run-installer.ps1"
     wrapper.write_text(
@@ -1372,6 +1419,7 @@ function Invoke-RestMethod {
         ($env:FAIL_STEP -eq "claude-download" -and $Uri.Contains("claude.ai")) -or
         ($env:FAIL_STEP -eq "codex-download" -and $Uri.Contains("chatgpt.com")) -or
         ($env:FAIL_STEP -eq "pi-download" -and $Uri.Contains("pi.dev")) -or
+        ($env:FAIL_STEP -eq "opencode-download" -and $Uri.Contains("anomalyco/opencode")) -or
         ($env:FAIL_STEP -eq "rtk-download" -and $Uri.Contains("rtk-ai/rtk")) -or
         ($env:FAIL_STEP -eq "uv-download" -and $Uri.Contains("astral.sh"))
     ) {
@@ -1385,6 +1433,13 @@ function Invoke-RestMethod {
     }
     elseif ($Uri.Contains("pi.dev")) {
         $source = Join-Path $env:FAKE_FIXTURES "pi-installer.ps1"
+    }
+    elseif ($Uri.Contains("opencode-windows-")) {
+        if ($env:FAIL_STEP -eq "opencode-archive") {
+            Set-Content -LiteralPath $OutFile -Value "not a zip"
+            return
+        }
+        $source = Join-Path $env:FAKE_FIXTURES ([IO.Path]::GetFileName($Uri))
     }
     elseif ($Uri.EndsWith("rtk-x86_64-pc-windows-msvc.zip")) {
         $source = Join-Path $env:FAKE_FIXTURES "rtk-x86_64-pc-windows-msvc.zip"
@@ -1416,7 +1471,18 @@ function Get-Process {
         }
     }
 }
-$installer = [scriptblock]::Create([IO.File]::ReadAllText($env:FCC_INSTALLER))
+$installerSource = [IO.File]::ReadAllText($env:FCC_INSTALLER)
+$nativeVersionProbe = '    $output = Invoke-Utf8NativeCapture -FilePath $OpenCodePath -Arguments @("--version")'
+$fakeArchiveVersionProbe = @'
+    $output = if ([IO.Path]::GetFileName($OpenCodePath) -eq "opencode.exe") {
+        "opencode 1.18.18"
+    }
+    else {
+        Invoke-Utf8NativeCapture -FilePath $OpenCodePath -Arguments @("--version")
+    }
+'@
+$installerSource = $installerSource.Replace($nativeVersionProbe, $fakeArchiveVersionProbe.TrimEnd())
+$installer = [scriptblock]::Create($installerSource)
 & $installer @args
 """,
         encoding="utf-8",
@@ -1441,6 +1507,8 @@ $installer = [scriptblock]::Create([IO.File]::ReadAllText($env:FCC_INSTALLER))
             "FCC_PROCESS_MARKER": str(tmp_path / "fcc-process-ready"),
             "FCC_RUNNING_COMMAND": "",
             "FCC_RUNNING_PHASE": "early",
+            "PROCESSOR_ARCHITECTURE": "AMD64",
+            "PROCESSOR_ARCHITEW6432": "",
             "FAIL_STEP": "",
         }
     )
@@ -1452,6 +1520,7 @@ $installer = [scriptblock]::Create([IO.File]::ReadAllText($env:FCC_INSTALLER))
 def test_install_ps1_fresh_install_is_verified(
     powershell_harness: PowerShellHarness,
 ) -> None:
+    (powershell_harness.bin_dir / "opencode.cmd").unlink()
     result = powershell_harness.run()
 
     assert result.returncode == 0, result.stderr
@@ -1460,6 +1529,7 @@ def test_install_ps1_fresh_install_is_verified(
     assert calls.index("claude-install") < calls.index("claude:--version")
     assert calls.index("codex-install:1") < calls.index("codex:--version")
     assert calls.index("pi-install") < calls.index("pi:--version")
+    assert any("anomalyco/opencode" in call for call in calls)
     assert calls.index("uv-install") < calls.index("uv:--version")
     assert any(
         call.startswith(
@@ -1501,6 +1571,34 @@ def test_install_ps1_fresh_install_is_verified(
     ).is_file()
 
 
+def test_install_ps1_selects_official_opencode_arm64_archive(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    (powershell_harness.bin_dir / "opencode.cmd").unlink()
+    powershell_harness.env["PROCESSOR_ARCHITEW6432"] = "ARM64"
+
+    result = powershell_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert any(
+        call.endswith("opencode-windows-arm64.zip")
+        for call in powershell_harness.calls()
+    )
+
+
+def test_install_ps1_rejects_unsupported_opencode_architecture(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    (powershell_harness.bin_dir / "opencode.cmd").unlink()
+    powershell_harness.env["PROCESSOR_ARCHITEW6432"] = "X86"
+
+    result = powershell_harness.run()
+
+    assert result.returncode != 0
+    assert "does not provide a supported Windows release" in result.stderr
+    assert not any("anomalyco/opencode" in call for call in powershell_harness.calls())
+
+
 def test_install_ps1_preserves_existing_rtk_and_configures_selected_agents(
     powershell_harness: PowerShellHarness,
 ) -> None:
@@ -1518,6 +1616,7 @@ def test_install_ps1_preserves_existing_rtk_and_configures_selected_agents(
         "rtk:init --global --auto-patch:telemetry=1",
         "rtk:init --global --codex:telemetry=1",
         "rtk:init --global --agent pi:telemetry=1",
+        "rtk:init --global --opencode:telemetry=1",
     ]
     assert (Path(powershell_harness.env["USERPROFILE"]) / ".claude").is_dir()
 
@@ -1805,6 +1904,9 @@ def test_install_ps1_replaces_prerelease_uv(
         "pi-download",
         "pi-install",
         "pi-verify",
+        "opencode-download",
+        "opencode-archive",
+        "opencode-verify",
         "uv-download",
         "uv-install",
         "uv-verify",
@@ -1818,6 +1920,8 @@ def test_install_ps1_stops_without_success_on_each_failure(
     powershell_harness: PowerShellHarness,
     failure: str,
 ) -> None:
+    if failure in {"opencode-download", "opencode-archive"}:
+        (powershell_harness.bin_dir / "opencode.cmd").unlink()
     result = powershell_harness.run(fail_step=failure)
 
     assert result.returncode != 0
@@ -1832,6 +1936,9 @@ def test_install_ps1_stops_without_success_on_each_failure(
         "pi-download": "pi-install",
         "pi-install": "pi:--version",
         "pi-verify": "astral.sh",
+        "opencode-download": "uv-install",
+        "opencode-archive": "uv-install",
+        "opencode-verify": "astral.sh",
         "uv-download": "uv-install",
         "uv-install": "uv:--version",
         "uv-verify": "uv:tool install",
@@ -2023,10 +2130,10 @@ Invoke-DownloadedPowerShellInstaller `
 @pytest.mark.parametrize(
     ("answers", "expected", "expected_messages"),
     [
-        (("", "", "", ""), "True,True,True,False", ()),
+        (("", "", "", "", ""), "True,True,True,True,False", ()),
         (
-            ("maybe", "n", "n", "n", "n", "y", "n", "y"),
-            "False,True,False,True",
+            ("maybe", "n", "n", "n", "n", "n", "y", "n", "n", "y"),
+            "False,True,False,False,True",
             ("Please answer Y or N.", "Select at least one coding agent."),
         ),
     ],
@@ -2048,6 +2155,7 @@ $script:AnswerIndex = 0
 $script:InstallClaudeCode = $true
 $script:InstallCodex = $true
 $script:InstallPi = $true
+$script:InstallOpenCode = $true
 $script:EnableRtk = $false
 function Read-Host {{
     param([string] $Prompt)
@@ -2058,7 +2166,7 @@ function Read-Host {{
 function Read-YesNo {{{read_yes_no}}}
 function Select-CodingAgents {{{select_agents}}}
 Select-CodingAgents
-Write-Output "selection:$($script:InstallClaudeCode),$($script:InstallCodex),$($script:InstallPi),$($script:EnableRtk)"
+Write-Output "selection:$($script:InstallClaudeCode),$($script:InstallCodex),$($script:InstallPi),$($script:InstallOpenCode),$($script:EnableRtk)"
 """
 
     result = subprocess.run(
@@ -2083,12 +2191,14 @@ $ErrorActionPreference = "Stop"
 $script:InstallClaudeCode = $false
 $script:InstallCodex = $true
 $script:InstallPi = $false
+$script:InstallOpenCode = $false
 $script:PiAvailable = $false
 $script:Calls = @()
 function Write-Step {{ param([string] $Message) }}
 function Ensure-ClaudeCode {{ $script:Calls += "claude" }}
 function Ensure-Codex {{ $script:Calls += "codex" }}
 function Ensure-Pi {{ $script:Calls += "pi"; $script:PiAvailable = $true }}
+function Ensure-OpenCode {{ $script:Calls += "opencode" }}
 function Ensure-SelectedCodingAgents {{{body}}}
 Ensure-SelectedCodingAgents
 Write-Output "calls:$($script:Calls -join ',')"
@@ -2117,6 +2227,7 @@ $script:EnableRtk = $true
 $script:InstallClaudeCode = $false
 $script:InstallCodex = $true
 $script:InstallPi = $true
+$script:InstallOpenCode = $false
 $script:PiAvailable = $false
 $script:Calls = @()
 function Write-Step {{ param([string] $Message) }}
@@ -2150,11 +2261,13 @@ $ErrorActionPreference = "Stop"
 $script:InstallClaudeCode = $false
 $script:InstallCodex = $false
 $script:InstallPi = $true
+$script:InstallOpenCode = $false
 $script:PiAvailable = $false
 function Write-Step {{ param([string] $Message) }}
 function Ensure-ClaudeCode {{ }}
 function Ensure-Codex {{ }}
 function Ensure-Pi {{ }}
+function Ensure-OpenCode {{ }}
 function Ensure-SelectedCodingAgents {{{body}}}
 Ensure-SelectedCodingAgents
 """

@@ -64,6 +64,7 @@ def test_cli_scripts_are_registered() -> None:
         "fcc-claude": "free_claude_code.cli.launchers.claude:launch",
         "fcc-codex": "free_claude_code.cli.launchers.codex:launch",
         "fcc-pi": "free_claude_code.cli.launchers.pi:launch",
+        "fcc-opencode": "free_claude_code.cli.launchers.opencode:launch",
     }
     assert pyproject["project"]["gui-scripts"] == {
         "fcc-desktop": "free_claude_code.cli.desktop_entrypoint:launch",
@@ -431,7 +432,7 @@ def test_launch_codex_passes_responses_config_and_child_env(
             return_value=catalog_path,
         ),
         patch(
-            "free_claude_code.cli.launchers.codex.open_local_request",
+            "free_claude_code.cli.launchers.model_catalog.open_local_request",
             side_effect=fake_urlopen,
         ),
         patch("free_claude_code.cli.launchers.common.subprocess.Popen") as popen,
@@ -490,7 +491,9 @@ def test_codex_proxy_auth_command_prints_only_current_token(
         patch.object(codex, "get_settings", return_value=settings) as get_settings,
         patch.object(codex, "preflight_proxy") as preflight_proxy,
         patch.object(codex, "resolve_client_binary") as resolve_client_binary,
-        patch.object(codex, "open_local_request") as open_local_request,
+        patch(
+            "free_claude_code.cli.launchers.model_catalog.open_local_request"
+        ) as open_local_request,
         patch.object(codex, "run_client_process") as run_client_process,
     ):
         codex.launch(["--print-proxy-auth-token"])
@@ -527,7 +530,7 @@ def test_launch_codex_catalog_failure_warns_and_continues(
             return_value=tmp_path / "codex-model-catalog.json",
         ),
         patch(
-            "free_claude_code.cli.launchers.codex.open_local_request",
+            "free_claude_code.cli.launchers.model_catalog.open_local_request",
             side_effect=URLError("boom"),
         ),
         patch("free_claude_code.cli.launchers.common.subprocess.Popen") as popen,

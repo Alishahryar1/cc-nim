@@ -118,6 +118,77 @@ def test_pi_cli_prompt_e2e(smoke_config: SmokeConfig, tmp_path: Path) -> None:
     assert "POST /v1/messages" in server_log
 
 
+@pytest.mark.smoke_target("clients")
+def test_opencode_cli_prompt_e2e(smoke_config: SmokeConfig, tmp_path: Path) -> None:
+    if not shutil.which("opencode"):
+        pytest.skip("missing_env: OpenCode CLI not found")
+    uv_bin = shutil.which("uv")
+    if not uv_bin:
+        pytest.skip("missing_env: uv not found")
+    provider_model = ProviderMatrixDriver(smoke_config).first_model()
+    auth_token = "fcc-opencode-smoke-token"
+    isolated_home = tmp_path / "opencode-home"
+    isolated_config = tmp_path / "opencode-config"
+    for path in (isolated_home, isolated_config):
+        path.mkdir()
+
+    with SmokeServerDriver(
+        smoke_config,
+        name="product-opencode-cli",
+        env_overrides={
+            "MODEL": provider_model.full_model,
+            "ANTHROPIC_AUTH_TOKEN": auth_token,
+            "MESSAGING_PLATFORM": "none",
+        },
+    ).run() as server:
+        env = os.environ.copy()
+        env.update(
+            {
+                "HOST": "127.0.0.1",
+                "PORT": str(server.port),
+                "FCC_OPEN_BROWSER": "0",
+                "ANTHROPIC_AUTH_TOKEN": auth_token,
+                "HOME": str(isolated_home),
+                "USERPROFILE": str(isolated_home),
+                "XDG_CONFIG_HOME": str(isolated_home / "config"),
+                "XDG_DATA_HOME": str(isolated_home / "data"),
+                "XDG_CACHE_HOME": str(isolated_home / "cache"),
+                "XDG_STATE_HOME": str(isolated_home / "state"),
+                "OPENCODE_CONFIG_DIR": str(isolated_config),
+            }
+        )
+        env.pop("OPENCODE_CONFIG", None)
+        env.pop("OPENCODE_CONFIG_CONTENT", None)
+        result = subprocess.run(
+            [
+                uv_bin,
+                "run",
+                "--project",
+                str(smoke_config.root),
+                "--no-sync",
+                "fcc-opencode",
+                "run",
+                "--format",
+                "json",
+                "--model",
+                f"free-claude-code/{provider_model.full_model}",
+                "Reply with exactly FCC_SMOKE_OPENCODE",
+            ],
+            cwd=tmp_path,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=smoke_config.timeout_s + 15,
+        )
+        server_log = server.log_path.read_text(encoding="utf-8", errors="replace")
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "FCC_SMOKE_OPENCODE" in result.stdout
+    assert "POST /v1/responses" in server_log
+    assert "POST /v1/chat/completions" not in server_log
+
+
 @pytest.mark.smoke_target("cli")
 def test_claude_cli_adaptive_thinking_e2e(
     smoke_config: SmokeConfig, tmp_path: Path

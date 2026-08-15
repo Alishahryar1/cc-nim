@@ -12,15 +12,15 @@ and how contributors should extend it.
 
 Free Claude Code is a local proxy for agent clients. It accepts Anthropic
 Messages traffic from Claude Code and Pi clients and OpenAI Responses traffic
-from Codex CLI, IDE, and App clients, routes the request to a configured
-upstream provider, and preserves the wire protocol expected by the caller.
+from Codex and OpenCode clients, routes the request to a configured upstream
+provider, and preserves the wire protocol expected by the caller.
 
 There are three runtime surfaces:
 
 - HTTP proxy: FastAPI routes expose Anthropic-compatible, Responses-compatible,
   health, model-listing, stop, and admin endpoints.
-- CLI launchers: wrapper entrypoints prepare Claude Code, Codex, and Pi sessions
-  so they target the local proxy.
+- CLI launchers: wrapper entrypoints prepare Claude Code, Codex, Pi, and
+  OpenCode sessions so they target the local proxy.
 - Messaging bridge: optional Discord or Telegram adapters turn chat messages
   into managed client CLI sessions.
 
@@ -29,6 +29,7 @@ flowchart LR
     ClaudeCode[Claude Code CLI and Extensions] --> ProxyAPI[FastAPI Proxy]
     Codex[Codex CLI, IDE, and App] --> ProxyAPI
     Pi[Pi Coding Agent] --> ProxyAPI
+    OpenCode[OpenCode CLI] --> ProxyAPI
     AdminUI[Local Admin UI] --> ProxyAPI
     Bots[Discord or Telegram Bots] --> Messaging[Messaging Bridge]
     Messaging --> ClientCLI[Managed Client CLI Sessions]
@@ -168,6 +169,9 @@ for real prompts against supported providers:
 - `fcc-pi`, Pi, and the Anthropic-compatible proxy behavior Pi relies on,
   including an FCC-scoped model catalog, streaming text and reasoning, and tool
   use/results.
+- `fcc-opencode`, stable OpenCode V1, and the OpenAI Responses behavior it
+  relies on, including an FCC-scoped model catalog and process-local provider
+  configuration.
 - Configured Discord and Telegram messaging bridges, including command handling,
   reply-based conversation branches, status updates, transcript rendering,
   managed Claude/Codex task execution where configured, task stop/clear flows,
@@ -222,6 +226,7 @@ Console scripts are registered in [pyproject.toml](pyproject.toml):
 - `fcc-claude` calls `free_claude_code.cli.launchers.claude:launch`.
 - `fcc-codex` calls `free_claude_code.cli.launchers.codex:launch`.
 - `fcc-pi` calls `free_claude_code.cli.launchers.pi:launch`.
+- `fcc-opencode` calls `free_claude_code.cli.launchers.opencode:launch`.
 
 [scripts/install.sh](scripts/install.sh) and [scripts/install.ps1](scripts/install.ps1)
 install or update the uv tool plus optional voice extras. On Windows the
@@ -230,7 +235,7 @@ per-user application bundle and desktop link. [scripts/uninstall.sh](scripts/uni
 and [scripts/uninstall.ps1](scripts/uninstall.ps1) remove those exact desktop
 artifacts, the FCC uv tool, and the managed `~/.fcc/` tree from
 [config/paths.py](src/free_claude_code/config/paths.py); they do not remove
-uv, Claude Code, Codex, Pi, or uv-managed Python runtimes. [scripts/ci.sh](scripts/ci.sh) and
+uv, Claude Code, Codex, Pi, OpenCode, or uv-managed Python runtimes. [scripts/ci.sh](scripts/ci.sh) and
 [scripts/ci.ps1](scripts/ci.ps1) mirror [.github/workflows/tests.yml](.github/workflows/tests.yml)
 for local pre-push verification.
 
@@ -1189,6 +1194,13 @@ client environment.
   Codex surface one credential owner instead of competing with Codex's signed-in
   OpenAI authorization.
 
+[cli/launchers/model_catalog.py](src/free_claude_code/cli/launchers/model_catalog.py)
+owns the client-neutral projection from FCC's `/v1/models` response to direct,
+nested `provider/model` routes. It removes Claude-only compatibility aliases,
+deduplicates normal and no-thinking forms deterministically, and is shared by
+Codex and OpenCode. Each launcher remains responsible for translating those
+neutral entries into its client's configuration format.
+
 [cli/launchers/pi.py](src/free_claude_code/cli/launchers/pi.py) owns the installed
 `fcc-pi` launcher and [cli/launchers/pi_extension.ts](src/free_claude_code/cli/launchers/pi_extension.ts)
 is its bundled Pi adapter:
@@ -1206,6 +1218,25 @@ is its bundled Pi adapter:
   Pi credentials and persistent configuration remain untouched.
 - Pi package-management, configuration, help, and version commands pass through
   unchanged because they do not create an FCC-backed session.
+
+[cli/launchers/opencode.py](src/free_claude_code/cli/launchers/opencode.py) and
+[cli/launchers/opencode_config.py](src/free_claude_code/cli/launchers/opencode_config.py)
+own the installed `fcc-opencode` launcher for stable OpenCode V1:
+
+- Inference commands require OpenCode V1 1.18.18 or newer, a reachable FCC
+  server, and a non-empty routable `/v1/models` snapshot. Preparation is
+  fail-closed so OpenCode cannot fall back to a native provider.
+- The launcher creates a temporary, secret-free `free-claude-code` provider
+  catalog and a protected process overlay. The provider uses `@ai-sdk/openai`
+  against FCC's `/v1` Responses surface, and bearer material is carried only in
+  the child environment.
+- Existing `OPENCODE_CONFIG` or `OPENCODE_CONFIG_CONTENT` overrides are rejected
+  because their precedence would make FCC routing ambiguous. Persistent OpenCode
+  config, data, credentials, plugins, and sessions remain OpenCode-owned and are
+  never rewritten.
+- Native help, version, authentication, upgrade, uninstall, and completion
+  commands pass through without requiring FCC. Other arguments are forwarded
+  unchanged after the FCC process configuration is ready.
 
 [cli/managed/](src/free_claude_code/cli/managed/) owns managed Claude Code subprocesses used by
 Discord and Telegram messaging. Managed task invocations extend the same proxy
@@ -1230,9 +1261,9 @@ reports a count-only failure, and leaves failures available for the next cleanup
 attempt. Real-session registration is collision-safe and becomes durable tree
 state only after the manager accepts it.
 
-Codex and Pi are supported through their installed launchers. FCC does not keep
-internal managed session runners for them because no user-facing messaging
-setting selects either client for Discord or Telegram.
+Codex, Pi, and OpenCode are supported through their installed launchers. FCC
+does not keep internal managed session runners for them because no user-facing
+messaging setting selects those clients for Discord or Telegram.
 
 ## Messaging Architecture
 

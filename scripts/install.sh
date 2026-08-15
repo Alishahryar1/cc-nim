@@ -7,13 +7,15 @@ MIN_UV_VERSION="0.11.16"
 CLAUDE_INSTALL_URL="https://claude.ai/install.sh"
 CODEX_INSTALL_URL="https://chatgpt.com/codex/install.sh"
 PI_INSTALL_URL="https://pi.dev/install.sh"
+OPENCODE_INSTALL_URL="https://opencode.ai/install"
+MIN_OPENCODE_VERSION="1.18.18"
 RTK_VERSION="0.44.2"
 RTK_RELEASE_BASE_URL="https://github.com/rtk-ai/rtk/releases/download/v$RTK_VERSION"
 UV_INSTALL_URL="https://astral.sh/uv/install.sh"
 FCC_MACOS_BUNDLE_ID="io.github.alishahryar1.free-claude-code"
 FCC_MACOS_OWNER_FILE=".free-claude-code-owner"
 # Include retired entry points so updates reject older FCC processes before replacement.
-FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-init free-claude-code"
+FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-init free-claude-code"
 
 dry_run=0
 voice_nim=0
@@ -22,6 +24,7 @@ voice_all=0
 install_claude=1
 install_codex=1
 install_pi=1
+install_opencode=1
 enable_rtk=0
 torch_backend=""
 temporary_file=""
@@ -106,8 +109,13 @@ choose_coding_agents() {
         else
             install_pi=0
         fi
+        if prompt_yes_no "Install or verify OpenCode for fcc-opencode?"; then
+            install_opencode=1
+        else
+            install_opencode=0
+        fi
 
-        if [ "$install_claude" -eq 1 ] || [ "$install_codex" -eq 1 ] || [ "$install_pi" -eq 1 ]; then
+        if [ "$install_claude" -eq 1 ] || [ "$install_codex" -eq 1 ] || [ "$install_pi" -eq 1 ] || [ "$install_opencode" -eq 1 ]; then
             break
         fi
         printf 'Select at least one coding agent.\n\n' >&4
@@ -191,6 +199,7 @@ add_known_bin_directories() {
     if [ -n "${HOME:-}" ]; then
         add_path_entry "$HOME/.local/bin"
         add_path_entry "$HOME/.cargo/bin"
+        add_path_entry "$HOME/.opencode/bin"
         add_path_entry "${XDG_DATA_HOME:-$HOME/.local/share}/pi-node/current/bin"
     fi
 
@@ -513,6 +522,9 @@ configure_rtk_for_selected_agents() {
     if [ "$install_pi" -eq 1 ] && [ "$pi_available" -eq 1 ]; then
         run_rtk_init init --global --agent pi
     fi
+    if [ "$install_opencode" -eq 1 ]; then
+        run_rtk_init init --global --opencode
+    fi
 }
 
 ensure_claude() {
@@ -569,6 +581,67 @@ ensure_pi() {
     pi_available=1
 }
 
+current_opencode_version() {
+    if output=$(opencode --version 2>/dev/null); then
+        :
+    else
+        return 1
+    fi
+
+    version=$(printf '%s\n' "$output" | awk '
+        /^[[:space:]]*((opencode( version)?[[:space:]]+)|v)?[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?[[:space:]]*$/ &&
+        match($0, /[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?/) {
+            print substr($0, RSTART, RLENGTH)
+            exit
+        }
+    ')
+    [ -n "$version" ] || return 1
+    printf '%s\n' "$version"
+}
+
+verify_opencode_command() {
+    if [ "$dry_run" -eq 1 ]; then
+        print_command opencode --version
+        return 0
+    fi
+
+    command_path=$(command -v opencode 2>/dev/null) || fail "OpenCode was installed, but 'opencode' is not available on PATH."
+    version=$(current_opencode_version) || fail "OpenCode is present, but 'opencode --version' did not return a valid semantic version."
+    if ! stable_version_is_supported "$version" "$MIN_OPENCODE_VERSION"; then
+        fail "Stable OpenCode V1 $MIN_OPENCODE_VERSION or newer is required; found OpenCode $version after installation."
+    fi
+    printf 'Verified OpenCode %s.\n' "$version"
+}
+
+ensure_opencode() {
+    if [ "$dry_run" -eq 1 ]; then
+        if command -v opencode >/dev/null 2>&1; then
+            print_command opencode --version
+            printf 'A compatible OpenCode will be preserved; an older version will be upgraded with opencode upgrade.\n'
+        else
+            download_and_run "$OPENCODE_INSTALL_URL" bash "OpenCode"
+        fi
+        verify_opencode_command
+        return 0
+    fi
+
+    if command -v opencode >/dev/null 2>&1; then
+        version=$(current_opencode_version) || fail "OpenCode is present, but 'opencode --version' did not return a valid semantic version."
+        if stable_version_is_supported "$version" "$MIN_OPENCODE_VERSION"; then
+            printf 'OpenCode %s already satisfies >=%s; leaving it unchanged.\n' "$version" "$MIN_OPENCODE_VERSION"
+            return 0
+        fi
+        printf 'OpenCode %s does not satisfy stable V1 >=%s; upgrading it with OpenCode.\n' "$version" "$MIN_OPENCODE_VERSION"
+        run opencode upgrade
+        add_known_bin_directories
+    else
+        download_and_run "$OPENCODE_INSTALL_URL" bash "OpenCode"
+        add_known_bin_directories
+    fi
+
+    verify_opencode_command
+}
+
 ensure_selected_coding_agents() {
     if [ "$install_claude" -eq 1 ]; then
         step "Ensuring Claude Code is installed"
@@ -585,7 +658,12 @@ ensure_selected_coding_agents() {
         ensure_pi
     fi
 
-    if [ "$install_claude" -eq 0 ] && [ "$install_codex" -eq 0 ] && [ "$pi_available" -eq 0 ]; then
+    if [ "$install_opencode" -eq 1 ]; then
+        step "Ensuring OpenCode is installed"
+        ensure_opencode
+    fi
+
+    if [ "$install_claude" -eq 0 ] && [ "$install_codex" -eq 0 ] && [ "$pi_available" -eq 0 ] && [ "$install_opencode" -eq 0 ]; then
         fail "No selected coding agent was installed. Re-run the installer and choose at least one."
     fi
 }
@@ -609,7 +687,7 @@ current_uv_version() {
     esac
 }
 
-uv_version_is_supported() {
+stable_version_is_supported() {
     case "$1" in
         *-*) return 1 ;;
     esac
@@ -648,7 +726,7 @@ verify_uv() {
 
     command -v uv >/dev/null 2>&1 || fail "uv was installed, but it is not available on PATH."
     version=$(current_uv_version) || fail "uv is present, but 'uv --version' did not return a valid version."
-    if ! uv_version_is_supported "$version" "$MIN_UV_VERSION"; then
+    if ! stable_version_is_supported "$version" "$MIN_UV_VERSION"; then
         fail "Stable uv $MIN_UV_VERSION or newer is required; found uv $version after installation."
     fi
 
@@ -670,7 +748,7 @@ ensure_uv() {
 
     if command -v uv >/dev/null 2>&1; then
         version=$(current_uv_version) || fail "uv is present, but 'uv --version' did not return a valid version."
-        if uv_version_is_supported "$version" "$MIN_UV_VERSION"; then
+        if stable_version_is_supported "$version" "$MIN_UV_VERSION"; then
             printf 'uv %s already satisfies >=%s; leaving it unchanged.\n' "$version" "$MIN_UV_VERSION"
             return 0
         fi
@@ -772,7 +850,7 @@ configure_and_verify_free_claude_code() {
 
     if [ "$dry_run" -eq 1 ]; then
         print_command uv tool dir --bin
-        printf '+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, and fcc-pi in the uv tool bin directory\n'
+        printf '+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, and fcc-opencode in the uv tool bin directory\n'
         print_command fcc-server --version
         return 0
     fi
@@ -790,7 +868,7 @@ configure_and_verify_free_claude_code() {
     export PATH
     hash -r 2>/dev/null || true
 
-    for command_name in fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi; do
+    for command_name in fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode; do
         [ -x "$tool_bin/$command_name" ] || fail "Free Claude Code installation did not create $tool_bin/$command_name."
     done
 
@@ -900,7 +978,7 @@ fi
 
 step "Checking installation prerequisites"
 require_command curl
-if [ "$install_claude" -eq 1 ]; then
+if [ "$install_claude" -eq 1 ] || [ "$install_opencode" -eq 1 ]; then
     require_command bash
 fi
 require_command sh
@@ -948,5 +1026,8 @@ else
     fi
     if [ "$pi_available" -eq 1 ]; then
         printf 'Run Pi with: fcc-pi\n'
+    fi
+    if [ "$install_opencode" -eq 1 ]; then
+        printf 'Run OpenCode with: fcc-opencode\n'
     fi
 fi

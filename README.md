@@ -21,7 +21,7 @@
 
 ## What You Get
 
-- **Use your preferred coding agent.** Run Claude Code, Codex, or Pi with FCC.
+- **Use your preferred coding agent.** Run Claude Code, Codex, Pi, or OpenCode with FCC.
 - **Choose your own models.** Connect free, paid, or local providers and search their models from one Admin UI.
 - **Route work your way.** Set one default model or map Fable, Opus, Sonnet, and Haiku separately.
 - **Save time and tokens.** Five built-in optimizations handle quota probes, command-prefix detection, title generation, suggestion mode, and filepath extraction locally instead of calling your provider; optionally enable [RTK](https://github.com/rtk-ai/rtk) to filter noisy terminal output before it reaches the model.
@@ -127,13 +127,20 @@ Pi:
 fcc-pi
 ```
 
-All three launchers use the current Admin UI settings. Use the agent's model picker to choose from the models FCC exposes. Normal CLI arguments still work, for example:
+OpenCode:
+
+```bash
+fcc-opencode
+```
+
+All four launchers use the current Admin UI settings. Use the agent's model picker to choose from the models FCC exposes. Normal CLI arguments still work, for example:
 
 ```bash
 fcc-codex exec "hello"
 ```
 
-`fcc-pi` registers FCC only for that Pi process; your existing Pi settings, sessions, credentials, and extensions remain unchanged.
+`fcc-pi` and `fcc-opencode` register FCC only for the launched process; your
+existing agent settings, sessions, credentials, and extensions remain unchanged.
 
 <a id="model-picker"></a>
 
@@ -279,7 +286,7 @@ Open **Admin UI → Model Config → Reasoning** and select the behavior you wan
 
 | Selection | Behavior |
 | --- | --- |
-| **From client** (default) | Use the effort sent by Claude Code, Codex, or Pi. If none is sent, keep the provider default. |
+| **From client** (default) | Use the effort sent by Claude Code, Codex, Pi, or OpenCode. If none is sent, keep the provider default. |
 | **Off** | Request reasoning to be disabled. |
 | **Low**, **Medium**, **High**, **X-High**, or **Max** | Override the client with the selected reasoning level. |
 | **Inherit** (Fable, Opus, Sonnet, and Haiku only) | Use the root Reasoning selection. |
@@ -292,7 +299,8 @@ Providers that do not support a selected control retain their own behavior.
 
 ## Connect Your Client
 
-For terminal use, start `fcc-server`, then run `fcc-claude`, `fcc-codex`, or `fcc-pi`. Use the guides below for editor integrations.
+For terminal use, start `fcc-server`, then run `fcc-claude`, `fcc-codex`,
+`fcc-pi`, or `fcc-opencode`. Use the guides below for editor integrations.
 
 <details>
 <summary><strong>Claude Code in VS Code</strong></summary>
@@ -527,7 +535,7 @@ Stop every running FCC command before uninstalling.
 **Keeps**
 
 - uv and Python
-- Claude Code, Codex, Pi, and RTK
+- Claude Code, Codex, Pi, OpenCode, and RTK
 - Shared PATH entries
 
 macOS/Linux:
