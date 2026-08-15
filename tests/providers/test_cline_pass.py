@@ -45,6 +45,33 @@ def cline_pass_provider() -> OpenAIChatProvider:
     )
 
 
+def _provider_with_transport(
+    transport: httpx.AsyncBaseTransport,
+    *,
+    api_key: str = "wire-cline-key",
+) -> OpenAIChatProvider:
+    client = AsyncOpenAI(
+        api_key=api_key,
+        base_url=CLINE_DEFAULT_BASE,
+        max_retries=0,
+        http_client=httpx.AsyncClient(transport=transport),
+    )
+    with patch(
+        "free_claude_code.providers.openai_chat.provider.AsyncOpenAI",
+        return_value=client,
+    ):
+        return profiled_provider(
+            "cline_pass",
+            make_provider_config(
+                api_key=api_key,
+                base_url=CLINE_DEFAULT_BASE,
+                rate_limit=10,
+                rate_window=60,
+            ),
+            admission=immediate_admission(provider_name="cline_pass"),
+        )
+
+
 def _request(**overrides: JsonValue) -> MessagesRequest:
     payload: JsonObject = {
         "model": "cline-pass/kimi-k3",
@@ -315,9 +342,7 @@ async def test_stream_uses_upstream_sse_and_preserves_reasoning_details(
 
 
 @pytest.mark.asyncio
-async def test_model_catalog_uses_cline_pass_collection_endpoint_and_auth(
-    cline_pass_provider: OpenAIChatProvider,
-) -> None:
+async def test_model_catalog_uses_cline_pass_collection_endpoint_and_auth() -> None:
     requests: list[httpx.Request] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
@@ -335,17 +360,13 @@ async def test_model_catalog_uses_cline_pass_collection_endpoint_and_auth(
             },
         )
 
-    await cline_pass_provider._client.close()
-    cline_pass_provider._client = AsyncOpenAI(
-        api_key="wire-cline-key",
-        base_url=CLINE_DEFAULT_BASE,
-        max_retries=0,
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+    provider = _provider_with_transport(
+        httpx.MockTransport(handler),
     )
     try:
-        model_infos = await cline_pass_provider.list_model_infos()
+        model_infos = await provider.list_model_infos()
     finally:
-        await cline_pass_provider.cleanup()
+        await provider.cleanup()
 
     assert model_infos == frozenset(
         {
@@ -370,18 +391,24 @@ async def test_model_catalog_uses_cline_pass_collection_endpoint_and_auth(
 )
 @pytest.mark.asyncio
 async def test_model_catalog_rejects_malformed_or_empty_cline_pass_collection(
-    cline_pass_provider: OpenAIChatProvider,
     payload: JsonObject,
     message: str,
 ) -> None:
-    cline_pass_provider._client.get = AsyncMock(return_value=payload)
-    cline_pass_provider._client.models.list = AsyncMock()
+    requests: list[httpx.Request] = []
 
-    with pytest.raises(ModelListResponseError, match=message):
-        await cline_pass_provider.list_model_infos()
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(200, json=payload)
 
-    cline_pass_provider._client.get.assert_awaited_once_with(
-        "/ai/cline/recommended-models",
-        cast_to=object,
-    )
-    cline_pass_provider._client.models.list.assert_not_awaited()
+    provider = _provider_with_transport(httpx.MockTransport(handler))
+
+    try:
+        with pytest.raises(ModelListResponseError, match=message):
+            await provider.list_model_infos()
+    finally:
+        await provider.cleanup()
+
+    assert [str(request.url) for request in requests] == [
+        "https://api.cline.bot/api/v1/ai/cline/recommended-models"
+    ]
+    assert requests[0].headers["authorization"] == ("Bearer wire-cline-key")
