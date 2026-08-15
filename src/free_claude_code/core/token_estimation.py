@@ -1,6 +1,9 @@
-"""Usage helpers for OpenAI Responses payloads."""
+"""Process-wide best-effort plain-text token estimation."""
 
 from typing import Protocol
+
+import tiktoken
+from loguru import logger
 
 _DISALLOWED_SPECIAL: tuple[str, ...] = ()
 
@@ -13,13 +16,12 @@ class _TokenEncoder(Protocol):
 
 def _load_encoder() -> _TokenEncoder | None:
     try:
-        import tiktoken
-    except ImportError:
-        return None
-
-    try:
         return tiktoken.get_encoding("cl100k_base")
-    except ValueError:
+    except Exception as exc:
+        logger.warning(
+            "cl100k_base token encoder unavailable ({}); using approximate token estimates",
+            type(exc).__name__,
+        )
         return None
 
 
@@ -27,7 +29,7 @@ _ENCODER = _load_encoder()
 
 
 def estimate_text_tokens(text: str) -> int:
-    """Return a best-effort token estimate for Responses usage details."""
+    """Estimate tokens for plain text using the shared process-wide encoder."""
     if not text:
         return 0
     if _ENCODER is not None:

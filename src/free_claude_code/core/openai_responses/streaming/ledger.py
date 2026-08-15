@@ -3,7 +3,8 @@
 from collections.abc import Mapping
 from typing import Any
 
-from ..usage import estimate_text_tokens
+from free_claude_code.core.token_estimation import estimate_text_tokens
+
 from .blocks import BlockState
 
 _ANTHROPIC_INPUT_TOKEN_FIELDS = (

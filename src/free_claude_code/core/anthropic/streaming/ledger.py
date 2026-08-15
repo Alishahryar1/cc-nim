@@ -10,18 +10,13 @@ from typing import Any
 
 from loguru import logger
 
+from free_claude_code.core.token_estimation import estimate_text_tokens
+
 from .emitter import AnthropicSseEmitter
 from .recovery import (
     ToolSchema,
     parse_complete_tool_input,
 )
-
-try:
-    import tiktoken
-
-    ENCODER = tiktoken.get_encoding("cl100k_base")
-except Exception:
-    ENCODER = None
 
 
 def _safe_usage_int(value: object) -> int:
@@ -446,28 +441,22 @@ class AnthropicStreamLedger:
         return "".join(self._thinking_parts)
 
     def estimate_output_tokens(self) -> int:
-        if ENCODER:
-            text_tokens = len(ENCODER.encode(self.accumulated_text))
-            reasoning_tokens = len(ENCODER.encode(self.accumulated_reasoning))
-            tool_tokens = 0
-            tool_count = 0
-            for name, content in self._iter_tool_token_payloads():
-                tool_tokens += len(ENCODER.encode(name))
-                tool_tokens += len(ENCODER.encode(content))
-                tool_tokens += 15
-                tool_count += 1
+        text_tokens = estimate_text_tokens(self.accumulated_text)
+        reasoning_tokens = estimate_text_tokens(self.accumulated_reasoning)
+        tool_tokens = 0
+        tool_count = 0
+        for name, content in self._iter_tool_token_payloads():
+            tool_tokens += estimate_text_tokens(name)
+            tool_tokens += estimate_text_tokens(content)
+            tool_tokens += 15
+            tool_count += 1
 
-            block_count = (
-                (1 if self.accumulated_reasoning else 0)
-                + (1 if self.accumulated_text else 0)
-                + tool_count
-            )
-            return text_tokens + reasoning_tokens + tool_tokens + (block_count * 4)
-
-        text_tokens = len(self.accumulated_text) // 4
-        reasoning_tokens = len(self.accumulated_reasoning) // 4
-        tool_tokens = sum(1 for _ in self._iter_tool_token_payloads()) * 50
-        return text_tokens + reasoning_tokens + tool_tokens
+        block_count = (
+            (1 if self.accumulated_reasoning else 0)
+            + (1 if self.accumulated_text else 0)
+            + tool_count
+        )
+        return text_tokens + reasoning_tokens + tool_tokens + (block_count * 4)
 
     def _iter_tool_token_payloads(self) -> Iterator[tuple[str, str]]:
         for block in self.tool_blocks():

@@ -428,6 +428,14 @@ not mistaken for stalled provider work and cannot receive cancellation from the
 generator's timer. Expiry becomes a protocol-neutral, non-retryable 504
 `ExecutionFailure`; cancellation and provider-originated timeouts retain their
 existing meanings.
+
+[core/token_estimation.py](src/free_claude_code/core/token_estimation.py) owns
+process-wide best-effort plain-text token estimation. It acquires the shared
+encoder once and degrades to a deterministic character estimate when encoder
+data is unavailable, so a cold cache or blocked network cannot prevent FCC from
+starting. Anthropic request counting and the Anthropic/Responses stream ledgers
+retain ownership of their protocol-specific block and structural overhead.
+
 [api/response_streams.py](src/free_claude_code/api/response_streams.py) owns public streaming egress
 commit timing. It waits for the first protocol chunk before returning a
 successful FCC-owned `StreamingResponse`. Its explicit replay iterator owns the
@@ -910,7 +918,8 @@ disjoint input categories into its single `input_tokens` total.
 - thinking block handling;
 - stream lifecycle through `src/free_claude_code/core/anthropic/streaming`, including the neutral
   stream ledger, Anthropic SSE emitter, continuation-body construction, and tool repair;
-- token counting and Anthropic-owned failure-kind-to-wire mapping.
+- Anthropic structural token counting and Anthropic-owned failure-kind-to-wire
+  mapping.
 
 `MessagesRequest` is an ingress model; no current provider sends Anthropic wire
 requests downstream. Anthropic request models validate transcript data without

@@ -1,6 +1,6 @@
 """Tests for API request detection and token counting helpers."""
 
-from unittest.mock import MagicMock
+from unittest.mock import MagicMock, patch
 
 import pytest
 
@@ -549,21 +549,19 @@ class TestGetTokenCount:
         count = get_token_count([msg])
         assert count >= 85
 
-    def test_known_payload_estimate_range(self):
-        """Known payload produces estimate within expected range (validation harness)."""
-        import tiktoken
-
-        enc = tiktoken.get_encoding("cl100k_base")
+    def test_known_payload_structural_overhead(self):
+        """Protocol overhead remains separate from plain-text estimation."""
         system_text = "You are a helpful assistant."
         user_text = "Hello, how are you?"
-        sys_tokens = len(enc.encode(system_text))
-        user_tokens = len(enc.encode(user_text))
-        # Min: content tokens + system overhead (4) + per-msg overhead (4)
-        expected_min = sys_tokens + user_tokens + 4 + 4
         msg = MagicMock()
         msg.content = user_text
-        count = get_token_count([msg], system=system_text)
-        assert count >= expected_min, f"count={count} < expected_min={expected_min}"
+        with patch(
+            "free_claude_code.core.anthropic.tokens.estimate_text_tokens",
+            side_effect=len,
+        ):
+            count = get_token_count([msg], system=system_text)
+
+        assert count == len(system_text) + len(user_text) + 4 + 4
 
 
 # --- Parametrized Edge Case Tests ---
