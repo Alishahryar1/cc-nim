@@ -47,7 +47,7 @@ voice_local = [
     "torch>=2.13.0",
     "transformers>=5.15.0",
     "accelerate>=1.14.0",
-    "librosa>=0.10.0",
+    "librosa>=1.0.0",
 ]
 
 [tool.hatch.build.targets.wheel]
