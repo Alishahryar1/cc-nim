@@ -1,6 +1,7 @@
 """Shared API request validation and safe error logging."""
 
-from typing import Any, Literal
+from collections.abc import Sequence
+from typing import Literal
 
 from fastapi import HTTPException
 from fastapi.responses import JSONResponse
@@ -24,7 +25,7 @@ from free_claude_code.core.openai_responses import (
 WireApi = Literal["messages", "responses"]
 
 
-def require_non_empty_messages(messages: list[Any]) -> None:
+def require_non_empty_messages(messages: Sequence[object]) -> None:
     if not messages:
         raise InvalidRequestError("messages cannot be empty")
 

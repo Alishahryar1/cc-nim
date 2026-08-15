@@ -1,7 +1,7 @@
 """Direct HTTP and child-environment policy for FCC-local traffic."""
 
 from collections.abc import Mapping
-from typing import Any
+from http.client import HTTPResponse
 from urllib.parse import urlsplit
 from urllib.request import ProxyHandler, Request, build_opener
 
@@ -10,7 +10,7 @@ _LOOPBACK_BYPASS_HOSTS = ("127.0.0.1", "localhost", "::1")
 _NO_PROXY_KEYS = ("NO_PROXY", "no_proxy")
 
 
-def open_local_request(request: Request, *, timeout: float) -> Any:
+def open_local_request(request: Request, *, timeout: float) -> HTTPResponse:
     """Open an FCC-local request without consulting machine proxy settings."""
 
     return _DIRECT_OPENER.open(request, timeout=timeout)

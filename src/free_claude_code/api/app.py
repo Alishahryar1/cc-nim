@@ -1,7 +1,5 @@
 """Pure FastAPI application factory."""
 
-from typing import Any
-
 from fastapi import FastAPI, Request
 from fastapi.exception_handlers import request_validation_exception_handler
 from fastapi.exceptions import RequestValidationError
@@ -47,7 +45,7 @@ def create_app(services: ApiServices) -> FastAPI:
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request: Request, exc: RequestValidationError):
         """Log request shape for 422 debugging without content values."""
-        body: Any
+        body: object
         try:
             body = await request.json()
         except Exception as error:

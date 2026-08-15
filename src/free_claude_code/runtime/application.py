@@ -7,7 +7,6 @@ import os
 import traceback
 from collections.abc import Awaitable, Callable, Mapping
 from dataclasses import replace
-from typing import Any
 
 from loguru import logger
 
@@ -27,6 +26,7 @@ from free_claude_code.config.admin.persistence import (
     commit_prepared_admin_update,
     prepare_admin_update,
 )
+from free_claude_code.config.admin.state import ConfigInputValue
 from free_claude_code.config.admin.status import provider_config_status
 from free_claude_code.config.admin.values import load_value_state
 from free_claude_code.config.loader import clear_settings_cache
@@ -34,6 +34,7 @@ from free_claude_code.config.model_refs import parse_provider_type
 from free_claude_code.config.paths import messaging_state_dir_path
 from free_claude_code.config.server_urls import local_admin_url, local_proxy_root_url
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.json_types import JsonObject
 from free_claude_code.messaging.platforms import factory as messaging_platform_factory
 from free_claude_code.messaging.platforms.factory import MessagingPlatformOptions
 from free_claude_code.messaging.platforms.ports import (
@@ -49,7 +50,7 @@ RestartCallback = Callable[[], Awaitable[None] | None]
 
 async def best_effort(
     name: str,
-    awaitable: Awaitable[Any],
+    awaitable: Awaitable[object],
     *,
     log_verbose_errors: bool = False,
 ) -> bool:
@@ -171,8 +172,8 @@ class ApplicationRuntime:
 
     async def apply_admin_config(
         self,
-        updates: Mapping[str, Any],
-    ) -> dict[str, Any]:
+        updates: Mapping[str, ConfigInputValue],
+    ) -> JsonObject:
         """Apply one validated config update without splitting runtime ownership."""
         async with self._config_lock:
             prepared = prepare_admin_update(updates)
@@ -192,7 +193,7 @@ class ApplicationRuntime:
                 )
                 return result
 
-            result: dict[str, Any] = {}
+            result: JsonObject = {}
 
             def commit() -> None:
                 result.update(self._commit_admin_update(prepared))
@@ -206,7 +207,7 @@ class ApplicationRuntime:
             result["restart"] = self._restart_metadata((), prepared.settings)
             return result
 
-    def admin_status(self) -> dict[str, Any]:
+    def admin_status(self) -> JsonObject:
         settings = self.settings
         return {
             "status": "running",
@@ -222,7 +223,7 @@ class ApplicationRuntime:
             },
         }
 
-    async def test_provider(self, provider_id: str) -> dict[str, Any]:
+    async def test_provider(self, provider_id: str) -> JsonObject:
         lease = await self.provider_manager.acquire()
         try:
             provider = lease.resolve_provider(provider_id)
@@ -309,7 +310,7 @@ class ApplicationRuntime:
     def _commit_admin_update(
         self,
         prepared: PreparedAdminUpdate,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         result = commit_prepared_admin_update(prepared)
         clear_settings_cache()
         return result
@@ -318,7 +319,7 @@ class ApplicationRuntime:
         self,
         fields: tuple[str, ...],
         settings: Settings,
-    ) -> dict[str, Any]:
+    ) -> JsonObject:
         automatic = bool(fields and self._restart_callback is not None)
         return {
             "required": bool(fields),

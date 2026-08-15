@@ -1,21 +1,22 @@
 """Provider configuration status for the Admin UI."""
 
 from collections.abc import Mapping
-from typing import Any
 
 from free_claude_code.config.provider_catalog import (
     PROVIDER_CATALOG,
     ProviderAuthKind,
 )
+from free_claude_code.core.json_types import JsonObject
 
 from .manifest import FIELDS
+from .state import ConfigValueState
 
 
 def provider_config_status(
-    state: Mapping[str, Mapping[str, Any]],
-) -> list[dict[str, Any]]:
+    state: Mapping[str, ConfigValueState],
+) -> list[JsonObject]:
     """Return provider configuration status without making network calls."""
-    statuses: list[dict[str, Any]] = []
+    statuses: list[JsonObject] = []
     for provider_id, descriptor in PROVIDER_CATALOG.items():
         if descriptor.auth_kind is ProviderAuthKind.CONNECTED_ACCOUNT:
             statuses.append(
@@ -81,11 +82,12 @@ def provider_config_status(
 
 
 def _value_for_settings_attr(
-    state: Mapping[str, Mapping[str, Any]], settings_attr: str
+    state: Mapping[str, ConfigValueState], settings_attr: str
 ) -> str | None:
     for field in FIELDS:
         if field.settings_attr == settings_attr:
-            value = state.get(field.key, {}).get("value", field.resolved_default())
+            entry = state.get(field.key)
+            value = entry.value if entry is not None else field.resolved_default()
             return str(value) if value is not None else None
     return None
 

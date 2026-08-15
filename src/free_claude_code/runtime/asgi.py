@@ -1,7 +1,5 @@
 """ASGI lifespan adapter for the application runtime owner."""
 
-from typing import Any
-
 from loguru import logger
 from starlette.types import ASGIApp, Receive, Scope, Send
 
@@ -14,9 +12,6 @@ class RuntimeASGIApp:
     def __init__(self, app: ASGIApp, runtime: ApplicationRuntime) -> None:
         self.app = app
         self.runtime = runtime
-
-    def __getattr__(self, name: str) -> Any:
-        return getattr(self.app, name)
 
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "lifespan":

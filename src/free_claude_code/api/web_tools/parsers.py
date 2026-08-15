@@ -3,7 +3,6 @@
 import html
 import re
 from html.parser import HTMLParser
-from typing import Any
 from urllib.parse import parse_qs, unquote, urlparse
 
 
@@ -76,7 +75,7 @@ class HTMLTextParser(HTMLParser):
             self.text_parts.append(text)
 
 
-def content_text(content: Any) -> str:
+def content_text(content: object) -> str:
     if isinstance(content, str):
         return content
     if isinstance(content, list):

@@ -1,6 +1,6 @@
 """Pure, validated application settings schema."""
 
-from typing import Annotated, Any
+from typing import Annotated
 
 from pydantic import (
     BaseModel,
@@ -23,7 +23,7 @@ from .provider_catalog import (
 from .reasoning import ReasoningPreference
 
 
-def _empty_to_none(value: Any) -> Any:
+def _empty_to_none(value: object) -> object:
     if isinstance(value, str) and not value.strip():
         return None
     return value
@@ -638,7 +638,7 @@ class Settings(BaseModel):
 
     @field_validator("max_message_log_entries_per_chat", mode="before")
     @classmethod
-    def parse_optional_log_cap(cls, v: Any) -> Any:
+    def parse_optional_log_cap(cls, v: object) -> object:
         if v == "" or v is None:
             return None
         return v

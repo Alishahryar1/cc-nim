@@ -1,11 +1,17 @@
 """Ensure admin UI manifest exposes every catalog credential/proxy binding."""
 
 from free_claude_code.config.admin.manifest import FIELD_BY_KEY, FIELDS
+from free_claude_code.config.admin.state import ConfigValueState
 from free_claude_code.config.provider_catalog import (
     PROVIDER_CATALOG,
     ProviderAuthKind,
 )
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.json_types import JsonObject
+
+
+def _test_value(value: str) -> ConfigValueState:
+    return ConfigValueState(value=value, source="test")
 
 
 def test_provider_catalog_remote_credentials_in_admin_manifest() -> None:
@@ -98,6 +104,14 @@ def test_provider_catalog_proxy_attrs_in_admin_manifest() -> None:
     assert not missing_key and not wrong_attr, "\n".join(missing_key + wrong_attr)
 
 
+def test_openai_proxy_override_applies_to_catalog_proxy_field() -> None:
+    entry = FIELD_BY_KEY["OPENAI_PROXY"]
+
+    assert entry.settings_attr == "openai_proxy"
+    assert entry.restart_required is True
+    assert "restarts FCC" in entry.description
+
+
 def test_provider_catalog_display_names_are_admin_status_source() -> None:
     from free_claude_code.config.admin.status import provider_config_status
     from free_claude_code.config.admin.values import load_value_state
@@ -156,7 +170,7 @@ def test_zai_shared_key_configures_both_distinct_provider_surfaces() -> None:
     statuses = {
         status["provider_id"]: status
         for status in provider_config_status(
-            {"ZAI_API_KEY": {"value": "shared-zai-key"}}
+            {"ZAI_API_KEY": _test_value("shared-zai-key")}
         )
     }
 
@@ -174,11 +188,11 @@ def test_zai_shared_key_configures_both_distinct_provider_surfaces() -> None:
 def test_vertex_admin_status_uses_project_configuration_not_an_api_key() -> None:
     from free_claude_code.config.admin.status import provider_config_status
 
-    def vertex_status(project_id: str) -> dict[str, object]:
+    def vertex_status(project_id: str) -> JsonObject:
         statuses = provider_config_status(
             {
-                "VERTEX_PROJECT_ID": {"value": project_id},
-                "VERTEX_LOCATION": {"value": "global"},
+                "VERTEX_PROJECT_ID": _test_value(project_id),
+                "VERTEX_LOCATION": _test_value("global"),
             }
         )
         return next(status for status in statuses if status["provider_id"] == "vertex")
@@ -192,11 +206,11 @@ def test_vertex_admin_status_uses_project_configuration_not_an_api_key() -> None
 def test_azure_openai_admin_status_distinguishes_key_and_url() -> None:
     from free_claude_code.config.admin.status import provider_config_status
 
-    def azure_status(api_key: str, base_url: str) -> dict[str, object]:
+    def azure_status(api_key: str, base_url: str) -> JsonObject:
         statuses = provider_config_status(
             {
-                "AZURE_OPENAI_API_KEY": {"value": api_key},
-                "AZURE_OPENAI_BASE_URL": {"value": base_url},
+                "AZURE_OPENAI_API_KEY": _test_value(api_key),
+                "AZURE_OPENAI_BASE_URL": _test_value(base_url),
             }
         )
         return next(

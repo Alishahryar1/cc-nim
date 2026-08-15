@@ -1,11 +1,23 @@
 """Catalog-derived Admin provider fields."""
 
-from typing import Any
+from dataclasses import replace
+from typing import TypedDict
 
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.settings import Settings
 
-_PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
+from .specs import ConfigFieldSpec
+
+
+class ProviderFieldOverride(TypedDict, total=False):
+    """Optional catalog-field presentation overrides."""
+
+    label: str
+    description: str
+    restart_required: bool
+
+
+_PROVIDER_FIELD_OVERRIDES: dict[str, ProviderFieldOverride] = {
     "OPENAI_PROXY": {
         "description": (
             "Optional proxy used for OpenAI sign-in and ChatGPT Codex requests. "
@@ -273,7 +285,7 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
 }
 
 
-def provider_field_specs() -> tuple[dict[str, Any], ...]:
+def provider_field_specs() -> tuple[ConfigFieldSpec, ...]:
     """Return provider fields generated from the provider catalog."""
 
     return (
@@ -285,8 +297,8 @@ def provider_field_specs() -> tuple[dict[str, Any], ...]:
     )
 
 
-def _credential_field_specs() -> tuple[dict[str, Any], ...]:
-    specs: list[dict[str, Any]] = []
+def _credential_field_specs() -> tuple[ConfigFieldSpec, ...]:
+    specs: list[ConfigFieldSpec] = []
     seen_env_keys: set[str] = set()
     for descriptor in PROVIDER_CATALOG.values():
         if descriptor.credential_env is None:
@@ -294,92 +306,110 @@ def _credential_field_specs() -> tuple[dict[str, Any], ...]:
         if descriptor.credential_env in seen_env_keys:
             continue
         seen_env_keys.add(descriptor.credential_env)
-        spec = {
-            "key": descriptor.credential_env,
-            "label": f"{descriptor.display_name} API Key",
-            "section_id": "providers",
-            "field_type": "secret",
-            "settings_attr": descriptor.credential_attr,
-            "secret": True,
-        }
-        spec.update(_PROVIDER_FIELD_OVERRIDES.get(descriptor.credential_env, {}))
-        specs.append(spec)
+        specs.append(
+            _with_override(
+                ConfigFieldSpec(
+                    key=descriptor.credential_env,
+                    label=f"{descriptor.display_name} API Key",
+                    section_id="providers",
+                    field_type="secret",
+                    settings_attr=descriptor.credential_attr,
+                    secret=True,
+                )
+            )
+        )
     return tuple(specs)
 
 
-def _base_url_field_specs() -> tuple[dict[str, Any], ...]:
-    specs: list[dict[str, Any]] = []
+def _base_url_field_specs() -> tuple[ConfigFieldSpec, ...]:
+    specs: list[ConfigFieldSpec] = []
     for descriptor in PROVIDER_CATALOG.values():
         if descriptor.base_url_attr is None:
             continue
         key = _settings_env_key(descriptor.base_url_attr)
-        spec = {
-            "key": key,
-            "label": f"{descriptor.display_name} Base URL",
-            "section_id": "providers",
-            "settings_attr": descriptor.base_url_attr,
-        }
-        spec.update(_PROVIDER_FIELD_OVERRIDES.get(key, {}))
-        specs.append(spec)
+        specs.append(
+            _with_override(
+                ConfigFieldSpec(
+                    key=key,
+                    label=f"{descriptor.display_name} Base URL",
+                    section_id="providers",
+                    settings_attr=descriptor.base_url_attr,
+                )
+            )
+        )
     return tuple(specs)
 
 
-def _cloudflare_account_field_specs() -> tuple[dict[str, Any], ...]:
+def _cloudflare_account_field_specs() -> tuple[ConfigFieldSpec, ...]:
     return (
-        {
-            "key": "CLOUDFLARE_ACCOUNT_ID",
-            "label": "Cloudflare Account ID",
-            "section_id": "providers",
-            "settings_attr": "cloudflare_account_id",
-            "description": (
+        ConfigFieldSpec(
+            key="CLOUDFLARE_ACCOUNT_ID",
+            label="Cloudflare Account ID",
+            section_id="providers",
+            settings_attr="cloudflare_account_id",
+            description=(
                 "Cloudflare account ID used to build the /accounts/{id}/ai/v1 endpoint."
             ),
-        },
+        ),
     )
 
 
-def _vertex_field_specs() -> tuple[dict[str, Any], ...]:
+def _vertex_field_specs() -> tuple[ConfigFieldSpec, ...]:
     return (
-        {
-            "key": "VERTEX_PROJECT_ID",
-            "label": "Google Cloud Project ID",
-            "section_id": "providers",
-            "settings_attr": "vertex_project_id",
-            "description": (
+        ConfigFieldSpec(
+            key="VERTEX_PROJECT_ID",
+            label="Google Cloud Project ID",
+            section_id="providers",
+            settings_attr="vertex_project_id",
+            description=(
                 "Google Cloud project used for Vertex AI. Authentication uses "
                 "Application Default Credentials (ADC)."
             ),
-        },
-        {
-            "key": "VERTEX_LOCATION",
-            "label": "Vertex AI Location",
-            "section_id": "providers",
-            "settings_attr": "vertex_location",
-            "description": (
+        ),
+        ConfigFieldSpec(
+            key="VERTEX_LOCATION",
+            label="Vertex AI Location",
+            section_id="providers",
+            settings_attr="vertex_location",
+            description=(
                 "Use global for the global Vertex AI endpoint or a region such as "
                 "us-central1."
             ),
-        },
+        ),
     )
 
 
-def _proxy_field_specs() -> tuple[dict[str, Any], ...]:
-    specs: list[dict[str, Any]] = []
+def _proxy_field_specs() -> tuple[ConfigFieldSpec, ...]:
+    specs: list[ConfigFieldSpec] = []
     for descriptor in PROVIDER_CATALOG.values():
         if descriptor.proxy_attr is None:
             continue
         specs.append(
-            {
-                "key": _settings_env_key(descriptor.proxy_attr),
-                "label": f"{descriptor.display_name} Proxy",
-                "section_id": "providers",
-                "field_type": "secret",
-                "settings_attr": descriptor.proxy_attr,
-                "secret": True,
-                "advanced": True,
-            }
+            _with_override(
+                ConfigFieldSpec(
+                    key=_settings_env_key(descriptor.proxy_attr),
+                    label=f"{descriptor.display_name} Proxy",
+                    section_id="providers",
+                    field_type="secret",
+                    settings_attr=descriptor.proxy_attr,
+                    secret=True,
+                    advanced=True,
+                )
+            )
         )
     return tuple(specs)
+
+
+def _with_override(spec: ConfigFieldSpec) -> ConfigFieldSpec:
+    override = _PROVIDER_FIELD_OVERRIDES.get(spec.key)
+    if override is None:
+        return spec
+    return replace(
+        spec,
+        label=override.get("label", spec.label),
+        description=override.get("description", spec.description),
+        restart_required=override.get("restart_required", spec.restart_required),
+    )
 
 
 def _settings_env_key(settings_attr: str) -> str:

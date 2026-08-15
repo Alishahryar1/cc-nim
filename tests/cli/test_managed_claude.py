@@ -223,3 +223,13 @@ def test_managed_claude_parser_returns_raw_for_non_json() -> None:
     )
 
     assert events == [{"type": "raw", "content": "not json"}]
+
+
+def test_managed_claude_parser_returns_raw_for_non_object_json() -> None:
+    events = list(
+        parse_managed_claude_stdout_line(
+            '"not an event"', ManagedClaudeParseState(log_raw_cli_diagnostics=False)
+        )
+    )
+
+    assert events == [{"type": "raw", "content": '"not an event"'}]

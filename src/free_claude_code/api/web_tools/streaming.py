@@ -3,7 +3,6 @@
 import uuid
 from collections.abc import AsyncIterator
 from datetime import UTC, datetime
-from typing import Any
 
 from free_claude_code.core.anthropic import MessagesRequest
 from free_claude_code.core.anthropic.server_tool_sse import (
@@ -14,6 +13,7 @@ from free_claude_code.core.anthropic.server_tool_sse import (
     WEB_SEARCH_TOOL_RESULT_ERROR,
 )
 from free_claude_code.core.anthropic.streaming import format_sse_event
+from free_claude_code.core.json_types import JsonValue
 
 from . import outbound
 from .constants import _MAX_FETCH_CHARS
@@ -110,7 +110,7 @@ async def stream_web_server_tool_response(
         if tool_name == "web_search":
             query = str(tool_input["query"])
             results = await outbound._run_web_search(query)
-            result_content: Any = [
+            result_content: JsonValue = [
                 {
                     "type": "web_search_result",
                     "title": result["title"],

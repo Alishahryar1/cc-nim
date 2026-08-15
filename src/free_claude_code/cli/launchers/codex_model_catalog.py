@@ -5,15 +5,15 @@ import uuid
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from free_claude_code.config.provider_catalog import SUPPORTED_PROVIDER_IDS
 from free_claude_code.core.gateway_model_ids import (
     GATEWAY_MODEL_ID_PREFIX,
     NO_THINKING_GATEWAY_MODEL_ID_PREFIX,
 )
+from free_claude_code.core.json_types import JsonObject, JsonValue
 
-SUPPORTED_REASONING_LEVELS = [
+SUPPORTED_REASONING_LEVELS: list[JsonObject] = [
     {"effort": "low", "description": "Fast responses with lighter reasoning"},
     {
         "effort": "medium",
@@ -41,7 +41,7 @@ class _CatalogCandidate:
     force_no_thinking: bool
 
 
-def build_codex_model_catalog(models_response: Mapping[str, Any]) -> dict[str, Any]:
+def build_codex_model_catalog(models_response: Mapping[str, JsonValue]) -> JsonObject:
     """Convert FCC `/v1/models` data into Codex `model_catalog_json` payload."""
 
     candidates = list(_catalog_candidates(models_response))
@@ -50,7 +50,7 @@ def build_codex_model_catalog(models_response: Mapping[str, Any]) -> dict[str, A
         for candidate in candidates
         if not candidate.force_no_thinking
     }
-    models: list[dict[str, Any]] = []
+    models: list[JsonObject] = []
     seen_slugs: set[str] = set()
 
     for candidate in candidates:
@@ -67,7 +67,9 @@ def build_codex_model_catalog(models_response: Mapping[str, Any]) -> dict[str, A
     return {"models": models}
 
 
-def write_codex_model_catalog(catalog_path: Path, catalog: Mapping[str, Any]) -> bool:
+def write_codex_model_catalog(
+    catalog_path: Path, catalog: Mapping[str, JsonValue]
+) -> bool:
     """Atomically write changed Codex model catalog JSON."""
 
     content = (json.dumps(catalog, ensure_ascii=True, indent=2) + "\n").encode()
@@ -88,7 +90,7 @@ def write_codex_model_catalog(catalog_path: Path, catalog: Mapping[str, Any]) ->
 
 
 def _catalog_candidates(
-    models_response: Mapping[str, Any],
+    models_response: Mapping[str, JsonValue],
 ) -> list[_CatalogCandidate]:
     data = models_response.get("data")
     if not isinstance(data, list):
@@ -148,9 +150,7 @@ def _candidate_from_model_id(
     return None
 
 
-def _codex_catalog_entry(
-    candidate: _CatalogCandidate, *, priority: int
-) -> dict[str, Any]:
+def _codex_catalog_entry(candidate: _CatalogCandidate, *, priority: int) -> JsonObject:
     return {
         "slug": candidate.slug,
         "display_name": candidate.display_name,
@@ -188,5 +188,5 @@ def _is_provider_model_ref(value: str) -> bool:
     return bool(separator and provider_model and provider_id in SUPPORTED_PROVIDER_IDS)
 
 
-def _string_value(value: Any) -> str | None:
+def _string_value(value: object) -> str | None:
     return value if isinstance(value, str) else None

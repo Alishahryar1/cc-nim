@@ -3,7 +3,6 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any
 
 from free_claude_code.config.env_files import (
     FCC_CONFIG_SCHEMA_ENV,
@@ -17,8 +16,10 @@ from free_claude_code.config.env_migrations import (
 )
 from free_claude_code.config.paths import managed_env_path
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.json_types import JsonObject
 
 from .manifest import FIELD_BY_KEY
+from .state import ConfigInputValue
 from .validation import settings_from_values
 from .values import MASKED_SECRET, is_locked_source, load_value_state, normalize_for_env
 
@@ -37,7 +38,7 @@ class PreparedAdminUpdate:
     def valid(self) -> bool:
         return self.settings is not None and not self.errors
 
-    def validation_response(self) -> dict[str, Any]:
+    def validation_response(self) -> JsonObject:
         return {
             "valid": self.valid,
             "errors": list(self.errors),
@@ -47,7 +48,7 @@ class PreparedAdminUpdate:
             ),
         }
 
-    def applied_response(self) -> dict[str, Any]:
+    def applied_response(self) -> JsonObject:
         if not self.valid:
             return self.validation_response() | {
                 "applied": False,
@@ -66,7 +67,9 @@ class PreparedAdminUpdate:
         }
 
 
-def target_values_with_updates(updates: Mapping[str, Any]) -> dict[str, str]:
+def target_values_with_updates(
+    updates: Mapping[str, ConfigInputValue],
+) -> dict[str, str]:
     """Return sparse managed state after applying valid partial-update semantics."""
 
     state = load_value_state()
@@ -79,7 +82,7 @@ def target_values_with_updates(updates: Mapping[str, Any]) -> dict[str, str]:
 
     for key, submitted in updates.items():
         field = FIELD_BY_KEY.get(key)
-        if field is None or is_locked_source(state[key]["source"]):
+        if field is None or is_locked_source(state[key].source):
             continue
         if field.secret and (
             submitted == MASKED_SECRET
@@ -96,14 +99,14 @@ def target_values_with_updates(updates: Mapping[str, Any]) -> dict[str, str]:
     return values
 
 
-def validate_updates(updates: Mapping[str, Any]) -> dict[str, Any]:
+def validate_updates(updates: Mapping[str, ConfigInputValue]) -> JsonObject:
     """Validate partial Admin updates and return a masked sparse preview."""
 
     return prepare_admin_update(updates).validation_response()
 
 
 def changed_pending_fields(
-    updates: Mapping[str, Any],
+    updates: Mapping[str, ConfigInputValue],
     *,
     settings: Settings,
 ) -> list[str]:
@@ -113,7 +116,7 @@ def changed_pending_fields(
     pending: list[str] = []
     for key, submitted in updates.items():
         field = FIELD_BY_KEY.get(key)
-        if field is None or is_locked_source(state[key]["source"]):
+        if field is None or is_locked_source(state[key].source):
             continue
         if field.secret and (
             submitted == MASKED_SECRET
@@ -125,13 +128,15 @@ def changed_pending_fields(
             requires_restart = _active_voice_credential(settings) == key
         if not requires_restart:
             continue
-        if normalize_for_env(submitted) == state[key]["value"]:
+        if normalize_for_env(submitted) == state[key].value:
             continue
         pending.append(key)
     return pending
 
 
-def prepare_admin_update(updates: Mapping[str, Any]) -> PreparedAdminUpdate:
+def prepare_admin_update(
+    updates: Mapping[str, ConfigInputValue],
+) -> PreparedAdminUpdate:
     """Validate an update and construct its prospective Settings snapshot."""
 
     update_errors = _update_protocol_errors(updates)
@@ -152,7 +157,7 @@ def prepare_admin_update(updates: Mapping[str, Any]) -> PreparedAdminUpdate:
     )
 
 
-def commit_prepared_admin_update(prepared: PreparedAdminUpdate) -> dict[str, Any]:
+def commit_prepared_admin_update(prepared: PreparedAdminUpdate) -> JsonObject:
     """Atomically persist a previously validated Admin update."""
 
     if not prepared.valid:
@@ -161,7 +166,9 @@ def commit_prepared_admin_update(prepared: PreparedAdminUpdate) -> dict[str, Any
     return prepared.applied_response()
 
 
-def _update_protocol_errors(updates: Mapping[str, Any]) -> tuple[str, ...]:
+def _update_protocol_errors(
+    updates: Mapping[str, ConfigInputValue],
+) -> tuple[str, ...]:
     errors: list[str] = []
     for key, submitted in updates.items():
         field = FIELD_BY_KEY.get(key)

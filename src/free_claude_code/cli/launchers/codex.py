@@ -14,6 +14,7 @@ from free_claude_code.config.loader import get_settings
 from free_claude_code.config.paths import codex_model_catalog_path
 from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.json_types import JsonObject, JsonValue
 
 from .codex_model_catalog import build_codex_model_catalog, write_codex_model_catalog
 from .common import (
@@ -163,9 +164,7 @@ def codex_model_catalog_config_args(
     return build_model_catalog_config_args(str(catalog_path))
 
 
-def fetch_proxy_models_response(
-    proxy_root_url: str, auth_token: str
-) -> dict[str, object]:
+def fetch_proxy_models_response(proxy_root_url: str, auth_token: str) -> JsonObject:
     """Fetch the local proxy `/v1/models` response for Codex catalog generation."""
 
     url = f"{proxy_root_url.rstrip('/')}/v1/models"
@@ -175,7 +174,7 @@ def fetch_proxy_models_response(
     with open_local_request(
         request, timeout=PROXY_PREFLIGHT_TIMEOUT_SECONDS
     ) as response:
-        payload = json.loads(response.read().decode("utf-8"))
+        payload: JsonValue = json.loads(response.read().decode("utf-8"))
 
     if not isinstance(payload, dict):
         raise ValueError("model list response was not a JSON object")

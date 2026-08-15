@@ -1,8 +1,8 @@
 """Local admin UI routes and APIs."""
 
 import ipaddress
+from collections.abc import Mapping
 from pathlib import Path
-from typing import Any
 from urllib.parse import urlsplit
 
 import httpx
@@ -16,12 +16,13 @@ from free_claude_code.application.connected_accounts import (
 from free_claude_code.application.model_metadata import ProviderModelRefreshResult
 from free_claude_code.config.admin.manifest import FIELD_BY_KEY
 from free_claude_code.config.admin.persistence import validate_updates
-from free_claude_code.config.admin.values import load_config_response
+from free_claude_code.config.admin.values import load_config_response, load_value_state
 from free_claude_code.config.model_refs import configured_chat_model_refs
 from free_claude_code.config.provider_catalog import (
     PROVIDER_CATALOG,
     ProviderAuthKind,
 )
+from free_claude_code.core.json_types import JsonObject, JsonValue
 
 from .dependencies import get_services
 from .ports import ApiServices
@@ -39,7 +40,7 @@ LOCAL_PROVIDER_PATHS = {
 class AdminConfigPayload(BaseModel):
     """Partial config update submitted by the admin UI."""
 
-    values: dict[str, Any] = Field(default_factory=dict)
+    values: JsonObject = Field(default_factory=dict)
 
 
 class ConnectedAccountLoginPayload(BaseModel):
@@ -139,8 +140,7 @@ async def admin_status(
 @router.get("/admin/api/providers/local-status")
 async def local_provider_status(request: Request):
     require_loopback_admin(request)
-    config = load_config_response()
-    values = {field["key"]: field["value"] for field in config["fields"]}
+    values = {key: entry.value or "" for key, entry in load_value_state().items()}
     checks = []
     for provider_id, path in LOCAL_PROVIDER_PATHS.items():
         base_url = _local_provider_url(provider_id, values)
@@ -255,7 +255,7 @@ def _model_options(
     }
 
 
-def _filtered_values(values: dict[str, Any]) -> dict[str, Any]:
+def _filtered_values(values: Mapping[str, JsonValue]) -> JsonObject:
     return {key: value for key, value in values.items() if key in FIELD_BY_KEY}
 
 
@@ -271,7 +271,7 @@ def _local_provider_url(provider_id: str, values: dict[str, str]) -> str:
 
 async def _check_local_provider(
     provider_id: str, base_url: str, path: str
-) -> dict[str, Any]:
+) -> JsonObject:
     clean_url = base_url.strip().rstrip("/")
     if not clean_url:
         return {
@@ -315,5 +315,5 @@ def _require_connected_account_provider(provider_id: str) -> None:
         )
 
 
-def _no_store(payload: Any) -> JSONResponse:
+def _no_store(payload: JsonValue) -> JSONResponse:
     return JSONResponse(payload, headers={"Cache-Control": "no-store"})

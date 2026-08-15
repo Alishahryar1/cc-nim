@@ -27,7 +27,7 @@ def preflight_proxy(proxy_root_url: str) -> str | None:
         with open_local_request(
             request, timeout=PROXY_PREFLIGHT_TIMEOUT_SECONDS
         ) as response:
-            status_code = response.getcode()
+            status_code = response.status
     except HTTPError as exc:
         return f"returned HTTP {exc.code}"
     except URLError as exc:

@@ -1,7 +1,6 @@
 """Resolve client reasoning input and FCC configuration exactly once."""
 
 from collections.abc import Mapping
-from typing import Any
 
 from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.core.anthropic.models import MessagesRequest, ThinkingConfig
@@ -75,7 +74,7 @@ def _thinking_control(
     return ReasoningControl.DEFAULT
 
 
-def _output_effort(value: Any) -> tuple[ReasoningEffort | None, bool]:
+def _output_effort(value: object) -> tuple[ReasoningEffort | None, bool]:
     if not isinstance(value, Mapping):
         return None, False
     raw = value.get("effort")

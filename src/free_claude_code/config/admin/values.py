@@ -2,20 +2,21 @@
 
 import os
 from enum import Enum
-from typing import Any
 
 from free_claude_code.config.env_files import dotenv_values_from_file
 from free_claude_code.config.loader import ConfigSource, resolve_settings_snapshot
 from free_claude_code.config.paths import managed_env_path
+from free_claude_code.core.json_types import JsonObject
 
-from .manifest import FIELDS, SECTIONS, ConfigFieldSpec, ConfigOptionSpec
+from .manifest import FIELDS, SECTIONS
+from .specs import ConfigFieldSpec, ConfigOptionSpec
+from .state import ConfigValueState, ValueState
 from .status import provider_config_status
 
 MASKED_SECRET = "********"
-ValueState = dict[str, dict[str, Any]]
 
 
-def normalize_for_env(value: Any) -> str | None:
+def normalize_for_env(value: object) -> str | None:
     """Normalize a submitted Admin value for sparse dotenv persistence."""
 
     if value is None:
@@ -61,19 +62,19 @@ def load_value_state() -> ValueState:
         else:
             value = field.resolved_default()
             source = ConfigSource.DEFAULT.value
-        state[field.key] = {"value": value, "source": source}
+        state[field.key] = ConfigValueState(value=value, source=source)
     return state
 
 
-def load_config_response() -> dict[str, Any]:
+def load_config_response() -> JsonObject:
     """Return manifest and current config values for the Admin UI."""
 
     state = load_value_state()
-    fields: list[dict[str, Any]] = []
+    fields: list[JsonObject] = []
     for field in FIELDS:
         entry = state[field.key]
-        source = str(entry["source"])
-        raw_value = entry["value"]
+        source = entry.source
+        raw_value = entry.value
         fields.append(
             {
                 "key": field.key,

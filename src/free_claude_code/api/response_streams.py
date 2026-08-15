@@ -7,7 +7,7 @@ from collections.abc import (
     Callable,
     Mapping,
 )
-from typing import Any, Literal
+from typing import Literal
 
 from fastapi.responses import JSONResponse, Response, StreamingResponse
 from starlette.background import BackgroundTask
@@ -23,6 +23,7 @@ from free_claude_code.core.anthropic.streaming import (
 from free_claude_code.core.async_iterators import try_close_async_iterator
 from free_claude_code.core.diagnostics import safe_exception_message
 from free_claude_code.core.failures import find_execution_failure
+from free_claude_code.core.json_types import JsonObject
 from free_claude_code.core.trace import close_stream_input, trace_event
 
 TERMINAL_EXECUTION_ERROR_HEADERS = {"x-should-retry": "false"}
@@ -174,7 +175,7 @@ async def bind_response_lifetime(
 
 
 def terminal_execution_error_response(
-    *, status_code: int, content: dict[str, Any]
+    *, status_code: int, content: JsonObject
 ) -> JSONResponse:
     """Return a final provider-execution error without enabling client retries."""
     return JSONResponse(
