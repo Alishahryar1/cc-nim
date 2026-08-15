@@ -127,6 +127,66 @@ def test_parse_cap_uses_only_the_structured_output_parameter_message():
     assert parse_output_token_cap(error) is None
 
 
+def test_parse_cap_respects_structured_non_output_parameter():
+    body = {
+        "param": "temperature",
+        "message": "max_tokens must not exceed 2",
+    }
+    error = _BadRequest(
+        f"Error code: 400 - {body}",
+        body=body,
+    )
+
+    assert parse_output_token_cap(error) is None
+
+
+def test_parse_cap_does_not_escape_structured_parameter_scope():
+    error = _BadRequest(
+        "invalid request",
+        body={
+            "param": "temperature",
+            "details": {"message": "max_tokens must not exceed 2"},
+        },
+    )
+
+    assert parse_output_token_cap(error) is None
+
+
+def test_parse_cap_ignores_text_outside_structured_error_schema():
+    error = _BadRequest(
+        "invalid request",
+        body={"request": {"message": "max_tokens must not exceed 2"}},
+    )
+
+    assert parse_output_token_cap(error) is None
+
+
+def test_parse_cap_reads_unscoped_structured_message():
+    error = _BadRequest(
+        "invalid request",
+        body={"message": "max_tokens must not exceed 8192"},
+    )
+
+    assert parse_output_token_cap(error) == 8192
+
+
+def test_parse_cap_selects_matching_parameter_from_structured_error_list():
+    error = _BadRequest(
+        "invalid request",
+        body={
+            "errors": [
+                {
+                    "param": "temperature",
+                    "message": "max_tokens must not exceed 2",
+                },
+                {"param": "max_tokens", "message": "<= 8192"},
+            ]
+        },
+    )
+
+    assert parse_output_token_cap(error) == 8192
+
+
 def test_parse_cap_returns_none_without_number():
     assert (
         parse_output_token_cap(_BadRequest("max_tokens is larger than allowed")) is None
@@ -274,9 +334,14 @@ async def test_mixed_field_400_does_not_retry_or_poison_learned_cap(groq_provide
             thinking={"enabled": False},
         )
     )
+    error_body = {
+        "param": "temperature",
+        "message": "max_completion_tokens must not exceed 2",
+    }
     create = AsyncMock(
         side_effect=_BadRequest(
-            "temperature must be <= 2; max_completion_tokens is invalid"
+            f"Error code: 400 - {error_body}",
+            body=error_body,
         )
     )
 

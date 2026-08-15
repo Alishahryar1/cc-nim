@@ -11,7 +11,6 @@ retry once and succeed. The provider also remembers the learned cap per model
 so later requests clamp proactively instead of paying the 400 every time.
 """
 
-import json
 import re
 from typing import Any
 
@@ -19,9 +18,13 @@ import openai
 
 # Body keys that carry the output-token budget across OpenAI-compatible policies.
 _OUTPUT_TOKEN_FIELDS = ("max_completion_tokens", "max_tokens")
+_STRUCTURED_TEXT_FIELDS = ("message", "detail", "error")
+_STRUCTURED_CONTAINER_FIELDS = ("error", "errors", "detail", "details")
 
 _CAP_VALUE_PATTERN = r"[`'\"]?(\d+)[`'\"]?"
-_OUTPUT_TOKEN_FIELD_PATTERN = r"[`'\"]?(?:max_completion_tokens|max_tokens)[`'\"]?"
+_OUTPUT_TOKEN_FIELD_PATTERN = (
+    r"(?<!\w)[`'\"]?(?:max_completion_tokens|max_tokens)[`'\"]?(?!\w)"
+)
 
 # An accepted grammar must bind the output-token field and its numeric limit.
 # A field mentioned elsewhere in the response must never authorize an unrelated
@@ -59,30 +62,64 @@ def _is_bad_request(error: Exception) -> bool:
     )
 
 
-def _error_texts(error: Exception) -> tuple[str, ...]:
-    """Normalize free-form and structured errors into field-bound text."""
-    texts = [str(error)]
-    body = getattr(error, "body", None)
-    if body is not None:
-        texts.append(json.dumps(body, default=str))
+def _normalized_output_field(value: object) -> str | None:
+    if not isinstance(value, str):
+        return None
+    field = value.strip("`'\" ").lower()
+    return field if field in _OUTPUT_TOKEN_FIELDS else None
 
-    pending: list[Any] = [body]
+
+def _structured_error_texts(body: dict[str, Any] | list[Any]) -> tuple[str, ...]:
+    """Extract messages without discarding their structured parameter scope."""
+    texts: list[str] = []
+    pending: list[dict[str, Any] | list[Any]] = [body]
     while pending:
         value = pending.pop()
-        if isinstance(value, dict):
-            param = value.get("param")
-            message = value.get("message")
-            if (
-                isinstance(param, str)
-                and param.strip("`'\" ").lower() in _OUTPUT_TOKEN_FIELDS
-                and isinstance(message, str)
-            ):
-                # Prefixing an explicitly named structured parameter lets the
-                # same field-bound grammar handle comparator-only messages.
-                texts.append(f"{param} {message}")
-            pending.extend(value.values())
-        elif isinstance(value, list):
-            pending.extend(value)
+        if isinstance(value, list):
+            for item in value:
+                if isinstance(item, str):
+                    texts.append(item)
+                elif isinstance(item, (dict, list)):
+                    pending.append(item)
+            continue
+
+        param = value.get("param")
+        output_field = _normalized_output_field(param)
+        messages = tuple(
+            message
+            for field in _STRUCTURED_TEXT_FIELDS
+            if isinstance(message := value.get(field), str)
+        )
+        if output_field is not None:
+            # Structured parameter metadata is authoritative. Prefixing the
+            # paired field supports comparator-only messages such as "<= 8192".
+            texts.extend(f"{output_field} {message}" for message in messages)
+        if param is not None:
+            # Do not let text nested below an explicitly scoped validation error
+            # escape that scope and become a new unscoped candidate.
+            continue
+
+        texts.extend(messages)
+        for field in _STRUCTURED_CONTAINER_FIELDS:
+            nested = value.get(field)
+            if isinstance(nested, (dict, list)):
+                pending.append(nested)
+    return tuple(texts)
+
+
+def _error_texts(error: Exception) -> tuple[str, ...]:
+    """Keep unstructured text separate from structured validation messages."""
+    body = getattr(error, "body", None)
+    if body is None:
+        texts = (str(error),)
+    elif isinstance(body, str):
+        texts = (body,)
+    elif isinstance(body, (dict, list)):
+        # The OpenAI SDK embeds a representation of this body in ``str(error)``.
+        # Parsing both would flatten the parameter scopes restored above.
+        texts = _structured_error_texts(body)
+    else:
+        texts = ()
     return tuple(text.lower() for text in texts)
 
 
