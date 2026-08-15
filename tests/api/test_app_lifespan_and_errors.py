@@ -312,6 +312,17 @@ def test_bootstrap_configures_default_log_and_publishes_only_services(tmp_path):
     assert set(api_app.state._state) == {"services"}
 
 
+def test_bootstrap_app_transparently_exposes_fastapi_interface() -> None:
+    with patch("free_claude_code.runtime.bootstrap.configure_logging"):
+        asgi_app = build_asgi_app(_settings())
+
+    api_app = cast(FastAPI, asgi_app.app)
+    assert asgi_app.router is api_app.router
+    assert asgi_app.routes is api_app.routes
+    assert asgi_app.state is api_app.state
+    assert asgi_app.openapi == api_app.openapi
+
+
 def test_bootstrap_wires_the_codex_catalog_publisher() -> None:
     publisher = MagicMock()
 

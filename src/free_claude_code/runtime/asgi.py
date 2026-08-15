@@ -13,6 +13,10 @@ class RuntimeASGIApp:
         self.app = app
         self.runtime = runtime
 
+    def __getattr__(self, name: str) -> object:
+        """Expose the wrapped application's public interface transparently."""
+        return getattr(self.app, name)
+
     async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
         if scope["type"] != "lifespan":
             await self.app(scope, receive, send)
