@@ -19,9 +19,14 @@
 
 </div>
 
+> This repository is built on top of
+> [Alishahryar1/free-claude-code](https://github.com/Alishahryar1/free-claude-code).
+> Extra clients here: Atomic Agents, Prime Agent, and Muse Code (optional MCP).
+> Do not commit `.env`, API keys, or passwords.
+
 ## What You Get
 
-- **Use your preferred coding agent.** Run Claude Code, Codex, or Pi with FCC.
+- **Use your preferred coding agent.** Run Claude Code, Codex, Pi, Atomic Agents, Prime Agent, or Muse Code with FCC.
 - **Choose your own models.** Connect free, paid, or local providers and search their models from one Admin UI.
 - **Route work your way.** Set one default model or map Fable, Opus, Sonnet, and Haiku separately.
 - **Save time and tokens.** Five built-in optimizations handle quota probes, command-prefix detection, title generation, suggestion mode, and filepath extraction locally instead of calling your provider; optionally enable [RTK](https://github.com/rtk-ai/rtk) to filter noisy terminal output before it reaches the model.
@@ -292,7 +297,33 @@ Providers that do not support a selected control retain their own behavior.
 
 ## Connect Your Client
 
-For terminal use, start `fcc-server`, then run `fcc-claude`, `fcc-codex`, or `fcc-pi`. Use the guides below for editor integrations.
+For terminal use, start `fcc-server`, then run `fcc-claude`, `fcc-codex`, `fcc-pi`, `fcc-atomic`, `fcc-prime`, or `fcc-muse`. Use the guides below for editor integrations.
+
+### Atomic Agents, Prime Agent, and Muse Code (simple)
+
+1. Put your provider key only in `~/.fcc/.env` (for example `OPENROUTER_API_KEY`). Never put keys in git.
+2. Start the proxy: `fcc-server`
+3. Pick a model in Admin, or set `MODEL=open_router/openai/gpt-4o-mini`
+4. Use one launcher:
+
+```bash
+# One Chat Completions turn (uses Atomic Agents if installed, otherwise the OpenAI wire format)
+fcc-atomic ping
+
+# Prime Agent through FCC (install Prime Agent first)
+fcc-prime
+
+# Muse Code through FCC (install Muse Code first)
+fcc-muse
+```
+
+Optional Muse MCP: set `FCC_MUSE_MCP_COMMAND` to a stdio MCP server command, or set `FCC_MUSE_MCP_SERVERS` to a JSON object. Those values stay in your environment; they are not written to the repo.
+
+```bash
+# Example: optional MCP server for Muse (replace with a server you trust)
+export FCC_MUSE_MCP_COMMAND="npx -y @modelcontextprotocol/server-filesystem"
+fcc-muse
+```
 
 <details>
 <summary><strong>Claude Code in VS Code</strong></summary>

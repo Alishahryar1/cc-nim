@@ -22,7 +22,7 @@ from free_claude_code.core.openai_responses import (
     openai_error_type_for_failure,
 )
 
-WireApi = Literal["messages", "responses"]
+WireApi = Literal["messages", "responses", "chat_completions"]
 
 
 def require_non_empty_messages(messages: Sequence[object]) -> None:
@@ -37,7 +37,7 @@ def ordinary_application_error_response(
     request_id: str,
 ) -> JSONResponse:
     """Serialize a deterministic application error without terminal headers."""
-    if wire_api == "responses":
+    if wire_api in ("responses", "chat_completions"):
         return JSONResponse(
             status_code=error.status_code,
             content=openai_error_payload(
