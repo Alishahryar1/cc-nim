@@ -133,6 +133,16 @@ def posix_uninstall_harness(tmp_path: Path) -> PosixUninstallHarness:
     _write_executable(bin_dir / "codex", "#!/bin/sh\nexit 0\n")
     _write_executable(bin_dir / "pi", "#!/bin/sh\nexit 0\n")
     _write_executable(
+        bin_dir / "pgrep",
+        """#!/bin/sh
+[ -n "${FCC_RUNNING_COMMAND:-}" ] || exit 1
+case "$*" in
+    *"$FCC_RUNNING_COMMAND"*) printf '4242\n'; exit 0 ;;
+    *) exit 1 ;;
+esac
+""",
+    )
+    _write_executable(
         bin_dir / "uv",
         """#!/bin/sh
 echo "uv:$*" >> "$CALL_LOG"
@@ -199,6 +209,7 @@ printf '%s\n' "$FAKE_UNAME"
             "CALL_LOG": str(log),
             "FAKE_TOOL_BIN": str(tool_bin),
             "FAKE_UNAME": "Darwin",
+            "FCC_RUNNING_COMMAND": "",
             "FAIL_STEP": "",
         }
     )
@@ -348,6 +359,24 @@ def test_uninstall_sh_rejects_invalid_options_before_mutation(
 
     assert result.returncode != 0
     assert posix_uninstall_harness.fcc_home.exists()
+    assert posix_uninstall_harness.calls() == []
+
+
+@pytest.mark.parametrize("command_name", FCC_COMMANDS)
+def test_uninstall_sh_rejects_running_fcc_before_mutation(
+    posix_uninstall_harness: PosixUninstallHarness,
+    command_name: str,
+) -> None:
+    posix_uninstall_harness.env["FCC_RUNNING_COMMAND"] = command_name
+
+    result = posix_uninstall_harness.run()
+
+    assert result.returncode != 0
+    assert command_name in result.stderr
+    assert posix_uninstall_harness.fcc_home.exists()
+    assert all(
+        (posix_uninstall_harness.tool_bin / name).exists() for name in FCC_COMMANDS
+    )
     assert posix_uninstall_harness.calls() == []
 
 

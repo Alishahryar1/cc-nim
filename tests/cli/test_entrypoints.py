@@ -46,6 +46,12 @@ class _JsonResponse:
         return json.dumps(self._payload).encode("utf-8")
 
 
+@pytest.fixture
+def empty_proxy_bypass_env(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.delenv("NO_PROXY", raising=False)
+    monkeypatch.delenv("no_proxy", raising=False)
+
+
 def test_cli_scripts_are_registered() -> None:
     pyproject = tomllib.loads(
         (Path(__file__).resolve().parents[2] / "pyproject.toml").read_text(
@@ -318,6 +324,7 @@ def test_claude_child_env_targets_current_proxy_config() -> None:
 
 def test_launch_claude_passes_args_and_child_env(
     monkeypatch: pytest.MonkeyPatch,
+    empty_proxy_bypass_env: None,
 ) -> None:
     from free_claude_code.cli.launchers.claude import launch
 
@@ -371,6 +378,7 @@ def test_launch_claude_passes_args_and_child_env(
 def test_launch_codex_passes_responses_config_and_child_env(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    empty_proxy_bypass_env: None,
 ) -> None:
     from free_claude_code.cli.launchers.codex import launch
 
@@ -586,6 +594,7 @@ def test_pi_launcher_builds_scoped_session_command_and_proxy_env(
 def test_launch_pi_registers_bundled_extension_for_sessions(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
+    empty_proxy_bypass_env: None,
 ) -> None:
     from free_claude_code.cli.launchers.pi import launch
 
