@@ -141,6 +141,13 @@ facade-only. Package initialization and those leaves must remain import-order sa
 The model-list schema stays beside its API-owned construction policy in
 `api/model_catalog.py`; there is no generic API model package.
 
+Type annotations follow the same ownership boundaries. Known values use the
+domain types owned by their package, and JSON wire values use `JsonValue` or
+`JsonObject` from `core.json_types`. `object` is reserved for genuinely opaque
+integration boundaries and is narrowed before use. Explicit `typing.Any` is
+avoided because it disables checking, but this remains a semantic design-review
+rule rather than a mechanical text ban in CI.
+
 ## Customer-Facing Contract
 
 FCC optimizes for installed user workflows, not internal compatibility. The
