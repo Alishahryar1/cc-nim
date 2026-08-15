@@ -22,7 +22,7 @@ dependencies = [
     "loguru>=0.7.0",
     "aiohttp>=3.14.3",
     "jsonschema>=4.25.0",
-    "google-auth[requests]>=2.56.2",
+    "google-auth[requests]>=2.56.3",
     "requests[socks]>=2.34.2",
     "pystray>=0.19.5; sys_platform == 'win32' or sys_platform == 'darwin'",
     "Pillow>=12.0.0; sys_platform == 'win32' or sys_platform == 'darwin'",
