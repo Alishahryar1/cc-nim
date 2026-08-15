@@ -12,12 +12,12 @@ from pathlib import Path
 from free_claude_code.config.loader import get_settings
 from free_claude_code.config.server_urls import local_proxy_root_url
 
-from .common import preflight_proxy, resolve_client_binary, run_client_process
+from .common import preflight_proxy, run_client_process
+from .ensure import ClientSpec, ensure_muse_client, muse_install_hint
 from .openai_compat import build_openai_compat_env, proxy_bearer_token
 
 _DISPLAY_NAME = "Muse Code"
 _BINARY_NAME = "muse"
-_INSTALL_HINT = "Install Muse Code from https://dev.meta.ai/docs/muse-code/"
 _MCP_COMMAND_ENV = "FCC_MUSE_MCP_COMMAND"
 _MCP_SERVERS_ENV = "FCC_MUSE_MCP_SERVERS"
 
@@ -36,11 +36,7 @@ def launch(argv: Sequence[str] | None = None) -> None:
         print("Start it in another terminal with: fcc-server", file=sys.stderr)
         raise SystemExit(1)
 
-    binary_path = resolve_client_binary(
-        binary_name=_BINARY_NAME,
-        display_name=_DISPLAY_NAME,
-        install_hint=_INSTALL_HINT,
-    )
+    client = ensure_muse_client()
     settings_path = write_muse_settings_file(
         Path(tempfile.mkdtemp(prefix="fcc-muse-")),
         mcp_servers=build_muse_mcp_servers(os.environ),
@@ -57,7 +53,7 @@ def launch(argv: Sequence[str] | None = None) -> None:
     )
     run_client_process(
         command=build_muse_launcher_command(
-            binary_path=binary_path,
+            client=client,
             argv=args,
             proxy_root_url=proxy_root_url,
             model=settings.model,
@@ -66,7 +62,7 @@ def launch(argv: Sequence[str] | None = None) -> None:
         env=env,
         binary_name=_BINARY_NAME,
         display_name=_DISPLAY_NAME,
-        install_hint=_INSTALL_HINT,
+        install_hint=muse_install_hint(),
     )
 
 
@@ -121,7 +117,8 @@ def write_muse_settings_file(
 
 def build_muse_launcher_command(
     *,
-    binary_path: str,
+    binary_path: str | None = None,
+    client: ClientSpec | None = None,
     argv: Sequence[str],
     proxy_root_url: str,
     model: str,
@@ -129,6 +126,7 @@ def build_muse_launcher_command(
 ) -> list[str]:
     """Return the Muse CLI command pointed at FCC."""
 
+    spec = client or ClientSpec(kind="native", binary=binary_path or "muse")
     args = list(argv)
     extras: list[str] = []
     if not _has_flag(args, "--provider"):
@@ -138,8 +136,8 @@ def build_muse_launcher_command(
     if not _has_flag(args, "--model"):
         extras.extend(["--model", model])
     if settings_path is not None and not _has_flag(args, "--settings"):
-        extras.extend(["--settings", str(settings_path)])
-    return [binary_path, *extras, *args]
+        extras.extend(["--settings", spec.map_path(settings_path)])
+    return spec.build([*extras, *args])
 
 
 def build_muse_launcher_env(

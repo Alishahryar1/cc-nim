@@ -14,13 +14,16 @@ Set-StrictMode -Version Latest
 $ErrorActionPreference = "Stop"
 $ProgressPreference = "SilentlyContinue"
 
-$RepoArchiveUrl = "https://github.com/Alishahryar1/free-claude-code/archive/refs/heads/main.zip"
+$RepoArchiveUrl = "https://github.com/vinothhacks/free-claude-code/archive/refs/heads/main.zip"
 # Windows on ARM emulates x64, whose Python package ecosystem has broader wheel support.
 $PythonRequest = "cpython-3.14.0-windows-x86_64-none"
 $MinUvVersion = "0.11.16"
 $ClaudeInstallUrl = "https://claude.ai/install.ps1"
 $CodexInstallUrl = "https://chatgpt.com/codex/install.ps1"
 $PiInstallUrl = "https://pi.dev/install.ps1"
+$MuseInstallUrl = "https://dev.meta.ai/install.sh"
+$PrimeStableUrl = "https://github.com/PrimeIntellect-ai/prime-agent/releases/latest/download/stable"
+$PrimeReleaseApiUrl = "https://api.github.com/repos/PrimeIntellect-ai/prime-agent/releases/latest"
 $RtkVersion = "0.44.2"
 $RtkReleaseBaseUrl = "https://github.com/rtk-ai/rtk/releases/download/v$RtkVersion"
 $RtkWindowsAssetName = "rtk-x86_64-pc-windows-msvc.zip"
@@ -29,7 +32,11 @@ $UvInstallUrl = "https://astral.sh/uv/install.ps1"
 $script:InstallClaudeCode = $true
 $script:InstallCodex = $true
 $script:InstallPi = $true
+$script:InstallMuse = $true
+$script:InstallPrime = $true
 $script:PiAvailable = $false
+$script:MuseAvailable = $false
+$script:PrimeAvailable = $false
 $script:EnableRtk = $Rtk.IsPresent
 $FccCommands = @(
     # Include retired entry points so updates reject older FCC processes before replacement.
@@ -38,6 +45,9 @@ $FccCommands = @(
     "fcc-claude",
     "fcc-codex",
     "fcc-pi",
+    "fcc-atomic",
+    "fcc-prime",
+    "fcc-muse",
     "fcc-init",
     "free-claude-code"
 )
@@ -97,8 +107,16 @@ function Select-CodingAgents {
         $script:InstallClaudeCode = Read-YesNo "Install or verify Claude Code for fcc-claude?"
         $script:InstallCodex = Read-YesNo "Install or verify Codex for fcc-codex?"
         $script:InstallPi = Read-YesNo "Install or verify Pi for fcc-pi?"
+        $script:InstallMuse = Read-YesNo "Install or verify Muse Code for fcc-muse?"
+        $script:InstallPrime = Read-YesNo "Install or verify Prime Agent for fcc-prime?"
 
-        if ($script:InstallClaudeCode -or $script:InstallCodex -or $script:InstallPi) {
+        if (
+            $script:InstallClaudeCode -or
+            $script:InstallCodex -or
+            $script:InstallPi -or
+            $script:InstallMuse -or
+            $script:InstallPrime
+        ) {
             break
         }
         Write-Host "Select at least one coding agent."
@@ -593,6 +611,137 @@ function Ensure-Pi {
     $script:PiAvailable = $true
 }
 
+function Test-WslUsable {
+    $wsl = Get-ApplicationCommand "wsl"
+    if (-not $wsl) {
+        return $false
+    }
+    & $wsl.Source -e true 2>$null | Out-Null
+    return $LASTEXITCODE -eq 0
+}
+
+function Get-PrimeAgentVersion {
+    try {
+        $version = (
+            Invoke-RestMethod -Uri $PrimeStableUrl -Headers @{ "User-Agent" = "free-claude-code" }
+        ).ToString().Trim().TrimStart("v")
+        if (-not [string]::IsNullOrWhiteSpace($version)) {
+            return $version
+        }
+    }
+    catch {
+        # Fall through to the GitHub releases API.
+    }
+
+    $release = Invoke-RestMethod `
+        -Uri $PrimeReleaseApiUrl `
+        -Headers @{
+            "User-Agent" = "free-claude-code"
+            "Accept" = "application/vnd.github+json"
+        }
+    $tag = [string] $release.tag_name
+    if ([string]::IsNullOrWhiteSpace($tag)) {
+        throw "Could not resolve the latest Prime Agent version."
+    }
+    return $tag.TrimStart("v")
+}
+
+function Ensure-Muse {
+    $script:MuseAvailable = $false
+    Add-KnownBinDirectories
+    if (Get-ApplicationCommand "muse") {
+        Write-Host "Muse Code already found on PATH; verifying it."
+        Confirm-Application -CommandName "muse" -DisplayName "Muse Code"
+        $script:MuseAvailable = $true
+        return
+    }
+
+    if (-not (Test-WslUsable)) {
+        Write-Host "Muse Code has no native Windows installer. Install WSL2, then rerun, or run fcc-muse later."
+        return
+    }
+
+    if ($DryRun) {
+        Write-Host "+ wsl bash -lc 'curl -fsSL $MuseInstallUrl | bash'"
+        $script:MuseAvailable = $true
+        return
+    }
+
+    $wsl = Get-ApplicationCommand "wsl"
+    Write-Host "Installing Muse Code inside WSL from $MuseInstallUrl"
+    Invoke-NativeCommand -FilePath $wsl.Source -Arguments @(
+        "bash",
+        "-lc",
+        "curl -fsSL --proto '=https' --tlsv1.2 $MuseInstallUrl | bash"
+    )
+    $script:MuseAvailable = $true
+}
+
+function Ensure-Prime {
+    $script:PrimeAvailable = $false
+    Add-PiBinDirectories
+    if (Get-ApplicationCommand "prime-agent") {
+        Write-Host "Prime Agent already found on PATH; verifying it."
+        Confirm-Application -CommandName "prime-agent" -DisplayName "Prime Agent"
+        $script:PrimeAvailable = $true
+        return
+    }
+
+    $npm = Get-ApplicationCommand "npm"
+    if (-not $npm) {
+        Write-Host "Node.js/npm not found; skipping Prime Agent. fcc-prime can install it later."
+        return
+    }
+
+    if ($DryRun) {
+        Write-Host "+ npm install -g <prime-agent-release-tarball>"
+        $script:PrimeAvailable = $true
+        return
+    }
+
+    $version = Get-PrimeAgentVersion
+    $tarballUrl = "https://github.com/PrimeIntellect-ai/prime-agent/releases/download/v$version/prime-agent-$version.tgz"
+    $tarball = Join-Path ([IO.Path]::GetTempPath()) ("prime-agent-" + $version + ".tgz")
+    Write-Host "+ downloading $tarballUrl"
+    Invoke-WebRequest -Uri $tarballUrl -OutFile $tarball -UseBasicParsing
+    $hadKernel = Test-Path Env:PRIME_AGENT_BOOTSTRAP_KERNEL_ON_INSTALL
+    $previousKernel = $env:PRIME_AGENT_BOOTSTRAP_KERNEL_ON_INSTALL
+    $hadTools = Test-Path Env:PRIME_AGENT_BOOTSTRAP_TOOLS_ON_INSTALL
+    $previousTools = $env:PRIME_AGENT_BOOTSTRAP_TOOLS_ON_INSTALL
+    try {
+        $env:PRIME_AGENT_BOOTSTRAP_KERNEL_ON_INSTALL = "0"
+        $env:PRIME_AGENT_BOOTSTRAP_TOOLS_ON_INSTALL = "1"
+        Invoke-NativeCommand -FilePath $npm.Source -Arguments @(
+            "install",
+            "-g",
+            "--no-fund",
+            "--no-audit",
+            $tarball
+        )
+    }
+    finally {
+        if ($hadKernel) {
+            $env:PRIME_AGENT_BOOTSTRAP_KERNEL_ON_INSTALL = $previousKernel
+        }
+        else {
+            Remove-Item Env:PRIME_AGENT_BOOTSTRAP_KERNEL_ON_INSTALL -ErrorAction SilentlyContinue
+        }
+        if ($hadTools) {
+            $env:PRIME_AGENT_BOOTSTRAP_TOOLS_ON_INSTALL = $previousTools
+        }
+        else {
+            Remove-Item Env:PRIME_AGENT_BOOTSTRAP_TOOLS_ON_INSTALL -ErrorAction SilentlyContinue
+        }
+        if (Test-Path -LiteralPath $tarball) {
+            Remove-Item -LiteralPath $tarball -Force -ErrorAction SilentlyContinue
+        }
+    }
+
+    Add-PiBinDirectories
+    Confirm-Application -CommandName "prime-agent" -DisplayName "Prime Agent"
+    $script:PrimeAvailable = $true
+}
+
 function Ensure-SelectedCodingAgents {
     if ($script:InstallClaudeCode) {
         Write-Step "Ensuring Claude Code is installed"
@@ -609,7 +758,23 @@ function Ensure-SelectedCodingAgents {
         Ensure-Pi
     }
 
-    if ((-not $script:InstallClaudeCode) -and (-not $script:InstallCodex) -and (-not $script:PiAvailable)) {
+    if ($script:InstallMuse) {
+        Write-Step "Checking or installing Muse Code"
+        Ensure-Muse
+    }
+
+    if ($script:InstallPrime) {
+        Write-Step "Checking or installing Prime Agent"
+        Ensure-Prime
+    }
+
+    if (
+        (-not $script:InstallClaudeCode) -and
+        (-not $script:InstallCodex) -and
+        (-not $script:PiAvailable) -and
+        (-not $script:MuseAvailable) -and
+        (-not $script:PrimeAvailable)
+    ) {
         throw "No selected coding agent was installed. Re-run the installer and choose at least one."
     }
 }
@@ -965,5 +1130,11 @@ else {
     }
     if ($script:PiAvailable) {
         Write-Host "Run Pi with: fcc-pi"
+    }
+    if ($script:MuseAvailable) {
+        Write-Host "Run Muse Code with: fcc-muse"
+    }
+    if ($script:PrimeAvailable) {
+        Write-Host "Run Prime Agent with: fcc-prime"
     }
 }

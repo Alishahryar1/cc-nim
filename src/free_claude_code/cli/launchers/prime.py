@@ -12,12 +12,15 @@ from pathlib import Path
 from free_claude_code.config.loader import get_settings
 from free_claude_code.config.server_urls import local_proxy_root_url
 
-from .common import preflight_proxy, resolve_client_binary, run_client_process
-from .openai_compat import build_openai_compat_env, openai_compat_base_url, proxy_bearer_token
+from .common import preflight_proxy, run_client_process
+from .ensure import ensure_prime_binary, prime_install_hint
+from .openai_compat import (
+    build_openai_compat_env,
+    openai_compat_base_url,
+    proxy_bearer_token,
+)
 
 _DISPLAY_NAME = "Prime Agent"
-_BINARY_CANDIDATES = ("prime-agent", "prime")
-_INSTALL_HINT = "Install Prime Agent from https://github.com/PrimeIntellect-ai/prime-agent"
 _API_KEY_ENV = "FCC_PRIME_API_KEY"
 
 
@@ -35,7 +38,7 @@ def launch(argv: Sequence[str] | None = None) -> None:
         print("Start it in another terminal with: fcc-server", file=sys.stderr)
         raise SystemExit(1)
 
-    binary_path = resolve_prime_binary()
+    binary_path = ensure_prime_binary()
     agent_dir = Path(tempfile.mkdtemp(prefix="fcc-prime-"))
     write_prime_agent_dir(
         agent_dir,
@@ -62,26 +65,8 @@ def launch(argv: Sequence[str] | None = None) -> None:
         env=env,
         binary_name=Path(binary_path).name,
         display_name=_DISPLAY_NAME,
-        install_hint=_INSTALL_HINT,
+        install_hint=prime_install_hint(),
     )
-
-
-def resolve_prime_binary() -> str:
-    """Return the first Prime Agent binary on PATH."""
-
-    last_error: SystemExit | None = None
-    for binary_name in _BINARY_CANDIDATES:
-        try:
-            return resolve_client_binary(
-                binary_name=binary_name,
-                display_name=_DISPLAY_NAME,
-                install_hint=_INSTALL_HINT,
-            )
-        except SystemExit as exc:
-            last_error = exc
-    if last_error is not None:
-        raise last_error
-    raise SystemExit(127)
 
 
 def build_prime_launcher_command(

@@ -1,6 +1,13 @@
+import os
 import tempfile
 from pathlib import Path
 
+from free_claude_code.cli.launchers.ensure import (
+    ClientSpec,
+    auto_install_enabled,
+    windows_path_text_to_wsl,
+    wsl_exec,
+)
 from free_claude_code.cli.launchers.muse import (
     build_muse_launcher_command,
     build_muse_launcher_env,
@@ -115,3 +122,53 @@ def test_muse_command_and_optional_mcp() -> None:
     )
     assert env["META_API_KEY"] == "proxy-token"
     assert env["META_BASE_URL"] == "http://127.0.0.1:8082"
+
+
+def test_auto_install_env_defaults_on() -> None:
+    assert auto_install_enabled({}) is True
+    assert auto_install_enabled({"FCC_NO_AUTO_INSTALL": "1"}) is False
+    assert auto_install_enabled({"FCC_NO_AUTO_INSTALL": "true"}) is False
+
+
+def test_wsl_muse_command_quotes_settings_path() -> None:
+    client = ClientSpec(kind="wsl", binary="muse")
+    settings_path = Path("/tmp/fcc-muse/settings.json")
+    command = build_muse_launcher_command(
+        client=client,
+        argv=["exec", "ping"],
+        proxy_root_url="http://127.0.0.1:8082",
+        model="open_router/openai/gpt-4o-mini",
+        settings_path=settings_path,
+    )
+    assert command[:3] == ["wsl", "bash", "-lc"]
+    inner = command[3]
+    assert "exec muse" in inner
+    assert "--provider" in inner
+    assert "meta" in inner
+    assert "--settings" in inner
+    assert windows_path_text_to_wsl(r"C:\Users\me\settings.json") == (
+        "/mnt/c/Users/me/settings.json"
+    )
+
+
+def test_wsl_exec_quotes_spaces() -> None:
+    command = wsl_exec("muse", ["--settings", "/tmp/my settings.json"])
+    assert command[:3] == ["wsl", "bash", "-lc"]
+    assert "'/tmp/my settings.json'" in command[3]
+
+
+def test_prime_skips_install_when_disabled(monkeypatch, capsys) -> None:
+    from free_claude_code.cli.launchers import ensure as ensure_mod
+
+    monkeypatch.setattr(ensure_mod, "find_prime_binary", lambda: None)
+    monkeypatch.setenv("FCC_NO_AUTO_INSTALL", "1")
+    try:
+        ensure_mod.ensure_prime_binary()
+    except SystemExit as exc:
+        assert exc.code == 127
+    else:
+        raise AssertionError("expected SystemExit 127")
+    err = capsys.readouterr().err
+    assert "Could not find Prime Agent" in err
+    assert "fcc-prime can install it" in err or "github.com/PrimeIntellect-ai" in err
+    assert os.environ["FCC_NO_AUTO_INSTALL"] == "1"
