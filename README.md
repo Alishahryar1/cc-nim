@@ -19,9 +19,14 @@
 
 </div>
 
+> This repository is [vinothhacks/free-claude-code](https://github.com/vinothhacks/free-claude-code),
+> built on [Alishahryar1/free-claude-code](https://github.com/Alishahryar1/free-claude-code).
+> Extra clients here: `fcc-atomic`, `fcc-prime`, and `fcc-muse` (optional MCP).
+> Do not commit `.env`, API keys, or passwords.
+
 ## What You Get
 
-- **Use your preferred coding agent.** Run Claude Code, Codex, or Pi with FCC.
+- **Use your preferred coding agent.** Run Claude Code, Codex, Pi, Atomic Agents, Prime Agent, or Muse Code with FCC.
 - **Choose your own models.** Connect free, paid, or local providers and search their models from one Admin UI.
 - **Route work your way.** Set one default model or map Fable, Opus, Sonnet, and Haiku separately.
 - **Save time and tokens.** Five built-in optimizations handle quota probes, command-prefix detection, title generation, suggestion mode, and filepath extraction locally instead of calling your provider; optionally enable [RTK](https://github.com/rtk-ai/rtk) to filter noisy terminal output before it reaches the model.
@@ -37,18 +42,52 @@
 
 <a id="install"></a>
 
-### 1. Install Or Update
+### Install this fork (fcc-atomic, fcc-prime, fcc-muse)
+
+Share **this** repo with friends: [vinothhacks/free-claude-code](https://github.com/vinothhacks/free-claude-code). The upstream installer does not include these three commands.
+
+Need [uv](https://docs.astral.sh/uv/getting-started/installation/) and Python 3.14. Put provider keys only in `~/.fcc/.env` (for example `OPENROUTER_API_KEY`). Never put keys in git.
+
+```bash
+uv tool install --force --python 3.14 git+https://github.com/vinothhacks/free-claude-code.git
+```
+
+```powershell
+uv tool install --force --python 3.14 git+https://github.com/vinothhacks/free-claude-code.git
+```
+
+Then start the proxy and use the launchers:
+
+```bash
+fcc-server
+```
+
+```bash
+fcc-atomic ping
+fcc-prime
+fcc-muse
+```
+
+- **fcc-atomic** — one Chat Completions turn through FCC. Works without extra packages; install `atomic-agents` and `instructor` if you want the Atomic Agents library.
+- **fcc-prime** — needs Node.js 20.6+ and npm. Missing Prime Agent is installed automatically.
+- **fcc-muse** — macOS/Linux, or Windows with [WSL2](https://learn.microsoft.com/windows/wsl/install). Missing Muse Code is installed automatically.
+
+To update later, re-run the same `uv tool install --force ...` command.
+
+### 1. Full installer (optional)
+
+The full installer also offers Claude Code, Codex, Pi, Muse Code, and Prime Agent.
 
 macOS/Linux:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.sh" | sh
+curl -fsSL "https://raw.githubusercontent.com/vinothhacks/free-claude-code/main/scripts/install.sh" | sh
 ```
 
 Windows PowerShell:
 
 ```powershell
-& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.ps1")))
+& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/vinothhacks/free-claude-code/main/scripts/install.ps1")))
 ```
 
 Re-run the same command whenever you want to update. You can review the installers before running them: [install.sh](scripts/install.sh) and [install.ps1](scripts/install.ps1).
@@ -127,7 +166,15 @@ Pi:
 fcc-pi
 ```
 
-All three launchers use the current Admin UI settings. Use the agent's model picker to choose from the models FCC exposes. Normal CLI arguments still work, for example:
+Atomic Agents, Prime Agent, and Muse Code (this fork):
+
+```bash
+fcc-atomic ping
+fcc-prime
+fcc-muse
+```
+
+These launchers use the current Admin UI settings. Use the agent's model picker to choose from the models FCC exposes. Normal CLI arguments still work, for example:
 
 ```bash
 fcc-codex exec "hello"
@@ -292,7 +339,37 @@ Providers that do not support a selected control retain their own behavior.
 
 ## Connect Your Client
 
-For terminal use, start `fcc-server`, then run `fcc-claude`, `fcc-codex`, or `fcc-pi`. Use the guides below for editor integrations.
+For terminal use, start `fcc-server`, then run `fcc-claude`, `fcc-codex`, `fcc-pi`, `fcc-atomic`, `fcc-prime`, or `fcc-muse`. Use the guides below for editor integrations.
+
+### Atomic Agents, Prime Agent, and Muse Code (simple)
+
+Friends: install **this GitHub repo**, not upstream. See [Install this fork](#install-this-fork-fcc-atomic-fcc-prime-fcc-muse).
+
+1. Put your provider key only in `~/.fcc/.env` (for example `OPENROUTER_API_KEY`). Never put keys in git.
+2. Start the proxy: `fcc-server`
+3. Pick a model in Admin, or set `MODEL=open_router/openai/gpt-4o-mini`
+4. Use one launcher:
+
+```bash
+# One Chat Completions turn (uses Atomic Agents if installed, otherwise the OpenAI wire format)
+fcc-atomic ping
+
+# Prime Agent through FCC (installs Prime Agent with npm if missing)
+fcc-prime
+
+# Muse Code through FCC (installs Muse Code if missing; uses WSL2 on Windows)
+fcc-muse
+```
+
+`fcc-prime` and `fcc-muse` install the missing CLI the first time you run them. Prime uses npm and the GitHub release tarball. Muse uses Meta's official installer, and on Windows that runs inside WSL2. Set `FCC_NO_AUTO_INSTALL=1` to skip auto-install and only print the install URL.
+
+Optional Muse MCP: set `FCC_MUSE_MCP_COMMAND` to a stdio MCP server command, or set `FCC_MUSE_MCP_SERVERS` to a JSON object. Those values stay in your environment; they are not written to the repo.
+
+```bash
+# Example: optional MCP server for Muse (replace with a server you trust)
+export FCC_MUSE_MCP_COMMAND="npx -y @modelcontextprotocol/server-filesystem"
+fcc-muse
+```
 
 <details>
 <summary><strong>Claude Code in VS Code</strong></summary>
@@ -496,13 +573,13 @@ replace the final option with the matching one from the table.
 macOS/Linux:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.sh" | sh -s -- --voice-nim
+curl -fsSL "https://raw.githubusercontent.com/vinothhacks/free-claude-code/main/scripts/install.sh" | sh -s -- --voice-nim
 ```
 
 Windows PowerShell:
 
 ```powershell
-& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.ps1"))) -VoiceNim
+& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/vinothhacks/free-claude-code/main/scripts/install.ps1"))) -VoiceNim
 ```
 
 Restart `fcc-server`. In **Admin UI → Messaging → Voice**, enable voice notes, select `cpu`, `cuda`, or `nvidia_nim`, and choose the Whisper model. Local gated models need `HUGGINGFACE_API_KEY`; NVIDIA NIM transcription needs `NVIDIA_NIM_API_KEY`.
@@ -533,18 +610,20 @@ Stop every running FCC command before uninstalling.
 macOS/Linux:
 
 ```bash
-curl -fsSL "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/uninstall.sh" | sh
+curl -fsSL "https://raw.githubusercontent.com/vinothhacks/free-claude-code/main/scripts/uninstall.sh" | sh
 ```
 
 Windows PowerShell:
 
 ```powershell
-& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/uninstall.ps1")))
+& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/vinothhacks/free-claude-code/main/scripts/uninstall.ps1")))
 ```
 
 ## Project Links
 
-- [Report bugs or request features](https://github.com/Alishahryar1/free-claude-code/issues)
+- [This fork](https://github.com/vinothhacks/free-claude-code)
+- [Upstream Free Claude Code](https://github.com/Alishahryar1/free-claude-code)
+- [Report bugs or request features](https://github.com/vinothhacks/free-claude-code/issues)
 - [Architecture and extension guide](ARCHITECTURE.md)
 - [Contributing guide](CONTRIBUTING.md)
 

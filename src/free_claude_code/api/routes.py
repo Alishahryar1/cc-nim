@@ -12,6 +12,7 @@ from free_claude_code.core.anthropic import (
     TokenCountRequest,
     get_token_count,
 )
+from free_claude_code.core.openai_chat_api import ChatCompletionsRequest
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.trace import trace_event
 
@@ -21,7 +22,12 @@ from .dependencies import (
     require_proxy_auth,
     resolve_provider,
 )
-from .handlers import MessagesHandler, ResponsesHandler, TokenCountHandler
+from .handlers import (
+    ChatCompletionsHandler,
+    MessagesHandler,
+    ResponsesHandler,
+    TokenCountHandler,
+)
 from .model_catalog import ModelsListResponse, build_models_list_response
 from .ports import ApiServices
 from .request_errors import ordinary_application_error_response
@@ -98,6 +104,38 @@ async def _create_responses_response(
     return await bind_response_lifetime(response, lease.release)
 
 
+async def _create_chat_completions_response(
+    services: ApiServices,
+    request_data: ChatCompletionsRequest,
+    *,
+    request_id: str,
+) -> object:
+    lease: RequestRuntimeLease | None = None
+    try:
+        lease = await services.requests.acquire()
+        handler = ChatCompletionsHandler(
+            lease.settings,
+            provider_resolver=_provider_resolver(lease),
+            token_counter=get_token_count,
+            generation_id=lease.generation_id,
+        )
+        response = await handler.create(request_data, request_id=request_id)
+    except ApplicationError as exc:
+        if lease is not None:
+            await lease.release()
+        return ordinary_application_error_response(
+            exc,
+            wire_api="chat_completions",
+            request_id=request_id,
+        )
+    except BaseException:
+        if lease is not None:
+            await lease.release()
+        raise
+    assert lease is not None
+    return await bind_response_lifetime(response, lease.release)
+
+
 def _probe_response(allow: str) -> Response:
     return Response(status_code=204, headers={"Allow": allow})
 
@@ -119,6 +157,31 @@ async def create_message(
 
 @router.api_route("/v1/messages", methods=["HEAD", "OPTIONS"])
 async def probe_messages(_auth=Depends(require_proxy_auth)):
+    return _probe_response("POST, HEAD, OPTIONS")
+
+
+@router.post("/v1/chat/completions")
+async def create_chat_completion(
+    request: Request,
+    request_data: ChatCompletionsRequest,
+    services: ApiServices = Depends(get_services),
+    _auth=Depends(require_proxy_auth),
+):
+    """Create a chat completion (JSON by default; stream=true returns OpenAI SSE).
+
+    Serves the OpenAI-compatible ecosystem -- Instructor, Atomic Agents,
+    Prime Agent, Muse Code, LangChain, and others -- against every provider
+    FCC has configured.
+    """
+    return await _create_chat_completions_response(
+        services,
+        request_data,
+        request_id=get_request_id(request),
+    )
+
+
+@router.api_route("/v1/chat/completions", methods=["HEAD", "OPTIONS"])
+async def probe_chat_completions(_auth=Depends(require_proxy_auth)):
     return _probe_response("POST, HEAD, OPTIONS")
 
 

@@ -1,19 +1,22 @@
 #!/bin/sh
 set -eu
 
-REPO_ARCHIVE_URL="https://github.com/Alishahryar1/free-claude-code/archive/refs/heads/main.zip"
+REPO_ARCHIVE_URL="https://github.com/vinothhacks/free-claude-code/archive/refs/heads/main.zip"
 PYTHON_VERSION="3.14.0"
 MIN_UV_VERSION="0.11.16"
 CLAUDE_INSTALL_URL="https://claude.ai/install.sh"
 CODEX_INSTALL_URL="https://chatgpt.com/codex/install.sh"
 PI_INSTALL_URL="https://pi.dev/install.sh"
+MUSE_INSTALL_URL="https://dev.meta.ai/install.sh"
+PRIME_STABLE_URL="https://github.com/PrimeIntellect-ai/prime-agent/releases/latest/download/stable"
+PRIME_RELEASE_API_URL="https://api.github.com/repos/PrimeIntellect-ai/prime-agent/releases/latest"
 RTK_VERSION="0.44.2"
 RTK_RELEASE_BASE_URL="https://github.com/rtk-ai/rtk/releases/download/v$RTK_VERSION"
 UV_INSTALL_URL="https://astral.sh/uv/install.sh"
 FCC_MACOS_BUNDLE_ID="io.github.alishahryar1.free-claude-code"
 FCC_MACOS_OWNER_FILE=".free-claude-code-owner"
 # Include retired entry points so updates reject older FCC processes before replacement.
-FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-init free-claude-code"
+FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-atomic fcc-prime fcc-muse fcc-init free-claude-code"
 
 dry_run=0
 voice_nim=0
@@ -22,12 +25,16 @@ voice_all=0
 install_claude=1
 install_codex=1
 install_pi=1
+install_muse=1
+install_prime=1
 enable_rtk=0
 torch_backend=""
 temporary_file=""
 temporary_binary=""
 tool_bin=""
 pi_available=0
+muse_available=0
+prime_available=0
 rtk_path=""
 
 show_usage() {
@@ -106,8 +113,20 @@ choose_coding_agents() {
         else
             install_pi=0
         fi
+        if prompt_yes_no "Install or verify Muse Code for fcc-muse?"; then
+            install_muse=1
+        else
+            install_muse=0
+        fi
+        if prompt_yes_no "Install or verify Prime Agent for fcc-prime?"; then
+            install_prime=1
+        else
+            install_prime=0
+        fi
 
-        if [ "$install_claude" -eq 1 ] || [ "$install_codex" -eq 1 ] || [ "$install_pi" -eq 1 ]; then
+        if [ "$install_claude" -eq 1 ] || [ "$install_codex" -eq 1 ] ||
+            [ "$install_pi" -eq 1 ] || [ "$install_muse" -eq 1 ] ||
+            [ "$install_prime" -eq 1 ]; then
             break
         fi
         printf 'Select at least one coding agent.\n\n' >&4
@@ -569,6 +588,84 @@ ensure_pi() {
     pi_available=1
 }
 
+resolve_prime_agent_version() {
+    version=$(curl -fsSL "$PRIME_STABLE_URL" 2>/dev/null | tr -d '[:space:]' | sed 's/^v//' || true)
+    case "$version" in
+        ''|*[!0-9A-Za-z.-]*) ;;
+        *)
+            printf '%s' "$version"
+            return 0
+            ;;
+    esac
+
+    version=$(
+        curl -fsSL "$PRIME_RELEASE_API_URL" \
+            -H 'User-Agent: free-claude-code' \
+            -H 'Accept: application/vnd.github+json' |
+            tr ',' '\n' |
+            sed -n 's/.*"tag_name": *"v\([^"]*\)".*/\1/p' |
+            head -n 1
+    ) || true
+    version=$(printf '%s' "$version" | tr -d '[:space:]' | sed 's/^v//')
+    [ -n "$version" ] || fail "Could not resolve the latest Prime Agent version."
+    printf '%s' "$version"
+}
+
+ensure_muse() {
+    muse_available=0
+    add_known_bin_directories
+    if command -v muse >/dev/null 2>&1; then
+        printf 'Muse Code already found on PATH; verifying it.\n'
+        verify_command muse "Muse Code"
+        muse_available=1
+        return 0
+    fi
+
+    download_and_run "$MUSE_INSTALL_URL" bash "Muse Code"
+    add_known_bin_directories
+    verify_command muse "Muse Code"
+    muse_available=1
+}
+
+ensure_prime() {
+    prime_available=0
+    add_pi_bin_directories
+    if command -v prime-agent >/dev/null 2>&1; then
+        printf 'Prime Agent already found on PATH; verifying it.\n'
+        verify_command prime-agent "Prime Agent"
+        prime_available=1
+        return 0
+    fi
+
+    if ! command -v npm >/dev/null 2>&1; then
+        printf 'npm not found; skipping Prime Agent. fcc-prime can install it later.\n'
+        return 0
+    fi
+
+    if [ "$dry_run" -eq 1 ]; then
+        print_command npm install -g "<prime-agent-release-tarball>"
+        prime_available=1
+        return 0
+    fi
+
+    version=$(resolve_prime_agent_version)
+    tarball_url="https://github.com/PrimeIntellect-ai/prime-agent/releases/download/v${version}/prime-agent-${version}.tgz"
+    temporary_file=$(mktemp "${TMPDIR:-/tmp}/fcc-prime-agent.XXXXXX.tgz") ||
+        fail "Unable to create a temporary file for Prime Agent."
+    print_command curl -fsSL "$tarball_url" -o "$temporary_file"
+    curl -fsSL "$tarball_url" -o "$temporary_file" ||
+        fail "Could not download Prime Agent v$version."
+    print_command npm install -g --no-fund --no-audit "$temporary_file"
+    PRIME_AGENT_BOOTSTRAP_KERNEL_ON_INSTALL=0 \
+        PRIME_AGENT_BOOTSTRAP_TOOLS_ON_INSTALL=1 \
+        npm install -g --no-fund --no-audit "$temporary_file"
+    rm -f "$temporary_file"
+    temporary_file=""
+    add_pi_bin_directories
+    verify_command prime-agent "Prime Agent"
+    prime_available=1
+}
+
 ensure_selected_coding_agents() {
     if [ "$install_claude" -eq 1 ]; then
         step "Ensuring Claude Code is installed"
@@ -585,7 +682,19 @@ ensure_selected_coding_agents() {
         ensure_pi
     fi
 
-    if [ "$install_claude" -eq 0 ] && [ "$install_codex" -eq 0 ] && [ "$pi_available" -eq 0 ]; then
+    if [ "$install_muse" -eq 1 ]; then
+        step "Checking or installing Muse Code"
+        ensure_muse
+    fi
+
+    if [ "$install_prime" -eq 1 ]; then
+        step "Checking or installing Prime Agent"
+        ensure_prime
+    fi
+
+    if [ "$install_claude" -eq 0 ] && [ "$install_codex" -eq 0 ] &&
+        [ "$pi_available" -eq 0 ] && [ "$muse_available" -eq 0 ] &&
+        [ "$prime_available" -eq 0 ]; then
         fail "No selected coding agent was installed. Re-run the installer and choose at least one."
     fi
 }
@@ -900,7 +1009,7 @@ fi
 
 step "Checking installation prerequisites"
 require_command curl
-if [ "$install_claude" -eq 1 ]; then
+if [ "$install_claude" -eq 1 ] || [ "$install_muse" -eq 1 ]; then
     require_command bash
 fi
 require_command sh
@@ -948,5 +1057,11 @@ else
     fi
     if [ "$pi_available" -eq 1 ]; then
         printf 'Run Pi with: fcc-pi\n'
+    fi
+    if [ "$muse_available" -eq 1 ]; then
+        printf 'Run Muse Code with: fcc-muse\n'
+    fi
+    if [ "$prime_available" -eq 1 ]; then
+        printf 'Run Prime Agent with: fcc-prime\n'
     fi
 fi
