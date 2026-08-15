@@ -210,6 +210,11 @@ class Settings(BaseModel):
         default=None, validation_alias="QWENCLOUD_API_KEY"
     )
 
+    # ==================== QwenCloud Coding Plan (OpenAI-compatible) ====================
+    qwencloud_coding_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="QWENCLOUD_CODING_API_KEY"
+    )
+
     # ==================== Together AI (OpenAI-compatible) ====================
     together_api_key: OptionalNonEmptyString = Field(
         default=None, validation_alias="TOGETHER_API_KEY"
@@ -333,6 +338,9 @@ class Settings(BaseModel):
     )
     qwencloud_proxy: OptionalNonEmptyString = Field(
         default=None, validation_alias="QWENCLOUD_PROXY"
+    )
+    qwencloud_coding_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="QWENCLOUD_CODING_PROXY"
     )
     together_proxy: OptionalNonEmptyString = Field(
         default=None, validation_alias="TOGETHER_PROXY"

@@ -25,6 +25,7 @@ from free_claude_code.config.provider_catalog import (
     NEBIUS_DEFAULT_BASE,
     OLLAMA_CLOUD_DEFAULT_BASE,
     PROVIDER_CATALOG,
+    QWENCLOUD_CODING_DEFAULT_BASE,
     QWENCLOUD_DEFAULT_BASE,
     SILICONFLOW_DEFAULT_BASE,
     SUPPORTED_PROVIDER_IDS,
@@ -73,6 +74,7 @@ def _make_settings(**overrides):
     mock.open_router_api_key = "test_openrouter_key"
     mock.xai_api_key = "test_xai_key"
     mock.qwencloud_api_key = "test_qwencloud_key"
+    mock.qwencloud_coding_api_key = "test_qwencloud_coding_key"
     mock.together_api_key = "test_together_key"
     mock.deepinfra_api_key = "test_deepinfra_key"
     mock.siliconflow_api_key = "test_siliconflow_key"
@@ -150,6 +152,7 @@ def _make_settings(**overrides):
     mock.openai_proxy = None
     mock.xai_proxy = None
     mock.qwencloud_proxy = None
+    mock.qwencloud_coding_proxy = None
     mock.together_proxy = None
     mock.deepinfra_proxy = None
     mock.siliconflow_proxy = None
@@ -259,6 +262,25 @@ def test_qwencloud_provider_config_uses_key_base_and_proxy() -> None:
     assert descriptor.credential_env == "QWENCLOUD_API_KEY"
     assert config.api_key == "qwencloud-token"
     assert config.base_url == QWENCLOUD_DEFAULT_BASE
+    assert config.proxy == "http://proxy.test:8080"
+    assert isinstance(provider, OpenAIChatProvider)
+
+
+def test_qwencloud_coding_provider_config_uses_key_base_and_proxy() -> None:
+    descriptor = PROVIDER_CATALOG["qwencloud_coding"]
+    settings = _make_settings(
+        qwencloud_coding_api_key="qwencloud-coding-token",
+        qwencloud_coding_proxy="http://proxy.test:8080",
+    )
+
+    config = build_provider_config(descriptor, settings)
+    with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
+        provider = create_provider("qwencloud_coding", settings)
+
+    assert descriptor.display_name == "QwenCloud Coding Plan"
+    assert descriptor.credential_env == "QWENCLOUD_CODING_API_KEY"
+    assert config.api_key == "qwencloud-coding-token"
+    assert config.base_url == QWENCLOUD_CODING_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
     assert isinstance(provider, OpenAIChatProvider)
 
@@ -742,6 +764,7 @@ def test_create_provider_instantiates_each_builtin():
         "openai": OpenAICodexProvider,
         "xai": OpenAIChatProvider,
         "qwencloud": OpenAIChatProvider,
+        "qwencloud_coding": OpenAIChatProvider,
         "together": OpenAIChatProvider,
         "deepinfra": OpenAIChatProvider,
         "siliconflow": OpenAIChatProvider,

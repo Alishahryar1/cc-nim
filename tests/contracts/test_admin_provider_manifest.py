@@ -139,6 +139,16 @@ def test_vertex_project_and_location_are_admin_provider_fields() -> None:
     assert location.resolved_default() == "global"
 
 
+def test_qwencloud_coding_key_is_a_distinct_admin_provider_field() -> None:
+    entry = FIELD_BY_KEY["QWENCLOUD_CODING_API_KEY"]
+
+    assert entry.label == "QwenCloud Coding Plan API Key"
+    assert entry.settings_attr == "qwencloud_coding_api_key"
+    assert entry.section_id == "providers"
+    assert entry.secret is True
+    assert "separate endpoints" in entry.description
+
+
 def test_vertex_admin_status_uses_project_configuration_not_an_api_key() -> None:
     from free_claude_code.config.admin.status import provider_config_status
 

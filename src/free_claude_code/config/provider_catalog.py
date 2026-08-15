@@ -56,6 +56,8 @@ XAI_DEFAULT_BASE = "https://api.x.ai/v1"
 QWENCLOUD_DEFAULT_BASE = (
     "https://token-plan.ap-southeast-1.maas.aliyuncs.com/compatible-mode/v1"
 )
+# QwenCloud Coding Plan OpenAI-compatible Chat Completions API.
+QWENCLOUD_CODING_DEFAULT_BASE = "https://coding-intl.dashscope.aliyuncs.com/v1"
 # Together AI OpenAI-compatible Chat Completions API.
 TOGETHER_DEFAULT_BASE = "https://api.together.ai/v1"
 # DeepInfra OpenAI-compatible Chat Completions API.
@@ -167,6 +169,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         credential_attr="qwencloud_api_key",
         default_base_url=QWENCLOUD_DEFAULT_BASE,
         proxy_attr="qwencloud_proxy",
+    ),
+    "qwencloud_coding": ProviderDescriptor(
+        provider_id="qwencloud_coding",
+        display_name="QwenCloud Coding Plan",
+        credential_env="QWENCLOUD_CODING_API_KEY",
+        credential_url="https://home.qwencloud.com/api-keys",
+        credential_attr="qwencloud_coding_api_key",
+        default_base_url=QWENCLOUD_CODING_DEFAULT_BASE,
+        proxy_attr="qwencloud_coding_proxy",
     ),
     "together": ProviderDescriptor(
         provider_id="together",

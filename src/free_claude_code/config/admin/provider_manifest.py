@@ -152,6 +152,14 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
             "mixed."
         ),
     },
+    "QWENCLOUD_CODING_API_KEY": {
+        "label": "QwenCloud Coding Plan API Key",
+        "description": (
+            "Dedicated QwenCloud Coding Plan key (sk-sp-...) for personal, "
+            "interactive coding-agent use. Token Plan, Coding Plan, and "
+            "pay-as-you-go keys use separate endpoints and cannot be mixed."
+        ),
+    },
     "TOGETHER_API_KEY": {
         "label": "Together AI API Key",
         "description": (

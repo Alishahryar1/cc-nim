@@ -162,6 +162,7 @@ fcc-codex exec "hello"
 | [OpenAI / ChatGPT](https://learn.chatgpt.com/docs/auth) | Connect ChatGPT in the Admin UI | `openai/<model-id>` |
 | [xAI (Grok)](https://console.x.ai/team/default/api-keys) | `XAI_API_KEY` | `xai/grok-4.5` |
 | [QwenCloud Token Plan](https://home.qwencloud.com/api-keys) | `QWENCLOUD_API_KEY` | `qwencloud/qwen3.7-plus` |
+| [QwenCloud Coding Plan](https://home.qwencloud.com/api-keys) | `QWENCLOUD_CODING_API_KEY` | `qwencloud_coding/qwen3.7-plus` |
 | [Together AI](https://api.together.ai/settings/api-keys) | `TOGETHER_API_KEY` | `together/zai-org/GLM-5.2` |
 | [DeepInfra](https://deepinfra.com/dash/api_keys) | `DEEPINFRA_API_KEY` | `deepinfra/deepseek-ai/DeepSeek-V4-Flash` |
 | [SiliconFlow](https://cloud.siliconflow.com/account/ak) | `SILICONFLOW_API_KEY` | `siliconflow/Qwen/Qwen3-32B` |
@@ -219,6 +220,10 @@ fcc-codex exec "hello"
 - Kimi Code subscription keys use `kimi_code/`; Kimi API credit keys use
   `kimi/`. Kimi Code plans are for personal interactive coding-agent use under
   [Kimi's community guidelines](https://www.kimi.com/code/docs/en/kimi-code/community-guidelines.html).
+- QwenCloud Coding Plan keys use `qwencloud_coding/`; QwenCloud Token Plan keys
+  use `qwencloud/`. The keys and endpoints are not interchangeable. Coding Plan
+  is for local, personal, interactive coding-agent use under the
+  [Coding Plan terms](https://www.alibabacloud.com/help/en/model-studio/coding-plan).
 - OpenCode Zen and OpenCode Go share `OPENCODE_API_KEY` but use the explicit
   `opencode_zen/` and `opencode_go/` model prefixes.
 - For Amazon Bedrock, set `BEDROCK_BASE_URL` to the URL for the same region as

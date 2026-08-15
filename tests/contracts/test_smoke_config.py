@@ -55,6 +55,7 @@ def _settings(**overrides):
         "groq_api_key": "",
         "xai_api_key": "",
         "qwencloud_api_key": "",
+        "qwencloud_coding_api_key": "",
         "together_api_key": "",
         "deepinfra_api_key": "",
         "siliconflow_api_key": "",
@@ -192,6 +193,52 @@ def test_qwencloud_provider_smoke_uses_current_coding_model(monkeypatch) -> None
     assert [model.provider for model in models] == ["qwencloud"]
     assert models[0].full_model == "qwencloud/qwen3.7-plus"
     assert models[0].source == "provider_default"
+
+
+def test_qwencloud_coding_provider_smoke_uses_recommended_model(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_QWENCLOUD_CODING", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            qwencloud_coding_api_key="qwencloud-coding-key",
+        )
+    )
+
+    models = config.provider_smoke_models()
+
+    assert [model.provider for model in models] == ["qwencloud_coding"]
+    assert models[0].full_model == "qwencloud_coding/qwen3.7-plus"
+    assert models[0].source == "provider_default"
+
+
+def test_qwencloud_coding_smoke_override_is_independent_from_token_plan(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_QWENCLOUD", raising=False)
+    monkeypatch.setenv(
+        "FCC_SMOKE_MODEL_QWENCLOUD_CODING",
+        "qwencloud_coding/kimi-k2.5",
+    )
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            qwencloud_api_key="qwencloud-key",
+            qwencloud_coding_api_key="qwencloud-coding-key",
+        )
+    )
+
+    models = config.provider_smoke_models()
+
+    assert [(model.provider, model.full_model, model.source) for model in models] == [
+        ("qwencloud", "qwencloud/qwen3.7-plus", "provider_default"),
+        (
+            "qwencloud_coding",
+            "qwencloud_coding/kimi-k2.5",
+            "FCC_SMOKE_MODEL_QWENCLOUD_CODING",
+        ),
+    ]
 
 
 def test_together_provider_smoke_uses_current_coding_model(monkeypatch) -> None:

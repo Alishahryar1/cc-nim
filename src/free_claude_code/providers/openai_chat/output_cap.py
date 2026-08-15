@@ -26,6 +26,10 @@ _OUTPUT_TOKEN_KEYWORDS = ("max_completion_tokens", "max_tokens")
 # Comparator phrases that precede the allowed maximum in provider error text.
 _CAP_VALUE_PATTERN = r"[`'\"]?(\d+)[`'\"]?"
 _CAP_PATTERNS: tuple[re.Pattern[str], ...] = (
+    re.compile(
+        rf"range\s+of\s+(?:max_completion_tokens|max_tokens)\s+should\s+be\s+"
+        rf"\[\s*1\s*,\s*{_CAP_VALUE_PATTERN}\s*\]"
+    ),
     re.compile(rf"less than or equal to\s+{_CAP_VALUE_PATTERN}"),
     re.compile(rf"smaller than or equal to\s+{_CAP_VALUE_PATTERN}"),
     re.compile(rf"<=\s*{_CAP_VALUE_PATTERN}"),

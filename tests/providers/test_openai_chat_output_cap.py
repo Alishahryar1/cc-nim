@@ -67,6 +67,30 @@ def test_parse_cap_reads_json_body():
     assert parse_output_token_cap(error) == 12000
 
 
+@pytest.mark.parametrize(
+    "message,expected",
+    [
+        ("Range of max_tokens should be [1, 32768]", 32768),
+        ("range of max_completion_tokens should be [ 1 , `8192` ]", 8192),
+    ],
+)
+def test_parse_cap_from_inclusive_range(message, expected):
+    assert parse_output_token_cap(_BadRequest(message)) == expected
+
+
+@pytest.mark.parametrize(
+    "message",
+    [
+        "Range of temperature should be [0, 2] for max_tokens requests",
+        "Range of max_tokens should be [0, 4096]",
+        "Range of max_tokens should be [1, unlimited]",
+        "Range of max_tokens is [1, 4096]",
+    ],
+)
+def test_parse_cap_ignores_unrecognized_ranges(message):
+    assert parse_output_token_cap(_BadRequest(message)) is None
+
+
 def test_parse_cap_ignores_non_400():
     error = _BadRequest("max_tokens must be less than or equal to 40960")
     error.status_code = 500

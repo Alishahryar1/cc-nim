@@ -73,6 +73,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "groq": "groq/llama-3.3-70b-versatile",
     "xai": "xai/grok-4.5",
     "qwencloud": "qwencloud/qwen3.7-plus",
+    "qwencloud_coding": "qwencloud_coding/qwen3.7-plus",
     "together": "together/zai-org/GLM-5.2",
     "deepinfra": "deepinfra/deepseek-ai/DeepSeek-V4-Flash",
     "siliconflow": "siliconflow/Qwen/Qwen3-32B",

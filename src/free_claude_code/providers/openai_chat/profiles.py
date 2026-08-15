@@ -214,6 +214,13 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         ),
         NO_REASONING,
     ),
+    "qwencloud_coding": OpenAIChatProfile(
+        _policy(
+            "QWENCLOUD_CODING",
+            ReasoningReplayMode.REASONING_CONTENT,
+        ),
+        NO_REASONING,
+    ),
     "together": OpenAIChatProfile(
         _policy(
             "TOGETHER",

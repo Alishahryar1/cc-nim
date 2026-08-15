@@ -776,6 +776,11 @@ declarative profiles for their thinking, token, and `extra_body` policy. Kimi
 Code remains distinct from Kimi API because its subscription key and base URL
 are a separate customer contract; its profile maps provider-neutral reasoning
 to Kimi's named efforts and identifies FCC through the upstream user agent.
+QwenCloud Coding Plan likewise remains distinct from QwenCloud Token Plan
+because its subscription key, quota, endpoint, and personal interactive-use
+contract are separate. It uses the ordinary OpenAI Chat transport, preserves
+reasoning history through `reasoning_content`, and does not impose one reasoning
+control or output-token default across its heterogeneous model catalog.
 Z.ai is treated as the GLM Coding Plan provider and uses Z.ai's Coding Plan
 OpenAI base.
 Mistral La Plateforme keeps its native `reasoning_effort` and thinking-chunk
