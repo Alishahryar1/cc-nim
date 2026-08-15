@@ -68,6 +68,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "cohere": "cohere/command-a-plus-05-2026",
     "github_models": "github_models/openai/gpt-4.1",
     "zai": "zai/glm-5.2",
+    "zai_api": "zai_api/glm-4.7-flash",
     "gemini": "gemini/models/gemini-3.1-flash-lite",
     "vertex": "vertex/google/gemini-3.5-flash",
     "groq": "groq/llama-3.3-70b-versatile",

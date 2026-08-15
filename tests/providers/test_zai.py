@@ -1,4 +1,4 @@
-"""Tests for the Z.ai OpenAI-chat Coding Plan provider."""
+"""Tests for the Z.ai OpenAI-chat provider surfaces."""
 
 from unittest.mock import AsyncMock, MagicMock
 
@@ -6,7 +6,10 @@ import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
-from free_claude_code.config.provider_catalog import ZAI_DEFAULT_BASE
+from free_claude_code.config.provider_catalog import (
+    ZAI_API_DEFAULT_BASE,
+    ZAI_CODING_DEFAULT_BASE,
+)
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.providers.support import (
@@ -16,14 +19,20 @@ from tests.providers.support import (
     reasoning_for,
 )
 
+_ZAI_BASES = {
+    "zai": ZAI_CODING_DEFAULT_BASE,
+    "zai_api": ZAI_API_DEFAULT_BASE,
+}
 
-@pytest.fixture
-def zai_provider():
+
+@pytest.fixture(params=tuple(_ZAI_BASES))
+def zai_provider(request: pytest.FixtureRequest):
+    provider_id = request.param
     return profiled_provider(
-        "zai",
+        provider_id,
         make_provider_config(
             api_key="test_zai_key",
-            base_url=ZAI_DEFAULT_BASE,
+            base_url=_ZAI_BASES[provider_id],
             rate_limit=10,
             rate_window=60,
         ),
@@ -31,10 +40,14 @@ def zai_provider():
     )
 
 
-def test_init_uses_openai_chat_coding_endpoint(zai_provider):
+def test_init_uses_surface_specific_openai_chat_endpoint(zai_provider):
     assert isinstance(zai_provider, OpenAIChatProvider)
     assert zai_provider._api_key == "test_zai_key"
-    assert zai_provider._base_url == "https://api.z.ai/api/coding/paas/v4"
+    expected_base = {
+        "ZAI": ZAI_CODING_DEFAULT_BASE,
+        "ZAI_API": ZAI_API_DEFAULT_BASE,
+    }[zai_provider._provider_name]
+    assert zai_provider._base_url == expected_base
 
 
 def test_build_request_body_openai_chat(zai_provider):

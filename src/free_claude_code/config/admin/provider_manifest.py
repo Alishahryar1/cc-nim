@@ -86,7 +86,11 @@ _PROVIDER_FIELD_OVERRIDES: dict[str, dict[str, Any]] = {
     },
     "ZAI_API_KEY": {
         "label": "Z.ai API Key",
-        "description": "Z.ai Coding Plan API key.",
+        "description": (
+            "Shared Z.ai key for Coding Plan (zai/...) and the general API "
+            "(zai_api/...). The selected model prefix chooses Coding Plan quota "
+            "or pay-as-you-go balance."
+        ),
     },
     "FIREWORKS_API_KEY": {
         "label": "Fireworks API Key",

@@ -46,6 +46,7 @@ _EXPECTED_PROVIDER_ORDER: tuple[str, ...] = (
     "novita",
     "cloudflare",
     "zai",
+    "zai_api",
     "tokenrouter",
     "nararoute",
     "ollama_cloud",

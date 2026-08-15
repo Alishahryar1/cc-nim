@@ -192,6 +192,24 @@ def _policy(
     )
 
 
+def _zai_profile(provider_name: str) -> OpenAIChatProfile:
+    return OpenAIChatProfile(
+        _policy(
+            provider_name,
+            ReasoningReplayMode.REASONING_CONTENT,
+            reject_extra_body_message=(
+                "Z.ai Chat Completions API does not support caller extra_body on "
+                "requests."
+            ),
+            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
+        ),
+        ThinkingObjectReasoning(
+            enabled={"type": "enabled", "clear_thinking": False},
+            disabled={"type": "disabled"},
+        ),
+    )
+
+
 OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
     "xai": OpenAIChatProfile(
         _policy(
@@ -569,20 +587,8 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             use_extra_body=True,
         ),
     ),
-    "zai": OpenAIChatProfile(
-        _policy(
-            "ZAI",
-            ReasoningReplayMode.REASONING_CONTENT,
-            reject_extra_body_message=(
-                "Z.ai Chat Completions API does not support caller extra_body on requests."
-            ),
-            default_max_tokens=ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS,
-        ),
-        ThinkingObjectReasoning(
-            enabled={"type": "enabled", "clear_thinking": False},
-            disabled={"type": "disabled"},
-        ),
-    ),
+    "zai": _zai_profile("ZAI"),
+    "zai_api": _zai_profile("ZAI_API"),
     "nararoute": OpenAIChatProfile(
         _policy(
             "NARAROUTE",

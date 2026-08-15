@@ -771,7 +771,7 @@ Responses-only models from Chat Completions discovery while keeping direct model
 execution upstream-authoritative. Amazon Bedrock Mantle uses an ordinary profile with a region-specific,
 configurable OpenAI base URL and bearer API key; AWS SigV4 and native
 Converse/Invoke transports are outside that provider contract. Wafer, Kimi API,
-Kimi Code, MiniMax, Fireworks, and Z.ai use ordinary
+Kimi Code, MiniMax, Fireworks, and both Z.ai surfaces use ordinary
 declarative profiles for their thinking, token, and `extra_body` policy. Kimi
 Code remains distinct from Kimi API because its subscription key and base URL
 are a separate customer contract; its profile maps provider-neutral reasoning
@@ -781,8 +781,12 @@ because its subscription key, quota, endpoint, and personal interactive-use
 contract are separate. It uses the ordinary OpenAI Chat transport, preserves
 reasoning history through `reasoning_content`, and does not impose one reasoning
 control or output-token default across its heterogeneous model catalog.
-Z.ai is treated as the GLM Coding Plan provider and uses Z.ai's Coding Plan
-OpenAI base.
+Z.ai Coding Plan (`zai`) and Z.ai API (`zai_api`) are distinct provider
+identities because their fixed endpoints select Coding Plan quota versus
+pay-as-you-go balance. They share the upstream `ZAI_API_KEY` and one declarative
+wire policy, while retaining separate proxies, provider instances, admission
+state, learned output caps, model caches, status rows, and model prefixes. FCC
+never probes or falls back between the two billing endpoints.
 Mistral La Plateforme keeps its native `reasoning_effort` and thinking-chunk
 request/stream mapping inside
 [providers/mistral/reasoning.py](src/free_claude_code/providers/mistral/reasoning.py), including its

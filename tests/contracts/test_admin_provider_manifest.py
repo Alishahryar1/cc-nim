@@ -1,6 +1,6 @@
 """Ensure admin UI manifest exposes every catalog credential/proxy binding."""
 
-from free_claude_code.config.admin.manifest import FIELD_BY_KEY
+from free_claude_code.config.admin.manifest import FIELD_BY_KEY, FIELDS
 from free_claude_code.config.provider_catalog import (
     PROVIDER_CATALOG,
     ProviderAuthKind,
@@ -147,6 +147,28 @@ def test_qwencloud_coding_key_is_a_distinct_admin_provider_field() -> None:
     assert entry.section_id == "providers"
     assert entry.secret is True
     assert "separate endpoints" in entry.description
+
+
+def test_zai_shared_key_configures_both_distinct_provider_surfaces() -> None:
+    from free_claude_code.config.admin.status import provider_config_status
+
+    entry = FIELD_BY_KEY["ZAI_API_KEY"]
+    statuses = {
+        status["provider_id"]: status
+        for status in provider_config_status(
+            {"ZAI_API_KEY": {"value": "shared-zai-key"}}
+        )
+    }
+
+    assert sum(field.key == "ZAI_API_KEY" for field in FIELDS) == 1
+    assert entry.settings_attr == "zai_api_key"
+    assert "Coding Plan" in entry.description
+    assert "pay-as-you-go" in entry.description
+    assert statuses["zai"]["display_name"] == "Z.ai Coding Plan"
+    assert statuses["zai"]["status"] == "configured"
+    assert statuses["zai_api"]["display_name"] == "Z.ai API"
+    assert statuses["zai_api"]["status"] == "configured"
+    assert FIELD_BY_KEY["ZAI_API_PROXY"].settings_attr == "zai_api_proxy"
 
 
 def test_vertex_admin_status_uses_project_configuration_not_an_api_key() -> None:

@@ -178,6 +178,44 @@ def test_xai_provider_smoke_uses_current_grok_model(monkeypatch) -> None:
     assert models[0].source == "provider_default"
 
 
+def test_zai_shared_key_enables_both_provider_smoke_surfaces(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_ZAI", raising=False)
+    monkeypatch.delenv("FCC_SMOKE_MODEL_ZAI_API", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            zai_api_key="shared-zai-key",
+        )
+    )
+
+    models = config.provider_smoke_models()
+
+    assert [(model.provider, model.full_model, model.source) for model in models] == [
+        ("zai", "zai/glm-5.2", "provider_default"),
+        ("zai_api", "zai_api/glm-4.7-flash", "provider_default"),
+    ]
+
+
+def test_zai_api_smoke_override_is_independent_from_coding_plan(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_ZAI", raising=False)
+    monkeypatch.setenv("FCC_SMOKE_MODEL_ZAI_API", "zai_api/glm-5.2")
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            zai_api_key="shared-zai-key",
+        )
+    )
+
+    models = config.provider_smoke_models()
+
+    assert [(model.provider, model.full_model, model.source) for model in models] == [
+        ("zai", "zai/glm-5.2", "provider_default"),
+        ("zai_api", "zai_api/glm-5.2", "FCC_SMOKE_MODEL_ZAI_API"),
+    ]
+
+
 def test_qwencloud_provider_smoke_uses_current_coding_model(monkeypatch) -> None:
     monkeypatch.delenv("FCC_SMOKE_MODEL_QWENCLOUD", raising=False)
     config = _smoke_config(

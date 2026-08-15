@@ -38,8 +38,9 @@ BEDROCK_DEFAULT_BASE = "https://bedrock-mantle.us-east-1.api.aws/v1"
 HUGGINGFACE_DEFAULT_BASE = "https://router.huggingface.co/v1"
 COHERE_DEFAULT_BASE = "https://api.cohere.ai/compatibility/v1"
 GITHUB_MODELS_DEFAULT_BASE = "https://models.github.ai/inference"
-# Z.ai GLM Coding Plan OpenAI-compatible Chat Completions API.
-ZAI_DEFAULT_BASE = "https://api.z.ai/api/coding/paas/v4"
+# Z.ai OpenAI-compatible Chat Completions APIs. The endpoint selects billing.
+ZAI_CODING_DEFAULT_BASE = "https://api.z.ai/api/coding/paas/v4"
+ZAI_API_DEFAULT_BASE = "https://api.z.ai/api/paas/v4"
 # Google AI Studio Gemini API OpenAI-compat layer (not Vertex AI).
 GEMINI_DEFAULT_BASE = "https://generativelanguage.googleapis.com/v1beta/openai/"
 # Vertex AI API root. The provider owns project/location endpoint composition.
@@ -479,11 +480,21 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
     ),
     "zai": ProviderDescriptor(
         provider_id="zai",
-        display_name="Z.ai",
+        display_name="Z.ai Coding Plan",
         credential_env="ZAI_API_KEY",
+        credential_url="https://z.ai/manage-apikey/apikey-list",
         credential_attr="zai_api_key",
-        default_base_url=ZAI_DEFAULT_BASE,
+        default_base_url=ZAI_CODING_DEFAULT_BASE,
         proxy_attr="zai_proxy",
+    ),
+    "zai_api": ProviderDescriptor(
+        provider_id="zai_api",
+        display_name="Z.ai API",
+        credential_env="ZAI_API_KEY",
+        credential_url="https://z.ai/manage-apikey/apikey-list",
+        credential_attr="zai_api_key",
+        default_base_url=ZAI_API_DEFAULT_BASE,
+        proxy_attr="zai_api_proxy",
     ),
     "tokenrouter": ProviderDescriptor(
         provider_id="tokenrouter",

@@ -34,7 +34,8 @@ from free_claude_code.config.provider_catalog import (
     VERCEL_AI_GATEWAY_DEFAULT_BASE,
     WANDB_INFERENCE_DEFAULT_BASE,
     XAI_DEFAULT_BASE,
-    ZAI_DEFAULT_BASE,
+    ZAI_API_DEFAULT_BASE,
+    ZAI_CODING_DEFAULT_BASE,
     ZENMUX_DEFAULT_BASE,
 )
 from free_claude_code.providers.admission import ProviderAdmissionController
@@ -125,6 +126,7 @@ def _make_settings(**overrides):
     mock.cohere_proxy = None
     mock.github_models_proxy = None
     mock.zai_proxy = None
+    mock.zai_api_proxy = None
     mock.tokenrouter_proxy = None
     mock.nararoute_proxy = None
     mock.agnes_proxy = None
@@ -548,10 +550,11 @@ def test_local_provider_factory_resolves_catalog_static_credential(
     assert provider._api_key == expected_api_key
 
 
-def test_zai_descriptor_uses_fixed_cloud_base_url():
+def test_zai_coding_descriptor_uses_fixed_cloud_base_url():
     descriptor = PROVIDER_CATALOG["zai"]
 
-    assert descriptor.default_base_url == ZAI_DEFAULT_BASE
+    assert descriptor.display_name == "Z.ai Coding Plan"
+    assert descriptor.default_base_url == ZAI_CODING_DEFAULT_BASE
     assert descriptor.base_url_attr is None
 
 
@@ -563,7 +566,31 @@ def test_zai_provider_config_ignores_stale_base_url_setting():
         _make_settings(zai_base_url="https://custom.zai.invalid/v1"),
     )
 
-    assert config.base_url == ZAI_DEFAULT_BASE
+    assert config.base_url == ZAI_CODING_DEFAULT_BASE
+
+
+def test_zai_api_provider_config_uses_shared_key_general_base_and_own_proxy():
+    descriptor = PROVIDER_CATALOG["zai_api"]
+    settings = _make_settings(
+        zai_api_key="shared-zai-key",
+        zai_api_proxy="http://proxy.test:8080",
+    )
+
+    config = build_provider_config(descriptor, settings)
+    with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
+        provider = create_provider("zai_api", settings)
+
+    assert descriptor.display_name == "Z.ai API"
+    assert descriptor.credential_env == "ZAI_API_KEY"
+    assert descriptor.credential_attr == "zai_api_key"
+    assert descriptor.default_base_url == ZAI_API_DEFAULT_BASE
+    assert descriptor.base_url_attr is None
+    assert descriptor.proxy_attr == "zai_api_proxy"
+    assert config.api_key == "shared-zai-key"
+    assert config.base_url == ZAI_API_DEFAULT_BASE
+    assert config.proxy == "http://proxy.test:8080"
+    assert isinstance(provider, OpenAIChatProvider)
+    assert provider._provider_name == "ZAI_API"
 
 
 def test_minimax_descriptor_uses_expected_endpoint_and_credential():
@@ -795,6 +822,7 @@ def test_create_provider_instantiates_each_builtin():
         "cohere": OpenAIChatProvider,
         "github_models": GitHubModelsProvider,
         "zai": OpenAIChatProvider,
+        "zai_api": OpenAIChatProvider,
         "tokenrouter": OpenAIChatProvider,
         "nararoute": OpenAIChatProvider,
         "agnes": OpenAIChatProvider,

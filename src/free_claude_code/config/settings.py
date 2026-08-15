@@ -141,7 +141,7 @@ class Settings(BaseModel):
         default=None, validation_alias="KILO_API_KEY"
     )
 
-    # ==================== Z.ai Config ====================
+    # ==================== Z.ai Coding Plan / General API ====================
     zai_api_key: OptionalNonEmptyString = Field(
         default=None, validation_alias="ZAI_API_KEY"
     )
@@ -431,6 +431,9 @@ class Settings(BaseModel):
     )
     zai_proxy: OptionalNonEmptyString = Field(
         default=None, validation_alias="ZAI_PROXY"
+    )
+    zai_api_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="ZAI_API_PROXY"
     )
     tokenrouter_proxy: OptionalNonEmptyString = Field(
         default=None, validation_alias="TOKENROUTER_PROXY"
