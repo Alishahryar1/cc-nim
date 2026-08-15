@@ -418,7 +418,16 @@ consumer-owned `ProviderPort`, synchronously preflights the upstream request,
 emits trace events, counts input tokens, and returns an Anthropic SSE iterator.
 It receives only a provider resolver and the few scalar collaborators it needs;
 it does not depend on FastAPI, provider implementations, or the full settings
-object.
+object. The executor also owns FCC's provider-progress deadline: every wait for
+the next non-empty provider chunk is limited to 240 seconds, leaving one minute
+below the five-minute idle watchdog shared by the first-party Claude, Codex, and
+Pi harnesses. Admission, retries, backoff, and recovery before a chunk all consume
+that same wait; a non-empty emitted chunk renews the next window. The timeout
+context ends before the executor yields, so downstream response backpressure is
+not mistaken for stalled provider work and cannot receive cancellation from the
+generator's timer. Expiry becomes a protocol-neutral, non-retryable 504
+`ExecutionFailure`; cancellation and provider-originated timeouts retain their
+existing meanings.
 [api/response_streams.py](src/free_claude_code/api/response_streams.py) owns public streaming egress
 commit timing. It waits for the first protocol chunk before returning a
 successful FCC-owned `StreamingResponse`. Its explicit replay iterator owns the
@@ -955,7 +964,11 @@ nested retry counters. Deterministic corrections retry immediately; transient
 failures use exponential backoff with jitter and honor `Retry-After` as a
 minimum. When partial output exists, the last available attempt is reserved for
 continuation or repair instead of replaying the full request again. Completed
-tool calls can be salvaged without an upstream attempt.
+tool calls can be salvaged without an upstream attempt. The application-owned
+progress window is an outer no-progress bound, not another retry counter: opening
+a new attempt never resets it, while a real emitted provider chunk does. Fast
+transient failures can therefore still use all five attempts, but repeated
+fully-stalled operations cannot outlive the downstream harness.
 
 For streams, upstream acceptance is the first received chunk. Retryable failure
 before that point participates in provider-wide coordinated recovery. Failure

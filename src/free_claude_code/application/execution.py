@@ -1,5 +1,7 @@
 """Provider execution shared by inbound API adapters."""
 
+import asyncio
+import math
 import sys
 from collections.abc import AsyncIterator, Callable
 from typing import Literal
@@ -13,6 +15,7 @@ from free_claude_code.core.anthropic import (
     anthropic_request_snapshot,
     get_token_count,
 )
+from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.trace import (
     close_stream_input,
     trace_event,
@@ -27,6 +30,7 @@ TokenCounter = Callable[
     int,
 ]
 WireApi = Literal["messages", "responses"]
+PROVIDER_PROGRESS_TIMEOUT_SECONDS = 240.0
 
 
 class ProviderExecutor:
@@ -39,11 +43,40 @@ class ProviderExecutor:
         token_counter: TokenCounter = get_token_count,
         generation_id: int | None = None,
         log_raw_payloads: bool = False,
+        progress_timeout_seconds: float = PROVIDER_PROGRESS_TIMEOUT_SECONDS,
     ) -> None:
+        if not math.isfinite(progress_timeout_seconds) or progress_timeout_seconds <= 0:
+            raise ValueError("progress_timeout_seconds must be finite and positive")
         self._provider_resolver = provider_resolver
         self._token_counter = token_counter
         self._generation_id = generation_id
         self._log_raw_payloads = log_raw_payloads
+        self._progress_timeout_seconds = float(progress_timeout_seconds)
+
+    def _progress_timeout_failure(
+        self,
+        *,
+        request_id: str,
+        provider_id: str,
+    ) -> ExecutionFailure:
+        trace_event(
+            stage="execution",
+            event="free_claude_code.provider.progress_timeout",
+            source="application",
+            request_id=request_id,
+            provider_id=provider_id,
+            timeout_seconds=self._progress_timeout_seconds,
+        )
+        timeout_text = f"{self._progress_timeout_seconds:g}"
+        return ExecutionFailure(
+            kind=FailureKind.TIMEOUT,
+            status_code=504,
+            message=(
+                f"Provider execution made no progress for {timeout_text} seconds.\n\n"
+                f"Request ID: {request_id}"
+            ),
+            retryable=False,
+        )
 
     def stream(
         self,
@@ -119,8 +152,32 @@ class ProviderExecutor:
                     response_model=gateway_model,
                     reasoning=routed.reasoning,
                 )
-                async for chunk in provider_stream:
+                loop = asyncio.get_running_loop()
+                progress_deadline = loop.time() + self._progress_timeout_seconds
+                while True:
+                    if loop.time() >= progress_deadline:
+                        raise self._progress_timeout_failure(
+                            request_id=request_id,
+                            provider_id=routed.resolved.provider_id,
+                        )
+                    progress_timeout = asyncio.timeout_at(progress_deadline)
+                    try:
+                        async with progress_timeout:
+                            chunk = await anext(provider_stream)
+                    except StopAsyncIteration:
+                        break
+                    except TimeoutError as exc:
+                        if not progress_timeout.expired():
+                            raise
+                        raise self._progress_timeout_failure(
+                            request_id=request_id,
+                            provider_id=routed.resolved.provider_id,
+                        ) from exc
+                    if not chunk:
+                        await asyncio.sleep(0)
+                        continue
                     yield chunk
+                    progress_deadline = loop.time() + self._progress_timeout_seconds
             finally:
                 if provider_stream is not None:
                     await close_stream_input(
