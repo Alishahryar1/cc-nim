@@ -101,6 +101,32 @@ def test_parse_cap_ignores_unrelated_400():
     assert parse_output_token_cap(_BadRequest("temperature must be <= 2")) is None
 
 
+@pytest.mark.parametrize(
+    "message",
+    [
+        "temperature must be <= 2; max_tokens is invalid",
+        "max_completion_tokens is invalid; temperature at most 2",
+        "maximum allowed value of 2 for temperature; max_tokens is invalid",
+    ],
+)
+def test_parse_cap_does_not_bind_unrelated_comparator_to_output_field(message):
+    assert parse_output_token_cap(_BadRequest(message)) is None
+
+
+def test_parse_cap_uses_only_the_structured_output_parameter_message():
+    error = _BadRequest(
+        "max_tokens is invalid",
+        body={
+            "errors": [
+                {"param": "temperature", "message": "must not exceed 2"},
+                {"param": "top_p", "message": "<= 1"},
+            ]
+        },
+    )
+
+    assert parse_output_token_cap(error) is None
+
+
 def test_parse_cap_returns_none_without_number():
     assert (
         parse_output_token_cap(_BadRequest("max_tokens is larger than allowed")) is None
@@ -229,6 +255,34 @@ async def test_unrelated_400_is_not_clamped_and_propagates(groq_provider):
     with (
         patch.object(groq_provider._client.chat.completions, "create", create),
         pytest.raises(Exception, match="wizard"),
+    ):
+        await groq_provider._create_stream(
+            body,
+            groq_provider._admission.new_retry_session(),
+        )
+
+    assert create.call_count == 1
+    assert groq_provider._model_output_caps == {}
+
+
+@pytest.mark.asyncio
+async def test_mixed_field_400_does_not_retry_or_poison_learned_cap(groq_provider):
+    body = groq_provider._build_request_body(
+        make_messages_request(
+            "llama-3.3-70b-versatile",
+            max_tokens=64000,
+            thinking={"enabled": False},
+        )
+    )
+    create = AsyncMock(
+        side_effect=_BadRequest(
+            "temperature must be <= 2; max_completion_tokens is invalid"
+        )
+    )
+
+    with (
+        patch.object(groq_provider._client.chat.completions, "create", create),
+        pytest.raises(Exception, match="temperature"),
     ):
         await groq_provider._create_stream(
             body,

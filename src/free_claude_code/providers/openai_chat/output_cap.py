@@ -20,23 +20,36 @@ import openai
 # Body keys that carry the output-token budget across OpenAI-compatible policies.
 _OUTPUT_TOKEN_FIELDS = ("max_completion_tokens", "max_tokens")
 
-# Only treat a 400 as an output-cap rejection when it names one of these fields.
-_OUTPUT_TOKEN_KEYWORDS = ("max_completion_tokens", "max_tokens")
-
-# Comparator phrases that precede the allowed maximum in provider error text.
 _CAP_VALUE_PATTERN = r"[`'\"]?(\d+)[`'\"]?"
-_CAP_PATTERNS: tuple[re.Pattern[str], ...] = (
+_OUTPUT_TOKEN_FIELD_PATTERN = r"[`'\"]?(?:max_completion_tokens|max_tokens)[`'\"]?"
+
+# An accepted grammar must bind the output-token field and its numeric limit.
+# A field mentioned elsewhere in the response must never authorize an unrelated
+# comparator.
+_FIELD_BOUND_CAP_PATTERNS: tuple[re.Pattern[str], ...] = (
     re.compile(
-        rf"range\s+of\s+(?:max_completion_tokens|max_tokens)\s+should\s+be\s+"
+        rf"range\s+of\s+{_OUTPUT_TOKEN_FIELD_PATTERN}\s+should\s+be\s+"
         rf"\[\s*1\s*,\s*{_CAP_VALUE_PATTERN}\s*\]"
     ),
-    re.compile(rf"less than or equal to\s+{_CAP_VALUE_PATTERN}"),
-    re.compile(rf"smaller than or equal to\s+{_CAP_VALUE_PATTERN}"),
-    re.compile(rf"<=\s*{_CAP_VALUE_PATTERN}"),
-    re.compile(rf"at most\s+{_CAP_VALUE_PATTERN}"),
-    re.compile(rf"must not exceed\s+{_CAP_VALUE_PATTERN}"),
-    re.compile(rf"maximum(?:\s+value)?(?:\s+for\s+\S+)?\s+is\s+{_CAP_VALUE_PATTERN}"),
-    re.compile(rf"maximum(?:\s+allowed)?(?:\s+value)?\s+of\s+{_CAP_VALUE_PATTERN}"),
+    re.compile(
+        rf"{_OUTPUT_TOKEN_FIELD_PATTERN}\s*(?::\s*)?"
+        rf"(?:"
+        rf"(?:(?:must|should)\s+be\s+)?"
+        rf"(?:less|smaller)\s+than\s+or\s+equal\s+to"
+        rf"|(?:(?:must|should)\s+be\s*)?<="
+        rf"|(?:(?:must|should)\s+be\s+)?at\s+most"
+        rf"|(?:must|should)\s+not\s+exceed"
+        rf"|maximum(?:\s+allowed)?(?:\s+value)?\s+(?:is|of)"
+        rf")\s*{_CAP_VALUE_PATTERN}"
+    ),
+    re.compile(
+        rf"maximum(?:\s+allowed)?(?:\s+value)?\s+for\s+"
+        rf"{_OUTPUT_TOKEN_FIELD_PATTERN}\s+is\s+{_CAP_VALUE_PATTERN}"
+    ),
+    re.compile(
+        rf"maximum(?:\s+allowed)?(?:\s+value)?\s+of\s+"
+        rf"{_CAP_VALUE_PATTERN}\s+for\s+{_OUTPUT_TOKEN_FIELD_PATTERN}"
+    ),
 )
 
 
@@ -46,12 +59,41 @@ def _is_bad_request(error: Exception) -> bool:
     )
 
 
-def _error_text(error: Exception) -> str:
-    text = str(error)
+def _error_texts(error: Exception) -> tuple[str, ...]:
+    """Normalize free-form and structured errors into field-bound text."""
+    texts = [str(error)]
     body = getattr(error, "body", None)
     if body is not None:
-        text = f"{text} {json.dumps(body, default=str)}"
-    return text.lower()
+        texts.append(json.dumps(body, default=str))
+
+    pending: list[Any] = [body]
+    while pending:
+        value = pending.pop()
+        if isinstance(value, dict):
+            param = value.get("param")
+            message = value.get("message")
+            if (
+                isinstance(param, str)
+                and param.strip("`'\" ").lower() in _OUTPUT_TOKEN_FIELDS
+                and isinstance(message, str)
+            ):
+                # Prefixing an explicitly named structured parameter lets the
+                # same field-bound grammar handle comparator-only messages.
+                texts.append(f"{param} {message}")
+            pending.extend(value.values())
+        elif isinstance(value, list):
+            pending.extend(value)
+    return tuple(text.lower() for text in texts)
+
+
+def _parse_cap(text: str) -> int | None:
+    for pattern in _FIELD_BOUND_CAP_PATTERNS:
+        match = pattern.search(text)
+        if match:
+            cap = int(match.group(1))
+            if cap > 0:
+                return cap
+    return None
 
 
 def parse_output_token_cap(error: Exception) -> int | None:
@@ -59,16 +101,10 @@ def parse_output_token_cap(error: Exception) -> int | None:
     if not _is_bad_request(error):
         return None
 
-    text = _error_text(error)
-    if not any(keyword in text for keyword in _OUTPUT_TOKEN_KEYWORDS):
-        return None
-
-    for pattern in _CAP_PATTERNS:
-        match = pattern.search(text)
-        if match:
-            cap = int(match.group(1))
-            if cap > 0:
-                return cap
+    for text in _error_texts(error):
+        cap = _parse_cap(text)
+        if cap is not None:
+            return cap
     return None
 
 
