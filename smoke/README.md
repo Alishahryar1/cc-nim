@@ -56,7 +56,7 @@ Default targets do not send real bot messages or load voice backends:
 | `api` | messages, count_tokens full payload, errors, `/stop`, optimizations | configured provider only for streaming messages |
 | `auth` | canonical bearer auth, conflicting legacy headers, invalid/missing auth | none; test sets an isolated token |
 | `cli` | server entrypoint, Claude CLI adaptive thinking, session cleanup | Claude CLI binary and provider only for real CLI |
-| `clients` | VS Code and JetBrains protocol payloads; Pi and OpenCode CLI prompts | configured provider; installed Pi/OpenCode binaries for their CLI scenarios |
+| `clients` | VS Code and JetBrains protocol payloads; Pi, OpenCode, and Cline CLI prompts | configured provider; installed Pi/OpenCode/Cline binaries for their CLI scenarios |
 | `config` | env precedence, removed-env migration, proxy/timeouts | none |
 | `extensibility` | provider runtime and platform factory construction | none |
 | `messaging` | fake Discord/Telegram full flow, literal clear scopes, trees, persistence, voice cancel | none |

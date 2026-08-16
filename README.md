@@ -22,7 +22,7 @@
 ## What You Get
 
 - **48 providers. 1.3B+ free tokens a month. One proxy.** Use free, paid, subscription, or local models from one searchable Admin UI.
-- **4 coding agents. One model catalog.** Run Claude Code, Codex, Pi, or OpenCode with your FCC models.
+- **5 coding agents. One model catalog.** Run Claude Code, Codex, Pi, OpenCode, or Cline with your FCC models.
 - **Up to 90% fewer terminal-output tokens.** Optional [RTK](https://github.com/rtk-ai/rtk) filters common command output, while five FCC optimizations handle quota probes, command-prefix detection, titles, suggestions, and filepaths without calling a provider.
 - **Terminal, desktop, IDE, or phone.** Work through native launchers, VS Code, Codex App, JetBrains, Discord, or Telegram.
 - **Voice notes in. Code out.** Talk to your agent using local Whisper or NVIDIA NIM transcription.
@@ -135,14 +135,22 @@ OpenCode:
 fcc-opencode
 ```
 
-All four launchers use the current Admin UI settings. Use the agent's model picker to choose from the models FCC exposes. Normal CLI arguments still work, for example:
+Cline:
+
+```bash
+fcc-cline
+```
+
+All five launchers use the current Admin UI settings. Use the agent's model picker to choose from the models FCC exposes. Normal CLI arguments still work, for example:
 
 ```bash
 fcc-codex exec "hello"
 ```
 
-`fcc-pi` and `fcc-opencode` register FCC only for the launched process; your
-existing agent settings, sessions, credentials, and extensions remain unchanged.
+`fcc-pi`, `fcc-opencode`, and `fcc-cline` configure FCC only for the launched
+process; your existing agent settings, sessions, credentials, and extensions
+remain unchanged. `fcc-cline` supports attached terminal sessions; run Cline's
+hub, schedule, connector, Zen, and sandbox-data workflows with ordinary `cline`.
 
 <a id="model-picker"></a>
 
@@ -288,7 +296,7 @@ Open **Admin UI → Model Config → Reasoning** and select the behavior you wan
 
 | Selection | Behavior |
 | --- | --- |
-| **From client** (default) | Use the effort sent by Claude Code, Codex, Pi, or OpenCode. If none is sent, keep the provider default. |
+| **From client** (default) | Use the effort sent by Claude Code, Codex, Pi, OpenCode, or Cline. If none is sent, keep the provider default. |
 | **Off** | Request reasoning to be disabled. |
 | **Low**, **Medium**, **High**, **X-High**, or **Max** | Override the client with the selected reasoning level. |
 | **Inherit** (Fable, Opus, Sonnet, and Haiku only) | Use the root Reasoning selection. |
@@ -302,7 +310,7 @@ Providers that do not support a selected control retain their own behavior.
 ## Connect Your Client
 
 For terminal use, start `fcc-server`, then run `fcc-claude`, `fcc-codex`,
-`fcc-pi`, or `fcc-opencode`. Use the guides below for editor integrations.
+`fcc-pi`, `fcc-opencode`, or `fcc-cline`. Use the guides below for editor integrations.
 
 <details>
 <summary><strong>Claude Code in VS Code</strong></summary>
@@ -537,7 +545,7 @@ Stop every running FCC command before uninstalling.
 **Keeps**
 
 - uv and Python
-- Claude Code, Codex, Pi, OpenCode, and RTK
+- Claude Code, Codex, Pi, OpenCode, Cline, and RTK
 - Shared PATH entries
 
 macOS/Linux:

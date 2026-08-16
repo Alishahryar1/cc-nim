@@ -18,6 +18,7 @@ $FccCommands = @(
     "fcc-codex",
     "fcc-pi",
     "fcc-opencode",
+    "fcc-cline",
     "fcc-init",
     "free-claude-code"
 )

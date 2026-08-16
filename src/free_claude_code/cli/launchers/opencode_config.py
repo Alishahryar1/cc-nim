@@ -4,6 +4,7 @@ from dataclasses import dataclass
 
 from free_claude_code.core.json_types import JsonObject
 
+from .common import proxy_v1_url
 from .model_catalog import ClientModel
 
 OPENCODE_API_KEY_ENV = "FCC_OPENCODE_API_KEY"
@@ -37,7 +38,7 @@ def build_opencode_config(
         "name": "Free Claude Code",
         "npm": "@ai-sdk/openai",
         "options": {
-            "baseURL": _ensure_v1_url(proxy_root_url),
+            "baseURL": proxy_v1_url(proxy_root_url),
             "apiKey": f"{{env:{OPENCODE_API_KEY_ENV}}}",
         },
     }
@@ -60,8 +61,3 @@ def build_opencode_config(
             "small_model": default_model,
         },
     )
-
-
-def _ensure_v1_url(url: str) -> str:
-    stripped = url.rstrip("/")
-    return stripped if stripped.endswith("/v1") else f"{stripped}/v1"

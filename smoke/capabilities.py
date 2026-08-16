@@ -515,6 +515,20 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         ("test_opencode_cli_prompt_e2e",),
     ),
     CapabilityContract(
+        "cli",
+        "cline_cli_integration",
+        "cline_cli_integration",
+        "free_claude_code.cli.launchers.cline",
+        "Cline binary, live FCC model catalog, and protected child-process files",
+        "Responses provider scoped to FCC for attached local sessions",
+        "version, detached mode, proxy, or catalog failure exits without fallback",
+        (
+            "tests/cli/test_cline_launcher.py",
+            "tests/cli/test_model_catalog.py",
+        ),
+        ("test_cline_cli_prompt_e2e",),
+    ),
+    CapabilityContract(
         "extensibility",
         "provider_platform_abcs",
         "extensible_provider_platform_abcs",

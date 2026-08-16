@@ -9,13 +9,14 @@ CODEX_INSTALL_URL="https://chatgpt.com/codex/install.sh"
 PI_INSTALL_URL="https://pi.dev/install.sh"
 OPENCODE_INSTALL_URL="https://opencode.ai/install"
 MIN_OPENCODE_VERSION="1.18.18"
+MIN_CLINE_VERSION="3.0.55"
 RTK_VERSION="0.44.2"
 RTK_RELEASE_BASE_URL="https://github.com/rtk-ai/rtk/releases/download/v$RTK_VERSION"
 UV_INSTALL_URL="https://astral.sh/uv/install.sh"
 FCC_MACOS_BUNDLE_ID="io.github.alishahryar1.free-claude-code"
 FCC_MACOS_OWNER_FILE=".free-claude-code-owner"
 # Include retired entry points so updates reject older FCC processes before replacement.
-FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-init free-claude-code"
+FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-init free-claude-code"
 
 dry_run=0
 voice_nim=0
@@ -25,6 +26,7 @@ install_claude=1
 install_codex=1
 install_pi=1
 install_opencode=1
+install_cline=0
 enable_rtk=0
 torch_backend=""
 temporary_file=""
@@ -115,7 +117,18 @@ choose_coding_agents() {
             install_opencode=0
         fi
 
-        if [ "$install_claude" -eq 1 ] || [ "$install_codex" -eq 1 ] || [ "$install_pi" -eq 1 ] || [ "$install_opencode" -eq 1 ]; then
+        if [ "$install_cline" -eq 1 ]; then
+            cline_default=yes
+        else
+            cline_default=no
+        fi
+        if prompt_yes_no "Install or verify Cline CLI for fcc-cline?" "$cline_default"; then
+            install_cline=1
+        else
+            install_cline=0
+        fi
+
+        if [ "$install_claude" -eq 1 ] || [ "$install_codex" -eq 1 ] || [ "$install_pi" -eq 1 ] || [ "$install_opencode" -eq 1 ] || [ "$install_cline" -eq 1 ]; then
             break
         fi
         printf 'Select at least one coding agent.\n\n' >&4
@@ -207,7 +220,7 @@ add_known_bin_directories() {
     hash -r 2>/dev/null || true
 }
 
-add_pi_bin_directories() {
+add_npm_bin_directories() {
     [ "$dry_run" -eq 0 ] || return 0
     add_known_bin_directories
     if command -v npm >/dev/null 2>&1; then
@@ -525,6 +538,9 @@ configure_rtk_for_selected_agents() {
     if [ "$install_opencode" -eq 1 ]; then
         run_rtk_init init --global --opencode
     fi
+    if [ "$install_cline" -eq 1 ]; then
+        printf 'Optional for each project: cd <project> && RTK_TELEMETRY_DISABLED=1 rtk init --agent cline\n'
+    fi
 }
 
 ensure_claude() {
@@ -551,7 +567,7 @@ ensure_codex() {
 
 ensure_pi() {
     pi_available=0
-    add_pi_bin_directories
+    add_npm_bin_directories
     existing_pi_path=$(command -v pi 2>/dev/null || true)
 
     if [ "$dry_run" -eq 1 ] && command -v pi >/dev/null 2>&1; then
@@ -563,7 +579,7 @@ ensure_pi() {
             printf "The existing 'pi' command at %s is not Pi Coding Agent; installing Pi.\n" "$existing_pi_path"
         fi
         download_and_run "$PI_INSTALL_URL" sh "Pi"
-        add_pi_bin_directories
+        add_npm_bin_directories
 
         if [ "$dry_run" -eq 0 ]; then
             current_pi_path=$(command -v pi 2>/dev/null || true)
@@ -642,6 +658,71 @@ ensure_opencode() {
     verify_opencode_command
 }
 
+current_cline_version() {
+    if output=$(cline --version 2>/dev/null); then
+        :
+    else
+        return 1
+    fi
+
+    version=$(printf '%s\n' "$output" | awk '
+        /^[[:space:]]*((cline( version)?[[:space:]]+)|v)?[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?[[:space:]]*$/ &&
+        match($0, /[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?/) {
+            print substr($0, RSTART, RLENGTH)
+            exit
+        }
+    ')
+    [ -n "$version" ] || return 1
+    printf '%s\n' "$version"
+}
+
+verify_cline_command() {
+    if [ "$dry_run" -eq 1 ]; then
+        print_command cline --version
+        return 0
+    fi
+
+    command -v cline >/dev/null 2>&1 || fail "Cline was installed, but 'cline' is not available on PATH."
+    version=$(current_cline_version) || fail "Cline is present, but 'cline --version' did not return a valid semantic version."
+    if ! stable_version_is_supported "$version" "$MIN_CLINE_VERSION"; then
+        fail "Stable Cline $MIN_CLINE_VERSION or newer is required; found Cline $version after installation."
+    fi
+    printf 'Verified Cline %s.\n' "$version"
+}
+
+ensure_cline() {
+    add_npm_bin_directories
+
+    if [ "$dry_run" -eq 1 ]; then
+        if command -v cline >/dev/null 2>&1; then
+            print_command cline --version
+            printf 'A compatible Cline will be preserved; an older version will be upgraded with cline update.\n'
+        elif command -v npm >/dev/null 2>&1; then
+            print_command npm install -g cline
+        else
+            fail "Cline installation requires npm. Install Node.js from https://nodejs.org/en/download, then rerun the installer."
+        fi
+        verify_cline_command
+        return 0
+    fi
+
+    if command -v cline >/dev/null 2>&1; then
+        version=$(current_cline_version) || fail "Cline is present, but 'cline --version' did not return a valid semantic version."
+        if stable_version_is_supported "$version" "$MIN_CLINE_VERSION"; then
+            printf 'Cline %s already satisfies >=%s; leaving it unchanged.\n' "$version" "$MIN_CLINE_VERSION"
+            return 0
+        fi
+        printf 'Cline %s does not satisfy stable >=%s; upgrading it with Cline.\n' "$version" "$MIN_CLINE_VERSION"
+        run cline update
+    else
+        command -v npm >/dev/null 2>&1 || fail "Cline installation requires npm. Install Node.js from https://nodejs.org/en/download, then rerun the installer."
+        run npm install -g cline
+    fi
+
+    add_npm_bin_directories
+    verify_cline_command
+}
+
 ensure_selected_coding_agents() {
     if [ "$install_claude" -eq 1 ]; then
         step "Ensuring Claude Code is installed"
@@ -663,7 +744,12 @@ ensure_selected_coding_agents() {
         ensure_opencode
     fi
 
-    if [ "$install_claude" -eq 0 ] && [ "$install_codex" -eq 0 ] && [ "$pi_available" -eq 0 ] && [ "$install_opencode" -eq 0 ]; then
+    if [ "$install_cline" -eq 1 ]; then
+        step "Ensuring Cline CLI is installed"
+        ensure_cline
+    fi
+
+    if [ "$install_claude" -eq 0 ] && [ "$install_codex" -eq 0 ] && [ "$pi_available" -eq 0 ] && [ "$install_opencode" -eq 0 ] && [ "$install_cline" -eq 0 ]; then
         fail "No selected coding agent was installed. Re-run the installer and choose at least one."
     fi
 }
@@ -850,7 +936,7 @@ configure_and_verify_free_claude_code() {
 
     if [ "$dry_run" -eq 1 ]; then
         print_command uv tool dir --bin
-        printf '+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, and fcc-opencode in the uv tool bin directory\n'
+        printf '+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, fcc-opencode, and fcc-cline in the uv tool bin directory\n'
         print_command fcc-server --version
         return 0
     fi
@@ -868,7 +954,7 @@ configure_and_verify_free_claude_code() {
     export PATH
     hash -r 2>/dev/null || true
 
-    for command_name in fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode; do
+    for command_name in fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline; do
         [ -x "$tool_bin/$command_name" ] || fail "Free Claude Code installation did not create $tool_bin/$command_name."
     done
 
@@ -967,6 +1053,9 @@ PLIST
 parse_args "$@"
 validate_args
 add_known_bin_directories
+if command -v cline >/dev/null 2>&1 || command -v npm >/dev/null 2>&1; then
+    install_cline=1
+fi
 
 step "Checking for running Free Claude Code processes"
 assert_no_fcc_processes_running
@@ -1029,5 +1118,10 @@ else
     fi
     if [ "$install_opencode" -eq 1 ]; then
         printf 'Run OpenCode with: fcc-opencode\n'
+    fi
+    if [ "$install_cline" -eq 1 ]; then
+        printf 'Run Cline with: fcc-cline\n'
+    else
+        printf 'The fcc-cline wrapper is ready after you install Cline CLI.\n'
     fi
 fi

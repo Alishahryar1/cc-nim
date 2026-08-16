@@ -189,6 +189,68 @@ def test_opencode_cli_prompt_e2e(smoke_config: SmokeConfig, tmp_path: Path) -> N
     assert "POST /v1/chat/completions" not in server_log
 
 
+@pytest.mark.smoke_target("clients")
+def test_cline_cli_prompt_e2e(smoke_config: SmokeConfig, tmp_path: Path) -> None:
+    if not shutil.which("cline"):
+        pytest.skip("missing_env: Cline CLI not found")
+    uv_bin = shutil.which("uv")
+    if not uv_bin:
+        pytest.skip("missing_env: uv not found")
+    provider_model = ProviderMatrixDriver(smoke_config).first_model()
+    auth_token = smoke_config.settings.proxy_auth_token
+    isolated_home = tmp_path / "cline-home"
+    isolated_home.mkdir()
+
+    with SmokeServerDriver(
+        smoke_config,
+        name="product-cline-cli",
+        env_overrides={
+            "MODEL": provider_model.full_model,
+            "ANTHROPIC_AUTH_TOKEN": auth_token,
+            "MESSAGING_PLATFORM": "none",
+        },
+    ).run() as server:
+        env = os.environ.copy()
+        env.update(
+            {
+                "HOST": "127.0.0.1",
+                "PORT": str(server.port),
+                "FCC_OPEN_BROWSER": "0",
+                "ANTHROPIC_AUTH_TOKEN": auth_token,
+                "HOME": str(isolated_home),
+                "USERPROFILE": str(isolated_home),
+            }
+        )
+        env.pop("CLINE_PROVIDER_SETTINGS_PATH", None)
+        env.pop("CLINE_SESSION_BACKEND_MODE", None)
+        result = subprocess.run(
+            [
+                uv_bin,
+                "run",
+                "--project",
+                str(smoke_config.root),
+                "--no-sync",
+                "fcc-cline",
+                "--json",
+                "--model",
+                provider_model.full_model,
+                "Reply with exactly FCC_SMOKE_CLINE",
+            ],
+            cwd=tmp_path,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=smoke_config.timeout_s + 15,
+        )
+        server_log = server.log_path.read_text(encoding="utf-8", errors="replace")
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert "FCC_SMOKE_CLINE" in result.stdout
+    assert "POST /v1/responses" in server_log
+    assert "POST /v1/chat/completions" not in server_log
+
+
 @pytest.mark.smoke_target("cli")
 def test_claude_cli_adaptive_thinking_e2e(
     smoke_config: SmokeConfig, tmp_path: Path

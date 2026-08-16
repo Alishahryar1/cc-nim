@@ -172,6 +172,9 @@ for real prompts against supported providers:
 - `fcc-opencode`, stable OpenCode V1, and the OpenAI Responses behavior it
   relies on, including an FCC-scoped model catalog and process-local provider
   configuration.
+- `fcc-cline`, stable Cline CLI, and the OpenAI Responses behavior it relies
+  on, including an FCC-scoped model catalog, attached local sessions, and
+  process-local provider configuration.
 - Configured Discord and Telegram messaging bridges, including command handling,
   reply-based conversation branches, status updates, transcript rendering,
   managed Claude/Codex task execution where configured, task stop/clear flows,
@@ -227,6 +230,7 @@ Console scripts are registered in [pyproject.toml](pyproject.toml):
 - `fcc-codex` calls `free_claude_code.cli.launchers.codex:launch`.
 - `fcc-pi` calls `free_claude_code.cli.launchers.pi:launch`.
 - `fcc-opencode` calls `free_claude_code.cli.launchers.opencode:launch`.
+- `fcc-cline` calls `free_claude_code.cli.launchers.cline:launch`.
 
 [scripts/install.sh](scripts/install.sh) and [scripts/install.ps1](scripts/install.ps1)
 install or update the uv tool plus optional voice extras. On Windows the
@@ -235,7 +239,7 @@ per-user application bundle and desktop link. [scripts/uninstall.sh](scripts/uni
 and [scripts/uninstall.ps1](scripts/uninstall.ps1) remove those exact desktop
 artifacts, the FCC uv tool, and the managed `~/.fcc/` tree from
 [config/paths.py](src/free_claude_code/config/paths.py); they do not remove
-uv, Claude Code, Codex, Pi, OpenCode, or uv-managed Python runtimes. [scripts/ci.sh](scripts/ci.sh) and
+uv, Claude Code, Codex, Pi, OpenCode, Cline, or uv-managed Python runtimes. [scripts/ci.sh](scripts/ci.sh) and
 [scripts/ci.ps1](scripts/ci.ps1) mirror [.github/workflows/tests.yml](.github/workflows/tests.yml)
 for local pre-push verification.
 
@@ -1198,7 +1202,7 @@ client environment.
 owns the client-neutral projection from FCC's `/v1/models` response to direct,
 nested `provider/model` routes. It removes Claude-only compatibility aliases,
 deduplicates normal and no-thinking forms deterministically, and is shared by
-Codex and OpenCode. Each launcher remains responsible for translating those
+Codex, OpenCode, and Cline. Each launcher remains responsible for translating those
 neutral entries into its client's configuration format.
 
 [cli/launchers/pi.py](src/free_claude_code/cli/launchers/pi.py) owns the installed
@@ -1238,6 +1242,36 @@ own the installed `fcc-opencode` launcher for stable OpenCode V1:
   commands pass through without requiring FCC. Other arguments are forwarded
   unchanged after the FCC process configuration is ready.
 
+[cli/launchers/cline.py](src/free_claude_code/cli/launchers/cline.py) and
+[cli/launchers/cline_config.py](src/free_claude_code/cli/launchers/cline_config.py)
+own the installed `fcc-cline` launcher for Cline CLI 3.0.55 or newer:
+
+- Attached inference sessions require a reachable FCC server and a non-empty
+  routable `/v1/models` snapshot. Preparation is fail-closed, and the launcher
+  prepends Cline's built-in `openai-native` provider while leaving an explicit
+  caller `--model` selection intact.
+- The launcher creates protected temporary `providers.json` and `models.json`
+  files. For that child only, they retarget Cline's existing OpenAI Responses
+  transport to FCC's `/v1` surface, rename it to Free Claude Code, replace its
+  catalog with nested FCC model slugs, and carry the canonical proxy token.
+  Cline 3.0.55's session gateway cannot instantiate user-defined provider IDs,
+  so this built-in transport seam is required even though its startup picker can
+  read custom providers.
+- `CLINE_PROVIDER_SETTINGS_PATH` points only that child at the generated
+  settings, and `CLINE_SESSION_BACKEND_MODE=local` keeps attached sessions in
+  the launcher lifecycle. Native Cline config, data, credentials, plugins, and
+  sessions remain Cline-owned.
+- Native configuration and package-management commands pass through without
+  requiring FCC. Hub, dashboard, schedule, connection, hook, kanban, and Zen
+  surfaces are rejected because they can outlive the temporary credential and
+  must be run with ordinary `cline`.
+- Cline sandbox data overrides are also rejected: released Cline rewrites its
+  provider-settings path in that mode, which would displace FCC's ephemeral
+  credential file. Ordinary Cline remains the owner of sandboxed runs.
+- Cline's provider picker can still expose its native providers. Startup and
+  command-line routing remain FCC-owned; deliberately switching providers
+  inside the running Cline process is an explicit opt-out for that process.
+
 [cli/managed/](src/free_claude_code/cli/managed/) owns managed Claude Code subprocesses used by
 Discord and Telegram messaging. Managed task invocations extend the same proxy
 environment only with non-interactive terminal settings, optional `--resume`,
@@ -1261,7 +1295,7 @@ reports a count-only failure, and leaves failures available for the next cleanup
 attempt. Real-session registration is collision-safe and becomes durable tree
 state only after the manager accepts it.
 
-Codex, Pi, and OpenCode are supported through their installed launchers. FCC
+Codex, Pi, OpenCode, and Cline are supported through their installed launchers. FCC
 does not keep internal managed session runners for them because no user-facing
 messaging setting selects those clients for Discord or Telegram.
 

@@ -102,6 +102,22 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         "skip only when OpenCode is absent; configured providers must pass",
     ),
     FeatureCoverage(
+        "cline_cli_integration",
+        "Cline discovers FCC models and sends Responses through the proxy",
+        (
+            "tests/cli/test_cline_launcher.py",
+            "tests/cli/test_model_catalog.py",
+        ),
+        ("test_probe_and_models_routes",),
+        ("test_cline_cli_prompt_e2e",),
+        ("clients",),
+        (
+            "stable Cline CLI",
+            "configured provider credentials or local provider endpoint",
+        ),
+        "skip only when Cline is absent; configured providers must pass",
+    ),
+    FeatureCoverage(
         "provider_matrix",
         "Every configured provider prefix can satisfy conversation scenarios",
         ("tests/api/test_dependencies.py", "tests/providers/"),

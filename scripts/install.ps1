@@ -23,6 +23,7 @@ $CodexInstallUrl = "https://chatgpt.com/codex/install.ps1"
 $PiInstallUrl = "https://pi.dev/install.ps1"
 $OpenCodeReleaseBaseUrl = "https://github.com/anomalyco/opencode/releases/latest/download"
 $MinOpenCodeVersion = "1.18.18"
+$MinClineVersion = "3.0.55"
 $RtkVersion = "0.44.2"
 $RtkReleaseBaseUrl = "https://github.com/rtk-ai/rtk/releases/download/v$RtkVersion"
 $RtkWindowsAssetName = "rtk-x86_64-pc-windows-msvc.zip"
@@ -32,6 +33,7 @@ $script:InstallClaudeCode = $true
 $script:InstallCodex = $true
 $script:InstallPi = $true
 $script:InstallOpenCode = $true
+$script:InstallCline = $false
 $script:PiAvailable = $false
 $script:EnableRtk = $Rtk.IsPresent
 $FccCommands = @(
@@ -42,6 +44,7 @@ $FccCommands = @(
     "fcc-codex",
     "fcc-pi",
     "fcc-opencode",
+    "fcc-cline",
     "fcc-init",
     "free-claude-code"
 )
@@ -102,8 +105,11 @@ function Select-CodingAgents {
         $script:InstallCodex = Read-YesNo "Install or verify Codex for fcc-codex?"
         $script:InstallPi = Read-YesNo "Install or verify Pi for fcc-pi?"
         $script:InstallOpenCode = Read-YesNo "Install or verify OpenCode for fcc-opencode?"
+        $script:InstallCline = Read-YesNo `
+            -Prompt "Install or verify Cline CLI for fcc-cline?" `
+            -DefaultYes $script:InstallCline
 
-        if ($script:InstallClaudeCode -or $script:InstallCodex -or $script:InstallPi -or $script:InstallOpenCode) {
+        if ($script:InstallClaudeCode -or $script:InstallCodex -or $script:InstallPi -or $script:InstallOpenCode -or $script:InstallCline) {
             break
         }
         Write-Host "Select at least one coding agent."
@@ -247,7 +253,7 @@ function Add-KnownBinDirectories {
     }
 }
 
-function Add-PiBinDirectories {
+function Add-NpmBinDirectories {
     if ($DryRun) {
         return
     }
@@ -543,6 +549,9 @@ function Configure-RtkForSelectedAgents {
     if ($script:InstallOpenCode) {
         Invoke-RtkCommand -Arguments @("init", "--global", "--opencode")
     }
+    if ($script:InstallCline) {
+        Write-Host "Optional for each project: cd <project>; `$env:RTK_TELEMETRY_DISABLED='1'; rtk init --agent cline"
+    }
 }
 
 function Ensure-ClaudeCode {
@@ -571,7 +580,7 @@ function Ensure-Codex {
 
 function Ensure-Pi {
     $script:PiAvailable = $false
-    Add-PiBinDirectories
+    Add-NpmBinDirectories
     $existingPi = Get-ApplicationCommand "pi"
     if ($existingPi -and ($DryRun -or (Test-PiApplication $existingPi))) {
         Write-Host "Pi already found on PATH; verifying it."
@@ -581,7 +590,7 @@ function Ensure-Pi {
             Write-Host "The existing 'pi' command at '$($existingPi.Source)' is not Pi Coding Agent; installing Pi."
         }
         Invoke-DownloadedPowerShellInstaller -Url $PiInstallUrl -Name "Pi"
-        Add-PiBinDirectories
+        Add-NpmBinDirectories
 
         if (-not $DryRun) {
             $currentPi = Get-ApplicationCommand "pi"
@@ -608,7 +617,7 @@ function Convert-SemanticVersionOutput {
     if ([string]::IsNullOrWhiteSpace($Output)) {
         return ""
     }
-    if ($Output -match '(?m)^\s*(?:(?:uv|opencode)(?:\s+version)?\s+|v)?(?<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?)(?:\s+\([^\r\n]*\))?\s*$') {
+    if ($Output -match '(?m)^\s*(?:(?:uv|opencode|cline)(?:\s+version)?\s+|v)?(?<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?)(?:\s+\([^\r\n]*\))?\s*$') {
         return $Matches["version"]
     }
     return ""
@@ -753,6 +762,74 @@ function Ensure-OpenCode {
     Confirm-OpenCodeApplication
 }
 
+function Get-ClineVersion {
+    param([string] $ClinePath)
+
+    $output = Invoke-Utf8NativeCapture -FilePath $ClinePath -Arguments @("--version")
+    $version = Convert-SemanticVersionOutput $output
+    if ([string]::IsNullOrWhiteSpace($version)) {
+        throw "Cline is present, but 'cline --version' did not return a valid semantic version."
+    }
+    return $version
+}
+
+function Confirm-ClineApplication {
+    if ($DryRun) {
+        Write-Host "+ cline --version"
+        return
+    }
+
+    $command = Get-ApplicationCommand "cline"
+    if (-not $command) {
+        throw "Cline was installed, but 'cline' is not available on PATH."
+    }
+    $version = Get-ClineVersion $command.Source
+    if (-not (Test-SupportedStableVersion -Version $version -Minimum $MinClineVersion)) {
+        throw "Stable Cline $MinClineVersion or newer is required; found Cline $version after installation."
+    }
+    Write-Host "Verified Cline $version."
+}
+
+function Ensure-Cline {
+    Add-NpmBinDirectories
+
+    if ($DryRun) {
+        if (Get-ApplicationCommand "cline") {
+            Write-Host "+ cline --version"
+            Write-Host "A compatible Cline will be preserved; an older version will be upgraded with cline update."
+        }
+        elseif (Get-ApplicationCommand "npm") {
+            Write-Host "+ npm install -g cline"
+        }
+        else {
+            throw "Cline installation requires npm. Install Node.js from https://nodejs.org/en/download, then rerun the installer."
+        }
+        Confirm-ClineApplication
+        return
+    }
+
+    $command = Get-ApplicationCommand "cline"
+    if ($command) {
+        $version = Get-ClineVersion $command.Source
+        if (Test-SupportedStableVersion -Version $version -Minimum $MinClineVersion) {
+            Write-Host "Cline $version already satisfies >=$MinClineVersion; leaving it unchanged."
+            return
+        }
+        Write-Host "Cline $version does not satisfy stable >=$MinClineVersion; upgrading it with Cline."
+        Invoke-NativeCommand -FilePath $command.Source -Arguments @("update")
+    }
+    else {
+        $npm = Get-ApplicationCommand "npm"
+        if (-not $npm) {
+            throw "Cline installation requires npm. Install Node.js from https://nodejs.org/en/download, then rerun the installer."
+        }
+        Invoke-NativeCommand -FilePath $npm.Source -Arguments @("install", "-g", "cline")
+    }
+
+    Add-NpmBinDirectories
+    Confirm-ClineApplication
+}
+
 function Ensure-SelectedCodingAgents {
     if ($script:InstallClaudeCode) {
         Write-Step "Ensuring Claude Code is installed"
@@ -774,7 +851,12 @@ function Ensure-SelectedCodingAgents {
         Ensure-OpenCode
     }
 
-    if ((-not $script:InstallClaudeCode) -and (-not $script:InstallCodex) -and (-not $script:PiAvailable) -and (-not $script:InstallOpenCode)) {
+    if ($script:InstallCline) {
+        Write-Step "Ensuring Cline CLI is installed"
+        Ensure-Cline
+    }
+
+    if ((-not $script:InstallClaudeCode) -and (-not $script:InstallCodex) -and (-not $script:PiAvailable) -and (-not $script:InstallOpenCode) -and (-not $script:InstallCline)) {
         throw "No selected coding agent was installed. Re-run the installer and choose at least one."
     }
 }
@@ -929,7 +1011,7 @@ function Configure-AndConfirmFreeClaudeCode {
     if ($DryRun) {
         Write-Host "+ uv tool update-shell"
         Write-Host "+ uv tool dir --bin"
-        Write-Host "+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, and fcc-opencode in the uv tool bin directory"
+        Write-Host "+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, fcc-opencode, and fcc-cline in the uv tool bin directory"
         Write-Host "+ fcc-server --version"
         Export-FccDesktopIcon `
             -DesktopCommand "<uv-tool-bin>\fcc-desktop.exe" `
@@ -956,7 +1038,7 @@ function Configure-AndConfirmFreeClaudeCode {
         [IO.Path]::AltDirectorySeparatorChar
     )
     $installedCommands = @{}
-    foreach ($commandName in @("fcc-desktop", "fcc-server", "fcc-claude", "fcc-codex", "fcc-pi", "fcc-opencode")) {
+    foreach ($commandName in @("fcc-desktop", "fcc-server", "fcc-claude", "fcc-codex", "fcc-pi", "fcc-opencode", "fcc-cline")) {
         $command = Get-ApplicationCommand $commandName
         if (-not $command) {
             throw "Free Claude Code installation did not create '$commandName'."
@@ -1059,6 +1141,7 @@ if ((-not [string]::IsNullOrWhiteSpace($TorchBackend)) -and (-not ($VoiceLocal -
 }
 
 Add-KnownBinDirectories
+$script:InstallCline = [bool] ((Get-ApplicationCommand "cline") -or (Get-ApplicationCommand "npm"))
 
 Write-Step "Checking for running Free Claude Code processes"
 Assert-NoFccProcessesRunning
@@ -1098,5 +1181,11 @@ else {
     }
     if ($script:InstallOpenCode) {
         Write-Host "Run OpenCode with: fcc-opencode"
+    }
+    if ($script:InstallCline) {
+        Write-Host "Run Cline with: fcc-cline"
+    }
+    else {
+        Write-Host "The fcc-cline wrapper is ready after you install Cline CLI."
     }
 }
