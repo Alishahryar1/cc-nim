@@ -52,6 +52,7 @@ _PROFILE = OpenAIChatProfile(
         disabled_value="none",
         enabled_value="high",
         budget_field="reasoning_tokens",
+        use_extra_body=True,
     ),
 )
 

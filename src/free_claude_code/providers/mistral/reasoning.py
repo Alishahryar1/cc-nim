@@ -244,7 +244,7 @@ def _split_mistral_content(content: Any) -> tuple[str | None, str | None, bool]:
     return (
         "".join(text_parts) or None,
         "".join(reasoning_parts) or None,
-        bool(text_parts or reasoning_parts),
+        True,
     )
 
 

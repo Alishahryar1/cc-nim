@@ -522,7 +522,7 @@ def test_openrouter_provider_smoke_uses_concrete_free_model(monkeypatch) -> None
     models = config.provider_smoke_models()
 
     assert [model.provider for model in models] == ["open_router"]
-    assert models[0].full_model == "open_router/moonshotai/kimi-k2.6:free"
+    assert models[0].full_model == "open_router/nvidia/nemotron-3-super-120b-a12b:free"
     assert models[0].source == "provider_default"
 
 

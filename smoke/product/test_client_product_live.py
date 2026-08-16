@@ -70,7 +70,7 @@ def test_pi_cli_prompt_e2e(smoke_config: SmokeConfig, tmp_path: Path) -> None:
     if not uv_bin:
         pytest.skip("missing_env: uv not found")
     provider_model = ProviderMatrixDriver(smoke_config).first_model()
-    auth_token = "fcc-pi-smoke-token"
+    auth_token = smoke_config.settings.proxy_auth_token
 
     with SmokeServerDriver(
         smoke_config,
@@ -126,7 +126,7 @@ def test_opencode_cli_prompt_e2e(smoke_config: SmokeConfig, tmp_path: Path) -> N
     if not uv_bin:
         pytest.skip("missing_env: uv not found")
     provider_model = ProviderMatrixDriver(smoke_config).first_model()
-    auth_token = "fcc-opencode-smoke-token"
+    auth_token = smoke_config.settings.proxy_auth_token
     isolated_home = tmp_path / "opencode-home"
     isolated_config = tmp_path / "opencode-config"
     for path in (isolated_home, isolated_config):

@@ -67,7 +67,8 @@ def test_adaptive_client_reasoning_uses_documented_named_effort(lmstudio_provide
 
     body = lmstudio_provider._build_request_body(req, reasoning=REASONING_ON)
 
-    assert body["reasoning_effort"] == "high"
+    assert body["extra_body"]["reasoning_effort"] == "high"
+    assert "reasoning_effort" not in body
 
 
 def test_exact_client_budget_is_not_derived_from_output_tokens(lmstudio_provider):
@@ -81,7 +82,8 @@ def test_exact_client_budget_is_not_derived_from_output_tokens(lmstudio_provider
         ),
     )
 
-    assert body["reasoning_tokens"] == 1024
+    assert body["extra_body"]["reasoning_tokens"] == 1024
+    assert "reasoning_tokens" not in body
     assert body["max_tokens"] == 8192
 
 
@@ -185,6 +187,49 @@ async def test_stream_response_text(lmstudio_provider):
         assert any(
             '"text_delta"' in event and "Hello back!" in event for event in events
         )
+
+
+@pytest.mark.asyncio
+async def test_stream_response_passes_exact_reasoning_budget_via_extra_body(
+    lmstudio_provider,
+):
+    req = make_request()
+    policy = ReasoningPolicy.on(
+        effort=ReasoningEffort.HIGH,
+        budget_tokens=1024,
+    )
+
+    mock_chunk = MagicMock()
+    mock_chunk.choices = [
+        MagicMock(
+            delta=MagicMock(content="Done", reasoning_content=None, tool_calls=None),
+            finish_reason="stop",
+        )
+    ]
+    mock_chunk.usage = MagicMock(completion_tokens=1, prompt_tokens=1)
+
+    async def mock_stream():
+        yield mock_chunk
+
+    with patch.object(
+        lmstudio_provider._client.chat.completions, "create", new_callable=AsyncMock
+    ) as mock_create:
+        mock_create.return_value = mock_stream()
+
+        events = [
+            event
+            async for event in lmstudio_provider.stream_response(
+                req,
+                reasoning=policy,
+            )
+        ]
+
+    await_args = mock_create.await_args
+    assert await_args is not None
+    create_kwargs = await_args.kwargs
+    assert create_kwargs["extra_body"] == {"reasoning_tokens": 1024}
+    assert "reasoning_tokens" not in create_kwargs
+    assert any("message_stop" in event for event in events)
 
 
 @pytest.mark.asyncio

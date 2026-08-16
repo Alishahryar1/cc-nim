@@ -436,6 +436,45 @@ async def test_stream_response_preserves_mixed_native_content_array(
 
 
 @pytest.mark.asyncio
+async def test_stream_response_ignores_unknown_native_content_chunks(
+    mistral_provider,
+):
+    req = make_request()
+
+    mock_chunk = MagicMock()
+    mock_chunk.choices = [
+        MagicMock(
+            delta=MagicMock(
+                content=[
+                    {
+                        "type": "reference",
+                        "reference_ids": ["ref_1"],
+                    }
+                ],
+                reasoning_content=None,
+                tool_calls=None,
+            ),
+            finish_reason="stop",
+        )
+    ]
+    mock_chunk.usage = MagicMock(completion_tokens=1, prompt_tokens=1)
+
+    async def mock_stream():
+        yield mock_chunk
+
+    with patch.object(
+        mistral_provider._client.chat.completions, "create", new_callable=AsyncMock
+    ) as mock_create:
+        mock_create.return_value = mock_stream()
+
+        events = [event async for event in mistral_provider.stream_response(req)]
+
+    event_text = "\n".join(events)
+    assert "reference_ids" not in event_text
+    assert "message_stop" in event_text
+
+
+@pytest.mark.asyncio
 async def test_stream_response_suppresses_native_mistral_thinking_when_disabled(
     mistral_provider,
 ):

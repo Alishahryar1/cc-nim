@@ -125,7 +125,7 @@ def test_mistral_native_reasoning_model_e2e(smoke_config: SmokeConfig) -> None:
 
     payload = {
         "model": "claude-opus-4-7",
-        "max_tokens": 256,
+        "max_tokens": 1024,
         "messages": [{"role": "user", "content": "Reply with one short sentence."}],
         "thinking": {"type": "adaptive"},
     }
@@ -302,7 +302,7 @@ def _scenario_adaptive_thinking_history(
 ) -> None:
     payload = {
         "model": "claude-opus-4-7",
-        "max_tokens": 256,
+        "max_tokens": 2048,
         "messages": [
             {"role": "user", "content": "hello"},
             {
@@ -327,7 +327,7 @@ def _scenario_interleaved_history(
 ) -> None:
     payload = {
         "model": "claude-sonnet-4-5-20250929",
-        "max_tokens": 256,
+        "max_tokens": 1024,
         "messages": [
             {"role": "user", "content": "Use the tool."},
             {
@@ -458,7 +458,7 @@ def _scenario_interrupted_tool_turn_resume(
     tool_id = "toolu_interrupted123456789"
     payload = {
         "model": "claude-sonnet-4-5-20250929",
-        "max_tokens": 32,
+        "max_tokens": 256,
         "stream": True,
         "messages": [
             {"role": "user", "content": "Use echo_smoke with value FCC_INTERRUPTED."},
