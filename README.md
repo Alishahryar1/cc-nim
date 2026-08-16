@@ -21,7 +21,7 @@
 
 ## What You Get
 
-- **48 providers. 1.2B+ free tokens a month. One proxy.** Use free, paid, subscription, or local models from one searchable Admin UI.
+- **48 providers. 1.3B+ free tokens a month. One proxy.** Use free, paid, subscription, or local models from one searchable Admin UI.
 - **4 coding agents. One model catalog.** Run Claude Code, Codex, Pi, or OpenCode with your FCC models.
 - **Up to 90% fewer terminal-output tokens.** Optional [RTK](https://github.com/rtk-ai/rtk) filters common command output, while five FCC optimizations handle quota probes, command-prefix detection, titles, suggestions, and filepaths without calling a provider.
 - **Terminal, desktop, IDE, or phone.** Work through native launchers, VS Code, Codex App, JetBrains, Discord, or Telegram.
