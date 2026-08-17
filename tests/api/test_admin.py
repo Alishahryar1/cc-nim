@@ -1413,7 +1413,9 @@ def test_admin_config_exposes_structured_provider_configuration_targets(
     assert providers["lmstudio"]["configuration_keys"] == ["LM_STUDIO_BASE_URL"]
 
 
-def test_admin_local_provider_failure_is_detailed_and_redacted(monkeypatch, tmp_path):
+def test_admin_local_provider_failure_does_not_return_exception_text(
+    monkeypatch, tmp_path
+):
     _set_home(monkeypatch, tmp_path)
     _clear_process_config(monkeypatch)
     app = create_test_app()
@@ -1427,7 +1429,7 @@ def test_admin_local_provider_failure_is_detailed_and_redacted(monkeypatch, tmp_
 
         async def get(self, url: str):
             raise RuntimeError(
-                "Authorization: Bearer sk-local-provider-secret could not connect"
+                "Provider rejected credential CREDENTIAL[unrecognized-format-987654321]"
             )
 
     with patch(
@@ -1440,8 +1442,11 @@ def test_admin_local_provider_failure_is_detailed_and_redacted(monkeypatch, tmp_
     providers = response.json()["providers"]
     assert {provider["status"] for provider in providers} == {"offline"}
     for provider in providers:
-        assert "<redacted>" in provider["message"]
-        assert "sk-local-provider-secret" not in provider["message"]
+        assert provider["message"] == (
+            "Could not connect. Verify the URL and that the local provider is running."
+        )
+        assert "CREDENTIAL[unrecognized-format-987654321]" not in provider["message"]
+        assert "RuntimeError" not in provider["message"]
         assert "error_type" not in provider
 
 

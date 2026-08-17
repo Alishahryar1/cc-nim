@@ -388,8 +388,8 @@ provider card to its first missing field; it never parses presentation text.
 Explicit remote model-list checks and local reachability probes are separate,
 ephemeral results. They render in their own live region and never overwrite the
 stable `Configured`/`Missing` badge or configuration description. Runtime and
-API owners return bounded credential-redacted messages for failed checks rather
-than Python exception class names.
+API owners return stable guidance for failed checks and keep all exception text
+out of the browser response; server logs record only safe failure metadata.
 
 The provider composition root narrows optional Settings into provider-ready
 state. Static-key providers receive a non-empty key, Vertex receives renewable

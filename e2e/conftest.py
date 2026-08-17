@@ -129,7 +129,7 @@ def admin_base_url(
     monkeypatch.setattr(env_migrations, "verified_checkout_env_path", lambda: None)
     clear_settings_cache()
 
-    provider_secret = "sk-browser-provider-secret"
+    provider_secret = "CREDENTIAL[unrecognized-format-987654321]"
     providers: dict[str, BaseProvider] = {
         "open_router": _ModelListingProvider(
             frozenset(
@@ -140,9 +140,7 @@ def admin_base_url(
             )
         ),
         "groq": _ModelListingProvider(
-            error=RuntimeError(
-                f"Authorization: Bearer {provider_secret} could not connect"
-            )
+            error=RuntimeError(f"Provider rejected credential {provider_secret}")
         ),
     }
     manager = ProviderRuntimeManager(

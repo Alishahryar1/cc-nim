@@ -82,7 +82,7 @@ def test_configured_provider_check_keeps_readiness_and_adds_models(
     ).to_be_visible()
 
 
-def test_provider_check_failure_is_separate_detailed_and_redacted(
+def test_provider_check_failure_is_separate_and_never_exposes_exception_text(
     page: Page,
     admin_base_url: str,
 ) -> None:
@@ -97,14 +97,17 @@ def test_provider_check_failure_is_separate_detailed_and_redacted(
     card.get_by_role("button", name="Refresh models", exact=True).click()
 
     result = card.locator(".provider-check-result")
-    expect(result).to_contain_text("Unavailable:")
-    expect(result).to_contain_text("<redacted>")
+    expect(result).to_have_text(
+        "Unavailable: Could not refresh this provider's models. "
+        "Verify its configuration and access."
+    )
     expect(card.locator(".status-pill")).to_have_text("Configured")
     expect(card.locator(".provider-meta")).to_have_text("GROQ_API_KEY")
     page_text = page.locator("body").inner_text()
-    assert "sk-browser-provider-secret" not in page_text
+    secret = "CREDENTIAL[unrecognized-format-987654321]"
+    assert secret not in page_text
     assert "RuntimeError" not in page_text
-    assert "sk-browser-provider-secret" not in "\n".join(console_messages)
+    assert secret not in "\n".join(console_messages)
 
 
 def test_multi_field_provider_targets_first_missing_configuration(

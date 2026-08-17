@@ -1,4 +1,5 @@
 import asyncio
+import logging
 from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -254,7 +255,7 @@ async def test_provider_check_caches_and_returns_sorted_models() -> None:
 
 
 @pytest.mark.asyncio
-async def test_provider_check_preserves_actionable_application_error() -> None:
+async def test_provider_check_returns_stable_failure_for_application_error() -> None:
     provider = AdminModelProvider(
         error=ApplicationUnavailableError(
             "NVIDIA_NIM_API_KEY is not set. Add it in the Admin UI."
@@ -267,29 +268,40 @@ async def test_provider_check_preserves_actionable_application_error() -> None:
     assert result == {
         "provider_id": "nvidia_nim",
         "ok": False,
-        "message": "NVIDIA_NIM_API_KEY is not set. Add it in the Admin UI.",
+        "message": (
+            "Could not refresh this provider's models. "
+            "Verify its configuration and access."
+        ),
     }
     assert "error_type" not in result
     await manager.close()
 
 
 @pytest.mark.asyncio
-async def test_provider_check_redacts_and_caps_unexpected_error() -> None:
-    secret = "sk-admin-provider-secret"
+async def test_provider_check_never_returns_unrecognized_credentials(
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    secret = "CREDENTIAL[unrecognized-format-987654321]"
     provider = AdminModelProvider(
-        error=RuntimeError(
-            f"Authorization: Bearer {secret} could not connect " + "x" * 500
-        )
+        error=RuntimeError(f"Provider rejected credential {secret}")
     )
     runtime, manager = _runtime_with_admin_provider(provider)
 
-    result = await runtime.test_provider("nvidia_nim")
+    with caplog.at_level(logging.WARNING):
+        result = await runtime.test_provider("nvidia_nim")
 
-    message = result["message"]
-    assert isinstance(message, str)
-    assert "<redacted>" in message
-    assert secret not in message
-    assert len(message) == 200
+    assert result == {
+        "provider_id": "nvidia_nim",
+        "ok": False,
+        "message": (
+            "Could not refresh this provider's models. "
+            "Verify its configuration and access."
+        ),
+    }
+    log_text = " | ".join(record.getMessage() for record in caplog.records)
+    assert "provider=nvidia_nim" in log_text
+    assert "exc_type=RuntimeError" in log_text
+    assert secret not in log_text
     assert "error_type" not in result
     await manager.close()
 

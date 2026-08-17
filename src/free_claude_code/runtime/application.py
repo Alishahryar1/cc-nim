@@ -34,7 +34,6 @@ from free_claude_code.config.model_refs import parse_provider_type
 from free_claude_code.config.paths import messaging_state_dir_path
 from free_claude_code.config.server_urls import local_admin_url, local_proxy_root_url
 from free_claude_code.config.settings import Settings
-from free_claude_code.core.diagnostics import format_user_error_preview
 from free_claude_code.core.json_types import JsonObject
 from free_claude_code.messaging.platforms import factory as messaging_platform_factory
 from free_claude_code.messaging.platforms.factory import MessagingPlatformOptions
@@ -47,6 +46,10 @@ from free_claude_code.messaging.voice import Transcriber
 from .provider_manager import ProviderRuntimeManager
 
 RestartCallback = Callable[[], Awaitable[None] | None]
+
+_PROVIDER_CHECK_FAILURE_MESSAGE = (
+    "Could not refresh this provider's models. Verify its configuration and access."
+)
 
 
 async def best_effort(
@@ -230,10 +233,15 @@ class ApplicationRuntime:
             provider = lease.resolve_provider(provider_id)
             infos = await provider.list_model_infos()
         except Exception as exc:
+            logger.warning(
+                "Admin provider check failed: provider={} exc_type={}",
+                provider_id,
+                type(exc).__name__,
+            )
             return {
                 "provider_id": provider_id,
                 "ok": False,
-                "message": format_user_error_preview(exc),
+                "message": _PROVIDER_CHECK_FAILURE_MESSAGE,
             }
         finally:
             await lease.release()
