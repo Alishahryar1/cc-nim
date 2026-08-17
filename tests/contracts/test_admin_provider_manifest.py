@@ -226,7 +226,8 @@ def test_vertex_admin_status_uses_project_configuration_not_an_api_key() -> None
 
     assert vertex_status("")["status"] == "missing_config"
     assert vertex_status("")["label"] == "Missing configuration"
-    assert vertex_status("")["configuration"] == "VERTEX_PROJECT_ID"
+    assert vertex_status("")["configuration_keys"] == ["VERTEX_PROJECT_ID"]
+    assert vertex_status("")["missing_configuration_keys"] == ["VERTEX_PROJECT_ID"]
     assert vertex_status("vertex-project")["status"] == "configured"
 
 
@@ -254,9 +255,11 @@ def test_azure_openai_admin_status_distinguishes_key_and_url() -> None:
     missing_url = azure_status("azure-key", "")
     assert missing_url["status"] == "missing_config"
     assert missing_url["label"] == "Missing configuration"
-    assert missing_url["configuration"] == (
-        "AZURE_OPENAI_API_KEY + AZURE_OPENAI_BASE_URL"
-    )
+    assert missing_url["configuration_keys"] == [
+        "AZURE_OPENAI_API_KEY",
+        "AZURE_OPENAI_BASE_URL",
+    ]
+    assert missing_url["missing_configuration_keys"] == ["AZURE_OPENAI_BASE_URL"]
 
     assert (
         azure_status(

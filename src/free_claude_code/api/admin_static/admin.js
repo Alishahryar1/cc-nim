@@ -1,7 +1,6 @@
 const state = {
   config: null,
   fields: new Map(),
-  localStatus: new Map(),
   modelOptions: [],
   modelComboboxes: new Set(),
   authPollers: new Map(),
@@ -167,29 +166,84 @@ function renderProviders(providerStatus) {
 
     const title = document.createElement("div");
     title.className = "provider-title";
-    title.innerHTML = `<strong>${provider.display_name || provider.provider_id}</strong>`;
+    const name = document.createElement("strong");
+    name.textContent = provider.display_name || provider.provider_id;
 
     const pill = document.createElement("span");
     pill.className = `status-pill ${statusClass(provider.status)}`;
     pill.textContent = provider.label;
-    title.appendChild(pill);
+    title.append(name, pill);
 
     const meta = document.createElement("div");
     meta.className = "provider-meta";
-    meta.textContent =
-      provider.kind === "local"
-        ? provider.base_url || "No local URL configured"
-        : provider.configuration;
+    const configurationKeys = Array.isArray(provider.configuration_keys)
+      ? provider.configuration_keys
+      : [];
+    const missingConfigurationKeys = Array.isArray(
+      provider.missing_configuration_keys,
+    )
+      ? provider.missing_configuration_keys
+      : [];
+    meta.textContent = configurationKeys.join(" + ");
 
-    const button = document.createElement("button");
-    button.type = "button";
-    button.className = "test-button";
-    button.textContent = provider.kind === "local" ? "Test" : "Refresh models";
-    button.addEventListener("click", () => testProvider(provider.provider_id, button));
+    const result = document.createElement("div");
+    result.className = "provider-check-result";
+    result.dataset.providerCheckResult = provider.provider_id;
+    result.setAttribute("aria-live", "polite");
+    result.hidden = true;
 
-    card.append(title, meta, button);
+    const actions = document.createElement("div");
+    actions.className = "provider-actions";
+    if (configurationKeys.length) {
+      const configuring = missingConfigurationKeys.length > 0;
+      actions.appendChild(
+        providerActionButton(configuring ? "Configure" : "Edit", () =>
+          navigateToProviderConfiguration(provider, configuring),
+        ),
+      );
+    }
+
+    if (missingConfigurationKeys.length === 0) {
+      const button = providerActionButton(
+        provider.kind === "local" ? "Test" : "Refresh models",
+        () => testProvider(provider.provider_id, button),
+        "secondary-button",
+      );
+      actions.appendChild(button);
+    }
+
+    card.append(title, meta, result, actions);
     grid.appendChild(card);
   });
+}
+
+function providerActionButton(label, action, className = "test-button") {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.textContent = label;
+  button.addEventListener("click", action);
+  return button;
+}
+
+function navigateToProviderConfiguration(provider, configuring) {
+  const keys = configuring
+    ? provider.missing_configuration_keys
+    : provider.configuration_keys;
+  const fieldKey = Array.isArray(keys) ? keys[0] : null;
+  const input = fieldKey ? byId(`field-${fieldKey}`) : null;
+  if (!input) {
+    showMessage("Provider configuration field is unavailable.", "error");
+    return;
+  }
+  const reducedMotion = window.matchMedia(
+    "(prefers-reduced-motion: reduce)",
+  ).matches;
+  input.scrollIntoView({
+    behavior: reducedMotion ? "instant" : "smooth",
+    block: "center",
+  });
+  input.focus({ preventScroll: true });
 }
 
 function renderConnectedAccountCard(provider, status = provider) {
@@ -416,15 +470,13 @@ async function copyDeviceCode(code) {
   }
 }
 
-function updateProviderCard(providerId, status, label, metaText) {
+function updateProviderCheckResult(providerId, status, message) {
   const card = document.querySelector(`[data-provider="${providerId}"]`);
   if (!card) return;
-  const pill = card.querySelector(".status-pill");
-  pill.className = `status-pill ${statusClass(status)}`;
-  pill.textContent = label;
-  if (metaText) {
-    card.querySelector(".provider-meta").textContent = metaText;
-  }
+  const result = card.querySelector(".provider-check-result");
+  result.className = `provider-check-result ${status}`;
+  result.textContent = message;
+  result.hidden = !message;
 }
 
 function renderSections(sections, fields) {
@@ -883,37 +935,61 @@ async function apply() {
 async function refreshLocalStatus() {
   const result = await api("/admin/api/providers/local-status");
   result.providers.forEach((provider) => {
-    state.localStatus.set(provider.provider_id, provider);
-    const meta = provider.status_code
-      ? `${provider.base_url} returned HTTP ${provider.status_code}`
-      : provider.base_url;
-    updateProviderCard(provider.provider_id, provider.status, provider.label, meta);
+    if (provider.status === "missing_url") return;
+    if (provider.status === "reachable") {
+      updateProviderCheckResult(
+        provider.provider_id,
+        "ok",
+        `Reachable: ${provider.base_url}`,
+      );
+      return;
+    }
+    const detail = provider.message
+      ? provider.message
+      : provider.status_code
+        ? `${provider.base_url} returned HTTP ${provider.status_code}`
+        : "The local provider did not respond.";
+    updateProviderCheckResult(
+      provider.provider_id,
+      "error",
+      `Unavailable: ${detail}`,
+    );
   });
 }
 
 async function testProvider(providerId, button) {
   const original = button.textContent;
   button.disabled = true;
-  button.textContent = "Testing";
+  button.textContent = "Checking...";
+  updateProviderCheckResult(providerId, "checking", "Checking...");
   try {
     const result = await api(`/admin/api/providers/${providerId}/test`, {
       method: "POST",
       body: "{}",
     });
     if (result.ok) {
-      updateProviderCard(
+      updateProviderCheckResult(
         providerId,
-        "reachable",
-        `${result.models.length} models`,
-        result.models.slice(0, 3).join(", ") || "No models returned",
+        "ok",
+        `${result.models.length} models available`,
       );
       setModelOptions([
         ...state.modelOptions,
         ...result.models.map((model) => `${providerId}/${model}`),
       ]);
     } else {
-      updateProviderCard(providerId, "offline", result.error_type, result.error_type);
+      updateProviderCheckResult(
+        providerId,
+        "error",
+        `Unavailable: ${result.message || "Provider check failed."}`,
+      );
     }
+  } catch {
+    updateProviderCheckResult(
+      providerId,
+      "error",
+      "Provider check could not be completed.",
+    );
   } finally {
     button.disabled = false;
     button.textContent = original;

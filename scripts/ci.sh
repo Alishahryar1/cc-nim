@@ -1,7 +1,7 @@
 #!/bin/sh
 set -eu
 
-CHECK_ORDER="suppressions ruff-format ruff-check ty pytest"
+CHECK_ORDER="suppressions ruff-format ruff-check ty pytest playwright"
 
 dry_run=0
 only_checks=""
@@ -12,7 +12,7 @@ show_usage() {
 Usage: ci.sh [options]
 
 Runs the local sequence for the same check IDs enforced by GitHub CI.
-Requires uv on PATH when running ruff, ty, or pytest checks.
+Requires uv on PATH when running ruff, ty, pytest, or Playwright checks.
 Local ruff checks repair formatting and autofixable lint before later checks.
 
 Checks (in order):
@@ -21,6 +21,7 @@ Checks (in order):
   ruff-check     uv run ruff check --fix
   ty             uv run ty check
   pytest         uv run pytest -v --tb=short
+  playwright     Install Chromium and run deterministic Admin browser tests
 
 Options:
   --only ID                Run only the given check (repeatable)
@@ -69,7 +70,7 @@ run() {
 
 valid_check_id() {
     case "$1" in
-        suppressions | ruff-format | ruff-check | ty | pytest) return 0 ;;
+        suppressions | ruff-format | ruff-check | ty | pytest | playwright) return 0 ;;
         *) return 1 ;;
     esac
 }
@@ -156,6 +157,14 @@ run_pytest() {
     run uv run pytest -v --tb=short
 }
 
+run_playwright() {
+    step "playwright"
+    run uv run playwright install chromium
+    run uv run pytest e2e -n 0 -v --tb=short \
+        --tracing=retain-on-failure --screenshot=only-on-failure \
+        --full-page-screenshot --output=test-results
+}
+
 run_check() {
     case "$1" in
         suppressions) run_suppressions ;;
@@ -163,6 +172,7 @@ run_check() {
         ruff-check) run_ruff_check ;;
         ty) run_ty ;;
         pytest) run_pytest ;;
+        playwright) run_playwright ;;
         *) fail "unknown check id: $1" ;;
     esac
 }

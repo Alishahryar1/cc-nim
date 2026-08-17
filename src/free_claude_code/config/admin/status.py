@@ -29,6 +29,20 @@ def provider_config_status(
                 }
             )
             continue
+
+        configuration_attrs = descriptor.configuration_attrs()
+        configuration_keys = [
+            _field_key_for_settings_attr(attr) for attr in configuration_attrs
+        ]
+        missing_attrs = tuple(
+            attr
+            for attr in configuration_attrs
+            if not _value_for_settings_attr(state, attr)
+        )
+        missing_configuration_keys = [
+            _field_key_for_settings_attr(attr) for attr in missing_attrs
+        ]
+
         if descriptor.local:
             base_url: str | None = None
             if descriptor.base_url_attr is not None:
@@ -38,23 +52,16 @@ def provider_config_status(
                     "provider_id": provider_id,
                     "display_name": descriptor.display_name,
                     "kind": "local",
-                    "status": "missing_url" if not base_url else "unknown",
-                    "label": "Missing URL" if not base_url else "Not checked",
+                    "status": "missing_url" if missing_attrs else "configured",
+                    "label": "Missing URL" if missing_attrs else "Configured",
                     "base_url": base_url or descriptor.default_base_url or "",
+                    "configuration_keys": configuration_keys,
+                    "missing_configuration_keys": missing_configuration_keys,
                 }
             )
             continue
 
-        configuration_attrs = descriptor.configuration_attrs()
-        missing_attrs = tuple(
-            attr
-            for attr in configuration_attrs
-            if not _value_for_settings_attr(state, attr)
-        )
         configured = not missing_attrs
-        configuration = " + ".join(
-            _field_key_for_settings_attr(attr) for attr in configuration_attrs
-        )
         missing_key = descriptor.credential_attr in missing_attrs
         statuses.append(
             {
@@ -75,7 +82,8 @@ def provider_config_status(
                     if missing_key
                     else "Missing configuration"
                 ),
-                "configuration": configuration,
+                "configuration_keys": configuration_keys,
+                "missing_configuration_keys": missing_configuration_keys,
             }
         )
     return statuses

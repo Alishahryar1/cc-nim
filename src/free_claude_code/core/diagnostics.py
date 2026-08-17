@@ -76,7 +76,7 @@ def safe_exception_message(
 
 
 def format_user_error_preview(exc: BaseException, *, max_len: int = 200) -> str:
-    """Return a short redacted exception preview for chat surfaces."""
+    """Return a short redacted exception preview for user-facing surfaces."""
     return safe_exception_message(exc)[:max_len]
 
 

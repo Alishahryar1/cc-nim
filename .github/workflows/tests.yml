@@ -1,6 +1,6 @@
 # Branch protection: require every status check this workflow reports, for example:
 #   Ban suppressions and legacy annotations
-#   ruff-format, ruff-check, ty, pytest
+#   ruff-format, ruff-check, ty, pytest, playwright
 # GitHub may prefix with the workflow name (e.g. "CI / ruff-format"); use the names the branch protection UI offers after a run.
 
 name: CI
@@ -56,6 +56,11 @@ jobs:
             run: uv run ty check
           - id: pytest
             run: uv run pytest -v --tb=short
+          - id: playwright
+            run: >-
+              uv run pytest e2e -n 0 -v --tb=short
+              --tracing=retain-on-failure --screenshot=only-on-failure
+              --full-page-screenshot --output=test-results
     steps:
       - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1
         with:
@@ -71,5 +76,18 @@ jobs:
           cache-python: true
           save-cache: ${{ matrix.id == 'ruff-format' }}
 
+      - name: Install Chromium
+        if: matrix.id == 'playwright'
+        run: uv run playwright install --with-deps chromium
+
       - name: Run
         run: ${{ matrix.run }}
+
+      - name: Upload Playwright failure artifacts
+        if: failure() && matrix.id == 'playwright'
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02
+        with:
+          name: playwright-results-${{ github.run_id }}-${{ github.run_attempt }}
+          path: test-results/
+          if-no-files-found: ignore
+          retention-days: 7

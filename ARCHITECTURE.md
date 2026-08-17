@@ -381,6 +381,16 @@ secrets. Preview and Apply validate the same prospective Settings snapshot, and
 Apply atomically writes only configured values plus preserved unknown managed
 assignments. Process-owned fields are visible but locked.
 
+[config/admin/status.py](src/free_claude_code/config/admin/status.py) owns
+provider configuration readiness and exposes ordered Admin field keys for each
+catalog descriptor. The browser uses those keys to navigate directly from a
+provider card to its first missing field; it never parses presentation text.
+Explicit remote model-list checks and local reachability probes are separate,
+ephemeral results. They render in their own live region and never overwrite the
+stable `Configured`/`Missing` badge or configuration description. Runtime and
+API owners return bounded credential-redacted messages for failed checks rather
+than Python exception class names.
+
 The provider composition root narrows optional Settings into provider-ready
 state. Static-key providers receive a non-empty key, Vertex receives renewable
 ADC with `api_key=None`, and optional proxies remain `None` until configured.
@@ -1637,6 +1647,15 @@ provider access from helper modules. These tests protect current architectural
 properties rather than preserving deleted modules or an exact internal file
 layout.
 
+Rendered Admin workflows live separately under [e2e/](e2e/). They use the
+official Python Playwright pytest plugin with headless Chromium, a temporary FCC
+home, fake providers, deterministic local probes, and a real loopback FastAPI
+server on an OS-assigned port. The suite proves scrolling, focus, responsive
+layout, configuration-versus-check state separation, model-option updates, and
+credential redaction without reading developer configuration or contacting an
+upstream service. Browser traces and full-page screenshots are retained only on
+failure.
+
 Live and local product tests live under [smoke/](smoke/). See
 [smoke/README.md](smoke/README.md) for target taxonomy, environment variables,
 failure classes, and examples. Smoke tests can launch subprocesses, call real
@@ -1645,11 +1664,12 @@ providers, touch local model servers, and optionally send bot messages.
 CI is defined in [.github/workflows/tests.yml](.github/workflows/tests.yml). It
 enforces:
 
-- `Ban type ignore suppressions`;
+- `Ban suppressions and legacy annotations`;
 - `ruff-format`;
 - `ruff-check`;
 - `ty`;
-- `pytest`.
+- `pytest`;
+- `playwright`.
 
 Contributor verification commands:
 
@@ -1658,6 +1678,8 @@ uv run ruff format
 uv run ruff check
 uv run ty check
 uv run pytest
+uv run playwright install chromium
+uv run pytest e2e -n 0
 ```
 
 For docs-only architecture changes, a source-link and accuracy review is usually

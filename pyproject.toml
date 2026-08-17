@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "free-claude-code"
-version = "5.6.0"
+version = "5.6.1"
 description = "Local proxy connecting coding agents to OpenAI-compatible AI providers"
 readme = "README.md"
 requires-python = ">=3.14.0"
@@ -74,6 +74,7 @@ dev = [
     "ty>=0.0.70",
     "ruff>=0.16.2",
     "pytest-xdist>=3.8.0",
+    "pytest-playwright>=0.9.0",
 ]
 
 [tool.ruff]

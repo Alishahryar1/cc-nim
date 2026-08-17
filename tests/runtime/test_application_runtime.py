@@ -1,4 +1,5 @@
 import asyncio
+from collections.abc import AsyncIterator
 from pathlib import Path
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -9,9 +10,12 @@ from free_claude_code.application.connected_accounts import (
     ConnectedAccountState,
     ConnectedAccountStatus,
 )
+from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.admin.persistence import PreparedAdminUpdate
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.messaging.command_context import StopOutcome
 from free_claude_code.messaging.platforms.ports import (
     InboundMessageHandler,
@@ -20,9 +24,11 @@ from free_claude_code.messaging.platforms.ports import (
 )
 from free_claude_code.messaging.session import SessionStore
 from free_claude_code.messaging.workflow import MessagingWorkflow
+from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.runtime import ProviderRuntime
 from free_claude_code.runtime.application import ApplicationRuntime
 from free_claude_code.runtime.provider_manager import ProviderRuntimeManager
+from tests.providers.support import make_provider_config
 
 
 class TrackingRuntime(ProviderRuntime):
@@ -33,6 +39,51 @@ class TrackingRuntime(ProviderRuntime):
     async def cleanup(self) -> None:
         self.cleanup_calls += 1
         await super().cleanup()
+
+
+class AdminModelProvider(BaseProvider):
+    def __init__(
+        self,
+        model_infos: frozenset[ProviderModelInfo] = frozenset(),
+        *,
+        error: Exception | None = None,
+    ) -> None:
+        super().__init__(
+            make_provider_config(
+                api_key="test",
+                base_url="https://provider.invalid/v1",
+            )
+        )
+        self._model_infos = model_infos
+        self._error = error
+
+    def preflight_stream(
+        self,
+        request: MessagesRequest,
+        *,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+    ) -> None:
+        return None
+
+    async def cleanup(self) -> None:
+        return None
+
+    async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
+        if self._error is not None:
+            raise self._error
+        return self._model_infos
+
+    async def stream_response(
+        self,
+        request: MessagesRequest,
+        input_tokens: int = 0,
+        *,
+        request_id: str | None = None,
+        response_model: str | None = None,
+        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+    ) -> AsyncIterator[str]:
+        if False:
+            yield ""
 
 
 class TrackingFactory:
@@ -159,6 +210,88 @@ def _applied_response(pending_fields: tuple[str, ...] = ()) -> dict[str, object]
         "path": ".env",
         "pending_fields": list(pending_fields),
     }
+
+
+def _runtime_with_admin_provider(
+    provider: BaseProvider,
+) -> tuple[ApplicationRuntime, ProviderRuntimeManager]:
+    settings = _settings("nvidia_nim/fallback").model_copy(
+        update={"nvidia_nim_api_key": "test-key"}
+    )
+    manager = ProviderRuntimeManager(
+        settings,
+        runtime_factory=lambda snapshot: ProviderRuntime(
+            snapshot,
+            {"nvidia_nim": provider},
+        ),
+    )
+    return ApplicationRuntime(manager, transcriber=None), manager
+
+
+@pytest.mark.asyncio
+async def test_provider_check_caches_and_returns_sorted_models() -> None:
+    provider = AdminModelProvider(
+        frozenset(
+            {
+                ProviderModelInfo("vendor/model-b"),
+                ProviderModelInfo("vendor/model-a"),
+            }
+        )
+    )
+    runtime, manager = _runtime_with_admin_provider(provider)
+
+    result = await runtime.test_provider("nvidia_nim")
+
+    assert result == {
+        "provider_id": "nvidia_nim",
+        "ok": True,
+        "models": ["vendor/model-a", "vendor/model-b"],
+    }
+    assert manager.cached_model_ids()["nvidia_nim"] == frozenset(
+        {"vendor/model-a", "vendor/model-b"}
+    )
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_provider_check_preserves_actionable_application_error() -> None:
+    provider = AdminModelProvider(
+        error=ApplicationUnavailableError(
+            "NVIDIA_NIM_API_KEY is not set. Add it in the Admin UI."
+        )
+    )
+    runtime, manager = _runtime_with_admin_provider(provider)
+
+    result = await runtime.test_provider("nvidia_nim")
+
+    assert result == {
+        "provider_id": "nvidia_nim",
+        "ok": False,
+        "message": "NVIDIA_NIM_API_KEY is not set. Add it in the Admin UI.",
+    }
+    assert "error_type" not in result
+    await manager.close()
+
+
+@pytest.mark.asyncio
+async def test_provider_check_redacts_and_caps_unexpected_error() -> None:
+    secret = "sk-admin-provider-secret"
+    provider = AdminModelProvider(
+        error=RuntimeError(
+            f"Authorization: Bearer {secret} could not connect " + "x" * 500
+        )
+    )
+    runtime, manager = _runtime_with_admin_provider(provider)
+
+    result = await runtime.test_provider("nvidia_nim")
+
+    message = result["message"]
+    assert isinstance(message, str)
+    assert "<redacted>" in message
+    assert secret not in message
+    assert len(message) == 200
+    assert "error_type" not in result
+    await manager.close()
 
 
 @pytest.mark.asyncio

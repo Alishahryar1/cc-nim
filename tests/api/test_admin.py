@@ -18,7 +18,7 @@ from free_claude_code.config.admin.values import MASKED_SECRET
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.server_urls import local_admin_url
 from free_claude_code.config.settings import Settings
-from tests.api.support import create_test_app, provider_manager_for_app
+from tests.api.support import create_test_app, provider_manager_for_app, runtime_for_app
 
 
 def _local_client(app):
@@ -264,15 +264,6 @@ def test_admin_rejects_auth_routes_for_non_connected_provider(monkeypatch, tmp_p
     )
 
     assert response.status_code == 404
-
-
-def test_admin_provider_cards_support_non_key_configuration():
-    script = Path("src/free_claude_code/api/admin_static/admin.js").read_text(
-        encoding="utf-8"
-    )
-
-    assert '"missing_config"' in script
-    assert ": provider.configuration;" in script
 
 
 def test_admin_page_no_longer_renders_generated_env_panel(monkeypatch, tmp_path):
@@ -1398,6 +1389,88 @@ def test_admin_local_provider_status_reports_reachable(monkeypatch, tmp_path):
     assert response.status_code == 200
     providers = response.json()["providers"]
     assert {provider["status"] for provider in providers} == {"reachable"}
+
+
+def test_admin_config_exposes_structured_provider_configuration_targets(
+    monkeypatch, tmp_path
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+
+    response = _local_client(create_test_app()).get("/admin/api/config")
+
+    assert response.status_code == 200
+    providers = {
+        provider["provider_id"]: provider
+        for provider in response.json()["provider_status"]
+    }
+    assert providers["nvidia_nim"]["configuration_keys"] == ["NVIDIA_NIM_API_KEY"]
+    assert providers["nvidia_nim"]["missing_configuration_keys"] == [
+        "NVIDIA_NIM_API_KEY"
+    ]
+    assert "configuration" not in providers["nvidia_nim"]
+    assert providers["lmstudio"]["status"] == "configured"
+    assert providers["lmstudio"]["configuration_keys"] == ["LM_STUDIO_BASE_URL"]
+
+
+def test_admin_local_provider_failure_is_detailed_and_redacted(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+
+    class FailingAsyncClient:
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url: str):
+            raise RuntimeError(
+                "Authorization: Bearer sk-local-provider-secret could not connect"
+            )
+
+    with patch(
+        "free_claude_code.api.admin_routes.httpx.AsyncClient",
+        return_value=FailingAsyncClient(),
+    ):
+        response = _local_client(app).get("/admin/api/providers/local-status")
+
+    assert response.status_code == 200
+    providers = response.json()["providers"]
+    assert {provider["status"] for provider in providers} == {"offline"}
+    for provider in providers:
+        assert "<redacted>" in provider["message"]
+        assert "sk-local-provider-secret" not in provider["message"]
+        assert "error_type" not in provider
+
+
+@pytest.mark.parametrize(
+    "result",
+    (
+        {"provider_id": "nvidia_nim", "ok": True, "models": ["model-a"]},
+        {
+            "provider_id": "nvidia_nim",
+            "ok": False,
+            "message": "NVIDIA_NIM_API_KEY is not set.",
+        },
+    ),
+)
+def test_admin_provider_test_route_preserves_runtime_result(
+    monkeypatch, tmp_path, result
+):
+    _set_home(monkeypatch, tmp_path)
+    app = create_test_app()
+    runtime = runtime_for_app(app)
+
+    with patch.object(runtime, "test_provider", new=AsyncMock(return_value=result)):
+        response = _local_client(app).post(
+            "/admin/api/providers/nvidia_nim/test",
+            json={},
+        )
+
+    assert response.status_code == 200
+    assert response.json() == result
 
 
 def test_admin_launch_url_uses_loopback_for_wildcard_host():

@@ -17,10 +17,11 @@
 - Fall back to individual repair commands when debugging local failures: `uv run ruff format`, `uv run ruff check --fix`, `uv run ty check`, `uv run pytest -v --tb=short`. Use GitHub-style checks only when verifying enforcement locally: `uv run ruff format --check`, `uv run ruff check`.
 - Do not add `# type: ignore` or `# ty: ignore`; fix the underlying type issue.
 - Do not add `from __future__ import annotations`; Python 3.14 native lazy annotations are the project standard.
-- All 5 check IDs are represented in `scripts/ci.sh` / `scripts/ci.ps1` and enforced by `tests.yml` before each merge (parallel jobs: suppression grep, ruff-format, ruff-check, ty, pytest).
+- All 6 check IDs are represented in `scripts/ci.sh` / `scripts/ci.ps1` and enforced by `tests.yml` before each merge (parallel jobs: suppression grep, ruff-format, ruff-check, ty, pytest, playwright).
+- Deterministic rendered Admin UI interactions live under `e2e/` and run separately from ordinary pytest. Install Chromium once with `uv run playwright install chromium`; API and unit contracts remain under `tests/`.
 - GitHub CI runs for every pull request, including stacked PRs targeting non-`main` branches. Head updates trigger fresh checks; strict required checks keep PRs targeting `main` current with `main`, so the tested PR tree is the tree squash-merged without a duplicate post-merge run.
 - Repository protection should use rulesets: a non-bypassable main integrity ruleset requires pull requests and strict required checks, keeps branches current, and blocks direct/force pushes to `main`; a separate review ruleset may allow `Alishahryar1`/admins to bypass review only.
-- Required status checks: set **required status checks** to **all** of those statuses (e.g. **Ban suppressions and legacy annotations**, **ruff-format**, **ruff-check**, **ty**, **pytest**—use the exact labels GitHub shows, which may be prefixed with **CI /**). Remove **ci** from required checks if it was previously added for the old gate job.
+- Required status checks: set **required status checks** to **all** of those statuses (e.g. **Ban suppressions and legacy annotations**, **ruff-format**, **ruff-check**, **ty**, **pytest**, **playwright**—use the exact labels GitHub shows, which may be prefixed with **CI /**). Remove **ci** from required checks if it was previously added for the old gate job.
 
 ## IDENTITY & CONTEXT
 

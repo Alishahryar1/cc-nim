@@ -22,6 +22,7 @@ from free_claude_code.config.provider_catalog import (
     PROVIDER_CATALOG,
     ProviderAuthKind,
 )
+from free_claude_code.core.diagnostics import format_user_error_preview
 from free_claude_code.core.json_types import JsonObject, JsonValue
 
 from .dependencies import get_services
@@ -299,7 +300,7 @@ async def _check_local_provider(
             "status": "offline",
             "label": "Offline",
             "base_url": base_url,
-            "error_type": type(exc).__name__,
+            "message": format_user_error_preview(exc),
         }
 
 

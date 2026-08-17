@@ -337,6 +337,25 @@ textarea:focus-visible,
   font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
 }
 
+.provider-check-result {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1.4;
+  overflow-wrap: anywhere;
+}
+
+.provider-check-result.ok {
+  color: var(--ok);
+}
+
+.provider-check-result.error {
+  color: var(--error);
+}
+
+.provider-check-result.checking {
+  color: var(--info);
+}
+
 .provider-actions {
   display: flex;
   flex-wrap: wrap;
