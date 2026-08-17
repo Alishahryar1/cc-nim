@@ -126,8 +126,11 @@ Cline:
 fcc-cline
 ```
 
-All five launchers use the current Admin UI settings. Use the agent's model
-picker to choose from the models FCC exposes.
+All five launchers use the current Admin UI settings. Use the agent's model picker to choose from the models FCC exposes. Normal CLI arguments still work, for example:
+
+```bash
+fcc-codex exec "hello"
+```
 
 FCC launchers leave your existing agent settings, sessions, credentials, and
 extensions unchanged.
