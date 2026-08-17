@@ -564,6 +564,20 @@ def test_cli_matrix_default_command_uses_bare_mode() -> None:
     assert "Read" in command
 
 
+def test_cli_matrix_auto_mode_exposes_tool_without_preapproval() -> None:
+    command = _build_claude_cli_command(
+        claude_bin="claude",
+        prompt="read the marker",
+        tools="Bash",
+        auto_mode=True,
+    )
+
+    assert command[command.index("--permission-mode") + 1] == "auto"
+    assert command[command.index("--tools") + 1] == "Bash"
+    assert "--dangerously-skip-permissions" not in command
+    assert "--allowedTools" not in command
+
+
 def test_cli_matrix_subagent_command_uses_agent_without_bare_or_task() -> None:
     bare, tools, pre_tool_args, extra_args = _subagent_probe_options("{}")
     command = _build_claude_cli_command(

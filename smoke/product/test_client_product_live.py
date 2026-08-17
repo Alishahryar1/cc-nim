@@ -3,6 +3,7 @@ import os
 import shutil
 import subprocess
 import threading
+import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
 from http import HTTPStatus
@@ -11,6 +12,8 @@ from pathlib import Path
 
 import pytest
 
+from free_claude_code.core.json_types import JsonObject, JsonValue
+from smoke.lib.claude_cli_matrix import run_claude_cli
 from smoke.lib.config import SmokeConfig
 from smoke.lib.e2e import (
     ClientProtocolDriver,
@@ -21,6 +24,20 @@ from smoke.lib.e2e import (
 )
 
 pytestmark = [pytest.mark.live]
+
+
+def _json_object_lines(text: str) -> list[JsonObject]:
+    objects: list[JsonObject] = []
+    for line in text.splitlines():
+        if not line.strip():
+            continue
+        try:
+            value: JsonValue = json.loads(line)
+        except json.JSONDecodeError:
+            continue
+        if isinstance(value, dict):
+            objects.append(value)
+    return objects
 
 
 @pytest.mark.smoke_target("clients")
@@ -283,6 +300,98 @@ def test_claude_cli_adaptive_thinking_e2e(
     assert 'HTTP/1.1" 422' not in server_log
     assert "400 Bad Request" not in result.stdout
     assert "FCC_SMOKE_CLI" in result.stdout
+
+
+@pytest.mark.smoke_target("cli")
+def test_claude_auto_mode_openai_connected_e2e(
+    smoke_config: SmokeConfig, tmp_path: Path
+) -> None:
+    claude_bin = shutil.which(smoke_config.claude_bin)
+    if not claude_bin:
+        pytest.skip(f"missing_env: Claude CLI not found: {smoke_config.claude_bin}")
+
+    provider_models = ProviderMatrixDriver(smoke_config).provider_smoke_models()
+    provider_model = next(
+        (model for model in provider_models if model.provider == "openai"),
+        None,
+    )
+    if provider_model is None:
+        pytest.skip(
+            "missing_env: set FCC_SMOKE_MODEL_OPENAI to run the connected-account "
+            "Auto-mode smoke"
+        )
+
+    marker = f"FCC_SMOKE_AUTO_MODE_{uuid.uuid4().hex}"
+    marker_path = tmp_path / "auto-mode-marker.txt"
+    marker_path.write_text(marker, encoding="utf-8")
+    workspace = tmp_path / "workspace"
+    routed_model = provider_model.full_model
+
+    with SmokeServerDriver(
+        smoke_config,
+        name="product-claude-auto-mode-openai",
+        env_overrides={
+            "MODEL": routed_model,
+            "MODEL_FABLE": routed_model,
+            "MODEL_OPUS": routed_model,
+            "MODEL_SONNET": routed_model,
+            "MODEL_HAIKU": routed_model,
+            "MESSAGING_PLATFORM": "none",
+            "LOG_LEVEL": "DEBUG",
+            "LOG_RAW_API_PAYLOADS": "false",
+            "LOG_RAW_SSE_EVENTS": "false",
+        },
+    ).run() as server:
+        run = run_claude_cli(
+            claude_bin=claude_bin,
+            server=server,
+            config=smoke_config,
+            cwd=workspace,
+            prompt=(
+                "Use Bash exactly once to run `cat "
+                f'"{marker_path.as_posix()}"`. After the tool succeeds, reply '
+                "with exactly the file contents."
+            ),
+            tools="Bash",
+            auto_mode=True,
+        )
+        server_log = server.log_path.read_text(encoding="utf-8", errors="replace")
+
+    assert run.timed_out is False, run.combined_output
+    assert run.returncode == 0, run.combined_output
+    cli_events = _json_object_lines(run.stdout)
+    assert cli_events, run.stdout
+    encoded_events = json.dumps(cli_events, sort_keys=True)
+    assert '"type": "tool_use"' in encoded_events
+    assert '"name": "Bash"' in encoded_events
+    assert '"type": "tool_result"' in encoded_events
+    assert marker in encoded_events
+
+    combined_lower = run.combined_output.lower()
+    for unexpected in (
+        "temporarily unavailable",
+        "cannot determine the safety",
+        "automode-unavailable",
+        "openai responses cannot represent",
+    ):
+        assert unexpected not in combined_lower
+
+    log_rows = _json_object_lines(server_log)
+    policy_rows = [
+        row
+        for row in log_rows
+        if row.get("event") == "free_claude_code.api.route.safety_classifier_policy"
+    ]
+    assert any(
+        row.get("classifier_stop_sequence") == "</severity>"
+        and row.get("stop_sequence_removed") is True
+        for row in policy_rows
+    ), server_log
+    message_requests = [
+        line for line in server_log.splitlines() if "POST /v1/messages" in line
+    ]
+    assert len(message_requests) >= 2, server_log
+    assert all(" 400 " not in message for message in message_requests), server_log
 
 
 @pytest.mark.smoke_target("cli")

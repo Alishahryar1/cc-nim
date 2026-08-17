@@ -245,6 +245,22 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
     ),
     CapabilityContract(
         "request_behavior",
+        "claude_auto_mode_classifier",
+        "claude_auto_mode_classifier",
+        "free_claude_code.api.handlers.messages.MessagesHandler",
+        "known Claude classifier prompt and its owned stop hint",
+        "reasoning disabled and classifier stop hint consumed before provider conversion",
+        "unknown prompts and arbitrary stop sequences retain ordinary strict behavior",
+        (
+            "tests/api/test_detection.py",
+            "tests/api/test_api_handlers.py",
+            "tests/api/test_openai_codex_compatibility.py",
+            "tests/contracts/test_nvidia_nim_cli_matrix.py",
+        ),
+        ("test_claude_auto_mode_openai_connected_e2e",),
+    ),
+    CapabilityContract(
+        "request_behavior",
         "token_counting",
         "count_tokens_contract",
         "free_claude_code.core.anthropic.get_token_count",

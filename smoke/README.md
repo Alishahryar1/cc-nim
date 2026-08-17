@@ -55,7 +55,7 @@ Default targets do not send real bot messages or load voice backends:
 | --- | --- | --- |
 | `api` | messages, count_tokens full payload, errors, `/stop`, optimizations | configured provider only for streaming messages |
 | `auth` | canonical bearer auth, conflicting legacy headers, invalid/missing auth | none; test sets an isolated token |
-| `cli` | server entrypoint, Claude CLI adaptive thinking, session cleanup | Claude CLI binary and provider only for real CLI |
+| `cli` | server entrypoint, Claude CLI adaptive thinking, Auto-mode classifier, session cleanup | Claude CLI binary and provider only for real CLI; connected OpenAI account for Auto mode |
 | `clients` | VS Code and JetBrains protocol payloads; Pi, OpenCode, and Cline CLI prompts | configured provider; installed Pi/OpenCode/Cline binaries for their CLI scenarios |
 | `config` | env precedence, removed-env migration, proxy/timeouts | none |
 | `extensibility` | provider runtime and platform factory construction | none |
@@ -111,6 +111,14 @@ $env:FCC_LIVE_SMOKE = "1"
 $env:FCC_SMOKE_TARGETS = "openrouter_free_cli"
 $env:FCC_SMOKE_OPENROUTER_FREE_MODELS = "nvidia/nemotron-3-super-120b-a12b:free,openai/gpt-oss-120b:free,poolside/laguna-m.1:free"
 uv run pytest smoke/product -n 0 -s --tb=short
+```
+
+```powershell
+$env:FCC_LIVE_SMOKE = "1"
+$env:FCC_SMOKE_TARGETS = "cli"
+$env:FCC_SMOKE_PROVIDER_MATRIX = "openai"
+$env:FCC_SMOKE_MODEL_OPENAI = "gpt-5.6-luna"
+uv run pytest smoke/product/test_client_product_live.py -n 0 -s --tb=short -k claude_auto_mode_openai_connected
 ```
 
 ```powershell

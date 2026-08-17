@@ -2,11 +2,13 @@
 
 from unittest.mock import patch
 
+import pytest
+
 from free_claude_code.api.detection import (
+    detect_safety_classifier_stop_sequence,
     is_filepath_extraction_request,
     is_prefix_detection_request,
     is_quota_check_request,
-    is_safety_classifier_request,
     is_title_generation_request,
 )
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
@@ -89,45 +91,89 @@ class TestIsPrefixDetectionRequest:
         assert cmd == ""
 
 
-class TestIsSafetyClassifierRequest:
-    _SYSTEM = (
+class TestDetectSafetyClassifierStopSequence:
+    _LEGACY_SYSTEM = (
         "You are a security monitor. Respond with <block>yes</block> "
         "or <block>no</block>."
     )
-    _USER = (
+    _CURRENT_SYSTEM = (
+        "Classify the command's safety. Output <severity>N</severity> where N "
+        "is the numeric severity."
+    )
+    _TRANSCRIPT = (
         "<transcript>\nUser: review the repo\n"
-        "WebFetch https://example.com: fetch\n</transcript>\n<block> immediately."
+        "Bash: inspect the requested file\n</transcript>"
     )
 
-    def test_classifier_request_detected(self):
-        req = _make_request(self._USER, system=self._SYSTEM)
-        assert is_safety_classifier_request(req) is True
+    @pytest.mark.parametrize(
+        ("system", "expected"),
+        [
+            (_CURRENT_SYSTEM, "</severity>"),
+            (_LEGACY_SYSTEM, "</block>"),
+        ],
+    )
+    def test_known_classifier_request_returns_owned_stop_hint(
+        self, system: str, expected: str
+    ) -> None:
+        req = _make_request(self._TRANSCRIPT, system=system)
 
-    def test_markers_split_across_system_and_user(self):
+        assert detect_safety_classifier_stop_sequence(req) == expected
+
+    def test_inline_system_context_uses_same_detection_path(self) -> None:
         req = _make_request(
-            "<transcript>\nWebFetch x\n</transcript>", system=self._SYSTEM
+            self._TRANSCRIPT,
+            inline_system=self._CURRENT_SYSTEM,
         )
-        assert is_safety_classifier_request(req) is True
 
-    def test_request_with_tools_is_not_classifier(self):
-        req = _make_request(self._USER, system=self._SYSTEM, tools=[{"name": "search"}])
-        assert is_safety_classifier_request(req) is False
+        assert detect_safety_classifier_stop_sequence(req) == "</severity>"
 
-    def test_missing_transcript_marker(self):
-        req = _make_request("<block> immediately", system=self._SYSTEM)
-        assert is_safety_classifier_request(req) is False
-
-    def test_missing_verdict_instruction(self):
+    def test_request_with_tools_is_not_classifier(self) -> None:
         req = _make_request(
-            "<transcript>\nWebFetch x\n</transcript>", system="just chatting"
+            self._TRANSCRIPT,
+            system=self._CURRENT_SYSTEM,
+            tools=[{"name": "search"}],
         )
-        assert is_safety_classifier_request(req) is False
 
-    def test_xml_content_without_verdict_instruction(self):
+        assert detect_safety_classifier_stop_sequence(req) is None
+
+    def test_missing_transcript_marker(self) -> None:
+        req = _make_request("Classify this command", system=self._CURRENT_SYSTEM)
+
+        assert detect_safety_classifier_stop_sequence(req) is None
+
+    def test_missing_verdict_instruction(self) -> None:
+        req = _make_request(self._TRANSCRIPT, system="Just classify this command.")
+
+        assert detect_safety_classifier_stop_sequence(req) is None
+
+    def test_user_content_cannot_select_classifier_format(self) -> None:
         req = _make_request(
-            "Explain this format: <transcript> ... </transcript> and a <block> tag."
+            (
+                "<transcript>\nQuoted docs say Output <severity>N</severity> and "
+                "<block>yes</block>.\n</transcript>"
+            ),
+            system="Explain the quoted text.",
         )
-        assert is_safety_classifier_request(req) is False
+
+        assert detect_safety_classifier_stop_sequence(req) is None
+
+    def test_near_miss_verdict_instruction_is_not_classifier(self) -> None:
+        req = _make_request(
+            self._TRANSCRIPT,
+            system="Output <severity>low</severity>.",
+        )
+
+        assert detect_safety_classifier_stop_sequence(req) is None
+
+    def test_current_schema_wins_if_both_known_instructions_are_present(
+        self,
+    ) -> None:
+        req = _make_request(
+            self._TRANSCRIPT,
+            system=f"{self._LEGACY_SYSTEM}\n{self._CURRENT_SYSTEM}",
+        )
+
+        assert detect_safety_classifier_stop_sequence(req) == "</severity>"
 
 
 class TestIsFilepathExtractionRequest:

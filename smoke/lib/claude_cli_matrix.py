@@ -81,6 +81,7 @@ def run_claude_cli(
     session_id: str | None = None,
     resume_session_id: str | None = None,
     no_session_persistence: bool = True,
+    auto_mode: bool = False,
 ) -> ClaudeCliRun:
     """Run Claude Code CLI against the local smoke proxy."""
     cwd.mkdir(parents=True, exist_ok=True)
@@ -96,6 +97,7 @@ def run_claude_cli(
             session_id=session_id,
             resume_session_id=resume_session_id,
             no_session_persistence=no_session_persistence,
+            auto_mode=auto_mode,
         )
     )
 
@@ -147,6 +149,7 @@ def _build_claude_cli_command(
     session_id: str | None = None,
     resume_session_id: str | None = None,
     no_session_persistence: bool = True,
+    auto_mode: bool = False,
 ) -> tuple[str, ...]:
     cmd: list[str] = [claude_bin]
     if bare:
@@ -162,8 +165,13 @@ def _build_claude_cli_command(
             "--include-partial-messages",
             "--verbose",
             "--permission-mode",
-            "bypassPermissions",
-            "--dangerously-skip-permissions",
+            "auto" if auto_mode else "bypassPermissions",
+        ]
+    )
+    if not auto_mode:
+        cmd.append("--dangerously-skip-permissions")
+    cmd.extend(
+        [
             "--model",
             "sonnet",
         ]
@@ -173,7 +181,7 @@ def _build_claude_cli_command(
     cmd.extend(pre_tool_args)
     if tools is not None:
         cmd.extend(["--tools", tools])
-        if tools:
+        if tools and not auto_mode:
             cmd.extend(["--allowedTools", tools])
     cmd.extend(extra_args)
     cmd.extend(["-p", prompt])

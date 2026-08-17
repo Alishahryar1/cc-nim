@@ -98,20 +98,27 @@ def is_prefix_detection_request(request_data: MessagesRequest) -> tuple[bool, st
     return False, ""
 
 
-def is_safety_classifier_request(request_data: MessagesRequest) -> bool:
-    """Return whether this is Claude Code's auto-mode safety classifier prompt."""
+def detect_safety_classifier_stop_sequence(
+    request_data: MessagesRequest,
+) -> str | None:
+    """Return the stop hint owned by a known Claude auto-mode classifier."""
     if request_data.tools:
-        return False
+        return None
 
-    system_text = (
-        extract_text_from_content(request_data.system) if request_data.system else ""
+    messages_text = "\n".join(
+        extract_text_from_content(message.content)
+        for message in request_data.messages
+        if message.role != "system"
     )
-    messages_text = "".join(
-        extract_text_from_content(message.content) for message in request_data.messages
-    )
-    combined = f"{system_text}\n{messages_text}"
-    has_verdict_instruction = "yes</block>" in combined or "no</block>" in combined
-    return "<transcript>" in combined and has_verdict_instruction
+    if "<transcript>" not in messages_text:
+        return None
+
+    system_text = _request_system_text(request_data)
+    if "Output <severity>N</severity>" in system_text:
+        return "</severity>"
+    if "yes</block>" in system_text or "no</block>" in system_text:
+        return "</block>"
+    return None
 
 
 def is_suggestion_mode_request(request_data: MessagesRequest) -> bool:

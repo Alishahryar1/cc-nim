@@ -1144,10 +1144,15 @@ The Messages handler runs these only after model routing and after local server-
 handling. Each optimization is controlled by settings flags.
 
 Claude Code auto-mode safety-classifier requests are a message-only routing
-policy, not a short-circuit response. After routing, the Messages handler detects the
-narrow classifier prompt shape and forces reasoning off before provider execution
-so Claude Code receives a parser-readable `<block>yes</block>` or
-`<block>no</block>` verdict.
+policy, not a short-circuit response. After routing, the Messages handler detects
+the exact current severity or legacy Boolean classifier shape, forces reasoning
+off, and consumes only that classifier's optional `</severity>` or `</block>`
+terminator before provider execution. Claude accepts the parser-readable verdict
+when the provider completes normally with `end_turn`; FCC does not fabricate a
+stop reason or truncate the output. Unrecognized and non-classifier stop
+sequences remain on the request so a target converter can preserve them or reject
+the request as lossy. This policy belongs to the Claude Messages boundary, never
+to an OpenAI provider or model-specific adapter.
 
 Local `web_search` and `web_fetch` handling lives under
 [api/web_tools/](src/free_claude_code/api/web_tools/). When `ENABLE_WEB_SERVER_TOOLS` is true, the

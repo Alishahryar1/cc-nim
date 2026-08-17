@@ -61,6 +61,21 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         "skip real CLI when binary is absent; configured providers must pass",
     ),
     FeatureCoverage(
+        "claude_auto_mode_classifier",
+        "Claude Auto mode classifies and executes Bash through OpenAI connected accounts",
+        (
+            "tests/api/test_detection.py",
+            "tests/api/test_api_handlers.py",
+            "tests/api/test_openai_codex_compatibility.py",
+            "tests/contracts/test_nvidia_nim_cli_matrix.py",
+        ),
+        ("test_claude_cli_prompt_when_available",),
+        ("test_claude_auto_mode_openai_connected_e2e",),
+        ("cli",),
+        ("Claude CLI", "FCC_SMOKE_MODEL_OPENAI and connected OpenAI account"),
+        "skip only before launch when Claude or an explicit OpenAI smoke model is absent",
+    ),
+    FeatureCoverage(
         "drop_in_codex_replacement",
         "OpenAI Responses API and Codex CLI adapter route through the proxy",
         (

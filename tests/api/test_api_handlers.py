@@ -24,12 +24,16 @@ from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import ReasoningPolicy
 
-_CLASSIFIER_SYSTEM = (
+_LEGACY_CLASSIFIER_SYSTEM = (
     "You are a security monitor. Respond with <block>yes</block> or <block>no</block>."
 )
+_CURRENT_CLASSIFIER_SYSTEM = (
+    "Classify the command's safety. Output <severity>N</severity> where N is the "
+    "numeric severity."
+)
 _CLASSIFIER_USER = (
-    "<transcript>\nUser: review the repo\nWebFetch https://example.com: fetch\n"
-    "</transcript>\n<block> immediately."
+    "<transcript>\nUser: review the repo\nBash: inspect the requested file\n"
+    "</transcript>"
 )
 
 
@@ -383,14 +387,25 @@ async def test_messages_handler_stream_false_provider_exception_keeps_status() -
 
 
 @pytest.mark.asyncio
-async def test_messages_handler_forces_no_thinking_for_safety_classifier() -> None:
+@pytest.mark.parametrize(
+    ("system", "classifier_stop_sequence"),
+    [
+        (_CURRENT_CLASSIFIER_SYSTEM, "</severity>"),
+        (_LEGACY_CLASSIFIER_SYSTEM, "</block>"),
+    ],
+)
+async def test_messages_handler_normalizes_safety_classifier_policy(
+    system: str,
+    classifier_stop_sequence: str,
+) -> None:
     provider = FakeProvider()
     handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
     request = MessagesRequest(
         model="nvidia_nim/test-model",
         max_tokens=100,
         stream=True,
-        system=_CLASSIFIER_SYSTEM,
+        system=system,
+        stop_sequences=[classifier_stop_sequence],
         messages=[Message(role="user", content=_CLASSIFIER_USER)],
     )
 
@@ -402,16 +417,21 @@ async def test_messages_handler_forces_no_thinking_for_safety_classifier() -> No
     assert provider.preflight_calls[0][1] == ReasoningPolicy.off()
     assert provider.stream_kwargs[0]["reasoning"] == ReasoningPolicy.off()
     assert provider.requests[0].model == "test-model"
-    assert provider.requests[0].system == _CLASSIFIER_SYSTEM
+    assert provider.requests[0].system == system
+    assert provider.preflight_calls[0][0].stop_sequences is None
+    assert provider.requests[0].stop_sequences is None
+    assert request.stop_sequences == [classifier_stop_sequence]
     assert _trace_events(
-        trace_mock, "free_claude_code.api.optimization.safety_classifier_no_thinking"
+        trace_mock, "free_claude_code.api.route.safety_classifier_policy"
     ) == [
         {
             "stage": "routing",
-            "event": "free_claude_code.api.optimization.safety_classifier_no_thinking",
+            "event": "free_claude_code.api.route.safety_classifier_policy",
             "source": "api",
             "model": "nvidia_nim/test-model",
-            "changed": True,
+            "classifier_stop_sequence": classifier_stop_sequence,
+            "reasoning_changed": True,
+            "stop_sequence_removed": True,
         }
     ]
 
@@ -425,6 +445,7 @@ async def test_messages_handler_preserves_thinking_for_non_classifier() -> None:
         max_tokens=100,
         stream=True,
         system="Explain XML formats.",
+        stop_sequences=["</severity>"],
         messages=[
             Message(
                 role="user",
@@ -443,10 +464,11 @@ async def test_messages_handler_preserves_thinking_for_non_classifier() -> None:
 
     assert provider.preflight_calls[0][1] == ReasoningPolicy.provider_default()
     assert provider.stream_kwargs[0]["reasoning"] == ReasoningPolicy.provider_default()
+    assert provider.requests[0].stop_sequences == ["</severity>"]
     assert (
         _trace_events(
             trace_mock,
-            "free_claude_code.api.optimization.safety_classifier_no_thinking",
+            "free_claude_code.api.route.safety_classifier_policy",
         )
         == []
     )
@@ -460,7 +482,8 @@ async def test_messages_handler_keeps_existing_no_thinking_for_classifier() -> N
         model="claude-3-freecc-no-thinking/nvidia_nim/test-model",
         max_tokens=100,
         stream=True,
-        system=_CLASSIFIER_SYSTEM,
+        system=_LEGACY_CLASSIFIER_SYSTEM,
+        stop_sequences=["</block>"],
         messages=[Message(role="user", content=_CLASSIFIER_USER)],
     )
 
@@ -471,17 +494,85 @@ async def test_messages_handler_keeps_existing_no_thinking_for_classifier() -> N
 
     assert provider.preflight_calls[0][1] == ReasoningPolicy.off()
     assert provider.stream_kwargs[0]["reasoning"] == ReasoningPolicy.off()
+    assert provider.requests[0].stop_sequences is None
+    assert request.stop_sequences == ["</block>"]
     assert _trace_events(
-        trace_mock, "free_claude_code.api.optimization.safety_classifier_no_thinking"
+        trace_mock, "free_claude_code.api.route.safety_classifier_policy"
     ) == [
         {
             "stage": "routing",
-            "event": "free_claude_code.api.optimization.safety_classifier_no_thinking",
+            "event": "free_claude_code.api.route.safety_classifier_policy",
             "source": "api",
             "model": "claude-3-freecc-no-thinking/nvidia_nim/test-model",
-            "changed": False,
+            "classifier_stop_sequence": "</block>",
+            "reasoning_changed": False,
+            "stop_sequence_removed": True,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_messages_handler_forces_no_thinking_without_classifier_stop_hint() -> (
+    None
+):
+    provider = FakeProvider()
+    handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
+    request = MessagesRequest(
+        model="nvidia_nim/test-model",
+        max_tokens=100,
+        stream=True,
+        system=_CURRENT_CLASSIFIER_SYSTEM,
+        messages=[Message(role="user", content=_CLASSIFIER_USER)],
+    )
+
+    with patch("free_claude_code.api.handlers.messages.trace_event") as trace_mock:
+        response = await handler.create(request)
+        assert isinstance(response, StreamingResponse)
+        await _streaming_body_text(response)
+
+    assert provider.preflight_calls[0][1] == ReasoningPolicy.off()
+    assert provider.requests[0].stop_sequences is None
+    assert _trace_events(
+        trace_mock, "free_claude_code.api.route.safety_classifier_policy"
+    ) == [
+        {
+            "stage": "routing",
+            "event": "free_claude_code.api.route.safety_classifier_policy",
+            "source": "api",
+            "model": "nvidia_nim/test-model",
+            "classifier_stop_sequence": "</severity>",
+            "reasoning_changed": True,
+            "stop_sequence_removed": False,
+        }
+    ]
+
+
+@pytest.mark.asyncio
+async def test_messages_handler_preserves_unowned_classifier_stop_sequences() -> None:
+    provider = FakeProvider()
+    handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
+    original_stops = ["custom", "</severity>", "custom", "</severity>", "tail"]
+    request = MessagesRequest(
+        model="nvidia_nim/test-model",
+        max_tokens=100,
+        stream=True,
+        system=_CURRENT_CLASSIFIER_SYSTEM,
+        stop_sequences=original_stops,
+        messages=[Message(role="user", content=_CLASSIFIER_USER)],
+    )
+
+    response = await handler.create(request)
+    assert isinstance(response, StreamingResponse)
+    await _streaming_body_text(response)
+
+    assert provider.preflight_calls[0][1] == ReasoningPolicy.off()
+    assert provider.preflight_calls[0][0].stop_sequences == [
+        "custom",
+        "custom",
+        "tail",
+    ]
+    assert provider.requests[0].stop_sequences == ["custom", "custom", "tail"]
+    assert request.stop_sequences == original_stops
 
 
 @pytest.mark.asyncio
@@ -538,7 +629,7 @@ async def test_responses_handler_does_not_apply_safety_classifier_policy() -> No
             OpenAIResponsesRequest(
                 model="nvidia_nim/test-model",
                 input=_CLASSIFIER_USER,
-                instructions=_CLASSIFIER_SYSTEM,
+                instructions=_CURRENT_CLASSIFIER_SYSTEM,
             )
         )
 
@@ -550,7 +641,7 @@ async def test_responses_handler_does_not_apply_safety_classifier_policy() -> No
     assert (
         _trace_events(
             trace_mock,
-            "free_claude_code.api.optimization.safety_classifier_no_thinking",
+            "free_claude_code.api.route.safety_classifier_policy",
         )
         == []
     )

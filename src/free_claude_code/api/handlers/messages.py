@@ -7,7 +7,7 @@ from dataclasses import dataclass, replace
 from fastapi.responses import JSONResponse, Response
 from loguru import logger
 
-from free_claude_code.api.detection import is_safety_classifier_request
+from free_claude_code.api.detection import detect_safety_classifier_stop_sequence
 from free_claude_code.api.optimization_handlers import try_optimizations
 from free_claude_code.api.request_errors import (
     http_status_for_unexpected_api_exception,
@@ -270,19 +270,48 @@ class MessagesHandler:
     def _apply_message_routing_policies(
         self, routed: RoutedMessagesRequest
     ) -> RoutedMessagesRequest:
-        if not is_safety_classifier_request(routed.request):
+        classifier_stop_sequence = detect_safety_classifier_stop_sequence(
+            routed.request
+        )
+        if classifier_stop_sequence is None:
             return routed
-        changed = routed.reasoning.control is not ReasoningControl.OFF
+
+        reasoning_changed = routed.reasoning.control is not ReasoningControl.OFF
+        stop_sequences = routed.request.stop_sequences
+        remaining_stop_sequences = (
+            [
+                stop_sequence
+                for stop_sequence in stop_sequences
+                if stop_sequence != classifier_stop_sequence
+            ]
+            if stop_sequences is not None
+            else None
+        )
+        stop_sequence_removed = remaining_stop_sequences != stop_sequences
         trace_event(
             stage="routing",
-            event="free_claude_code.api.optimization.safety_classifier_no_thinking",
+            event="free_claude_code.api.route.safety_classifier_policy",
             source="api",
             model=routed.resolved.original_model,
-            changed=changed,
+            classifier_stop_sequence=classifier_stop_sequence,
+            reasoning_changed=reasoning_changed,
+            stop_sequence_removed=stop_sequence_removed,
         )
-        if not changed:
+        if not reasoning_changed and not stop_sequence_removed:
             return routed
-        return replace(routed, reasoning=ReasoningPolicy.off())
+
+        request = routed.request
+        if stop_sequence_removed:
+            request = request.model_copy(
+                update={"stop_sequences": remaining_stop_sequences or None}
+            )
+        return replace(
+            routed,
+            request=request,
+            reasoning=(
+                ReasoningPolicy.off() if reasoning_changed else routed.reasoning
+            ),
+        )
 
     def _run_message_intercepts(
         self, routed: RoutedMessagesRequest
