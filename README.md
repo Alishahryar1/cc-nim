@@ -21,7 +21,7 @@
 
 ## What You Get
 
-- **48 ToS-friendly providers. 1.3B+ free tokens every month. Zero ban-risk shortcuts.** Use free, paid, subscription, and local models from one searchable UI—without shared accounts, scraped sessions, client impersonation, quota evasion, or access-control bypasses.
+- **48 ToS-friendly providers. 1.3B+ free tokens every month.** Use free, paid, subscription, and local models from one searchable UI without putting your account at risk. FCC follows provider terms and removes integrations if they stop being allowed.
 - **5 coding agents. One model catalog.** Run Claude Code, Codex, Pi, OpenCode, or Cline with your FCC models.
 - **Up to 90% fewer terminal-output tokens.** Optional [RTK](https://github.com/rtk-ai/rtk) filters common command output, while five FCC optimizations handle quota probes, command-prefix detection, titles, suggestions, and filepaths without calling a provider.
 - **Terminal, desktop, IDE, or phone.** Work through native launchers, VS Code, Codex App, JetBrains, Discord, or Telegram.
