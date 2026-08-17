@@ -53,9 +53,7 @@ Windows PowerShell:
 & ([scriptblock]::Create((irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.ps1")))
 ```
 
-Re-run the same command whenever you want to update. You can review the installers before running them: [install.sh](scripts/install.sh) and [install.ps1](scripts/install.ps1).
-
-The installer asks which coding agents to install or verify. Choose at least one; skipped agents are left unchanged. It can also install and configure RTK globally for the selected agents; RTK is off by default.
+Re-run the same command to update. When prompted, choose at least one coding agent and optionally RTK. You can review the installers before running them: [install.sh](scripts/install.sh) and [install.ps1](scripts/install.ps1).
 
 ### 2. Start FCC
 
@@ -75,21 +73,9 @@ Run:
 fcc-server
 ```
 
-On Windows and macOS, FCC runs in the system tray or menu bar without opening a
-terminal. Use its menu to open Admin, check server status, restart, or quit. On
-Windows, left-clicking the tray icon opens Admin directly.
-
-To print the installed Free Claude Code version without starting the server,
-run `fcc-server --version`.
-
-When using `fcc-server`, keep the terminal open. The Admin UI opens in your
-browser after startup by default. Its address is also shown in the log:
-
-```text
-INFO:     Admin UI: http://127.0.0.1:8082/admin (local-only)
-```
-
-Use the port shown in your terminal if it differs from `8082`.
+FCC opens the Admin UI after starting. On Windows and macOS, use the tray or
+menu-bar icon to open Admin, restart, or quit. When using `fcc-server`, keep its
+terminal open.
 
 <a id="nvidia-nim-provider"></a>
 
@@ -101,9 +87,8 @@ Use the port shown in your terminal if it differs from `8082`.
 4. Leave `MODEL` on the default `nvidia_nim/nvidia/nemotron-3-super-120b-a12b`, or search the model dropdown and select another model.
 5. Click **Validate**, then **Apply**.
 
-FCC stores Admin settings in `~/.fcc/.env`. To require a bearer token on the
-proxy API, enable **Proxy Authentication** in Admin; disabling enforcement keeps
-the same token available to FCC launchers.
+To protect the local proxy with a bearer token, enable **Proxy Authentication**
+in Admin.
 
 <div align="center">
   <img src="assets/admin-page.png" alt="Free Claude Code Admin UI" width="700">
@@ -141,16 +126,11 @@ Cline:
 fcc-cline
 ```
 
-All five launchers use the current Admin UI settings. Use the agent's model picker to choose from the models FCC exposes. Normal CLI arguments still work, for example:
+All five launchers use the current Admin UI settings. Use the agent's model
+picker to choose from the models FCC exposes.
 
-```bash
-fcc-codex exec "hello"
-```
-
-`fcc-pi`, `fcc-opencode`, and `fcc-cline` configure FCC only for the launched
-process; your existing agent settings, sessions, credentials, and extensions
-remain unchanged. `fcc-cline` supports attached terminal sessions; run Cline's
-hub, schedule, connector, Zen, and sandbox-data workflows with ordinary `cline`.
+FCC launchers leave your existing agent settings, sessions, credentials, and
+extensions unchanged.
 
 <a id="model-picker"></a>
 
@@ -528,6 +508,8 @@ Restart `fcc-server`. In **Admin UI → Messaging → Voice**, enable voice note
 </details>
 
 ## Manage Your Installation
+
+Run `fcc-server --version` to check the installed version without starting FCC.
 
 ### Update
 
