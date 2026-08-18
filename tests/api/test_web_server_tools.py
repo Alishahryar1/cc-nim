@@ -24,7 +24,8 @@ from free_claude_code.api.web_tools.streaming import stream_web_server_tool_resp
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.application.routing import (
     ModelRouter,
-    ResolvedModel,
+    ProviderModelTarget,
+    ResolvedModelRoute,
     RoutedMessagesRequest,
 )
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
@@ -71,15 +72,19 @@ class FixedProviderModelRouter(ModelRouter):
         self, request: MessagesRequest
     ) -> RoutedMessagesRequest:
         provider_model = self._fixed_provider_model or request.model
-        resolved = ResolvedModel(
-            original_model=request.model,
+        target = ProviderModelTarget(
             provider_id=self._fixed_provider_id,
             provider_model=provider_model,
             provider_model_ref=f"{self._fixed_provider_id}/{provider_model}",
+        )
+        resolved = ResolvedModelRoute(
+            original_model=request.model,
+            primary=target,
+            fallbacks=(),
             reasoning_preference=ReasoningPreference.OFF,
         )
         routed = request.model_copy(deep=True)
-        routed.model = resolved.provider_model
+        routed.model = resolved.primary.provider_model
         return RoutedMessagesRequest(
             request=routed,
             resolved=resolved,

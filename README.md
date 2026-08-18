@@ -23,6 +23,7 @@
 
 - **48 ToS-friendly providers. 1.3B+ free tokens every month.** Use free, paid, subscription, and local models from one searchable UI without putting your account at risk. FCC follows provider terms and removes integrations if they stop being allowed.
 - **5 coding agents. One model catalog.** Run Claude Code, Codex, Pi, OpenCode, or Cline with your FCC models.
+- **Ordered model fallback for every client.** After a provider exhausts retryable failures, FCC can try your next configured model without restarting the turn.
 - **Up to 90% fewer terminal-output tokens.** Optional [RTK](https://github.com/rtk-ai/rtk) filters common command output, while five FCC optimizations handle quota probes, command-prefix detection, titles, suggestions, and filepaths without calling a provider.
 - **Terminal, desktop, IDE, or phone.** Work through native launchers, VS Code, Codex App, JetBrains, Discord, or Telegram.
 - **Voice notes in. Code out.** Talk to your agent using local Whisper or NVIDIA NIM transcription.
@@ -150,6 +151,10 @@ extensions unchanged.
 3. Search the `MODEL` dropdown and select a model. If the provider cannot list
    models, enter `<provider-id>/<exact-provider-model-id>` manually.
 4. Click **Validate**, then **Apply**.
+
+Optional: add an ordered **Fallback Models** list under **Model Config**. It
+applies to every connected client. A failed request may reach and consume usage
+from more than one provider before succeeding.
 
 <details>
 <summary><strong>Provider catalog</strong></summary>

@@ -91,7 +91,7 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "models",
         "model",
         settings_attr="model",
-        description="Fallback provider/model route for all Claude model names.",
+        description="Provider/model used when no tier-specific override applies.",
     ),
     ConfigFieldSpec(
         "MODEL_FABLE",
@@ -124,6 +124,18 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "optional_model",
         settings_attr="model_haiku",
         description="Select None to use the Default Model for Haiku requests.",
+    ),
+    ConfigFieldSpec(
+        "MODEL_FALLBACKS",
+        "Fallback Models",
+        "models",
+        "model_list",
+        settings_attr="model_fallbacks",
+        description=(
+            "Tried in order after the selected model exhausts retryable provider "
+            "failures. Applies to every client. One request may reach multiple "
+            "providers and consume usage at each."
+        ),
     ),
     ConfigFieldSpec(
         "REASONING_POLICY",

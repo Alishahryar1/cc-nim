@@ -584,10 +584,14 @@ function renderField(field) {
     });
   }
 
-  const control =
-    field.type === "model" || field.type === "optional_model"
-      ? new ModelCombobox(input, field).element
-      : input;
+  let control = input;
+  if (field.type === "model" || field.type === "optional_model") {
+    control = new ModelCombobox(input, field).element;
+  } else if (field.type === "model_list") {
+    const editor = new ModelListEditor(input, field);
+    label.htmlFor = editor.inputId;
+    control = editor.element;
+  }
   wrapper.append(label, control);
   if (field.secret && field.nullable && field.configured && !field.locked) {
     const removeButton = document.createElement("button");
@@ -641,6 +645,13 @@ function inputForField(field) {
     input.type = "text";
     input.value = field.value || (field.type === "optional_model" ? "None" : "");
     input.autocomplete = "off";
+    return input;
+  }
+
+  if (field.type === "model_list") {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.value = field.value || "";
     return input;
   }
 
@@ -836,6 +847,132 @@ class ModelCombobox {
     } else if (this.isOpen && event.key === "Tab") {
       this.close();
     }
+  }
+}
+
+class ModelListEditor {
+  constructor(input, field) {
+    this.input = input;
+    this.field = field;
+    this.values = input.value
+      ? input.value.split(",").map((value) => value.trim()).filter(Boolean)
+      : [];
+    this.inputId = `field-${field.key}-add`;
+
+    this.element = document.createElement("div");
+    this.element.className = "model-list-editor";
+
+    const addRow = document.createElement("div");
+    addRow.className = "model-list-add";
+    this.addInput = document.createElement("input");
+    this.addInput.id = this.inputId;
+    this.addInput.type = "text";
+    this.addInput.autocomplete = "off";
+    this.addInput.placeholder = "provider/model";
+    this.addInput.disabled = field.locked;
+    const addCombobox = new ModelCombobox(this.addInput, {
+      ...field,
+      key: `${field.key}-add`,
+      label: "fallback model",
+      type: "model",
+    });
+
+    this.addButton = document.createElement("button");
+    this.addButton.type = "button";
+    this.addButton.className = "secondary-button";
+    this.addButton.textContent = "Add";
+    this.addButton.disabled = field.locked;
+    this.addButton.addEventListener("click", () => this.add());
+    addRow.append(addCombobox.element, this.addButton);
+
+    this.rows = document.createElement("div");
+    this.rows.className = "model-list-rows";
+    this.element.append(input, addRow, this.rows);
+    this.renderRows();
+  }
+
+  add() {
+    const value = this.addInput.value.trim();
+    if (!value) {
+      showMessage("Enter a full provider/model fallback.", "error");
+      return;
+    }
+    if (this.values.includes(value)) {
+      showMessage("That fallback model is already in the list.", "error");
+      return;
+    }
+    this.values.push(value);
+    this.addInput.value = "";
+    showMessage("");
+    this.sync();
+  }
+
+  move(index, offset) {
+    const destination = index + offset;
+    if (destination < 0 || destination >= this.values.length) return;
+    [this.values[index], this.values[destination]] = [
+      this.values[destination],
+      this.values[index],
+    ];
+    this.sync();
+  }
+
+  remove(index) {
+    this.values.splice(index, 1);
+    this.sync();
+  }
+
+  sync() {
+    this.input.value = this.values.join(",");
+    this.input.dataset.remove = "false";
+    this.input.dispatchEvent(new Event("input", { bubbles: true }));
+    this.renderRows();
+  }
+
+  renderRows() {
+    this.rows.innerHTML = "";
+    if (this.values.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "model-list-empty";
+      empty.textContent = "No fallback models configured.";
+      this.rows.appendChild(empty);
+      return;
+    }
+
+    this.values.forEach((value, index) => {
+      const row = document.createElement("div");
+      row.className = "model-list-row";
+
+      const model = document.createElement("span");
+      model.className = "model-list-value";
+      model.textContent = value;
+
+      const up = this.actionButton("Move up", `Move ${value} up`, () =>
+        this.move(index, -1),
+      );
+      up.disabled = this.field.locked || index === 0;
+      const down = this.actionButton("Move down", `Move ${value} down`, () =>
+        this.move(index, 1),
+      );
+      down.disabled = this.field.locked || index === this.values.length - 1;
+      const remove = this.actionButton("Remove", `Remove ${value}`, () =>
+        this.remove(index),
+      );
+      remove.disabled = this.field.locked;
+
+      row.append(model, up, down, remove);
+      this.rows.appendChild(row);
+    });
+  }
+
+  actionButton(text, label, action) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ghost-button model-list-action";
+    button.textContent = text;
+    button.setAttribute("aria-label", label);
+    button.addEventListener("click", action);
+    return button;
   }
 }
 

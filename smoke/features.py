@@ -163,6 +163,20 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         "configured mixed-provider mappings must resolve consistently",
     ),
     FeatureCoverage(
+        "model_fallback",
+        "Retryable pre-response failures can move through an ordered model list",
+        (
+            "tests/application/test_execution.py",
+            "tests/api/test_model_fallback.py",
+            "tests/config/test_config.py",
+        ),
+        (),
+        ("test_model_fallback_e2e",),
+        ("api",),
+        (),
+        "always runnable with isolated controlled providers",
+    ),
+    FeatureCoverage(
         "thinking_token_support",
         "Thinking history, adaptive thinking, and redacted blocks are accepted",
         (

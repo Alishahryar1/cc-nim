@@ -12,6 +12,7 @@ from free_claude_code.api.optimization_handlers import try_optimizations
 from free_claude_code.api.request_errors import (
     http_status_for_unexpected_api_exception,
     log_unexpected_api_exception,
+    ordinary_application_error_response,
     require_non_empty_messages,
     unexpected_http_exception,
 )
@@ -152,6 +153,8 @@ class MessagesHandler:
                 raise
             except asyncio.CancelledError:
                 raise
+            except ApplicationError:
+                raise
             except ExecutionFailure as exc:
                 return self._execution_failure_response(exc, request_id=request_id)
             except BaseExceptionGroup as exc:
@@ -200,6 +203,12 @@ class MessagesHandler:
     def _pre_start_error_response(
         self, exc: BaseException, *, request_id: str
     ) -> Response:
+        if isinstance(exc, ApplicationError):
+            return ordinary_application_error_response(
+                exc,
+                wire_api="messages",
+                request_id=request_id,
+            )
         failure = find_execution_failure(exc)
         if failure is not None:
             return self._execution_failure_response(failure, request_id=request_id)

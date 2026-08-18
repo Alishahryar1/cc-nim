@@ -34,6 +34,7 @@ def _set_home(monkeypatch, tmp_path: Path) -> None:
 def _clear_process_config(monkeypatch) -> None:
     for key in (
         "MODEL",
+        "MODEL_FALLBACKS",
         "NVIDIA_NIM_API_KEY",
         "HUGGINGFACE_API_KEY",
         "OPENROUTER_API_KEY",
@@ -442,7 +443,14 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
         field["key"]: field["type"]
         for field in body["fields"]
         if field["key"]
-        in {"MODEL", "MODEL_FABLE", "MODEL_OPUS", "MODEL_SONNET", "MODEL_HAIKU"}
+        in {
+            "MODEL",
+            "MODEL_FABLE",
+            "MODEL_OPUS",
+            "MODEL_SONNET",
+            "MODEL_HAIKU",
+            "MODEL_FALLBACKS",
+        }
     }
     assert model_field_types == {
         "MODEL": "model",
@@ -450,7 +458,17 @@ def test_admin_config_masks_secrets_and_exposes_manifest(monkeypatch, tmp_path):
         "MODEL_OPUS": "optional_model",
         "MODEL_SONNET": "optional_model",
         "MODEL_HAIKU": "optional_model",
+        "MODEL_FALLBACKS": "model_list",
     }
+    fallback_field = next(
+        field for field in body["fields"] if field["key"] == "MODEL_FALLBACKS"
+    )
+    assert fallback_field["label"] == "Fallback Models"
+    assert fallback_field["value"] is None
+    assert fallback_field["nullable"] is True
+    assert fallback_field["restart_required"] is False
+    assert "every client" in fallback_field["description"]
+    assert "multiple providers" in fallback_field["description"]
     reasoning_policy = next(
         field for field in body["fields"] if field["key"] == "REASONING_POLICY"
     )
@@ -626,6 +644,56 @@ def test_admin_apply_hot_publishes_provider_progress_timeout(monkeypatch, tmp_pa
     assert "PROVIDER_PROGRESS_TIMEOUT=900" in managed_env.read_text(encoding="utf-8")
 
 
+def test_admin_apply_hot_publishes_ordered_model_fallbacks(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+    value = "open_router/vendor/model-a,groq/vendor/model-b"
+
+    response = _local_client(app).post(
+        "/admin/api/config/apply",
+        json={"values": {"MODEL_FALLBACKS": value}},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["applied"] is True
+    assert body["restart"]["required"] is False
+    assert provider_manager_for_app(app).current_settings().model_fallbacks == (
+        "open_router/vendor/model-a",
+        "groq/vendor/model-b",
+    )
+    managed_env = tmp_path / ".fcc" / ".env"
+    assert f"MODEL_FALLBACKS={value}" in managed_env.read_text(encoding="utf-8")
+
+    loaded = _local_client(app).get("/admin/api/config").json()
+    field = next(item for item in loaded["fields"] if item["key"] == "MODEL_FALLBACKS")
+    assert field["value"] == value
+    assert field["source"] == "managed_env"
+
+
+def test_admin_apply_null_removes_model_fallbacks(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    env_file = tmp_path / ".fcc" / ".env"
+    env_file.parent.mkdir(parents=True)
+    env_file.write_text(
+        "FCC_CONFIG_SCHEMA=1\nMODEL_FALLBACKS=open_router/vendor/model-a\n",
+        encoding="utf-8",
+    )
+    app = create_test_app()
+
+    response = _local_client(app).post(
+        "/admin/api/config/apply",
+        json={"values": {"MODEL_FALLBACKS": None}},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["applied"] is True
+    assert provider_manager_for_app(app).current_settings().model_fallbacks is None
+    assert "MODEL_FALLBACKS=" not in env_file.read_text(encoding="utf-8")
+
+
 def test_admin_rejects_invalid_provider_progress_timeout_without_writing(
     monkeypatch,
     tmp_path,
@@ -730,6 +798,23 @@ def test_admin_validate_rejects_bad_model_shape(monkeypatch, tmp_path):
     body = response.json()
     assert body["valid"] is False
     assert any("provider type" in error for error in body["errors"])
+
+
+def test_admin_validate_rejects_duplicate_model_fallbacks(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+    duplicate = "groq/vendor/model,groq/vendor/model"
+
+    response = _local_client(app).post(
+        "/admin/api/config/validate",
+        json={"values": {"MODEL_FALLBACKS": duplicate}},
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["valid"] is False
+    assert any("duplicate" in error.lower() for error in body["errors"])
 
 
 def test_admin_apply_writes_complete_managed_env_and_masks_preview(
@@ -1284,6 +1369,29 @@ def test_admin_process_env_values_are_locked_and_not_written(monkeypatch, tmp_pa
     assert response.status_code == 200
     env_file = tmp_path / ".fcc" / ".env"
     assert "deepseek/managed-model" not in env_file.read_text("utf-8")
+
+
+def test_admin_process_model_fallbacks_are_locked_and_not_written(
+    monkeypatch, tmp_path
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    monkeypatch.setenv("MODEL_FALLBACKS", "open_router/process-model")
+    app = create_test_app()
+
+    config = _local_client(app).get("/admin/api/config").json()
+    field = next(item for item in config["fields"] if item["key"] == "MODEL_FALLBACKS")
+    assert field["locked"] is True
+    assert field["source"] == "process"
+
+    response = _local_client(app).post(
+        "/admin/api/config/apply",
+        json={"values": {"MODEL_FALLBACKS": "groq/managed-model"}},
+    )
+
+    assert response.status_code == 200
+    env_file = tmp_path / ".fcc" / ".env"
+    assert "MODEL_FALLBACKS=" not in env_file.read_text("utf-8")
 
 
 def test_admin_never_reads_arbitrary_current_directory_env(monkeypatch, tmp_path):

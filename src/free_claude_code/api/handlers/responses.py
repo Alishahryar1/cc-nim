@@ -5,6 +5,7 @@ from fastapi.responses import JSONResponse
 from free_claude_code.api.request_errors import (
     http_status_for_unexpected_api_exception,
     log_unexpected_api_exception,
+    ordinary_application_error_response,
     require_non_empty_messages,
 )
 from free_claude_code.api.request_ids import new_request_id
@@ -120,6 +121,12 @@ class ResponsesHandler:
     def _pre_start_error_response(
         self, exc: BaseException, *, request_id: str
     ) -> JSONResponse:
+        if isinstance(exc, ApplicationError):
+            return ordinary_application_error_response(
+                exc,
+                wire_api="responses",
+                request_id=request_id,
+            )
         failure = find_execution_failure(exc)
         if failure is not None:
             return self._execution_failure_response(failure, request_id=request_id)

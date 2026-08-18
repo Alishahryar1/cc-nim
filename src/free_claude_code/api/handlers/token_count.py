@@ -55,9 +55,9 @@ class TokenCountHandler:
                     source="api",
                     request_id=request_id,
                     kind="count_tokens",
-                    provider_id=routed.resolved.provider_id,
-                    provider_model=routed.resolved.provider_model,
-                    provider_model_ref=routed.resolved.provider_model_ref,
+                    provider_id=routed.resolved.primary.provider_id,
+                    provider_model=routed.resolved.primary.provider_model,
+                    provider_model_ref=routed.resolved.primary.provider_model_ref,
                     gateway_model=routed.resolved.original_model,
                 )
                 request_snapshot = anthropic_request_snapshot(routed.request)

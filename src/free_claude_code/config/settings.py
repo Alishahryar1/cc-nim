@@ -29,6 +29,18 @@ def _empty_to_none(value: object) -> object:
     return value
 
 
+def _parse_model_fallbacks(value: object) -> object:
+    if value is None:
+        return None
+    if isinstance(value, str):
+        if not value.strip():
+            return None
+        return tuple(part.strip() for part in value.split(","))
+    if isinstance(value, list | tuple) and not value:
+        return None
+    return value
+
+
 NonEmptyString = Annotated[
     str,
     StringConstraints(strip_whitespace=True, min_length=1),
@@ -37,6 +49,26 @@ OptionalNonEmptyString = Annotated[
     NonEmptyString | None,
     BeforeValidator(_empty_to_none),
 ]
+OptionalModelFallbacks = Annotated[
+    tuple[NonEmptyString, ...] | None,
+    BeforeValidator(_parse_model_fallbacks),
+]
+
+
+def _validate_model_ref(value: str) -> str:
+    provider, separator, model = value.partition("/")
+    if not separator or not provider:
+        raise ValueError(
+            "Model must be prefixed with provider type. "
+            f"Valid providers: {', '.join(SUPPORTED_PROVIDER_IDS)}. "
+            "Format: provider_type/model/name"
+        )
+    if provider not in SUPPORTED_PROVIDER_IDS:
+        supported = ", ".join(f"'{item}'" for item in SUPPORTED_PROVIDER_IDS)
+        raise ValueError(f"Invalid provider: '{provider}'. Supported: {supported}")
+    if not model:
+        raise ValueError("Model reference must include a non-empty model suffix.")
+    return value
 
 
 class Settings(BaseModel):
@@ -319,7 +351,7 @@ class Settings(BaseModel):
         validation_alias="MODEL",
     )
 
-    # Per-model overrides (optional, falls back to MODEL)
+    # Per-model overrides (optional, use MODEL when unset)
     # Each can use a different provider
     model_fable: OptionalNonEmptyString = Field(
         default=None, validation_alias="MODEL_FABLE"
@@ -332,6 +364,10 @@ class Settings(BaseModel):
     )
     model_haiku: OptionalNonEmptyString = Field(
         default=None, validation_alias="MODEL_HAIKU"
+    )
+    model_fallbacks: OptionalModelFallbacks = Field(
+        default=None,
+        validation_alias="MODEL_FALLBACKS",
     )
 
     # ==================== Per-Provider Proxy ====================
@@ -727,17 +763,19 @@ class Settings(BaseModel):
     def validate_model_format(cls, v: str | None) -> str | None:
         if v is None:
             return None
-        if "/" not in v:
-            raise ValueError(
-                f"Model must be prefixed with provider type. "
-                f"Valid providers: {', '.join(SUPPORTED_PROVIDER_IDS)}. "
-                f"Format: provider_type/model/name"
-            )
-        provider = v.split("/", 1)[0]
-        if provider not in SUPPORTED_PROVIDER_IDS:
-            supported = ", ".join(f"'{p}'" for p in SUPPORTED_PROVIDER_IDS)
-            raise ValueError(f"Invalid provider: '{provider}'. Supported: {supported}")
-        return v
+        return _validate_model_ref(v)
+
+    @field_validator("model_fallbacks")
+    @classmethod
+    def validate_model_fallbacks(
+        cls, value: tuple[str, ...] | None
+    ) -> tuple[str, ...] | None:
+        if value is None:
+            return None
+        validated = tuple(_validate_model_ref(model_ref) for model_ref in value)
+        if len(validated) != len(set(validated)):
+            raise ValueError("MODEL_FALLBACKS must not contain duplicate model refs.")
+        return validated
 
     @model_validator(mode="after")
     def check_nvidia_nim_api_key(self) -> Settings:

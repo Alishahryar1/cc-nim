@@ -453,16 +453,19 @@ server tools, then streams Anthropic SSE. `ResponsesHandler` owns streaming-only
 OpenAI Responses validation and conversion for Codex clients. `TokenCountHandler`
 owns Anthropic token counting. Shared provider execution lives in
 [application/execution.py](src/free_claude_code/application/execution.py). `ProviderExecutor` resolves the narrow
-consumer-owned `ProviderPort`, synchronously preflights the upstream request,
-emits trace events, counts input tokens, and returns an Anthropic SSE iterator.
+consumer-owned `ProviderPort`, synchronously preflights the primary upstream
+request, emits trace events, counts input tokens, and returns an Anthropic SSE
+iterator. It also owns application-level model fallback after provider-owned
+retries are exhausted; providers do not select alternate models.
 It receives only a provider resolver and the few scalar collaborators it needs;
 it does not depend on FastAPI, provider implementations, or the full settings
 object. The executor also owns FCC's provider-progress deadline: every wait for
 the next non-empty provider chunk is limited by the Settings-owned
 `PROVIDER_PROGRESS_TIMEOUT`, which defaults to 600 seconds and is projected into
-the executor as a validated scalar. Admission, retries, backoff, and recovery
-before a chunk all consume that same wait; a non-empty emitted chunk renews the
-next window, while empty keepalives do not. The timeout context ends before the
+the executor as a validated scalar. Admission, retries, backoff, recovery, and
+any pre-output fallback transitions all consume that same wait; switching
+candidates never resets it. A non-empty emitted chunk renews the next window,
+while empty keepalives do not. The timeout context ends before the
 executor yields, so downstream response backpressure is not mistaken for
 stalled provider work and cannot receive cancellation from the generator's
 timer. Expiry becomes a protocol-neutral, non-retryable 504 `ExecutionFailure`;
@@ -558,8 +561,8 @@ It supports two forms:
 - Gateway model IDs decoded by [core/gateway_model_ids.py](src/free_claude_code/core/gateway_model_ids.py).
 
 If the incoming model is not direct, `ModelRouter` maps it by Claude tier. Names
-containing `fable`, `opus`, `sonnet`, or `haiku` use the matching tier override when set,
-otherwise they fall back to `MODEL`.
+containing `fable`, `opus`, `sonnet`, or `haiku` use the matching tier override
+when set, otherwise they use the Default Model in `MODEL`.
 
 The router also selects the applicable reasoning preference. Direct provider
 refs use the root policy; Claude tier routes use a non-inherited tier override
@@ -567,16 +570,41 @@ or the root fallback; the no-thinking gateway variant forces `off`.
 [application/reasoning.py](src/free_claude_code/application/reasoning.py) then
 combines that preference with the concrete client request exactly once. The
 resulting `ReasoningPolicy` preserves independent control, named effort, and an
-exact client token budget without guessing provider behavior. `ResolvedModel`
-owns the selected route and preference; `RoutedMessagesRequest` owns the final
-request-scoped policy passed to execution.
+exact client token budget without guessing provider behavior.
+`ResolvedModelRoute` owns the public model, one canonical primary
+`ProviderModelTarget`, the ordered canonical targets from `MODEL_FALLBACKS`, and
+the reasoning preference. It omits only a fallback exactly equal to the resolved
+primary; another model on the same provider remains valid.
+`RoutedMessagesRequest` owns the final request-scoped policy passed to execution.
 
 Routing keeps model identity split at the application boundary. The routed
 request carries the provider model sent upstream, while
-`ResolvedModel.original_model` remains the stable gateway model exposed in
+`ResolvedModelRoute.original_model` remains the stable gateway model exposed in
 Anthropic responses and traces. `ProviderExecutor` passes both identities
 explicitly; providers, local optimizations, and local server tools must never
 publish the private upstream model as the response model.
+
+Fallback execution is a bounded first-frame state machine in
+[application/execution.py](src/free_claude_code/application/execution.py). The
+executor opens the primary first and resolves each later provider lazily. It
+advances only when the current candidate raises a retryable `ExecutionFailure`
+before emitting any non-empty protocol chunk and another configured target
+exists. It closes the abandoned iterator before resolving the next provider and
+deep-copies the original routed request for every candidate, changing only the
+upstream model. Authentication, permission, billing, invalid request, context
+overflow, deterministic preflight, unexpected exceptions, empty completion,
+timeouts, cancellation, and disconnect do not advance. Once any protocol frame
+is emitted, the candidate is committed and existing terminal-error behavior is
+authoritative; this prevents duplicate lifecycles and output. Final exhaustion
+re-raises the last exact failure.
+
+Every candidate keeps the original request ID, public response model, input
+token count, reasoning policy, messages, system prompt, tools, and generation
+metadata. One request-generation lease therefore snapshots both the primary and
+fallback list: Admin hot apply affects only requests that acquire the next
+generation. Safe `model_fallback.started` and `model_fallback.selected` trace
+events expose canonical route refs, candidate positions, failure kind, status,
+wire API, and generation without prompt or raw upstream error content.
 
 `GET /v1/models` advertises:
 
@@ -589,8 +617,8 @@ Provider model discovery and optional thinking metadata live in the
 application-level catalog owned by `ProviderRuntimeManager`.
 [providers/runtime/discovery.py](src/free_claude_code/providers/runtime/discovery.py)
 is the sole owner of provider model-list queries and cache population. Startup
-synchronously warms the providers referenced by model routing before clients can
-perform their one-time model fetch, then a background pass fills the remaining
+synchronously warms the providers referenced by primary and fallback routing
+before clients can perform their one-time model fetch, then a background pass fills the remaining
 configured provider catalogs without querying successful warm-ups again.
 Discovery is an adapter operation, not an assumption that every upstream has an
 OpenAI `/models` route. For example, Vertex translates that operation to

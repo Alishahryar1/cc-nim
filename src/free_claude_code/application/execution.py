@@ -23,7 +23,7 @@ from free_claude_code.core.trace import (
 )
 
 from .ports import ProviderResolver
-from .routing import RoutedMessagesRequest
+from .routing import ProviderModelTarget, RoutedMessagesRequest
 
 TokenCounter = Callable[
     [list[Message], str | list[SystemContent] | None, list[Tool] | None],
@@ -77,6 +77,69 @@ class ProviderExecutor:
             retryable=False,
         )
 
+    def _trace_fallback_started(
+        self,
+        *,
+        request_id: str,
+        wire_api: WireApi,
+        failed: ProviderModelTarget,
+        selected: ProviderModelTarget,
+        failure: ExecutionFailure,
+        candidate_index: int,
+        candidate_count: int,
+    ) -> None:
+        fields: dict[str, object] = {
+            "stage": "execution",
+            "event": "free_claude_code.model_fallback.started",
+            "source": "application",
+            "request_id": request_id,
+            "wire_api": wire_api,
+            "from_provider_model_ref": failed.provider_model_ref,
+            "to_provider_model_ref": selected.provider_model_ref,
+            "candidate_index": candidate_index,
+            "candidate_count": candidate_count,
+            "failure_kind": failure.kind.value,
+            "status_code": failure.status_code,
+            "provider_retryable": True,
+        }
+        if self._generation_id is not None:
+            fields["generation_id"] = self._generation_id
+        trace_event(**fields)
+        logger.info(
+            "Model fallback: request_id={} from={} to={} candidate={}/{} "
+            "failure_kind={} status_code={}",
+            request_id,
+            failed.provider_model_ref,
+            selected.provider_model_ref,
+            candidate_index,
+            candidate_count,
+            failure.kind.value,
+            failure.status_code,
+        )
+
+    def _trace_fallback_selected(
+        self,
+        *,
+        request_id: str,
+        wire_api: WireApi,
+        selected: ProviderModelTarget,
+        candidate_index: int,
+        candidate_count: int,
+    ) -> None:
+        fields: dict[str, object] = {
+            "stage": "execution",
+            "event": "free_claude_code.model_fallback.selected",
+            "source": "application",
+            "request_id": request_id,
+            "wire_api": wire_api,
+            "selected_provider_model_ref": selected.provider_model_ref,
+            "candidate_index": candidate_index,
+            "candidate_count": candidate_count,
+        }
+        if self._generation_id is not None:
+            fields["generation_id"] = self._generation_id
+        trace_event(**fields)
+
     def stream(
         self,
         routed: RoutedMessagesRequest,
@@ -87,11 +150,14 @@ class ProviderExecutor:
         request_id: str,
     ) -> AsyncIterator[str]:
         """Preflight synchronously, then return the traced provider stream."""
-        provider = self._provider_resolver(routed.resolved.provider_id)
-        provider.preflight_stream(
-            routed.request,
+        primary = routed.resolved.primary
+        primary_provider = self._provider_resolver(primary.provider_id)
+        primary_request = routed.request.model_copy(deep=True)
+        primary_provider.preflight_stream(
+            primary_request,
             reasoning=routed.reasoning,
         )
+        candidates = (primary, *routed.resolved.fallbacks)
 
         gateway_model = routed.resolved.original_model
         route_trace: dict[str, object] = {
@@ -99,9 +165,10 @@ class ProviderExecutor:
             "event": "free_claude_code.api.route.resolved",
             "source": "api",
             "request_id": request_id,
-            "provider_id": routed.resolved.provider_id,
-            "provider_model": routed.resolved.provider_model,
-            "provider_model_ref": routed.resolved.provider_model_ref,
+            "provider_id": primary.provider_id,
+            "provider_model": primary.provider_model,
+            "provider_model_ref": primary.provider_model_ref,
+            "fallback_count": len(routed.resolved.fallbacks),
             "gateway_model": gateway_model,
             "reasoning_control": routed.reasoning.control.value,
             "reasoning_effort": (
@@ -142,53 +209,106 @@ class ProviderExecutor:
         )
 
         async def provider_body() -> AsyncIterator[str]:
-            provider_stream: AsyncIterator[str] | None = None
-            try:
-                provider_stream = provider.stream_response(
-                    routed.request,
-                    input_tokens=input_tokens,
-                    request_id=request_id,
-                    response_model=gateway_model,
-                    reasoning=routed.reasoning,
+            loop = asyncio.get_running_loop()
+            progress_deadline = loop.time() + self._progress_timeout_seconds
+            for index, target in enumerate(candidates):
+                provider = (
+                    primary_provider
+                    if index == 0
+                    else self._provider_resolver(target.provider_id)
                 )
-                loop = asyncio.get_running_loop()
-                progress_deadline = loop.time() + self._progress_timeout_seconds
-                while True:
-                    if loop.time() >= progress_deadline:
-                        raise self._progress_timeout_failure(
-                            request_id=request_id,
-                            provider_id=routed.resolved.provider_id,
-                        )
-                    progress_timeout = asyncio.timeout_at(progress_deadline)
-                    try:
-                        async with progress_timeout:
-                            chunk = await anext(provider_stream)
-                    except StopAsyncIteration:
-                        break
-                    except TimeoutError as exc:
-                        if not progress_timeout.expired():
-                            raise
-                        raise self._progress_timeout_failure(
-                            request_id=request_id,
-                            provider_id=routed.resolved.provider_id,
-                        ) from exc
-                    if not chunk:
-                        await asyncio.sleep(0)
-                        continue
-                    yield chunk
-                    progress_deadline = loop.time() + self._progress_timeout_seconds
-            finally:
-                if provider_stream is not None:
-                    await close_stream_input(
-                        provider_stream,
-                        owner="provider_executor",
-                        source="api",
-                        preserved_error=sys.exception(),
+                candidate_request = (
+                    primary_request
+                    if index == 0
+                    else routed.request.model_copy(
+                        update={"model": target.provider_model},
+                        deep=True,
                     )
+                )
+                if index > 0:
+                    provider.preflight_stream(
+                        candidate_request,
+                        reasoning=routed.reasoning,
+                    )
+
+                provider_stream: AsyncIterator[str] | None = None
+                candidate_committed = False
+                advance_failure: ExecutionFailure | None = None
+                try:
+                    provider_stream = provider.stream_response(
+                        candidate_request,
+                        input_tokens=input_tokens,
+                        request_id=request_id,
+                        response_model=gateway_model,
+                        reasoning=routed.reasoning,
+                    )
+                    while True:
+                        if loop.time() >= progress_deadline:
+                            raise self._progress_timeout_failure(
+                                request_id=request_id,
+                                provider_id=target.provider_id,
+                            )
+                        progress_timeout = asyncio.timeout_at(progress_deadline)
+                        try:
+                            async with progress_timeout:
+                                chunk = await anext(provider_stream)
+                        except StopAsyncIteration:
+                            break
+                        except TimeoutError as exc:
+                            if not progress_timeout.expired():
+                                raise
+                            raise self._progress_timeout_failure(
+                                request_id=request_id,
+                                provider_id=target.provider_id,
+                            ) from exc
+                        if not chunk:
+                            await asyncio.sleep(0)
+                            continue
+                        if not candidate_committed:
+                            candidate_committed = True
+                            if index > 0:
+                                self._trace_fallback_selected(
+                                    request_id=request_id,
+                                    wire_api=wire_api,
+                                    selected=target,
+                                    candidate_index=index + 1,
+                                    candidate_count=len(candidates),
+                                )
+                        yield chunk
+                        progress_deadline = loop.time() + self._progress_timeout_seconds
+                except ExecutionFailure as failure:
+                    if (
+                        candidate_committed
+                        or not failure.retryable
+                        or index + 1 >= len(candidates)
+                    ):
+                        raise
+                    advance_failure = failure
+                finally:
+                    if provider_stream is not None:
+                        await close_stream_input(
+                            provider_stream,
+                            owner="provider_executor",
+                            source="api",
+                            preserved_error=sys.exception(),
+                        )
+
+                if advance_failure is None:
+                    return
+                next_target = candidates[index + 1]
+                self._trace_fallback_started(
+                    request_id=request_id,
+                    wire_api=wire_api,
+                    failed=target,
+                    selected=next_target,
+                    failure=advance_failure,
+                    candidate_index=index + 2,
+                    candidate_count=len(candidates),
+                )
 
         stream_trace: dict[str, object] = {
             "request_id": request_id,
-            "provider_id": routed.resolved.provider_id,
+            "initial_provider_id": primary.provider_id,
             "gateway_model": gateway_model,
         }
         if self._generation_id is not None:

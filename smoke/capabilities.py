@@ -146,6 +146,21 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
     ),
     CapabilityContract(
         "provider_routing",
+        "retry_exhaustion_fallback",
+        "model_fallback",
+        "free_claude_code.application.execution.ProviderExecutor",
+        "resolved primary plus ordered MODEL_FALLBACKS route plan",
+        "one protocol lifecycle from the first candidate that emits a frame",
+        "last exact failure, or no transition after commit/cancellation/nonretryable error",
+        (
+            "tests/application/test_execution.py",
+            "tests/api/test_model_fallback.py",
+            "tests/config/test_config.py",
+        ),
+        ("test_model_fallback_e2e",),
+    ),
+    CapabilityContract(
+        "provider_routing",
         "provider_runtime_config",
         "provider_proxy_timeout_config",
         "free_claude_code.providers.runtime.ProviderRuntime",

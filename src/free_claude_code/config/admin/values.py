@@ -25,6 +25,8 @@ def normalize_for_env(value: object) -> str | None:
         return "true" if value else "false"
     if isinstance(value, Enum):
         return str(value.value)
+    if isinstance(value, tuple) and all(isinstance(item, str) for item in value):
+        return ",".join(value)
     return str(value).strip()
 
 

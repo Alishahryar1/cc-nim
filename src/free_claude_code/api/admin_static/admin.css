@@ -611,6 +611,59 @@ textarea:focus-visible,
   line-height: 1.4;
 }
 
+.field[data-key="MODEL_FALLBACKS"] {
+  grid-column: 1 / -1;
+}
+
+.model-list-editor,
+.model-list-rows {
+  display: grid;
+  gap: 8px;
+}
+
+.model-list-add {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  gap: 8px;
+  align-items: start;
+}
+
+.model-list-row {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto auto auto;
+  gap: 4px;
+  align-items: center;
+  min-height: 44px;
+  padding: 6px 8px 6px 12px;
+  border: 1px solid var(--line);
+  border-radius: var(--radius-md);
+  background: var(--panel-strong);
+}
+
+.model-list-value {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  color: var(--text-strong);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+  font-size: 13px;
+}
+
+.model-list-action {
+  min-height: 32px;
+  padding: 4px 8px;
+}
+
+.model-list-editor button:disabled {
+  cursor: not-allowed;
+  opacity: 0.45;
+}
+
+.model-list-empty {
+  padding: 8px 2px;
+  color: var(--muted);
+  font-size: 13px;
+}
+
 .field input:focus,
 .field select:focus,
 .field textarea:focus {
@@ -829,6 +882,14 @@ textarea:focus-visible,
   
   .field-grid {
     grid-template-columns: 1fr;
+  }
+
+  .model-list-add {
+    grid-template-columns: 1fr;
+  }
+
+  .model-list-row {
+    grid-template-columns: 1fr repeat(3, auto);
   }
 
   .action-meta {

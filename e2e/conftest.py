@@ -104,6 +104,7 @@ def _close_manager(manager: ProviderRuntimeManager) -> None:
 
 @pytest.fixture
 def admin_base_url(
+    request: pytest.FixtureRequest,
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> Iterator[str]:
@@ -124,6 +125,8 @@ def admin_base_url(
     monkeypatch.setenv("FCC_OPEN_BROWSER", "false")
     monkeypatch.setenv("PROXY_AUTH_ENABLED", "false")
     monkeypatch.setenv("ANTHROPIC_AUTH_TOKEN", "e2e-proxy-token")
+    for key, value in getattr(request, "param", {}).items():
+        monkeypatch.setenv(key, value)
     monkeypatch.setattr(paths, "config_dir_path", lambda: config_dir)
     monkeypatch.setattr(env_migrations, "legacy_env_paths", lambda: ())
     monkeypatch.setattr(env_migrations, "verified_checkout_env_path", lambda: None)

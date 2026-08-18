@@ -197,6 +197,42 @@ def test_optional_strings_share_one_normalization_rule() -> None:
     assert settings.allowed_dir is None
 
 
+@pytest.mark.parametrize("value", [None, "", "   ", (), []])
+def test_model_fallbacks_empty_values_disable_fallback(value: object) -> None:
+    settings = Settings.model_validate({"MODEL_FALLBACKS": value})
+
+    assert settings.model_fallbacks is None
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "open_router/vendor/model-a, groq/vendor/model-b ",
+        ("open_router/vendor/model-a", " groq/vendor/model-b "),
+        ["open_router/vendor/model-a", "groq/vendor/model-b"],
+    ],
+)
+def test_model_fallbacks_preserve_order_and_trim_members(value: object) -> None:
+    settings = Settings.model_validate({"MODEL_FALLBACKS": value})
+
+    assert settings.model_fallbacks == (
+        "open_router/vendor/model-a",
+        "groq/vendor/model-b",
+    )
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        "open_router/vendor/model-a,,groq/vendor/model-b",
+        "open_router/vendor/model-a,open_router/vendor/model-a",
+    ],
+)
+def test_model_fallbacks_reject_blank_and_duplicate_members(value: str) -> None:
+    with pytest.raises(ValidationError):
+        Settings.model_validate({"MODEL_FALLBACKS": value})
+
+
 @pytest.mark.parametrize(
     "field",
     ["MODEL", "HOST", "WHISPER_MODEL", "LOG_LEVEL", "ANTHROPIC_AUTH_TOKEN"],
@@ -213,12 +249,21 @@ def test_model_validation_and_routing() -> None:
     )
 
     router = ModelRouter(settings)
-    assert router.resolve("claude-opus-4").provider_model_ref == (
+    assert router.resolve("claude-opus-4").primary.provider_model_ref == (
         "open_router/anthropic/claude-opus"
     )
-    assert router.resolve("unknown").provider_model_ref == "deepseek/fallback"
+    assert router.resolve("unknown").primary.provider_model_ref == "deepseek/fallback"
     with pytest.raises(ValidationError, match="Invalid provider"):
         Settings(model="unknown/model")
+
+
+@pytest.mark.parametrize(
+    "field",
+    ["MODEL", "MODEL_FABLE", "MODEL_OPUS", "MODEL_SONNET", "MODEL_HAIKU"],
+)
+def test_model_settings_reject_empty_model_suffix(field: str) -> None:
+    with pytest.raises(ValidationError, match="model suffix"):
+        Settings.model_validate({field: "open_router/"})
 
 
 def test_configured_chat_model_refs_are_unique() -> None:
@@ -226,6 +271,11 @@ def test_configured_chat_model_refs_are_unique() -> None:
         model="deepseek/fallback",
         model_fable="open_router/anthropic/claude-fable",
         model_sonnet="deepseek/fallback",
+        model_fallbacks=(
+            "groq/vendor/model-a",
+            "open_router/anthropic/claude-fable",
+            "lmstudio/vendor/model-b",
+        ),
     )
 
     refs = configured_chat_model_refs(settings)
@@ -233,6 +283,8 @@ def test_configured_chat_model_refs_are_unique() -> None:
     assert [ref.model_ref for ref in refs] == [
         "deepseek/fallback",
         "open_router/anthropic/claude-fable",
+        "groq/vendor/model-a",
+        "lmstudio/vendor/model-b",
     ]
 
 

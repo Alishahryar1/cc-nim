@@ -13,6 +13,7 @@ type FieldType = Literal[
     "boolean",
     "model",
     "optional_model",
+    "model_list",
     "select",
     "textarea",
 ]
