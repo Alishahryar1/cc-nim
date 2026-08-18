@@ -23,7 +23,7 @@
 
 - **48 ToS-friendly providers. 1.3B+ free tokens every month.** Use free, paid, subscription, and local models from one searchable UI without putting your account at risk. FCC follows provider terms and removes integrations if they stop being allowed.
 - **5 coding agents. One model catalog.** Run Claude Code, Codex, Pi, OpenCode, or Cline with your FCC models.
-- **Ordered model fallback for every client.** After a provider exhausts retryable failures, FCC can try your next configured model without restarting the turn.
+- **Keep coding through provider outages.** After retries are exhausted, FCC automatically tries your next configured model without making you restart the turn—across every client.
 - **Up to 90% fewer terminal-output tokens.** Optional [RTK](https://github.com/rtk-ai/rtk) filters common command output, while five FCC optimizations handle quota probes, command-prefix detection, titles, suggestions, and filepaths without calling a provider.
 - **Terminal, desktop, IDE, or phone.** Work through native launchers, VS Code, Codex App, JetBrains, Discord, or Telegram.
 - **Voice notes in. Code out.** Talk to your agent using local Whisper or NVIDIA NIM transcription.
