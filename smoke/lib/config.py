@@ -96,7 +96,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
 MISTRAL_REASONING_SMOKE_DEFAULT_MODEL = "mistral/mistral-medium-3-5"
 
 NVIDIA_NIM_CLI_DEFAULT_MODELS: tuple[str, ...] = (
-    "z-ai/glm-5.2",
+    "nvidia/nemotron-3.5-lightning-30b-a3b",
     "moonshotai/kimi-k2.6",
     "minimaxai/minimax-m2.7",
     "minimaxai/minimax-m3",

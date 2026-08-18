@@ -978,7 +978,7 @@ def test_smoke_config_returns_nvidia_nim_cli_provider_models(monkeypatch) -> Non
     models = config.nvidia_nim_cli_models()
 
     assert models[0].provider == "nvidia_nim"
-    assert models[0].full_model == "nvidia_nim/z-ai/glm-5.2"
+    assert models[0].full_model == f"nvidia_nim/{NVIDIA_NIM_CLI_DEFAULT_MODELS[0]}"
     assert models[0].source == "nvidia_nim_cli_default"
 
 
