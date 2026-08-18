@@ -271,10 +271,14 @@ configures logging, constructs the runtime owners and the configured voice
   their inbound-adapter port in [api/ports.py](src/free_claude_code/api/ports.py).
 
 [api/app.py](src/free_claude_code/api/app.py) registers routers and exception
-handlers around an explicit `ApiServices` value, then wraps the application in a
-pure ASGI correlation boundary. The boundary surrounds the complete wire send;
-it does not proxy streaming responses through `BaseHTTPMiddleware`. The API does
-not read global settings or construct runtime resources.
+handlers around an explicit `ApiServices` value, then composes pure ASGI
+correlation and inference-lifetime boundaries. Correlation surrounds the
+complete wire send. The inner lifetime boundary owns `http.disconnect` for
+Messages and Responses, cancelling the request application whether abandonment
+occurs during request processing, first-frame prefetch, non-streaming
+aggregation, or a silent committed stream. Neither boundary proxies streaming
+responses through `BaseHTTPMiddleware`. The API does not read global settings or
+construct runtime resources.
 `app.state.services` is the only runtime state published to FastAPI.
 
 [runtime/application.py](src/free_claude_code/runtime/application.py) owns process startup and shutdown, optional messaging,
@@ -433,6 +437,15 @@ response lifetime finalization under the concrete response owner. Starlette's
 outer server-error boundary bypasses user middleware for its catch-all 500, so
 that one handler explicitly attaches the same ingress-owned headers.
 
+Inference client lifetime is also owned at the HTTP boundary. One bounded
+receive pump is the sole reader of the server's ASGI `receive` channel while the
+application consumes the relayed request body. The complete application task is
+raced against `http.disconnect`; application completion wins a simultaneous
+race, while disconnect cancels and drains unfinished work. Existing route,
+response-body, provider-stream, and request-generation owners then perform their
+normal cancellation cleanup. FCC sends no synthetic timeout or terminal event
+to a client that has already left. Non-inference routes bypass this machinery.
+
 [api/handlers/](src/free_claude_code/api/handlers/) owns the public API product flows.
 `MessagesHandler` validates non-empty messages, resolves models, applies
 Claude-only safety-classifier and local optimization policy, handles local web
@@ -445,15 +458,19 @@ emits trace events, counts input tokens, and returns an Anthropic SSE iterator.
 It receives only a provider resolver and the few scalar collaborators it needs;
 it does not depend on FastAPI, provider implementations, or the full settings
 object. The executor also owns FCC's provider-progress deadline: every wait for
-the next non-empty provider chunk is limited to 240 seconds, leaving one minute
-below the five-minute idle watchdog shared by the first-party Claude, Codex, and
-Pi harnesses. Admission, retries, backoff, and recovery before a chunk all consume
-that same wait; a non-empty emitted chunk renews the next window. The timeout
-context ends before the executor yields, so downstream response backpressure is
-not mistaken for stalled provider work and cannot receive cancellation from the
-generator's timer. Expiry becomes a protocol-neutral, non-retryable 504
-`ExecutionFailure`; cancellation and provider-originated timeouts retain their
-existing meanings.
+the next non-empty provider chunk is limited by the Settings-owned
+`PROVIDER_PROGRESS_TIMEOUT`, which defaults to 600 seconds and is projected into
+the executor as a validated scalar. Admission, retries, backoff, and recovery
+before a chunk all consume that same wait; a non-empty emitted chunk renews the
+next window, while empty keepalives do not. The timeout context ends before the
+executor yields, so downstream response backpressure is not mistaken for
+stalled provider work and cannot receive cancellation from the generator's
+timer. Expiry becomes a protocol-neutral, non-retryable 504 `ExecutionFailure`;
+cancellation and provider-originated timeouts retain their existing meanings.
+This progress deadline is independent of provider `HTTP_READ_TIMEOUT` and of any
+client-owned deadline: provider HTTP adapters own read failures, the application
+owns visible-progress failure, and the API boundary owns actual client
+abandonment.
 
 [core/token_estimation.py](src/free_claude_code/core/token_estimation.py) owns
 process-wide best-effort plain-text token estimation. It acquires the shared

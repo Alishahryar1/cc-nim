@@ -47,6 +47,7 @@ class ResponsesHandler:
         self._responses_adapter = responses_adapter or OpenAIResponsesAdapter()
         self._provider_executor = provider_executor or ProviderExecutor(
             provider_resolver,
+            progress_timeout_seconds=settings.provider_progress_timeout,
             generation_id=generation_id,
             log_raw_payloads=settings.log_raw_api_payloads,
         )

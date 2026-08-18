@@ -30,7 +30,6 @@ TokenCounter = Callable[
     int,
 ]
 WireApi = Literal["messages", "responses"]
-PROVIDER_PROGRESS_TIMEOUT_SECONDS = 240.0
 
 
 class ProviderExecutor:
@@ -40,10 +39,10 @@ class ProviderExecutor:
         self,
         provider_resolver: ProviderResolver,
         *,
+        progress_timeout_seconds: float,
         token_counter: TokenCounter = get_token_count,
         generation_id: int | None = None,
         log_raw_payloads: bool = False,
-        progress_timeout_seconds: float = PROVIDER_PROGRESS_TIMEOUT_SECONDS,
     ) -> None:
         if not math.isfinite(progress_timeout_seconds) or progress_timeout_seconds <= 0:
             raise ValueError("progress_timeout_seconds must be finite and positive")

@@ -83,6 +83,7 @@ class MessagesHandler:
         self._token_counter = token_counter
         self._provider_executor = provider_executor or ProviderExecutor(
             provider_resolver,
+            progress_timeout_seconds=settings.provider_progress_timeout,
             token_counter=token_counter,
             generation_id=generation_id,
             log_raw_payloads=settings.log_raw_api_payloads,

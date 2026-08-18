@@ -189,6 +189,7 @@ async def test_executor_uses_structural_provider_port_and_preflights_eagerly() -
     request = routed.request
     executor = ProviderExecutor(
         lambda _provider_id: provider,
+        progress_timeout_seconds=60.0,
         token_counter=lambda _messages, _system, _tools: 17,
     )
 
@@ -220,6 +221,7 @@ async def test_closing_executor_stream_closes_provider_stream_once() -> None:
     routed = _routed_request()
     executor = ProviderExecutor(
         lambda _provider_id: provider,
+        progress_timeout_seconds=60.0,
         token_counter=lambda _messages, _system, _tools: 17,
     )
     stream = executor.stream(
@@ -242,6 +244,7 @@ async def test_stream_construction_failure_remains_deferred_to_iteration() -> No
     provider = FailingStreamConstructionProvider()
     executor = ProviderExecutor(
         lambda _provider_id: provider,
+        progress_timeout_seconds=60.0,
         token_counter=lambda _messages, _system, _tools: 17,
     )
 
@@ -262,6 +265,7 @@ def test_executor_preflight_failure_stays_before_token_count_and_stream() -> Non
     token_counter = MagicMock(return_value=17)
     executor = ProviderExecutor(
         lambda _provider_id: provider,
+        progress_timeout_seconds=60.0,
         token_counter=token_counter,
     )
 

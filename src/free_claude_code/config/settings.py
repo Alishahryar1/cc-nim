@@ -482,6 +482,12 @@ class Settings(BaseModel):
     provider_max_concurrency: int = Field(
         default=2, validation_alias="PROVIDER_MAX_CONCURRENCY"
     )
+    provider_progress_timeout: float = Field(
+        default=600.0,
+        gt=0,
+        allow_inf_nan=False,
+        validation_alias="PROVIDER_PROGRESS_TIMEOUT",
+    )
     reasoning_policy: ReasoningPreference = Field(
         default=ReasoningPreference.CLIENT,
         validation_alias="REASONING_POLICY",
