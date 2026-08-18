@@ -528,6 +528,19 @@ function Remove-Item {
     }
     Microsoft.PowerShell.Management\Remove-Item @PSBoundParameters
 }
+function Get-Process {
+    [CmdletBinding()]
+    param([string[]] $Name)
+
+    if ([string]::IsNullOrWhiteSpace($env:FCC_RUNNING_COMMAND)) {
+        return
+    }
+    foreach ($requestedName in $Name) {
+        if ($requestedName -eq $env:FCC_RUNNING_COMMAND) {
+            [pscustomobject] @{ Id = 4242; ProcessName = $requestedName }
+        }
+    }
+}
 $installer = [scriptblock]::Create([IO.File]::ReadAllText($env:FCC_UNINSTALLER))
 if ($env:UNINSTALL_DRY_RUN -eq "1") {
     & $installer -DryRun
@@ -569,6 +582,7 @@ else {
             "CALL_LOG": str(log),
             "FAKE_TOOL_BIN": str(tool_bin),
             "FCC_UNINSTALLER": str(_repo_root() / "scripts" / "uninstall.ps1"),
+            "FCC_RUNNING_COMMAND": "",
             "FAIL_STEP": "",
             "UNINSTALL_DRY_RUN": "0",
         }
@@ -694,6 +708,25 @@ def test_uninstall_ps1_dry_run_is_non_mutating(
     )
     assert powershell_uninstall_harness.calls() == []
     assert "Dry run complete. No changes were made." in result.stdout
+
+
+@pytest.mark.parametrize("command_name", FCC_COMMANDS)
+def test_uninstall_ps1_rejects_running_fcc_before_mutation(
+    powershell_uninstall_harness: PowerShellUninstallHarness,
+    command_name: str,
+) -> None:
+    powershell_uninstall_harness.env["FCC_RUNNING_COMMAND"] = command_name
+
+    result = powershell_uninstall_harness.run()
+
+    assert result.returncode != 0
+    assert command_name in result.stderr
+    assert powershell_uninstall_harness.fcc_home.exists()
+    assert all(
+        (powershell_uninstall_harness.tool_bin / f"{name}.cmd").exists()
+        for name in FCC_COMMANDS
+    )
+    assert powershell_uninstall_harness.calls() == []
 
 
 def test_uninstallers_guard_running_commands_and_preserve_shared_owners() -> None:

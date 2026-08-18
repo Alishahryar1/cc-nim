@@ -1994,21 +1994,7 @@ def test_install_ps1_stops_without_success_on_each_failure(
 def test_install_ps1_dry_run_never_executes_commands(
     powershell_harness: PowerShellHarness,
 ) -> None:
-    result = subprocess.run(
-        [
-            powershell_harness.powershell,
-            "-NoProfile",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-File",
-            str(_repo_root() / "scripts" / "install.ps1"),
-            "-DryRun",
-        ],
-        check=False,
-        capture_output=True,
-        text=True,
-        env=powershell_harness.env,
-    )
+    result = powershell_harness.run("-DryRun")
 
     assert result.returncode == 0, result.stderr
     assert powershell_harness.calls() == []
