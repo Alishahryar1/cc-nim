@@ -18,15 +18,34 @@ def test_supported_uv_minimum_is_consistent() -> None:
     assert f'$MinUvVersion = "{UV_MINIMUM}"' in install_ps1
     for workflow_path in UV_WORKFLOWS:
         workflow = workflow_path.read_text(encoding="utf-8")
-        assert f'version: "{UV_MINIMUM}"' in workflow
+        assert f'CI_UV_VERSION: "{UV_MINIMUM}"' in workflow
+        assert "version: ${{ env.CI_UV_VERSION }}" in workflow
 
 
 def test_every_uv_workflow_inherits_malware_check() -> None:
-    workflow_env = (
-        'env:\n  UV_MALWARE_CHECK: "1"\n  UV_PREVIEW_FEATURES: "malware-check"\n'
+    malware_policy = '  UV_MALWARE_CHECK: "1"\n  UV_PREVIEW_FEATURES: "malware-check"\n'
+
+    for workflow_path in UV_WORKFLOWS:
+        workflow = workflow_path.read_text(encoding="utf-8")
+        assert workflow.count(malware_policy) == 1
+        assert workflow.index(malware_policy) < workflow.index("jobs:\n")
+
+
+def test_only_trusted_main_workflow_writes_caches() -> None:
+    pull_request_workflow = UV_WORKFLOWS[0].read_text(encoding="utf-8")
+    main_workflow = UV_WORKFLOWS[1].read_text(encoding="utf-8")
+
+    assert "actions/cache/save@" not in pull_request_workflow
+    assert main_workflow.count("actions/cache/save@") == 2
+
+
+def test_uv_workflows_share_managed_python_cache_policy() -> None:
+    python_policy = (
+        "  UV_PYTHON_INSTALL_DIR: /tmp/uv-python\n"
+        "  UV_PYTHON_PREFERENCE: only-managed\n"
     )
 
     for workflow_path in UV_WORKFLOWS:
         workflow = workflow_path.read_text(encoding="utf-8")
-        assert workflow.count(workflow_env) == 1
-        assert workflow.index(workflow_env) < workflow.index("jobs:\n")
+        assert workflow.count(python_policy) == 1
+        assert "actions/setup-python@" not in workflow
