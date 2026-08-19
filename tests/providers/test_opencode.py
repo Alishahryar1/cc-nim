@@ -13,6 +13,24 @@ from tests.providers.support import (
 
 
 @pytest.mark.parametrize("provider_id", ["opencode_zen", "opencode_go"])
+def test_client_identifies_as_first_party_opencode_user_agent(
+    provider_id: str,
+) -> None:
+    """OpenCode Zen throttles third-party free usage; FCC identifies as ``opencode``."""
+    provider = profiled_provider(
+        provider_id,
+        make_provider_config(
+            api_key="test_opencode_key",
+            base_url="https://example.invalid/v1",
+            rate_limit=1,
+            rate_window=1,
+        ),
+        admission=immediate_admission(),
+    )
+    assert provider._client.default_headers["User-Agent"] == "opencode"
+
+
+@pytest.mark.parametrize("provider_id", ["opencode_zen", "opencode_go"])
 def test_build_request_body_replays_tool_reasoning_natively(
     provider_id: str,
 ) -> None:
