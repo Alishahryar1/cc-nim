@@ -656,4 +656,11 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         normalize_base_url=True,
         reasoning_delta_field="reasoning",
     ),
+    "poolside": OpenAIChatProfile(
+        _policy(
+            "POOLSIDE",
+            ReasoningReplayMode.REASONING_CONTENT,
+        ),
+        NO_REASONING,
+    ),
 }

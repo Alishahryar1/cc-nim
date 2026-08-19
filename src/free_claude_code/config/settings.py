@@ -307,6 +307,11 @@ class Settings(BaseModel):
         default=None, validation_alias="OLLAMA_API_KEY"
     )
 
+    # ==================== Poolside AI (OpenAI-compatible) ====================
+    poolside_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="POOLSIDE_API_KEY"
+    )
+
     # ==================== Messaging Platform Selection ====================
     # Valid: "telegram" | "discord" | "none"
     messaging_platform: NonEmptyString = Field(
@@ -508,6 +513,9 @@ class Settings(BaseModel):
     )
     ollama_cloud_proxy: OptionalNonEmptyString = Field(
         default=None, validation_alias="OLLAMA_CLOUD_PROXY"
+    )
+    poolside_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="POOLSIDE_PROXY"
     )
 
     # ==================== Provider Rate Limiting ====================
