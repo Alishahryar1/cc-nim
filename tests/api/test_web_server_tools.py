@@ -1,160 +1,37 @@
-import json
-from typing import Any
+from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
-from fastapi.responses import JSONResponse, StreamingResponse
 
 import free_claude_code.api.web_tools.constants as web_tool_constants
-from free_claude_code.api.handlers import MessagesHandler
 from free_claude_code.api.web_tools import egress as web_egress
 from free_claude_code.api.web_tools.egress import (
+    WebDomainPolicy,
+    WebDomainRule,
     WebFetchEgressPolicy,
     WebFetchEgressViolation,
     enforce_web_fetch_egress,
+    parse_web_domain_rule,
 )
 from free_claude_code.api.web_tools.outbound import (
     _drain_response_body_capped,
     _read_response_body_capped,
     _run_web_fetch,
+    _run_web_search,
 )
-from free_claude_code.api.web_tools.request import is_web_server_tool_request
-from free_claude_code.api.web_tools.streaming import stream_web_server_tool_response
-from free_claude_code.application.errors import InvalidRequestError
-from free_claude_code.application.routing import (
-    ModelRouter,
-    ProviderModelTarget,
-    ResolvedModelRoute,
-    RoutedMessagesRequest,
-)
-from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
-from free_claude_code.config.reasoning import ReasoningPreference
-from free_claude_code.config.settings import Settings
-from free_claude_code.core.anthropic.models import Message, MessagesRequest, Tool
-from free_claude_code.core.anthropic.stream_contracts import (
-    assert_anthropic_stream_contract,
-    parse_sse_text,
-    text_content,
-)
-from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.core.version import package_version
-from free_claude_code.messaging.event_parser import parse_cli_event
 
 _STRICT_EGRESS = WebFetchEgressPolicy(
     allow_private_network_targets=False,
     allowed_schemes=frozenset({"http", "https"}),
 )
-_PROVIDER_IDS = tuple(PROVIDER_CATALOG)
 
 
 def test_web_tool_user_agent_reports_installed_package_version() -> None:
     assert {
-        "User-Agent": (f"Mozilla/5.0 compatible; free-claude-code/{package_version()}")
+        "User-Agent": f"Mozilla/5.0 compatible; free-claude-code/{package_version()}"
     } == web_tool_constants._WEB_TOOL_HTTP_HEADERS
-
-
-class FixedProviderModelRouter(ModelRouter):
-    """Test double that pins provider identity."""
-
-    def __init__(
-        self,
-        settings: Settings,
-        provider_id: str,
-        *,
-        provider_model: str | None = None,
-    ) -> None:
-        super().__init__(settings)
-        self._fixed_provider_id = provider_id
-        self._fixed_provider_model = provider_model
-
-    def resolve_messages_request(
-        self, request: MessagesRequest
-    ) -> RoutedMessagesRequest:
-        provider_model = self._fixed_provider_model or request.model
-        target = ProviderModelTarget(
-            provider_id=self._fixed_provider_id,
-            provider_model=provider_model,
-            provider_model_ref=f"{self._fixed_provider_id}/{provider_model}",
-        )
-        resolved = ResolvedModelRoute(
-            original_model=request.model,
-            primary=target,
-            fallbacks=(),
-            reasoning_preference=ReasoningPreference.OFF,
-        )
-        routed = request.model_copy(deep=True)
-        routed.model = resolved.primary.provider_model
-        return RoutedMessagesRequest(
-            request=routed,
-            resolved=resolved,
-            reasoning=ReasoningPolicy.off(),
-        )
-
-
-def test_web_server_tool_not_detected_when_tool_only_listed():
-    """Listing web_search without forcing it must not skip the upstream provider."""
-    request = MessagesRequest(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=100,
-        messages=[Message(role="user", content="search")],
-        tools=[Tool(name="web_search", type="web_search_20250305")],
-    )
-
-    assert not is_web_server_tool_request(request)
-
-
-def test_web_server_tool_detected_when_tool_choice_forces_it():
-    request = MessagesRequest(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=100,
-        messages=[Message(role="user", content="search")],
-        tools=[Tool(name="web_search", type="web_search_20250305")],
-        tool_choice={"type": "tool", "name": "web_search"},
-    )
-
-    assert is_web_server_tool_request(request)
-
-
-def test_web_server_tool_not_detected_when_forced_name_missing_from_tools():
-    request = MessagesRequest(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=100,
-        messages=[Message(role="user", content="hi")],
-        tools=[Tool(name="other", type="function")],
-        tool_choice={"type": "tool", "name": "web_search"},
-    )
-
-    assert not is_web_server_tool_request(request)
-
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("provider_id", _PROVIDER_IDS)
-async def test_service_rejects_forced_server_tool_when_local_handler_is_disabled(
-    provider_id: str,
-):
-    """Every provider needs FCC's local handler for forced server tools."""
-    settings = Settings()
-    assert settings.enable_web_server_tools is False
-    service = MessagesHandler(
-        settings,
-        provider_resolver=lambda _: MagicMock(),
-        model_router=FixedProviderModelRouter(settings, provider_id),
-    )
-    request = MessagesRequest(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=100,
-        messages=[
-            Message(
-                role="user",
-                content="Perform a web search for the query: DeepSeek V4 model release 2026",
-            )
-        ],
-        tools=[Tool(name="web_search", type="web_search_20250305")],
-        tool_choice={"type": "tool", "name": "web_search"},
-    )
-    with pytest.raises(InvalidRequestError, match="ENABLE_WEB_SERVER_TOOLS"):
-        await service.create(request)
 
 
 @pytest.mark.parametrize(
@@ -167,19 +44,20 @@ async def test_service_rejects_forced_server_tool_when_local_handler_is_disabled
         "http://localhost/foo",
         "http://mybox.local/",
         "file:///etc/passwd",
+        "http://user:secret@example.com/",
         "http://169.254.169.254/latest/meta-data/",
     ],
 )
-def test_enforce_web_fetch_egress_blocks_internal_or_disallowed(url: str):
+def test_enforce_web_fetch_egress_blocks_internal_or_disallowed(url: str) -> None:
     with pytest.raises(WebFetchEgressViolation):
         enforce_web_fetch_egress(url, _STRICT_EGRESS)
 
 
-def test_enforce_web_fetch_egress_allows_global_literal_ip():
+def test_enforce_web_fetch_egress_allows_global_literal_ip() -> None:
     enforce_web_fetch_egress("http://8.8.8.8/", _STRICT_EGRESS)
 
 
-def test_enforce_web_fetch_egress_skips_private_checks_when_opted_in():
+def test_enforce_web_fetch_egress_skips_private_checks_when_opted_in() -> None:
     enforce_web_fetch_egress(
         "http://127.0.0.1/",
         WebFetchEgressPolicy(
@@ -189,32 +67,48 @@ def test_enforce_web_fetch_egress_skips_private_checks_when_opted_in():
     )
 
 
-def _cm(mock_client: MagicMock) -> MagicMock:
-    cm = MagicMock()
-    cm.__aenter__ = AsyncMock(return_value=mock_client)
-    cm.__aexit__ = AsyncMock(return_value=None)
-    return cm
+def test_domain_policy_matches_parent_subdomains_and_search_paths() -> None:
+    policy = WebDomainPolicy(
+        allowed=(WebDomainRule("example.com", "/docs"),),
+        blocked=(WebDomainRule("private.example.com"),),
+    )
+
+    assert policy.allows("https://www.example.com/docs/start")
+    assert not policy.allows("https://www.example.com/blog")
+    assert not policy.allows("https://private.example.com/docs/start")
+    assert not policy.allows("https://example.net/docs/start")
 
 
-def _stream_cm(response: httpx.Response) -> MagicMock:
-    cm = MagicMock()
-    cm.__aenter__ = AsyncMock(return_value=response)
-    cm.__aexit__ = AsyncMock(return_value=None)
-    return cm
+def test_domain_policy_search_hints_preserve_blocked_paths() -> None:
+    policy = WebDomainPolicy(blocked=(WebDomainRule("example.com", "/private"),))
+
+    assert policy.search_query("docs") == "docs -site:example.com/private"
 
 
-def _json_body(response: JSONResponse) -> dict[str, Any]:
-    payload = json.loads(bytes(response.body).decode("utf-8"))
-    assert isinstance(payload, dict)
-    return payload
+@pytest.mark.parametrize(
+    ("value", "allow_path"),
+    [
+        ("https://example.com", True),
+        ("example.com:443", True),
+        ("*.example.com", True),
+        ("tést.example", True),
+        ("example.com/docs", False),
+    ],
+)
+def test_domain_rule_rejects_unsupported_shapes(value: str, allow_path: bool) -> None:
+    with pytest.raises(ValueError):
+        parse_web_domain_rule(value, allow_path=allow_path)
 
 
-async def _streaming_body_text(response: StreamingResponse) -> str:
-    parts = [
-        chunk.decode("utf-8") if isinstance(chunk, bytes) else str(chunk)
-        async for chunk in response.body_iterator
-    ]
-    return "".join(parts)
+def test_enforce_web_fetch_egress_documents_connect_time_pinning() -> None:
+    assert enforce_web_fetch_egress.__doc__ and "resolved addresses" in (
+        enforce_web_fetch_egress.__doc__ or ""
+    )
+    assert web_egress.get_validated_stream_addrinfos_for_egress.__doc__
+    assert "pinning" in (
+        web_egress.get_validated_stream_addrinfos_for_egress.__doc__ or ""
+    )
+    assert "DNS-pinned" in (_run_web_fetch.__doc__ or "")
 
 
 def _aiohttp_response(
@@ -224,122 +118,117 @@ def _aiohttp_response(
     location: str | None = None,
     body: bytes = b"hello world",
 ) -> MagicMock:
-    r = MagicMock()
-    r.status = status
-    r.url = url
-    hdrs: dict[str, str] = {}
+    response = MagicMock()
+    response.status = status
+    response.url = url
+    headers = {"content-type": "text/plain"}
     if location is not None:
-        hdrs["location"] = location
-    r.headers = hdrs
-    r.get_encoding = MagicMock(return_value="utf-8")
-    r.raise_for_status = MagicMock()
-    r.request_info = MagicMock()
-    r.history = ()
+        headers["location"] = location
+    response.headers = headers
+    response.get_encoding = MagicMock(return_value="utf-8")
+    response.raise_for_status = MagicMock()
+    response.request_info = MagicMock()
+    response.history = ()
 
-    async def iter_chunked(_n: int) -> Any:
+    async def iter_chunked(_size: int) -> AsyncIterator[bytes]:
         yield body
 
-    r.content.iter_chunked = MagicMock(side_effect=iter_chunked)
-    return r
+    response.content.iter_chunked = MagicMock(side_effect=iter_chunked)
+    return response
 
 
 def _aiohttp_client_session_patch(
     *responses: MagicMock,
 ) -> tuple[MagicMock, MagicMock]:
-    """Build ``ClientSession`` mock that serves ``responses`` to successive ``get`` calls."""
     queue = list(responses)
-    n = 0
+    index = 0
 
-    def get_side(*_a: Any, **_k: Any) -> Any:
-        nonlocal n
-        resp = queue[n] if n < len(queue) else queue[-1]
-        n += 1
-        cm = MagicMock()
-        cm.__aenter__ = AsyncMock(return_value=resp)
-        cm.__aexit__ = AsyncMock(return_value=None)
-        return cm
+    def get_side(*_args: object, **_kwargs: object) -> MagicMock:
+        nonlocal index
+        response = queue[index] if index < len(queue) else queue[-1]
+        index += 1
+        context = MagicMock()
+        context.__aenter__ = AsyncMock(return_value=response)
+        context.__aexit__ = AsyncMock(return_value=None)
+        return context
 
     session = MagicMock()
     session.get = MagicMock(side_effect=get_side)
-
-    client_cm = MagicMock()
-    client_cm.__aenter__ = AsyncMock(return_value=session)
-    client_cm.__aexit__ = AsyncMock(return_value=None)
-    return client_cm, session
-
-
-def test_enforce_web_fetch_egress_documents_connect_time_pinning():
-    assert enforce_web_fetch_egress.__doc__ and "resolved addresses" in (
-        enforce_web_fetch_egress.__doc__ or ""
-    )
-    assert (
-        web_egress.get_validated_stream_addrinfos_for_egress.__doc__
-        and "pinning"
-        in (web_egress.get_validated_stream_addrinfos_for_egress.__doc__ or "")
-    )
-    assert "DNS-pinned" in (_run_web_fetch.__doc__ or "")
+    client_context = MagicMock()
+    client_context.__aenter__ = AsyncMock(return_value=session)
+    client_context.__aexit__ = AsyncMock(return_value=None)
+    return client_context, session
 
 
 @pytest.mark.asyncio
-async def test_run_web_fetch_follows_redirect_when_each_hop_is_allowed():
-    res_redirect = _aiohttp_response(
+async def test_run_web_fetch_follows_redirect_when_each_hop_is_allowed() -> None:
+    redirect = _aiohttp_response(
         302, url="http://8.8.8.8/start", location="/final", body=b""
     )
-    res_ok = _aiohttp_response(200, url="http://8.8.8.8/final", body=b"hello world")
-    client_cm, session = _aiohttp_client_session_patch(res_redirect, res_ok)
+    success = _aiohttp_response(200, url="http://8.8.8.8/final")
+    client_context, session = _aiohttp_client_session_patch(redirect, success)
     with patch(
-        "free_claude_code.api.web_tools.outbound.ClientSession", return_value=client_cm
+        "free_claude_code.api.web_tools.outbound.ClientSession",
+        return_value=client_context,
     ):
-        out = await _run_web_fetch("http://8.8.8.8/start", _STRICT_EGRESS)
+        result = await _run_web_fetch("http://8.8.8.8/start", _STRICT_EGRESS)
 
-    assert out["data"] == "hello world"
+    assert result["data"] == "hello world"
     assert session.get.call_count == 2
 
 
 @pytest.mark.asyncio
-async def test_run_web_fetch_truncates_large_body_to_byte_cap(monkeypatch):
-    huge = b"x" * 5000
-    res_ok = _aiohttp_response(200, url="http://8.8.8.8/big", body=huge)
-    client_cm, _ = _aiohttp_client_session_patch(res_ok)
-    monkeypatch.setattr(web_tool_constants, "_MAX_WEB_FETCH_RESPONSE_BYTES", 100)
-    with patch(
-        "free_claude_code.api.web_tools.outbound.ClientSession", return_value=client_cm
-    ):
-        out = await _run_web_fetch("http://8.8.8.8/big", _STRICT_EGRESS)
-
-    assert len(out["data"]) <= 100
-    assert out["data"] == "x" * 100
-
-
-@pytest.mark.asyncio
-async def test_run_web_fetch_redirect_to_blocked_host_raises():
-    res_redirect = _aiohttp_response(
+async def test_run_web_fetch_applies_domain_policy_to_redirects() -> None:
+    redirect = _aiohttp_response(
         302,
         url="http://8.8.8.8/start",
-        location="http://127.0.0.1/secret",
+        location="http://1.1.1.1/secret",
         body=b"",
     )
-    client_cm, session = _aiohttp_client_session_patch(res_redirect)
+    client_context, session = _aiohttp_client_session_patch(redirect)
+    policy = WebFetchEgressPolicy(
+        allow_private_network_targets=False,
+        allowed_schemes=frozenset({"http", "https"}),
+        domains=WebDomainPolicy(allowed=(WebDomainRule("8.8.8.8"),)),
+    )
     with (
         patch(
             "free_claude_code.api.web_tools.outbound.ClientSession",
-            return_value=client_cm,
+            return_value=client_context,
         ),
-        pytest.raises(WebFetchEgressViolation),
+        pytest.raises(WebFetchEgressViolation, match="domain policy"),
     ):
-        await _run_web_fetch("http://8.8.8.8/start", _STRICT_EGRESS)
+        await _run_web_fetch("http://8.8.8.8/start", policy)
 
     session.get.assert_called_once()
 
 
 @pytest.mark.asyncio
-async def test_run_web_fetch_redirect_without_location_raises():
-    res_bad = _aiohttp_response(302, url="http://8.8.8.8/here", body=b"")
-    client_cm, _ = _aiohttp_client_session_patch(res_bad)
+async def test_run_web_fetch_truncates_large_body_to_byte_cap(monkeypatch) -> None:
+    success = _aiohttp_response(
+        200,
+        url="http://8.8.8.8/big",
+        body=b"x" * 5_000,
+    )
+    client_context, _ = _aiohttp_client_session_patch(success)
+    monkeypatch.setattr(web_tool_constants, "_MAX_WEB_FETCH_RESPONSE_BYTES", 100)
+    with patch(
+        "free_claude_code.api.web_tools.outbound.ClientSession",
+        return_value=client_context,
+    ):
+        result = await _run_web_fetch("http://8.8.8.8/big", _STRICT_EGRESS)
+
+    assert result["data"] == "x" * 100
+
+
+@pytest.mark.asyncio
+async def test_run_web_fetch_redirect_without_location_raises() -> None:
+    response = _aiohttp_response(302, url="http://8.8.8.8/here", body=b"")
+    client_context, _ = _aiohttp_client_session_patch(response)
     with (
         patch(
             "free_claude_code.api.web_tools.outbound.ClientSession",
-            return_value=client_cm,
+            return_value=client_context,
         ),
         pytest.raises(WebFetchEgressViolation, match="missing Location"),
     ):
@@ -347,15 +236,15 @@ async def test_run_web_fetch_redirect_without_location_raises():
 
 
 @pytest.mark.asyncio
-async def test_run_web_fetch_excess_redirects_raises():
-    res1 = _aiohttp_response(302, url="http://8.8.8.8/a", location="/b", body=b"")
-    res2 = _aiohttp_response(302, url="http://8.8.8.8/b", location="/c", body=b"")
-    client_cm, _ = _aiohttp_client_session_patch(res1, res2)
+async def test_run_web_fetch_excess_redirects_raises() -> None:
+    first = _aiohttp_response(302, url="http://8.8.8.8/a", location="/b", body=b"")
+    second = _aiohttp_response(302, url="http://8.8.8.8/b", location="/c", body=b"")
+    client_context, _ = _aiohttp_client_session_patch(first, second)
     with (
         patch("free_claude_code.api.web_tools.constants._MAX_WEB_FETCH_REDIRECTS", 1),
         patch(
             "free_claude_code.api.web_tools.outbound.ClientSession",
-            return_value=client_cm,
+            return_value=client_context,
         ),
         pytest.raises(WebFetchEgressViolation, match="exceeded maximum redirects"),
     ):
@@ -363,438 +252,60 @@ async def test_run_web_fetch_excess_redirects_raises():
 
 
 @pytest.mark.asyncio
-async def test_streams_web_search_server_tool_result(monkeypatch):
-    async def fake_search(query: str) -> list[dict[str, str]]:
-        assert query == "DeepSeek V4 model release 2026"
-        return [{"title": "DeepSeek V4 Released", "url": "https://example.com/v4"}]
+async def test_run_web_search_postfilters_backend_results(monkeypatch) -> None:
+    html = b"""
+    <a href="/?uddg=https%3A%2F%2Fdocs.example.com%2Fguide">Allowed</a>
+    <a href="/?uddg=https%3A%2F%2Fevil.example%2Fguide">Blocked</a>
+    """
+    response = httpx.Response(
+        200,
+        content=html,
+        request=httpx.Request("GET", "https://lite.duckduckgo.com/lite/"),
+    )
+    stream_context = MagicMock()
+    stream_context.__aenter__ = AsyncMock(return_value=response)
+    stream_context.__aexit__ = AsyncMock(return_value=None)
+    client = MagicMock()
+    client.stream = MagicMock(return_value=stream_context)
+    client_context = MagicMock()
+    client_context.__aenter__ = AsyncMock(return_value=client)
+    client_context.__aexit__ = AsyncMock(return_value=None)
+    monkeypatch.setattr(httpx, "AsyncClient", MagicMock(return_value=client_context))
 
-    monkeypatch.setattr(
-        "free_claude_code.api.web_tools.outbound._run_web_search", fake_search
-    )
-    request = MessagesRequest(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=100,
-        messages=[
-            Message(
-                role="user",
-                content=(
-                    "Perform a web search for the query: DeepSeek V4 model release 2026"
-                ),
-            )
-        ],
-        tools=[Tool(name="web_search", type="web_search_20250305")],
-        tool_choice={"type": "tool", "name": "web_search"},
+    results = await _run_web_search(
+        "docs",
+        WebDomainPolicy(allowed=(WebDomainRule("example.com"),)),
     )
 
-    raw = "".join(
-        [
-            event
-            async for event in stream_web_server_tool_response(
-                request, input_tokens=42, web_fetch_egress=_STRICT_EGRESS
-            )
-        ]
-    )
-    events = parse_sse_text(raw)
-    assert_anthropic_stream_contract(events)
-    starts = [e for e in events if e.event == "content_block_start"]
-    assert starts[0].data["content_block"]["type"] == "server_tool_use"
-    assert starts[0].data["content_block"]["name"] == "web_search"
-    tool_use_id = starts[0].data["content_block"]["id"]
-    assert starts[1].data["content_block"]["type"] == "web_search_tool_result"
-    assert starts[1].data["content_block"]["tool_use_id"] == tool_use_id
-    assert starts[1].data["content_block"]["content"][0]["url"] == (
-        "https://example.com/v4"
-    )
-    text_deltas = [
-        e
-        for e in events
-        if e.event == "content_block_delta"
-        and e.data.get("delta", {}).get("type") == "text_delta"
-    ]
-    assert text_deltas, "summary must be streamed as text_delta"
-    assert "example.com" in text_content(events)
-    cli_text: list[str] = []
-    for ev in events:
-        cli_text.extend(
-            str(p.get("text", ""))
-            for p in parse_cli_event(ev.data)
-            if p.get("type") == "text_delta"
-        )
-    assert "example.com" in "".join(cli_text)
-    deltas = [e for e in events if e.event == "message_delta"]
-    assert deltas[-1].data["usage"]["server_tool_use"] == {"web_search_requests": 1}
+    assert results == [{"title": "Allowed", "url": "https://docs.example.com/guide"}]
+    assert client.stream.call_args.kwargs["params"] == {"q": "docs site:example.com"}
 
 
 @pytest.mark.asyncio
-async def test_service_streams_forced_web_search_by_default(monkeypatch):
-    async def fake_search(_query: str) -> list[dict[str, str]]:
-        return [{"title": "DeepSeek V4 Released", "url": "https://example.com/v4"}]
-
-    monkeypatch.setattr(
-        "free_claude_code.api.web_tools.outbound._run_web_search", fake_search
-    )
-    settings = Settings.model_validate({"ENABLE_WEB_SERVER_TOOLS": True})
-    provider_resolver = MagicMock()
-    service = MessagesHandler(
-        settings,
-        provider_resolver=provider_resolver,
-        model_router=FixedProviderModelRouter(
-            settings,
-            _PROVIDER_IDS[0],
-            provider_model="upstream-model",
-        ),
-    )
-    request = MessagesRequest(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=100,
-        stream=True,
-        messages=[Message(role="user", content="Search for DeepSeek V4")],
-        tools=[Tool(name="web_search", type="web_search_20250305")],
-        tool_choice={"type": "tool", "name": "web_search"},
-    )
-
-    response = await service.create(request)
-
-    assert isinstance(response, StreamingResponse)
-    assert response.media_type == "text/event-stream"
-    raw = await _streaming_body_text(response)
-    assert "event: message_start" in raw
-    assert "DeepSeek V4 Released" in raw
-    message_start = next(
-        event.data["message"]
-        for event in parse_sse_text(raw)
-        if event.event == "message_start"
-    )
-    assert message_start["model"] == request.model
-    provider_resolver.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_service_aggregates_forced_web_search_when_stream_false(monkeypatch):
-    async def fake_search(_query: str) -> list[dict[str, str]]:
-        return [{"title": "DeepSeek V4 Released", "url": "https://example.com/v4"}]
-
-    monkeypatch.setattr(
-        "free_claude_code.api.web_tools.outbound._run_web_search", fake_search
-    )
-    settings = Settings.model_validate({"ENABLE_WEB_SERVER_TOOLS": True})
-    provider_resolver = MagicMock()
-    service = MessagesHandler(
-        settings,
-        provider_resolver=provider_resolver,
-        model_router=FixedProviderModelRouter(settings, _PROVIDER_IDS[0]),
-    )
-    request = MessagesRequest(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=100,
-        messages=[Message(role="user", content="Search for DeepSeek V4")],
-        stream=False,
-        tools=[Tool(name="web_search", type="web_search_20250305")],
-        tool_choice={"type": "tool", "name": "web_search"},
-    )
-
-    response = await service.create(request)
-
-    assert isinstance(response, JSONResponse)
-    assert response.headers["content-type"].startswith("application/json")
-    body = _json_body(response)
-    assert [block["type"] for block in body["content"]] == [
-        "server_tool_use",
-        "web_search_tool_result",
-        "text",
-    ]
-    assert body["content"][1]["content"][0]["url"] == "https://example.com/v4"
-    assert "DeepSeek V4 Released" in body["content"][2]["text"]
-    assert body["usage"]["server_tool_use"] == {"web_search_requests": 1}
-    provider_resolver.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_forced_web_fetch_ignores_stale_url_from_prior_user_turns(monkeypatch):
-    """Only the latest user message supplies the URL (not earlier transcript text)."""
-    target = "https://new-only.example.com/page"
-
-    async def fake_fetch(url: str, _egress: WebFetchEgressPolicy) -> dict[str, str]:
-        assert url == target
-        return {
-            "url": url,
-            "title": "T",
-            "media_type": "text/plain",
-            "data": "x",
-        }
-
-    monkeypatch.setattr(
-        "free_claude_code.api.web_tools.outbound._run_web_fetch", fake_fetch
-    )
-    request = MessagesRequest(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=100,
-        messages=[
-            Message(
-                role="user",
-                content="Earlier turn https://stale.com/old-article ignore this",
-            ),
-            Message(role="assistant", content="ok"),
-            Message(
-                role="user",
-                content=f"Please fetch {target} for the summary",
-            ),
-        ],
-        tools=[Tool(name="web_fetch", type="web_fetch_20250910")],
-        tool_choice={"type": "tool", "name": "web_fetch"},
-    )
-
-    raw = "".join(
-        [
-            event
-            async for event in stream_web_server_tool_response(
-                request, input_tokens=1, web_fetch_egress=_STRICT_EGRESS
-            )
-        ]
-    )
-    assert target in raw
-
-
-@pytest.mark.asyncio
-async def test_service_aggregates_forced_web_fetch_when_stream_false(monkeypatch):
-    async def fake_fetch(url: str, _egress: WebFetchEgressPolicy) -> dict[str, str]:
-        return {
-            "url": url,
-            "title": "Example Article",
-            "media_type": "text/plain",
-            "data": "Article body",
-        }
-
-    monkeypatch.setattr(
-        "free_claude_code.api.web_tools.outbound._run_web_fetch", fake_fetch
-    )
-    settings = Settings.model_validate({"ENABLE_WEB_SERVER_TOOLS": True})
-    provider_resolver = MagicMock()
-    service = MessagesHandler(
-        settings,
-        provider_resolver=provider_resolver,
-        model_router=FixedProviderModelRouter(settings, _PROVIDER_IDS[0]),
-    )
-    request = MessagesRequest(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=100,
-        messages=[Message(role="user", content="Fetch https://example.com/article")],
-        stream=False,
-        tools=[Tool(name="web_fetch", type="web_fetch_20250910")],
-        tool_choice={"type": "tool", "name": "web_fetch"},
-    )
-
-    response = await service.create(request)
-
-    assert isinstance(response, JSONResponse)
-    assert response.headers["content-type"].startswith("application/json")
-    body = _json_body(response)
-    assert [block["type"] for block in body["content"]] == [
-        "server_tool_use",
-        "web_fetch_tool_result",
-        "text",
-    ]
-    assert body["content"][1]["content"]["content"]["title"] == "Example Article"
-    assert body["content"][2]["text"] == "Article body"
-    assert body["usage"]["server_tool_use"] == {"web_fetch_requests": 1}
-    provider_resolver.assert_not_called()
-
-
-@pytest.mark.asyncio
-async def test_streams_web_fetch_server_tool_result(monkeypatch):
-    async def fake_fetch(url: str, _egress: WebFetchEgressPolicy) -> dict[str, str]:
-        assert url == "https://example.com/article"
-        return {
-            "url": url,
-            "title": "Example Article",
-            "media_type": "text/plain",
-            "data": "Article body",
-        }
-
-    monkeypatch.setattr(
-        "free_claude_code.api.web_tools.outbound._run_web_fetch", fake_fetch
-    )
-    request = MessagesRequest(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=100,
-        messages=[
-            Message(role="user", content="Fetch https://example.com/article please")
-        ],
-        tools=[Tool(name="web_fetch", type="web_fetch_20250910")],
-        tool_choice={"type": "tool", "name": "web_fetch"},
-    )
-
-    raw = "".join(
-        [
-            event
-            async for event in stream_web_server_tool_response(
-                request, input_tokens=42, web_fetch_egress=_STRICT_EGRESS
-            )
-        ]
-    )
-    events = parse_sse_text(raw)
-    assert_anthropic_stream_contract(events)
-    starts = [e for e in events if e.event == "content_block_start"]
-    assert starts[0].data["content_block"]["type"] == "server_tool_use"
-    tool_use_id = starts[0].data["content_block"]["id"]
-    assert starts[1].data["content_block"]["type"] == "web_fetch_tool_result"
-    assert starts[1].data["content_block"]["tool_use_id"] == tool_use_id
-    assert starts[1].data["content_block"]["content"]["content"]["title"] == (
-        "Example Article"
-    )
-    assert any(
-        e.event == "content_block_delta"
-        and e.data.get("delta", {}).get("type") == "text_delta"
-        for e in events
-    )
-    assert "Article body" in text_content(events)
-    cli_text: list[str] = []
-    for ev in events:
-        cli_text.extend(
-            str(p.get("text", ""))
-            for p in parse_cli_event(ev.data)
-            if p.get("type") == "text_delta"
-        )
-    assert "Article body" in "".join(cli_text)
-    deltas = [e for e in events if e.event == "message_delta"]
-    assert deltas[-1].data["usage"]["server_tool_use"] == {"web_fetch_requests": 1}
-
-
-@pytest.mark.asyncio
-async def test_streams_web_fetch_error_summary_generic_by_default(monkeypatch):
-    secret = "sensitive-upstream-token"
-
-    async def boom(_url: str, _egress: WebFetchEgressPolicy) -> dict[str, str]:
-        raise ValueError(secret)
-
-    monkeypatch.setattr("free_claude_code.api.web_tools.outbound._run_web_fetch", boom)
-    request = MessagesRequest(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=100,
-        messages=[
-            Message(
-                role="user",
-                content="Fetch https://example.com/sensitive-path?x=1 please",
-            )
-        ],
-        tools=[Tool(name="web_fetch", type="web_fetch_20250910")],
-        tool_choice={"type": "tool", "name": "web_fetch"},
-    )
-
-    with patch("free_claude_code.api.web_tools.outbound.logger.warning") as log_warn:
-        raw = "".join(
-            [
-                event
-                async for event in stream_web_server_tool_response(
-                    request,
-                    input_tokens=1,
-                    web_fetch_egress=_STRICT_EGRESS,
-                    verbose_client_errors=False,
-                )
-            ]
-        )
-
-    assert secret not in raw
-    assert "ValueError" not in raw
-    assert "Web tool request failed." in raw
-    err_events = parse_sse_text(raw)
-    assert_anthropic_stream_contract(err_events)
-    assert any(
-        e.event == "content_block_delta"
-        and e.data.get("delta", {}).get("type") == "text_delta"
-        for e in err_events
-    )
-    cli_err_text: list[str] = []
-    for ev in err_events:
-        cli_err_text.extend(
-            str(p.get("text", ""))
-            for p in parse_cli_event(ev.data)
-            if p.get("type") == "text_delta"
-        )
-    assert "Web tool request failed." in "".join(cli_err_text)
-    log_blob = " ".join(str(a) for c in log_warn.call_args_list for a in c.args)
-    assert secret not in log_blob
-    assert "example.com" in log_blob
-    assert "/sensitive-path" not in log_blob
-
-
-@pytest.mark.asyncio
-async def test_streams_web_fetch_error_summary_verbose_includes_exception_class(
-    monkeypatch,
-):
-    async def boom(_url: str, _egress: WebFetchEgressPolicy) -> dict[str, str]:
-        raise OSError(5, "oops")
-
-    monkeypatch.setattr("free_claude_code.api.web_tools.outbound._run_web_fetch", boom)
-    request = MessagesRequest(
-        model="claude-haiku-4-5-20251001",
-        max_tokens=100,
-        messages=[Message(role="user", content="Fetch https://example.com/x")],
-        tools=[Tool(name="web_fetch", type="web_fetch_20250910")],
-        tool_choice={"type": "tool", "name": "web_fetch"},
-    )
-
-    raw = "".join(
-        [
-            event
-            async for event in stream_web_server_tool_response(
-                request,
-                input_tokens=1,
-                web_fetch_egress=_STRICT_EGRESS,
-                verbose_client_errors=True,
-            )
-        ]
-    )
-    assert "OSError" in raw
-
-
-@pytest.mark.asyncio
-async def test_read_response_body_capped_truncates_single_oversized_chunk():
-    cap = 500
-
-    async def aiter_bytes(chunk_size=None):
-        yield b"z" * (cap * 20)
-
+async def test_read_response_body_capped_truncates_oversized_chunk() -> None:
     response = MagicMock()
-    response.aiter_bytes = aiter_bytes
 
-    out = await _read_response_body_capped(response, cap)
-    assert len(out) == cap
-    assert out == b"z" * cap
+    async def chunks(*, chunk_size: int) -> AsyncIterator[bytes]:
+        assert chunk_size == 65_536
+        yield b"x" * 200
+
+    response.aiter_bytes = chunks
+    assert await _read_response_body_capped(response, 10) == b"x" * 10
 
 
 @pytest.mark.asyncio
-async def test_drain_response_body_capped_stops_after_first_chunk_when_oversized():
-    cap = 300
-    chunk_calls = {"n": 0}
-
-    async def aiter_bytes(chunk_size=None):
-        chunk_calls["n"] += 1
-        yield b"y" * (cap * 10)
-
+async def test_drain_response_body_capped_stops_after_cap() -> None:
     response = MagicMock()
-    response.aiter_bytes = aiter_bytes
+    consumed = 0
 
-    await _drain_response_body_capped(response, cap)
-    assert chunk_calls["n"] == 1
+    async def chunks(*, chunk_size: int) -> AsyncIterator[bytes]:
+        nonlocal consumed
+        assert chunk_size == 65_536
+        consumed += 1
+        yield b"x" * 200
+        consumed += 1
+        yield b"y" * 200
 
-
-@pytest.mark.asyncio
-@pytest.mark.parametrize("provider_id", _PROVIDER_IDS)
-async def test_service_rejects_listed_server_tools_for_every_provider(
-    provider_id: str,
-) -> None:
-    settings = Settings()
-    service = MessagesHandler(
-        settings,
-        provider_resolver=lambda _: MagicMock(),
-        model_router=FixedProviderModelRouter(settings, provider_id),
-    )
-    request = MessagesRequest(
-        model="m",
-        max_tokens=20,
-        messages=[Message(role="user", content="q")],
-        tools=[Tool(name="web_search", type="web_search_20250305")],
-    )
-    with pytest.raises(InvalidRequestError, match="cannot pass listed Anthropic"):
-        await service.create(request)
+    response.aiter_bytes = chunks
+    await _drain_response_body_capped(response, 10)
+    assert consumed == 1

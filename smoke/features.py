@@ -213,6 +213,25 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         "tool-capable configured providers must emit or continue tool results",
     ),
     FeatureCoverage(
+        "anthropic_web_server_tools",
+        "Claude WebSearch and WebFetch run automatically through every provider",
+        (
+            "tests/api/test_web_server_tool_request.py",
+            "tests/api/test_web_server_tool_coordinator.py",
+            "tests/api/test_web_server_tools.py",
+        ),
+        (),
+        ("test_claude_cli_web_search_e2e",),
+        ("cli",),
+        (
+            "FCC_SMOKE_RUN_WEB_TOOLS=1",
+            "Claude CLI",
+            "configured tool-capable provider",
+            "public network access",
+        ),
+        "opt-in because it performs a real public web search",
+    ),
+    FeatureCoverage(
         "request_optimization",
         "Local request optimizations return product responses without providers",
         (

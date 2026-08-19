@@ -160,12 +160,13 @@ class TestMessagesResponse:
         from typing import Literal
 
         reasons: list[
-            Literal["end_turn", "max_tokens", "stop_sequence", "tool_use"]
+            Literal["end_turn", "max_tokens", "stop_sequence", "tool_use", "pause_turn"]
         ] = [
             "end_turn",
             "max_tokens",
             "stop_sequence",
             "tool_use",
+            "pause_turn",
         ]
         for reason in reasons:
             resp = MessagesResponse(

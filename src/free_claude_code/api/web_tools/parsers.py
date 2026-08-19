@@ -5,6 +5,11 @@ import re
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, unquote, urlparse
 
+from pydantic import BaseModel
+
+_URL_PATTERN = re.compile(r"https?://[^\s<>\"']+", flags=re.IGNORECASE)
+_URL_TRAILING_PUNCTUATION = ").,;:!?]}"
+
 
 class SearchResultParser(HTMLParser):
     """DuckDuckGo lite HTML: extract result links and titles."""
@@ -75,27 +80,17 @@ class HTMLTextParser(HTMLParser):
             self.text_parts.append(text)
 
 
-def content_text(content: object) -> str:
-    if isinstance(content, str):
-        return content
-    if isinstance(content, list):
-        parts = []
-        for item in content:
-            if isinstance(item, dict):
-                parts.append(str(item.get("text", "")))
-            else:
-                parts.append(str(getattr(item, "text", "")))
-        return "\n".join(part for part in parts if part)
-    return str(content)
-
-
-def extract_query(text: str) -> str:
-    match = re.search(r"query:\s*(.+)", text, flags=re.IGNORECASE | re.DOTALL)
-    if match:
-        return match.group(1).strip().strip("\"'")
-    return text.strip()
-
-
-def extract_url(text: str) -> str:
-    match = re.search(r"https?://\S+", text)
-    return match.group(0).rstrip(").,]") if match else text.strip()
+def collect_urls(value: object) -> set[str]:
+    """Collect literal HTTP(S) URLs from one trusted transcript value."""
+    if isinstance(value, str):
+        return {
+            match.group(0).rstrip(_URL_TRAILING_PUNCTUATION)
+            for match in _URL_PATTERN.finditer(value)
+        }
+    if isinstance(value, BaseModel):
+        return collect_urls(value.model_dump())
+    if isinstance(value, dict):
+        return set().union(*(collect_urls(item) for item in value.values()))
+    if isinstance(value, list | tuple):
+        return set().union(*(collect_urls(item) for item in value))
+    return set()

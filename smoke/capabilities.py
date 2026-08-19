@@ -58,6 +58,21 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
     ),
     CapabilityContract(
         "api_compatibility",
+        "anthropic_web_server_tools",
+        "anthropic_web_server_tools",
+        "free_claude_code.api.web_tools.coordinator.WebServerToolCoordinator",
+        "supported Anthropic web_search/web_fetch definitions and transcript",
+        "one Anthropic lifecycle with model-authored answer and local tool results",
+        "400 ingress error, in-band tool error, or commit-boundary provider error",
+        (
+            "tests/api/test_web_server_tool_request.py",
+            "tests/api/test_web_server_tool_coordinator.py",
+            "tests/api/test_web_server_tools.py",
+        ),
+        ("test_claude_cli_web_search_e2e",),
+    ),
+    CapabilityContract(
+        "api_compatibility",
         "responses_api",
         "drop_in_codex_replacement",
         "free_claude_code.api.handlers.responses.ResponsesHandler",

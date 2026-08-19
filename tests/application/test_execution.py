@@ -252,6 +252,45 @@ async def test_executor_uses_structural_provider_port_and_preflights_eagerly() -
     assert provider.stream_close_calls == 1
 
 
+@pytest.mark.asyncio
+async def test_internal_round_uses_continuation_trace_not_duplicate_ingress() -> None:
+    provider = FakeProvider()
+    executor = ProviderExecutor(
+        lambda _provider_id: provider,
+        progress_timeout_seconds=60.0,
+    )
+
+    with patch("free_claude_code.application.execution.trace_event") as trace_mock:
+        chunks = [
+            chunk
+            async for chunk in executor.stream(
+                _routed_request(),
+                wire_api="messages",
+                raw_log_label="FULL_PAYLOAD",
+                raw_log_payload={},
+                request_id="req_continuation",
+                internal_round=2,
+            )
+        ]
+
+    assert chunks == ["event: message_stop\ndata: {}\n\n"]
+    events = [call.kwargs for call in trace_mock.call_args_list]
+    assert not any(
+        event.get("event") == "free_claude_code.api.request.received"
+        for event in events
+    )
+    continuation = next(
+        event
+        for event in events
+        if event.get("event") == "free_claude_code.api.request.internal_continuation"
+    )
+    assert continuation["request_id"] == "req_continuation"
+    assert continuation["wire_api"] == "messages"
+    assert continuation["gateway_model"] == "gateway-model"
+    assert continuation["internal_round"] == 2
+    assert "snapshot" not in continuation
+
+
 def _execution_failure(
     message: str,
     *,

@@ -303,6 +303,63 @@ def test_claude_cli_adaptive_thinking_e2e(
 
 
 @pytest.mark.smoke_target("cli")
+def test_claude_cli_web_search_e2e(smoke_config: SmokeConfig, tmp_path: Path) -> None:
+    if os.environ.get("FCC_SMOKE_RUN_WEB_TOOLS") != "1":
+        pytest.skip("missing_env: set FCC_SMOKE_RUN_WEB_TOOLS=1")
+    claude_bin = shutil.which(smoke_config.claude_bin)
+    if not claude_bin:
+        pytest.skip(f"missing_env: Claude CLI not found: {smoke_config.claude_bin}")
+    provider_model = ProviderMatrixDriver(smoke_config).first_model()
+
+    with SmokeServerDriver(
+        smoke_config,
+        name="product-claude-cli-web-search",
+        env_overrides={
+            "MODEL": provider_model.full_model,
+            "MESSAGING_PLATFORM": "none",
+            "ENABLE_WEB_SERVER_TOOLS": "true",
+            "LOG_LEVEL": "DEBUG",
+        },
+    ).run() as server:
+        run = run_claude_cli(
+            claude_bin=claude_bin,
+            server=server,
+            config=smoke_config,
+            cwd=tmp_path,
+            bare=False,
+            prompt=(
+                "Use WebSearch to find the Free Claude Code GitHub repository. "
+                "Then reply with FCC_SMOKE_WEB_SEARCH and one source URL."
+            ),
+            tools="WebSearch",
+        )
+        server_log = server.log_path.read_text(encoding="utf-8", errors="replace")
+
+    assert run.timed_out is False, run.combined_output
+    assert run.returncode == 0, run.combined_output
+    assert "FCC_SMOKE_WEB_SEARCH" in run.combined_output
+    assert "http" in run.combined_output
+    log_rows = _json_object_lines(server_log)
+    assert any(
+        row.get("event") == "free_claude_code.api.web_server_tools.recognized"
+        for row in log_rows
+    ), server_log
+    assert any(
+        row.get("event") == "free_claude_code.api.web_server_tools.local_completed"
+        and row.get("tool_kind") == "web_search"
+        for row in log_rows
+    ), server_log
+    assert (
+        sum(
+            row.get("event")
+            == "free_claude_code.api.web_server_tools.model_round_started"
+            for row in log_rows
+        )
+        >= 2
+    ), server_log
+
+
+@pytest.mark.smoke_target("cli")
 def test_claude_auto_mode_openai_connected_e2e(
     smoke_config: SmokeConfig, tmp_path: Path
 ) -> None:

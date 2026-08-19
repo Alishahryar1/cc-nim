@@ -40,7 +40,7 @@ def test_settings_defaults_are_valid_and_nonempty() -> None:
     assert settings.voice_note_enabled is True
     assert settings.whisper_device == "cpu"
     assert settings.whisper_model == "base"
-    assert settings.enable_web_server_tools is False
+    assert settings.enable_web_server_tools is True
     assert settings.proxy_auth_enabled is False
     assert settings.proxy_auth_token == "freecc"
     assert [
@@ -51,6 +51,12 @@ def test_settings_defaults_are_valid_and_nonempty() -> None:
         for name, field in Settings.model_fields.items()
         if field.get_default(call_default_factory=True) == ""
     ] == []
+
+
+def test_web_server_tools_explicit_false_overrides_enabled_default() -> None:
+    settings = Settings.model_validate({"ENABLE_WEB_SERVER_TOOLS": "false"})
+
+    assert settings.enable_web_server_tools is False
 
 
 def test_every_external_setting_has_one_explicit_alias() -> None:

@@ -57,15 +57,19 @@ class ProviderExecutor:
         *,
         request_id: str,
         provider_id: str,
+        internal_round: int,
     ) -> ExecutionFailure:
-        trace_event(
-            stage="execution",
-            event="free_claude_code.provider.progress_timeout",
-            source="application",
-            request_id=request_id,
-            provider_id=provider_id,
-            timeout_seconds=self._progress_timeout_seconds,
-        )
+        fields: dict[str, object] = {
+            "stage": "execution",
+            "event": "free_claude_code.provider.progress_timeout",
+            "source": "application",
+            "request_id": request_id,
+            "provider_id": provider_id,
+            "timeout_seconds": self._progress_timeout_seconds,
+        }
+        if internal_round > 1:
+            fields["internal_round"] = internal_round
+        trace_event(**fields)
         timeout_text = f"{self._progress_timeout_seconds:g}"
         return ExecutionFailure(
             kind=FailureKind.TIMEOUT,
@@ -87,6 +91,7 @@ class ProviderExecutor:
         failure: ExecutionFailure,
         candidate_index: int,
         candidate_count: int,
+        internal_round: int,
     ) -> None:
         fields: dict[str, object] = {
             "stage": "execution",
@@ -104,6 +109,8 @@ class ProviderExecutor:
         }
         if self._generation_id is not None:
             fields["generation_id"] = self._generation_id
+        if internal_round > 1:
+            fields["internal_round"] = internal_round
         trace_event(**fields)
         logger.info(
             "Model fallback: request_id={} from={} to={} candidate={}/{} "
@@ -125,6 +132,7 @@ class ProviderExecutor:
         selected: ProviderModelTarget,
         candidate_index: int,
         candidate_count: int,
+        internal_round: int,
     ) -> None:
         fields: dict[str, object] = {
             "stage": "execution",
@@ -138,6 +146,8 @@ class ProviderExecutor:
         }
         if self._generation_id is not None:
             fields["generation_id"] = self._generation_id
+        if internal_round > 1:
+            fields["internal_round"] = internal_round
         trace_event(**fields)
 
     def stream(
@@ -148,8 +158,11 @@ class ProviderExecutor:
         raw_log_label: str,
         raw_log_payload: object,
         request_id: str,
+        internal_round: int = 1,
     ) -> AsyncIterator[str]:
         """Preflight synchronously, then return the traced provider stream."""
+        if internal_round < 1:
+            raise ValueError("internal_round must be positive")
         primary = routed.resolved.primary
         primary_provider = self._provider_resolver(primary.provider_id)
         primary_request = routed.request.model_copy(deep=True)
@@ -182,22 +195,36 @@ class ProviderExecutor:
             route_trace["wire_api"] = "responses"
         if self._generation_id is not None:
             route_trace["generation_id"] = self._generation_id
+        if internal_round > 1:
+            route_trace["internal_round"] = internal_round
         trace_event(**route_trace)
 
         request_snapshot = anthropic_request_snapshot(routed.request)
         request_snapshot["model"] = gateway_model
-        trace_event(
-            stage="ingress",
-            event=(
-                "free_claude_code.api.responses.request.received"
-                if wire_api == "responses"
-                else "free_claude_code.api.request.received"
-            ),
-            source="api",
-            message_count=len(routed.request.messages),
-            snapshot=request_snapshot,
-            request_id=request_id,
-        )
+        if internal_round == 1:
+            trace_event(
+                stage="ingress",
+                event=(
+                    "free_claude_code.api.responses.request.received"
+                    if wire_api == "responses"
+                    else "free_claude_code.api.request.received"
+                ),
+                source="api",
+                message_count=len(routed.request.messages),
+                snapshot=request_snapshot,
+                request_id=request_id,
+            )
+        else:
+            trace_event(
+                stage="execution",
+                event="free_claude_code.api.request.internal_continuation",
+                source="api",
+                message_count=len(routed.request.messages),
+                request_id=request_id,
+                wire_api=wire_api,
+                gateway_model=gateway_model,
+                internal_round=internal_round,
+            )
 
         if self._log_raw_payloads:
             logger.debug(f"{raw_log_label} [{{}}]: {{}}", request_id, raw_log_payload)
@@ -247,6 +274,7 @@ class ProviderExecutor:
                             raise self._progress_timeout_failure(
                                 request_id=request_id,
                                 provider_id=target.provider_id,
+                                internal_round=internal_round,
                             )
                         progress_timeout = asyncio.timeout_at(progress_deadline)
                         try:
@@ -260,6 +288,7 @@ class ProviderExecutor:
                             raise self._progress_timeout_failure(
                                 request_id=request_id,
                                 provider_id=target.provider_id,
+                                internal_round=internal_round,
                             ) from exc
                         if not chunk:
                             await asyncio.sleep(0)
@@ -273,6 +302,7 @@ class ProviderExecutor:
                                     selected=target,
                                     candidate_index=index + 1,
                                     candidate_count=len(candidates),
+                                    internal_round=internal_round,
                                 )
                         yield chunk
                         progress_deadline = loop.time() + self._progress_timeout_seconds
@@ -304,6 +334,7 @@ class ProviderExecutor:
                     failure=advance_failure,
                     candidate_index=index + 2,
                     candidate_count=len(candidates),
+                    internal_round=internal_round,
                 )
 
         stream_trace: dict[str, object] = {
@@ -313,6 +344,8 @@ class ProviderExecutor:
         }
         if self._generation_id is not None:
             stream_trace["generation_id"] = self._generation_id
+        if internal_round > 1:
+            stream_trace["internal_round"] = internal_round
 
         return traced_async_stream(
             provider_body(),

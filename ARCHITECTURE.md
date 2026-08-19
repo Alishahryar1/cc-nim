@@ -1200,15 +1200,38 @@ the request as lossy. This policy belongs to the Claude Messages boundary, never
 to an OpenAI provider or model-specific adapter.
 
 Local `web_search` and `web_fetch` handling lives under
-[api/web_tools/](src/free_claude_code/api/web_tools/). When `ENABLE_WEB_SERVER_TOOLS` is true, the
-Messages handler can stream local Anthropic server-tool responses without sending the
-request upstream. [api/web_tools/egress.py](src/free_claude_code/api/web_tools/egress.py) enforces URL
-scheme and private-network restrictions for `web_fetch`.
+[api/web_tools/](src/free_claude_code/api/web_tools/). The Messages boundary
+recognizes only the documented `web_search_20250305` and
+`web_fetch_20250910` definitions, validates their choice, use-limit, and domain
+contracts before side effects, and translates them into reserved ordinary
+functions that every routed provider can understand. Ordinary client tools—even
+ones named `web_search`—remain ordinary tools. Mixed client/server definitions
+and unsupported server-tool versions fail as deterministic 400 responses rather
+than being guessed or silently downgraded.
 
-Anthropic server-tool definitions are never passed to upstream OpenAI Chat
-providers because that conversion would be lossy. Forced `web_search` or
-`web_fetch` requests are handled locally when `ENABLE_WEB_SERVER_TOOLS` is true;
-otherwise the Messages handler rejects them before provider execution.
+[api/web_tools/coordinator.py](src/free_claude_code/api/web_tools/coordinator.py)
+owns one request-local model/tool loop. Every model round still goes through the
+application `ProviderExecutor`, preserving provider retries, model fallback,
+reasoning, progress deadlines, cancellation, and iterator cleanup. The model
+selects each tool and supplies its structured arguments; FCC executes the local
+search/fetch and feeds an ordinary hidden `tool_result` back to the next model
+round. Hidden names and provider call IDs never cross the public boundary. The
+client receives one Anthropic lifecycle containing model-authored thinking/text,
+public `server_tool_use` blocks, and matching result blocks. A ten-round ceiling
+returns `pause_turn`; the next request reconstructs and resumes the pending call
+from its public transcript, so no session database is needed.
+
+[api/web_tools/egress.py](src/free_claude_code/api/web_tools/egress.py) remains
+the owner of fetch safety. It applies normalized allow/block domains to the
+initial URL and every redirect in addition to scheme checks, DNS pinning,
+private-address rejection, redirect limits, response caps, and timeouts. Fetch
+URLs must also come from user content, a client tool result, or an earlier local
+web result. Local validation/network failures are returned in-band so the model
+can recover; provider failures before the first public frame remain typed
+non-2xx responses, while failures after a server block has committed become the
+normal terminal Anthropic error event. `ENABLE_WEB_SERVER_TOOLS` defaults on for
+Claude-compatible behavior, while an explicit false remains a complete local
+web-access opt-out.
 
 ## CLI Launchers And Managed Claude
 

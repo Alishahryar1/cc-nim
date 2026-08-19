@@ -177,7 +177,8 @@ class MessagesResponse(BaseModel):
     ]
     type: Literal["message"] = "message"
     stop_reason: (
-        Literal["end_turn", "max_tokens", "stop_sequence", "tool_use"] | None
+        Literal["end_turn", "max_tokens", "stop_sequence", "tool_use", "pause_turn"]
+        | None
     ) = None
     stop_sequence: str | None = None
     usage: Usage

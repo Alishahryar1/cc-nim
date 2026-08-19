@@ -21,11 +21,17 @@ from .constants import (
     _WEB_TOOL_HTTP_HEADERS,
 )
 from .egress import (
+    WebDomainPolicy,
+    WebFetchAccessError,
     WebFetchEgressPolicy,
     WebFetchEgressViolation,
     get_validated_stream_addrinfos_for_egress,
 )
 from .parsers import HTMLTextParser, SearchResultParser
+
+
+class UnsupportedWebContentError(ValueError):
+    """Raised when web_fetch receives a media type FCC cannot safely expose."""
 
 
 def _safe_public_host_for_logs(url: str) -> str:
@@ -182,7 +188,10 @@ async def _drain_aiohttp_body_capped(
             break
 
 
-async def _run_web_search(query: str) -> list[dict[str, str]]:
+async def _run_web_search(
+    query: str,
+    domains: WebDomainPolicy = WebDomainPolicy(),
+) -> list[dict[str, str]]:
     async with (
         httpx.AsyncClient(
             timeout=_REQUEST_TIMEOUT_S,
@@ -192,7 +201,7 @@ async def _run_web_search(query: str) -> list[dict[str, str]]:
         client.stream(
             "GET",
             "https://lite.duckduckgo.com/lite/",
-            params={"q": query},
+            params={"q": domains.search_query(query)},
         ) as response,
     ):
         response.raise_for_status()
@@ -202,7 +211,9 @@ async def _run_web_search(query: str) -> list[dict[str, str]]:
     text = body_bytes.decode("utf-8", errors="replace")
     parser = SearchResultParser()
     parser.feed(text)
-    return parser.results[:_MAX_SEARCH_RESULTS]
+    return [result for result in parser.results if domains.allows(result["url"])][
+        :_MAX_SEARCH_RESULTS
+    ]
 
 
 async def _run_web_fetch(url: str, egress: WebFetchEgressPolicy) -> dict[str, str]:
@@ -236,13 +247,13 @@ async def _run_web_fetch(url: str, egress: WebFetchEgressPolicy) -> dict[str, st
                         response, _REDIRECT_RESPONSE_BODY_CAP_BYTES
                     )
                     if redirect_hops >= constants._MAX_WEB_FETCH_REDIRECTS:
-                        raise WebFetchEgressViolation(
+                        raise WebFetchAccessError(
                             "web_fetch exceeded maximum redirects "
                             f"({constants._MAX_WEB_FETCH_REDIRECTS})"
                         )
                     location = response.headers.get("location")
                     if not location or not location.strip():
-                        raise WebFetchEgressViolation(
+                        raise WebFetchAccessError(
                             "web_fetch redirect response missing Location header"
                         )
                     current_url = urljoin(str(response.url), location.strip())
@@ -250,6 +261,19 @@ async def _run_web_fetch(url: str, egress: WebFetchEgressPolicy) -> dict[str, st
                     continue
                 response.raise_for_status()
                 content_type = response.headers.get("content-type", "text/plain")
+                media_type = content_type.partition(";")[0].strip().lower()
+                if not (
+                    media_type.startswith("text/")
+                    or media_type
+                    in {
+                        "application/json",
+                        "application/xml",
+                        "application/xhtml+xml",
+                    }
+                ):
+                    raise UnsupportedWebContentError(
+                        f"Unsupported web_fetch media type {media_type!r}"
+                    )
                 final_url = str(response.url)
                 encoding = response.get_encoding() or "utf-8"
                 body_bytes = await _read_aiohttp_body_capped(
