@@ -1,12 +1,52 @@
-"""Detect forced Anthropic web server tool requests."""
+"""Recognize the narrow Anthropic web-tool requests FCC can execute locally."""
 
+import re
+from dataclasses import dataclass
+
+from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.core.anthropic import MessagesRequest, Tool
 
 from .parsers import content_text
 
+WEB_SEARCH_TYPE = "web_search_20250305"
+WEB_FETCH_TYPE = "web_fetch_20250910"
+HIDDEN_WEB_SEARCH_NAME = "fcc_web_search"
+
+_SERVER_TOOL_TYPES = {
+    "web_search": WEB_SEARCH_TYPE,
+    "web_fetch": WEB_FETCH_TYPE,
+}
+_SERVER_TOOL_PREFIXES = ("web_search_", "web_fetch_")
+_SERVER_HISTORY_TYPES = {
+    "server_tool_use",
+    "web_search_tool_result",
+    "web_fetch_tool_result",
+}
+_WEB_SEARCH_OPTION_FIELDS = {"max_uses", "allowed_domains", "blocked_domains"}
+_DOMAIN_PATTERN = re.compile(
+    r"(?=.{1,253}\Z)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)*"
+    r"[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?"
+)
+
+
+@dataclass(frozen=True, slots=True)
+class WebSearchDomainFilter:
+    """Literal hostname constraints supplied by Claude Code."""
+
+    allowed: tuple[str, ...] = ()
+    blocked: tuple[str, ...] = ()
+
+
+@dataclass(frozen=True, slots=True)
+class AutomaticWebSearchPlan:
+    """One exact Claude Code automatic-search request translated for a provider."""
+
+    request: MessagesRequest
+    domains: WebSearchDomainFilter
+
 
 def forced_tool_turn_text(request: MessagesRequest) -> str:
-    """Text for parsing forced server-tool inputs: latest user turn only (avoids stale history)."""
+    """Text for parsing forced server-tool inputs: latest user turn only."""
     if not request.messages:
         return ""
 
@@ -17,15 +57,18 @@ def forced_tool_turn_text(request: MessagesRequest) -> str:
 
 
 def forced_server_tool_name(request: MessagesRequest) -> str | None:
-    """Return web_search or web_fetch only when tool_choice forces that server tool."""
-    tc = request.tool_choice
-    if not isinstance(tc, dict):
+    """Return a forced supported server tool, never an ordinary same-name function."""
+    choice = request.tool_choice
+    if not isinstance(choice, dict) or choice.get("type") != "tool":
         return None
-    if tc.get("type") != "tool":
+    name = choice.get("name")
+    if not isinstance(name, str) or name not in _SERVER_TOOL_TYPES:
         return None
-    name = tc.get("name")
-    if name in {"web_search", "web_fetch"}:
-        return str(name)
+    expected_type = _SERVER_TOOL_TYPES[name]
+    if any(
+        tool.name == name and tool.type == expected_type for tool in request.tools or []
+    ):
+        return name
     return None
 
 
@@ -34,43 +77,165 @@ def has_tool_named(request: MessagesRequest, name: str) -> bool:
 
 
 def is_web_server_tool_request(request: MessagesRequest) -> bool:
-    """True when the client forces a web server tool via tool_choice (not merely listed)."""
-    forced = forced_server_tool_name(request)
-    if forced is None:
-        return False
-    return has_tool_named(request, forced)
+    """True only when the client forces one supported Anthropic server tool."""
+    return forced_server_tool_name(request) is not None
 
 
 def is_anthropic_server_tool_definition(tool: Tool) -> bool:
-    """Whether ``tool`` refers to an Anthropic server tool (web_search / web_fetch family)."""
-    name = (tool.name or "").strip()
-    if name in ("web_search", "web_fetch"):
-        return True
-    typ = tool.type
-    if isinstance(typ, str):
-        return typ.startswith("web_search") or typ.startswith("web_fetch")
-    return False
+    """Whether ``tool.type`` identifies an Anthropic web server-tool family."""
+    tool_type = tool.type
+    return isinstance(tool_type, str) and tool_type.startswith(_SERVER_TOOL_PREFIXES)
 
 
 def has_listed_anthropic_server_tools(request: MessagesRequest) -> bool:
-    """True when tools include web_search / web_fetch-style entries (listed, forced or not)."""
-    return any(is_anthropic_server_tool_definition(t) for t in (request.tools or []))
+    """True when tools include a typed Anthropic web server-tool definition."""
+    return any(
+        is_anthropic_server_tool_definition(tool) for tool in request.tools or []
+    )
+
+
+def plan_automatic_web_search(
+    request: MessagesRequest,
+    *,
+    web_tools_enabled: bool,
+) -> AutomaticWebSearchPlan | None:
+    """Translate only Claude Code's server-tool-only automatic WebSearch request."""
+    choice = request.tool_choice
+    if choice is not None and choice != {"type": "auto"}:
+        return None
+
+    tools = request.tools or []
+    server_tools = [tool for tool in tools if is_anthropic_server_tool_definition(tool)]
+    if not server_tools:
+        return None
+    if len(tools) != 1 or len(server_tools) != 1:
+        return None
+
+    tool = server_tools[0]
+    if tool.type != WEB_SEARCH_TYPE:
+        return None
+    if not web_tools_enabled:
+        raise InvalidRequestError(
+            "Anthropic web_search is disabled (ENABLE_WEB_SERVER_TOOLS=false). "
+            "Enable local web tools or remove web_search from the request."
+        )
+    if _has_server_tool_history(request):
+        raise InvalidRequestError(
+            "Automatic web_search does not accept prior Anthropic server-tool history."
+        )
+    if tool.name != "web_search":
+        raise InvalidRequestError(
+            f"Server tool type {WEB_SEARCH_TYPE!r} must use name 'web_search'."
+        )
+    if tool.description is not None or tool.input_schema is not None:
+        raise InvalidRequestError(
+            "Anthropic web_search must not define description or input_schema."
+        )
+
+    options = tool.model_extra or {}
+    unsupported = sorted(set(options) - _WEB_SEARCH_OPTION_FIELDS)
+    if unsupported:
+        raise InvalidRequestError(
+            "Anthropic web_search contains unsupported option(s): "
+            + ", ".join(unsupported)
+            + "."
+        )
+    _validate_max_uses(options.get("max_uses"))
+    allowed = _parse_domains(
+        options.get("allowed_domains"), field="web_search.allowed_domains"
+    )
+    blocked = _parse_domains(
+        options.get("blocked_domains"), field="web_search.blocked_domains"
+    )
+    if allowed and blocked:
+        raise InvalidRequestError(
+            "web_search may define allowed_domains or blocked_domains, not both."
+        )
+
+    hidden_tool = Tool(
+        name=HIDDEN_WEB_SEARCH_NAME,
+        description="Search the public web for current information.",
+        input_schema={
+            "type": "object",
+            "properties": {"query": {"type": "string"}},
+            "required": ["query"],
+            "additionalProperties": False,
+        },
+    )
+    translated = request.model_copy(
+        update={"tools": [hidden_tool]},
+        deep=True,
+    )
+    return AutomaticWebSearchPlan(
+        request=translated,
+        domains=WebSearchDomainFilter(allowed=allowed, blocked=blocked),
+    )
 
 
 def unsupported_server_tool_error(
     request: MessagesRequest, *, web_tools_enabled: bool
 ) -> str | None:
-    """Return the user-facing error when the resolved provider cannot run server tools."""
+    """Return the user-facing error for a server-tool shape FCC does not handle."""
     forced = forced_server_tool_name(request)
     if forced and not web_tools_enabled:
         return (
-            f"tool_choice forces Anthropic server tool {forced!r}, but local web server tools are "
-            "disabled (ENABLE_WEB_SERVER_TOOLS=false). Enable them or remove the forced server tool."
+            f"tool_choice forces Anthropic server tool {forced!r}, but local web "
+            "server tools are disabled (ENABLE_WEB_SERVER_TOOLS=false). Enable "
+            "them or remove the forced server tool."
         )
     if not forced and has_listed_anthropic_server_tools(request):
         return (
-            "FCC cannot pass listed Anthropic server tools (web_search / web_fetch) "
-            "to OpenAI Chat upstreams. Set ENABLE_WEB_SERVER_TOOLS=true and force the "
-            "tool with tool_choice, or remove these tools from the request."
+            "FCC supports automatic Anthropic web_search only for Claude Code's "
+            f"{WEB_SEARCH_TYPE} server-tool-only request. Automatic web_fetch, "
+            "mixed tools, and other server-tool choices are not supported."
         )
     return None
+
+
+def _has_server_tool_history(request: MessagesRequest) -> bool:
+    for message in request.messages:
+        if not isinstance(message.content, list):
+            continue
+        for block in message.content:
+            if getattr(block, "type", None) in _SERVER_HISTORY_TYPES:
+                return True
+    return False
+
+
+def _validate_max_uses(value: object) -> None:
+    if value is None:
+        return
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        raise InvalidRequestError("web_search.max_uses must be a positive integer.")
+
+
+def _parse_domains(value: object, *, field: str) -> tuple[str, ...]:
+    if value is None:
+        return ()
+    if not isinstance(value, list):
+        raise InvalidRequestError(f"{field} must be a list of literal hostnames.")
+
+    domains: list[str] = []
+    for entry in value:
+        if not isinstance(entry, str) or not entry or entry != entry.strip():
+            raise InvalidRequestError(f"{field} entries must be non-empty hostnames.")
+        if any(character in entry for character in ":/\\?#@*"):
+            raise InvalidRequestError(
+                f"{field} entry {entry!r} must be a literal hostname without a "
+                "scheme, port, path, query, fragment, user info, or wildcard."
+            )
+        try:
+            domain = entry.encode("idna").decode("ascii").lower()
+        except UnicodeError as exc:
+            raise InvalidRequestError(
+                f"{field} entry {entry!r} is not a valid hostname."
+            ) from exc
+        if _DOMAIN_PATTERN.fullmatch(domain) is None:
+            raise InvalidRequestError(
+                f"{field} entry {entry!r} is not a valid hostname."
+            )
+        domains.append(domain)
+
+    if len(domains) != len(set(domains)):
+        raise InvalidRequestError(f"{field} must not contain duplicate hostnames.")
+    return tuple(domains)

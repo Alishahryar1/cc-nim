@@ -303,6 +303,99 @@ def test_claude_cli_adaptive_thinking_e2e(
 
 
 @pytest.mark.smoke_target("cli")
+def test_claude_cli_web_search_e2e(smoke_config: SmokeConfig, tmp_path: Path) -> None:
+    if os.environ.get("FCC_SMOKE_RUN_WEB_TOOLS") != "1":
+        pytest.skip("missing_env: set FCC_SMOKE_RUN_WEB_TOOLS=1")
+    claude_bin = shutil.which(smoke_config.claude_bin)
+    if not claude_bin:
+        pytest.skip(f"missing_env: Claude CLI not found: {smoke_config.claude_bin}")
+    provider_model = ProviderMatrixDriver(smoke_config).first_model()
+
+    with SmokeServerDriver(
+        smoke_config,
+        name="product-claude-cli-web-search",
+        env_overrides={
+            "MODEL": provider_model.full_model,
+            "MESSAGING_PLATFORM": "none",
+            "ENABLE_WEB_SERVER_TOOLS": "true",
+            "LOG_LEVEL": "DEBUG",
+        },
+    ).run() as server:
+        automatic_turn = ConversationDriver(server, smoke_config).stream(
+            {
+                "model": provider_model.full_model,
+                "max_tokens": 512,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": (
+                            "You must use the available web search tool to find the "
+                            "Free Claude Code GitHub repository."
+                        ),
+                    }
+                ],
+                "tools": [
+                    {
+                        "name": "web_search",
+                        "type": "web_search_20250305",
+                    }
+                ],
+                "tool_choice": {"type": "auto"},
+            }
+        )
+        run = run_claude_cli(
+            claude_bin=claude_bin,
+            server=server,
+            config=smoke_config,
+            cwd=tmp_path,
+            bare=False,
+            prompt=(
+                "Use WebSearch exactly once to find the Free Claude Code GitHub "
+                "repository. Then reply with FCC_SMOKE_WEB_SEARCH and one source URL."
+            ),
+            tools="WebSearch",
+        )
+        server_log = server.log_path.read_text(encoding="utf-8", errors="replace")
+
+    assert run.timed_out is False, run.combined_output
+    assert run.returncode == 0, run.combined_output
+    assert "FCC_SMOKE_WEB_SEARCH" in run.combined_output
+    assert "http" in run.combined_output
+    automatic_payload = json.dumps(
+        [event.data for event in automatic_turn.events], sort_keys=True
+    )
+    assert '"type": "server_tool_use"' in automatic_payload
+    assert '"type": "web_search_tool_result"' in automatic_payload
+    assert "github.com" in automatic_payload
+    log_rows = _json_object_lines(server_log)
+    assert (
+        sum(
+            row.get("event") == "free_claude_code.api.web_search.automatic_recognized"
+            for row in log_rows
+        )
+        == 1
+    ), server_log
+    assert any(
+        row.get("event") == "free_claude_code.api.optimization.web_server_tool"
+        for row in log_rows
+    ), server_log
+    assert (
+        sum(
+            row.get("event") == "free_claude_code.api.web_search.automatic_selected"
+            for row in log_rows
+        )
+        == 1
+    ), server_log
+    assert (
+        sum(
+            row.get("event") == "free_claude_code.api.web_search.automatic_completed"
+            for row in log_rows
+        )
+        == 1
+    ), server_log
+
+
+@pytest.mark.smoke_target("cli")
 def test_claude_auto_mode_openai_connected_e2e(
     smoke_config: SmokeConfig, tmp_path: Path
 ) -> None:
