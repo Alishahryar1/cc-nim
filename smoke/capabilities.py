@@ -53,8 +53,15 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         "Claude Code, VS Code, and JetBrains shaped requests",
         "compatible streaming response",
         "provider or validation error in Anthropic shape",
-        ("tests/api/test_api.py", "tests/cli/test_cli.py"),
-        ("test_vscode_and_jetbrains_shaped_requests",),
+        (
+            "tests/api/test_api.py",
+            "tests/api/test_web_server_tools.py",
+            "tests/cli/test_cli.py",
+        ),
+        (
+            "test_vscode_and_jetbrains_shaped_requests",
+            "test_claude_cli_web_search_e2e",
+        ),
     ),
     CapabilityContract(
         "api_compatibility",
@@ -498,9 +505,10 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         "Claude CLI binary and proxy env",
         "stream-json events and session id mapping",
         "stderr/error event and process cleanup",
-        ("tests/cli/test_cli.py",),
+        ("tests/api/test_web_server_tools.py", "tests/cli/test_cli.py"),
         (
             "test_claude_cli_prompt_when_available",
+            "test_claude_cli_web_search_e2e",
             "test_claude_cli_provider_error_e2e",
             "test_nvidia_nim_cli_matrix_e2e",
             "test_openrouter_free_cli_matrix_e2e",

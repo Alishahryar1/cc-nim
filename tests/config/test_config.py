@@ -40,7 +40,7 @@ def test_settings_defaults_are_valid_and_nonempty() -> None:
     assert settings.voice_note_enabled is True
     assert settings.whisper_device == "cpu"
     assert settings.whisper_model == "base"
-    assert settings.enable_web_server_tools is False
+    assert settings.enable_web_server_tools is True
     assert settings.proxy_auth_enabled is False
     assert settings.proxy_auth_token == "freecc"
     assert [

@@ -1,4 +1,6 @@
+import asyncio
 import json
+from collections.abc import AsyncIterator
 from typing import Any
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -19,7 +21,12 @@ from free_claude_code.api.web_tools.outbound import (
     _read_response_body_capped,
     _run_web_fetch,
 )
-from free_claude_code.api.web_tools.request import is_web_server_tool_request
+from free_claude_code.api.web_tools.request import (
+    HIDDEN_WEB_SEARCH_NAME,
+    is_web_server_tool_request,
+    plan_automatic_web_search,
+    unsupported_server_tool_error,
+)
 from free_claude_code.api.web_tools.streaming import stream_web_server_tool_response
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.application.routing import (
@@ -31,12 +38,19 @@ from free_claude_code.application.routing import (
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.config.settings import Settings
-from free_claude_code.core.anthropic.models import Message, MessagesRequest, Tool
+from free_claude_code.core.anthropic.models import (
+    ContentBlockServerToolUse,
+    Message,
+    MessagesRequest,
+    Tool,
+)
 from free_claude_code.core.anthropic.stream_contracts import (
     assert_anthropic_stream_contract,
     parse_sse_text,
     text_content,
 )
+from free_claude_code.core.anthropic.streaming import format_sse_event
+from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.core.version import package_version
 from free_claude_code.messaging.event_parser import parse_cli_event
@@ -92,6 +106,228 @@ class FixedProviderModelRouter(ModelRouter):
         )
 
 
+class ScriptedSelectionProvider:
+    """One-stream provider double for the automatic WebSearch decision."""
+
+    def __init__(
+        self,
+        events: list[str],
+        *,
+        failure: ExecutionFailure | None = None,
+        failure_after_events: bool = False,
+        wait_for: asyncio.Event | None = None,
+    ) -> None:
+        self.events = events
+        self.failure = failure
+        self.failure_after_events = failure_after_events
+        self.wait_for = wait_for
+        self.started = asyncio.Event()
+        self.requests: list[MessagesRequest] = []
+        self.stream_kwargs: list[dict[str, object]] = []
+        self.close_count = 0
+
+    def preflight_stream(
+        self, request: MessagesRequest, *, reasoning: ReasoningPolicy
+    ) -> None:
+        return None
+
+    async def stream_response(
+        self,
+        request: MessagesRequest,
+        *,
+        input_tokens: int,
+        request_id: str,
+        response_model: str,
+        reasoning: ReasoningPolicy,
+    ) -> AsyncIterator[str]:
+        self.requests.append(request)
+        self.stream_kwargs.append(
+            {
+                "input_tokens": input_tokens,
+                "request_id": request_id,
+                "response_model": response_model,
+                "reasoning": reasoning,
+            }
+        )
+        self.started.set()
+        try:
+            if self.wait_for is not None:
+                await self.wait_for.wait()
+            if self.failure is not None and not self.failure_after_events:
+                raise self.failure
+            for event in self.events:
+                yield event
+            if self.failure is not None:
+                raise self.failure
+        finally:
+            self.close_count += 1
+
+
+def _provider_text_events(text: str) -> list[str]:
+    return [
+        format_sse_event(
+            "message_start",
+            {
+                "type": "message_start",
+                "message": {
+                    "id": "msg_provider",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [],
+                    "model": "gateway-model",
+                    "stop_reason": None,
+                    "stop_sequence": None,
+                    "usage": {"input_tokens": 11, "output_tokens": 1},
+                },
+            },
+        ),
+        format_sse_event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""},
+            },
+        ),
+        format_sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": text},
+            },
+        ),
+        format_sse_event(
+            "content_block_stop", {"type": "content_block_stop", "index": 0}
+        ),
+        format_sse_event(
+            "message_delta",
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                "usage": {"output_tokens": 3},
+            },
+        ),
+        format_sse_event("message_stop", {"type": "message_stop"}),
+    ]
+
+
+def _provider_tool_events(
+    *,
+    name: str = HIDDEN_WEB_SEARCH_NAME,
+    arguments: dict[str, object] | None = None,
+    additional_calls: int = 0,
+) -> list[str]:
+    calls = [(name, arguments if arguments is not None else {"query": "selected"})]
+    calls.extend(
+        (name, {"query": f"extra-{index}"}) for index in range(additional_calls)
+    )
+    events = [
+        format_sse_event(
+            "message_start",
+            {
+                "type": "message_start",
+                "message": {
+                    "id": "msg_provider",
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [],
+                    "model": "gateway-model",
+                    "stop_reason": None,
+                    "stop_sequence": None,
+                    "usage": {
+                        "input_tokens": 17,
+                        "output_tokens": 1,
+                        "cache_read_input_tokens": 5,
+                    },
+                },
+            },
+        )
+    ]
+    for index, (tool_name, tool_input) in enumerate(calls):
+        events.extend(
+            [
+                format_sse_event(
+                    "content_block_start",
+                    {
+                        "type": "content_block_start",
+                        "index": index,
+                        "content_block": {
+                            "type": "tool_use",
+                            "id": f"call_{index}",
+                            "name": tool_name,
+                            "input": {},
+                        },
+                    },
+                ),
+                format_sse_event(
+                    "content_block_delta",
+                    {
+                        "type": "content_block_delta",
+                        "index": index,
+                        "delta": {
+                            "type": "input_json_delta",
+                            "partial_json": json.dumps(tool_input),
+                        },
+                    },
+                ),
+                format_sse_event(
+                    "content_block_stop",
+                    {"type": "content_block_stop", "index": index},
+                ),
+            ]
+        )
+    events.extend(
+        [
+            format_sse_event(
+                "message_delta",
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": "tool_use", "stop_sequence": None},
+                    "usage": {"output_tokens": 9},
+                },
+            ),
+            format_sse_event("message_stop", {"type": "message_stop"}),
+        ]
+    )
+    return events
+
+
+def _automatic_search_request(
+    *,
+    stream: bool = True,
+    tool: Tool | None = None,
+    tool_choice: dict[str, Any] | None = None,
+) -> MessagesRequest:
+    return MessagesRequest(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=100,
+        stream=stream,
+        messages=[
+            Message(role="user", content="Prompt text must not become the query")
+        ],
+        tools=[tool or Tool(name="web_search", type="web_search_20250305")],
+        tool_choice={"type": "auto"} if tool_choice is None else tool_choice,
+    )
+
+
+def _automatic_search_service(
+    provider: ScriptedSelectionProvider,
+    *,
+    settings: Settings | None = None,
+) -> MessagesHandler:
+    effective_settings = settings or Settings()
+    return MessagesHandler(
+        effective_settings,
+        provider_resolver=lambda _: provider,
+        model_router=FixedProviderModelRouter(
+            effective_settings,
+            _PROVIDER_IDS[0],
+            provider_model="upstream-model",
+        ),
+    )
+
+
 def test_web_server_tool_not_detected_when_tool_only_listed():
     """Listing web_search without forcing it must not skip the upstream provider."""
     request = MessagesRequest(
@@ -128,13 +364,181 @@ def test_web_server_tool_not_detected_when_forced_name_missing_from_tools():
     assert not is_web_server_tool_request(request)
 
 
+@pytest.mark.parametrize("tool_choice", [None, {"type": "auto"}])
+def test_plans_exact_automatic_web_search(tool_choice: dict[str, Any] | None) -> None:
+    request = MessagesRequest(
+        model="m",
+        max_tokens=20,
+        messages=[Message(role="user", content="search")],
+        tools=[
+            Tool(
+                name="web_search",
+                type="web_search_20250305",
+                max_uses=8,
+                allowed_domains=["Example.com"],
+            )
+        ],
+        tool_choice=tool_choice,
+    )
+
+    plan = plan_automatic_web_search(request, web_tools_enabled=True)
+
+    assert plan is not None
+    assert plan.domains.allowed == ("example.com",)
+    assert plan.domains.blocked == ()
+    assert plan.request.tool_choice == tool_choice
+    assert plan.request.tools is not None
+    assert [tool.name for tool in plan.request.tools] == [HIDDEN_WEB_SEARCH_NAME]
+    assert plan.request.tools[0].input_schema == {
+        "type": "object",
+        "properties": {"query": {"type": "string"}},
+        "required": ["query"],
+        "additionalProperties": False,
+    }
+    assert request.tools is not None
+    assert request.tools[0].name == "web_search"
+
+
+def test_ordinary_function_named_web_search_remains_a_client_tool() -> None:
+    request = MessagesRequest(
+        model="m",
+        max_tokens=20,
+        messages=[Message(role="user", content="search")],
+        tools=[
+            Tool(
+                name="web_search",
+                description="ordinary client function",
+                input_schema={"type": "object"},
+            )
+        ],
+        tool_choice={"type": "tool", "name": "web_search"},
+    )
+
+    assert plan_automatic_web_search(request, web_tools_enabled=True) is None
+    assert unsupported_server_tool_error(request, web_tools_enabled=True) is None
+    assert not is_web_server_tool_request(request)
+
+
+@pytest.mark.parametrize(
+    "tool",
+    [
+        Tool(name="web_fetch", type="web_fetch_20250910"),
+        Tool(name="web_search", type="web_search_20260209"),
+        Tool(name="WebSearch", input_schema={"type": "object"}),
+        Tool(name="WebFetch", input_schema={"type": "object"}),
+    ],
+)
+def test_does_not_plan_noncanonical_automatic_search(tool: Tool) -> None:
+    request = _automatic_search_request(tool=tool)
+
+    assert plan_automatic_web_search(request, web_tools_enabled=True) is None
+
+
+def test_does_not_plan_mixed_tools_or_extended_auto_choice() -> None:
+    mixed = _automatic_search_request()
+    mixed.tools = [
+        Tool(name="web_search", type="web_search_20250305"),
+        Tool(name="client_tool", input_schema={"type": "object"}),
+    ]
+    extended_choice = _automatic_search_request(
+        tool_choice={"type": "auto", "disable_parallel_tool_use": True}
+    )
+
+    for request in (mixed, extended_choice):
+        assert plan_automatic_web_search(request, web_tools_enabled=True) is None
+        assert (
+            unsupported_server_tool_error(request, web_tools_enabled=True) is not None
+        )
+
+
+@pytest.mark.parametrize(
+    ("tool", "message"),
+    [
+        (
+            Tool(name="other", type="web_search_20250305"),
+            "must use name 'web_search'",
+        ),
+        (
+            Tool(
+                name="web_search",
+                type="web_search_20250305",
+                description="custom",
+            ),
+            "must not define description",
+        ),
+        (
+            Tool(name="web_search", type="web_search_20250305", max_uses=0),
+            "must be a positive integer",
+        ),
+        (
+            Tool(name="web_search", type="web_search_20250305", unknown="value"),
+            "unsupported option",
+        ),
+        (
+            Tool(
+                name="web_search",
+                type="web_search_20250305",
+                allowed_domains=["example.com"],
+                blocked_domains=["blocked.test"],
+            ),
+            "may define allowed_domains or blocked_domains",
+        ),
+    ],
+)
+def test_rejects_malformed_automatic_web_search_definition(
+    tool: Tool, message: str
+) -> None:
+    with pytest.raises(InvalidRequestError, match=message):
+        plan_automatic_web_search(
+            _automatic_search_request(tool=tool), web_tools_enabled=True
+        )
+
+
+def test_rejects_automatic_web_search_with_server_tool_history() -> None:
+    request = _automatic_search_request()
+    request.messages.insert(
+        0,
+        Message(
+            role="assistant",
+            content=[
+                ContentBlockServerToolUse(
+                    type="server_tool_use",
+                    id="srvtoolu_prior",
+                    name="web_search",
+                    input={"query": "prior"},
+                )
+            ],
+        ),
+    )
+
+    with pytest.raises(InvalidRequestError, match="prior Anthropic server-tool"):
+        plan_automatic_web_search(request, web_tools_enabled=True)
+
+
+@pytest.mark.parametrize(
+    "domain",
+    ["*.example.com", "example.com/path", "https://example.com", "example.com:443"],
+)
+def test_rejects_web_search_domain_wildcards_and_url_parts(domain: str) -> None:
+    request = _automatic_search_request(
+        tool=Tool(
+            name="web_search",
+            type="web_search_20250305",
+            allowed_domains=[domain],
+        )
+    )
+
+    with pytest.raises(InvalidRequestError, match="literal hostname"):
+        plan_automatic_web_search(request, web_tools_enabled=True)
+
+
 @pytest.mark.asyncio
 @pytest.mark.parametrize("provider_id", _PROVIDER_IDS)
 async def test_service_rejects_forced_server_tool_when_local_handler_is_disabled(
     provider_id: str,
 ):
     """Every provider needs FCC's local handler for forced server tools."""
-    settings = Settings()
+    settings = Settings.model_validate({"ENABLE_WEB_SERVER_TOOLS": False})
     assert settings.enable_web_server_tools is False
     service = MessagesHandler(
         settings,
@@ -155,6 +559,278 @@ async def test_service_rejects_forced_server_tool_when_local_handler_is_disabled
     )
     with pytest.raises(InvalidRequestError, match="ENABLE_WEB_SERVER_TOOLS"):
         await service.create(request)
+
+
+@pytest.mark.asyncio
+async def test_automatic_web_search_replays_provider_response_when_declined(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    events = _provider_text_events("No search needed")
+    provider = ScriptedSelectionProvider(events)
+    search = AsyncMock()
+    monkeypatch.setattr(
+        "free_claude_code.api.web_tools.outbound._run_web_search", search
+    )
+    service = _automatic_search_service(provider)
+
+    response = await service.create(
+        _automatic_search_request(), request_id="req_automatic_declined"
+    )
+
+    assert isinstance(response, StreamingResponse)
+    assert await _streaming_body_text(response) == "".join(events)
+    search.assert_not_awaited()
+    assert provider.close_count == 1
+    assert len(provider.requests) == 1
+    translated = provider.requests[0]
+    assert translated.model == "upstream-model"
+    assert translated.tool_choice == {"type": "auto"}
+    assert translated.tools is not None
+    assert [tool.name for tool in translated.tools] == [HIDDEN_WEB_SEARCH_NAME]
+    assert provider.stream_kwargs == [
+        {
+            "input_tokens": provider.stream_kwargs[0]["input_tokens"],
+            "request_id": "req_automatic_declined",
+            "response_model": "claude-haiku-4-5-20251001",
+            "reasoning": ReasoningPolicy.off(),
+        }
+    ]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("domain_option", "domain"),
+    [
+        ("allowed_domains", "example.com"),
+        ("blocked_domains", "unrelated.test"),
+    ],
+)
+async def test_automatic_web_search_uses_model_query_and_filters_domains(
+    domain_option: str,
+    domain: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = ScriptedSelectionProvider(
+        _provider_tool_events(arguments={"query": "model selected query"})
+    )
+    seen_queries: list[str] = []
+
+    async def fake_search(query: str) -> list[dict[str, str]]:
+        seen_queries.append(query)
+        return [
+            {"title": "Allowed", "url": "https://docs.example.com/page"},
+            {"title": "Filtered", "url": "https://unrelated.test/page"},
+        ]
+
+    monkeypatch.setattr(
+        "free_claude_code.api.web_tools.outbound._run_web_search", fake_search
+    )
+    service = _automatic_search_service(provider)
+    request = _automatic_search_request(
+        tool=Tool.model_validate(
+            {
+                "name": "web_search",
+                "type": "web_search_20250305",
+                "max_uses": 8,
+                domain_option: [domain],
+            }
+        )
+    )
+
+    response = await service.create(request, request_id="req_automatic_selected")
+
+    assert isinstance(response, StreamingResponse)
+    raw = await _streaming_body_text(response)
+    events = parse_sse_text(raw)
+    assert_anthropic_stream_contract(events)
+    assert seen_queries == ["model selected query"]
+    assert HIDDEN_WEB_SEARCH_NAME not in raw
+    assert "call_0" not in raw
+    assert "Prompt text must not become the query" not in raw
+    assert "docs.example.com/page" in raw
+    assert "unrelated.test/page" not in raw
+    assert sum(event.event == "message_start" for event in events) == 1
+    assert sum(event.event == "message_stop" for event in events) == 1
+    starts = [event for event in events if event.event == "content_block_start"]
+    assert [start.data["content_block"]["type"] for start in starts] == [
+        "server_tool_use",
+        "web_search_tool_result",
+        "text",
+    ]
+    assert starts[0].data["content_block"]["input"] == {"query": "model selected query"}
+    assert (
+        starts[1].data["content_block"]["tool_use_id"]
+        == starts[0].data["content_block"]["id"]
+    )
+    message_start = next(
+        event.data["message"] for event in events if event.event == "message_start"
+    )
+    assert message_start["model"] == "claude-haiku-4-5-20251001"
+    final_usage = next(
+        event.data["usage"] for event in events if event.event == "message_delta"
+    )
+    assert final_usage == {
+        "input_tokens": 17,
+        "output_tokens": 9,
+        "cache_read_input_tokens": 5,
+        "server_tool_use": {"web_search_requests": 1},
+    }
+    assert len(provider.requests) == 1
+    assert provider.close_count == 1
+
+
+@pytest.mark.asyncio
+async def test_automatic_web_search_aggregates_when_stream_false(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = ScriptedSelectionProvider(
+        _provider_tool_events(arguments={"query": "json query"})
+    )
+
+    async def fake_search(_query: str) -> list[dict[str, str]]:
+        return [{"title": "JSON result", "url": "https://example.com/json"}]
+
+    monkeypatch.setattr(
+        "free_claude_code.api.web_tools.outbound._run_web_search", fake_search
+    )
+    service = _automatic_search_service(provider)
+
+    response = await service.create(
+        _automatic_search_request(stream=False),
+        request_id="req_automatic_json",
+    )
+
+    assert isinstance(response, JSONResponse)
+    body = _json_body(response)
+    assert [block["type"] for block in body["content"]] == [
+        "server_tool_use",
+        "web_search_tool_result",
+        "text",
+    ]
+    assert body["content"][1]["content"][0]["url"] == "https://example.com/json"
+    assert body["usage"]["server_tool_use"] == {"web_search_requests": 1}
+    assert len(provider.requests) == 1
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    "events",
+    [
+        _provider_tool_events(arguments={"query": ""}),
+        _provider_tool_events(name="unexpected_tool"),
+        _provider_tool_events(additional_calls=1),
+    ],
+    ids=["blank-query", "wrong-tool", "multiple-tools"],
+)
+async def test_automatic_web_search_rejects_malformed_provider_selection(
+    events: list[str],
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = ScriptedSelectionProvider(events)
+    search = AsyncMock()
+    monkeypatch.setattr(
+        "free_claude_code.api.web_tools.outbound._run_web_search", search
+    )
+    service = _automatic_search_service(provider)
+
+    response = await service.create(
+        _automatic_search_request(), request_id="req_malformed_selection"
+    )
+
+    assert isinstance(response, JSONResponse)
+    assert response.status_code == 500
+    assert response.headers["x-should-retry"] == "false"
+    assert response.headers["content-type"].startswith("application/json")
+    assert _json_body(response)["request_id"] == "req_malformed_selection"
+    search.assert_not_awaited()
+    assert provider.close_count == 1
+
+
+@pytest.mark.asyncio
+async def test_automatic_web_search_preserves_provider_failure_before_public_commit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = ScriptedSelectionProvider(
+        [],
+        failure=ExecutionFailure(
+            kind=FailureKind.RATE_LIMIT,
+            status_code=429,
+            message="provider exhausted retries",
+            retryable=False,
+        ),
+    )
+    search = AsyncMock()
+    monkeypatch.setattr(
+        "free_claude_code.api.web_tools.outbound._run_web_search", search
+    )
+    service = _automatic_search_service(provider)
+
+    response = await service.create(
+        _automatic_search_request(), request_id="req_selection_failure"
+    )
+
+    assert isinstance(response, JSONResponse)
+    assert response.status_code == 429
+    assert response.headers["x-should-retry"] == "false"
+    assert _json_body(response)["error"]["type"] == "rate_limit_error"
+    search.assert_not_awaited()
+    assert provider.close_count == 1
+
+
+@pytest.mark.asyncio
+async def test_automatic_web_search_converts_internal_post_start_failure_to_json(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    provider = ScriptedSelectionProvider(
+        _provider_text_events("partial")[:2],
+        failure=ExecutionFailure(
+            kind=FailureKind.OVERLOADED,
+            status_code=529,
+            message="provider exhausted retries after starting",
+            retryable=False,
+        ),
+        failure_after_events=True,
+    )
+    search = AsyncMock()
+    monkeypatch.setattr(
+        "free_claude_code.api.web_tools.outbound._run_web_search", search
+    )
+    service = _automatic_search_service(provider)
+
+    response = await service.create(
+        _automatic_search_request(), request_id="req_selection_post_start_failure"
+    )
+
+    assert isinstance(response, JSONResponse)
+    assert response.status_code == 529
+    assert response.headers["x-should-retry"] == "false"
+    assert response.headers["content-type"].startswith("application/json")
+    body = _json_body(response)
+    assert body["error"]["type"] == "overloaded_error"
+    assert body["request_id"] == "req_selection_post_start_failure"
+    search.assert_not_awaited()
+    assert provider.close_count == 1
+
+
+@pytest.mark.asyncio
+async def test_automatic_web_search_cancellation_closes_provider_stream() -> None:
+    release = asyncio.Event()
+    provider = ScriptedSelectionProvider(
+        _provider_text_events("unused"), wait_for=release
+    )
+    service = _automatic_search_service(provider)
+    task = asyncio.create_task(
+        service.create(
+            _automatic_search_request(), request_id="req_selection_cancelled"
+        )
+    )
+    await provider.started.wait()
+
+    task.cancel()
+
+    with pytest.raises(asyncio.CancelledError):
+        await task
+    assert provider.close_count == 1
 
 
 @pytest.mark.parametrize(
@@ -784,7 +1460,7 @@ async def test_drain_response_body_capped_stops_after_first_chunk_when_oversized
 async def test_service_rejects_listed_server_tools_for_every_provider(
     provider_id: str,
 ) -> None:
-    settings = Settings()
+    settings = Settings.model_validate({"ENABLE_WEB_SERVER_TOOLS": False})
     service = MessagesHandler(
         settings,
         provider_resolver=lambda _: MagicMock(),
@@ -796,5 +1472,5 @@ async def test_service_rejects_listed_server_tools_for_every_provider(
         messages=[Message(role="user", content="q")],
         tools=[Tool(name="web_search", type="web_search_20250305")],
     )
-    with pytest.raises(InvalidRequestError, match="cannot pass listed Anthropic"):
+    with pytest.raises(InvalidRequestError, match="ENABLE_WEB_SERVER_TOOLS=false"):
         await service.create(request)

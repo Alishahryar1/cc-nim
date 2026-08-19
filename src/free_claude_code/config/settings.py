@@ -582,9 +582,9 @@ class Settings(BaseModel):
     )
 
     # ==================== Local web server tools (web_search / web_fetch) ====================
-    # Off by default: these tools perform outbound HTTP from the proxy (SSRF risk).
+    # On by default to match Claude Code's normal web-tool availability.
     enable_web_server_tools: bool = Field(
-        default=False, validation_alias="ENABLE_WEB_SERVER_TOOLS"
+        default=True, validation_alias="ENABLE_WEB_SERVER_TOOLS"
     )
     # Comma-separated URL schemes allowed for web_fetch (default: http,https).
     web_fetch_allowed_schemes: NonEmptyString = Field(

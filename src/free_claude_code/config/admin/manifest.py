@@ -434,6 +434,10 @@ _NON_PROVIDER_FIELDS: tuple[ConfigFieldSpec, ...] = (
         "web_tools",
         "boolean",
         settings_attr="enable_web_server_tools",
+        description=(
+            "Let Claude Code use WebSearch through FCC and allow forced local web "
+            "tools. Disable to prevent local web access."
+        ),
     ),
     ConfigFieldSpec(
         "WEB_FETCH_ALLOWED_SCHEMES",
