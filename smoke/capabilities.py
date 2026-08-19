@@ -568,6 +568,20 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         ("test_cline_cli_prompt_e2e",),
     ),
     CapabilityContract(
+        "cli",
+        "hermes_cli_integration",
+        "hermes_cli_integration",
+        "free_claude_code.cli.launchers.hermes",
+        "Hermes Agent 0.20.4+, live FCC catalog, and process-only managed overlay",
+        "Responses provider scoped to FCC for attached terminal sessions",
+        "version, policy, activation, proxy, or catalog failure exits before inference",
+        (
+            "tests/cli/test_hermes_config.py",
+            "tests/cli/test_hermes_launcher.py",
+        ),
+        ("test_hermes_cli_prompt_e2e",),
+    ),
+    CapabilityContract(
         "extensibility",
         "provider_platform_abcs",
         "extensible_provider_platform_abcs",
