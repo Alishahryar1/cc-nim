@@ -83,6 +83,8 @@ AGNES_DEFAULT_BASE = "https://apihub.agnes-ai.com/v1"
 ZENMUX_DEFAULT_BASE = "https://zenmux.ai/api/v1"
 # W&B Serverless Inference OpenAI-compatible API.
 WANDB_INFERENCE_DEFAULT_BASE = "https://api.inference.wandb.ai/v1"
+# Poolside AI OpenAI-compatible Chat Completions API.
+POOLSIDE_DEFAULT_BASE = "https://inference.poolside.ai/v1"
 
 
 class ProviderAuthKind(StrEnum):
@@ -561,6 +563,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         default_base_url=OLLAMA_DEFAULT_BASE,
         base_url_attr="ollama_base_url",
         local=True,
+    ),
+    "poolside": ProviderDescriptor(
+        provider_id="poolside",
+        display_name="Poolside AI",
+        credential_env="POOLSIDE_API_KEY",
+        credential_url="https://inference.poolside.ai/",
+        credential_attr="poolside_api_key",
+        default_base_url=POOLSIDE_DEFAULT_BASE,
+        proxy_attr="poolside_proxy",
     ),
 }
 

@@ -253,6 +253,7 @@ from more than one provider before succeeding.
 | [LM Studio](https://lmstudio.ai/) | `LM_STUDIO_BASE_URL` | `lmstudio/<model-id>` |
 | [llama.cpp](https://github.com/ggml-org/llama.cpp) | `LLAMACPP_BASE_URL` | `llamacpp/<model-id>` |
 | [Ollama](https://ollama.com/) | `OLLAMA_BASE_URL` | `ollama/<model-tag>` |
+| [Poolside AI](https://inference.poolside.ai/) | `POOLSIDE_API_KEY` | `poolside/<model-name>` |
 
 </details>
 
