@@ -321,6 +321,28 @@ def test_claude_cli_web_search_e2e(smoke_config: SmokeConfig, tmp_path: Path) ->
             "LOG_LEVEL": "DEBUG",
         },
     ).run() as server:
+        automatic_turn = ConversationDriver(server, smoke_config).stream(
+            {
+                "model": provider_model.full_model,
+                "max_tokens": 512,
+                "messages": [
+                    {
+                        "role": "user",
+                        "content": (
+                            "You must use the available web search tool to find the "
+                            "Free Claude Code GitHub repository."
+                        ),
+                    }
+                ],
+                "tools": [
+                    {
+                        "name": "web_search",
+                        "type": "web_search_20250305",
+                    }
+                ],
+                "tool_choice": {"type": "auto"},
+            }
+        )
         run = run_claude_cli(
             claude_bin=claude_bin,
             server=server,
@@ -328,8 +350,8 @@ def test_claude_cli_web_search_e2e(smoke_config: SmokeConfig, tmp_path: Path) ->
             cwd=tmp_path,
             bare=False,
             prompt=(
-                "Use WebSearch to find the Free Claude Code GitHub repository. "
-                "Then reply with FCC_SMOKE_WEB_SEARCH and one source URL."
+                "Use WebSearch exactly once to find the Free Claude Code GitHub "
+                "repository. Then reply with FCC_SMOKE_WEB_SEARCH and one source URL."
             ),
             tools="WebSearch",
         )
@@ -339,23 +361,37 @@ def test_claude_cli_web_search_e2e(smoke_config: SmokeConfig, tmp_path: Path) ->
     assert run.returncode == 0, run.combined_output
     assert "FCC_SMOKE_WEB_SEARCH" in run.combined_output
     assert "http" in run.combined_output
+    automatic_payload = json.dumps(
+        [event.data for event in automatic_turn.events], sort_keys=True
+    )
+    assert '"type": "server_tool_use"' in automatic_payload
+    assert '"type": "web_search_tool_result"' in automatic_payload
+    assert "github.com" in automatic_payload
     log_rows = _json_object_lines(server_log)
-    assert any(
-        row.get("event") == "free_claude_code.api.web_server_tools.recognized"
-        for row in log_rows
+    assert (
+        sum(
+            row.get("event") == "free_claude_code.api.web_search.automatic_recognized"
+            for row in log_rows
+        )
+        == 1
     ), server_log
     assert any(
-        row.get("event") == "free_claude_code.api.web_server_tools.local_completed"
-        and row.get("tool_kind") == "web_search"
+        row.get("event") == "free_claude_code.api.optimization.web_server_tool"
         for row in log_rows
     ), server_log
     assert (
         sum(
-            row.get("event")
-            == "free_claude_code.api.web_server_tools.model_round_started"
+            row.get("event") == "free_claude_code.api.web_search.automatic_selected"
             for row in log_rows
         )
-        >= 2
+        == 1
+    ), server_log
+    assert (
+        sum(
+            row.get("event") == "free_claude_code.api.web_search.automatic_completed"
+            for row in log_rows
+        )
+        == 1
     ), server_log
 
 

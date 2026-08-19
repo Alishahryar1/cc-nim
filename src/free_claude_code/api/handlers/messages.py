@@ -1,7 +1,7 @@
 """Claude Messages API product flow."""
 
 import asyncio
-from collections.abc import AsyncIterator
+from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass, replace
 
 from fastapi.responses import JSONResponse, Response
@@ -23,13 +23,20 @@ from free_claude_code.api.response_streams import (
     terminal_execution_error_response,
     trace_terminal_execution_error,
 )
-from free_claude_code.api.web_tools.coordinator import WebServerToolCoordinator
+from free_claude_code.api.web_tools.automatic_search import (
+    stream_automatic_web_search_response,
+)
 from free_claude_code.api.web_tools.egress import (
     WebFetchEgressPolicy,
     web_fetch_allowed_scheme_set,
 )
-from free_claude_code.api.web_tools.request import plan_web_server_tools
-from free_claude_code.application.errors import ApplicationError
+from free_claude_code.api.web_tools.request import (
+    is_web_server_tool_request,
+    plan_automatic_web_search,
+    unsupported_server_tool_error,
+)
+from free_claude_code.api.web_tools.streaming import stream_web_server_tool_response
+from free_claude_code.application.errors import ApplicationError, InvalidRequestError
 from free_claude_code.application.execution import ProviderExecutor, TokenCounter
 from free_claude_code.application.ports import ProviderResolver
 from free_claude_code.application.routing import ModelRouter, RoutedMessagesRequest
@@ -60,6 +67,7 @@ class _MessagesCompleteResult:
 
 
 _MessagesResult = _MessagesStreamResult | _MessagesCompleteResult
+MessageIntercept = Callable[[RoutedMessagesRequest], _MessagesResult | None]
 
 
 class MessagesHandler:
@@ -77,6 +85,7 @@ class MessagesHandler:
     ) -> None:
         self._settings = settings
         self._model_router = model_router or ModelRouter(settings)
+        self._token_counter = token_counter
         self._provider_executor = provider_executor or ProviderExecutor(
             provider_resolver,
             progress_timeout_seconds=settings.provider_progress_timeout,
@@ -84,14 +93,9 @@ class MessagesHandler:
             generation_id=generation_id,
             log_raw_payloads=settings.log_raw_api_payloads,
         )
-        self._web_server_tool_coordinator = WebServerToolCoordinator(
-            self._provider_executor,
-            web_fetch_egress=WebFetchEgressPolicy(
-                allow_private_network_targets=settings.web_fetch_allow_private_networks,
-                allowed_schemes=web_fetch_allowed_scheme_set(
-                    settings.web_fetch_allowed_schemes
-                ),
-            ),
+        self._message_intercepts: tuple[MessageIntercept, ...] = (
+            self._intercept_web_server_tool,
+            self._intercept_local_optimization,
         )
 
     async def create(
@@ -103,22 +107,29 @@ class MessagesHandler:
             require_non_empty_messages(request_data.messages)
             routed = self._model_router.resolve_messages_request(request_data)
             routed = self._apply_message_routing_policies(routed)
-            web_plan = plan_web_server_tools(
+            automatic_search = plan_automatic_web_search(
                 routed.request,
-                enabled=self._settings.enable_web_server_tools,
+                web_tools_enabled=self._settings.enable_web_server_tools,
             )
-            if web_plan is not None and web_plan.active:
-                result: _MessagesResult | None = _MessagesStreamResult(
-                    self._web_server_tool_coordinator.stream(
+            if automatic_search is None:
+                self._reject_unsupported_server_tools(routed)
+                result = self._run_message_intercepts(routed)
+            else:
+                input_tokens = self._token_counter(
+                    routed.request.messages,
+                    routed.request.system,
+                    routed.request.tools,
+                )
+                result = _MessagesStreamResult(
+                    stream_automatic_web_search_response(
+                        self._provider_executor,
                         routed,
-                        web_plan,
+                        automatic_search,
                         request_id=request_id,
+                        fallback_input_tokens=input_tokens,
+                        verbose_client_errors=self._settings.log_api_error_tracebacks,
                     )
                 )
-            else:
-                if web_plan is not None:
-                    routed = replace(routed, request=web_plan.request)
-                result = self._intercept_local_optimization(routed)
             if result is None:
                 logger.debug("No optimization matched, routing to provider")
                 result = _MessagesStreamResult(
@@ -282,6 +293,14 @@ class MessagesHandler:
             ),
         )
 
+    def _reject_unsupported_server_tools(self, routed: RoutedMessagesRequest) -> None:
+        tool_err = unsupported_server_tool_error(
+            routed.request,
+            web_tools_enabled=self._settings.enable_web_server_tools,
+        )
+        if tool_err is not None:
+            raise InvalidRequestError(tool_err)
+
     def _apply_message_routing_policies(
         self, routed: RoutedMessagesRequest
     ) -> RoutedMessagesRequest:
@@ -325,6 +344,48 @@ class MessagesHandler:
             request=request,
             reasoning=(
                 ReasoningPolicy.off() if reasoning_changed else routed.reasoning
+            ),
+        )
+
+    def _run_message_intercepts(
+        self, routed: RoutedMessagesRequest
+    ) -> _MessagesResult | None:
+        for intercept in self._message_intercepts:
+            result = intercept(routed)
+            if result is not None:
+                return result
+        return None
+
+    def _intercept_web_server_tool(
+        self, routed: RoutedMessagesRequest
+    ) -> _MessagesResult | None:
+        if not self._settings.enable_web_server_tools:
+            return None
+        if not is_web_server_tool_request(routed.request):
+            return None
+
+        input_tokens = self._token_counter(
+            routed.request.messages, routed.request.system, routed.request.tools
+        )
+        trace_event(
+            stage="routing",
+            event="free_claude_code.api.optimization.web_server_tool",
+            source="api",
+            model=routed.resolved.original_model,
+        )
+        egress = WebFetchEgressPolicy(
+            allow_private_network_targets=self._settings.web_fetch_allow_private_networks,
+            allowed_schemes=web_fetch_allowed_scheme_set(
+                self._settings.web_fetch_allowed_schemes
+            ),
+        )
+        return _MessagesStreamResult(
+            stream_web_server_tool_response(
+                routed.request,
+                input_tokens=input_tokens,
+                web_fetch_egress=egress,
+                response_model=routed.resolved.original_model,
+                verbose_client_errors=self._settings.log_api_error_tracebacks,
             ),
         )
 

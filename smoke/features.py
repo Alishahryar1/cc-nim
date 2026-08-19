@@ -40,11 +40,16 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "drop_in_claude_code_replacement",
         "Claude-compatible API, CLI, and editor protocol flows work",
-        ("tests/api/test_api.py", "tests/cli/test_cli.py"),
+        (
+            "tests/api/test_api.py",
+            "tests/api/test_web_server_tools.py",
+            "tests/cli/test_cli.py",
+        ),
         ("test_probe_and_models_routes", "test_claude_cli_prompt_when_available"),
         (
             "test_api_basic_conversation_e2e",
             "test_claude_cli_adaptive_thinking_e2e",
+            "test_claude_cli_web_search_e2e",
             "test_claude_cli_provider_error_e2e",
             "test_nvidia_nim_cli_matrix_e2e",
             "test_openrouter_free_cli_matrix_e2e",
@@ -211,25 +216,6 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         ("tools", "providers"),
         ("configured tool-capable provider",),
         "tool-capable configured providers must emit or continue tool results",
-    ),
-    FeatureCoverage(
-        "anthropic_web_server_tools",
-        "Claude WebSearch and WebFetch run automatically through every provider",
-        (
-            "tests/api/test_web_server_tool_request.py",
-            "tests/api/test_web_server_tool_coordinator.py",
-            "tests/api/test_web_server_tools.py",
-        ),
-        (),
-        ("test_claude_cli_web_search_e2e",),
-        ("cli",),
-        (
-            "FCC_SMOKE_RUN_WEB_TOOLS=1",
-            "Claude CLI",
-            "configured tool-capable provider",
-            "public network access",
-        ),
-        "opt-in because it performs a real public web search",
     ),
     FeatureCoverage(
         "request_optimization",
@@ -460,10 +446,11 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
     FeatureCoverage(
         "claude_cli_drop_in",
         "Claude CLI can send adaptive thinking and tool-shaped history",
-        ("tests/cli/test_cli.py",),
+        ("tests/api/test_web_server_tools.py", "tests/cli/test_cli.py"),
         ("test_claude_cli_prompt_when_available",),
         (
             "test_claude_cli_adaptive_thinking_e2e",
+            "test_claude_cli_web_search_e2e",
             "test_claude_cli_multiturn_tool_protocol_e2e",
             "test_nvidia_nim_cli_matrix_e2e",
             "test_openrouter_free_cli_matrix_e2e",

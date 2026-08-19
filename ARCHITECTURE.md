@@ -1199,39 +1199,31 @@ sequences remain on the request so a target converter can preserve them or rejec
 the request as lossy. This policy belongs to the Claude Messages boundary, never
 to an OpenAI provider or model-specific adapter.
 
-Local `web_search` and `web_fetch` handling lives under
-[api/web_tools/](src/free_claude_code/api/web_tools/). The Messages boundary
-recognizes only the documented `web_search_20250305` and
-`web_fetch_20250910` definitions, validates their choice, use-limit, and domain
-contracts before side effects, and translates them into reserved ordinary
-functions that every routed provider can understand. Ordinary client tools—even
-ones named `web_search`—remain ordinary tools. Mixed client/server definitions
-and unsupported server-tool versions fail as deterministic 400 responses rather
-than being guessed or silently downgraded.
+Local `web_search` and `web_fetch` compatibility lives under
+[api/web_tools/](src/free_claude_code/api/web_tools/). It is enabled by default
+and can be disabled with `ENABLE_WEB_SERVER_TOOLS=false`. Forced
+`web_search_20250305` and `web_fetch_20250910` requests bypass the provider and
+retain the existing local result lifecycle. [api/web_tools/egress.py](src/free_claude_code/api/web_tools/egress.py)
+continues to own URL-scheme and private-network restrictions for forced
+`web_fetch`.
 
-[api/web_tools/coordinator.py](src/free_claude_code/api/web_tools/coordinator.py)
-owns one request-local model/tool loop. Every model round still goes through the
-application `ProviderExecutor`, preserving provider retries, model fallback,
-reasoning, progress deadlines, cancellation, and iterator cleanup. The model
-selects each tool and supplies its structured arguments; FCC executes the local
-search/fetch and feeds an ordinary hidden `tool_result` back to the next model
-round. Hidden names and provider call IDs never cross the public boundary. The
-client receives one Anthropic lifecycle containing model-authored thinking/text,
-public `server_tool_use` blocks, and matching result blocks. A ten-round ceiling
-returns `pause_turn`; the next request reconstructs and resumes the pending call
-from its public transcript, so no session database is needed.
+Current Claude Code uses a separate subordinate Messages request when its outer
+`WebSearch` tool is available. For the exact request containing only
+`web_search_20250305` with omitted or automatic tool choice, the Messages
+boundary translates that server tool into one private ordinary search function.
+`ProviderExecutor` runs and buffers one normal provider decision, preserving its
+retry, fallback, timeout, and failure behavior. If the model declines the tool,
+FCC replays the buffered stream unchanged. If the model selects one valid query,
+FCC discards the private function frames, searches the fixed DuckDuckGo backend,
+and emits the existing Anthropic `server_tool_use` and
+`web_search_tool_result` lifecycle. Claude Code owns the outer continuation; FCC
+does not run a second provider round or persist hidden transcript state.
 
-[api/web_tools/egress.py](src/free_claude_code/api/web_tools/egress.py) remains
-the owner of fetch safety. It applies normalized allow/block domains to the
-initial URL and every redirect in addition to scheme checks, DNS pinning,
-private-address rejection, redirect limits, response caps, and timeouts. Fetch
-URLs must also come from user content, a client tool result, or an earlier local
-web result. Local validation/network failures are returned in-band so the model
-can recover; provider failures before the first public frame remain typed
-non-2xx responses, while failures after a server block has committed become the
-normal terminal Anthropic error event. `ENABLE_WEB_SERVER_TOOLS` defaults on for
-Claude-compatible behavior, while an explicit false remains a complete local
-web-access opt-out.
+Other Anthropic server-tool shapes remain fail-closed before provider execution:
+automatic WebFetch, mixed tool lists, newer unverified versions, prior hosted
+server-tool history, and extra choice semantics are not generalized. This keeps
+the compatibility exception at the Messages/API boundary rather than leaking
+server-tool semantics into providers or the executor.
 
 ## CLI Launchers And Managed Claude
 

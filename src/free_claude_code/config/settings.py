@@ -582,7 +582,7 @@ class Settings(BaseModel):
     )
 
     # ==================== Local web server tools (web_search / web_fetch) ====================
-    # On by default; public-network egress restrictions remain enforced for fetches.
+    # On by default to match Claude Code's normal web-tool availability.
     enable_web_server_tools: bool = Field(
         default=True, validation_alias="ENABLE_WEB_SERVER_TOOLS"
     )

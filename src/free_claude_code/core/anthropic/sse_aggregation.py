@@ -104,7 +104,7 @@ async def aggregate_anthropic_sse_to_message(
         elif btype == "thinking":
             block["thinking"] = str(block.get("thinking", "")) + accumulated
             block.setdefault("signature", "")
-        elif btype in {"tool_use", "server_tool_use"}:
+        elif btype == "tool_use":
             if accumulated.strip():
                 try:
                     block["input"] = json.loads(accumulated)

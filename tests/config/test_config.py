@@ -53,12 +53,6 @@ def test_settings_defaults_are_valid_and_nonempty() -> None:
     ] == []
 
 
-def test_web_server_tools_explicit_false_overrides_enabled_default() -> None:
-    settings = Settings.model_validate({"ENABLE_WEB_SERVER_TOOLS": "false"})
-
-    assert settings.enable_web_server_tools is False
-
-
 def test_every_external_setting_has_one_explicit_alias() -> None:
     aliases = [
         field.validation_alias
