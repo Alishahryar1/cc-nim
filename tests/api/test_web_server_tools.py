@@ -79,6 +79,19 @@ def test_domain_policy_matches_parent_subdomains_and_search_paths() -> None:
     assert not policy.allows("https://example.net/docs/start")
 
 
+@pytest.mark.parametrize("rule_path", ["/api", "/api/"])
+def test_domain_rule_path_matches_only_exact_or_descendant_paths(
+    rule_path: str,
+) -> None:
+    rule = WebDomainRule("example.com", rule_path)
+
+    assert rule.matches("https://example.com/api")
+    assert rule.matches("https://example.com/api/")
+    assert rule.matches("https://example.com/api/child")
+    assert not rule.matches("https://example.com/apiary")
+    assert not rule.matches("https://example.com/api-v2")
+
+
 def test_domain_policy_search_hints_preserve_blocked_paths() -> None:
     policy = WebDomainPolicy(blocked=(WebDomainRule("example.com", "/private"),))
 

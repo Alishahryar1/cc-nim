@@ -21,7 +21,11 @@ class WebDomainRule:
         host = (parsed.hostname or "").lower().rstrip(".")
         if host != self.host and not host.endswith(f".{self.host}"):
             return False
-        return not self.path or (parsed.path or "/").startswith(self.path)
+        rule_path = self.path.rstrip("/") or "/"
+        if rule_path == "/":
+            return True
+        path = parsed.path or "/"
+        return path == rule_path or path.startswith(f"{rule_path}/")
 
 
 @dataclass(frozen=True, slots=True)
