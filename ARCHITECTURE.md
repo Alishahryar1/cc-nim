@@ -12,16 +12,17 @@ and how contributors should extend it.
 
 Free Claude Code is a local proxy for agent clients. It accepts Anthropic
 Messages traffic from Claude Code and Pi clients and OpenAI Responses traffic
-from Codex, OpenCode, Cline, Hermes, and DeepSeek Harness clients, routes the request to a
-configured upstream provider, and preserves the wire protocol expected by the
-caller.
+from Codex, OpenCode, Cline, Hermes, DeepSeek Harness, and Grok Build clients,
+routes the request to a configured upstream provider, and preserves the wire
+protocol expected by the caller.
 
 There are three runtime surfaces:
 
 - HTTP proxy: FastAPI routes expose Anthropic-compatible, Responses-compatible,
   health, model-listing, stop, and admin endpoints.
 - CLI launchers: wrapper entrypoints prepare Claude Code, Codex, Pi, OpenCode,
-  Cline, Hermes, and DeepSeek Harness sessions so they target the local proxy.
+  Cline, Hermes, DeepSeek Harness, and Grok Build sessions so they target the
+  local proxy.
 - Messaging bridge: optional Discord or Telegram adapters turn chat messages
   into managed client CLI sessions.
 
@@ -34,6 +35,7 @@ flowchart LR
     Cline[Cline CLI] --> ProxyAPI
     Hermes[Hermes Agent] --> ProxyAPI
     DSH[DeepSeek Harness] --> ProxyAPI
+    Grok[Grok Build] --> ProxyAPI
     AdminUI[Local Admin UI] --> ProxyAPI
     Bots[Discord or Telegram Bots] --> Messaging[Messaging Bridge]
     Messaging --> ClientCLI[Managed Client CLI Sessions]
@@ -185,6 +187,9 @@ for real prompts against supported providers:
 - `fcc-dsh`, DeepSeek Harness 0.1.0-rc.8, and the OpenAI Responses behavior it
   relies on for attached Web and headless sessions, including an FCC-scoped
   model catalog and process-local configuration.
+- `fcc-grok`, Grok Build 1.0.5 or newer, and the OpenAI Responses behavior it
+  relies on for attached terminal, headless, and ACP sessions, including an
+  FCC-scoped model catalog and process-local configuration.
 - Configured Discord and Telegram messaging bridges, including command handling,
   reply-based conversation branches, status updates, transcript rendering,
   managed Claude/Codex task execution where configured, task stop/clear flows,
@@ -243,6 +248,7 @@ Console scripts are registered in [pyproject.toml](pyproject.toml):
 - `fcc-cline` calls `free_claude_code.cli.launchers.cline:launch`.
 - `fcc-hermes` calls `free_claude_code.cli.launchers.hermes:launch`.
 - `fcc-dsh` calls `free_claude_code.cli.launchers.dsh:launch`.
+- `fcc-grok` calls `free_claude_code.cli.launchers.grok:launch`.
 
 [scripts/install.sh](scripts/install.sh) and [scripts/install.ps1](scripts/install.ps1)
 install or update the uv tool plus optional voice extras. On Windows the
@@ -251,7 +257,8 @@ per-user application bundle and desktop link. [scripts/uninstall.sh](scripts/uni
 and [scripts/uninstall.ps1](scripts/uninstall.ps1) remove those exact desktop
 artifacts, the FCC uv tool, and the managed `~/.fcc/` tree from
 [config/paths.py](src/free_claude_code/config/paths.py); they do not remove
-uv, Claude Code, Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, or uv-managed Python runtimes. [scripts/ci.sh](scripts/ci.sh) and
+uv, Claude Code, Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok
+Build, or uv-managed Python runtimes. [scripts/ci.sh](scripts/ci.sh) and
 [scripts/ci.ps1](scripts/ci.ps1) mirror [.github/workflows/tests.yml](.github/workflows/tests.yml)
 for local pre-push verification.
 
@@ -618,12 +625,14 @@ generation. Safe `model_fallback.started` and `model_fallback.selected` trace
 events expose canonical route refs, candidate positions, failure kind, status,
 wire API, and generation without prompt or raw upstream error content.
 
-`GET /v1/models` advertises:
+`GET /v1/models` owns one neutral inventory with three typed views:
 
-- configured provider model refs;
-- cached provider-discovered models;
-- no-thinking variants when appropriate;
-- built-in Claude model IDs for compatibility with Claude clients.
+- the default `claude` view preserves configured and cached provider models,
+  no-thinking variants, and built-in Claude compatibility IDs;
+- the `messages` view exposes one direct routable ID per model for
+  Messages-native clients; and
+- the `responses` view exposes those direct IDs plus Responses transport,
+  retry, reasoning, and timeout metadata for Responses-native clients.
 
 Provider model discovery and optional thinking metadata live in the
 application-level catalog owned by `ProviderRuntimeManager`.
@@ -646,7 +655,7 @@ translate reasoning. The catalog is not part of an individual provider
 generation, so a hot replacement does not erase the last useful model list.
 Discovery failures retain prior entries.
 
-Codex-specific model picker shaping stays out of this route.
+Codex-specific model picker shaping stays outside the neutral inventory.
 [runtime/codex_catalog.py](src/free_claude_code/runtime/codex_catalog.py) is the
 composition bridge: it asks this route's pure builder for the exact application
 inventory, passes that response to the existing Codex adapter, and writes
@@ -1286,12 +1295,10 @@ client environment.
   OpenAI authorization.
 
 [cli/launchers/model_catalog.py](src/free_claude_code/cli/launchers/model_catalog.py)
-owns the client-neutral projection from FCC's `/v1/models` response to direct,
-nested `provider/model` routes. It removes Claude-only compatibility aliases,
-deduplicates normal and no-thinking forms deterministically, and is shared by
-Codex, OpenCode, Cline, Hermes, and DeepSeek Harness. Each launcher remains
-responsible for translating those neutral entries into its client's
-configuration format.
+consumes the direct Responses view, validates its nested `provider/model`
+references, and is shared by Codex, OpenCode, Cline, Hermes, DeepSeek Harness,
+and Grok Build. The API owns compatibility filtering and direct wire identity;
+each launcher owns only translation into its client's configuration format.
 
 [cli/launchers/pi.py](src/free_claude_code/cli/launchers/pi.py) owns the installed
 `fcc-pi` launcher and [cli/launchers/pi_extension.ts](src/free_claude_code/cli/launchers/pi_extension.ts)
@@ -1301,7 +1308,7 @@ is its bundled Pi adapter:
   scope Pi to the ephemeral `free-claude-code/**` provider, whose model IDs
   retain FCC's nested `provider/model` routing reference.
 - The extension fetches FCC's `/v1/models` catalog before registration, projects
-  only routable provider-model IDs, and registers an `anthropic-messages`
+  the direct Messages view, and registers an `anthropic-messages`
   provider targeting the local proxy. Catalog failure is fail-closed so Pi never
   silently falls back to a different provider.
 - Catalog discovery and provider inference use HTTP bearer authorization. Pi's
@@ -1409,6 +1416,24 @@ own the installed `fcc-dsh` launcher for DeepSeek Harness 0.1.0-rc.8:
   activity; `fcc-dsh` owns the configured model route, not a general plugin
   sandbox.
 
+[cli/launchers/grok.py](src/free_claude_code/cli/launchers/grok.py) owns the
+installed `fcc-grok` launcher for stable Grok Build 1.0.5 or newer:
+
+- Attached TUI, headless, and `agent stdio` sessions require a reachable FCC
+  server, a canonical proxy token, and a non-empty direct Responses catalog.
+  Model overrides are validated before Grok starts; preparation is fail-closed.
+- A child-only environment points Grok's native Responses backend and model
+  picker at FCC, sets client retries to zero through catalog metadata, and
+  derives its idle timeout from FCC's provider-progress boundary. Native Grok
+  configuration, credentials, sessions, plugins, skills, and telemetry remain
+  Grok-owned and are never rewritten.
+- The wrapper prevents native leader or endpoint overrides for attached
+  sessions. Detached modes pass through or fail explicitly according to their
+  lifecycle, rather than outliving FCC's process-only route.
+- Grok's built-in web search and fetch are disabled because they use a distinct
+  Responses-side service contract FCC does not implement. Ordinary `grok`
+  remains unchanged.
+
 [cli/managed/](src/free_claude_code/cli/managed/) owns managed Claude Code subprocesses used by
 Discord and Telegram messaging. Managed task invocations extend the same proxy
 environment only with non-interactive terminal settings, optional `--resume`,
@@ -1432,10 +1457,10 @@ reports a count-only failure, and leaves failures available for the next cleanup
 attempt. Real-session registration is collision-safe and becomes durable tree
 state only after the manager accepts it.
 
-Codex, Pi, OpenCode, Cline, Hermes, and DeepSeek Harness are supported through
-their installed launchers. FCC does not keep internal managed session runners
-for them because no user-facing messaging setting selects those clients for
-Discord or Telegram.
+Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, and Grok Build are
+supported through their installed launchers. FCC does not keep internal managed
+session runners for them because no user-facing messaging setting selects those
+clients for Discord or Telegram.
 
 ## Messaging Architecture
 

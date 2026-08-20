@@ -8,8 +8,8 @@ from ..tools import (
     custom_tool_input_text_from_arguments,
     normalized_function_call_arguments,
 )
-from . import event_builders as events
 from .blocks import BlockState, ReasoningBlockState, TextBlockState, ToolBlockState
+from .event_builders import ResponseEventBuilder
 from .ledger import ResponsesOutputLedger
 
 InvalidFunctionCallHandler = Callable[
@@ -24,9 +24,11 @@ class ResponseBlockCompleter:
         self,
         ledger: ResponsesOutputLedger,
         *,
+        events: ResponseEventBuilder,
         on_invalid_function_call: InvalidFunctionCallHandler,
     ) -> None:
         self._ledger = ledger
+        self._events = events
         self._on_invalid_function_call = on_invalid_function_call
 
     def complete_block(self, state: BlockState) -> list[str]:
@@ -41,9 +43,9 @@ class ResponseBlockCompleter:
         item = message_item(state.item_id, text, "completed")
         self._ledger.commit_output(state.output_index, item)
         return [
-            events.output_text_done(state.item_id, state.output_index, text),
-            events.content_part_done(state.item_id, state.output_index, text),
-            events.output_item_done(state.output_index, item),
+            self._events.output_text_done(state.item_id, state.output_index, text),
+            self._events.content_part_done(state.item_id, state.output_index, text),
+            self._events.output_item_done(state.output_index, item),
         ]
 
     def _complete_reasoning_block(self, state: ReasoningBlockState) -> list[str]:
@@ -54,9 +56,11 @@ class ResponseBlockCompleter:
         if text:
             self._ledger.add_reasoning_text(text)
             chunks.append(
-                events.reasoning_text_done(state.item_id, state.output_index, text)
+                self._events.reasoning_text_done(
+                    state.item_id, state.output_index, text
+                )
             )
-        chunks.append(events.output_item_done(state.output_index, item))
+        chunks.append(self._events.output_item_done(state.output_index, item))
         return chunks
 
     def _complete_tool_block(self, state: ToolBlockState) -> list[str]:
@@ -72,16 +76,16 @@ class ResponseBlockCompleter:
         chunks: list[str] = []
         if arguments:
             chunks.append(
-                events.function_call_arguments_delta(
+                self._events.function_call_arguments_delta(
                     state.item_id, state.output_index, arguments
                 )
             )
         chunks.extend(
             [
-                events.function_call_arguments_done(
+                self._events.function_call_arguments_done(
                     state.item_id, state.output_index, arguments
                 ),
-                events.output_item_done(state.output_index, item),
+                self._events.output_item_done(state.output_index, item),
             ]
         )
         return chunks
@@ -95,16 +99,16 @@ class ResponseBlockCompleter:
         chunks: list[str] = []
         if input_text:
             chunks.append(
-                events.custom_tool_call_input_delta(
+                self._events.custom_tool_call_input_delta(
                     state.item_id, state.output_index, input_text
                 )
             )
         chunks.extend(
             [
-                events.custom_tool_call_input_done(
+                self._events.custom_tool_call_input_done(
                     state.item_id, state.output_index, input_text
                 ),
-                events.output_item_done(state.output_index, item),
+                self._events.output_item_done(state.output_index, item),
             ]
         )
         return chunks

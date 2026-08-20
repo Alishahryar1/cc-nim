@@ -19,13 +19,13 @@ from ..ids import (
 )
 from ..models import OpenAIResponsesRequest
 from ..tools import responses_tool_identity_from_anthropic_name
-from . import event_builders as events
 from .blocks import ReasoningBlockState, TextBlockState, ToolBlockState
 from .completion import ResponseBlockCompleter, reasoning_output_item, tool_item
 from .error_mapping import (
     openai_error_from_anthropic_error,
     replay_unsafe_function_call_error,
 )
+from .event_builders import ResponseEventBuilder
 from .ledger import ResponsesOutputLedger
 
 
@@ -37,8 +37,10 @@ class ResponsesStreamAssembler:
         self._response_id = new_response_id()
         self._created_at = int(time.time())
         self._ledger = ResponsesOutputLedger()
+        self._events = ResponseEventBuilder()
         self._completer = ResponseBlockCompleter(
             self._ledger,
+            events=self._events,
             on_invalid_function_call=self._fail_invalid_function_call,
         )
         self._started = False
@@ -116,7 +118,7 @@ class ResponsesStreamAssembler:
             chunks.extend(self._finish_incomplete_response())
             return chunks
         self.final_response = self.response_payload(status="completed")
-        chunks.append(events.response_completed(self.final_response))
+        chunks.append(self._events.response_completed(self.final_response))
         self.terminal = True
         return chunks
 
@@ -140,7 +142,7 @@ class ResponsesStreamAssembler:
         self._provisional_error = None
         self.final_response = self.response_payload(status="failed", error=error)
         self.terminal = True
-        return [events.response_failed(self.final_response)]
+        return [self._events.response_failed(self.final_response)]
 
     def _finish_incomplete_response(self) -> list[str]:
         self.final_response = self.response_payload(
@@ -148,13 +150,15 @@ class ResponsesStreamAssembler:
             incomplete_details={"reason": "max_output_tokens"},
         )
         self.terminal = True
-        return [events.response_incomplete(self.final_response)]
+        return [self._events.response_incomplete(self.final_response)]
 
     def _ensure_started(self) -> list[str]:
         if self._started:
             return []
         self._started = True
-        return [events.response_created(self.response_payload(status="in_progress"))]
+        return [
+            self._events.response_created(self.response_payload(status="in_progress"))
+        ]
 
     def _handle_content_block_start(self, data: Mapping[str, Any]) -> list[str]:
         block = data.get("content_block")
@@ -267,8 +271,8 @@ class ResponsesStreamAssembler:
         }
         chunks.extend(
             [
-                events.output_item_added(output_index, item),
-                events.content_part_added(state.item_id, output_index),
+                self._events.output_item_added(output_index, item),
+                self._events.content_part_added(state.item_id, output_index),
             ]
         )
         return chunks, state
@@ -288,7 +292,7 @@ class ResponsesStreamAssembler:
         )
         self._ledger.set_active_block(state)
         chunks.append(
-            events.output_item_added(
+            self._events.output_item_added(
                 output_index,
                 reasoning_output_item(state, status="in_progress"),
             )
@@ -319,7 +323,7 @@ class ResponsesStreamAssembler:
             state.argument_parts.append(json.dumps(initial_input))
         self._ledger.set_active_block(state)
         chunks.append(
-            events.output_item_added(
+            self._events.output_item_added(
                 state.output_index,
                 tool_item(state, status="in_progress"),
             )
@@ -330,13 +334,15 @@ class ResponsesStreamAssembler:
         if not text:
             return []
         state.text_parts.append(text)
-        return [events.output_text_delta(state.item_id, state.output_index, text)]
+        return [self._events.output_text_delta(state.item_id, state.output_index, text)]
 
     def _emit_reasoning_delta(self, state: ReasoningBlockState, text: str) -> list[str]:
         if not text:
             return []
         state.text_parts.append(text)
-        return [events.reasoning_text_delta(state.item_id, state.output_index, text)]
+        return [
+            self._events.reasoning_text_delta(state.item_id, state.output_index, text)
+        ]
 
     def _complete_existing_block(self, index: int) -> list[str]:
         existing = self._ledger.pop_active_block(index)

@@ -168,6 +168,19 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         "skip only when DSH is absent; the local fake upstream must pass",
     ),
     FeatureCoverage(
+        "grok_cli_integration",
+        "Grok Build discovers FCC models and sends Responses through the proxy",
+        (
+            "tests/cli/test_grok_launcher.py",
+            "tests/cli/test_model_catalog.py",
+        ),
+        ("test_probe_and_models_routes",),
+        ("test_grok_cli_headless_e2e",),
+        ("clients",),
+        ("stable Grok Build 1.0.5+",),
+        "skip only when Grok Build is absent; the local fake upstream must pass",
+    ),
+    FeatureCoverage(
         "provider_matrix",
         "Every configured provider prefix can satisfy conversation scenarios",
         ("tests/api/test_dependencies.py", "tests/providers/"),

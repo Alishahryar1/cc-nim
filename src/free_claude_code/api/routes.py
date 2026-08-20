@@ -22,7 +22,11 @@ from .dependencies import (
     resolve_provider,
 )
 from .handlers import MessagesHandler, ResponsesHandler, TokenCountHandler
-from .model_catalog import ModelsListResponse, build_models_list_response
+from .model_catalog import (
+    ModelCatalogView,
+    ModelsListResponse,
+    build_models_list_response,
+)
 from .ports import ApiServices
 from .request_errors import ordinary_application_error_response
 from .request_ids import get_request_id
@@ -186,15 +190,20 @@ async def probe_health():
     return _probe_response("GET, HEAD, OPTIONS")
 
 
-@router.get("/v1/models", response_model=ModelsListResponse)
+@router.get(
+    "/v1/models",
+    response_model=ModelsListResponse,
+    response_model_exclude_none=True,
+)
 async def list_models(
+    view: ModelCatalogView = ModelCatalogView.CLAUDE,
     services: ApiServices = Depends(get_services),
     settings: Settings = Depends(get_settings),
     _auth=Depends(require_proxy_auth),
 ):
     """List the model ids this proxy advertises to compatible clients."""
     trace_event(stage="ingress", event="free_claude_code.api.models.list", source="api")
-    return build_models_list_response(settings, services.requests)
+    return build_models_list_response(settings, services.requests, view=view)
 
 
 @router.post("/stop")
