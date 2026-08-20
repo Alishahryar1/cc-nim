@@ -151,6 +151,23 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         "skip only when Hermes is absent; the local fake upstream must pass",
     ),
     FeatureCoverage(
+        "dsh_cli_integration",
+        "DeepSeek Harness discovers FCC models and sends Responses through the proxy",
+        (
+            "tests/cli/test_dsh_config.py",
+            "tests/cli/test_dsh_launcher.py",
+        ),
+        ("test_probe_and_models_routes",),
+        (
+            "test_dsh_cli_headless_e2e",
+            "test_dsh_cli_terminal_failure_e2e",
+            "test_dsh_cli_web_startup_e2e",
+        ),
+        ("clients",),
+        ("DeepSeek Harness 0.1.0-rc.8",),
+        "skip only when DSH is absent; the local fake upstream must pass",
+    ),
+    FeatureCoverage(
         "provider_matrix",
         "Every configured provider prefix can satisfy conversation scenarios",
         ("tests/api/test_dependencies.py", "tests/providers/"),

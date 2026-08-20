@@ -12,13 +12,15 @@ MIN_OPENCODE_VERSION="1.18.18"
 MIN_CLINE_VERSION="3.0.55"
 HERMES_INSTALL_URL="https://hermes-agent.nousresearch.com/install.sh"
 MIN_HERMES_VERSION="0.20.4"
+DSH_VERSION="0.1.0-rc.8"
+DSH_PACKAGE="@deepseek-ai/dsh@$DSH_VERSION"
 RTK_VERSION="0.44.2"
 RTK_RELEASE_BASE_URL="https://github.com/rtk-ai/rtk/releases/download/v$RTK_VERSION"
 UV_INSTALL_URL="https://astral.sh/uv/install.sh"
 FCC_MACOS_BUNDLE_ID="io.github.alishahryar1.free-claude-code"
 FCC_MACOS_OWNER_FILE=".free-claude-code-owner"
 # Include retired entry points so updates reject older FCC processes before replacement.
-FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-init free-claude-code"
+FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-init free-claude-code"
 
 dry_run=0
 voice_nim=0
@@ -30,6 +32,7 @@ install_pi=1
 install_opencode=1
 install_cline=0
 install_hermes=1
+install_dsh=1
 enable_rtk=0
 torch_backend=""
 temporary_file=""
@@ -142,7 +145,18 @@ choose_coding_agents() {
             install_hermes=0
         fi
 
-        if [ "$install_claude" -eq 1 ] || [ "$install_codex" -eq 1 ] || [ "$install_pi" -eq 1 ] || [ "$install_opencode" -eq 1 ] || [ "$install_cline" -eq 1 ] || [ "$install_hermes" -eq 1 ]; then
+        if [ "$install_dsh" -eq 1 ]; then
+            dsh_default=yes
+        else
+            dsh_default=no
+        fi
+        if prompt_yes_no "Install or verify DeepSeek Harness for fcc-dsh?" "$dsh_default"; then
+            install_dsh=1
+        else
+            install_dsh=0
+        fi
+
+        if [ "$install_claude" -eq 1 ] || [ "$install_codex" -eq 1 ] || [ "$install_pi" -eq 1 ] || [ "$install_opencode" -eq 1 ] || [ "$install_cline" -eq 1 ] || [ "$install_hermes" -eq 1 ] || [ "$install_dsh" -eq 1 ]; then
             break
         fi
         printf 'Select at least one coding agent.\n\n' >&4
@@ -833,6 +847,118 @@ ensure_hermes() {
     verify_hermes_command
 }
 
+current_dsh_version() {
+    if output=$(dsh --version 2>/dev/null); then
+        :
+    else
+        return 1
+    fi
+
+    version=$(printf '%s\n' "$output" | awk '
+        match($0, /[0-9]+\.[0-9]+\.[0-9]+-[0-9A-Za-z][0-9A-Za-z.-]*/) {
+            print substr($0, RSTART, RLENGTH)
+            exit
+        }
+    ')
+    [ -n "$version" ] || return 1
+    printf '%s\n' "$version"
+}
+
+current_node_version() {
+    if output=$(node --version 2>/dev/null); then
+        :
+    else
+        return 1
+    fi
+
+    version=$(printf '%s\n' "$output" | awk '
+        match($0, /[0-9]+\.[0-9]+\.[0-9]+/) {
+            print substr($0, RSTART, RLENGTH)
+            exit
+        }
+    ')
+    [ -n "$version" ] || return 1
+    printf '%s\n' "$version"
+}
+
+dsh_node_version_is_supported() {
+    version=$1
+    major=${version%%.*}
+    rest=${version#*.}
+    [ "$rest" != "$version" ] || return 1
+    minor=${rest%%.*}
+    case "$major:$minor" in
+        *[!0-9:]*|:*) return 1 ;;
+    esac
+    if [ "$major" -eq 22 ]; then
+        [ "$minor" -ge 19 ]
+        return
+    fi
+    [ "$major" -ge 24 ]
+}
+
+dsh_toolchain_is_supported() {
+    command -v node >/dev/null 2>&1 || return 1
+    command -v npm >/dev/null 2>&1 || return 1
+    version=$(current_node_version) || return 1
+    dsh_node_version_is_supported "$version"
+}
+
+require_dsh_toolchain() {
+    command -v node >/dev/null 2>&1 || fail "DeepSeek Harness requires Node.js ^22.19.0 or >=24.0.0 and npm. Install Node.js, then rerun the installer."
+    command -v npm >/dev/null 2>&1 || fail "DeepSeek Harness requires npm. Install npm, then rerun the installer."
+    version=$(current_node_version) || fail "DeepSeek Harness requires a readable Node.js version."
+    dsh_node_version_is_supported "$version" || fail "DeepSeek Harness requires Node.js ^22.19.0 or >=24.0.0; found Node.js $version."
+}
+
+verify_dsh_command() {
+    if [ "$dry_run" -eq 1 ]; then
+        print_command dsh --version
+        return 0
+    fi
+
+    command -v dsh >/dev/null 2>&1 || fail "DeepSeek Harness was installed, but 'dsh' is not available on PATH."
+    version=$(current_dsh_version) || fail "DeepSeek Harness is present, but 'dsh --version' did not return its preview semantic version."
+    [ "$version" = "$DSH_VERSION" ] || fail "DeepSeek Harness $DSH_VERSION is required; found $version after installation."
+    printf 'Verified DeepSeek Harness %s.\n' "$version"
+}
+
+install_dsh_package() {
+    require_dsh_toolchain
+    run npm install -g "$DSH_PACKAGE"
+    add_npm_bin_directories
+}
+
+ensure_dsh() {
+    add_npm_bin_directories
+
+    if [ "$dry_run" -eq 1 ]; then
+        if command -v dsh >/dev/null 2>&1; then
+            print_command dsh --version
+            printf 'The exact supported DeepSeek Harness preview will be preserved; another version will be replaced.\n'
+        else
+            command -v node >/dev/null 2>&1 || fail "DeepSeek Harness requires Node.js ^22.19.0 or >=24.0.0 and npm. Install Node.js, then rerun the installer."
+            command -v npm >/dev/null 2>&1 || fail "DeepSeek Harness requires npm. Install npm, then rerun the installer."
+            print_command npm install -g "$DSH_PACKAGE"
+        fi
+        verify_dsh_command
+        return 0
+    fi
+
+    require_dsh_toolchain
+    if command -v dsh >/dev/null 2>&1; then
+        version=$(current_dsh_version) || fail "DeepSeek Harness is present, but 'dsh --version' did not return its preview semantic version."
+        if [ "$version" = "$DSH_VERSION" ]; then
+            printf 'DeepSeek Harness %s already matches the supported preview; leaving it unchanged.\n' "$version"
+            return 0
+        fi
+        printf 'DeepSeek Harness %s does not match %s; replacing it with the supported preview.\n' "$version" "$DSH_VERSION"
+    fi
+
+    install_dsh_package
+    verify_dsh_command
+}
+
 ensure_selected_coding_agents() {
     if [ "$install_claude" -eq 1 ]; then
         step "Ensuring Claude Code is installed"
@@ -864,7 +990,12 @@ ensure_selected_coding_agents() {
         ensure_hermes
     fi
 
-    if [ "$install_claude" -eq 0 ] && [ "$install_codex" -eq 0 ] && [ "$pi_available" -eq 0 ] && [ "$install_opencode" -eq 0 ] && [ "$install_cline" -eq 0 ] && [ "$install_hermes" -eq 0 ]; then
+    if [ "$install_dsh" -eq 1 ]; then
+        step "Ensuring DeepSeek Harness is installed"
+        ensure_dsh
+    fi
+
+    if [ "$install_claude" -eq 0 ] && [ "$install_codex" -eq 0 ] && [ "$pi_available" -eq 0 ] && [ "$install_opencode" -eq 0 ] && [ "$install_cline" -eq 0 ] && [ "$install_hermes" -eq 0 ] && [ "$install_dsh" -eq 0 ]; then
         fail "No selected coding agent was installed. Re-run the installer and choose at least one."
     fi
 }
@@ -1051,7 +1182,7 @@ configure_and_verify_free_claude_code() {
 
     if [ "$dry_run" -eq 1 ]; then
         print_command uv tool dir --bin
-        printf '+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, fcc-opencode, fcc-cline, and fcc-hermes in the uv tool bin directory\n'
+        printf '+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, fcc-opencode, fcc-cline, fcc-hermes, and fcc-dsh in the uv tool bin directory\n'
         print_command fcc-server --version
         return 0
     fi
@@ -1069,7 +1200,7 @@ configure_and_verify_free_claude_code() {
     export PATH
     hash -r 2>/dev/null || true
 
-    for command_name in fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes; do
+    for command_name in fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh; do
         [ -x "$tool_bin/$command_name" ] || fail "Free Claude Code installation did not create $tool_bin/$command_name."
     done
 
@@ -1174,9 +1305,16 @@ fi
 if ! command -v hermes >/dev/null 2>&1 && ! hermes_platform_is_supported; then
     install_hermes=0
 fi
-
 step "Checking for running Free Claude Code processes"
 assert_no_fcc_processes_running
+
+if ! installer_is_interactive && ! command -v dsh >/dev/null 2>&1; then
+    if [ "$dry_run" -eq 1 ] && command -v node >/dev/null 2>&1 && command -v npm >/dev/null 2>&1; then
+        install_dsh=1
+    elif ! dsh_toolchain_is_supported; then
+        install_dsh=0
+    fi
+fi
 
 if installer_is_interactive; then
     step "Choosing coding agents"
@@ -1246,5 +1384,10 @@ else
         printf 'Run Hermes Agent with: fcc-hermes\n'
     else
         printf 'The fcc-hermes wrapper is ready after you install Hermes Agent.\n'
+    fi
+    if [ "$install_dsh" -eq 1 ]; then
+        printf 'Run DeepSeek Harness with: fcc-dsh\n'
+    else
+        printf 'The fcc-dsh wrapper is ready after you install DeepSeek Harness %s.\n' "$DSH_VERSION"
     fi
 fi

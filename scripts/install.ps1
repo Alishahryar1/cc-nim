@@ -26,6 +26,8 @@ $MinOpenCodeVersion = "1.18.18"
 $MinClineVersion = "3.0.55"
 $HermesInstallUrl = "https://hermes-agent.nousresearch.com/install.ps1"
 $MinHermesVersion = "0.20.4"
+$DshVersion = "0.1.0-rc.8"
+$DshPackage = "@deepseek-ai/dsh@$DshVersion"
 $RtkVersion = "0.44.2"
 $RtkReleaseBaseUrl = "https://github.com/rtk-ai/rtk/releases/download/v$RtkVersion"
 $RtkWindowsAssetName = "rtk-x86_64-pc-windows-msvc.zip"
@@ -37,6 +39,7 @@ $script:InstallPi = $true
 $script:InstallOpenCode = $true
 $script:InstallCline = $false
 $script:InstallHermes = $true
+$script:InstallDsh = $true
 $script:PiAvailable = $false
 $script:EnableRtk = $Rtk.IsPresent
 $FccCommands = @(
@@ -49,6 +52,7 @@ $FccCommands = @(
     "fcc-opencode",
     "fcc-cline",
     "fcc-hermes",
+    "fcc-dsh",
     "fcc-init",
     "free-claude-code"
 )
@@ -115,8 +119,11 @@ function Select-CodingAgents {
         $script:InstallHermes = Read-YesNo `
             -Prompt "Install or verify Hermes Agent for fcc-hermes?" `
             -DefaultYes $script:InstallHermes
+        $script:InstallDsh = Read-YesNo `
+            -Prompt "Install or verify DeepSeek Harness for fcc-dsh?" `
+            -DefaultYes $script:InstallDsh
 
-        if ($script:InstallClaudeCode -or $script:InstallCodex -or $script:InstallPi -or $script:InstallOpenCode -or $script:InstallCline -or $script:InstallHermes) {
+        if ($script:InstallClaudeCode -or $script:InstallCodex -or $script:InstallPi -or $script:InstallOpenCode -or $script:InstallCline -or $script:InstallHermes -or $script:InstallDsh) {
             break
         }
         Write-Host "Select at least one coding agent."
@@ -635,7 +642,7 @@ function Convert-SemanticVersionOutput {
     if ([string]::IsNullOrWhiteSpace($Output)) {
         return ""
     }
-    if ($Output -match '(?m)^\s*(?:(?:uv|opencode|cline)(?:\s+version)?\s+|Hermes Agent\s+v?|v)?(?<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?)(?:\s+\([^\r\n]*\))?\s*$') {
+    if ($Output -match '(?m)^\s*(?:(?:uv|opencode|cline|dsh|node)(?:\s+version)?\s+|Hermes Agent\s+v?|v)?(?<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?)(?:\s+\([^\r\n]*\))?\s*$') {
         return $Matches["version"]
     }
     return ""
@@ -925,6 +932,132 @@ function Ensure-Hermes {
     Confirm-HermesApplication
 }
 
+function Get-DshVersion {
+    param([string] $DshPath)
+
+    $output = Invoke-Utf8NativeCapture -FilePath $DshPath -Arguments @("--version")
+    $version = Convert-SemanticVersionOutput $output
+    if ([string]::IsNullOrWhiteSpace($version) -or (-not $version.Contains("-"))) {
+        throw "DeepSeek Harness is present, but 'dsh --version' did not return its preview semantic version."
+    }
+    return $version
+}
+
+function Get-DshNodeVersion {
+    param([string] $NodePath)
+
+    $output = Invoke-Utf8NativeCapture -FilePath $NodePath -Arguments @("--version")
+    $version = Convert-SemanticVersionOutput $output
+    if ([string]::IsNullOrWhiteSpace($version)) {
+        throw "DeepSeek Harness requires a readable Node.js version."
+    }
+    return $version
+}
+
+function Test-DshNodeVersion {
+    param([string] $Version)
+
+    try {
+        $parsed = [version] (($Version -replace '^v', '') -replace '[-+].*$', '')
+    }
+    catch {
+        return $false
+    }
+    return (
+        (($parsed.Major -eq 22) -and ($parsed.Minor -ge 19)) -or
+        ($parsed.Major -ge 24)
+    )
+}
+
+function Test-DshToolchain {
+    $node = Get-ApplicationCommand "node"
+    $npm = Get-ApplicationCommand "npm"
+    if ((-not $node) -or (-not $npm)) {
+        return $false
+    }
+    try {
+        return (Test-DshNodeVersion -Version (Get-DshNodeVersion $node.Source))
+    }
+    catch {
+        return $false
+    }
+}
+
+function Confirm-DshToolchain {
+    $node = Get-ApplicationCommand "node"
+    if (-not $node) {
+        throw "DeepSeek Harness requires Node.js ^22.19.0 or >=24.0.0 and npm. Install Node.js, then rerun the installer."
+    }
+    $npm = Get-ApplicationCommand "npm"
+    if (-not $npm) {
+        throw "DeepSeek Harness requires npm. Install npm, then rerun the installer."
+    }
+    $version = Get-DshNodeVersion $node.Source
+    if (-not (Test-DshNodeVersion $version)) {
+        throw "DeepSeek Harness requires Node.js ^22.19.0 or >=24.0.0; found Node.js $version."
+    }
+    return $npm.Source
+}
+
+function Confirm-DshApplication {
+    if ($DryRun) {
+        Write-Host "+ dsh --version"
+        return
+    }
+
+    $command = Get-ApplicationCommand "dsh"
+    if (-not $command) {
+        throw "DeepSeek Harness was installed, but 'dsh' is not available on PATH."
+    }
+    $version = Get-DshVersion $command.Source
+    if ($version -ne $DshVersion) {
+        throw "DeepSeek Harness $DshVersion is required; found $version after installation."
+    }
+    Write-Host "Verified DeepSeek Harness $version."
+}
+
+function Install-Dsh {
+    $npmPath = Confirm-DshToolchain
+    Invoke-NativeCommand -FilePath $npmPath -Arguments @("install", "-g", $DshPackage)
+    Add-NpmBinDirectories
+}
+
+function Ensure-Dsh {
+    Add-NpmBinDirectories
+
+    if ($DryRun) {
+        if (Get-ApplicationCommand "dsh") {
+            Write-Host "+ dsh --version"
+            Write-Host "The exact supported DeepSeek Harness preview will be preserved; another version will be replaced."
+        }
+        else {
+            $node = Get-ApplicationCommand "node"
+            $npm = Get-ApplicationCommand "npm"
+            if ((-not $node) -or (-not $npm)) {
+                throw "DeepSeek Harness requires Node.js ^22.19.0 or >=24.0.0 and npm. Install Node.js, then rerun the installer."
+            }
+            $npmPath = $npm.Source
+            Write-Host "+ $(Format-Command -FilePath $npmPath -Arguments @('install', '-g', $DshPackage))"
+        }
+        Confirm-DshApplication
+        return
+    }
+
+    [void] (Confirm-DshToolchain)
+    $command = Get-ApplicationCommand "dsh"
+    if ($command) {
+        $version = Get-DshVersion $command.Source
+        if ($version -eq $DshVersion) {
+            Write-Host "DeepSeek Harness $version already matches the supported preview; leaving it unchanged."
+            return
+        }
+        Write-Host "DeepSeek Harness $version does not match $DshVersion; replacing it with the supported preview."
+    }
+
+    Install-Dsh
+    Confirm-DshApplication
+}
+
 function Ensure-SelectedCodingAgents {
     if ($script:InstallClaudeCode) {
         Write-Step "Ensuring Claude Code is installed"
@@ -956,7 +1089,12 @@ function Ensure-SelectedCodingAgents {
         Ensure-Hermes
     }
 
-    if ((-not $script:InstallClaudeCode) -and (-not $script:InstallCodex) -and (-not $script:PiAvailable) -and (-not $script:InstallOpenCode) -and (-not $script:InstallCline) -and (-not $script:InstallHermes)) {
+    if ($script:InstallDsh) {
+        Write-Step "Ensuring DeepSeek Harness is installed"
+        Ensure-Dsh
+    }
+
+    if ((-not $script:InstallClaudeCode) -and (-not $script:InstallCodex) -and (-not $script:PiAvailable) -and (-not $script:InstallOpenCode) -and (-not $script:InstallCline) -and (-not $script:InstallHermes) -and (-not $script:InstallDsh)) {
         throw "No selected coding agent was installed. Re-run the installer and choose at least one."
     }
 }
@@ -1111,7 +1249,7 @@ function Configure-AndConfirmFreeClaudeCode {
     if ($DryRun) {
         Write-Host "+ uv tool update-shell"
         Write-Host "+ uv tool dir --bin"
-        Write-Host "+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, fcc-opencode, fcc-cline, and fcc-hermes in the uv tool bin directory"
+        Write-Host "+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, fcc-opencode, fcc-cline, fcc-hermes, and fcc-dsh in the uv tool bin directory"
         Write-Host "+ fcc-server --version"
         Export-FccDesktopIcon `
             -DesktopCommand "<uv-tool-bin>\fcc-desktop.exe" `
@@ -1138,7 +1276,7 @@ function Configure-AndConfirmFreeClaudeCode {
         [IO.Path]::AltDirectorySeparatorChar
     )
     $installedCommands = @{}
-    foreach ($commandName in @("fcc-desktop", "fcc-server", "fcc-claude", "fcc-codex", "fcc-pi", "fcc-opencode", "fcc-cline", "fcc-hermes")) {
+    foreach ($commandName in @("fcc-desktop", "fcc-server", "fcc-claude", "fcc-codex", "fcc-pi", "fcc-opencode", "fcc-cline", "fcc-hermes", "fcc-dsh")) {
         $command = Get-ApplicationCommand $commandName
         if (-not $command) {
             throw "Free Claude Code installation did not create '$commandName'."
@@ -1242,9 +1380,18 @@ if ((-not [string]::IsNullOrWhiteSpace($TorchBackend)) -and (-not ($VoiceLocal -
 
 Add-KnownBinDirectories
 $script:InstallCline = [bool] ((Get-ApplicationCommand "cline") -or (Get-ApplicationCommand "npm"))
-
 Write-Step "Checking for running Free Claude Code processes"
 Assert-NoFccProcessesRunning
+
+if (-not (Test-InteractiveInstaller)) {
+    $hasDsh = [bool] (Get-ApplicationCommand "dsh")
+    $hasDryRunToolchain = [bool] (
+        $DryRun -and
+        (Get-ApplicationCommand "node") -and
+        (Get-ApplicationCommand "npm")
+    )
+    $script:InstallDsh = $hasDsh -or $hasDryRunToolchain -or (Test-DshToolchain)
+}
 
 if (Test-InteractiveInstaller) {
     Write-Step "Choosing coding agents"
@@ -1293,5 +1440,11 @@ else {
     }
     else {
         Write-Host "The fcc-hermes wrapper is ready after you install Hermes Agent."
+    }
+    if ($script:InstallDsh) {
+        Write-Host "Run DeepSeek Harness with: fcc-dsh"
+    }
+    else {
+        Write-Host "The fcc-dsh wrapper is ready after you install DeepSeek Harness $DshVersion."
     }
 }
