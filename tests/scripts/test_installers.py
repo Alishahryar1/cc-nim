@@ -21,6 +21,7 @@ FCC_COMMANDS = (
     "fcc-cline",
     "fcc-hermes",
     "fcc-dsh",
+    "fcc-grok",
     "fcc-init",
     "free-claude-code",
 )
@@ -56,6 +57,7 @@ def _posix_command(name: str) -> str:
         "cline": "3.0.55",
         "hermes": "0.20.4",
         "dsh": "0.1.0-rc.8",
+        "grok": "1.0.5",
         "node": "22.19.0",
     }.get(name, "1.0.0")
     version_output = (
@@ -138,6 +140,7 @@ if [ "${{1:-}}" = "tool" ] && [ "${{2:-}}" = "install" ]; then
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-cline"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-hermes"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-dsh"
+    cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-grok"
     if [ "$FAIL_STEP" != "fcc-missing" ]; then
         cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-codex"
     fi
@@ -327,7 +330,7 @@ while [ "$#" -gt 0 ]; do
 done
 echo "download:$url" >> "$CALL_LOG"
 case "$url:$FAIL_STEP" in
-    *claude.ai*:claude-download|*chatgpt.com*:codex-download|*pi.dev*:pi-download|*opencode.ai*:opencode-download|*hermes-agent.nousresearch.com*:hermes-download|*rtk-ai*:rtk-download|*astral.sh*:uv-download)
+    *claude.ai*:claude-download|*chatgpt.com*:codex-download|*pi.dev*:pi-download|*opencode.ai*:opencode-download|*hermes-agent.nousresearch.com*:hermes-download|*x.ai*:grok-download|*rtk-ai*:rtk-download|*astral.sh*:uv-download)
         exit 41
         ;;
 esac
@@ -337,6 +340,7 @@ case "$url" in
     *pi.dev*) source="$FAKE_FIXTURES/pi-installer.sh" ;;
     *opencode.ai*) source="$FAKE_FIXTURES/opencode-installer.sh" ;;
     *hermes-agent.nousresearch.com*) source="$FAKE_FIXTURES/hermes-installer.sh" ;;
+    *x.ai*) source="$FAKE_FIXTURES/grok-installer.sh" ;;
     *rtk-ai*)
         if [ "$FAIL_STEP" = "rtk-install" ]; then
             printf 'invalid archive\n' > "$output"
@@ -407,6 +411,16 @@ chmod +x "$HOME/.local/bin/hermes"
 """,
     )
     _write_executable(
+        fixtures / "grok-installer.sh",
+        """#!/bin/sh
+echo "grok-install" >> "$CALL_LOG"
+[ "$FAIL_STEP" = "grok-install" ] && exit 27
+mkdir -p "$HOME/.local/bin"
+cp "$FAKE_FIXTURES/grok-command.sh" "$HOME/.local/bin/grok"
+chmod +x "$HOME/.local/bin/grok"
+""",
+    )
+    _write_executable(
         fixtures / "uv-installer.sh",
         """#!/bin/sh
 echo "uv-install" >> "$CALL_LOG"
@@ -423,6 +437,7 @@ chmod +x "$HOME/.local/bin/uv"
     _write_executable(fixtures / "cline-command.sh", _posix_command("cline"))
     _write_executable(fixtures / "hermes-command.sh", _posix_command("hermes"))
     _write_executable(fixtures / "dsh-command.sh", _posix_command("dsh"))
+    _write_executable(fixtures / "grok-command.sh", _posix_command("grok"))
     rtk_command = _posix_rtk_command().encode()
     with tarfile.open(
         fixtures / "rtk-x86_64-unknown-linux-musl.tar.gz", "w:gz"
@@ -516,6 +531,7 @@ def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> No
     assert calls.index("npm:install -g @deepseek-ai/dsh@0.1.0-rc.8") < calls.index(
         "dsh:--version"
     )
+    assert calls.index("grok-install") < calls.index("grok:--version")
     assert calls.index("uv-install") < calls.index("uv:--version")
     assert any(
         call.startswith(
@@ -537,7 +553,7 @@ def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> No
 def test_install_sh_installs_selected_hermes_without_setup(
     posix_harness: PosixHarness,
 ) -> None:
-    result = posix_harness.run_interactive("n\nn\nn\nn\nn\ny\nn\nn\n")
+    result = posix_harness.run_interactive("n\nn\nn\nn\nn\ny\nn\nn\nn\n")
 
     assert result.returncode == 0, result.stdout
     calls = posix_harness.calls()
@@ -557,7 +573,7 @@ def test_install_sh_stops_when_selected_hermes_install_fails(
     failure: str,
 ) -> None:
     result = posix_harness.run_interactive(
-        "n\nn\nn\nn\nn\ny\nn\nn\n", fail_step=failure
+        "n\nn\nn\nn\nn\ny\nn\nn\nn\n", fail_step=failure
     )
 
     assert result.returncode != 0
@@ -571,7 +587,7 @@ def test_install_sh_rejects_unsupported_hermes_platform_before_download(
     posix_harness.env["FAKE_UNAME"] = "Darwin"
     posix_harness.env["FAKE_UNAME_MACHINE"] = "x86_64"
 
-    result = posix_harness.run_interactive("n\nn\nn\nn\nn\ny\nn\nn\n")
+    result = posix_harness.run_interactive("n\nn\nn\nn\nn\ny\nn\nn\nn\n")
 
     assert result.returncode != 0
     assert "does not provide a supported release for Darwin x86_64" in result.stdout
@@ -594,10 +610,52 @@ def test_install_sh_preserves_compatible_existing_hermes(
     )
 
 
+def test_install_sh_preserves_compatible_existing_grok(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.add_client("grok")
+
+    result = posix_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "Grok Build 1.0.5 already satisfies >=1.0.5" in result.stdout
+    assert not any("x.ai/cli" in call for call in posix_harness.calls())
+
+
+def test_install_sh_upgrades_old_grok_with_official_installer(
+    posix_harness: PosixHarness,
+) -> None:
+    _write_executable(
+        posix_harness.bin_dir / "grok",
+        _posix_command("grok").replace("grok 1.0.5", "grok 1.0.4"),
+    )
+
+    result = posix_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "does not satisfy stable >=1.0.5" in result.stdout
+    assert "download:https://x.ai/cli/install.sh" in posix_harness.calls()
+    assert "grok-install" in posix_harness.calls()
+
+
+@pytest.mark.parametrize("failure", ["grok-download", "grok-install"])
+def test_install_sh_stops_when_grok_install_fails(
+    posix_harness: PosixHarness,
+    failure: str,
+) -> None:
+    result = posix_harness.run_interactive(
+        "n\nn\nn\nn\nn\nn\nn\ny\nn\n", fail_step=failure
+    )
+
+    assert result.returncode != 0
+    assert "Free Claude Code is installed and verified." not in result.stdout
+    assert not any(call.startswith("uv:") for call in posix_harness.calls())
+
+
 def test_install_sh_installs_selected_dsh_at_exact_preview(
     posix_harness: PosixHarness,
 ) -> None:
-    result = posix_harness.run_interactive("n\nn\nn\nn\nn\nn\ny\nn\n")
+    result = posix_harness.run_interactive("n\nn\nn\nn\nn\nn\ny\nn\nn\n")
 
     assert result.returncode == 0, result.stdout
     calls = posix_harness.calls()
@@ -650,7 +708,7 @@ def test_install_sh_rejects_incompatible_node_for_selected_dsh(
         _posix_command("node").replace("node 22.19.0", f"node {node_version}"),
     )
 
-    result = posix_harness.run_interactive("n\nn\nn\nn\nn\nn\ny\nn\n")
+    result = posix_harness.run_interactive("n\nn\nn\nn\nn\nn\ny\nn\nn\n")
 
     assert result.returncode != 0
     assert "Free Claude Code is installed and verified." not in result.stdout
@@ -676,7 +734,7 @@ def test_install_sh_stops_when_selected_dsh_install_fails(
     posix_harness: PosixHarness,
 ) -> None:
     result = posix_harness.run_interactive(
-        "n\nn\nn\nn\nn\nn\ny\nn\n", fail_step="dsh-install"
+        "n\nn\nn\nn\nn\nn\ny\nn\nn\n", fail_step="dsh-install"
     )
 
     assert result.returncode != 0
@@ -770,7 +828,7 @@ def test_install_sh_preserves_existing_rtk_and_configures_only_selected_agent(
 ) -> None:
     posix_harness.add_rtk()
 
-    result = posix_harness.run_interactive("n\ny\nn\nn\nn\nn\nn\ny\n")
+    result = posix_harness.run_interactive("n\ny\nn\nn\nn\nn\nn\nn\ny\n")
 
     assert result.returncode == 0, result.stdout
     assert "verifying it without updating it" in result.stdout
@@ -818,7 +876,7 @@ def test_install_sh_reprompts_then_installs_only_selected_agent(
     posix_harness: PosixHarness,
 ) -> None:
     result = posix_harness.run_interactive(
-        "n\nn\nn\nn\nn\nn\nn\nn\ny\nn\nn\nn\nn\nn\nn\n"
+        "n\nn\nn\nn\nn\nn\nn\nn\nn\ny\nn\nn\nn\nn\nn\nn\nn\n"
     )
 
     assert result.returncode == 0, result.stdout
@@ -839,7 +897,7 @@ def test_install_sh_rejects_uninstalled_only_selection(
     posix_harness: PosixHarness,
 ) -> None:
     result = posix_harness.run_interactive(
-        "n\nn\ny\nn\nn\nn\nn\nn\n", fail_step="pi-skip"
+        "n\nn\ny\nn\nn\nn\nn\nn\nn\n", fail_step="pi-skip"
     )
 
     assert result.returncode != 0
@@ -942,6 +1000,7 @@ def test_install_sh_preserves_valid_existing_tools(
     posix_harness.add_client("pi")
     posix_harness.add_client("cline")
     posix_harness.add_client("hermes")
+    posix_harness.add_client("grok")
     posix_harness.add_uv(uv_version)
 
     result = posix_harness.run()
@@ -1385,6 +1444,7 @@ def _batch_client(name: str) -> str:
         "cline": "3.0.55",
         "hermes": "0.20.4",
         "dsh": "0.1.0-rc.8",
+        "grok": "1.0.5",
         "node": "22.19.0",
     }.get(name, "1.0.0")
     version_output = (
@@ -1454,6 +1514,7 @@ copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-opencode.cmd" >nu
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-cline.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-hermes.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-dsh.cmd" >nul
+copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-grok.cmd" >nul
 if not "%FAIL_STEP%"=="fcc-missing" copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-codex.cmd" >nul
 exit /b 0
 :update_shell
@@ -1585,6 +1646,7 @@ def powershell_harness(
         _batch_client("hermes"), encoding="utf-8"
     )
     (fixtures / "dsh-command.cmd").write_text(_batch_client("dsh"), encoding="utf-8")
+    (fixtures / "grok-command.cmd").write_text(_batch_client("grok"), encoding="utf-8")
     (fixtures / "rtk-command.cmd").write_text(_batch_rtk(), encoding="utf-8")
     (fixtures / "uv-command.cmd").write_text(_batch_uv("0.11.28"), encoding="utf-8")
     (fixtures / "fcc-command.cmd").write_text(
@@ -1646,6 +1708,15 @@ Add-Content -LiteralPath $env:CALL_LOG -Value "hermes-install:${NonInteractive}:
 """,
         encoding="utf-8",
     )
+    (fixtures / "grok-installer.ps1").write_text(
+        r"""if ($env:FAIL_STEP -eq "grok-install") { exit 66 }
+$bin = Join-Path $env:USERPROFILE ".local\bin"
+New-Item -ItemType Directory -Force -Path $bin | Out-Null
+Copy-Item (Join-Path $env:FAKE_FIXTURES "grok-command.cmd") (Join-Path $bin "grok.cmd") -Force
+Add-Content -LiteralPath $env:CALL_LOG -Value "grok-install"
+""",
+        encoding="utf-8",
+    )
     (fixtures / "uv-installer.ps1").write_text(
         r"""if ($env:FAIL_STEP -eq "uv-install") { exit 63 }
 $bin = Join-Path $env:USERPROFILE ".local\bin"
@@ -1690,6 +1761,7 @@ function Invoke-RestMethod {
         ($env:FAIL_STEP -eq "pi-download" -and $Uri.Contains("pi.dev")) -or
         ($env:FAIL_STEP -eq "opencode-download" -and $Uri.Contains("anomalyco/opencode")) -or
         ($env:FAIL_STEP -eq "hermes-download" -and $Uri.Contains("hermes-agent.nousresearch.com")) -or
+        ($env:FAIL_STEP -eq "grok-download" -and $Uri.Contains("x.ai/cli")) -or
         ($env:FAIL_STEP -eq "rtk-download" -and $Uri.Contains("rtk-ai/rtk")) -or
         ($env:FAIL_STEP -eq "uv-download" -and $Uri.Contains("astral.sh"))
     ) {
@@ -1706,6 +1778,9 @@ function Invoke-RestMethod {
     }
     elseif ($Uri.Contains("hermes-agent.nousresearch.com")) {
         $source = Join-Path $env:FAKE_FIXTURES "hermes-installer.ps1"
+    }
+    elseif ($Uri.Contains("x.ai/cli")) {
+        $source = Join-Path $env:FAKE_FIXTURES "grok-installer.ps1"
     }
     elseif ($Uri.Contains("opencode-windows-")) {
         if ($env:FAIL_STEP -eq "opencode-archive") {
@@ -1810,6 +1885,7 @@ def test_install_ps1_fresh_install_is_verified(
     assert calls.index("npm:install -g @deepseek-ai/dsh@0.1.0-rc.8") < calls.index(
         "dsh:--version"
     )
+    assert calls.index("grok-install") < calls.index("grok:--version")
     assert not any("hermes:setup" in call for call in calls)
     assert calls.index("uv-install") < calls.index("uv:--version")
     assert any(
@@ -1864,6 +1940,46 @@ def test_install_ps1_preserves_compatible_existing_hermes(
     assert not any(
         "hermes-agent.nousresearch.com" in call for call in powershell_harness.calls()
     )
+
+
+def test_install_ps1_preserves_compatible_existing_grok(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    powershell_harness.add_client("grok")
+
+    result = powershell_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "Grok Build 1.0.5 already satisfies >=1.0.5" in result.stdout
+    assert not any("x.ai/cli" in call for call in powershell_harness.calls())
+
+
+def test_install_ps1_upgrades_old_grok_with_official_installer(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    (powershell_harness.bin_dir / "grok.cmd").write_text(
+        _batch_client("grok").replace("grok 1.0.5", "grok 1.0.4"),
+        encoding="utf-8",
+    )
+
+    result = powershell_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "does not satisfy stable >=1.0.5" in result.stdout
+    assert "download:https://x.ai/cli/install.ps1" in powershell_harness.calls()
+    assert "grok-install" in powershell_harness.calls()
+
+
+@pytest.mark.parametrize("failure", ["grok-download", "grok-install"])
+def test_install_ps1_stops_when_grok_install_fails(
+    powershell_harness: PowerShellHarness,
+    failure: str,
+) -> None:
+    result = powershell_harness.run(fail_step=failure)
+
+    assert result.returncode != 0
+    assert "Free Claude Code is installed and verified." not in result.stdout
+    assert not any(call.startswith("uv:") for call in powershell_harness.calls())
 
 
 def test_install_ps1_preserves_exact_dsh_preview(
@@ -2220,6 +2336,7 @@ def test_install_ps1_preserves_valid_existing_tools(
     powershell_harness.add_client("pi")
     powershell_harness.add_client("cline")
     powershell_harness.add_client("hermes")
+    powershell_harness.add_client("grok")
     powershell_harness.add_uv(uv_version)
 
     result = powershell_harness.run()
@@ -2524,6 +2641,8 @@ def test_installers_use_native_clients_and_single_python_selection() -> None:
 
     assert "https://pi.dev/install.sh" in shell
     assert "https://pi.dev/install.ps1" in powershell
+    assert "https://x.ai/cli/install.sh" in shell
+    assert "https://x.ai/cli/install.ps1" in powershell
 
 
 def test_install_ps1_uses_x64_python_for_windows_arm_compatibility() -> None:
@@ -2575,8 +2694,8 @@ Invoke-DownloadedPowerShellInstaller `
     ("answers", "expected", "expected_messages"),
     [
         (
-            ("", "", "", "", "", "", "", ""),
-            "True,True,True,True,False,True,True,False",
+            ("", "", "", "", "", "", "", "", ""),
+            "True,True,True,True,False,True,True,True,False",
             (),
         ),
         (
@@ -2590,7 +2709,9 @@ Invoke-DownloadedPowerShellInstaller `
                 "n",
                 "n",
                 "n",
+                "n",
                 "y",
+                "n",
                 "n",
                 "n",
                 "n",
@@ -2598,7 +2719,7 @@ Invoke-DownloadedPowerShellInstaller `
                 "n",
                 "y",
             ),
-            "False,True,False,False,False,False,False,True",
+            "False,True,False,False,False,False,False,False,True",
             ("Please answer Y or N.", "Select at least one coding agent."),
         ),
     ],
@@ -2624,6 +2745,7 @@ $script:InstallOpenCode = $true
 $script:InstallCline = $false
 $script:InstallHermes = $true
 $script:InstallDsh = $true
+$script:InstallGrok = $true
 $script:EnableRtk = $false
 function Read-Host {{
     param([string] $Prompt)
@@ -2634,7 +2756,7 @@ function Read-Host {{
 function Read-YesNo {{{read_yes_no}}}
 function Select-CodingAgents {{{select_agents}}}
 Select-CodingAgents
-Write-Output "selection:$($script:InstallClaudeCode),$($script:InstallCodex),$($script:InstallPi),$($script:InstallOpenCode),$($script:InstallCline),$($script:InstallHermes),$($script:InstallDsh),$($script:EnableRtk)"
+Write-Output "selection:$($script:InstallClaudeCode),$($script:InstallCodex),$($script:InstallPi),$($script:InstallOpenCode),$($script:InstallCline),$($script:InstallHermes),$($script:InstallDsh),$($script:InstallGrok),$($script:EnableRtk)"
 """
 
     result = subprocess.run(
@@ -2663,6 +2785,7 @@ $script:InstallOpenCode = $false
 $script:InstallCline = $false
 $script:InstallHermes = $false
 $script:InstallDsh = $false
+$script:InstallGrok = $false
 $script:PiAvailable = $false
 $script:Calls = @()
 function Write-Step {{ param([string] $Message) }}
@@ -2673,6 +2796,7 @@ function Ensure-OpenCode {{ $script:Calls += "opencode" }}
 function Ensure-Cline {{ $script:Calls += "cline" }}
 function Ensure-Hermes {{ $script:Calls += "hermes" }}
 function Ensure-Dsh {{ $script:Calls += "dsh" }}
+function Ensure-Grok {{ $script:Calls += "grok" }}
 function Ensure-SelectedCodingAgents {{{body}}}
 Ensure-SelectedCodingAgents
 Write-Output "calls:$($script:Calls -join ',')"
@@ -2705,6 +2829,7 @@ $script:InstallOpenCode = $false
 $script:InstallCline = $false
 $script:InstallHermes = $false
 $script:InstallDsh = $false
+$script:InstallGrok = $false
 $script:PiAvailable = $false
 $script:Calls = @()
 function Write-Step {{ param([string] $Message) }}
@@ -2742,6 +2867,7 @@ $script:InstallOpenCode = $false
 $script:InstallCline = $false
 $script:InstallHermes = $false
 $script:InstallDsh = $false
+$script:InstallGrok = $false
 $script:PiAvailable = $false
 function Write-Step {{ param([string] $Message) }}
 function Ensure-ClaudeCode {{ }}
@@ -2751,6 +2877,7 @@ function Ensure-OpenCode {{ }}
 function Ensure-Cline {{ }}
 function Ensure-Hermes {{ }}
 function Ensure-Dsh {{ }}
+function Ensure-Grok {{ }}
 function Ensure-SelectedCodingAgents {{{body}}}
 Ensure-SelectedCodingAgents
 """

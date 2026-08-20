@@ -173,6 +173,9 @@ async def test_anthropic_text_stream_converts_to_responses_sse() -> None:
 
     events = parse_sse_text(text)
     event_names = [event.event for event in events]
+    assert [event.data["sequence_number"] for event in events] == list(
+        range(len(events))
+    )
     assert event_names[:3] == [
         "response.created",
         "response.output_item.added",
@@ -206,7 +209,9 @@ async def test_max_tokens_stop_reason_converts_to_response_incomplete() -> None:
     assert incomplete["output"][0]["content"][0]["text"] == "partial output"
     assert incomplete["usage"] == {
         "input_tokens": 3,
+        "input_tokens_details": {"cached_tokens": 0},
         "output_tokens": 4,
+        "output_tokens_details": {"reasoning_tokens": 0},
         "total_tokens": 7,
     }
 
@@ -587,7 +592,9 @@ async def test_split_usage_deltas_sum_latest_anthropic_input_categories() -> Non
 
     assert response["usage"] == {
         "input_tokens": 36,
+        "input_tokens_details": {"cached_tokens": 11},
         "output_tokens": 7,
+        "output_tokens_details": {"reasoning_tokens": 0},
         "total_tokens": 43,
     }
     assert "stop_reason" not in response
@@ -632,7 +639,9 @@ async def test_usage_ignores_invalid_anthropic_input_categories() -> None:
 
     assert response["usage"] == {
         "input_tokens": 35,
+        "input_tokens_details": {"cached_tokens": 10},
         "output_tokens": 7,
+        "output_tokens_details": {"reasoning_tokens": 0},
         "total_tokens": 42,
     }
 
@@ -668,7 +677,7 @@ async def test_reasoning_usage_detail_is_capped_at_output_tokens() -> None:
 
 
 @pytest.mark.asyncio
-async def test_reasoning_usage_detail_omits_zero_capped_count() -> None:
+async def test_reasoning_usage_detail_reports_zero_capped_count() -> None:
     response = await _completed_response_from_sse(
         _aiter(
             _anthropic_reasoning_stream(
@@ -681,13 +690,15 @@ async def test_reasoning_usage_detail_omits_zero_capped_count() -> None:
 
     assert response["usage"] == {
         "input_tokens": 3,
+        "input_tokens_details": {"cached_tokens": 0},
         "output_tokens": 0,
+        "output_tokens_details": {"reasoning_tokens": 0},
         "total_tokens": 3,
     }
 
 
 @pytest.mark.asyncio
-async def test_text_only_usage_omits_reasoning_usage_detail() -> None:
+async def test_text_only_usage_reports_zero_reasoning_usage_detail() -> None:
     response = await _completed_response_from_sse(
         _aiter(_anthropic_text_stream("plain text only")),
         {"model": "nvidia_nim/test-model", "stream": True},
@@ -695,7 +706,9 @@ async def test_text_only_usage_omits_reasoning_usage_detail() -> None:
 
     assert response["usage"] == {
         "input_tokens": 3,
+        "input_tokens_details": {"cached_tokens": 0},
         "output_tokens": 4,
+        "output_tokens_details": {"reasoning_tokens": 0},
         "total_tokens": 7,
     }
 

@@ -14,13 +14,15 @@ HERMES_INSTALL_URL="https://hermes-agent.nousresearch.com/install.sh"
 MIN_HERMES_VERSION="0.20.4"
 DSH_VERSION="0.1.0-rc.8"
 DSH_PACKAGE="@deepseek-ai/dsh@$DSH_VERSION"
+GROK_INSTALL_URL="https://x.ai/cli/install.sh"
+MIN_GROK_VERSION="1.0.5"
 RTK_VERSION="0.44.2"
 RTK_RELEASE_BASE_URL="https://github.com/rtk-ai/rtk/releases/download/v$RTK_VERSION"
 UV_INSTALL_URL="https://astral.sh/uv/install.sh"
 FCC_MACOS_BUNDLE_ID="io.github.alishahryar1.free-claude-code"
 FCC_MACOS_OWNER_FILE=".free-claude-code-owner"
 # Include retired entry points so updates reject older FCC processes before replacement.
-FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-init free-claude-code"
+FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-grok fcc-init free-claude-code"
 
 dry_run=0
 voice_nim=0
@@ -33,6 +35,7 @@ install_opencode=1
 install_cline=0
 install_hermes=1
 install_dsh=1
+install_grok=1
 enable_rtk=0
 torch_backend=""
 temporary_file=""
@@ -156,7 +159,18 @@ choose_coding_agents() {
             install_dsh=0
         fi
 
-        if [ "$install_claude" -eq 1 ] || [ "$install_codex" -eq 1 ] || [ "$install_pi" -eq 1 ] || [ "$install_opencode" -eq 1 ] || [ "$install_cline" -eq 1 ] || [ "$install_hermes" -eq 1 ] || [ "$install_dsh" -eq 1 ]; then
+        if [ "$install_grok" -eq 1 ]; then
+            grok_default=yes
+        else
+            grok_default=no
+        fi
+        if prompt_yes_no "Install or verify Grok Build for fcc-grok?" "$grok_default"; then
+            install_grok=1
+        else
+            install_grok=0
+        fi
+
+        if [ "$install_claude" -eq 1 ] || [ "$install_codex" -eq 1 ] || [ "$install_pi" -eq 1 ] || [ "$install_opencode" -eq 1 ] || [ "$install_cline" -eq 1 ] || [ "$install_hermes" -eq 1 ] || [ "$install_dsh" -eq 1 ] || [ "$install_grok" -eq 1 ]; then
             break
         fi
         printf 'Select at least one coding agent.\n\n' >&4
@@ -959,6 +973,68 @@ ensure_dsh() {
     verify_dsh_command
 }
 
+current_grok_version() {
+    if output=$(grok --version 2>/dev/null); then
+        :
+    else
+        return 1
+    fi
+
+    version=$(printf '%s\n' "$output" | awk '
+        /^[[:space:]]*(grok[[:space:]]+|v)?[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?([[:space:]]+\([^\r\n]*\))?[[:space:]]*$/ &&
+        match($0, /[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?/) {
+            print substr($0, RSTART, RLENGTH)
+            exit
+        }
+    ')
+    [ -n "$version" ] || return 1
+    printf '%s\n' "$version"
+}
+
+verify_grok_command() {
+    if [ "$dry_run" -eq 1 ]; then
+        print_command grok --version
+        return 0
+    fi
+
+    command -v grok >/dev/null 2>&1 || fail "Grok Build was installed, but 'grok' is not available on PATH."
+    version=$(current_grok_version) || fail "Grok Build is present, but 'grok --version' did not return a valid semantic version."
+    if ! stable_version_is_supported "$version" "$MIN_GROK_VERSION"; then
+        fail "Stable Grok Build $MIN_GROK_VERSION or newer is required; found Grok Build $version after installation."
+    fi
+    printf 'Verified Grok Build %s.\n' "$version"
+}
+
+install_grok_build() {
+    download_and_run "$GROK_INSTALL_URL" bash "Grok Build"
+    add_known_bin_directories
+}
+
+ensure_grok() {
+    if [ "$dry_run" -eq 1 ]; then
+        if command -v grok >/dev/null 2>&1; then
+            print_command grok --version
+            printf 'A compatible Grok Build will be preserved; an older version will be upgraded with the official installer.\n'
+        else
+            install_grok_build
+        fi
+        verify_grok_command
+        return 0
+    fi
+
+    if command -v grok >/dev/null 2>&1; then
+        version=$(current_grok_version) || fail "Grok Build is present, but 'grok --version' did not return a valid semantic version."
+        if stable_version_is_supported "$version" "$MIN_GROK_VERSION"; then
+            printf 'Grok Build %s already satisfies >=%s; leaving it unchanged.\n' "$version" "$MIN_GROK_VERSION"
+            return 0
+        fi
+        printf 'Grok Build %s does not satisfy stable >=%s; upgrading it with the official installer.\n' "$version" "$MIN_GROK_VERSION"
+    fi
+
+    install_grok_build
+    verify_grok_command
+}
+
 ensure_selected_coding_agents() {
     if [ "$install_claude" -eq 1 ]; then
         step "Ensuring Claude Code is installed"
@@ -995,7 +1071,12 @@ ensure_selected_coding_agents() {
         ensure_dsh
     fi
 
-    if [ "$install_claude" -eq 0 ] && [ "$install_codex" -eq 0 ] && [ "$pi_available" -eq 0 ] && [ "$install_opencode" -eq 0 ] && [ "$install_cline" -eq 0 ] && [ "$install_hermes" -eq 0 ] && [ "$install_dsh" -eq 0 ]; then
+    if [ "$install_grok" -eq 1 ]; then
+        step "Ensuring Grok Build is installed"
+        ensure_grok
+    fi
+
+    if [ "$install_claude" -eq 0 ] && [ "$install_codex" -eq 0 ] && [ "$pi_available" -eq 0 ] && [ "$install_opencode" -eq 0 ] && [ "$install_cline" -eq 0 ] && [ "$install_hermes" -eq 0 ] && [ "$install_dsh" -eq 0 ] && [ "$install_grok" -eq 0 ]; then
         fail "No selected coding agent was installed. Re-run the installer and choose at least one."
     fi
 }
@@ -1182,7 +1263,7 @@ configure_and_verify_free_claude_code() {
 
     if [ "$dry_run" -eq 1 ]; then
         print_command uv tool dir --bin
-        printf '+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, fcc-opencode, fcc-cline, fcc-hermes, and fcc-dsh in the uv tool bin directory\n'
+        printf '+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, fcc-opencode, fcc-cline, fcc-hermes, fcc-dsh, and fcc-grok in the uv tool bin directory\n'
         print_command fcc-server --version
         return 0
     fi
@@ -1200,7 +1281,7 @@ configure_and_verify_free_claude_code() {
     export PATH
     hash -r 2>/dev/null || true
 
-    for command_name in fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh; do
+    for command_name in fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-grok; do
         [ -x "$tool_bin/$command_name" ] || fail "Free Claude Code installation did not create $tool_bin/$command_name."
     done
 
@@ -1323,7 +1404,7 @@ fi
 
 step "Checking installation prerequisites"
 require_command curl
-if [ "$install_claude" -eq 1 ] || [ "$install_opencode" -eq 1 ] || [ "$install_hermes" -eq 1 ]; then
+if [ "$install_claude" -eq 1 ] || [ "$install_opencode" -eq 1 ] || [ "$install_hermes" -eq 1 ] || [ "$install_grok" -eq 1 ]; then
     require_command bash
 fi
 require_command sh
@@ -1389,5 +1470,10 @@ else
         printf 'Run DeepSeek Harness with: fcc-dsh\n'
     else
         printf 'The fcc-dsh wrapper is ready after you install DeepSeek Harness %s.\n' "$DSH_VERSION"
+    fi
+    if [ "$install_grok" -eq 1 ]; then
+        printf 'Run Grok Build with: fcc-grok\n'
+    else
+        printf 'The fcc-grok wrapper is ready after you install Grok Build %s or newer.\n' "$MIN_GROK_VERSION"
     fi
 fi

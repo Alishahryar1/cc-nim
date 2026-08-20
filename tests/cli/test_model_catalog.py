@@ -10,24 +10,22 @@ from free_claude_code.cli.launchers.model_catalog import (
 from free_claude_code.core.json_types import JsonObject
 
 
-def _models_payload(*model_ids: str) -> JsonObject:
-    return {
-        "data": [
-            {
-                "id": model_id,
-                "display_name": f"Display {index}",
-            }
-            for index, model_id in enumerate(model_ids)
-        ]
-    }
-
-
 def test_client_models_project_nested_direct_refs_in_source_order() -> None:
     assert client_models_from_response(
-        _models_payload(
-            "anthropic/nvidia_nim/nvidia/nemotron-3-super",
-            "open_router/meta-llama/llama-3.3-70b",
-        )
+        {
+            "data": [
+                {
+                    "id": "nvidia_nim/nvidia/nemotron-3-super",
+                    "provider_model_ref": "nvidia_nim/nvidia/nemotron-3-super",
+                    "display_name": "Display 0",
+                },
+                {
+                    "id": "open_router/meta-llama/llama-3.3-70b",
+                    "provider_model_ref": "open_router/meta-llama/llama-3.3-70b",
+                    "display_name": "Display 1",
+                },
+            ]
+        }
     ) == (
         ClientModel(
             wire_slug="nvidia_nim/nvidia/nemotron-3-super",
@@ -44,20 +42,40 @@ def test_client_models_project_nested_direct_refs_in_source_order() -> None:
     )
 
 
-def test_client_models_suppress_no_thinking_alias_when_normal_model_exists() -> None:
+def test_client_models_keep_no_thinking_direct_route() -> None:
     models = client_models_from_response(
-        _models_payload(
-            "claude-3-freecc-no-thinking/nvidia_nim/provider-model",
-            "anthropic/nvidia_nim/provider-model",
-        )
+        {
+            "data": [
+                {
+                    "id": "claude-3-freecc-no-thinking/nvidia_nim/provider-model",
+                    "provider_model_ref": "nvidia_nim/provider-model",
+                    "display_name": "Display 0",
+                }
+            ]
+        }
     )
 
-    assert [model.wire_slug for model in models] == ["nvidia_nim/provider-model"]
+    assert models == (
+        ClientModel(
+            wire_slug="claude-3-freecc-no-thinking/nvidia_nim/provider-model",
+            provider_model_ref="nvidia_nim/provider-model",
+            display_name="Display 0",
+            allows_reasoning=False,
+        ),
+    )
 
 
 def test_client_models_keep_no_thinking_only_route() -> None:
     assert client_models_from_response(
-        _models_payload("claude-3-freecc-no-thinking/open_router/plain-model")
+        {
+            "data": [
+                {
+                    "id": "claude-3-freecc-no-thinking/open_router/plain-model",
+                    "provider_model_ref": "open_router/plain-model",
+                    "display_name": "Display 0",
+                }
+            ]
+        }
     ) == (
         ClientModel(
             wire_slug="claude-3-freecc-no-thinking/open_router/plain-model",
@@ -72,7 +90,9 @@ def test_client_models_ignore_compatibility_unknown_and_malformed_entries() -> N
     payload: JsonObject = {
         "data": [
             {"id": "claude-opus-4-20250514"},
-            {"id": "anthropic/unknown/model"},
+            {"id": "unknown/model", "provider_model_ref": 123},
+            {"id": "   ", "provider_model_ref": "open_router/model"},
+            {"id": "open_router/model", "provider_model_ref": "open_router/"},
             {"id": 123},
             "not-an-object",
         ]
@@ -84,11 +104,25 @@ def test_client_models_ignore_compatibility_unknown_and_malformed_entries() -> N
 
 def test_client_models_deduplicate_wire_slugs_deterministically() -> None:
     models = client_models_from_response(
-        _models_payload(
-            "anthropic/gemini/models/gemini-test",
-            "gemini/models/gemini-test",
-            "anthropic/open_router/provider/test",
-        )
+        {
+            "data": [
+                {
+                    "id": "gemini/models/gemini-test",
+                    "provider_model_ref": "gemini/models/gemini-test",
+                    "display_name": "Display 0",
+                },
+                {
+                    "id": "gemini/models/gemini-test",
+                    "provider_model_ref": "gemini/models/gemini-test",
+                    "display_name": "Display 1",
+                },
+                {
+                    "id": "open_router/provider/test",
+                    "provider_model_ref": "open_router/provider/test",
+                    "display_name": "Display 2",
+                },
+            ]
+        }
     )
 
     assert [model.wire_slug for model in models] == [
@@ -121,7 +155,7 @@ def test_fetch_proxy_models_uses_canonical_bearer_request() -> None:
 
     assert response == {"data": []}
     request = open_local_request.call_args.args[0]
-    assert request.full_url == "http://127.0.0.1:9191/v1/models"
+    assert request.full_url == "http://127.0.0.1:9191/v1/models?view=responses"
     assert request.get_method() == "GET"
     assert request.get_header("Authorization") == "Bearer proxy-token"
 

@@ -2,7 +2,10 @@
 
 from pathlib import Path
 
-from free_claude_code.api.model_catalog import build_models_list_response
+from free_claude_code.api.model_catalog import (
+    ModelCatalogView,
+    build_models_list_response,
+)
 from free_claude_code.application.ports import RequestRuntimePort
 from free_claude_code.cli.launchers.codex_model_catalog import (
     build_codex_model_catalog,
@@ -38,8 +41,11 @@ class CodexModelCatalogPublisher:
         models_response = build_models_list_response(
             runtime.current_settings(),
             runtime,
+            view=ModelCatalogView.RESPONSES,
         )
-        catalog = build_codex_model_catalog(models_response.model_dump())
+        catalog = build_codex_model_catalog(
+            models_response.model_dump(by_alias=True, exclude_none=True)
+        )
         models = catalog.get("models")
         if not isinstance(models, list) or not models:
             raise ValueError("Codex model catalog contains no routable models.")

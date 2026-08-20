@@ -29,11 +29,13 @@ def _models_payload() -> JsonObject:
     return {
         "data": [
             {
-                "id": "anthropic/nvidia_nim/vendor/model",
+                "id": "nvidia_nim/vendor/model",
+                "provider_model_ref": "nvidia_nim/vendor/model",
                 "display_name": "Nested model",
             },
             {
                 "id": "claude-3-freecc-no-thinking/open_router/plain-model",
+                "provider_model_ref": "open_router/plain-model",
                 "display_name": "No-thinking model",
             },
         ]

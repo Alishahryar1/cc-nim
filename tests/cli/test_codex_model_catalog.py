@@ -20,7 +20,10 @@ def _models_payload(*model_ids: str) -> dict[str, Any]:
         "data": [
             {
                 "id": model_id,
-                "display_name": model_id.replace("anthropic/", ""),
+                "provider_model_ref": (
+                    model_id.removeprefix("claude-3-freecc-no-thinking/")
+                ),
+                "display_name": model_id,
             }
             for model_id in model_ids
         ]
@@ -46,13 +49,11 @@ def _slugs(catalog: Mapping[str, Any]) -> list[str]:
     return slugs
 
 
-def test_codex_catalog_converts_configured_and_cached_models_to_direct_slugs() -> None:
+def test_codex_catalog_uses_direct_configured_and_cached_model_slugs() -> None:
     catalog = build_codex_model_catalog(
         _models_payload(
-            "anthropic/nvidia_nim/nvidia/nemotron-3-super",
-            "claude-3-freecc-no-thinking/nvidia_nim/nvidia/nemotron-3-super",
-            "anthropic/open_router/meta-llama/llama-3.3-70b",
-            "claude-3-freecc-no-thinking/open_router/meta-llama/llama-3.3-70b",
+            "nvidia_nim/nvidia/nemotron-3-super",
+            "open_router/meta-llama/llama-3.3-70b",
         )
     )
 
@@ -76,23 +77,28 @@ def test_codex_catalog_converts_configured_and_cached_models_to_direct_slugs() -
     } <= set(model)
 
 
-def test_codex_catalog_excludes_claude_compatibility_model_ids() -> None:
+def test_codex_catalog_ignores_rows_without_direct_provider_identity() -> None:
     catalog = build_codex_model_catalog(
-        _models_payload(
-            "claude-opus-4-20250514",
-            "claude-3-haiku-20240307",
-            "anthropic/nvidia_nim/provider-model",
-        )
+        {
+            "data": [
+                {"id": "claude-opus-4-20250514"},
+                {
+                    "id": "nvidia_nim/provider-model",
+                    "provider_model_ref": "nvidia_nim/provider-model",
+                    "display_name": "NIM",
+                },
+            ]
+        }
     )
 
     assert _slugs(catalog) == ["nvidia_nim/provider-model"]
 
 
-def test_codex_catalog_skips_no_thinking_duplicate_when_normal_slug_exists() -> None:
+def test_codex_catalog_deduplicates_direct_wire_ids() -> None:
     catalog = build_codex_model_catalog(
         _models_payload(
-            "claude-3-freecc-no-thinking/nvidia_nim/provider-model",
-            "anthropic/nvidia_nim/provider-model",
+            "nvidia_nim/provider-model",
+            "nvidia_nim/provider-model",
         )
     )
 
@@ -111,32 +117,34 @@ def test_codex_catalog_ordering_and_priorities_are_deterministic() -> None:
     catalog = build_codex_model_catalog(
         _models_payload(
             "anthropic/gemini/models/gemini-test",
-            "anthropic/nvidia_nim/nvidia/test",
+            "nvidia_nim/nvidia/test",
             "anthropic/gemini/models/gemini-test",
-            "anthropic/open_router/provider/test",
+            "open_router/provider/test",
         )
     )
 
     models = _catalog_models(catalog)
     assert _slugs(catalog) == [
-        "gemini/models/gemini-test",
+        "anthropic/gemini/models/gemini-test",
         "nvidia_nim/nvidia/test",
         "open_router/provider/test",
     ]
     assert [model["priority"] for model in models] == [0, 1, 2]
 
 
-def test_codex_catalog_accepts_future_direct_provider_slugs() -> None:
+def test_codex_catalog_accepts_direct_provider_slugs_without_a_provider_registry() -> (
+    None
+):
     catalog = build_codex_model_catalog(
         _models_payload(
             "nvidia_nim/provider-model",
-            "anthropic/open_router/provider-model",
+            "future_provider/provider-model",
         )
     )
 
     assert _slugs(catalog) == [
         "nvidia_nim/provider-model",
-        "open_router/provider-model",
+        "future_provider/provider-model",
     ]
 
 
@@ -150,7 +158,7 @@ def test_launcher_config_composes_with_persistent_codex_config(
     catalog_path = tmp_path / "codex-model-catalog.json"
     write_codex_model_catalog(
         catalog_path,
-        build_codex_model_catalog(_models_payload("anthropic/nvidia_nim/test-model")),
+        build_codex_model_catalog(_models_payload("nvidia_nim/test-model")),
     )
     codex_home = tmp_path / "codex-home"
     codex_home.mkdir()
@@ -208,8 +216,8 @@ def test_catalog_writer_skips_identical_content_and_replaces_changes(
     tmp_path: Path,
 ) -> None:
     catalog_path = tmp_path / "codex-model-catalog.json"
-    first = build_codex_model_catalog(_models_payload("anthropic/nvidia_nim/first"))
-    second = build_codex_model_catalog(_models_payload("anthropic/nvidia_nim/second"))
+    first = build_codex_model_catalog(_models_payload("nvidia_nim/first"))
+    second = build_codex_model_catalog(_models_payload("nvidia_nim/second"))
 
     assert write_codex_model_catalog(catalog_path, first) is True
     assert write_codex_model_catalog(catalog_path, first) is False
@@ -235,9 +243,7 @@ def test_catalog_writer_cleans_temporary_file_after_replace_failure(
     with pytest.raises(PermissionError, match="locked"):
         write_codex_model_catalog(
             catalog_path,
-            build_codex_model_catalog(
-                _models_payload("anthropic/nvidia_nim/replacement")
-            ),
+            build_codex_model_catalog(_models_payload("nvidia_nim/replacement")),
         )
 
     assert catalog_path.read_text(encoding="utf-8") == "previous\n"

@@ -521,6 +521,9 @@ class Settings(BaseModel):
     provider_progress_timeout: float = Field(
         default=600.0,
         gt=0,
+        # Responses metadata adds 60 seconds before encoding this as a u64.
+        # The next representable float below 2**64 leaves more than that margin.
+        lt=float(1 << 64),
         allow_inf_nan=False,
         validation_alias="PROVIDER_PROGRESS_TIMEOUT",
     )

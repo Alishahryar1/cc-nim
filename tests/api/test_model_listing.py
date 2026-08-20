@@ -1,3 +1,5 @@
+import math
+
 from fastapi.testclient import TestClient
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
@@ -74,6 +76,10 @@ def test_models_list_includes_configured_refs_cached_provider_models_and_aliases
     assert data["first_id"] == ids[0]
     assert data["last_id"] == ids[-1]
     assert data["has_more"] is False
+    assert all(
+        "provider_model_ref" not in item and "apiBackend" not in item
+        for item in data["data"]
+    )
 
 
 def test_models_list_uses_thinking_metadata_for_cached_models():
@@ -168,3 +174,86 @@ def test_models_list_works_with_empty_discovery_catalog():
         "claude-3-freecc-no-thinking/open_router/anthropic/claude-opus",
     ]
     assert "claude-sonnet-4-20250514" in ids
+
+
+def test_direct_model_views_exclude_claude_aliases_and_duplicate_variants():
+    app = create_test_app(_settings(model_opus=None, model_haiku=None))
+    manager = provider_manager_for_app(app)
+    manager.cache_model_infos(
+        "open_router",
+        {
+            ProviderModelInfo("reasoning-model", supports_thinking=True),
+            ProviderModelInfo("plain-model", supports_thinking=False),
+        },
+    )
+
+    messages = TestClient(app).get("/v1/models?view=messages").json()
+    responses = TestClient(app).get("/v1/models?view=responses").json()
+
+    assert [row["id"] for row in messages["data"]] == [
+        "deepseek/deepseek-chat",
+        "claude-3-freecc-no-thinking/open_router/plain-model",
+        "open_router/reasoning-model",
+    ]
+    assert "claude-sonnet-4-20250514" not in {row["id"] for row in messages["data"]}
+    assert all("apiBackend" not in row for row in messages["data"])
+    assert responses["data"][0] == {
+        "object": "model",
+        "created": 0,
+        "owned_by": "free-claude-code",
+        "created_at": "1970-01-01T00:00:00Z",
+        "display_name": "deepseek/deepseek-chat",
+        "id": "deepseek/deepseek-chat",
+        "type": "model",
+        "provider_model_ref": "deepseek/deepseek-chat",
+        "apiBackend": "responses",
+        "maxRetries": 0,
+        "supportsReasoningEffort": True,
+        "reasoningEfforts": [
+            "none",
+            "minimal",
+            "low",
+            "medium",
+            "high",
+            "xhigh",
+            "max",
+        ],
+        "inferenceIdleTimeoutSecs": 660,
+    }
+    plain = responses["data"][1]
+    assert plain["supportsReasoningEffort"] is False
+    assert "reasoningEfforts" not in plain
+
+
+def test_responses_model_view_rounds_timeout_up_before_margin():
+    app = create_test_app(
+        _settings().model_copy(update={"provider_progress_timeout": 1.1})
+    )
+
+    response = TestClient(app).get("/v1/models?view=responses")
+
+    assert response.status_code == 200
+    assert {row["inferenceIdleTimeoutSecs"] for row in response.json()["data"]} == {62}
+
+
+def test_responses_model_view_timeout_fits_unsigned_range():
+    largest_accepted_timeout = math.nextafter(float(1 << 64), 0.0)
+    app = create_test_app(
+        _settings().model_copy(
+            update={"provider_progress_timeout": largest_accepted_timeout}
+        )
+    )
+
+    response = TestClient(app).get("/v1/models?view=responses")
+
+    assert response.status_code == 200
+    assert all(
+        row["inferenceIdleTimeoutSecs"] <= (1 << 64) - 1
+        for row in response.json()["data"]
+    )
+
+
+def test_unknown_model_view_is_rejected():
+    response = TestClient(create_test_app(_settings())).get("/v1/models?view=other")
+
+    assert response.status_code == 422
