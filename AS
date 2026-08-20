@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Ashish Gupta | Data Analyst · Registered Pharmacist · Pharmacovigilance</title>
+<meta name="description" content="Ashish Gupta — Data Analyst, Registered Pharmacist, and Pharmacovigilance Professional. Panipat, Haryana, India.">
+<link rel="canonical" href="https://ashishgupta-master.example/">
+<meta property="og:type" content="website">
+<meta property="og:title" content="Ashish Gupta | Data Analyst · Registered Pharmacist · Pharmacovigilance">
+<meta property="og:description" content="Versatile healthcare and data professional combining an active Registered Pharmacist license with hands-on data analysis experience.">
+<meta name="theme-color" content="#EFF2EC">
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link href="https://fonts.googleapis.com/css2?family=Source+Serif+4:ital,opsz,wght@0,8..60,400;0,8..60,600;0,8..60,700;1,8..60,500&family=IBM+Plex+Sans:wght@400;500;600&family=IBM+Plex+Mono:wght@400;500&display=swap" rel="stylesheet">
+<style>
+  :root{ --paper:#EFF2EC; --panel:#E4E9E0; --ink:#16211C; --ink-soft:#45524A; --signal:#1F6F4A; --amber:#C17A2E; --line:#C7D0C3; --max:1040px; }
+  *{box-sizing:border-box;}
+  html{scroll-behavior:smooth;}
+  @media (prefers-reduced-motion: reduce){ html{scroll-behavior:auto;} *{animation-duration:0.001ms !important; transition-duration:0.001ms !important;} }
+  body{ margin:0; background:var(--paper); color:var(--ink); font-family:'IBM Plex Sans', system-ui, sans-serif; line-height:1.55; }
+  a{color:var(--signal);}
+  a:focus-visible, button:focus-visible{ outline:2px solid var(--amber); outline-offset:3px; border-radius:2px; }
+  .wrap{max-width:var(--max); margin:0 auto; padding:0 24px;}
+  .mono{font-family:'IBM Plex Mono', monospace; letter-spacing:0.02em;}
+  .intake{ border-bottom:1px solid var(--line); background:var(--panel); font-size:0.72rem; }
+  .intake .wrap{ display:flex; flex-wrap:wrap; gap:6px 28px; padding:10px 24px; align-items:center; }
+  .intake .field{color:var(--ink-soft); white-space:nowrap;}
+  .intake .field b{ color:var(--ink); font-weight:500; margin-right:6px; text-transform:uppercase; font-size:0.66rem; letter-spacing:0.08em; }
+  .intake .status b{color:var(--amber);}
+  .track-badge{ margin-left:auto; font-family:'IBM Plex Mono'; font-size:0.66rem; text-transform:uppercase; letter-spacing:0.08em; background:var(--signal); color:#fff; padding:3px 10px; border-radius:20px; }
+  header.top{ position:sticky; top:0; z-index:20; background:rgba(239,242,236,0.92); backdrop-filter:blur(6px); border-bottom:1px solid var(--line); }
+  header.top .wrap{ display:flex; align-items:center; justify-content:space-between; padding:14px 24px; }
+  .wordmark{ font-family:'Source Serif 4', serif; font-weight:700; font-size:1.15rem; }
+  nav ul{list-style:none; display:flex; gap:22px; margin:0; padding:0;}
+  nav a{ color:var(--ink-soft); text-decoration:none; font-size:0.85rem; font-weight:500; }
+  nav a:hover{color:var(--signal);}
+  .btn{ display:inline-block; background:var(--signal); color:#fff; padding:9px 16px; border-radius:3px; text-decoration:none; font-size:0.85rem; font-weight:500; border:1px solid var(--signal); }
+  .btn:hover{background:#195a3c;}
+  .btn.ghost{ background:transparent; color:var(--signal); border:1px solid var(--signal); }
+  .btn.ghost:hover{background:var(--panel);}
+  @media (max-width:640px){ nav ul{display:none;} }
+  .hero{position:relative; overflow:hidden; padding:64px 0 56px; border-bottom:1px solid var(--line);}
+  .hero-trace{position:absolute; right:-40px; top:10px; width:420px; max-width:60%; opacity:0.35; pointer-events:none;}
+  .hero-trace path{ fill:none; stroke:var(--signal); stroke-width:2; stroke-dasharray:900; stroke-dashoffset:900; animation:draw 1.8s ease-out 0.2s forwards; }
+  @keyframes draw{ to{stroke-dashoffset:0;} }
+  .eyebrow{ text-transform:uppercase; font-size:0.75rem; letter-spacing:0.14em; color:var(--signal); font-weight:500; margin-bottom:18px; }
+  h1{ font-family:'Source Serif 4', serif; font-weight:700; font-size:clamp(2rem, 4.6vw, 2.9rem); line-height:1.15; margin:0 0 18px; max-width:16ch; }
+  h1 em{font-style:italic; color:var(--signal);}
+  .lede{ font-size:1.08rem; color:var(--ink-soft); max-width:60ch; margin:0 0 30px; }
+  .cta-row{display:flex; flex-wrap:wrap; gap:12px;}
+  section{padding:56px 0; border-bottom:1px solid var(--line);}
+  section:last-of-type{border-bottom:none;}
+  h2{ font-family:'Source Serif 4', serif; font-weight:600; font-size:1.5rem; margin:0 0 8px; }
+  .section-note{color:var(--ink-soft); margin:0 0 32px; max-width:64ch;}
+  .grid{display:grid; grid-template-columns:repeat(2,1fr); gap:18px;}
+  @media (max-width:640px){.grid{grid-template-columns:1fr;}}
+  .card{ background:var(--panel); border:1px solid var(--line); border-radius:6px; padding:20px; }
+  .card h3{ font-size:1rem; font-weight:600; margin:0 0 4px; }
+  .card .issuer{color:var(--ink-soft); font-size:0.85rem; margin-bottom:10px;}
+  .card p{margin:0; font-size:0.92rem; color:var(--ink-soft);}
+  .score{ display:inline-block; margin-top:12px; font-family:'IBM Plex Mono'; font-size:0.78rem; color:var(--amber); border:1px solid var(--amber); border-radius:20px; padding:2px 10px; }
+  .case-card{ background:var(--panel); border:1px solid var(--line); border-radius:8px; padding:28px; }
+  .case-card h3{ font-family:'Source Serif 4', serif; font-size:1.3rem; margin:0 0 4px; }
+  .case-card .issuer{color:var(--ink-soft); margin-bottom:16px;}
+  .case-card ul{margin:0; padding-left:18px; color:var(--ink-soft); font-size:0.92rem;}
+  .case-card li{margin-bottom:6px;}
+  .tags{display:flex; flex-wrap:wrap; gap:8px; margin-top:18px;}
+  .tag{ font-family:'IBM Plex Mono'; font-size:0.72rem; background:var(--paper); border:1px solid var(--line); padding:4px 10px; border-radius:20px; color:var(--ink-soft); }
+  .role{ display:flex; gap:20px; padding:18px 0; border-top:1px solid var(--line); }
+  .role:first-of-type{border-top:none;}
+  .role .when{ font-family:'IBM Plex Mono'; font-size:0.78rem; color:var(--ink-soft); min-width:150px; padding-top:2px; }
+  .role h3{margin:0 0 4px; font-size:1rem;}
+  .role .org{color:var(--ink-soft); font-size:0.9rem; margin-bottom:6px;}
+  .role ul{margin:0; padding-left:18px; font-size:0.92rem; color:var(--ink-soft);}
+  .role li{margin-bottom:4px;}
+  .skills-row{display:flex; flex-wrap:wrap; gap:10px; margin-top:8px;}
+  .skill{ font-family:'IBM Plex Mono'; font-size:0.78rem; background:var(--panel); border:1px solid var(--line); padding:6px 12px; border-radius:20px; }
+  .contact-grid{display:grid; grid-template-columns:1fr 1fr; gap:18px;}
+  @media (max-width:640px){.contact-grid{grid-template-columns:1fr;}}
+  .contact-item .label{ font-family:'IBM Plex Mono'; font-size:0.72rem; text-transform:uppercase; letter-spacing:0.08em; color:var(--ink-soft); display:block; margin-bottom:4px; }
+  .contact-item a, .contact-item span{font-size:1rem;}
+  footer{padding:32px 0; text-align:center; color:var(--ink-soft); font-size:0.82rem;}
+</style>
+</head>
+<body>
+
+<div class="intake mono">
+  <div class="wrap">
+    <span class="field"><b>Subject</b>Ashish Gupta</span>
+    <span class="field"><b>Base</b>Panipat, Haryana, IN</span>
+    <span class="field status"><b>Status</b>Open — Data Analyst &amp; Pharmacovigilance roles</span>
+    <span class="track-badge">Overview</span>
+  </div>
+</div>
+
+<header class="top">
+  <div class="wrap">
+    <div class="wordmark">AG</div>
+    <nav><ul>
+      <li><a href="#summary">Summary</a></li>
+      <li><a href="#credentials">Credentials</a></li>
+      <li><a href="#case-study">Project</a></li>
+      <li><a href="#experience">Experience</a></li>
+      <li><a href="#contact">Contact</a></li>
+    </ul></nav>
+    <a class="btn" href="mailto:ash95885@gmail.com">Email me</a>
+  </div>
+</header>
+
+<section class="hero">
+  <svg class="hero-trace" viewBox="0 0 400 140" aria-hidden="true">
+    <path d="M0,90 C20,85 35,95 50,90 C65,85 80,100 95,88 C110,76 120,92 135,80 C150,68 160,86 175,70 C190,54 200,74 215,55 C235,30 250,60 270,20 C285,-8 300,15 320,5" />
+  </svg>
+  <div class="wrap">
+    <p class="eyebrow">Data Analyst · Registered Pharmacist · Pharmacovigilance Professional</p>
+    <h1>Where <em>production data</em> meets <em>patient safety.</em></h1>
+    <p class="lede">Versatile healthcare and data professional combining an active Registered Pharmacist license with hands-on data analysis experience in pharmaceutical production reporting. Certified in ADR Reporting and Pharmacovigilance Management (Uppsala Monitoring Centre, 92%), with working skills in Excel, SQL, Power BI, and Python.</p>
+    <div class="cta-row">
+      <a class="btn" href="mailto:ash95885@gmail.com">Email</a>
+      <a class="btn ghost" href="tel:+919588522159">+91 95885 22159</a>
+      <a class="btn ghost" href="https://linkedin.com/in/ashishgupta">LinkedIn</a>
+    </div>
+  </div>
+</section>
+
+<section id="summary">
+  <div class="wrap">
+    <h2>Summary</h2>
+    <p class="section-note" style="max-width:70ch;">
+      Versatile healthcare and data professional combining an active Registered Pharmacist license
+      with hands-on data analysis experience in pharmaceutical production reporting. Certified in
+      ADR Reporting and Pharmacovigilance Management (Uppsala Monitoring Centre, scored 92%), Tally
+      ERP-9, computer systems (Master Diploma, 84.40%), and Python programming fundamentals. Skilled
+      in Microsoft Excel, SQL, and Power BI dashboard development, with 4+ years of progressive
+      clinical, hospital, and retail pharmacy experience underpinning strong documentation discipline.
+    </p>
+    <div class="skills-row">
+      <span class="skill">Data Analysis &amp; Reporting</span>
+      <span class="skill">Excel (Advanced)</span>
+      <span class="skill">SQL</span>
+      <span class="skill">Python (OOP)</span>
+      <span class="skill">Power BI &amp; DAX</span>
+      <span class="skill">Tally ERP-9</span>
+      <span class="skill">Pharmacovigilance &amp; ADR Reporting</span>
+      <span class="skill">ICSR Fundamentals</span>
+      <span class="skill">MedDRA Coding (Familiar)</span>
+      <span class="skill">Inventory &amp; Production Data</span>
+    </div>
+  </div>
+</section>
+
+<section id="credentials">
+  <div class="wrap">
+    <h2>Credentials</h2>
+    <p class="section-note">Licenses, certifications, and education.</p>
+    <div class="grid">
+      <div class="card">
+        <h3>Registered Pharmacist</h3>
+        <div class="issuer">Haryana State Pharmacy Council — Reg. No. 64165, valid through Dec 2026</div>
+      </div>
+      <div class="card">
+        <h3>PV Management Systems &amp; Terminologies</h3>
+        <div class="issuer">Uppsala Monitoring Centre</div>
+        <span class="score">Scored 92%</span>
+      </div>
+      <div class="card">
+        <h3>Collecting High Quality ADR Reports</h3>
+        <div class="issuer">Uppsala Monitoring Centre</div>
+      </div>
+      <div class="card">
+        <h3>Master Diploma — Computer Info &amp; System Management</h3>
+        <div class="issuer">Suraj Bhan Education Academy</div>
+        <span class="score">84.40% — Excellent</span>
+      </div>
+      <div class="card">
+        <h3>Python Programming (OOP)</h3>
+        <div class="issuer">Certificate of Completion</div>
+      </div>
+      <div class="card">
+        <h3>Diploma in Pharmacy</h3>
+        <div class="issuer">Kurukshetra University — Completed</div>
+      </div>
+      <div class="card">
+        <h3>Bachelor of Arts — in progress</h3>
+        <div class="issuer">IB College, Panipat</div>
+      </div>
+      <div class="card">
+        <h3>Senior &amp; Secondary Schooling</h3>
+        <div class="issuer">Board of School Education Haryana</div>
+        <p>12th — 83.2% · 10th — 63.4%</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="case-study">
+  <div class="wrap">
+    <h2>Featured project</h2>
+    <div class="case-card">
+      <h3>Pharmaceutical Production Batch Analytics Dashboard</h3>
+      <div class="issuer">Modeled on real production data workflows from current role</div>
+      <ul>
+        <li>Built an interactive Power BI-style dashboard analyzing 100+ production batches across three product lines.</li>
+        <li>Designed DAX-style measures for output ratio variance and product-line comparisons.</li>
+      </ul>
+      <div class="tags">
+        <span class="tag">Power BI</span><span class="tag">DAX</span><span class="tag">Excel</span><span class="tag">Production Data</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="experience">
+  <div class="wrap">
+    <h2>Experience</h2>
+    <div class="role">
+      <div class="when">Jan 2026 — Present</div>
+      <div>
+        <h3>Production Data &amp; Inventory Executive</h3>
+        <div class="org">GGC Chemical and Pharmaceutical Pvt. Ltd.</div>
+        <ul>
+          <li>Maintain and analyze production data using Microsoft Excel, supporting operational decision-making.</li>
+          <li>Prepare monthly production and raw material costing reports for management review.</li>
+          <li>Manage warehouse inventory records for raw materials and finished goods, ensuring data accuracy.</li>
+          <li>Handle stock entries, operational documentation, and Tally ERP records.</li>
+          <li>Identified a critical data-quality gap where the highest-volume product line (35.8% of monthly output) lacked confirmed raw-material costing due to inconsistent naming across source sheets, and delivered a prioritized executive summary and recommendations to resolve it.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="role">
+      <div class="when">Jun 2025 — Nov 2025</div>
+      <div>
+        <h3>Hospital Pharmacist <span style="font-weight:400;color:var(--ink-soft);">(Structured Clinical Rotation)</span></h3>
+        <div class="org">Civil Hospital, Panipat</div>
+        <ul>
+          <li>Managed inpatient and outpatient medicine dispensing across daily patient volumes.</li>
+          <li>Monitored drug storage conditions and coordinated inventory to maintain compliance standards.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="role">
+      <div class="when">Jun 2023 — May 2025</div>
+      <div>
+        <h3>Nursing Staff</h3>
+        <div class="org">Hospital Setting</div>
+        <ul>
+          <li>Provided patient care and medication administration, maintaining detailed, audit-ready documentation.</li>
+          <li>Assisted physicians during IV procedures and treatments, supporting accurate case record-keeping.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="role">
+      <div class="when">Nov 2022 — May 2023</div>
+      <div>
+        <h3>Clinical Pharmacist <span style="font-weight:400;color:var(--ink-soft);">(Structured Clinical Rotation)</span></h3>
+        <div class="org">Clinical Setting</div>
+        <ul>
+          <li>Conducted medication review and ADR monitoring for patient caseloads, supporting timely identification of adverse events.</li>
+          <li>Assisted in pharmacovigilance and drug safety documentation, maintaining accuracy across patient records.</li>
+        </ul>
+      </div>
+    </div>
+    <div class="role">
+      <div class="when">May 2022 — Oct 2022</div>
+      <div>
+        <h3>Retail Pharmacist</h3>
+        <div class="org">Retail Pharmacy</div>
+        <ul>
+          <li>Managed prescription dispensing and medication verification, ensuring accurate handoffs.</li>
+          <li>Counseled patients on medicine dosage and precautions, reinforcing safe medication use.</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section id="contact">
+  <div class="wrap">
+    <h2>Contact</h2>
+    <div class="contact-grid">
+      <div class="contact-item"><span class="label">Email</span><a href="mailto:ash95885@gmail.com">ash95885@gmail.com</a></div>
+      <div class="contact-item"><span class="label">Phone</span><a href="tel:+919588522159">+91 95885 22159</a></div>
+      <div class="contact-item"><span class="label">LinkedIn</span><a href="https://linkedin.com/in/ashishgupta">linkedin.com/in/ashishgupta</a></div>
+      <div class="contact-item"><span class="label">Location</span><span>Panipat, Haryana, India</span></div>
+    </div>
+  </div>
+</section>
+
+<footer>Ashish Gupta — Data Analyst · Registered Pharmacist · Pharmacovigilance Professional</footer>
+
+</body>
+</html>
