@@ -582,6 +582,24 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         ("test_hermes_cli_prompt_e2e",),
     ),
     CapabilityContract(
+        "cli",
+        "dsh_cli_integration",
+        "dsh_cli_integration",
+        "free_claude_code.cli.launchers.dsh",
+        "DeepSeek Harness 0.1.0-rc.8, live FCC catalog, and process-only patch",
+        "Responses provider scoped to FCC for attached Web and headless sessions",
+        "version, proxy, catalog, or private-config failure exits before inference",
+        (
+            "tests/cli/test_dsh_config.py",
+            "tests/cli/test_dsh_launcher.py",
+        ),
+        (
+            "test_dsh_cli_headless_e2e",
+            "test_dsh_cli_terminal_failure_e2e",
+            "test_dsh_cli_web_startup_e2e",
+        ),
+    ),
+    CapabilityContract(
         "extensibility",
         "provider_platform_abcs",
         "extensible_provider_platform_abcs",

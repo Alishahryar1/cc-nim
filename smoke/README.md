@@ -56,7 +56,7 @@ Default targets do not send real bot messages or load voice backends:
 | `api` | messages, count_tokens full payload, errors, `/stop`, optimizations | configured provider only for streaming messages |
 | `auth` | canonical bearer auth, conflicting legacy headers, invalid/missing auth | none; test sets an isolated token |
 | `cli` | server entrypoint, Claude CLI adaptive thinking, automatic WebSearch, Auto-mode classifier, session cleanup | Claude CLI binary and provider only for real CLI; connected OpenAI account for Auto mode; `FCC_SMOKE_RUN_WEB_TOOLS=1` for WebSearch |
-| `clients` | VS Code and JetBrains protocol payloads; Pi, OpenCode, Cline, and Hermes CLI prompts | configured provider; installed Pi/OpenCode/Cline binaries; Hermes uses a local fake upstream |
+| `clients` | VS Code and JetBrains protocol payloads; Pi, OpenCode, Cline, Hermes, and DeepSeek Harness CLI prompts | configured provider; installed Pi/OpenCode/Cline binaries; Hermes and DSH use a local fake upstream |
 | `config` | env precedence, removed-env migration, proxy/timeouts | none |
 | `extensibility` | provider runtime and platform factory construction | none |
 | `messaging` | fake Discord/Telegram full flow, literal clear scopes, trees, persistence, voice cancel | none |

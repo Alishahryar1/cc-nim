@@ -1,8 +1,10 @@
 import json
 import os
 import shutil
+import signal
 import subprocess
 import threading
+import time
 import uuid
 from collections.abc import Iterator
 from contextlib import contextmanager
@@ -10,6 +12,7 @@ from http import HTTPStatus
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
 
+import httpx
 import pytest
 
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
@@ -23,6 +26,7 @@ from smoke.lib.e2e import (
     SmokeServerDriver,
     assert_product_stream,
 )
+from smoke.lib.server import find_free_port
 
 pytestmark = [pytest.mark.live]
 
@@ -385,6 +389,195 @@ def test_hermes_cli_prompt_e2e(smoke_config: SmokeConfig, tmp_path: Path) -> Non
     assert native_env.read_bytes() == env_before
 
 
+@pytest.mark.smoke_target("clients")
+def test_dsh_cli_headless_e2e(smoke_config: SmokeConfig, tmp_path: Path) -> None:
+    dsh_bin = shutil.which("dsh")
+    if not dsh_bin:
+        pytest.skip("missing_env: DeepSeek Harness not found")
+    uv_bin = shutil.which("uv")
+    if not uv_bin:
+        pytest.skip("missing_env: uv not found")
+
+    model_id = "fcc-smoke-dsh"
+    full_model = f"lmstudio/{model_id}"
+    marker = "FCC_SMOKE_DSH"
+    auth_token = smoke_config.settings.proxy_auth_token
+    credential_env_keys = _provider_credential_env_keys()
+
+    with (
+        _successful_openai_provider(model_id=model_id, marker=marker) as (
+            provider_base_url,
+            provider_requests,
+        ),
+        SmokeServerDriver(
+            smoke_config,
+            name="product-dsh-cli-headless",
+            env_overrides=_local_provider_overrides(full_model, provider_base_url),
+            env_unset=credential_env_keys,
+        ).run() as server,
+    ):
+        env = _isolated_dsh_env(
+            tmp_path=tmp_path,
+            server_port=server.port,
+            auth_token=auth_token,
+            credential_env_keys=credential_env_keys,
+        )
+        result = subprocess.run(
+            [
+                uv_bin,
+                "run",
+                "--project",
+                str(smoke_config.root),
+                "--no-sync",
+                "fcc-dsh",
+                "--profile",
+                "headless",
+                f"Reply with exactly {marker}",
+            ],
+            cwd=tmp_path,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=smoke_config.timeout_s + 30,
+        )
+        server_log = server.log_path.read_text(encoding="utf-8", errors="replace")
+
+    combined = f"{result.stdout}\n{result.stderr}"
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert result.stdout.strip() == marker
+    assert auth_token not in combined
+    assert "GET /v1/models" in server_log
+    assert server_log.count("POST /v1/responses") == 1
+    assert "POST /v1/chat/completions" not in server_log
+    assert [request["path"] for request in provider_requests] == [
+        "/v1/chat/completions"
+    ]
+    provider_body = provider_requests[0]["body"]
+    assert isinstance(provider_body, dict)
+    assert provider_body["model"] == model_id
+
+
+@pytest.mark.smoke_target("clients")
+def test_dsh_cli_terminal_failure_e2e(
+    smoke_config: SmokeConfig, tmp_path: Path
+) -> None:
+    if not shutil.which("dsh"):
+        pytest.skip("missing_env: DeepSeek Harness not found")
+    uv_bin = shutil.which("uv")
+    if not uv_bin:
+        pytest.skip("missing_env: uv not found")
+
+    full_model = "lmstudio/fcc-smoke-failing-model"
+    auth_token = smoke_config.settings.proxy_auth_token
+    credential_env_keys = _provider_credential_env_keys()
+    with (
+        _deliberately_failing_openai_provider() as (
+            provider_base_url,
+            provider_requests,
+        ),
+        SmokeServerDriver(
+            smoke_config,
+            name="product-dsh-cli-provider-error",
+            env_overrides=_local_provider_overrides(full_model, provider_base_url),
+            env_unset=credential_env_keys,
+        ).run() as server,
+    ):
+        env = _isolated_dsh_env(
+            tmp_path=tmp_path,
+            server_port=server.port,
+            auth_token=auth_token,
+            credential_env_keys=credential_env_keys,
+        )
+        result = subprocess.run(
+            [
+                uv_bin,
+                "run",
+                "--project",
+                str(smoke_config.root),
+                "--no-sync",
+                "fcc-dsh",
+                "--profile",
+                "headless",
+                "Reply with exactly FCC_SMOKE_UNREACHABLE",
+            ],
+            cwd=tmp_path,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=smoke_config.timeout_s + 30,
+        )
+        server_log = server.log_path.read_text(encoding="utf-8", errors="replace")
+
+    combined = f"{result.stdout}\n{result.stderr}"
+    assert result.returncode != 0
+    assert auth_token not in combined
+    assert server_log.count("POST /v1/responses") == 1
+    assert provider_requests == ["/v1/chat/completions"]
+
+
+@pytest.mark.smoke_target("clients")
+def test_dsh_cli_web_startup_e2e(smoke_config: SmokeConfig, tmp_path: Path) -> None:
+    if not shutil.which("dsh"):
+        pytest.skip("missing_env: DeepSeek Harness not found")
+    uv_bin = shutil.which("uv")
+    if not uv_bin:
+        pytest.skip("missing_env: uv not found")
+
+    model_id = "fcc-smoke-dsh-web"
+    full_model = f"lmstudio/{model_id}"
+    auth_token = smoke_config.settings.proxy_auth_token
+    credential_env_keys = _provider_credential_env_keys()
+    web_port = find_free_port()
+    with (
+        _successful_openai_provider(model_id=model_id, marker="unused") as (
+            provider_base_url,
+            provider_requests,
+        ),
+        SmokeServerDriver(
+            smoke_config,
+            name="product-dsh-cli-web",
+            env_overrides=_local_provider_overrides(full_model, provider_base_url),
+            env_unset=credential_env_keys,
+        ).run() as server,
+    ):
+        env = _isolated_dsh_env(
+            tmp_path=tmp_path,
+            server_port=server.port,
+            auth_token=auth_token,
+            credential_env_keys=credential_env_keys,
+        )
+        command = [
+            uv_bin,
+            "run",
+            "--project",
+            str(smoke_config.root),
+            "--no-sync",
+            "fcc-dsh",
+            "web",
+            "--no-open",
+            "--port",
+            str(web_port),
+        ]
+        process = _start_attached_process(command, cwd=tmp_path, env=env)
+        try:
+            _wait_for_web_root(
+                process,
+                url=f"http://127.0.0.1:{web_port}/",
+                timeout_s=smoke_config.timeout_s + 30,
+            )
+            assert process.poll() is None
+        finally:
+            stdout, stderr = _stop_attached_process(process)
+        server_log = server.log_path.read_text(encoding="utf-8", errors="replace")
+
+    assert process.poll() is not None
+    assert auth_token not in f"{stdout}\n{stderr}"
+    assert "GET /v1/models" in server_log
+    assert provider_requests == []
+
+
 @pytest.mark.smoke_target("cli")
 def test_claude_cli_adaptive_thinking_e2e(
     smoke_config: SmokeConfig, tmp_path: Path
@@ -658,6 +851,129 @@ def test_claude_cli_provider_error_e2e(
     assert provider_requests == ["/v1/chat/completions"]
 
 
+def _provider_credential_env_keys() -> set[str]:
+    return {
+        descriptor.credential_env
+        for descriptor in PROVIDER_CATALOG.values()
+        if descriptor.credential_env is not None
+    }
+
+
+def _local_provider_overrides(
+    full_model: str, provider_base_url: str
+) -> dict[str, str]:
+    return {
+        "MODEL": full_model,
+        "MODEL_FABLE": full_model,
+        "MODEL_OPUS": full_model,
+        "MODEL_SONNET": full_model,
+        "MODEL_HAIKU": full_model,
+        "LM_STUDIO_BASE_URL": provider_base_url,
+        "MESSAGING_PLATFORM": "none",
+    }
+
+
+def _isolated_dsh_env(
+    *,
+    tmp_path: Path,
+    server_port: int,
+    auth_token: str,
+    credential_env_keys: set[str],
+) -> dict[str, str]:
+    isolated_home = tmp_path / "home"
+    dsh_home = tmp_path / "dsh-home"
+    isolated_home.mkdir(exist_ok=True)
+    dsh_home.mkdir(exist_ok=True)
+
+    env = os.environ.copy()
+    for key in credential_env_keys:
+        env.pop(key, None)
+    for key in tuple(env):
+        if key.startswith("FCC_DSH_"):
+            env.pop(key)
+    env.update(
+        {
+            "HOST": "127.0.0.1",
+            "PORT": str(server_port),
+            "FCC_OPEN_BROWSER": "0",
+            "ANTHROPIC_AUTH_TOKEN": auth_token,
+            "HOME": str(isolated_home),
+            "USERPROFILE": str(isolated_home),
+            "DSH_HOME": str(dsh_home),
+        }
+    )
+    return env
+
+
+def _start_attached_process(
+    command: list[str], *, cwd: Path, env: dict[str, str]
+) -> subprocess.Popen[str]:
+    if os.name == "nt":
+        return subprocess.Popen(
+            command,
+            cwd=cwd,
+            env=env,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.PIPE,
+            text=True,
+            creationflags=subprocess.CREATE_NEW_PROCESS_GROUP,
+        )
+    return subprocess.Popen(
+        command,
+        cwd=cwd,
+        env=env,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.PIPE,
+        text=True,
+        start_new_session=True,
+    )
+
+
+def _wait_for_web_root(
+    process: subprocess.Popen[str], *, url: str, timeout_s: float
+) -> None:
+    deadline = time.monotonic() + timeout_s
+    last_error = ""
+    while time.monotonic() < deadline:
+        if process.poll() is not None:
+            break
+        try:
+            response = httpx.get(url, timeout=2.0, follow_redirects=True)
+            if response.status_code == HTTPStatus.OK:
+                return
+            last_error = f"HTTP {response.status_code}: {response.text[:200]}"
+        except httpx.HTTPError as exc:
+            last_error = f"{type(exc).__name__}: {exc}"
+        time.sleep(0.25)
+    raise AssertionError(
+        "DeepSeek Harness Web did not become ready. "
+        f"exit={process.poll()!r} last_error={last_error!r}"
+    )
+
+
+def _stop_attached_process(process: subprocess.Popen[str]) -> tuple[str, str]:
+    if process.poll() is None:
+        try:
+            if os.name == "nt":
+                process.send_signal(signal.CTRL_BREAK_EVENT)
+            else:
+                os.killpg(process.pid, signal.SIGINT)
+        except ProcessLookupError:
+            pass
+    try:
+        return process.communicate(timeout=10)
+    except subprocess.TimeoutExpired:
+        if os.name == "nt":
+            subprocess.run(
+                ["taskkill", "/PID", str(process.pid), "/T", "/F"],
+                check=False,
+                capture_output=True,
+            )
+        else:
+            os.killpg(process.pid, signal.SIGKILL)
+        return process.communicate(timeout=5)
+
+
 @contextmanager
 def _deliberately_failing_openai_provider() -> Iterator[tuple[str, list[str]]]:
     provider_requests: list[str] = []
@@ -775,8 +1091,10 @@ def _successful_openai_provider(
             self.send_response(status)
             self.send_header("content-type", "application/json")
             self.send_header("content-length", str(len(body)))
+            self.send_header("connection", "close")
             self.end_headers()
             self.wfile.write(body)
+            self.close_connection = True
 
         def _write_chunk(
             self, *, content: str | None, finish_reason: str | None

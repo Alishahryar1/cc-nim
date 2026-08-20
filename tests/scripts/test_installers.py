@@ -20,6 +20,7 @@ FCC_COMMANDS = (
     "fcc-opencode",
     "fcc-cline",
     "fcc-hermes",
+    "fcc-dsh",
     "fcc-init",
     "free-claude-code",
 )
@@ -54,6 +55,8 @@ def _posix_command(name: str) -> str:
         "opencode": "1.18.18",
         "cline": "3.0.55",
         "hermes": "0.20.4",
+        "dsh": "0.1.0-rc.8",
+        "node": "22.19.0",
     }.get(name, "1.0.0")
     version_output = (
         f"Hermes Agent v{version} (test build)"
@@ -88,6 +91,13 @@ if [ "${1:-}" = "install" ] && [ "${2:-}" = "-g" ] && [ "${3:-}" = "cline" ]; th
     mkdir -p "$FAKE_NPM_PREFIX/bin"
     cp "$FAKE_FIXTURES/cline-command.sh" "$FAKE_NPM_PREFIX/bin/cline"
     chmod +x "$FAKE_NPM_PREFIX/bin/cline"
+    exit 0
+fi
+if [ "${1:-}" = "install" ] && [ "${2:-}" = "-g" ] && [ "${3:-}" = "@deepseek-ai/dsh@0.1.0-rc.8" ]; then
+    [ "$FAIL_STEP" = "dsh-install" ] && exit 73
+    mkdir -p "$FAKE_NPM_PREFIX/bin"
+    cp "$FAKE_FIXTURES/dsh-command.sh" "$FAKE_NPM_PREFIX/bin/dsh"
+    chmod +x "$FAKE_NPM_PREFIX/bin/dsh"
     exit 0
 fi
 if [ "${1:-}" = "prefix" ] && [ "${2:-}" = "-g" ]; then
@@ -127,6 +137,7 @@ if [ "${{1:-}}" = "tool" ] && [ "${{2:-}}" = "install" ]; then
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-opencode"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-cline"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-hermes"
+    cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-dsh"
     if [ "$FAIL_STEP" != "fcc-missing" ]; then
         cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-codex"
     fi
@@ -411,6 +422,7 @@ chmod +x "$HOME/.local/bin/uv"
     _write_executable(fixtures / "opencode-command.sh", _posix_command("opencode"))
     _write_executable(fixtures / "cline-command.sh", _posix_command("cline"))
     _write_executable(fixtures / "hermes-command.sh", _posix_command("hermes"))
+    _write_executable(fixtures / "dsh-command.sh", _posix_command("dsh"))
     rtk_command = _posix_rtk_command().encode()
     with tarfile.open(
         fixtures / "rtk-x86_64-unknown-linux-musl.tar.gz", "w:gz"
@@ -448,6 +460,7 @@ esac
 """,
     )
     _write_executable(bin_dir / "opencode", _posix_command("opencode"))
+    _write_executable(bin_dir / "node", _posix_command("node"))
     npm_prefix = tmp_path / "npm-prefix"
     npm_prefix.mkdir()
     _write_executable(bin_dir / "npm", _posix_npm_command())
@@ -500,6 +513,9 @@ def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> No
     assert calls.index("hermes-install:--non-interactive --skip-setup") < calls.index(
         "hermes:--version"
     )
+    assert calls.index("npm:install -g @deepseek-ai/dsh@0.1.0-rc.8") < calls.index(
+        "dsh:--version"
+    )
     assert calls.index("uv-install") < calls.index("uv:--version")
     assert any(
         call.startswith(
@@ -521,7 +537,7 @@ def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> No
 def test_install_sh_installs_selected_hermes_without_setup(
     posix_harness: PosixHarness,
 ) -> None:
-    result = posix_harness.run_interactive("n\nn\nn\nn\nn\ny\nn\n")
+    result = posix_harness.run_interactive("n\nn\nn\nn\nn\ny\nn\nn\n")
 
     assert result.returncode == 0, result.stdout
     calls = posix_harness.calls()
@@ -540,7 +556,9 @@ def test_install_sh_stops_when_selected_hermes_install_fails(
     posix_harness: PosixHarness,
     failure: str,
 ) -> None:
-    result = posix_harness.run_interactive("n\nn\nn\nn\nn\ny\nn\n", fail_step=failure)
+    result = posix_harness.run_interactive(
+        "n\nn\nn\nn\nn\ny\nn\nn\n", fail_step=failure
+    )
 
     assert result.returncode != 0
     assert "Free Claude Code is installed and verified." not in result.stdout
@@ -553,7 +571,7 @@ def test_install_sh_rejects_unsupported_hermes_platform_before_download(
     posix_harness.env["FAKE_UNAME"] = "Darwin"
     posix_harness.env["FAKE_UNAME_MACHINE"] = "x86_64"
 
-    result = posix_harness.run_interactive("n\nn\nn\nn\nn\ny\nn\n")
+    result = posix_harness.run_interactive("n\nn\nn\nn\nn\ny\nn\nn\n")
 
     assert result.returncode != 0
     assert "does not provide a supported release for Darwin x86_64" in result.stdout
@@ -574,6 +592,96 @@ def test_install_sh_preserves_compatible_existing_hermes(
     assert not any(
         "hermes-agent.nousresearch.com" in call for call in posix_harness.calls()
     )
+
+
+def test_install_sh_installs_selected_dsh_at_exact_preview(
+    posix_harness: PosixHarness,
+) -> None:
+    result = posix_harness.run_interactive("n\nn\nn\nn\nn\nn\ny\nn\n")
+
+    assert result.returncode == 0, result.stdout
+    calls = posix_harness.calls()
+    assert "npm:install -g @deepseek-ai/dsh@0.1.0-rc.8" in calls
+    assert calls.index("npm:install -g @deepseek-ai/dsh@0.1.0-rc.8") < calls.index(
+        "dsh:--version"
+    )
+    assert "Run DeepSeek Harness with: fcc-dsh" in result.stdout
+    assert not any(call.startswith("rtk:init") for call in calls)
+
+
+def test_install_sh_replaces_mismatched_dsh_preview(
+    posix_harness: PosixHarness,
+) -> None:
+    _write_executable(
+        posix_harness.bin_dir / "dsh",
+        _posix_command("dsh").replace("0.1.0-rc.8", "0.1.0-rc.7"),
+    )
+
+    result = posix_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "does not match 0.1.0-rc.8" in result.stdout
+    assert "npm:install -g @deepseek-ai/dsh@0.1.0-rc.8" in posix_harness.calls()
+
+
+def test_install_sh_rejects_exact_dsh_on_unsupported_node(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.add_client("dsh")
+    _write_executable(
+        posix_harness.bin_dir / "node",
+        _posix_command("node").replace("node 22.19.0", "node 23.9.0"),
+    )
+
+    result = posix_harness.run()
+
+    assert result.returncode != 0
+    assert "requires Node.js ^22.19.0 or >=24.0.0" in result.stderr
+    assert not any(call.startswith("uv:") for call in posix_harness.calls())
+
+
+@pytest.mark.parametrize("node_version", ["22.18.0", "23.9.0", "not-a-version"])
+def test_install_sh_rejects_incompatible_node_for_selected_dsh(
+    posix_harness: PosixHarness,
+    node_version: str,
+) -> None:
+    _write_executable(
+        posix_harness.bin_dir / "node",
+        _posix_command("node").replace("node 22.19.0", f"node {node_version}"),
+    )
+
+    result = posix_harness.run_interactive("n\nn\nn\nn\nn\nn\ny\nn\n")
+
+    assert result.returncode != 0
+    assert "Free Claude Code is installed and verified." not in result.stdout
+    assert not any(call.startswith("uv:") for call in posix_harness.calls())
+
+
+def test_install_sh_noninteractive_skips_dsh_without_node(
+    posix_harness: PosixHarness,
+) -> None:
+    (posix_harness.bin_dir / "node").unlink()
+    (posix_harness.bin_dir / "npm").unlink()
+
+    result = posix_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        "fcc-dsh wrapper is ready after you install DeepSeek Harness" in result.stdout
+    )
+    assert not any("@deepseek-ai/dsh" in call for call in posix_harness.calls())
+
+
+def test_install_sh_stops_when_selected_dsh_install_fails(
+    posix_harness: PosixHarness,
+) -> None:
+    result = posix_harness.run_interactive(
+        "n\nn\nn\nn\nn\nn\ny\nn\n", fail_step="dsh-install"
+    )
+
+    assert result.returncode != 0
+    assert "Free Claude Code is installed and verified." not in result.stdout
+    assert not any(call.startswith("uv:") for call in posix_harness.calls())
 
 
 def test_install_sh_installs_and_configures_rtk_for_selected_agents(
@@ -662,7 +770,7 @@ def test_install_sh_preserves_existing_rtk_and_configures_only_selected_agent(
 ) -> None:
     posix_harness.add_rtk()
 
-    result = posix_harness.run_interactive("n\ny\nn\nn\nn\nn\ny\n")
+    result = posix_harness.run_interactive("n\ny\nn\nn\nn\nn\nn\ny\n")
 
     assert result.returncode == 0, result.stdout
     assert "verifying it without updating it" in result.stdout
@@ -709,7 +817,9 @@ def test_install_sh_stops_when_rtk_setup_fails(
 def test_install_sh_reprompts_then_installs_only_selected_agent(
     posix_harness: PosixHarness,
 ) -> None:
-    result = posix_harness.run_interactive("n\nn\nn\nn\nn\nn\nn\ny\nn\nn\nn\nn\nn\n")
+    result = posix_harness.run_interactive(
+        "n\nn\nn\nn\nn\nn\nn\nn\ny\nn\nn\nn\nn\nn\nn\n"
+    )
 
     assert result.returncode == 0, result.stdout
     assert "Select at least one coding agent." in result.stdout
@@ -728,7 +838,9 @@ def test_install_sh_reprompts_then_installs_only_selected_agent(
 def test_install_sh_rejects_uninstalled_only_selection(
     posix_harness: PosixHarness,
 ) -> None:
-    result = posix_harness.run_interactive("n\nn\ny\nn\nn\nn\nn\n", fail_step="pi-skip")
+    result = posix_harness.run_interactive(
+        "n\nn\ny\nn\nn\nn\nn\nn\n", fail_step="pi-skip"
+    )
 
     assert result.returncode != 0
     assert "No selected coding agent was installed." in result.stdout
@@ -1272,6 +1384,8 @@ def _batch_client(name: str) -> str:
         "opencode": "1.18.18",
         "cline": "3.0.55",
         "hermes": "0.20.4",
+        "dsh": "0.1.0-rc.8",
+        "node": "22.19.0",
     }.get(name, "1.0.0")
     version_output = (
         f"Hermes Agent v{version} (test build)"
@@ -1299,6 +1413,7 @@ def _batch_npm() -> str:
     return r"""@echo off
 echo npm:%*>>"%CALL_LOG%"
 if "%1"=="install" if "%2"=="-g" if "%3"=="cline" goto install_cline
+if "%1"=="install" if "%2"=="-g" if "%3"=="@deepseek-ai/dsh@0.1.0-rc.8" goto install_dsh
 if "%1"=="prefix" if "%2"=="-g" echo %FAKE_NPM_PREFIX%& exit /b 0
 if "%1"=="config" if "%2"=="get" if "%3"=="prefix" echo %FAKE_NPM_PREFIX%& exit /b 0
 exit /b 71
@@ -1306,6 +1421,11 @@ exit /b 71
 if "%FAIL_STEP%"=="cline-install" exit /b 72
 if not exist "%FAKE_NPM_PREFIX%" mkdir "%FAKE_NPM_PREFIX%"
 copy /y "%FAKE_FIXTURES%\cline-command.cmd" "%FAKE_NPM_PREFIX%\cline.cmd" >nul
+exit /b 0
+:install_dsh
+if "%FAIL_STEP%"=="dsh-install" exit /b 73
+if not exist "%FAKE_NPM_PREFIX%" mkdir "%FAKE_NPM_PREFIX%"
+copy /y "%FAKE_FIXTURES%\dsh-command.cmd" "%FAKE_NPM_PREFIX%\dsh.cmd" >nul
 exit /b 0
 """
 
@@ -1333,6 +1453,7 @@ copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-pi.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-opencode.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-cline.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-hermes.cmd" >nul
+copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-dsh.cmd" >nul
 if not "%FAIL_STEP%"=="fcc-missing" copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-codex.cmd" >nul
 exit /b 0
 :update_shell
@@ -1463,6 +1584,7 @@ def powershell_harness(
     (fixtures / "hermes-command.cmd").write_text(
         _batch_client("hermes"), encoding="utf-8"
     )
+    (fixtures / "dsh-command.cmd").write_text(_batch_client("dsh"), encoding="utf-8")
     (fixtures / "rtk-command.cmd").write_text(_batch_rtk(), encoding="utf-8")
     (fixtures / "uv-command.cmd").write_text(_batch_uv("0.11.28"), encoding="utf-8")
     (fixtures / "fcc-command.cmd").write_text(
@@ -1548,6 +1670,7 @@ Add-Content -LiteralPath $env:CALL_LOG -Value "uv-install"
                 arcname="opencode.exe",
             )
     (bin_dir / "opencode.cmd").write_text(_batch_client("opencode"), encoding="utf-8")
+    (bin_dir / "node.cmd").write_text(_batch_client("node"), encoding="utf-8")
     npm_prefix = tmp_path / "npm-prefix"
     npm_prefix.mkdir()
     (bin_dir / "npm.cmd").write_text(_batch_npm(), encoding="utf-8")
@@ -1684,6 +1807,9 @@ def test_install_ps1_fresh_install_is_verified(
     assert calls.index("npm:install -g cline") < calls.index("cline:--version")
     assert any("hermes-agent.nousresearch.com/install.ps1" in call for call in calls)
     assert "hermes-install:True:True" in calls
+    assert calls.index("npm:install -g @deepseek-ai/dsh@0.1.0-rc.8") < calls.index(
+        "dsh:--version"
+    )
     assert not any("hermes:setup" in call for call in calls)
     assert calls.index("uv-install") < calls.index("uv:--version")
     assert any(
@@ -1738,6 +1864,99 @@ def test_install_ps1_preserves_compatible_existing_hermes(
     assert not any(
         "hermes-agent.nousresearch.com" in call for call in powershell_harness.calls()
     )
+
+
+def test_install_ps1_preserves_exact_dsh_preview(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    powershell_harness.add_client("dsh")
+
+    result = powershell_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "already matches the supported preview" in result.stdout
+    assert "npm:install -g @deepseek-ai/dsh@0.1.0-rc.8" not in (
+        powershell_harness.calls()
+    )
+
+
+def test_install_ps1_replaces_mismatched_dsh_preview(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    (powershell_harness.bin_dir / "dsh.cmd").write_text(
+        _batch_client("dsh").replace("0.1.0-rc.8", "0.1.0-rc.7"),
+        encoding="utf-8",
+    )
+
+    result = powershell_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "does not match 0.1.0-rc.8" in result.stdout
+    assert "npm:install -g @deepseek-ai/dsh@0.1.0-rc.8" in (powershell_harness.calls())
+
+
+def test_install_ps1_rejects_exact_dsh_on_unsupported_node(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    powershell_harness.add_client("dsh")
+    (powershell_harness.bin_dir / "node.cmd").write_text(
+        _batch_client("node").replace("node 22.19.0", "node 23.9.0"),
+        encoding="utf-8",
+    )
+
+    result = powershell_harness.run()
+
+    assert result.returncode != 0
+    assert "requires Node.js ^22.19.0 or >=24.0.0" in (
+        f"{result.stdout}\n{result.stderr}"
+    )
+    assert not any(call.startswith("uv:") for call in powershell_harness.calls())
+
+
+@pytest.mark.parametrize("node_version", ["22.18.0", "23.9.0", "not-a-version"])
+def test_install_ps1_rejects_incompatible_node_for_selected_dsh(
+    powershell_harness: PowerShellHarness,
+    node_version: str,
+) -> None:
+    (powershell_harness.bin_dir / "dsh.cmd").write_text(
+        _batch_client("dsh").replace("0.1.0-rc.8", "0.1.0-rc.7"),
+        encoding="utf-8",
+    )
+    (powershell_harness.bin_dir / "node.cmd").write_text(
+        _batch_client("node").replace("node 22.19.0", f"node {node_version}"),
+        encoding="utf-8",
+    )
+
+    result = powershell_harness.run()
+
+    assert result.returncode != 0
+    assert "Free Claude Code is installed and verified." not in result.stdout
+    assert not any(call.startswith("uv:") for call in powershell_harness.calls())
+
+
+def test_install_ps1_noninteractive_skips_dsh_without_node(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    (powershell_harness.bin_dir / "node.cmd").unlink()
+    (powershell_harness.bin_dir / "npm.cmd").unlink()
+
+    result = powershell_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert (
+        "fcc-dsh wrapper is ready after you install DeepSeek Harness" in result.stdout
+    )
+    assert not any("@deepseek-ai/dsh" in call for call in powershell_harness.calls())
+
+
+def test_install_ps1_stops_when_selected_dsh_install_fails(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    result = powershell_harness.run(fail_step="dsh-install")
+
+    assert result.returncode != 0
+    assert "Free Claude Code is installed and verified." not in result.stdout
+    assert not any(call.startswith("uv:") for call in powershell_harness.calls())
 
 
 def test_install_ps1_upgrades_old_hermes_with_noninteractive_setup_skipped(
@@ -2356,8 +2575,8 @@ Invoke-DownloadedPowerShellInstaller `
     ("answers", "expected", "expected_messages"),
     [
         (
-            ("", "", "", "", "", "", ""),
-            "True,True,True,True,False,True,False",
+            ("", "", "", "", "", "", "", ""),
+            "True,True,True,True,False,True,True,False",
             (),
         ),
         (
@@ -2370,14 +2589,16 @@ Invoke-DownloadedPowerShellInstaller `
                 "n",
                 "n",
                 "n",
+                "n",
                 "y",
+                "n",
                 "n",
                 "n",
                 "n",
                 "n",
                 "y",
             ),
-            "False,True,False,False,False,False,True",
+            "False,True,False,False,False,False,False,True",
             ("Please answer Y or N.", "Select at least one coding agent."),
         ),
     ],
@@ -2402,6 +2623,7 @@ $script:InstallPi = $true
 $script:InstallOpenCode = $true
 $script:InstallCline = $false
 $script:InstallHermes = $true
+$script:InstallDsh = $true
 $script:EnableRtk = $false
 function Read-Host {{
     param([string] $Prompt)
@@ -2412,7 +2634,7 @@ function Read-Host {{
 function Read-YesNo {{{read_yes_no}}}
 function Select-CodingAgents {{{select_agents}}}
 Select-CodingAgents
-Write-Output "selection:$($script:InstallClaudeCode),$($script:InstallCodex),$($script:InstallPi),$($script:InstallOpenCode),$($script:InstallCline),$($script:InstallHermes),$($script:EnableRtk)"
+Write-Output "selection:$($script:InstallClaudeCode),$($script:InstallCodex),$($script:InstallPi),$($script:InstallOpenCode),$($script:InstallCline),$($script:InstallHermes),$($script:InstallDsh),$($script:EnableRtk)"
 """
 
     result = subprocess.run(
@@ -2440,6 +2662,7 @@ $script:InstallPi = $false
 $script:InstallOpenCode = $false
 $script:InstallCline = $false
 $script:InstallHermes = $false
+$script:InstallDsh = $false
 $script:PiAvailable = $false
 $script:Calls = @()
 function Write-Step {{ param([string] $Message) }}
@@ -2449,6 +2672,7 @@ function Ensure-Pi {{ $script:Calls += "pi"; $script:PiAvailable = $true }}
 function Ensure-OpenCode {{ $script:Calls += "opencode" }}
 function Ensure-Cline {{ $script:Calls += "cline" }}
 function Ensure-Hermes {{ $script:Calls += "hermes" }}
+function Ensure-Dsh {{ $script:Calls += "dsh" }}
 function Ensure-SelectedCodingAgents {{{body}}}
 Ensure-SelectedCodingAgents
 Write-Output "calls:$($script:Calls -join ',')"
@@ -2480,6 +2704,7 @@ $script:InstallPi = $true
 $script:InstallOpenCode = $false
 $script:InstallCline = $false
 $script:InstallHermes = $false
+$script:InstallDsh = $false
 $script:PiAvailable = $false
 $script:Calls = @()
 function Write-Step {{ param([string] $Message) }}
@@ -2516,6 +2741,7 @@ $script:InstallPi = $true
 $script:InstallOpenCode = $false
 $script:InstallCline = $false
 $script:InstallHermes = $false
+$script:InstallDsh = $false
 $script:PiAvailable = $false
 function Write-Step {{ param([string] $Message) }}
 function Ensure-ClaudeCode {{ }}
@@ -2524,6 +2750,7 @@ function Ensure-Pi {{ }}
 function Ensure-OpenCode {{ }}
 function Ensure-Cline {{ }}
 function Ensure-Hermes {{ }}
+function Ensure-Dsh {{ }}
 function Ensure-SelectedCodingAgents {{{body}}}
 Ensure-SelectedCodingAgents
 """

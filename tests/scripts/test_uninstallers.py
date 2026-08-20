@@ -15,6 +15,7 @@ FCC_COMMANDS = (
     "fcc-opencode",
     "fcc-cline",
     "fcc-hermes",
+    "fcc-dsh",
     "fcc-init",
     "free-claude-code",
 )
@@ -138,9 +139,13 @@ def posix_uninstall_harness(tmp_path: Path) -> PosixUninstallHarness:
     _write_executable(bin_dir / "opencode", "#!/bin/sh\nexit 0\n")
     _write_executable(bin_dir / "cline", "#!/bin/sh\nexit 0\n")
     _write_executable(bin_dir / "hermes", "#!/bin/sh\nexit 0\n")
+    _write_executable(bin_dir / "dsh", "#!/bin/sh\nexit 0\n")
     hermes_state = home / ".hermes" / "sessions" / "state.json"
     hermes_state.parent.mkdir(parents=True)
     hermes_state.write_text('{"native": true}\n', encoding="utf-8")
+    dsh_state = home / ".dsh" / "sessions" / "state.json"
+    dsh_state.parent.mkdir(parents=True)
+    dsh_state.write_text('{"native": true}\n', encoding="utf-8")
     _write_executable(
         bin_dir / "pgrep",
         """#!/bin/sh
@@ -172,7 +177,7 @@ if [ "${1:-}" = "tool" ] && [ "${2:-}" = "uninstall" ]; then
         echo 'Tool `free-claude-code` is not installed' >&2
         exit 2
     fi
-    for name in fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-init free-claude-code; do
+    for name in fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-init free-claude-code; do
         /bin/rm -f "$FAKE_TOOL_BIN/$name"
     done
     echo "Uninstalled free-claude-code"
@@ -244,8 +249,12 @@ def test_uninstall_sh_removes_and_verifies_only_fcc(
     assert (posix_uninstall_harness.bin_dir / "opencode").exists()
     assert (posix_uninstall_harness.bin_dir / "cline").exists()
     assert (posix_uninstall_harness.bin_dir / "hermes").exists()
+    assert (posix_uninstall_harness.bin_dir / "dsh").exists()
     assert (
         posix_uninstall_harness.home / ".hermes" / "sessions" / "state.json"
+    ).read_text(encoding="utf-8") == '{"native": true}\n'
+    assert (
+        posix_uninstall_harness.home / ".dsh" / "sessions" / "state.json"
     ).read_text(encoding="utf-8") == '{"native": true}\n'
     assert posix_uninstall_harness.calls() == [
         "uv:tool dir --bin",
@@ -493,11 +502,14 @@ def powershell_uninstall_harness(
         (tool_bin / f"{name}.cmd").write_text(
             "@echo off\nexit /b 0\n", encoding="utf-8"
         )
-    for name in ("claude", "codex", "pi", "opencode", "cline", "hermes"):
+    for name in ("claude", "codex", "pi", "opencode", "cline", "hermes", "dsh"):
         (bin_dir / f"{name}.cmd").write_text("@echo off\nexit /b 0\n", encoding="utf-8")
     hermes_state = local_app_data / "hermes" / "state.json"
     hermes_state.parent.mkdir(parents=True)
     hermes_state.write_text('{"native": true}\n', encoding="utf-8")
+    dsh_state = home / ".dsh" / "sessions" / "state.json"
+    dsh_state.parent.mkdir(parents=True)
+    dsh_state.write_text('{"native": true}\n', encoding="utf-8")
 
     uv_commands = " ".join(FCC_COMMANDS)
     (bin_dir / "uv.cmd").write_text(
@@ -625,8 +637,12 @@ def test_uninstall_ps1_removes_and_verifies_only_fcc(
     assert (powershell_uninstall_harness.bin_dir / "opencode.cmd").exists()
     assert (powershell_uninstall_harness.bin_dir / "cline.cmd").exists()
     assert (powershell_uninstall_harness.bin_dir / "hermes.cmd").exists()
+    assert (powershell_uninstall_harness.bin_dir / "dsh.cmd").exists()
     assert (
         Path(powershell_uninstall_harness.env["LOCALAPPDATA"]) / "hermes" / "state.json"
+    ).read_text(encoding="utf-8") == '{"native": true}\n'
+    assert (
+        powershell_uninstall_harness.home / ".dsh" / "sessions" / "state.json"
     ).read_text(encoding="utf-8") == '{"native": true}\n'
     assert powershell_uninstall_harness.calls() == [
         "uv:tool dir --bin",
