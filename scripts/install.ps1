@@ -866,7 +866,7 @@ function Get-HermesVersion {
     param([string] $HermesPath)
 
     $output = Invoke-Utf8NativeCapture -FilePath $HermesPath -Arguments @("--version")
-    if ($output -match '(?im)^\s*(?:Hermes Agent\s+)?v?(?<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?)(?=\s|$)') {
+    if ($output -match '(?im)^\s*Hermes Agent\s+v?(?<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?)(?=\s|$)') {
         return $Matches["version"]
     }
 

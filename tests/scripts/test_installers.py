@@ -1950,12 +1950,21 @@ def test_install_ps1_preserves_compatible_existing_hermes(
     )
 
 
+@pytest.mark.parametrize("unrelated_version", ["3.12.11", "v3.12.11"])
 def test_install_ps1_rejects_unrelated_versions_in_hermes_output(
     powershell_harness: PowerShellHarness,
+    unrelated_version: str,
 ) -> None:
-    hermes_command = _batch_client("hermes").replace(
-        "echo Hermes Agent v0.20.4 (2026.8.18) · upstream deadbeef",
-        "echo Hermes Agent release unavailable",
+    hermes_command = (
+        _batch_client("hermes")
+        .replace(
+            "echo Hermes Agent v0.20.4 (2026.8.18) · upstream deadbeef",
+            "echo Hermes Agent release unavailable",
+        )
+        .replace(
+            "echo Python: 3.12.11",
+            f"echo {unrelated_version}",
+        )
     )
     _write_executable(powershell_harness.bin_dir / "hermes.cmd", hermes_command)
 
