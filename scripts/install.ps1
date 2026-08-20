@@ -36,7 +36,7 @@ $script:InstallCodex = $true
 $script:InstallPi = $true
 $script:InstallOpenCode = $true
 $script:InstallCline = $false
-$script:InstallHermes = $false
+$script:InstallHermes = $true
 $script:PiAvailable = $false
 $script:EnableRtk = $Rtk.IsPresent
 $FccCommands = @(
@@ -1242,7 +1242,6 @@ if ((-not [string]::IsNullOrWhiteSpace($TorchBackend)) -and (-not ($VoiceLocal -
 
 Add-KnownBinDirectories
 $script:InstallCline = [bool] ((Get-ApplicationCommand "cline") -or (Get-ApplicationCommand "npm"))
-$script:InstallHermes = [bool] (Get-ApplicationCommand "hermes")
 
 Write-Step "Checking for running Free Claude Code processes"
 Assert-NoFccProcessesRunning

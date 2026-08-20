@@ -497,6 +497,9 @@ def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> No
     assert calls.index("pi-install") < calls.index("pi:--version")
     assert calls.index("opencode-install") < calls.index("opencode:--version")
     assert calls.index("npm:install -g cline") < calls.index("cline:--version")
+    assert calls.index("hermes-install:--non-interactive --skip-setup") < calls.index(
+        "hermes:--version"
+    )
     assert calls.index("uv-install") < calls.index("uv:--version")
     assert any(
         call.startswith(
@@ -512,7 +515,7 @@ def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> No
         "uv:tool dir --bin",
         "fcc-server:--version",
     ]
-    assert not any("hermes-agent.nousresearch.com" in call for call in calls)
+    assert not any("hermes:setup" in call for call in calls)
 
 
 def test_install_sh_installs_selected_hermes_without_setup(
@@ -826,6 +829,7 @@ def test_install_sh_preserves_valid_existing_tools(
     posix_harness.add_client("codex")
     posix_harness.add_client("pi")
     posix_harness.add_client("cline")
+    posix_harness.add_client("hermes")
     posix_harness.add_uv(uv_version)
 
     result = posix_harness.run()
@@ -1678,6 +1682,9 @@ def test_install_ps1_fresh_install_is_verified(
     assert calls.index("pi-install") < calls.index("pi:--version")
     assert any("anomalyco/opencode" in call for call in calls)
     assert calls.index("npm:install -g cline") < calls.index("cline:--version")
+    assert any("hermes-agent.nousresearch.com/install.ps1" in call for call in calls)
+    assert "hermes-install:True:True" in calls
+    assert not any("hermes:setup" in call for call in calls)
     assert calls.index("uv-install") < calls.index("uv:--version")
     assert any(
         call.startswith(
@@ -1993,6 +2000,7 @@ def test_install_ps1_preserves_valid_existing_tools(
     powershell_harness.add_client("codex")
     powershell_harness.add_client("pi")
     powershell_harness.add_client("cline")
+    powershell_harness.add_client("hermes")
     powershell_harness.add_uv(uv_version)
 
     result = powershell_harness.run()
@@ -2349,7 +2357,7 @@ Invoke-DownloadedPowerShellInstaller `
     [
         (
             ("", "", "", "", "", "", ""),
-            "True,True,True,True,False,False,False",
+            "True,True,True,True,False,True,False",
             (),
         ),
         (
@@ -2393,7 +2401,7 @@ $script:InstallCodex = $true
 $script:InstallPi = $true
 $script:InstallOpenCode = $true
 $script:InstallCline = $false
-$script:InstallHermes = $false
+$script:InstallHermes = $true
 $script:EnableRtk = $false
 function Read-Host {{
     param([string] $Prompt)
