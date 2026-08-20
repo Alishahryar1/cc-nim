@@ -662,7 +662,7 @@ def test_install_sh_preserves_existing_rtk_and_configures_only_selected_agent(
 ) -> None:
     posix_harness.add_rtk()
 
-    result = posix_harness.run_interactive("n\ny\nn\nn\nn\ny\n")
+    result = posix_harness.run_interactive("n\ny\nn\nn\nn\nn\ny\n")
 
     assert result.returncode == 0, result.stdout
     assert "verifying it without updating it" in result.stdout
@@ -709,7 +709,7 @@ def test_install_sh_stops_when_rtk_setup_fails(
 def test_install_sh_reprompts_then_installs_only_selected_agent(
     posix_harness: PosixHarness,
 ) -> None:
-    result = posix_harness.run_interactive("n\nn\nn\nn\nn\nn\ny\nn\nn\nn\nn\n")
+    result = posix_harness.run_interactive("n\nn\nn\nn\nn\nn\nn\ny\nn\nn\nn\nn\nn\n")
 
     assert result.returncode == 0, result.stdout
     assert "Select at least one coding agent." in result.stdout
@@ -728,7 +728,7 @@ def test_install_sh_reprompts_then_installs_only_selected_agent(
 def test_install_sh_rejects_uninstalled_only_selection(
     posix_harness: PosixHarness,
 ) -> None:
-    result = posix_harness.run_interactive("n\nn\ny\nn\nn\nn\n", fail_step="pi-skip")
+    result = posix_harness.run_interactive("n\nn\ny\nn\nn\nn\nn\n", fail_step="pi-skip")
 
     assert result.returncode != 0
     assert "No selected coding agent was installed." in result.stdout

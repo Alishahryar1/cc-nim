@@ -782,7 +782,7 @@ verify_hermes_command() {
     printf 'Verified Hermes Agent %s.\n' "$version"
 }
 
-confirm_hermes_platform() {
+hermes_platform_is_supported() {
     hermes_platform=$(uname -s)
     hermes_architecture=$(uname -m)
     case "$hermes_platform:$hermes_architecture" in
@@ -790,9 +790,16 @@ confirm_hermes_platform() {
             return 0
             ;;
         *)
-            fail "Hermes Agent does not provide a supported release for $hermes_platform $hermes_architecture."
+            return 1
             ;;
     esac
+}
+
+confirm_hermes_platform() {
+    if hermes_platform_is_supported; then
+        return 0
+    fi
+    fail "Hermes Agent does not provide a supported release for $hermes_platform $hermes_architecture."
 }
 
 install_hermes() {
@@ -1164,8 +1171,8 @@ add_known_bin_directories
 if command -v cline >/dev/null 2>&1 || command -v npm >/dev/null 2>&1; then
     install_cline=1
 fi
-if command -v hermes >/dev/null 2>&1; then
-    install_hermes=1
+if ! command -v hermes >/dev/null 2>&1 && ! hermes_platform_is_supported; then
+    install_hermes=0
 fi
 
 step "Checking for running Free Claude Code processes"
