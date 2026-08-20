@@ -26,7 +26,7 @@
 ## What You Get
 
 - **48 ToS-friendly providers. 1.3B+ free tokens every month.** Use free, paid, subscription, and local models from one searchable UI without putting your account at risk. FCC follows provider terms and removes integrations if they stop being allowed.
-- **8 coding agents. One model catalog.** Run [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://github.com/openai/codex), [Pi](https://github.com/earendil-works/pi), [OpenCode](https://github.com/anomalyco/opencode), [Cline](https://github.com/cline/cline), [Hermes](https://github.com/NousResearch/hermes-agent), [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), or [Grok Build](https://github.com/xai-org/grok-build) with your FCC models.
+- **9 coding agents. One model catalog.** Run [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://github.com/openai/codex), [Pi](https://github.com/earendil-works/pi), [OpenCode](https://github.com/anomalyco/opencode), [Cline](https://github.com/cline/cline), [Hermes](https://github.com/NousResearch/hermes-agent), [DeepSeek Harness](https://github.com/deepseek-ai/deepseek-harness), [Grok Build](https://github.com/xai-org/grok-build), or [Muse Code](https://research.meta.ai/blog/introducing-muse-code-and-muse-spark-1-2/) with your FCC models.
 - **Keep coding through provider outages.** After retries are exhausted, FCC automatically tries your next configured model without making you restart the turn—across every client.
 - **Up to 90% fewer terminal-output tokens.** Optional [RTK](https://github.com/rtk-ai/rtk) filters common command output, while five FCC optimizations handle quota probes, command-prefix detection, titles, suggestions, and filepaths without calling a provider.
 - **Terminal, desktop, IDE, or phone.** Work through native launchers, [VS Code](https://code.visualstudio.com/), [Codex App](https://learn.chatgpt.com/docs/app), [JetBrains](https://www.jetbrains.com/), [Discord](https://discord.com/), or [Telegram](https://telegram.org/).
@@ -155,7 +155,13 @@ Grok Build:
 fcc-grok
 ```
 
-All eight launchers use the current Admin UI settings. Use the agent's model picker to choose from the models FCC exposes. Normal CLI arguments still work, for example:
+Muse Code:
+
+```bash
+fcc-muse
+```
+
+All nine launchers use the current Admin UI settings. Use the agent's model picker to choose from the models FCC exposes. Normal CLI arguments still work, for example:
 
 ```bash
 fcc-codex exec "hello"
@@ -170,6 +176,9 @@ on Node.js `^22.19` or `>=24`.
 `fcc-grok` keeps Grok Build's sessions and plugins, while routing attached
 sessions through FCC. Web search and fetch stay disabled until FCC supports
 Grok Build's Responses-side web-tool contract.
+`fcc-muse` keeps Muse Code's native sessions and settings while routing attached
+sessions through FCC. Muse is beta; Meta's official installer currently supports
+macOS, Linux, and WSL, while Windows requires a compatible preinstalled binary.
 
 <a id="model-picker"></a>
 
@@ -319,7 +328,7 @@ Open **Admin UI → Model Config → Reasoning** and select the behavior you wan
 
 | Selection | Behavior |
 | --- | --- |
-| **From client** (default) | Use the effort sent by Claude Code, Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, or Grok Build. If none is sent, keep the provider default. |
+| **From client** (default) | Use the effort sent by Claude Code, Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok Build, or Muse Code. If none is sent, keep the provider default. |
 | **Off** | Request reasoning to be disabled. |
 | **Low**, **Medium**, **High**, **X-High**, or **Max** | Override the client with the selected reasoning level. |
 | **Inherit** (Fable, Opus, Sonnet, and Haiku only) | Use the root Reasoning selection. |
@@ -333,7 +342,8 @@ Providers that do not support a selected control retain their own behavior.
 ## Connect Your Client
 
 For terminal use, start `fcc-server`, then run `fcc-claude`, `fcc-codex`,
-`fcc-pi`, `fcc-opencode`, `fcc-cline`, `fcc-hermes`, `fcc-dsh`, or `fcc-grok`.
+`fcc-pi`, `fcc-opencode`, `fcc-cline`, `fcc-hermes`, `fcc-dsh`, `fcc-grok`, or
+`fcc-muse`.
 Use the guides below for editor integrations.
 
 <details>
@@ -571,7 +581,7 @@ Stop every running FCC command before uninstalling.
 **Keeps**
 
 - uv and Python
-- Claude Code, Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok Build, and RTK
+- Claude Code, Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok Build, Muse Code, and RTK
 - Shared PATH entries
 
 macOS/Linux:

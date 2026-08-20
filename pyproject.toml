@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "free-claude-code"
-version = "5.11.1"
+version = "5.12.0"
 description = "Local proxy connecting coding agents to OpenAI-compatible AI providers"
 readme = "README.md"
 requires-python = ">=3.14.0"
@@ -38,6 +38,7 @@ fcc-cline = "free_claude_code.cli.launchers.cline:launch"
 fcc-hermes = "free_claude_code.cli.launchers.hermes:launch"
 fcc-dsh = "free_claude_code.cli.launchers.dsh:launch"
 fcc-grok = "free_claude_code.cli.launchers.grok:launch"
+fcc-muse = "free_claude_code.cli.launchers.muse:launch"
 
 [project.gui-scripts]
 fcc-desktop = "free_claude_code.cli.desktop_entrypoint:launch"

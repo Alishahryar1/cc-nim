@@ -22,6 +22,7 @@ $FccCommands = @(
     "fcc-hermes",
     "fcc-dsh",
     "fcc-grok",
+    "fcc-muse",
     "fcc-init",
     "free-claude-code"
 )

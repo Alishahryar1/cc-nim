@@ -206,6 +206,25 @@ async def list_models(
     return build_models_list_response(settings, services.requests, view=view)
 
 
+@router.get(
+    "/muse-code/models",
+    response_model=ModelsListResponse,
+    response_model_exclude_none=True,
+)
+async def list_muse_models(
+    services: ApiServices = Depends(get_services),
+    settings: Settings = Depends(get_settings),
+    _auth=Depends(require_proxy_auth),
+):
+    """List the direct Responses models expected by Muse Code."""
+    trace_event(stage="ingress", event="free_claude_code.api.models.list", source="api")
+    return build_models_list_response(
+        settings,
+        services.requests,
+        view=ModelCatalogView.RESPONSES,
+    )
+
+
 @router.post("/stop")
 async def stop_cli(
     services: ApiServices = Depends(get_services),

@@ -663,6 +663,110 @@ def test_grok_cli_headless_e2e(smoke_config: SmokeConfig, tmp_path: Path) -> Non
         assert provider_body["model"] == model_id
 
 
+@pytest.mark.smoke_target("clients")
+def test_muse_cli_headless_e2e(smoke_config: SmokeConfig, tmp_path: Path) -> None:
+    if not shutil.which("muse"):
+        pytest.skip("missing_env: Muse Code not found")
+    uv_bin = shutil.which("uv")
+    if not uv_bin:
+        pytest.skip("missing_env: uv not found")
+
+    model_id = "fcc-smoke-muse"
+    full_model = f"lmstudio/{model_id}"
+    marker = "FCC_SMOKE_MUSE"
+    auth_token = smoke_config.settings.proxy_auth_token
+    credential_env_keys = _provider_credential_env_keys()
+
+    with (
+        _successful_openai_provider(model_id=model_id, marker=marker) as (
+            provider_base_url,
+            provider_requests,
+        ),
+        SmokeServerDriver(
+            smoke_config,
+            name="product-muse-cli-headless",
+            env_overrides=_local_provider_overrides(full_model, provider_base_url),
+            env_unset=credential_env_keys,
+        ).run() as server,
+    ):
+        isolated_home = tmp_path / "muse-home"
+        isolated_home.mkdir()
+        env = os.environ.copy()
+        for key in credential_env_keys:
+            env.pop(key, None)
+        for key in tuple(env):
+            if key.startswith("FCC_MUSE_"):
+                env.pop(key)
+        for key in (
+            "META_API_KEY",
+            "MUSE_MODEL",
+            "MUSE_CUSTOM_HEADERS",
+            "MUSE_WWW_ROUTING",
+        ):
+            env.pop(key, None)
+        env.update(
+            {
+                "HOST": "127.0.0.1",
+                "PORT": str(server.port),
+                "FCC_OPEN_BROWSER": "0",
+                "ANTHROPIC_AUTH_TOKEN": auth_token,
+                "HOME": str(isolated_home),
+                "USERPROFILE": str(isolated_home),
+                "XDG_CONFIG_HOME": str(isolated_home / "config"),
+                "XDG_DATA_HOME": str(isolated_home / "data"),
+                "XDG_CACHE_HOME": str(isolated_home / "cache"),
+                "XDG_STATE_HOME": str(isolated_home / "state"),
+                "MUSE_NO_AUTO_UPDATE": "1",
+            }
+        )
+        result = subprocess.run(
+            [
+                uv_bin,
+                "run",
+                "--project",
+                str(smoke_config.root),
+                "--no-sync",
+                "fcc-muse",
+                "exec",
+                "--json",
+                "--no-session-log",
+                "--disable-web-tools",
+                "--disable-write",
+                "--disable-shell",
+                "--max-model-steps",
+                "1",
+                "--model",
+                full_model,
+                f"Reply with exactly {marker}",
+            ],
+            cwd=tmp_path,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=smoke_config.timeout_s + 30,
+        )
+        server_log = server.log_path.read_text(encoding="utf-8", errors="replace")
+
+    combined = f"{result.stdout}\n{result.stderr}"
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert marker in result.stdout
+    assert auth_token not in combined
+    assert "GET /v1/models?view=responses" in server_log
+    assert "GET /muse-code/models" in server_log
+    responses_count = server_log.count("POST /v1/responses")
+    assert responses_count >= 1
+    assert responses_count == len(provider_requests)
+    assert "POST /v1/chat/completions" not in server_log
+    assert all(
+        request["path"] == "/v1/chat/completions" for request in provider_requests
+    )
+    for request in provider_requests:
+        provider_body = request["body"]
+        assert isinstance(provider_body, dict)
+        assert provider_body["model"] == model_id
+
+
 @pytest.mark.smoke_target("cli")
 def test_claude_cli_adaptive_thinking_e2e(
     smoke_config: SmokeConfig, tmp_path: Path

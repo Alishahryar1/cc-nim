@@ -111,19 +111,20 @@ def test_proxy_auth_token_normalizes_configured_whitespace():
     app.dependency_overrides.clear()
 
 
-def test_proxy_auth_token_applies_to_models_endpoint():
+def test_proxy_auth_token_applies_to_model_catalog_endpoints():
     client = TestClient(app)
     settings = Settings(proxy_auth_enabled=True, proxy_auth_token="models-token")
     app.dependency_overrides[get_settings] = lambda: settings
 
-    r = client.get("/v1/models")
-    assert r.status_code == 401
-    assert r.headers["x-request-id"] == r.headers["request-id"]
-    assert "x-should-retry" not in r.headers
+    for path in ("/v1/models", "/muse-code/models"):
+        r = client.get(path)
+        assert r.status_code == 401
+        assert r.headers["x-request-id"] == r.headers["request-id"]
+        assert "x-should-retry" not in r.headers
 
-    r = client.get("/v1/models", headers={"Authorization": "Bearer models-token"})
-    assert r.status_code == 200
-    assert "data" in r.json()
+        r = client.get(path, headers={"Authorization": "Bearer models-token"})
+        assert r.status_code == 200
+        assert "data" in r.json()
 
     app.dependency_overrides.clear()
 

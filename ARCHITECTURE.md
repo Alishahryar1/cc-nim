@@ -12,17 +12,17 @@ and how contributors should extend it.
 
 Free Claude Code is a local proxy for agent clients. It accepts Anthropic
 Messages traffic from Claude Code and Pi clients and OpenAI Responses traffic
-from Codex, OpenCode, Cline, Hermes, DeepSeek Harness, and Grok Build clients,
-routes the request to a configured upstream provider, and preserves the wire
-protocol expected by the caller.
+from Codex, OpenCode, Cline, Hermes, DeepSeek Harness, Grok Build, and Muse Code
+clients, routes the request to a configured upstream provider, and preserves
+the wire protocol expected by the caller.
 
 There are three runtime surfaces:
 
 - HTTP proxy: FastAPI routes expose Anthropic-compatible, Responses-compatible,
   health, model-listing, stop, and admin endpoints.
 - CLI launchers: wrapper entrypoints prepare Claude Code, Codex, Pi, OpenCode,
-  Cline, Hermes, DeepSeek Harness, and Grok Build sessions so they target the
-  local proxy.
+  Cline, Hermes, DeepSeek Harness, Grok Build, and Muse Code sessions so they
+  target the local proxy.
 - Messaging bridge: optional Discord or Telegram adapters turn chat messages
   into managed client CLI sessions.
 
@@ -36,6 +36,7 @@ flowchart LR
     Hermes[Hermes Agent] --> ProxyAPI
     DSH[DeepSeek Harness] --> ProxyAPI
     Grok[Grok Build] --> ProxyAPI
+    Muse[Muse Code] --> ProxyAPI
     AdminUI[Local Admin UI] --> ProxyAPI
     Bots[Discord or Telegram Bots] --> Messaging[Messaging Bridge]
     Messaging --> ClientCLI[Managed Client CLI Sessions]
@@ -190,6 +191,9 @@ for real prompts against supported providers:
 - `fcc-grok`, Grok Build 1.0.5 or newer, and the OpenAI Responses behavior it
   relies on for attached terminal, headless, and ACP sessions, including an
   FCC-scoped model catalog and process-local configuration.
+- `fcc-muse`, Muse Code 0.2.1 or newer, and the OpenAI Responses behavior it
+  relies on for attached TUI, exec, and resume sessions, including an
+  FCC-scoped model catalog and process-local routing.
 - Configured Discord and Telegram messaging bridges, including command handling,
   reply-based conversation branches, status updates, transcript rendering,
   managed Claude/Codex task execution where configured, task stop/clear flows,
@@ -249,6 +253,7 @@ Console scripts are registered in [pyproject.toml](pyproject.toml):
 - `fcc-hermes` calls `free_claude_code.cli.launchers.hermes:launch`.
 - `fcc-dsh` calls `free_claude_code.cli.launchers.dsh:launch`.
 - `fcc-grok` calls `free_claude_code.cli.launchers.grok:launch`.
+- `fcc-muse` calls `free_claude_code.cli.launchers.muse:launch`.
 
 [scripts/install.sh](scripts/install.sh) and [scripts/install.ps1](scripts/install.ps1)
 install or update the uv tool plus optional voice extras. On Windows the
@@ -258,7 +263,7 @@ and [scripts/uninstall.ps1](scripts/uninstall.ps1) remove those exact desktop
 artifacts, the FCC uv tool, and the managed `~/.fcc/` tree from
 [config/paths.py](src/free_claude_code/config/paths.py); they do not remove
 uv, Claude Code, Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok
-Build, or uv-managed Python runtimes. [scripts/ci.sh](scripts/ci.sh) and
+Build, Muse Code, or uv-managed Python runtimes. [scripts/ci.sh](scripts/ci.sh) and
 [scripts/ci.ps1](scripts/ci.ps1) mirror [.github/workflows/tests.yml](.github/workflows/tests.yml)
 for local pre-push verification.
 
@@ -432,6 +437,8 @@ non-loopback clients and non-local origins.
 - `POST /v1/responses`: OpenAI Responses-compatible requests.
 - `POST /v1/messages/count_tokens`: Anthropic token counting.
 - `GET /v1/models`: gateway and Claude-compatible model listing.
+- `GET /muse-code/models`: authenticated Muse compatibility alias for the
+  direct Responses model view.
 - `GET /health`: health check.
 - `POST /stop`: stop CLI sessions and pending tasks.
 - `HEAD` and `OPTIONS` probes for compatibility on supported endpoints.
@@ -1297,8 +1304,9 @@ client environment.
 [cli/launchers/model_catalog.py](src/free_claude_code/cli/launchers/model_catalog.py)
 consumes the direct Responses view, validates its nested `provider/model`
 references, and is shared by Codex, OpenCode, Cline, Hermes, DeepSeek Harness,
-and Grok Build. The API owns compatibility filtering and direct wire identity;
-each launcher owns only translation into its client's configuration format.
+Grok Build, and Muse Code. The API owns compatibility filtering and direct wire
+identity; each launcher owns only translation into its client's configuration
+format.
 
 [cli/launchers/pi.py](src/free_claude_code/cli/launchers/pi.py) owns the installed
 `fcc-pi` launcher and [cli/launchers/pi_extension.ts](src/free_claude_code/cli/launchers/pi_extension.ts)
@@ -1434,6 +1442,30 @@ installed `fcc-grok` launcher for stable Grok Build 1.0.5 or newer:
   Responses-side service contract FCC does not implement. Ordinary `grok`
   remains unchanged.
 
+[cli/launchers/muse.py](src/free_claude_code/cli/launchers/muse.py) owns the
+installed `fcc-muse` launcher for Muse Code 0.2.1 or newer:
+
+- Attached TUI, `exec`, and `resume` sessions require a reachable FCC server,
+  a canonical proxy token, and a non-empty direct Responses catalog. Caller
+  provider and base-URL overrides are rejected, and explicit model choices are
+  validated before Muse starts.
+- A child-only environment replaces Muse's Meta bearer token and removes
+  inherited model, custom-header, and routing controls. Grammar-correct
+  `--provider meta`, FCC `/v1`, and model flags route the native Muse Responses
+  transport through FCC without writing Muse configuration or account state.
+- Muse fetches `/muse-code/models`; that authenticated route is a fixed alias
+  over FCC's existing Responses catalog builder rather than another inventory.
+  Native help, authentication, configuration, export, trace, skills, sandbox,
+  and initialization commands pass through without requiring FCC.
+- Muse retains its native whole-request retry loop because release 0.2.1 has no
+  complete process-scoped retry-off control and does not honor
+  `x-should-retry: false`. FCC still owns provider retries and ordered model
+  fallback inside each repeated request; the launcher does not mutate Muse's
+  persistent retry settings.
+- Meta's official installer currently supports macOS, Linux, and WSL. The
+  PowerShell installer verifies an existing compatible Muse binary but does not
+  invent a Windows installation or update path.
+
 [cli/managed/](src/free_claude_code/cli/managed/) owns managed Claude Code subprocesses used by
 Discord and Telegram messaging. Managed task invocations extend the same proxy
 environment only with non-interactive terminal settings, optional `--resume`,
@@ -1457,10 +1489,10 @@ reports a count-only failure, and leaves failures available for the next cleanup
 attempt. Real-session registration is collision-safe and becomes durable tree
 state only after the manager accepts it.
 
-Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, and Grok Build are
-supported through their installed launchers. FCC does not keep internal managed
-session runners for them because no user-facing messaging setting selects those
-clients for Discord or Telegram.
+Codex, Pi, OpenCode, Cline, Hermes, DeepSeek Harness, Grok Build, and Muse Code
+are supported through their installed launchers. FCC does not keep internal
+managed session runners for them because no user-facing messaging setting
+selects those clients for Discord or Telegram.
 
 ## Messaging Architecture
 

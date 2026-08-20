@@ -225,6 +225,31 @@ def test_direct_model_views_exclude_claude_aliases_and_duplicate_variants():
     assert "reasoningEfforts" not in plain
 
 
+def test_muse_model_catalog_is_the_fixed_responses_projection():
+    app = create_test_app(_settings(model_opus=None, model_haiku=None))
+    manager = provider_manager_for_app(app)
+    manager.cache_model_infos(
+        "open_router",
+        {
+            ProviderModelInfo("reasoning-model", supports_thinking=True),
+            ProviderModelInfo("plain-model", supports_thinking=False),
+        },
+    )
+    client = TestClient(app)
+
+    responses = client.get("/v1/models?view=responses")
+    muse = client.get("/muse-code/models?view=claude")
+
+    assert responses.status_code == 200
+    assert muse.status_code == 200
+    assert muse.json() == responses.json()
+    assert [row["id"] for row in muse.json()["data"]] == [
+        "deepseek/deepseek-chat",
+        "claude-3-freecc-no-thinking/open_router/plain-model",
+        "open_router/reasoning-model",
+    ]
+
+
 def test_responses_model_view_rounds_timeout_up_before_margin():
     app = create_test_app(
         _settings().model_copy(update={"provider_progress_timeout": 1.1})
