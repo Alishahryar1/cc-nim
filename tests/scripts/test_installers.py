@@ -876,6 +876,7 @@ def test_install_sh_selects_pinned_rtk_release_for_platform(
 def test_install_sh_rejects_unsupported_rtk_platform(
     posix_harness: PosixHarness,
 ) -> None:
+    posix_harness.add_client("muse")
     posix_harness.env["FAKE_UNAME"] = "FreeBSD"
     posix_harness.env["FAKE_UNAME_MACHINE"] = "riscv64"
 
@@ -1063,6 +1064,7 @@ def test_install_sh_preserves_valid_existing_tools(
     posix_harness.add_client("cline")
     posix_harness.add_client("hermes")
     posix_harness.add_client("grok")
+    posix_harness.add_client("muse")
     posix_harness.add_uv(uv_version)
 
     result = posix_harness.run()
