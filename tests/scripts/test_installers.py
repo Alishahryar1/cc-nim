@@ -1000,6 +1000,7 @@ def test_install_sh_preserves_valid_existing_tools(
     posix_harness.add_client("pi")
     posix_harness.add_client("cline")
     posix_harness.add_client("hermes")
+    posix_harness.add_client("grok")
     posix_harness.add_uv(uv_version)
 
     result = posix_harness.run()

@@ -17,7 +17,6 @@ from free_claude_code.core.gateway_model_ids import (
 
 DISCOVERED_MODEL_CREATED_AT = "1970-01-01T00:00:00Z"
 _INFERENCE_IDLE_TIMEOUT_MARGIN_SECONDS = 60
-_MAX_U64 = (1 << 64) - 1
 _REASONING_EFFORTS = ("none", "minimal", "low", "medium", "high", "xhigh", "max")
 
 
@@ -251,14 +250,7 @@ def _collect_inventory(
 
 
 def _responses_inference_idle_timeout_seconds(provider_progress_timeout: float) -> int:
-    timeout = (
-        math.ceil(provider_progress_timeout) + _INFERENCE_IDLE_TIMEOUT_MARGIN_SECONDS
-    )
-    if timeout > _MAX_U64:
-        raise ValueError(
-            "PROVIDER_PROGRESS_TIMEOUT is too large for Responses model metadata"
-        )
-    return timeout
+    return math.ceil(provider_progress_timeout) + _INFERENCE_IDLE_TIMEOUT_MARGIN_SECONDS
 
 
 def _discovered_model_response(model_id: str, *, display_name: str) -> ModelResponse:

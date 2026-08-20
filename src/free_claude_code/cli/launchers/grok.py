@@ -384,15 +384,17 @@ def _args_with_safety_flags(
     argv: Sequence[str], invocation: GrokInvocation
 ) -> list[str]:
     args = list(argv)
+    agent_index = invocation.agent_index
     if "--disable-web-search" not in _before_separator(args):
         args.insert(0, "--disable-web-search")
+        if agent_index is not None:
+            agent_index += 1
 
-    if invocation.agent_index is None:
+    if agent_index is None:
         if "--no-leader" not in _before_separator(args):
             args.insert(0, "--no-leader")
         return args
 
-    agent_index = args.index("agent")
     if "--no-leader" not in _before_separator(args)[agent_index + 1 :]:
         args.insert(agent_index + 1, "--no-leader")
     return args

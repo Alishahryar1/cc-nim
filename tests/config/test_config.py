@@ -108,14 +108,24 @@ def test_process_values_are_parsed_at_the_loader_boundary(
 
 @pytest.mark.parametrize(
     "value",
-    [0.0, -1.0, float("inf"), float("-inf"), float("nan")],
+    [
+        0.0,
+        -1.0,
+        float("inf"),
+        float("-inf"),
+        float("nan"),
+        float(1 << 64),
+    ],
 )
-def test_provider_progress_timeout_must_be_finite_and_positive(value: float) -> None:
+def test_provider_progress_timeout_must_be_representable(value: float) -> None:
     with pytest.raises(ValidationError):
         Settings(provider_progress_timeout=value)
 
 
-@pytest.mark.parametrize("value", ["0", "-1", "inf", "-inf", "nan"])
+@pytest.mark.parametrize(
+    "value",
+    ["0", "-1", "inf", "-inf", "nan", str(1 << 64)],
+)
 def test_loader_rejects_invalid_provider_progress_timeout(value: str) -> None:
     with pytest.raises(ValidationError):
         compose_settings_snapshot({}, {"PROVIDER_PROGRESS_TIMEOUT": value})

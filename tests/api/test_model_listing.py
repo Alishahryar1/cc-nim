@@ -1,4 +1,5 @@
-import pytest
+import math
+
 from fastapi.testclient import TestClient
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
@@ -235,13 +236,21 @@ def test_responses_model_view_rounds_timeout_up_before_margin():
     assert {row["inferenceIdleTimeoutSecs"] for row in response.json()["data"]} == {62}
 
 
-def test_responses_model_view_rejects_timeout_above_unsigned_range():
+def test_responses_model_view_timeout_fits_unsigned_range():
+    largest_accepted_timeout = math.nextafter(float(1 << 64), 0.0)
     app = create_test_app(
-        _settings().model_copy(update={"provider_progress_timeout": float(1 << 64)})
+        _settings().model_copy(
+            update={"provider_progress_timeout": largest_accepted_timeout}
+        )
     )
 
-    with pytest.raises(ValueError, match="too large"):
-        TestClient(app).get("/v1/models?view=responses")
+    response = TestClient(app).get("/v1/models?view=responses")
+
+    assert response.status_code == 200
+    assert all(
+        row["inferenceIdleTimeoutSecs"] <= (1 << 64) - 1
+        for row in response.json()["data"]
+    )
 
 
 def test_unknown_model_view_is_rejected():

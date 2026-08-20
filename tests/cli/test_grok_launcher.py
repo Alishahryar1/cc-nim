@@ -286,13 +286,13 @@ def test_agent_stdio_inserts_flags_in_their_parser_scopes() -> None:
         ),
         patch.object(grok, "run_client_process") as run_client_process,
     ):
-        grok.launch(["--cwd", "workspace", "agent", "--always-approve", "stdio"])
+        grok.launch(["--cwd", "agent", "agent", "--always-approve", "stdio"])
 
     assert run_client_process.call_args.kwargs["command"] == [
         "resolved-grok",
         "--disable-web-search",
         "--cwd",
-        "workspace",
+        "agent",
         "agent",
         "--no-leader",
         "--always-approve",
