@@ -181,6 +181,19 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         "skip only when Grok Build is absent; the local fake upstream must pass",
     ),
     FeatureCoverage(
+        "muse_cli_integration",
+        "Muse Code discovers FCC models and sends Responses through the proxy",
+        (
+            "tests/cli/test_muse_launcher.py",
+            "tests/api/test_model_listing.py",
+        ),
+        ("test_muse_model_catalog_is_the_fixed_responses_projection",),
+        ("test_muse_cli_headless_e2e",),
+        ("clients",),
+        ("Muse Code 0.2.1+",),
+        "skip only when Muse is absent; the local fake upstream must pass",
+    ),
+    FeatureCoverage(
         "provider_matrix",
         "Every configured provider prefix can satisfy conversation scenarios",
         ("tests/api/test_dependencies.py", "tests/providers/"),

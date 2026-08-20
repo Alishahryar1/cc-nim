@@ -439,6 +439,63 @@ def test_create_response_accepts_codex_namespace_tool_request() -> None:
     assert call["name"] == "js"
 
 
+def test_create_response_accepts_muse_code_request_shape() -> None:
+    provider = FakeProvider(_anthropic_tool_stream(tool_name="muse__read_file"))
+    app = create_test_app()
+    with (
+        patch("free_claude_code.api.routes.resolve_provider", return_value=provider),
+        TestClient(app) as client,
+    ):
+        response = client.post(
+            "/v1/responses",
+            json={
+                "model": "nvidia_nim/test-model",
+                "input": "Read the file",
+                "instructions": "Be concise.",
+                "max_output_tokens": 64,
+                "store": False,
+                "stream": True,
+                "reasoning": {"effort": "high", "summary": "auto"},
+                "include": ["reasoning.encrypted_content"],
+                "prompt_cache_key": "muse-session-1",
+                "tools": [
+                    {
+                        "type": "namespace",
+                        "name": "muse",
+                        "tools": [
+                            {
+                                "type": "function",
+                                "name": "read_file",
+                                "description": "Read one file.",
+                                "strict": True,
+                                "parameters": {
+                                    "type": "object",
+                                    "properties": {"path": {"type": "string"}},
+                                    "required": ["path"],
+                                    "additionalProperties": False,
+                                },
+                            }
+                        ],
+                    }
+                ],
+            },
+        )
+
+    assert response.status_code == 200
+    routed = provider.requests[0]
+    assert routed.max_tokens == 64
+    assert routed.output_config == {"effort": "high"}
+    assert provider.stream_kwargs[0]["reasoning"] == ReasoningPolicy(
+        control=ReasoningControl.DEFAULT,
+        effort=ReasoningEffort.HIGH,
+    )
+    assert [tool.name for tool in routed.tools] == ["muse__read_file"]
+    completed = parse_sse_text(response.text)[-1].data["response"]
+    call = completed["output"][0]
+    assert call["namespace"] == "muse"
+    assert call["name"] == "read_file"
+
+
 def test_create_response_accepts_codex_custom_tool_request() -> None:
     provider = FakeProvider(
         _anthropic_tool_stream(

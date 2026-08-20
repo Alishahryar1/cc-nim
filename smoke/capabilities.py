@@ -614,6 +614,20 @@ CAPABILITY_CONTRACTS: tuple[CapabilityContract, ...] = (
         ("test_grok_cli_headless_e2e",),
     ),
     CapabilityContract(
+        "cli",
+        "muse_cli_integration",
+        "muse_cli_integration",
+        "free_claude_code.cli.launchers.muse",
+        "Muse Code 0.2.1+, live FCC Responses catalog, and child-only route",
+        "Responses route scoped to FCC for attached TUI, exec, and resume sessions",
+        "version, route conflict, proxy, or catalog failure exits before inference",
+        (
+            "tests/cli/test_muse_launcher.py",
+            "tests/api/test_model_listing.py",
+        ),
+        ("test_muse_cli_headless_e2e",),
+    ),
+    CapabilityContract(
         "extensibility",
         "provider_platform_abcs",
         "extensible_provider_platform_abcs",

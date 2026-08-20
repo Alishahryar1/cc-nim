@@ -16,13 +16,15 @@ DSH_VERSION="0.1.0-rc.8"
 DSH_PACKAGE="@deepseek-ai/dsh@$DSH_VERSION"
 GROK_INSTALL_URL="https://x.ai/cli/install.sh"
 MIN_GROK_VERSION="1.0.5"
+MUSE_INSTALL_URL="https://dev.meta.ai/install.sh"
+MIN_MUSE_VERSION="0.2.1"
 RTK_VERSION="0.44.2"
 RTK_RELEASE_BASE_URL="https://github.com/rtk-ai/rtk/releases/download/v$RTK_VERSION"
 UV_INSTALL_URL="https://astral.sh/uv/install.sh"
 FCC_MACOS_BUNDLE_ID="io.github.alishahryar1.free-claude-code"
 FCC_MACOS_OWNER_FILE=".free-claude-code-owner"
 # Include retired entry points so updates reject older FCC processes before replacement.
-FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-grok fcc-init free-claude-code"
+FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-grok fcc-muse fcc-init free-claude-code"
 
 dry_run=0
 voice_nim=0
@@ -36,6 +38,7 @@ install_cline=0
 install_hermes=1
 install_dsh=1
 install_grok=1
+install_muse=1
 enable_rtk=0
 torch_backend=""
 temporary_file=""
@@ -170,7 +173,18 @@ choose_coding_agents() {
             install_grok=0
         fi
 
-        if [ "$install_claude" -eq 1 ] || [ "$install_codex" -eq 1 ] || [ "$install_pi" -eq 1 ] || [ "$install_opencode" -eq 1 ] || [ "$install_cline" -eq 1 ] || [ "$install_hermes" -eq 1 ] || [ "$install_dsh" -eq 1 ] || [ "$install_grok" -eq 1 ]; then
+        if [ "$install_muse" -eq 1 ]; then
+            muse_default=yes
+        else
+            muse_default=no
+        fi
+        if prompt_yes_no "Install or verify Muse Code for fcc-muse?" "$muse_default"; then
+            install_muse=1
+        else
+            install_muse=0
+        fi
+
+        if [ "$install_claude" -eq 1 ] || [ "$install_codex" -eq 1 ] || [ "$install_pi" -eq 1 ] || [ "$install_opencode" -eq 1 ] || [ "$install_cline" -eq 1 ] || [ "$install_hermes" -eq 1 ] || [ "$install_dsh" -eq 1 ] || [ "$install_grok" -eq 1 ] || [ "$install_muse" -eq 1 ]; then
             break
         fi
         printf 'Select at least one coding agent.\n\n' >&4
@@ -1035,6 +1049,72 @@ ensure_grok() {
     verify_grok_command
 }
 
+current_muse_version() {
+    if output=$(muse --version 2>/dev/null); then
+        :
+    else
+        return 1
+    fi
+
+    version=$(printf '%s\n' "$output" | awk '
+        /^[[:space:]]*Muse Code[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+([[:space:]]+\([^\r\n]+\))?[[:space:]]*$/ &&
+        match($0, /[0-9]+\.[0-9]+\.[0-9]+/) {
+            print substr($0, RSTART, RLENGTH)
+            exit
+        }
+    ')
+    [ -n "$version" ] || return 1
+    printf '%s\n' "$version"
+}
+
+verify_muse_command() {
+    if [ "$dry_run" -eq 1 ]; then
+        print_command muse --version
+        return 0
+    fi
+
+    command -v muse >/dev/null 2>&1 || fail "Muse Code was installed, but 'muse' is not available on PATH."
+    version=$(current_muse_version) || fail "Muse Code is present, but 'muse --version' did not return the expected 'Muse Code x.y.z' version."
+    if ! stable_version_is_supported "$version" "$MIN_MUSE_VERSION"; then
+        fail "Muse Code $MIN_MUSE_VERSION or newer is required; found Muse Code $version after installation."
+    fi
+    printf 'Verified Muse Code %s.\n' "$version"
+}
+
+install_muse_code() {
+    case "$(uname -s)" in
+        Darwin|Linux) ;;
+        *) fail "Meta's official Muse Code installer supports macOS, Linux, and WSL only." ;;
+    esac
+    download_and_run "$MUSE_INSTALL_URL" bash "Muse Code"
+    add_known_bin_directories
+}
+
+ensure_muse() {
+    if [ "$dry_run" -eq 1 ]; then
+        if command -v muse >/dev/null 2>&1; then
+            print_command muse --version
+            printf 'A compatible Muse Code will be preserved; an older version will be upgraded with the official installer.\n'
+        else
+            install_muse_code
+        fi
+        verify_muse_command
+        return 0
+    fi
+
+    if command -v muse >/dev/null 2>&1; then
+        version=$(current_muse_version) || fail "Muse Code is present, but 'muse --version' did not return the expected 'Muse Code x.y.z' version."
+        if stable_version_is_supported "$version" "$MIN_MUSE_VERSION"; then
+            printf 'Muse Code %s already satisfies >=%s; leaving it unchanged.\n' "$version" "$MIN_MUSE_VERSION"
+            return 0
+        fi
+        printf 'Muse Code %s does not satisfy >=%s; upgrading it with the official installer.\n' "$version" "$MIN_MUSE_VERSION"
+    fi
+
+    install_muse_code
+    verify_muse_command
+}
+
 ensure_selected_coding_agents() {
     if [ "$install_claude" -eq 1 ]; then
         step "Ensuring Claude Code is installed"
@@ -1076,7 +1156,12 @@ ensure_selected_coding_agents() {
         ensure_grok
     fi
 
-    if [ "$install_claude" -eq 0 ] && [ "$install_codex" -eq 0 ] && [ "$pi_available" -eq 0 ] && [ "$install_opencode" -eq 0 ] && [ "$install_cline" -eq 0 ] && [ "$install_hermes" -eq 0 ] && [ "$install_dsh" -eq 0 ] && [ "$install_grok" -eq 0 ]; then
+    if [ "$install_muse" -eq 1 ]; then
+        step "Ensuring Muse Code is installed"
+        ensure_muse
+    fi
+
+    if [ "$install_claude" -eq 0 ] && [ "$install_codex" -eq 0 ] && [ "$pi_available" -eq 0 ] && [ "$install_opencode" -eq 0 ] && [ "$install_cline" -eq 0 ] && [ "$install_hermes" -eq 0 ] && [ "$install_dsh" -eq 0 ] && [ "$install_grok" -eq 0 ] && [ "$install_muse" -eq 0 ]; then
         fail "No selected coding agent was installed. Re-run the installer and choose at least one."
     fi
 }
@@ -1263,7 +1348,7 @@ configure_and_verify_free_claude_code() {
 
     if [ "$dry_run" -eq 1 ]; then
         print_command uv tool dir --bin
-        printf '+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, fcc-opencode, fcc-cline, fcc-hermes, fcc-dsh, and fcc-grok in the uv tool bin directory\n'
+        printf '+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, fcc-opencode, fcc-cline, fcc-hermes, fcc-dsh, fcc-grok, and fcc-muse in the uv tool bin directory\n'
         print_command fcc-server --version
         return 0
     fi
@@ -1281,7 +1366,7 @@ configure_and_verify_free_claude_code() {
     export PATH
     hash -r 2>/dev/null || true
 
-    for command_name in fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-grok; do
+    for command_name in fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-grok fcc-muse; do
         [ -x "$tool_bin/$command_name" ] || fail "Free Claude Code installation did not create $tool_bin/$command_name."
     done
 
@@ -1404,7 +1489,7 @@ fi
 
 step "Checking installation prerequisites"
 require_command curl
-if [ "$install_claude" -eq 1 ] || [ "$install_opencode" -eq 1 ] || [ "$install_hermes" -eq 1 ] || [ "$install_grok" -eq 1 ]; then
+if [ "$install_claude" -eq 1 ] || [ "$install_opencode" -eq 1 ] || [ "$install_hermes" -eq 1 ] || [ "$install_grok" -eq 1 ] || [ "$install_muse" -eq 1 ]; then
     require_command bash
 fi
 require_command sh
@@ -1475,5 +1560,10 @@ else
         printf 'Run Grok Build with: fcc-grok\n'
     else
         printf 'The fcc-grok wrapper is ready after you install Grok Build %s or newer.\n' "$MIN_GROK_VERSION"
+    fi
+    if [ "$install_muse" -eq 1 ]; then
+        printf 'Run Muse Code with: fcc-muse\n'
+    else
+        printf 'The fcc-muse wrapper is ready after you install Muse Code %s or newer.\n' "$MIN_MUSE_VERSION"
     fi
 fi
