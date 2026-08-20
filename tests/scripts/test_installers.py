@@ -636,7 +636,7 @@ def test_install_sh_rejects_exact_dsh_on_unsupported_node(
     result = posix_harness.run()
 
     assert result.returncode != 0
-    assert "requires Node.js ^22.19.0 or >=24.0.0" in result.stdout
+    assert "requires Node.js ^22.19.0 or >=24.0.0" in result.stderr
     assert not any(call.startswith("uv:") for call in posix_harness.calls())
 
 
