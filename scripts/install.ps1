@@ -866,11 +866,11 @@ function Get-HermesVersion {
     param([string] $HermesPath)
 
     $output = Invoke-Utf8NativeCapture -FilePath $HermesPath -Arguments @("--version")
-    $version = Convert-SemanticVersionOutput $output
-    if ([string]::IsNullOrWhiteSpace($version)) {
-        throw "Hermes Agent is present, but 'hermes --version' did not return a valid semantic version."
+    if ($output -match '(?im)^\s*Hermes Agent\s+v?(?<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?)(?=\s|$)') {
+        return $Matches["version"]
     }
-    return $version
+
+    throw "Hermes Agent is present, but 'hermes --version' did not return a valid semantic version."
 }
 
 function Confirm-HermesArchitecture {

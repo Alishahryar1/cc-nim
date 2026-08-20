@@ -1448,9 +1448,17 @@ def _batch_client(name: str) -> str:
         "node": "22.19.0",
     }.get(name, "1.0.0")
     version_output = (
-        f"Hermes Agent v{version} (test build)"
+        (
+            f'if "%1"=="--version" echo Hermes Agent v{version} '
+            "(2026.8.18) · upstream deadbeef\n"
+            'if "%1"=="--version" echo Install directory: C:\\fake-hermes\n'
+            'if "%1"=="--version" echo Install method: git\n'
+            'if "%1"=="--version" echo Python: 3.12.11\n'
+            'if "%1"=="--version" echo OpenAI SDK: 2.15.0\n'
+            'if "%1"=="--version" echo Up to date'
+        )
         if name == "hermes"
-        else f"{name} {version}"
+        else f'if "%1"=="--version" echo {name} {version}'
     )
     help_output = (
         "echo   --extension, -e ^<path^>  Load an extension\n"
@@ -1461,7 +1469,7 @@ def _batch_client(name: str) -> str:
     return f"""@echo off
 echo {name}:%*>>"%CALL_LOG%"
 if "%FAIL_STEP%"=="{name}-verify" exit /b 51
-if "%1"=="--version" echo {version_output}
+{version_output}
 if "%1"=="--help" (
 {help_output}
 )
@@ -1940,6 +1948,31 @@ def test_install_ps1_preserves_compatible_existing_hermes(
     assert not any(
         "hermes-agent.nousresearch.com" in call for call in powershell_harness.calls()
     )
+
+
+@pytest.mark.parametrize("unrelated_version", ["3.12.11", "v3.12.11"])
+def test_install_ps1_rejects_unrelated_versions_in_hermes_output(
+    powershell_harness: PowerShellHarness,
+    unrelated_version: str,
+) -> None:
+    hermes_command = (
+        _batch_client("hermes")
+        .replace(
+            "echo Hermes Agent v0.20.4 (2026.8.18) · upstream deadbeef",
+            "echo Hermes Agent release unavailable",
+        )
+        .replace(
+            "echo Python: 3.12.11",
+            f"echo {unrelated_version}",
+        )
+    )
+    _write_executable(powershell_harness.bin_dir / "hermes.cmd", hermes_command)
+
+    result = powershell_harness.run()
+
+    assert result.returncode != 0
+    assert "did not return a valid semantic version" in result.stderr
+    assert not any(call.startswith("uv:") for call in powershell_harness.calls())
 
 
 def test_install_ps1_preserves_compatible_existing_grok(
