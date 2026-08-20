@@ -19,6 +19,7 @@ FCC_COMMANDS = (
     "fcc-pi",
     "fcc-opencode",
     "fcc-cline",
+    "fcc-hermes",
     "fcc-init",
     "free-claude-code",
 )
@@ -49,7 +50,16 @@ def _braced_body(text: str, declaration: str) -> str:
 
 
 def _posix_command(name: str) -> str:
-    version = {"opencode": "1.18.18", "cline": "3.0.55"}.get(name, "1.0.0")
+    version = {
+        "opencode": "1.18.18",
+        "cline": "3.0.55",
+        "hermes": "0.20.4",
+    }.get(name, "1.0.0")
+    version_output = (
+        f"Hermes Agent v{version} (test build)"
+        if name == "hermes"
+        else f"{name} {version}"
+    )
     help_output = (
         '    echo "  --extension, -e <path>  Load an extension"\n'
         '    echo "  --models <patterns>     Scope models"'
@@ -62,7 +72,7 @@ if [ "$FAIL_STEP" = "{name}-verify" ]; then
     exit 31
 fi
 if [ "${{1:-}}" = "--version" ]; then
-    echo "{name} {version}"
+    echo "{version_output}"
 fi
 if [ "${{1:-}}" = "--help" ]; then
 {help_output}
@@ -116,6 +126,7 @@ if [ "${{1:-}}" = "tool" ] && [ "${{2:-}}" = "install" ]; then
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-pi"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-opencode"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-cline"
+    cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-hermes"
     if [ "$FAIL_STEP" != "fcc-missing" ]; then
         cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-codex"
     fi
@@ -305,7 +316,7 @@ while [ "$#" -gt 0 ]; do
 done
 echo "download:$url" >> "$CALL_LOG"
 case "$url:$FAIL_STEP" in
-    *claude.ai*:claude-download|*chatgpt.com*:codex-download|*pi.dev*:pi-download|*opencode.ai*:opencode-download|*rtk-ai*:rtk-download|*astral.sh*:uv-download)
+    *claude.ai*:claude-download|*chatgpt.com*:codex-download|*pi.dev*:pi-download|*opencode.ai*:opencode-download|*hermes-agent.nousresearch.com*:hermes-download|*rtk-ai*:rtk-download|*astral.sh*:uv-download)
         exit 41
         ;;
 esac
@@ -314,6 +325,7 @@ case "$url" in
     *chatgpt.com*) source="$FAKE_FIXTURES/codex-installer.sh" ;;
     *pi.dev*) source="$FAKE_FIXTURES/pi-installer.sh" ;;
     *opencode.ai*) source="$FAKE_FIXTURES/opencode-installer.sh" ;;
+    *hermes-agent.nousresearch.com*) source="$FAKE_FIXTURES/hermes-installer.sh" ;;
     *rtk-ai*)
         if [ "$FAIL_STEP" = "rtk-install" ]; then
             printf 'invalid archive\n' > "$output"
@@ -374,6 +386,16 @@ chmod +x "$HOME/.opencode/bin/opencode"
 """,
     )
     _write_executable(
+        fixtures / "hermes-installer.sh",
+        """#!/bin/sh
+echo "hermes-install:$*" >> "$CALL_LOG"
+[ "$FAIL_STEP" = "hermes-install" ] && exit 26
+mkdir -p "$HOME/.local/bin"
+cp "$FAKE_FIXTURES/hermes-command.sh" "$HOME/.local/bin/hermes"
+chmod +x "$HOME/.local/bin/hermes"
+""",
+    )
+    _write_executable(
         fixtures / "uv-installer.sh",
         """#!/bin/sh
 echo "uv-install" >> "$CALL_LOG"
@@ -388,6 +410,7 @@ chmod +x "$HOME/.local/bin/uv"
     _write_executable(fixtures / "pi-command.sh", _posix_command("pi"))
     _write_executable(fixtures / "opencode-command.sh", _posix_command("opencode"))
     _write_executable(fixtures / "cline-command.sh", _posix_command("cline"))
+    _write_executable(fixtures / "hermes-command.sh", _posix_command("hermes"))
     rtk_command = _posix_rtk_command().encode()
     with tarfile.open(
         fixtures / "rtk-x86_64-unknown-linux-musl.tar.gz", "w:gz"
@@ -474,6 +497,9 @@ def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> No
     assert calls.index("pi-install") < calls.index("pi:--version")
     assert calls.index("opencode-install") < calls.index("opencode:--version")
     assert calls.index("npm:install -g cline") < calls.index("cline:--version")
+    assert calls.index("hermes-install:--non-interactive --skip-setup") < calls.index(
+        "hermes:--version"
+    )
     assert calls.index("uv-install") < calls.index("uv:--version")
     assert any(
         call.startswith(
@@ -489,6 +515,65 @@ def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> No
         "uv:tool dir --bin",
         "fcc-server:--version",
     ]
+    assert not any("hermes:setup" in call for call in calls)
+
+
+def test_install_sh_installs_selected_hermes_without_setup(
+    posix_harness: PosixHarness,
+) -> None:
+    result = posix_harness.run_interactive("n\nn\nn\nn\nn\ny\nn\n")
+
+    assert result.returncode == 0, result.stdout
+    calls = posix_harness.calls()
+    assert "download:https://hermes-agent.nousresearch.com/install.sh" in calls
+    assert "hermes-install:--non-interactive --skip-setup" in calls
+    assert calls.index("hermes-install:--non-interactive --skip-setup") < calls.index(
+        "hermes:--version"
+    )
+    assert "Run Hermes Agent with: fcc-hermes" in result.stdout
+    assert not any("hermes:setup" in call for call in calls)
+    assert not any(call.startswith("rtk:init") for call in calls)
+
+
+@pytest.mark.parametrize("failure", ["hermes-download", "hermes-install"])
+def test_install_sh_stops_when_selected_hermes_install_fails(
+    posix_harness: PosixHarness,
+    failure: str,
+) -> None:
+    result = posix_harness.run_interactive("n\nn\nn\nn\nn\ny\nn\n", fail_step=failure)
+
+    assert result.returncode != 0
+    assert "Free Claude Code is installed and verified." not in result.stdout
+    assert not any("astral.sh" in call for call in posix_harness.calls())
+
+
+def test_install_sh_rejects_unsupported_hermes_platform_before_download(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.env["FAKE_UNAME"] = "Darwin"
+    posix_harness.env["FAKE_UNAME_MACHINE"] = "x86_64"
+
+    result = posix_harness.run_interactive("n\nn\nn\nn\nn\ny\nn\n")
+
+    assert result.returncode != 0
+    assert "does not provide a supported release for Darwin x86_64" in result.stdout
+    assert not any(
+        "hermes-agent.nousresearch.com" in call for call in posix_harness.calls()
+    )
+
+
+def test_install_sh_preserves_compatible_existing_hermes(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.add_client("hermes")
+
+    result = posix_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "Hermes Agent 0.20.4 already satisfies >=0.20.4" in result.stdout
+    assert not any(
+        "hermes-agent.nousresearch.com" in call for call in posix_harness.calls()
+    )
 
 
 def test_install_sh_installs_and_configures_rtk_for_selected_agents(
@@ -577,7 +662,7 @@ def test_install_sh_preserves_existing_rtk_and_configures_only_selected_agent(
 ) -> None:
     posix_harness.add_rtk()
 
-    result = posix_harness.run_interactive("n\ny\nn\nn\nn\ny\n")
+    result = posix_harness.run_interactive("n\ny\nn\nn\nn\nn\ny\n")
 
     assert result.returncode == 0, result.stdout
     assert "verifying it without updating it" in result.stdout
@@ -624,7 +709,7 @@ def test_install_sh_stops_when_rtk_setup_fails(
 def test_install_sh_reprompts_then_installs_only_selected_agent(
     posix_harness: PosixHarness,
 ) -> None:
-    result = posix_harness.run_interactive("n\nn\nn\nn\nn\nn\ny\nn\nn\nn\nn\n")
+    result = posix_harness.run_interactive("n\nn\nn\nn\nn\nn\nn\ny\nn\nn\nn\nn\nn\n")
 
     assert result.returncode == 0, result.stdout
     assert "Select at least one coding agent." in result.stdout
@@ -643,7 +728,7 @@ def test_install_sh_reprompts_then_installs_only_selected_agent(
 def test_install_sh_rejects_uninstalled_only_selection(
     posix_harness: PosixHarness,
 ) -> None:
-    result = posix_harness.run_interactive("n\nn\ny\nn\nn\nn\n", fail_step="pi-skip")
+    result = posix_harness.run_interactive("n\nn\ny\nn\nn\nn\nn\n", fail_step="pi-skip")
 
     assert result.returncode != 0
     assert "No selected coding agent was installed." in result.stdout
@@ -744,6 +829,7 @@ def test_install_sh_preserves_valid_existing_tools(
     posix_harness.add_client("codex")
     posix_harness.add_client("pi")
     posix_harness.add_client("cline")
+    posix_harness.add_client("hermes")
     posix_harness.add_uv(uv_version)
 
     result = posix_harness.run()
@@ -1182,7 +1268,16 @@ def _windows_shortcut_icon(
 
 
 def _batch_client(name: str) -> str:
-    version = {"opencode": "1.18.18", "cline": "3.0.55"}.get(name, "1.0.0")
+    version = {
+        "opencode": "1.18.18",
+        "cline": "3.0.55",
+        "hermes": "0.20.4",
+    }.get(name, "1.0.0")
+    version_output = (
+        f"Hermes Agent v{version} (test build)"
+        if name == "hermes"
+        else f"{name} {version}"
+    )
     help_output = (
         "echo   --extension, -e ^<path^>  Load an extension\n"
         "echo   --models ^<patterns^>     Scope models"
@@ -1192,7 +1287,7 @@ def _batch_client(name: str) -> str:
     return f"""@echo off
 echo {name}:%*>>"%CALL_LOG%"
 if "%FAIL_STEP%"=="{name}-verify" exit /b 51
-if "%1"=="--version" echo {name} {version}
+if "%1"=="--version" echo {version_output}
 if "%1"=="--help" (
 {help_output}
 )
@@ -1237,6 +1332,7 @@ copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-claude.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-pi.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-opencode.cmd" >nul
 copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-cline.cmd" >nul
+copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-hermes.cmd" >nul
 if not "%FAIL_STEP%"=="fcc-missing" copy /y "%FAKE_FIXTURES%\fcc-command.cmd" "%FAKE_TOOL_BIN%\fcc-codex.cmd" >nul
 exit /b 0
 :update_shell
@@ -1364,6 +1460,9 @@ def powershell_harness(
     (fixtures / "cline-command.cmd").write_text(
         _batch_client("cline"), encoding="utf-8"
     )
+    (fixtures / "hermes-command.cmd").write_text(
+        _batch_client("hermes"), encoding="utf-8"
+    )
     (fixtures / "rtk-command.cmd").write_text(_batch_rtk(), encoding="utf-8")
     (fixtures / "uv-command.cmd").write_text(_batch_uv("0.11.28"), encoding="utf-8")
     (fixtures / "fcc-command.cmd").write_text(
@@ -1412,6 +1511,19 @@ Add-Content -LiteralPath $env:CALL_LOG -Value "pi-install"
 """,
         encoding="utf-8",
     )
+    (fixtures / "hermes-installer.ps1").write_text(
+        r"""param(
+    [switch] $NonInteractive,
+    [switch] $SkipSetup
+)
+if ($env:FAIL_STEP -eq "hermes-install") { exit 65 }
+$bin = Join-Path $env:LOCALAPPDATA "hermes\hermes-agent\bin"
+New-Item -ItemType Directory -Force -Path $bin | Out-Null
+Copy-Item (Join-Path $env:FAKE_FIXTURES "hermes-command.cmd") (Join-Path $bin "hermes.cmd") -Force
+Add-Content -LiteralPath $env:CALL_LOG -Value "hermes-install:${NonInteractive}:${SkipSetup}"
+""",
+        encoding="utf-8",
+    )
     (fixtures / "uv-installer.ps1").write_text(
         r"""if ($env:FAIL_STEP -eq "uv-install") { exit 63 }
 $bin = Join-Path $env:USERPROFILE ".local\bin"
@@ -1454,6 +1566,7 @@ function Invoke-RestMethod {
         ($env:FAIL_STEP -eq "codex-download" -and $Uri.Contains("chatgpt.com")) -or
         ($env:FAIL_STEP -eq "pi-download" -and $Uri.Contains("pi.dev")) -or
         ($env:FAIL_STEP -eq "opencode-download" -and $Uri.Contains("anomalyco/opencode")) -or
+        ($env:FAIL_STEP -eq "hermes-download" -and $Uri.Contains("hermes-agent.nousresearch.com")) -or
         ($env:FAIL_STEP -eq "rtk-download" -and $Uri.Contains("rtk-ai/rtk")) -or
         ($env:FAIL_STEP -eq "uv-download" -and $Uri.Contains("astral.sh"))
     ) {
@@ -1467,6 +1580,9 @@ function Invoke-RestMethod {
     }
     elseif ($Uri.Contains("pi.dev")) {
         $source = Join-Path $env:FAKE_FIXTURES "pi-installer.ps1"
+    }
+    elseif ($Uri.Contains("hermes-agent.nousresearch.com")) {
+        $source = Join-Path $env:FAKE_FIXTURES "hermes-installer.ps1"
     }
     elseif ($Uri.Contains("opencode-windows-")) {
         if ($env:FAIL_STEP -eq "opencode-archive") {
@@ -1566,6 +1682,9 @@ def test_install_ps1_fresh_install_is_verified(
     assert calls.index("pi-install") < calls.index("pi:--version")
     assert any("anomalyco/opencode" in call for call in calls)
     assert calls.index("npm:install -g cline") < calls.index("cline:--version")
+    assert any("hermes-agent.nousresearch.com/install.ps1" in call for call in calls)
+    assert "hermes-install:True:True" in calls
+    assert not any("hermes:setup" in call for call in calls)
     assert calls.index("uv-install") < calls.index("uv:--version")
     assert any(
         call.startswith(
@@ -1605,6 +1724,84 @@ def test_install_ps1_fresh_install_is_verified(
         / "Programs"
         / "Free Claude Code.lnk"
     ).is_file()
+
+
+def test_install_ps1_preserves_compatible_existing_hermes(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    powershell_harness.add_client("hermes")
+
+    result = powershell_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert "Hermes Agent 0.20.4 already satisfies >=0.20.4" in result.stdout
+    assert not any(
+        "hermes-agent.nousresearch.com" in call for call in powershell_harness.calls()
+    )
+
+
+def test_install_ps1_upgrades_old_hermes_with_noninteractive_setup_skipped(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    hermes_bin = (
+        Path(powershell_harness.env["LOCALAPPDATA"]) / "hermes" / "hermes-agent" / "bin"
+    )
+    hermes_bin.mkdir(parents=True)
+    (hermes_bin / "hermes.cmd").write_text(
+        _batch_client("hermes").replace("v0.20.4", "v0.19.9"),
+        encoding="utf-8",
+    )
+
+    result = powershell_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    calls = powershell_harness.calls()
+    assert any("hermes-agent.nousresearch.com/install.ps1" in call for call in calls)
+    assert "hermes-install:True:True" in calls
+    assert not any("hermes:setup" in call for call in calls)
+    assert not any(call.startswith("rtk:init") for call in calls)
+
+
+def test_install_ps1_stops_when_hermes_upgrade_fails(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    hermes_bin = (
+        Path(powershell_harness.env["LOCALAPPDATA"]) / "hermes" / "hermes-agent" / "bin"
+    )
+    hermes_bin.mkdir(parents=True)
+    (hermes_bin / "hermes.cmd").write_text(
+        _batch_client("hermes").replace("v0.20.4", "v0.19.9"),
+        encoding="utf-8",
+    )
+
+    result = powershell_harness.run(fail_step="hermes-install")
+
+    assert result.returncode != 0
+    assert "Free Claude Code is installed and verified." not in result.stdout
+    assert not any("astral.sh" in call for call in powershell_harness.calls())
+
+
+def test_install_ps1_rejects_unsupported_hermes_architecture_before_download(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    hermes_bin = (
+        Path(powershell_harness.env["LOCALAPPDATA"]) / "hermes" / "hermes-agent" / "bin"
+    )
+    hermes_bin.mkdir(parents=True)
+    (hermes_bin / "hermes.cmd").write_text(
+        _batch_client("hermes").replace("v0.20.4", "v0.19.9"),
+        encoding="utf-8",
+    )
+    powershell_harness.env["PROCESSOR_ARCHITECTURE"] = "MIPS"
+    powershell_harness.env["PROCESSOR_ARCHITEW6432"] = "MIPS"
+
+    result = powershell_harness.run()
+
+    assert result.returncode != 0
+    assert "does not provide a supported Windows release" in result.stderr
+    assert not any(
+        "hermes-agent.nousresearch.com" in call for call in powershell_harness.calls()
+    )
 
 
 def test_install_ps1_selects_official_opencode_arm64_archive(
@@ -1803,6 +2000,7 @@ def test_install_ps1_preserves_valid_existing_tools(
     powershell_harness.add_client("codex")
     powershell_harness.add_client("pi")
     powershell_harness.add_client("cline")
+    powershell_harness.add_client("hermes")
     powershell_harness.add_uv(uv_version)
 
     result = powershell_harness.run()
@@ -2158,8 +2356,8 @@ Invoke-DownloadedPowerShellInstaller `
     ("answers", "expected", "expected_messages"),
     [
         (
-            ("", "", "", "", "", ""),
-            "True,True,True,True,False,False",
+            ("", "", "", "", "", "", ""),
+            "True,True,True,True,False,True,False",
             (),
         ),
         (
@@ -2171,13 +2369,15 @@ Invoke-DownloadedPowerShellInstaller `
                 "n",
                 "n",
                 "n",
+                "n",
                 "y",
+                "n",
                 "n",
                 "n",
                 "n",
                 "y",
             ),
-            "False,True,False,False,False,True",
+            "False,True,False,False,False,False,True",
             ("Please answer Y or N.", "Select at least one coding agent."),
         ),
     ],
@@ -2201,6 +2401,7 @@ $script:InstallCodex = $true
 $script:InstallPi = $true
 $script:InstallOpenCode = $true
 $script:InstallCline = $false
+$script:InstallHermes = $true
 $script:EnableRtk = $false
 function Read-Host {{
     param([string] $Prompt)
@@ -2211,7 +2412,7 @@ function Read-Host {{
 function Read-YesNo {{{read_yes_no}}}
 function Select-CodingAgents {{{select_agents}}}
 Select-CodingAgents
-Write-Output "selection:$($script:InstallClaudeCode),$($script:InstallCodex),$($script:InstallPi),$($script:InstallOpenCode),$($script:InstallCline),$($script:EnableRtk)"
+Write-Output "selection:$($script:InstallClaudeCode),$($script:InstallCodex),$($script:InstallPi),$($script:InstallOpenCode),$($script:InstallCline),$($script:InstallHermes),$($script:EnableRtk)"
 """
 
     result = subprocess.run(
@@ -2238,6 +2439,7 @@ $script:InstallCodex = $true
 $script:InstallPi = $false
 $script:InstallOpenCode = $false
 $script:InstallCline = $false
+$script:InstallHermes = $false
 $script:PiAvailable = $false
 $script:Calls = @()
 function Write-Step {{ param([string] $Message) }}
@@ -2246,6 +2448,7 @@ function Ensure-Codex {{ $script:Calls += "codex" }}
 function Ensure-Pi {{ $script:Calls += "pi"; $script:PiAvailable = $true }}
 function Ensure-OpenCode {{ $script:Calls += "opencode" }}
 function Ensure-Cline {{ $script:Calls += "cline" }}
+function Ensure-Hermes {{ $script:Calls += "hermes" }}
 function Ensure-SelectedCodingAgents {{{body}}}
 Ensure-SelectedCodingAgents
 Write-Output "calls:$($script:Calls -join ',')"
@@ -2276,6 +2479,7 @@ $script:InstallCodex = $true
 $script:InstallPi = $true
 $script:InstallOpenCode = $false
 $script:InstallCline = $false
+$script:InstallHermes = $false
 $script:PiAvailable = $false
 $script:Calls = @()
 function Write-Step {{ param([string] $Message) }}
@@ -2311,6 +2515,7 @@ $script:InstallCodex = $false
 $script:InstallPi = $true
 $script:InstallOpenCode = $false
 $script:InstallCline = $false
+$script:InstallHermes = $false
 $script:PiAvailable = $false
 function Write-Step {{ param([string] $Message) }}
 function Ensure-ClaudeCode {{ }}
@@ -2318,6 +2523,7 @@ function Ensure-Codex {{ }}
 function Ensure-Pi {{ }}
 function Ensure-OpenCode {{ }}
 function Ensure-Cline {{ }}
+function Ensure-Hermes {{ }}
 function Ensure-SelectedCodingAgents {{{body}}}
 Ensure-SelectedCodingAgents
 """

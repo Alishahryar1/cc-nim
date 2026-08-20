@@ -138,6 +138,19 @@ FEATURE_INVENTORY: tuple[FeatureCoverage, ...] = (
         "skip only when Cline is absent; configured providers must pass",
     ),
     FeatureCoverage(
+        "hermes_cli_integration",
+        "Hermes discovers FCC models and sends Responses through the proxy",
+        (
+            "tests/cli/test_hermes_config.py",
+            "tests/cli/test_hermes_launcher.py",
+        ),
+        ("test_probe_and_models_routes",),
+        ("test_hermes_cli_prompt_e2e",),
+        ("clients",),
+        ("Hermes Agent 0.20.4+",),
+        "skip only when Hermes is absent; the local fake upstream must pass",
+    ),
+    FeatureCoverage(
         "provider_matrix",
         "Every configured provider prefix can satisfy conversation scenarios",
         ("tests/api/test_dependencies.py", "tests/providers/"),

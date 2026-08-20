@@ -24,6 +24,8 @@ $PiInstallUrl = "https://pi.dev/install.ps1"
 $OpenCodeReleaseBaseUrl = "https://github.com/anomalyco/opencode/releases/latest/download"
 $MinOpenCodeVersion = "1.18.18"
 $MinClineVersion = "3.0.55"
+$HermesInstallUrl = "https://hermes-agent.nousresearch.com/install.ps1"
+$MinHermesVersion = "0.20.4"
 $RtkVersion = "0.44.2"
 $RtkReleaseBaseUrl = "https://github.com/rtk-ai/rtk/releases/download/v$RtkVersion"
 $RtkWindowsAssetName = "rtk-x86_64-pc-windows-msvc.zip"
@@ -34,6 +36,7 @@ $script:InstallCodex = $true
 $script:InstallPi = $true
 $script:InstallOpenCode = $true
 $script:InstallCline = $false
+$script:InstallHermes = $true
 $script:PiAvailable = $false
 $script:EnableRtk = $Rtk.IsPresent
 $FccCommands = @(
@@ -45,6 +48,7 @@ $FccCommands = @(
     "fcc-pi",
     "fcc-opencode",
     "fcc-cline",
+    "fcc-hermes",
     "fcc-init",
     "free-claude-code"
 )
@@ -108,8 +112,11 @@ function Select-CodingAgents {
         $script:InstallCline = Read-YesNo `
             -Prompt "Install or verify Cline CLI for fcc-cline?" `
             -DefaultYes $script:InstallCline
+        $script:InstallHermes = Read-YesNo `
+            -Prompt "Install or verify Hermes Agent for fcc-hermes?" `
+            -DefaultYes $script:InstallHermes
 
-        if ($script:InstallClaudeCode -or $script:InstallCodex -or $script:InstallPi -or $script:InstallOpenCode -or $script:InstallCline) {
+        if ($script:InstallClaudeCode -or $script:InstallCodex -or $script:InstallPi -or $script:InstallOpenCode -or $script:InstallCline -or $script:InstallHermes) {
             break
         }
         Write-Host "Select at least one coding agent."
@@ -245,6 +252,9 @@ function Add-KnownBinDirectories {
         Add-PathEntry (Join-Path $env:USERPROFILE ".opencode\bin")
     }
     if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
+        Add-PathEntry (Join-Path $env:LOCALAPPDATA "hermes\hermes-agent\bin")
+    }
+    if (-not [string]::IsNullOrWhiteSpace($env:LOCALAPPDATA)) {
         Add-PathEntry (Join-Path $env:LOCALAPPDATA "Programs\OpenAI\Codex\bin")
         Add-PathEntry (Join-Path $env:LOCALAPPDATA "pi-node\current")
     }
@@ -291,13 +301,20 @@ function Invoke-DownloadedPowerShellInstaller {
     param(
         [string] $Url,
         [string] $Name,
-        [switch] $NonInteractive
+        [switch] $NonInteractive,
+        [string[]] $ScriptArguments = @()
     )
 
     if ($DryRun) {
         Write-Host "+ irm $Url -OutFile <temporary-script>"
         $prefix = if ($NonInteractive) { "CODEX_NON_INTERACTIVE=1 " } else { "" }
-        Write-Host "+ ${prefix}powershell -NoProfile -ExecutionPolicy Bypass -File <temporary-script>"
+        $suffix = if ($ScriptArguments.Count -gt 0) {
+            " " + (($ScriptArguments | ForEach-Object { Format-Argument $_ }) -join " ")
+        }
+        else {
+            ""
+        }
+        Write-Host "+ ${prefix}powershell -NoProfile -ExecutionPolicy Bypass -File <temporary-script>$suffix"
         return
     }
 
@@ -328,13 +345,14 @@ function Invoke-DownloadedPowerShellInstaller {
             if ($NonInteractive) {
                 $env:CODEX_NON_INTERACTIVE = "1"
             }
-            Invoke-NativeCommand -FilePath $powerShellPath -Arguments @(
+            $installerArguments = @(
                 "-NoProfile",
                 "-ExecutionPolicy",
                 "Bypass",
                 "-File",
                 $temporaryScript
-            )
+            ) + $ScriptArguments
+            Invoke-NativeCommand -FilePath $powerShellPath -Arguments $installerArguments
         }
         finally {
             if ($hadNonInteractive) {
@@ -617,7 +635,7 @@ function Convert-SemanticVersionOutput {
     if ([string]::IsNullOrWhiteSpace($Output)) {
         return ""
     }
-    if ($Output -match '(?m)^\s*(?:(?:uv|opencode|cline)(?:\s+version)?\s+|v)?(?<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?)(?:\s+\([^\r\n]*\))?\s*$') {
+    if ($Output -match '(?m)^\s*(?:(?:uv|opencode|cline)(?:\s+version)?\s+|Hermes Agent\s+v?|v)?(?<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?)(?:\s+\([^\r\n]*\))?\s*$') {
         return $Matches["version"]
     }
     return ""
@@ -830,6 +848,83 @@ function Ensure-Cline {
     Confirm-ClineApplication
 }
 
+function Get-HermesVersion {
+    param([string] $HermesPath)
+
+    $output = Invoke-Utf8NativeCapture -FilePath $HermesPath -Arguments @("--version")
+    $version = Convert-SemanticVersionOutput $output
+    if ([string]::IsNullOrWhiteSpace($version)) {
+        throw "Hermes Agent is present, but 'hermes --version' did not return a valid semantic version."
+    }
+    return $version
+}
+
+function Confirm-HermesArchitecture {
+    $architecture = $env:PROCESSOR_ARCHITEW6432
+    if ([string]::IsNullOrWhiteSpace($architecture)) {
+        $architecture = $env:PROCESSOR_ARCHITECTURE
+    }
+    if ([string]::IsNullOrWhiteSpace($architecture)) {
+        $architecture = [Runtime.InteropServices.RuntimeInformation]::OSArchitecture.ToString()
+    }
+    if ($architecture.ToUpperInvariant() -notin @("ARM64", "AMD64", "X64", "X86_64")) {
+        throw "Hermes Agent does not provide a supported Windows release for architecture '$architecture'."
+    }
+}
+
+function Confirm-HermesApplication {
+    if ($DryRun) {
+        Write-Host "+ hermes --version"
+        return
+    }
+
+    $command = Get-ApplicationCommand "hermes"
+    if (-not $command) {
+        throw "Hermes Agent was installed, but 'hermes' is not available on PATH."
+    }
+    $version = Get-HermesVersion $command.Source
+    if (-not (Test-SupportedStableVersion -Version $version -Minimum $MinHermesVersion)) {
+        throw "Hermes Agent $MinHermesVersion or newer is required; found Hermes $version after installation."
+    }
+    Write-Host "Verified Hermes Agent $version."
+}
+
+function Install-Hermes {
+    Confirm-HermesArchitecture
+    Invoke-DownloadedPowerShellInstaller `
+        -Url $HermesInstallUrl `
+        -Name "Hermes Agent" `
+        -ScriptArguments @("-NonInteractive", "-SkipSetup")
+    Add-KnownBinDirectories
+}
+
+function Ensure-Hermes {
+    if ($DryRun) {
+        if (Get-ApplicationCommand "hermes") {
+            Write-Host "+ hermes --version"
+            Write-Host "A compatible Hermes Agent will be preserved; an older version will be upgraded with the official installer."
+        }
+        else {
+            Install-Hermes
+        }
+        Confirm-HermesApplication
+        return
+    }
+
+    $command = Get-ApplicationCommand "hermes"
+    if ($command) {
+        $version = Get-HermesVersion $command.Source
+        if (Test-SupportedStableVersion -Version $version -Minimum $MinHermesVersion) {
+            Write-Host "Hermes Agent $version already satisfies >=$MinHermesVersion; leaving it unchanged."
+            return
+        }
+        Write-Host "Hermes Agent $version does not satisfy >=$MinHermesVersion; upgrading it with the official installer."
+    }
+
+    Install-Hermes
+    Confirm-HermesApplication
+}
+
 function Ensure-SelectedCodingAgents {
     if ($script:InstallClaudeCode) {
         Write-Step "Ensuring Claude Code is installed"
@@ -856,7 +951,12 @@ function Ensure-SelectedCodingAgents {
         Ensure-Cline
     }
 
-    if ((-not $script:InstallClaudeCode) -and (-not $script:InstallCodex) -and (-not $script:PiAvailable) -and (-not $script:InstallOpenCode) -and (-not $script:InstallCline)) {
+    if ($script:InstallHermes) {
+        Write-Step "Ensuring Hermes Agent is installed"
+        Ensure-Hermes
+    }
+
+    if ((-not $script:InstallClaudeCode) -and (-not $script:InstallCodex) -and (-not $script:PiAvailable) -and (-not $script:InstallOpenCode) -and (-not $script:InstallCline) -and (-not $script:InstallHermes)) {
         throw "No selected coding agent was installed. Re-run the installer and choose at least one."
     }
 }
@@ -1011,7 +1111,7 @@ function Configure-AndConfirmFreeClaudeCode {
     if ($DryRun) {
         Write-Host "+ uv tool update-shell"
         Write-Host "+ uv tool dir --bin"
-        Write-Host "+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, fcc-opencode, and fcc-cline in the uv tool bin directory"
+        Write-Host "+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, fcc-opencode, fcc-cline, and fcc-hermes in the uv tool bin directory"
         Write-Host "+ fcc-server --version"
         Export-FccDesktopIcon `
             -DesktopCommand "<uv-tool-bin>\fcc-desktop.exe" `
@@ -1038,7 +1138,7 @@ function Configure-AndConfirmFreeClaudeCode {
         [IO.Path]::AltDirectorySeparatorChar
     )
     $installedCommands = @{}
-    foreach ($commandName in @("fcc-desktop", "fcc-server", "fcc-claude", "fcc-codex", "fcc-pi", "fcc-opencode", "fcc-cline")) {
+    foreach ($commandName in @("fcc-desktop", "fcc-server", "fcc-claude", "fcc-codex", "fcc-pi", "fcc-opencode", "fcc-cline", "fcc-hermes")) {
         $command = Get-ApplicationCommand $commandName
         if (-not $command) {
             throw "Free Claude Code installation did not create '$commandName'."
@@ -1187,5 +1287,11 @@ else {
     }
     else {
         Write-Host "The fcc-cline wrapper is ready after you install Cline CLI."
+    }
+    if ($script:InstallHermes) {
+        Write-Host "Run Hermes Agent with: fcc-hermes"
+    }
+    else {
+        Write-Host "The fcc-hermes wrapper is ready after you install Hermes Agent."
     }
 }

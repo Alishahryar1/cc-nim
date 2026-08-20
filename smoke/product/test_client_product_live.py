@@ -12,6 +12,7 @@ from pathlib import Path
 
 import pytest
 
+from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.core.json_types import JsonObject, JsonValue
 from smoke.lib.claude_cli_matrix import run_claude_cli
 from smoke.lib.config import SmokeConfig
@@ -266,6 +267,122 @@ def test_cline_cli_prompt_e2e(smoke_config: SmokeConfig, tmp_path: Path) -> None
     assert "FCC_SMOKE_CLINE" in result.stdout
     assert "POST /v1/responses" in server_log
     assert "POST /v1/chat/completions" not in server_log
+
+
+@pytest.mark.smoke_target("clients")
+def test_hermes_cli_prompt_e2e(smoke_config: SmokeConfig, tmp_path: Path) -> None:
+    if not shutil.which("hermes"):
+        pytest.skip("missing_env: Hermes Agent not found")
+    uv_bin = shutil.which("uv")
+    if not uv_bin:
+        pytest.skip("missing_env: uv not found")
+
+    model_id = "fcc-smoke-hermes"
+    full_model = f"lmstudio/{model_id}"
+    marker = "FCC_SMOKE_HERMES"
+    auth_token = smoke_config.settings.proxy_auth_token
+    isolated_home = tmp_path / "home"
+    hermes_home = tmp_path / "hermes-home"
+    isolated_home.mkdir()
+    hermes_home.mkdir()
+    native_config = hermes_home / "config.yaml"
+    native_env = hermes_home / ".env"
+    native_config.write_text(
+        json.dumps(
+            {
+                "model": {
+                    "provider": "openrouter",
+                    "default": "native/model",
+                }
+            },
+            indent=2,
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+    native_env.write_text("OPENAI_API_KEY=native-sentinel\n", encoding="utf-8")
+    config_before = native_config.read_bytes()
+    env_before = native_env.read_bytes()
+    credential_env_keys = {
+        descriptor.credential_env
+        for descriptor in PROVIDER_CATALOG.values()
+        if descriptor.credential_env is not None
+    }
+
+    with (
+        _successful_openai_provider(model_id=model_id, marker=marker) as (
+            provider_base_url,
+            provider_requests,
+        ),
+        SmokeServerDriver(
+            smoke_config,
+            name="product-hermes-cli",
+            env_overrides={
+                "MODEL": full_model,
+                "MODEL_FABLE": full_model,
+                "MODEL_OPUS": full_model,
+                "MODEL_SONNET": full_model,
+                "MODEL_HAIKU": full_model,
+                "LM_STUDIO_BASE_URL": provider_base_url,
+                "MESSAGING_PLATFORM": "none",
+            },
+            env_unset=credential_env_keys,
+        ).run() as server,
+    ):
+        env = os.environ.copy()
+        for key in credential_env_keys:
+            env.pop(key, None)
+        for key in tuple(env):
+            if key.startswith("FCC_HERMES_"):
+                env.pop(key)
+        env.update(
+            {
+                "HOST": "127.0.0.1",
+                "PORT": str(server.port),
+                "FCC_OPEN_BROWSER": "0",
+                "ANTHROPIC_AUTH_TOKEN": auth_token,
+                "HOME": str(isolated_home),
+                "USERPROFILE": str(isolated_home),
+                "HERMES_HOME": str(hermes_home),
+            }
+        )
+        env.pop("HERMES_MANAGED_DIR", None)
+        result = subprocess.run(
+            [
+                uv_bin,
+                "run",
+                "--project",
+                str(smoke_config.root),
+                "--no-sync",
+                "fcc-hermes",
+                "--model",
+                full_model,
+                "-z",
+                f"Reply with exactly {marker}",
+            ],
+            cwd=tmp_path,
+            env=env,
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=smoke_config.timeout_s + 15,
+        )
+        server_log = server.log_path.read_text(encoding="utf-8", errors="replace")
+
+    assert result.returncode == 0, result.stderr or result.stdout
+    assert result.stdout == f"{marker}\n"
+    assert result.stderr == ""
+    assert "GET /v1/models" in server_log
+    assert server_log.count("POST /v1/responses") == 1
+    assert "POST /v1/chat/completions" not in server_log
+    assert [request["path"] for request in provider_requests] == [
+        "/v1/chat/completions"
+    ]
+    provider_body = provider_requests[0]["body"]
+    assert isinstance(provider_body, dict)
+    assert provider_body["model"] == model_id
+    assert native_config.read_bytes() == config_before
+    assert native_env.read_bytes() == env_before
 
 
 @pytest.mark.smoke_target("cli")
@@ -593,6 +710,98 @@ def _deliberately_failing_openai_provider() -> Iterator[tuple[str, list[str]]]:
             self.wfile.write(body)
 
     server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    thread = threading.Thread(target=server.serve_forever, daemon=True)
+    thread.start()
+    try:
+        port = int(server.server_address[1])
+        yield f"http://127.0.0.1:{port}/v1", provider_requests
+    finally:
+        server.shutdown()
+        server.server_close()
+        thread.join(timeout=5)
+
+
+@contextmanager
+def _successful_openai_provider(
+    *, model_id: str, marker: str
+) -> Iterator[tuple[str, list[JsonObject]]]:
+    provider_requests: list[JsonObject] = []
+
+    class Handler(BaseHTTPRequestHandler):
+        protocol_version = "HTTP/1.1"
+
+        def do_GET(self) -> None:
+            if self.path == "/v1/models":
+                self._write_json(
+                    HTTPStatus.OK,
+                    {
+                        "object": "list",
+                        "data": [{"id": model_id, "object": "model"}],
+                    },
+                )
+                return
+            if self.path == "/api/v0/models":
+                self._write_json(HTTPStatus.OK, {"data": []})
+                return
+            self._write_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
+
+        def do_POST(self) -> None:
+            length = int(self.headers.get("content-length", "0"))
+            raw_body = self.rfile.read(length)
+            parsed: JsonValue = json.loads(raw_body) if raw_body else {}
+            if not isinstance(parsed, dict):
+                self._write_json(HTTPStatus.BAD_REQUEST, {"error": "invalid body"})
+                return
+            provider_requests.append({"path": self.path, "body": parsed})
+            if self.path != "/v1/chat/completions":
+                self._write_json(HTTPStatus.NOT_FOUND, {"error": "not found"})
+                return
+
+            self.send_response(HTTPStatus.OK)
+            self.send_header("content-type", "text/event-stream")
+            self.send_header("cache-control", "no-cache")
+            self.send_header("connection", "close")
+            self.end_headers()
+            self._write_chunk(content=marker, finish_reason=None)
+            self._write_chunk(content=None, finish_reason="stop")
+            self.wfile.write(b"data: [DONE]\n\n")
+            self.wfile.flush()
+
+        def log_message(self, format: str, *args: object) -> None:
+            return
+
+        def _write_json(self, status: HTTPStatus, payload: object) -> None:
+            body = json.dumps(payload).encode("utf-8")
+            self.send_response(status)
+            self.send_header("content-type", "application/json")
+            self.send_header("content-length", str(len(body)))
+            self.end_headers()
+            self.wfile.write(body)
+
+        def _write_chunk(
+            self, *, content: str | None, finish_reason: str | None
+        ) -> None:
+            delta: JsonObject = {}
+            if content is not None:
+                delta = {"role": "assistant", "content": content}
+            payload = {
+                "id": "chatcmpl-hermes-smoke",
+                "object": "chat.completion.chunk",
+                "created": 0,
+                "model": model_id,
+                "choices": [
+                    {
+                        "index": 0,
+                        "delta": delta,
+                        "finish_reason": finish_reason,
+                    }
+                ],
+            }
+            self.wfile.write(f"data: {json.dumps(payload)}\n\n".encode())
+            self.wfile.flush()
+
+    server = ThreadingHTTPServer(("127.0.0.1", 0), Handler)
+    server.daemon_threads = True
     thread = threading.Thread(target=server.serve_forever, daemon=True)
     thread.start()
     try:

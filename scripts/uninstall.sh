@@ -6,7 +6,7 @@ FCC_HOME_DIRNAME=".fcc"
 FCC_MACOS_BUNDLE_ID="io.github.alishahryar1.free-claude-code"
 FCC_MACOS_OWNER_FILE=".free-claude-code-owner"
 # Include retired entry points so older installations are fully stopped and removed.
-FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-init free-claude-code"
+FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-init free-claude-code"
 
 dry_run=0
 uv_tool_bin=""
@@ -298,5 +298,5 @@ if [ "$dry_run" -eq 1 ]; then
     printf '\nDry run complete. No changes were made.\n'
 else
     printf '\nFree Claude Code has been removed and verified.\n'
-    printf 'uv, Claude Code, Codex, Pi, OpenCode, the uv-managed Python runtime, and shared PATH entries were left installed.\n'
+    printf 'uv, Claude Code, Codex, Pi, OpenCode, Cline, Hermes Agent, the uv-managed Python runtime, and shared PATH entries were left installed.\n'
 fi

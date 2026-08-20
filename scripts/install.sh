@@ -10,13 +10,15 @@ PI_INSTALL_URL="https://pi.dev/install.sh"
 OPENCODE_INSTALL_URL="https://opencode.ai/install"
 MIN_OPENCODE_VERSION="1.18.18"
 MIN_CLINE_VERSION="3.0.55"
+HERMES_INSTALL_URL="https://hermes-agent.nousresearch.com/install.sh"
+MIN_HERMES_VERSION="0.20.4"
 RTK_VERSION="0.44.2"
 RTK_RELEASE_BASE_URL="https://github.com/rtk-ai/rtk/releases/download/v$RTK_VERSION"
 UV_INSTALL_URL="https://astral.sh/uv/install.sh"
 FCC_MACOS_BUNDLE_ID="io.github.alishahryar1.free-claude-code"
 FCC_MACOS_OWNER_FILE=".free-claude-code-owner"
 # Include retired entry points so updates reject older FCC processes before replacement.
-FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-init free-claude-code"
+FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-init free-claude-code"
 
 dry_run=0
 voice_nim=0
@@ -27,6 +29,7 @@ install_codex=1
 install_pi=1
 install_opencode=1
 install_cline=0
+install_hermes=1
 enable_rtk=0
 torch_backend=""
 temporary_file=""
@@ -128,7 +131,18 @@ choose_coding_agents() {
             install_cline=0
         fi
 
-        if [ "$install_claude" -eq 1 ] || [ "$install_codex" -eq 1 ] || [ "$install_pi" -eq 1 ] || [ "$install_opencode" -eq 1 ] || [ "$install_cline" -eq 1 ]; then
+        if [ "$install_hermes" -eq 1 ]; then
+            hermes_default=yes
+        else
+            hermes_default=no
+        fi
+        if prompt_yes_no "Install or verify Hermes Agent for fcc-hermes?" "$hermes_default"; then
+            install_hermes=1
+        else
+            install_hermes=0
+        fi
+
+        if [ "$install_claude" -eq 1 ] || [ "$install_codex" -eq 1 ] || [ "$install_pi" -eq 1 ] || [ "$install_opencode" -eq 1 ] || [ "$install_cline" -eq 1 ] || [ "$install_hermes" -eq 1 ]; then
             break
         fi
         printf 'Select at least one coding agent.\n\n' >&4
@@ -290,16 +304,26 @@ download_and_run() {
     url=$1
     interpreter=$2
     label=$3
-    non_interactive=${4:-0}
+    shift 3
+    non_interactive=0
+    if [ "$#" -gt 0 ]; then
+        non_interactive=$1
+        shift
+    fi
 
     if [ "$dry_run" -eq 1 ]; then
         print_command curl -fsSL "$url" -o "<temporary-script>"
         if [ "$non_interactive" -eq 1 ]; then
             printf '+ CODEX_NON_INTERACTIVE=1 '
             quote_arg "$interpreter"
-            printf ' <temporary-script>\n'
+            printf ' <temporary-script>'
+            for arg in "$@"; do
+                printf ' '
+                quote_arg "$arg"
+            done
+            printf '\n'
         else
-            print_command "$interpreter" "<temporary-script>"
+            print_command "$interpreter" "<temporary-script>" "$@"
         fi
         return 0
     fi
@@ -322,16 +346,20 @@ download_and_run() {
         quote_arg "$interpreter"
         printf ' '
         quote_arg "$temporary_file"
+        for arg in "$@"; do
+            printf ' '
+            quote_arg "$arg"
+        done
         printf '\n'
-        if CODEX_NON_INTERACTIVE=1 "$interpreter" "$temporary_file"; then
+        if CODEX_NON_INTERACTIVE=1 "$interpreter" "$temporary_file" "$@"; then
             :
         else
             status=$?
             fail "$label installation failed with exit code $status."
         fi
     else
-        print_command "$interpreter" "$temporary_file"
-        if "$interpreter" "$temporary_file"; then
+        print_command "$interpreter" "$temporary_file" "$@"
+        if "$interpreter" "$temporary_file" "$@"; then
             :
         else
             status=$?
@@ -723,6 +751,88 @@ ensure_cline() {
     verify_cline_command
 }
 
+current_hermes_version() {
+    if output=$(hermes --version 2>/dev/null); then
+        :
+    else
+        return 1
+    fi
+
+    version=$(printf '%s\n' "$output" | awk '
+        match($0, /[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?/) {
+            print substr($0, RSTART, RLENGTH)
+            exit
+        }
+    ')
+    [ -n "$version" ] || return 1
+    printf '%s\n' "$version"
+}
+
+verify_hermes_command() {
+    if [ "$dry_run" -eq 1 ]; then
+        print_command hermes --version
+        return 0
+    fi
+
+    command -v hermes >/dev/null 2>&1 || fail "Hermes Agent was installed, but 'hermes' is not available on PATH."
+    version=$(current_hermes_version) || fail "Hermes Agent is present, but 'hermes --version' did not return a valid semantic version."
+    if ! stable_version_is_supported "$version" "$MIN_HERMES_VERSION"; then
+        fail "Hermes Agent $MIN_HERMES_VERSION or newer is required; found Hermes $version after installation."
+    fi
+    printf 'Verified Hermes Agent %s.\n' "$version"
+}
+
+hermes_platform_is_supported() {
+    hermes_platform=$(uname -s)
+    hermes_architecture=$(uname -m)
+    case "$hermes_platform:$hermes_architecture" in
+        Linux:x86_64|Linux:amd64|Linux:aarch64|Linux:arm64|Darwin:aarch64|Darwin:arm64)
+            return 0
+            ;;
+        *)
+            return 1
+            ;;
+    esac
+}
+
+confirm_hermes_platform() {
+    if hermes_platform_is_supported; then
+        return 0
+    fi
+    fail "Hermes Agent does not provide a supported release for $hermes_platform $hermes_architecture."
+}
+
+install_hermes() {
+    confirm_hermes_platform
+    download_and_run "$HERMES_INSTALL_URL" bash "Hermes Agent" 0 --non-interactive --skip-setup
+    add_known_bin_directories
+}
+
+ensure_hermes() {
+    if [ "$dry_run" -eq 1 ]; then
+        if command -v hermes >/dev/null 2>&1; then
+            print_command hermes --version
+            printf 'A compatible Hermes Agent will be preserved; an older version will be upgraded with the official installer.\n'
+        else
+            install_hermes
+        fi
+        verify_hermes_command
+        return 0
+    fi
+
+    if command -v hermes >/dev/null 2>&1; then
+        version=$(current_hermes_version) || fail "Hermes Agent is present, but 'hermes --version' did not return a valid semantic version."
+        if stable_version_is_supported "$version" "$MIN_HERMES_VERSION"; then
+            printf 'Hermes Agent %s already satisfies >=%s; leaving it unchanged.\n' "$version" "$MIN_HERMES_VERSION"
+            return 0
+        fi
+        printf 'Hermes Agent %s does not satisfy >=%s; upgrading it with the official installer.\n' "$version" "$MIN_HERMES_VERSION"
+    fi
+
+    install_hermes
+    verify_hermes_command
+}
+
 ensure_selected_coding_agents() {
     if [ "$install_claude" -eq 1 ]; then
         step "Ensuring Claude Code is installed"
@@ -749,7 +859,12 @@ ensure_selected_coding_agents() {
         ensure_cline
     fi
 
-    if [ "$install_claude" -eq 0 ] && [ "$install_codex" -eq 0 ] && [ "$pi_available" -eq 0 ] && [ "$install_opencode" -eq 0 ] && [ "$install_cline" -eq 0 ]; then
+    if [ "$install_hermes" -eq 1 ]; then
+        step "Ensuring Hermes Agent is installed"
+        ensure_hermes
+    fi
+
+    if [ "$install_claude" -eq 0 ] && [ "$install_codex" -eq 0 ] && [ "$pi_available" -eq 0 ] && [ "$install_opencode" -eq 0 ] && [ "$install_cline" -eq 0 ] && [ "$install_hermes" -eq 0 ]; then
         fail "No selected coding agent was installed. Re-run the installer and choose at least one."
     fi
 }
@@ -936,7 +1051,7 @@ configure_and_verify_free_claude_code() {
 
     if [ "$dry_run" -eq 1 ]; then
         print_command uv tool dir --bin
-        printf '+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, fcc-opencode, and fcc-cline in the uv tool bin directory\n'
+        printf '+ verify fcc-desktop, fcc-server, fcc-claude, fcc-codex, fcc-pi, fcc-opencode, fcc-cline, and fcc-hermes in the uv tool bin directory\n'
         print_command fcc-server --version
         return 0
     fi
@@ -954,7 +1069,7 @@ configure_and_verify_free_claude_code() {
     export PATH
     hash -r 2>/dev/null || true
 
-    for command_name in fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline; do
+    for command_name in fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes; do
         [ -x "$tool_bin/$command_name" ] || fail "Free Claude Code installation did not create $tool_bin/$command_name."
     done
 
@@ -1056,6 +1171,9 @@ add_known_bin_directories
 if command -v cline >/dev/null 2>&1 || command -v npm >/dev/null 2>&1; then
     install_cline=1
 fi
+if ! command -v hermes >/dev/null 2>&1 && ! hermes_platform_is_supported; then
+    install_hermes=0
+fi
 
 step "Checking for running Free Claude Code processes"
 assert_no_fcc_processes_running
@@ -1067,7 +1185,7 @@ fi
 
 step "Checking installation prerequisites"
 require_command curl
-if [ "$install_claude" -eq 1 ] || [ "$install_opencode" -eq 1 ]; then
+if [ "$install_claude" -eq 1 ] || [ "$install_opencode" -eq 1 ] || [ "$install_hermes" -eq 1 ]; then
     require_command bash
 fi
 require_command sh
@@ -1123,5 +1241,10 @@ else
         printf 'Run Cline with: fcc-cline\n'
     else
         printf 'The fcc-cline wrapper is ready after you install Cline CLI.\n'
+    fi
+    if [ "$install_hermes" -eq 1 ]; then
+        printf 'Run Hermes Agent with: fcc-hermes\n'
+    else
+        printf 'The fcc-hermes wrapper is ready after you install Hermes Agent.\n'
     fi
 fi

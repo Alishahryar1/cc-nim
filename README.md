@@ -26,7 +26,7 @@
 ## What You Get
 
 - **48 ToS-friendly providers. 1.3B+ free tokens every month.** Use free, paid, subscription, and local models from one searchable UI without putting your account at risk. FCC follows provider terms and removes integrations if they stop being allowed.
-- **5 coding agents. One model catalog.** Run [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://github.com/openai/codex), [Pi](https://github.com/earendil-works/pi), [OpenCode](https://github.com/anomalyco/opencode), or [Cline](https://github.com/cline/cline) with your FCC models.
+- **6 coding agents. One model catalog.** Run [Claude Code](https://code.claude.com/docs/en/overview), [Codex](https://github.com/openai/codex), [Pi](https://github.com/earendil-works/pi), [OpenCode](https://github.com/anomalyco/opencode), [Cline](https://github.com/cline/cline), or [Hermes](https://github.com/NousResearch/hermes-agent) with your FCC models.
 - **Keep coding through provider outages.** After retries are exhausted, FCC automatically tries your next configured model without making you restart the turn—across every client.
 - **Up to 90% fewer terminal-output tokens.** Optional [RTK](https://github.com/rtk-ai/rtk) filters common command output, while five FCC optimizations handle quota probes, command-prefix detection, titles, suggestions, and filepaths without calling a provider.
 - **Terminal, desktop, IDE, or phone.** Work through native launchers, [VS Code](https://code.visualstudio.com/), [Codex App](https://learn.chatgpt.com/docs/app), [JetBrains](https://www.jetbrains.com/), [Discord](https://discord.com/), or [Telegram](https://telegram.org/).
@@ -131,14 +131,21 @@ Cline:
 fcc-cline
 ```
 
-All five launchers use the current Admin UI settings. Use the agent's model picker to choose from the models FCC exposes. Normal CLI arguments still work, for example:
+Hermes:
+
+```bash
+fcc-hermes
+```
+
+All six launchers use the current Admin UI settings. Use the agent's model picker to choose from the models FCC exposes. Normal CLI arguments still work, for example:
 
 ```bash
 fcc-codex exec "hello"
 ```
 
 FCC launchers leave your existing agent settings, sessions, credentials, and
-extensions unchanged.
+extensions unchanged. `fcc-hermes` starts attached sessions through FCC; choosing
+another provider with Hermes `/model` intentionally leaves the FCC route.
 
 <a id="model-picker"></a>
 
@@ -288,7 +295,7 @@ Open **Admin UI → Model Config → Reasoning** and select the behavior you wan
 
 | Selection | Behavior |
 | --- | --- |
-| **From client** (default) | Use the effort sent by Claude Code, Codex, Pi, OpenCode, or Cline. If none is sent, keep the provider default. |
+| **From client** (default) | Use the effort sent by Claude Code, Codex, Pi, OpenCode, Cline, or Hermes. If none is sent, keep the provider default. |
 | **Off** | Request reasoning to be disabled. |
 | **Low**, **Medium**, **High**, **X-High**, or **Max** | Override the client with the selected reasoning level. |
 | **Inherit** (Fable, Opus, Sonnet, and Haiku only) | Use the root Reasoning selection. |
@@ -302,7 +309,7 @@ Providers that do not support a selected control retain their own behavior.
 ## Connect Your Client
 
 For terminal use, start `fcc-server`, then run `fcc-claude`, `fcc-codex`,
-`fcc-pi`, `fcc-opencode`, or `fcc-cline`. Use the guides below for editor integrations.
+`fcc-pi`, `fcc-opencode`, `fcc-cline`, or `fcc-hermes`. Use the guides below for editor integrations.
 
 <details>
 <summary><strong>Claude Code in VS Code</strong></summary>
@@ -539,7 +546,7 @@ Stop every running FCC command before uninstalling.
 **Keeps**
 
 - uv and Python
-- Claude Code, Codex, Pi, OpenCode, Cline, and RTK
+- Claude Code, Codex, Pi, OpenCode, Cline, Hermes, and RTK
 - Shared PATH entries
 
 macOS/Linux:
