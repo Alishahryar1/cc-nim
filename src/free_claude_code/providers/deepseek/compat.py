@@ -296,7 +296,9 @@ def _validate_deepseek_request_dict(
         content = message.get("content")
         if isinstance(content, list):
             _walk_block_list_for_unsupported(
-                content, where=f"messages[{i}].content", allow_attachments=allow_attachments
+                content,
+                where=f"messages[{i}].content",
+                allow_attachments=allow_attachments,
             )
 
     system = data.get("system")

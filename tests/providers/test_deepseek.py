@@ -752,12 +752,16 @@ def test_vision_model_forwards_user_image():
     content = body["messages"][0]["content"]
     assert isinstance(content, list)
     image_parts = [
-        part for part in content if isinstance(part, dict) and part.get("type") == "image_url"
+        part
+        for part in content
+        if isinstance(part, dict) and part.get("type") == "image_url"
     ]
     assert len(image_parts) == 1
     assert image_parts[0]["image_url"]["url"] == "data:image/png;base64,YQ=="
     text_parts = [
-        part for part in content if isinstance(part, dict) and part.get("type") == "text"
+        part
+        for part in content
+        if isinstance(part, dict) and part.get("type") == "text"
     ]
     assert text_parts[0]["text"] == "Describe this image"
 
