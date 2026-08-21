@@ -716,6 +716,52 @@ def test_preflight_strips_user_image():
     assert "image or document inputs" in content.lower()
 
 
+def test_vision_model_forwards_user_image():
+    """Vision-capable DeepSeek models receive image blocks as OpenAI image_url parts."""
+    request = MessagesRequest(
+        model="deepseek-v4-flash-vision-exp",
+        messages=[
+            Message(
+                role="user",
+                content=[
+                    ContentBlockImage(
+                        type="image",
+                        source={
+                            "type": "base64",
+                            "media_type": "image/png",
+                            "data": "YQ==",
+                        },
+                    ),
+                    {"type": "text", "text": "Describe this image"},
+                ],
+            )
+        ],
+    )
+    provider = DeepSeekProvider(
+        make_provider_config(
+            api_key="k",
+            base_url=DEEPSEEK_DEFAULT_BASE,
+            rate_limit=1,
+            rate_window=1,
+        ),
+        admission=immediate_admission(),
+    )
+    # Must not raise on preflight (no InvalidRequestError for image blocks).
+    provider.preflight_stream(request, reasoning=REASONING_ON)
+    body = provider._build_request_body(request, reasoning=reasoning_for(request))
+    content = body["messages"][0]["content"]
+    assert isinstance(content, list)
+    image_parts = [
+        part for part in content if isinstance(part, dict) and part.get("type") == "image_url"
+    ]
+    assert len(image_parts) == 1
+    assert image_parts[0]["image_url"]["url"] == "data:image/png;base64,YQ=="
+    text_parts = [
+        part for part in content if isinstance(part, dict) and part.get("type") == "text"
+    ]
+    assert text_parts[0]["text"] == "Describe this image"
+
+
 def test_preflight_rejects_mcp_servers():
     request = MessagesRequest(
         model="m",
