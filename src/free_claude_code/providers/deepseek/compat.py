@@ -39,6 +39,7 @@ _UNSUPPORTED_MESSAGE_BLOCK_TYPES = frozenset(
     }
 )
 _STRIPPABLE_MESSAGE_BLOCK_TYPES = frozenset({"image", "document"})
+_FORWARDABLE_ATTACHMENT_BLOCK_TYPES = frozenset({"image"})
 _OMITTED_ATTACHMENT_TEXT = (
     "[attachment omitted: DeepSeek does not support image or document inputs]"
 )
@@ -46,11 +47,11 @@ _OMITTED_ATTACHMENT_BLOCK = {"type": "text", "text": _OMITTED_ATTACHMENT_TEXT}
 
 
 def _is_vision_capable_model(model: str | None) -> bool:
-    """True when the DeepSeek model accepts image/document attachments.
+    """True when the DeepSeek model accepts OpenAI image parts.
 
     DeepSeek's vision models (e.g. ``deepseek-v4-flash-vision-exp``) support
-    OpenAI-format image parts natively; attachment blocks must be forwarded to
-    them instead of stripped.
+    image inputs natively. Document blocks are still stripped because the
+    shared OpenAI conversion path has no document parts.
     """
     if not model:
         return False
@@ -173,7 +174,7 @@ def sanitize_deepseek_messages_for_openai(messages: Any) -> Any:
 def _strip_unsupported_attachment_blocks(
     messages: Any, *, allow_attachments: bool = False
 ) -> Any:
-    if allow_attachments or not isinstance(messages, list):
+    if not isinstance(messages, list):
         return messages
 
     stripped: list[Any] = []
@@ -196,6 +197,12 @@ def _strip_unsupported_attachment_blocks(
             if isinstance(block, dict):
                 btype = block.get("type")
                 if btype in _STRIPPABLE_MESSAGE_BLOCK_TYPES:
+                    if (
+                        allow_attachments
+                        and btype in _FORWARDABLE_ATTACHMENT_BLOCK_TYPES
+                    ):
+                        new_content.append(block)
+                        continue
                     top_level_dropped[btype] = top_level_dropped.get(btype, 0) + 1
                     message_dropped_attachment = True
                     continue
@@ -209,6 +216,12 @@ def _strip_unsupported_attachment_blocks(
                                 and sub.get("type") in _STRIPPABLE_MESSAGE_BLOCK_TYPES
                             ):
                                 sub_type = sub["type"]
+                                if (
+                                    allow_attachments
+                                    and sub_type in _FORWARDABLE_ATTACHMENT_BLOCK_TYPES
+                                ):
+                                    filtered_inner.append(sub)
+                                    continue
                                 nested_dropped[sub_type] = (
                                     nested_dropped.get(sub_type, 0) + 1
                                 )
@@ -261,7 +274,7 @@ def _walk_block_list_for_unsupported(
             continue
         btype = block.get("type")
         if btype in _UNSUPPORTED_MESSAGE_BLOCK_TYPES:
-            if allow_attachments and btype in _STRIPPABLE_MESSAGE_BLOCK_TYPES:
+            if allow_attachments and btype in _FORWARDABLE_ATTACHMENT_BLOCK_TYPES:
                 continue
             raise InvalidRequestError(
                 f"DeepSeek native does not support {btype!r} blocks ({where})."
