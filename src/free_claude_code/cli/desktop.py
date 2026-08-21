@@ -112,7 +112,7 @@ class DesktopController:
             self._server_thread.start()
 
     def _run_server(self) -> None:
-        self._supervisor.run(open_admin_browser=False)
+        self._supervisor.run()
 
 
 def launch_desktop(tray_factory: DesktopTrayFactory) -> None:
