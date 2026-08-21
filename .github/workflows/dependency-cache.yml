@@ -45,7 +45,7 @@ jobs:
           key: uv-python-v1-${{ runner.os }}-${{ runner.arch }}-py-${{ steps.python.outputs.version }}-uv-${{ env.CI_UV_VERSION }}
 
       - name: Install uv
-        uses: astral-sh/setup-uv@c771a70e6277c0a99b617c7a806ffedaca235ff9
+        uses: astral-sh/setup-uv@20cfd1bf945f4377ade1205e4dbc17946fc9a30d
         with:
           version: ${{ env.CI_UV_VERSION }}
           enable-cache: false
