@@ -117,7 +117,7 @@ def test_desktop_controller_owns_server_thread_and_graceful_quit() -> None:
 
     assert tray is not None
     assert tray.run_thread_id == main_thread_id
-    assert supervisor.run_arguments == [False]
+    assert supervisor.run_arguments == [None]
     assert supervisor.schedule_count == 1
     assert supervisor.restart_count == 1
     assert supervisor.stop_count >= 1
@@ -142,7 +142,7 @@ def test_restart_during_server_startup_is_accepted_without_waiting() -> None:
             return True
 
         def run(self, *, open_admin_browser: bool | None = None) -> None:
-            assert open_admin_browser is False
+            assert open_admin_browser is None
             self.run_called.set()
             assert self.allow_run.wait(2)
             self.run_scheduled = False
@@ -247,7 +247,7 @@ def test_desktop_attaches_to_terminal_server_instead_of_binding_twice() -> None:
     instance_lock.release.assert_called_once_with()
 
 
-def test_fresh_desktop_launch_disables_console_and_automatic_browser() -> None:
+def test_fresh_desktop_launch_uses_console_free_supervisor() -> None:
     from free_claude_code.cli import desktop
 
     settings = _settings()

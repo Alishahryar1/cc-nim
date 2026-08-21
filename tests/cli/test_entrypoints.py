@@ -158,10 +158,11 @@ def test_schedule_open_admin_browser_opens_when_health_ready() -> None:
     assert opened_urls == [local_admin_url(settings)]
 
 
-def test_serve_skips_admin_browser_when_setting_is_disabled() -> None:
+@pytest.mark.parametrize("open_admin_browser", (False, True))
+def test_serve_respects_admin_browser_setting(open_admin_browser: bool) -> None:
     from free_claude_code.cli import commands
 
-    settings = _launcher_settings(open_admin_browser=False)
+    settings = _launcher_settings(open_admin_browser=open_admin_browser)
     get_settings = MagicMock(return_value=settings)
 
     with (
@@ -175,7 +176,7 @@ def test_serve_skips_admin_browser_when_setting_is_disabled() -> None:
 
     run_server.assert_called_once_with(
         settings,
-        open_admin_browser=False,
+        open_admin_browser=open_admin_browser,
         restart_generation=0,
     )
 
