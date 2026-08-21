@@ -6,7 +6,7 @@ from unittest.mock import AsyncMock, patch
 
 import openai
 import pytest
-from httpx import Request, Response
+from httpx2 import Request, Response
 
 from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.anthropic.models import MessagesRequest

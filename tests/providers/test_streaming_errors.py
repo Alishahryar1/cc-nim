@@ -5,6 +5,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
+import httpx2
 import openai
 import pytest
 
@@ -586,9 +587,9 @@ class TestStreamingExceptionHandling:
         """OpenAI SDK bodies should be raised so users can copy exact provider errors."""
         provider = _make_provider()
         request = _make_request()
-        response = httpx.Response(
+        response = httpx2.Response(
             status_code=400,
-            request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+            request=httpx2.Request("POST", "https://example.com/v1/chat/completions"),
         )
         body = {
             "error": {
@@ -627,9 +628,9 @@ class TestStreamingExceptionHandling:
         tool_chunk = _make_tool_calls_chunk(
             name="echo_smoke", arguments="{}", tool_id="call_body", index=0
         )
-        response = httpx.Response(
+        response = httpx2.Response(
             status_code=400,
-            request=httpx.Request("POST", "https://example.com/v1/chat/completions"),
+            request=httpx2.Request("POST", "https://example.com/v1/chat/completions"),
         )
         body = {"error": {"message": "bad after tool"}}
         error = openai.BadRequestError("Bad Request", response=response, body=body)
@@ -1279,12 +1280,12 @@ class TestStreamingExceptionHandling:
         provider = _make_provider()
         runner = _make_stream_runner(provider)
         retry_session = provider._admission.new_retry_session()
-        request = httpx.Request(
+        request = httpx2.Request(
             "POST", "https://test.api.nvidia.com/v1/chat/completions"
         )
         degraded = openai.BadRequestError(
             "Bad Request",
-            response=httpx.Response(400, request=request),
+            response=httpx2.Response(400, request=request),
             body={
                 "status": 400,
                 "detail": (

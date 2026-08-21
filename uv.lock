@@ -607,7 +607,7 @@ wheels = [
 
 [[package]]
 name = "free-claude-code"
-version = "5.12.1"
+version = "5.12.2"
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },
@@ -615,6 +615,7 @@ dependencies = [
     { name = "fastapi", extra = ["standard"] },
     { name = "google-auth", extra = ["requests"] },
     { name = "httpx", extra = ["socks"] },
+    { name = "httpx2", extra = ["socks"] },
     { name = "jsonschema" },
     { name = "loguru" },
     { name = "markdown-it-py" },
@@ -663,12 +664,13 @@ requires-dist = [
     { name = "grpcio", marker = "extra == 'voice'", specifier = ">=1.83.0" },
     { name = "grpcio-tools", marker = "extra == 'voice'", specifier = ">=1.81.1" },
     { name = "httpx", extras = ["socks"], specifier = ">=0.28.1" },
+    { name = "httpx2", extras = ["socks"], specifier = ">=2.7.0,<3" },
     { name = "jsonschema", specifier = ">=4.25.0" },
     { name = "librosa", marker = "extra == 'voice-local'", specifier = ">=1.0.0" },
     { name = "loguru", specifier = ">=0.7.0" },
     { name = "markdown-it-py", specifier = ">=4.2.0" },
     { name = "nvidia-riva-client", marker = "extra == 'voice'", specifier = ">=2.26.0" },
-    { name = "openai", specifier = ">=2.54.0" },
+    { name = "openai", specifier = ">=3.2.0" },
     { name = "pillow", marker = "sys_platform == 'darwin' or sys_platform == 'win32'", specifier = ">=12.0.0" },
     { name = "pydantic", specifier = ">=2.13.4" },
     { name = "pystray", marker = "sys_platform == 'darwin' or sys_platform == 'win32'", specifier = ">=0.19.5" },
@@ -967,6 +969,11 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/7f/f8/579a8b51e42e38ee32647df9f08aa25643ae788e275cc625b199829c4671/httpx2-2.12.0.tar.gz", hash = "sha256:7631fe9887a8a2275f4a2540e053aa670fcc50742864a9ae7c66e609fdcf12cf", size = 100040, upload-time = "2026-08-18T13:22:09.086Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/c8/95/411ba65569158e862368917aaf56597f3e5fa3b91b0502919638465a08f3/httpx2-2.12.0-py3-none-any.whl", hash = "sha256:cc8b6eecb8661c146b8f89a60e97456ee086e91a784ed31ac450c3a9e613dd36", size = 95427, upload-time = "2026-08-18T13:22:06.834Z" },
+]
+
+[package.optional-dependencies]
+socks = [
+    { name = "socksio" },
 ]
 
 [[package]]

@@ -4,6 +4,7 @@ from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
 import httpx
+import httpx2
 import pytest
 from openai import AsyncOpenAI
 
@@ -193,11 +194,11 @@ async def test_lists_only_documented_chat_models(
 async def test_model_catalog_uses_configured_base_url_and_auth(
     together_provider: OpenAIChatProvider,
 ) -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json=[
                 {
@@ -214,7 +215,7 @@ async def test_model_catalog_uses_configured_base_url_and_auth(
         api_key="wire-together-key",
         base_url=TOGETHER_DEFAULT_BASE,
         max_retries=0,
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
     )
     try:
         model_infos = await together_provider.list_model_infos()
