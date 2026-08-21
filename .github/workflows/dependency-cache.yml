@@ -39,7 +39,7 @@ jobs:
 
       - name: Restore Python
         id: python-cache
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ env.UV_PYTHON_INSTALL_DIR }}
           key: uv-python-v1-${{ runner.os }}-${{ runner.arch }}-py-${{ steps.python.outputs.version }}-uv-${{ env.CI_UV_VERSION }}
@@ -76,7 +76,7 @@ jobs:
 
       - name: Check for exact uv cache
         id: exact-cache
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ env.UV_CACHE_DIR }}
           key: uv-deps-v1-${{ runner.os }}-${{ runner.arch }}-py-${{ steps.python.outputs.version }}-uv-${{ env.CI_UV_VERSION }}-${{ steps.dependencies.outputs.hash }}
@@ -85,7 +85,7 @@ jobs:
       - name: Restore compatible uv cache
         if: steps.exact-cache.outputs.cache-hit != 'true'
         id: uv-cache
-        uses: actions/cache/restore@caa296126883cff596d87d8935842f9db880ef25
+        uses: actions/cache/restore@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ env.UV_CACHE_DIR }}
           key: uv-deps-v1-${{ runner.os }}-${{ runner.arch }}-py-${{ steps.python.outputs.version }}-uv-${{ env.CI_UV_VERSION }}-${{ steps.dependencies.outputs.hash }}
