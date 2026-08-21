@@ -39,10 +39,23 @@ _UNSUPPORTED_MESSAGE_BLOCK_TYPES = frozenset(
     }
 )
 _STRIPPABLE_MESSAGE_BLOCK_TYPES = frozenset({"image", "document"})
+_FORWARDABLE_ATTACHMENT_BLOCK_TYPES = frozenset({"image"})
 _OMITTED_ATTACHMENT_TEXT = (
     "[attachment omitted: DeepSeek does not support image or document inputs]"
 )
 _OMITTED_ATTACHMENT_BLOCK = {"type": "text", "text": _OMITTED_ATTACHMENT_TEXT}
+
+
+def _is_vision_capable_model(model: str | None) -> bool:
+    """True when the DeepSeek model accepts OpenAI image parts.
+
+    DeepSeek's vision models (e.g. ``deepseek-v4-flash-vision-exp``) support
+    image inputs natively. Document blocks are still stripped because the
+    shared OpenAI conversion path has no document parts.
+    """
+    if not model:
+        return False
+    return "vision" in str(model).rsplit("/", 1)[-1].lower()
 
 
 def build_deepseek_request_body(
@@ -55,10 +68,13 @@ def build_deepseek_request_body(
         len(request_data.messages),
     )
 
+    vision_capable = _is_vision_capable_model(request_data.model)
     data = dump_messages_request(request_data)
     if "messages" in data:
-        data["messages"] = _strip_unsupported_attachment_blocks(data["messages"])
-    _validate_deepseek_request_dict(data)
+        data["messages"] = _strip_unsupported_attachment_blocks(
+            data["messages"], allow_attachments=vision_capable
+        )
+    _validate_deepseek_request_dict(data, allow_attachments=vision_capable)
     _downgrade_forced_tool_choice(data)
 
     has_tool_history = _has_tool_history(data)
@@ -155,7 +171,9 @@ def sanitize_deepseek_messages_for_openai(messages: Any) -> Any:
     return sanitized
 
 
-def _strip_unsupported_attachment_blocks(messages: Any) -> Any:
+def _strip_unsupported_attachment_blocks(
+    messages: Any, *, allow_attachments: bool = False
+) -> Any:
     if not isinstance(messages, list):
         return messages
 
@@ -179,6 +197,12 @@ def _strip_unsupported_attachment_blocks(messages: Any) -> Any:
             if isinstance(block, dict):
                 btype = block.get("type")
                 if btype in _STRIPPABLE_MESSAGE_BLOCK_TYPES:
+                    if (
+                        allow_attachments
+                        and btype in _FORWARDABLE_ATTACHMENT_BLOCK_TYPES
+                    ):
+                        new_content.append(block)
+                        continue
                     top_level_dropped[btype] = top_level_dropped.get(btype, 0) + 1
                     message_dropped_attachment = True
                     continue
@@ -192,6 +216,12 @@ def _strip_unsupported_attachment_blocks(messages: Any) -> Any:
                                 and sub.get("type") in _STRIPPABLE_MESSAGE_BLOCK_TYPES
                             ):
                                 sub_type = sub["type"]
+                                if (
+                                    allow_attachments
+                                    and sub_type in _FORWARDABLE_ATTACHMENT_BLOCK_TYPES
+                                ):
+                                    filtered_inner.append(sub)
+                                    continue
                                 nested_dropped[sub_type] = (
                                     nested_dropped.get(sub_type, 0) + 1
                                 )
@@ -234,7 +264,9 @@ def _is_server_listed_tool(tool: Mapping[str, Any]) -> bool:
     return False
 
 
-def _walk_block_list_for_unsupported(blocks: Any, *, where: str) -> None:
+def _walk_block_list_for_unsupported(
+    blocks: Any, *, where: str, allow_attachments: bool = False
+) -> None:
     if not isinstance(blocks, list):
         return
     for block in blocks:
@@ -242,16 +274,22 @@ def _walk_block_list_for_unsupported(blocks: Any, *, where: str) -> None:
             continue
         btype = block.get("type")
         if btype in _UNSUPPORTED_MESSAGE_BLOCK_TYPES:
+            if allow_attachments and btype in _FORWARDABLE_ATTACHMENT_BLOCK_TYPES:
+                continue
             raise InvalidRequestError(
                 f"DeepSeek native does not support {btype!r} blocks ({where})."
             )
         if btype == "tool_result" and "content" in block:
             _walk_block_list_for_unsupported(
-                block["content"], where=f"{where} (tool_result content)"
+                block["content"],
+                where=f"{where} (tool_result content)",
+                allow_attachments=allow_attachments,
             )
 
 
-def _validate_deepseek_request_dict(data: dict[str, Any]) -> None:
+def _validate_deepseek_request_dict(
+    data: dict[str, Any], *, allow_attachments: bool = False
+) -> None:
     mcp = data.get("mcp_servers")
     if mcp:
         raise InvalidRequestError("DeepSeek does not support mcp_servers on requests.")
@@ -270,11 +308,17 @@ def _validate_deepseek_request_dict(data: dict[str, Any]) -> None:
             continue
         content = message.get("content")
         if isinstance(content, list):
-            _walk_block_list_for_unsupported(content, where=f"messages[{i}].content")
+            _walk_block_list_for_unsupported(
+                content,
+                where=f"messages[{i}].content",
+                allow_attachments=allow_attachments,
+            )
 
     system = data.get("system")
     if isinstance(system, list):
-        _walk_block_list_for_unsupported(system, where="system")
+        _walk_block_list_for_unsupported(
+            system, where="system", allow_attachments=allow_attachments
+        )
 
 
 def _has_tool_history_blocks(message: Mapping[str, Any]) -> bool:
