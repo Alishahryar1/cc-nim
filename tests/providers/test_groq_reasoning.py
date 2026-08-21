@@ -4,7 +4,7 @@ import asyncio
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
-import httpx
+import httpx2
 import openai
 import pytest
 
@@ -137,8 +137,8 @@ def test_parse_does_not_inherit_reasoning_param_into_unrelated_descendant() -> N
 
 
 def test_parse_actual_openai_bad_request() -> None:
-    request = httpx.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
-    response = httpx.Response(400, request=request)
+    request = httpx2.Request("POST", "https://api.groq.com/openai/v1/chat/completions")
+    response = httpx2.Response(400, request=request)
     error = openai.BadRequestError(
         _ISSUE_MESSAGE,
         response=response,

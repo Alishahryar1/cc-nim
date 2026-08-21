@@ -1,6 +1,7 @@
 """Provider stream commit-boundary and recovery policy."""
 
 import httpx
+import httpx2
 import openai
 
 from free_claude_code.providers.stream_recovery import (
@@ -17,7 +18,7 @@ def _statusless_openai_api_error(
 ) -> openai.APIError:
     return openai.APIError(
         message,
-        request=httpx.Request("POST", "https://provider.test/messages"),
+        request=httpx2.Request("POST", "https://provider.test/messages"),
         body=body,
     )
 
@@ -80,11 +81,11 @@ def test_retryable_stream_error_classifies_resource_exhausted_text() -> None:
 
 
 def test_retryable_stream_error_does_not_retry_bad_request_status() -> None:
-    request = httpx.Request("POST", "https://provider.test/messages")
+    request = httpx2.Request("POST", "https://provider.test/messages")
     assert not is_retryable_stream_error(
         openai.BadRequestError(
             "bad request",
-            response=httpx.Response(400, request=request),
+            response=httpx2.Response(400, request=request),
             body={"error": {"message": "bad request"}},
         )
     )

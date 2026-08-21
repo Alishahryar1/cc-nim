@@ -4,6 +4,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 
 import httpx
+import httpx2
 import openai
 import pytest
 
@@ -27,8 +28,8 @@ def _openai_status_error(
     message: str,
     body: object | None = None,
 ) -> openai.APIStatusError:
-    request = httpx.Request("POST", "https://provider.test/v1/chat/completions")
-    response = httpx.Response(status_code, request=request)
+    request = httpx2.Request("POST", "https://provider.test/v1/chat/completions")
+    response = httpx2.Response(status_code, request=request)
     return error_type(
         message,
         response=response,
@@ -39,7 +40,7 @@ def _openai_status_error(
 def _statusless_openai_error(message: str, body: object | None) -> openai.APIError:
     return openai.APIError(
         message,
-        request=httpx.Request("POST", "https://provider.test/v1/chat/completions"),
+        request=httpx2.Request("POST", "https://provider.test/v1/chat/completions"),
         body=body,
     )
 
@@ -251,7 +252,7 @@ _CASES = (
     _ClassificationCase(
         "openai_connection_error_keeps_status",
         lambda: openai.APIConnectionError(
-            request=httpx.Request("POST", "https://provider.test/v1/chat/completions")
+            request=httpx2.Request("POST", "https://provider.test/v1/chat/completions")
         ),
         FailureKind.UNAVAILABLE,
         500,
@@ -413,9 +414,9 @@ def test_http_405_diagnostic_names_rejected_upstream_endpoint() -> None:
 
 
 def test_connection_cause_chain_is_redacted_and_capped() -> None:
-    request = httpx.Request("POST", "https://provider.test/v1/chat/completions")
+    request = httpx2.Request("POST", "https://provider.test/v1/chat/completions")
     error = openai.APIConnectionError(request=request)
-    error.__cause__ = httpx.ConnectError(
+    error.__cause__ = httpx2.ConnectError(
         "connect failed authorization: Bearer CAUSE_SECRET "
         + "x" * (ERROR_DETAIL_DISPLAY_CAP_BYTES + 10),
         request=request,

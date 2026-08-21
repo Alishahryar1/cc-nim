@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "free-claude-code"
-version = "5.12.1"
+version = "5.12.2"
 description = "Local proxy connecting coding agents to OpenAI-compatible AI providers"
 readme = "README.md"
 requires-python = ">=3.14.0"
@@ -12,13 +12,14 @@ dependencies = [
     "fastapi[standard]>=0.141.1",
     "uvicorn>=0.52.1",
     "httpx[socks]>=0.28.1",
+    "httpx2[socks]>=2.7.0,<3",
     "markdown-it-py>=4.2.0",
     "pydantic>=2.13.4",
     "python-dotenv>=1.2.2",
     "tiktoken>=0.13.0",
     "python-telegram-bot>=22.8",
     "discord.py>=2.7.1",
-    "openai>=2.54.0",
+    "openai>=3.2.0",
     "loguru>=0.7.0",
     "aiohttp>=3.14.3",
     "jsonschema>=4.25.0",

@@ -3,7 +3,7 @@
 import logging
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2
 import openai
 import pytest
 
@@ -53,9 +53,9 @@ async def test_stream_failure_default_logs_exclude_exception_text(caplog) -> Non
 async def test_stream_failure_default_logs_cause_types_only(caplog) -> None:
     provider = _provider()
     error = openai.APIConnectionError(
-        request=httpx.Request("POST", "http://localhost:1/v1/chat/completions")
+        request=httpx2.Request("POST", "http://localhost:1/v1/chat/completions")
     )
-    error.__cause__ = httpx.ConnectError("SECRET_CAUSE_DETAIL")
+    error.__cause__ = httpx2.ConnectError("SECRET_CAUSE_DETAIL")
     with (
         patch.object(
             provider,

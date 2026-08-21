@@ -2,7 +2,7 @@
 
 from unittest.mock import AsyncMock, MagicMock, Mock, patch
 
-import httpx
+import httpx2
 import openai
 import pytest
 
@@ -57,10 +57,10 @@ def _bad_request(
     *,
     body_extra: dict[str, str] | None = None,
 ) -> openai.BadRequestError:
-    request = httpx.Request(
+    request = httpx2.Request(
         "POST", "https://integrate.api.nvidia.com/v1/chat/completions"
     )
-    response = httpx.Response(400, request=request)
+    response = httpx2.Response(400, request=request)
     body: dict[str, object] = {
         "status": 400,
         "title": "Bad Request",
@@ -80,10 +80,10 @@ def _context_window_error(
     nested: bool = False,
     status_code: int = 400,
 ) -> openai.BadRequestError | openai.InternalServerError:
-    request = httpx.Request(
+    request = httpx2.Request(
         "POST", "https://integrate.api.nvidia.com/v1/chat/completions"
     )
-    response = httpx.Response(status_code, request=request)
+    response = httpx2.Response(status_code, request=request)
     error_body: dict[str, object] = {
         "message": message,
         "type": "BadRequestError",

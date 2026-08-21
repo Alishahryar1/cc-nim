@@ -3,7 +3,7 @@
 from typing import Any
 from unittest.mock import AsyncMock
 
-import httpx
+import httpx2
 import pytest
 from openai import AsyncOpenAI
 
@@ -389,12 +389,12 @@ async def test_later_page_failure_cannot_return_a_partial_catalog(
 async def test_catalog_uses_documented_url_query_and_bearer_auth(
     featherless_provider: OpenAIChatProvider,
 ) -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
         page = int(request.url.params["page"])
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json=_page(
                 page,
@@ -408,7 +408,7 @@ async def test_catalog_uses_documented_url_query_and_bearer_auth(
         api_key="wire-featherless-key",
         base_url=FEATHERLESS_DEFAULT_BASE,
         max_retries=0,
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
     )
     try:
         model_infos = await featherless_provider.list_model_infos()

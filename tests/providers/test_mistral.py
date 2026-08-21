@@ -5,7 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 
 import openai
 import pytest
-from httpx import Request, Response
+from httpx2 import Request, Response
 
 from free_claude_code.config.provider_catalog import MISTRAL_DEFAULT_BASE
 from free_claude_code.core.failures import ExecutionFailure

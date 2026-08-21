@@ -2,7 +2,7 @@
 
 from unittest.mock import AsyncMock
 
-import httpx
+import httpx2
 import pytest
 from openai import AsyncOpenAI
 
@@ -224,18 +224,18 @@ async def test_incomplete_record_cannot_bypass_later_metadata_validation(
 async def test_model_catalog_uses_documented_url_and_bearer_auth(
     chutes_provider: OpenAIChatProvider,
 ) -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(200, json={"data": [_catalog_model()]})
+        return httpx2.Response(200, json={"data": [_catalog_model()]})
 
     await chutes_provider._client.close()
     chutes_provider._client = AsyncOpenAI(
         api_key="wire-chutes-key",
         base_url=CHUTES_DEFAULT_BASE,
         max_retries=0,
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
     )
     try:
         model_infos = await chutes_provider.list_model_infos()

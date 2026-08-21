@@ -7,9 +7,9 @@ from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mappin
 from dataclasses import dataclass
 from typing import Any
 
-import httpx
+import httpx2
 from loguru import logger
-from openai import AsyncOpenAI
+from openai import AsyncOpenAI, DefaultAsyncHttpx2Client
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic import (
@@ -157,28 +157,24 @@ class OpenAIChatProvider(BaseProvider):
         # later requests clamp proactively instead of paying the 400 each time.
         self._model_output_caps: dict[str, int] = {}
         self._admission = admission
+        timeout = httpx2.Timeout(
+            config.http_read_timeout,
+            connect=config.http_connect_timeout,
+            read=config.http_read_timeout,
+            write=config.http_write_timeout,
+        )
         http_client = None
         if config.proxy:
-            http_client = httpx.AsyncClient(
+            http_client = DefaultAsyncHttpx2Client(
                 proxy=config.proxy,
-                timeout=httpx.Timeout(
-                    config.http_read_timeout,
-                    connect=config.http_connect_timeout,
-                    read=config.http_read_timeout,
-                    write=config.http_write_timeout,
-                ),
+                timeout=timeout,
             )
         self._client = AsyncOpenAI(
             api_key=api_key_provider or self._api_key,
             base_url=self._base_url,
             max_retries=0,
             default_headers=default_headers,
-            timeout=httpx.Timeout(
-                config.http_read_timeout,
-                connect=config.http_connect_timeout,
-                read=config.http_read_timeout,
-                write=config.http_write_timeout,
-            ),
+            timeout=timeout,
             http_client=http_client,
         )
 

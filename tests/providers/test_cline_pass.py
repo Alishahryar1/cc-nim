@@ -5,7 +5,7 @@ from collections.abc import AsyncIterator
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
-import httpx
+import httpx2
 import pytest
 from openai import AsyncOpenAI
 
@@ -46,7 +46,7 @@ def cline_pass_provider() -> OpenAIChatProvider:
 
 
 def _provider_with_transport(
-    transport: httpx.AsyncBaseTransport,
+    transport: httpx2.AsyncBaseTransport,
     *,
     api_key: str = "wire-cline-key",
 ) -> OpenAIChatProvider:
@@ -54,7 +54,7 @@ def _provider_with_transport(
         api_key=api_key,
         base_url=CLINE_DEFAULT_BASE,
         max_retries=0,
-        http_client=httpx.AsyncClient(transport=transport),
+        http_client=httpx2.AsyncClient(transport=transport),
     )
     with patch(
         "free_claude_code.providers.openai_chat.provider.AsyncOpenAI",
@@ -343,11 +343,11 @@ async def test_stream_uses_upstream_sse_and_preserves_reasoning_details(
 
 @pytest.mark.asyncio
 async def test_model_catalog_uses_cline_pass_collection_endpoint_and_auth() -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 "recommended": [{"id": "anthropic/claude-sonnet-4-6"}],
@@ -361,7 +361,7 @@ async def test_model_catalog_uses_cline_pass_collection_endpoint_and_auth() -> N
         )
 
     provider = _provider_with_transport(
-        httpx.MockTransport(handler),
+        httpx2.MockTransport(handler),
     )
     try:
         model_infos = await provider.list_model_infos()
@@ -394,13 +394,13 @@ async def test_model_catalog_rejects_malformed_or_empty_cline_pass_collection(
     payload: JsonObject,
     message: str,
 ) -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(200, json=payload)
+        return httpx2.Response(200, json=payload)
 
-    provider = _provider_with_transport(httpx.MockTransport(handler))
+    provider = _provider_with_transport(httpx2.MockTransport(handler))
 
     try:
         with pytest.raises(ModelListResponseError, match=message):

@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import httpx
+import httpx2
 import pytest
 from openai import AsyncOpenAI
 
@@ -188,11 +188,11 @@ async def test_rejects_malformed_or_unusable_catalog_atomically(
 async def test_model_catalog_uses_documented_url_auth_and_verbose_query(
     nebius_provider: OpenAIChatProvider,
 ) -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 "data": [
@@ -209,7 +209,7 @@ async def test_model_catalog_uses_documented_url_auth_and_verbose_query(
         api_key="wire-nebius-key",
         base_url=NEBIUS_DEFAULT_BASE,
         max_retries=0,
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
     )
     try:
         model_infos = await nebius_provider.list_model_infos()

@@ -3,7 +3,7 @@
 from types import SimpleNamespace
 from unittest.mock import AsyncMock
 
-import httpx
+import httpx2
 import pytest
 from openai import AsyncOpenAI
 
@@ -166,11 +166,11 @@ def test_build_request_body_replays_prior_reasoning_content(
 async def test_model_catalog_uses_standard_endpoint_base_url_and_auth(
     qwencloud_provider: OpenAIChatProvider,
 ) -> None:
-    requests: list[httpx.Request] = []
+    requests: list[httpx2.Request] = []
 
-    def handler(request: httpx.Request) -> httpx.Response:
+    def handler(request: httpx2.Request) -> httpx2.Response:
         requests.append(request)
-        return httpx.Response(
+        return httpx2.Response(
             200,
             json={
                 "object": "list",
@@ -196,7 +196,7 @@ async def test_model_catalog_uses_standard_endpoint_base_url_and_auth(
         api_key="wire-qwencloud-key",
         base_url=QWENCLOUD_DEFAULT_BASE,
         max_retries=0,
-        http_client=httpx.AsyncClient(transport=httpx.MockTransport(handler)),
+        http_client=httpx2.AsyncClient(transport=httpx2.MockTransport(handler)),
     )
     try:
         model_infos = await qwencloud_provider.list_model_infos()
