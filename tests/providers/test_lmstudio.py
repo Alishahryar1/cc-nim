@@ -1,409 +1,324 @@
-"""Tests for LM Studio native Anthropic provider."""
+"""Tests for LM Studio (OpenAI-compatible chat completions) provider."""
 
 from unittest.mock import AsyncMock, MagicMock, patch
 
 import httpx
 import pytest
 
-from config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
-from providers.base import ProviderConfig
-from providers.lmstudio import LMStudioProvider
-from tests.stream_contract import assert_canonical_stream_error_envelope
+from free_claude_code.application.errors import InvalidRequestError
+from free_claude_code.config.provider_catalog import LMSTUDIO_DEFAULT_BASE
+from free_claude_code.core.failures import ExecutionFailure, FailureKind
+from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
+from free_claude_code.providers.lmstudio import LMStudioProvider
+from tests.providers.request_factory import make_messages_request
+from tests.providers.support import (
+    REASONING_OFF,
+    REASONING_ON,
+    immediate_admission,
+    make_provider_config,
+)
 
 
-class MockMessage:
-    def __init__(self, role, content):
-        self.role = role
-        self.content = content
-
-
-class MockRequest:
-    def __init__(self, **kwargs):
-        self.model = "lmstudio-community/qwen2.5-7b-instruct"
-        self.messages = [MockMessage("user", "Hello")]
-        self.max_tokens = 100
-        self.temperature = 0.5
-        self.top_p = 0.9
-        self.system = "System prompt"
-        self.stop_sequences = None
-        self.tools = []
-        self.extra_body = {}
-        self.thinking = MagicMock()
-        self.thinking.enabled = True
-        for k, v in kwargs.items():
-            setattr(self, k, v)
-
-    def model_dump(self, exclude_none=True):
-        return {
-            "model": self.model,
-            "messages": [{"role": m.role, "content": m.content} for m in self.messages],
-            "max_tokens": self.max_tokens,
-            "temperature": self.temperature,
-            "extra_body": self.extra_body,
-            "thinking": {"enabled": self.thinking.enabled} if self.thinking else None,
-        }
+def make_request(**overrides):
+    return make_messages_request("lmstudio-community/qwen2.5-7b-instruct", **overrides)
 
 
 @pytest.fixture
 def lmstudio_config():
-    return ProviderConfig(
+    return make_provider_config(
         api_key="lm-studio",
-        base_url="http://localhost:1234/v1",
+        base_url=LMSTUDIO_DEFAULT_BASE,
         rate_limit=10,
         rate_window=60,
     )
-
-
-@pytest.fixture(autouse=True)
-def mock_rate_limiter():
-    """Mock the global rate limiter to prevent waiting."""
-    with patch("providers.anthropic_messages.GlobalRateLimiter") as mock:
-        instance = mock.get_scoped_instance.return_value
-        instance.wait_if_blocked = AsyncMock(return_value=False)
-
-        async def _passthrough(fn, *args, **kwargs):
-            return await fn(*args, **kwargs)
-
-        instance.execute_with_retry = AsyncMock(side_effect=_passthrough)
-        yield instance
 
 
 @pytest.fixture
 def lmstudio_provider(lmstudio_config):
-    return LMStudioProvider(lmstudio_config)
+    return LMStudioProvider(lmstudio_config, admission=immediate_admission())
 
 
 def test_init(lmstudio_config):
     """Test provider initialization."""
-    with patch("httpx.AsyncClient"):
-        provider = LMStudioProvider(lmstudio_config)
-        assert provider._base_url == "http://localhost:1234/v1"
+    with patch(
+        "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
+    ) as mock_openai:
+        provider = LMStudioProvider(lmstudio_config, admission=immediate_admission())
+        assert provider._api_key == "lm-studio"
+        assert provider._base_url == LMSTUDIO_DEFAULT_BASE
         assert provider._provider_name == "LMSTUDIO"
+        mock_openai.assert_called_once()
 
 
-def test_init_uses_configurable_timeouts():
-    """Test that provider passes configurable read/write/connect timeouts to client."""
-    config = ProviderConfig(
-        api_key="lm-studio",
-        base_url="http://localhost:1234/v1",
-        http_read_timeout=600.0,
-        http_write_timeout=15.0,
-        http_connect_timeout=5.0,
-    )
-    with patch("httpx.AsyncClient") as mock_client:
-        LMStudioProvider(config)
-        call_kwargs = mock_client.call_args[1]
-        timeout = call_kwargs["timeout"]
-        assert timeout.read == 600.0
-        assert timeout.write == 15.0
-        assert timeout.connect == 5.0
+def test_default_base_url_constant():
+    assert LMSTUDIO_DEFAULT_BASE == "http://localhost:1234/v1"
 
 
-def test_init_base_url_strips_trailing_slash():
-    """Config with base_url trailing slash is stored without it."""
-    config = ProviderConfig(
-        api_key="lm-studio",
-        base_url="http://localhost:1234/v1/",
-        rate_limit=10,
-        rate_window=60,
-    )
-    with patch("httpx.AsyncClient"):
-        provider = LMStudioProvider(config)
-        assert provider._base_url == "http://localhost:1234/v1"
+def test_build_request_body_basic(lmstudio_provider):
+    req = make_request()
+    body = lmstudio_provider._build_request_body(req)
+
+    assert body["model"] == "lmstudio-community/qwen2.5-7b-instruct"
+    assert body["messages"][0]["role"] == "system"
 
 
-@pytest.mark.asyncio
-async def test_stream_response_omits_thinking_when_globally_disabled(lmstudio_config):
-    provider = LMStudioProvider(
-        lmstudio_config.model_copy(update={"enable_thinking": False})
-    )
-    req = MockRequest()
+def test_adaptive_client_reasoning_uses_documented_named_effort(lmstudio_provider):
+    req = make_request()
 
-    mock_response = MagicMock()
-    mock_response.status_code = 200
+    body = lmstudio_provider._build_request_body(req, reasoning=REASONING_ON)
 
-    async def empty_aiter():
-        if False:
-            yield ""
+    assert body["extra_body"]["reasoning_effort"] == "high"
+    assert "reasoning_effort" not in body
 
-    mock_response.aiter_lines = empty_aiter
 
-    with (
-        patch.object(provider._client, "build_request") as mock_build,
-        patch.object(
-            provider._client,
-            "send",
-            new_callable=AsyncMock,
-            return_value=mock_response,
+def test_exact_client_budget_is_not_derived_from_output_tokens(lmstudio_provider):
+    req = make_request(max_tokens=8192)
+
+    body = lmstudio_provider._build_request_body(
+        req,
+        reasoning=ReasoningPolicy.on(
+            effort=ReasoningEffort.HIGH,
+            budget_tokens=1024,
         ),
-    ):
-        [e async for e in provider.stream_response(req)]
-
-    _, kwargs = mock_build.call_args
-    assert "thinking" not in kwargs["json"]
-
-
-@pytest.mark.asyncio
-async def test_stream_response_omits_thinking_when_request_disables_it(
-    lmstudio_provider,
-):
-    req = MockRequest()
-    req.thinking.enabled = False
-
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-
-    async def empty_aiter():
-        if False:
-            yield ""
-
-    mock_response.aiter_lines = empty_aiter
-
-    with (
-        patch.object(lmstudio_provider._client, "build_request") as mock_build,
-        patch.object(
-            lmstudio_provider._client,
-            "send",
-            new_callable=AsyncMock,
-            return_value=mock_response,
-        ),
-    ):
-        [e async for e in lmstudio_provider.stream_response(req)]
-
-    _, kwargs = mock_build.call_args
-    assert "thinking" not in kwargs["json"]
-
-
-@pytest.mark.asyncio
-async def test_stream_response(lmstudio_provider):
-    """Test streaming native Anthropic response."""
-    req = MockRequest()
-
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-
-    async def mock_aiter_lines():
-        yield "event: message_start"
-        yield 'data: {"type":"message_start","message":{}}'
-        yield ""
-        yield "event: content_block_delta"
-        yield 'data: {"type":"content_block_delta","delta":{"type":"text_delta","text":"Hello World"}}'
-        yield ""
-        yield "event: message_stop"
-        yield 'data: {"type":"message_stop"}'
-        yield ""
-
-    mock_response.aiter_lines = mock_aiter_lines
-
-    with (
-        patch.object(
-            lmstudio_provider._client, "build_request", return_value=MagicMock()
-        ) as mock_build,
-        patch.object(
-            lmstudio_provider._client,
-            "send",
-            new_callable=AsyncMock,
-            return_value=mock_response,
-        ),
-    ):
-        events = [e async for e in lmstudio_provider.stream_response(req)]
-
-        # Verify request construction
-        mock_build.assert_called_once()
-        args, kwargs = mock_build.call_args
-        assert args[0] == "POST"
-        assert args[1] == "/messages"
-        assert kwargs["json"]["model"] == "lmstudio-community/qwen2.5-7b-instruct"
-        # Verify internal fields are popped
-        assert "extra_body" not in kwargs["json"]
-        assert kwargs["json"]["max_tokens"] == 100
-
-        # Verify internal ThinkingConfig is mapped to Anthropic API format
-        assert kwargs["json"]["thinking"] == {"type": "enabled"}
-
-        # Verify events yielded correctly
-        assert len(events) == 9
-        assert events[0] == "event: message_start\n"
-        assert events[1] == 'data: {"type":"message_start","message":{}}\n'
-
-
-@pytest.mark.asyncio
-async def test_stream_response_adds_max_tokens_if_missing(lmstudio_provider):
-    """Fallback max_tokens to 81920 if not present."""
-    req = MockRequest()
-    mock_response = MagicMock()
-    mock_response.status_code = 200
-
-    async def empty_aiter():
-        if False:
-            yield ""
-
-    mock_response.aiter_lines = empty_aiter
-
-    with (
-        patch.object(req, "model_dump", return_value={"model": "test"}),
-        patch.object(lmstudio_provider._client, "build_request") as mock_build,
-        patch.object(
-            lmstudio_provider._client,
-            "send",
-            new_callable=AsyncMock,
-            return_value=mock_response,
-        ),
-    ):
-        # Just run the generator to completion
-        [e async for e in lmstudio_provider.stream_response(req)]
-
-        _, kwargs = mock_build.call_args
-        assert kwargs["json"]["max_tokens"] == ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
-
-
-@pytest.mark.asyncio
-async def test_stream_error_status_code(lmstudio_provider):
-    """Non-200 status code raises an error that gets caught and yielded as an SSE API error."""
-    req = MockRequest()
-
-    mock_response = MagicMock()
-    mock_response.status_code = 500
-    mock_response.aread = AsyncMock(return_value=b"Internal Server Error")
-    mock_response.raise_for_status = MagicMock(
-        side_effect=httpx.HTTPStatusError(
-            "Internal Server Error", request=MagicMock(), response=mock_response
-        )
     )
 
-    with (
-        patch.object(
-            lmstudio_provider._client, "build_request", return_value=MagicMock()
-        ),
-        patch.object(
-            lmstudio_provider._client,
-            "send",
-            new_callable=AsyncMock,
-            return_value=mock_response,
-        ),
-    ):
-        events = [
-            e
-            async for e in lmstudio_provider.stream_response(req, request_id="TEST_ID")
-        ]
-
-        assert_canonical_stream_error_envelope(
-            events, user_message_substr="Provider API request failed"
-        )
-        assert "TEST_ID" in "".join(events)
+    assert body["extra_body"]["reasoning_tokens"] == 1024
+    assert "reasoning_tokens" not in body
+    assert body["max_tokens"] == 8192
 
 
-@pytest.mark.asyncio
-async def test_stream_network_error(lmstudio_provider):
-    """Network errors are caught and yielded as SSE API error events."""
-    req = MockRequest()
-
-    with (
-        patch.object(
-            lmstudio_provider._client, "build_request", return_value=MagicMock()
-        ),
-        patch.object(
-            lmstudio_provider._client,
-            "send",
-            new_callable=AsyncMock,
-            side_effect=httpx.ConnectError("Connection refused"),
-        ),
-    ):
-        events = [
-            e
-            async for e in lmstudio_provider.stream_response(req, request_id="TEST_ID2")
-        ]
-
-        blob = "".join(events)
-        assert_canonical_stream_error_envelope(
-            events, user_message_substr="Connection refused"
-        )
-        assert "TEST_ID2" in blob
-
-
-@pytest.mark.asyncio
-async def test_stream_error_405_mentions_upstream_provider(lmstudio_provider):
-    req = MockRequest()
-
-    mock_response = MagicMock()
-    mock_response.status_code = 405
-    mock_response.aread = AsyncMock(return_value=b"Method Not Allowed")
-    mock_response.raise_for_status = MagicMock(
-        side_effect=httpx.HTTPStatusError(
-            "Method Not Allowed", request=MagicMock(), response=mock_response
-        )
-    )
-
-    with (
-        patch.object(
-            lmstudio_provider._client, "build_request", return_value=MagicMock()
-        ),
-        patch.object(
-            lmstudio_provider._client,
-            "send",
-            new_callable=AsyncMock,
-            return_value=mock_response,
-        ),
-    ):
-        events = [
-            e async for e in lmstudio_provider.stream_response(req, request_id="REQ405")
-        ]
-
-    blob = "".join(events)
-    assert (
-        "Upstream provider LMSTUDIO rejected the request method or endpoint (HTTP 405)."
-        in blob
-    )
-    assert "REQ405" in blob
-
-
-def test_build_request_body_disabled_thinking_strips_native_thinking_history(
-    lmstudio_config,
-):
-    """Disabled thinking must omit prior assistant thinking/redacted blocks in JSON."""
-    provider = LMStudioProvider(
-        lmstudio_config.model_copy(update={"enable_thinking": False})
-    )
-    req = MockRequest(
-        system=None,
+def test_build_request_body_never_replays_prior_thinking(lmstudio_provider):
+    """Mistral-family templates have no assistant reasoning field; prior-turn
+    thinking must never be replayed regardless of current-turn reasoning policy."""
+    req = make_request(
         messages=[
-            MockMessage("user", "hi"),
-            MockMessage(
-                "assistant",
-                [
-                    {"type": "thinking", "thinking": "t"},
-                    {"type": "redacted_thinking", "data": "opaque"},
-                ],
-            ),
-        ],
-    )
-    body = provider._build_request_body(req, thinking_enabled=False)
-    assert body["messages"][1]["content"] == ""
-    assert "redacted_thinking" not in str(body)
-
-
-def test_build_request_body_preserves_signed_thinking_native_history(lmstudio_config):
-    """When thinking is enabled, signed thinking blocks are kept; unsigned stripped."""
-    provider = LMStudioProvider(lmstudio_config)
-    req = MockRequest(
-        system=None,
-        messages=[
-            MockMessage("user", "hi"),
-            MockMessage(
-                "assistant",
-                [
+            {"role": "user", "content": "hi"},
+            {
+                "role": "assistant",
+                "content": [
                     {
                         "type": "thinking",
-                        "thinking": "signed",
-                        "signature": "sig",
-                    },
-                    {"type": "redacted_thinking", "data": "opaque"},
+                        "thinking": "prior reasoning",
+                        "signature": "s",
+                    }
                 ],
-            ),
-        ],
+            },
+        ]
     )
-    body = provider._build_request_body(req, thinking_enabled=True)
-    c = body["messages"][1]["content"]
-    assert isinstance(c, list)
-    assert any(isinstance(b, dict) and b.get("type") == "thinking" for b in c)
-    assert any(isinstance(b, dict) and b.get("type") == "redacted_thinking" for b in c)
+    body = lmstudio_provider._build_request_body(req)
+
+    roles = [m.get("role") for m in body.get("messages", [])]
+    assert "assistant_reasoning_content" not in roles
+    assert "prior reasoning" not in str(body)
+
+
+def test_preflight_builds_before_context_budget_and_preserves_policy(
+    lmstudio_provider,
+):
+    request = make_request()
+    calls: list[tuple[str, object]] = []
+
+    def build(request_arg, *, reasoning):
+        assert request_arg is request
+        calls.append(("build", reasoning))
+        return {}
+
+    def check_context(request_arg):
+        assert request_arg is request
+        calls.append(("context", request_arg))
+
+    with (
+        patch.object(lmstudio_provider, "_build_request_body", side_effect=build),
+        patch.object(
+            lmstudio_provider,
+            "_preflight_context_budget",
+            side_effect=check_context,
+        ),
+    ):
+        lmstudio_provider.preflight_stream(request, reasoning=REASONING_OFF)
+
+    assert calls == [("build", REASONING_OFF), ("context", request)]
+
+
+def test_preflight_conversion_failure_skips_context_budget(lmstudio_provider):
+    request = make_request()
+    conversion_error = InvalidRequestError("invalid request conversion")
+
+    with (
+        patch.object(
+            lmstudio_provider,
+            "_build_request_body",
+            side_effect=conversion_error,
+        ),
+        patch.object(lmstudio_provider, "_preflight_context_budget") as context,
+        pytest.raises(InvalidRequestError, match="invalid request conversion"),
+    ):
+        lmstudio_provider.preflight_stream(request, reasoning=REASONING_ON)
+
+    context.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_stream_response_text(lmstudio_provider):
+    """Text content deltas are emitted through the shared OpenAI-chat provider."""
+    req = make_request()
+
+    mock_chunk = MagicMock()
+    mock_chunk.choices = [
+        MagicMock(
+            delta=MagicMock(
+                content="Hello back!", reasoning_content=None, tool_calls=None
+            ),
+            finish_reason="stop",
+        )
+    ]
+    mock_chunk.usage = MagicMock(completion_tokens=5, prompt_tokens=10)
+
+    async def mock_stream():
+        yield mock_chunk
+
+    with patch.object(
+        lmstudio_provider._client.chat.completions, "create", new_callable=AsyncMock
+    ) as mock_create:
+        mock_create.return_value = mock_stream()
+
+        events = [event async for event in lmstudio_provider.stream_response(req)]
+
+        assert any(
+            '"text_delta"' in event and "Hello back!" in event for event in events
+        )
+
+
+@pytest.mark.asyncio
+async def test_stream_response_passes_exact_reasoning_budget_via_extra_body(
+    lmstudio_provider,
+):
+    req = make_request()
+    policy = ReasoningPolicy.on(
+        effort=ReasoningEffort.HIGH,
+        budget_tokens=1024,
+    )
+
+    mock_chunk = MagicMock()
+    mock_chunk.choices = [
+        MagicMock(
+            delta=MagicMock(content="Done", reasoning_content=None, tool_calls=None),
+            finish_reason="stop",
+        )
+    ]
+    mock_chunk.usage = MagicMock(completion_tokens=1, prompt_tokens=1)
+
+    async def mock_stream():
+        yield mock_chunk
+
+    with patch.object(
+        lmstudio_provider._client.chat.completions, "create", new_callable=AsyncMock
+    ) as mock_create:
+        mock_create.return_value = mock_stream()
+
+        events = [
+            event
+            async for event in lmstudio_provider.stream_response(
+                req,
+                reasoning=policy,
+            )
+        ]
+
+    await_args = mock_create.await_args
+    assert await_args is not None
+    create_kwargs = await_args.kwargs
+    assert create_kwargs["extra_body"] == {"reasoning_tokens": 1024}
+    assert "reasoning_tokens" not in create_kwargs
+    assert any("message_stop" in event for event in events)
+
+
+@pytest.mark.asyncio
+async def test_cleanup(lmstudio_provider):
+    lmstudio_provider._client = AsyncMock()
+    await lmstudio_provider.cleanup()
+
+
+# --- Context-budget preflight (new: guards against LM Studio's silent
+# mid-stream truncation when a prompt exceeds the loaded model's context) ---
+
+
+def test_preflight_context_budget_noop_when_context_length_unknown(lmstudio_provider):
+    """No LM Studio /api/v0/models data available -> preflight is a no-op (fail open)."""
+    with patch.object(lmstudio_provider, "_loaded_context_length", return_value=None):
+        lmstudio_provider._preflight_context_budget(make_request())  # must not raise
+
+
+def test_preflight_context_budget_allows_request_under_budget(lmstudio_provider):
+    with patch.object(
+        lmstudio_provider, "_loaded_context_length", return_value=100_000
+    ):
+        req = make_request(
+            messages=[{"role": "user", "content": "hi"}], system=None, tools=[]
+        )
+        lmstudio_provider._preflight_context_budget(req)  # must not raise
+
+
+def test_preflight_context_budget_rejects_request_over_90_percent(lmstudio_provider):
+    with (
+        patch.object(lmstudio_provider, "_loaded_context_length", return_value=1000),
+        patch(
+            "free_claude_code.providers.lmstudio.client.get_token_count",
+            return_value=901,
+        ),
+        pytest.raises(ExecutionFailure) as exc_info,
+    ):
+        lmstudio_provider._preflight_context_budget(make_request())
+
+    failure = exc_info.value
+    assert failure.kind is FailureKind.CONTEXT_WINDOW_EXCEEDED
+    assert failure.status_code == 400
+    assert failure.retryable is False
+    assert failure.message == (
+        "Estimated provider input (901 tokens) exceeds the safe LM Studio "
+        "context budget (900 tokens; 90% of loaded context 1000)."
+    )
+    assert "prompt is too long" not in failure.message
+
+
+def test_loaded_context_length_reads_max_across_loaded_models(lmstudio_provider):
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json.return_value = {
+        "data": [
+            {"state": "loaded", "loaded_context_length": 40960},
+            {"state": "loaded", "loaded_context_length": 8192},
+            {"state": "not-loaded", "loaded_context_length": 999999},
+        ]
+    }
+    with patch(
+        "free_claude_code.providers.lmstudio.client.httpx.get", return_value=response
+    ) as mock_get:
+        value = lmstudio_provider._loaded_context_length()
+
+    assert value == 40960
+    mock_get.assert_called_once()
+    assert mock_get.call_args[0][0] == "http://localhost:1234/api/v0/models"
+
+
+def test_loaded_context_length_fails_open_on_error(lmstudio_provider):
+    with patch(
+        "free_claude_code.providers.lmstudio.client.httpx.get",
+        side_effect=httpx.ConnectError("refused"),
+    ):
+        assert lmstudio_provider._loaded_context_length() is None
+
+
+def test_loaded_context_length_is_cached_within_ttl(lmstudio_provider):
+    response = MagicMock()
+    response.raise_for_status = MagicMock()
+    response.json.return_value = {
+        "data": [{"state": "loaded", "loaded_context_length": 40960}]
+    }
+    with patch(
+        "free_claude_code.providers.lmstudio.client.httpx.get", return_value=response
+    ) as mock_get:
+        first = lmstudio_provider._loaded_context_length()
+        second = lmstudio_provider._loaded_context_length()
+
+    assert first == second == 40960
+    mock_get.assert_called_once()

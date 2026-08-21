@@ -1,0 +1,250 @@
+import json
+import os
+import shutil
+import subprocess
+from collections.abc import Mapping
+from pathlib import Path
+from typing import Any, cast
+
+import pytest
+
+from free_claude_code.cli.launchers.codex import codex_config_args
+from free_claude_code.cli.launchers.codex_model_catalog import (
+    build_codex_model_catalog,
+    write_codex_model_catalog,
+)
+
+
+def _models_payload(*model_ids: str) -> dict[str, Any]:
+    return {
+        "data": [
+            {
+                "id": model_id,
+                "provider_model_ref": (
+                    model_id.removeprefix("claude-3-freecc-no-thinking/")
+                ),
+                "display_name": model_id,
+            }
+            for model_id in model_ids
+        ]
+    }
+
+
+def _catalog_models(catalog: Mapping[str, Any]) -> list[Mapping[str, Any]]:
+    models = catalog["models"]
+    assert isinstance(models, list)
+    catalog_models: list[Mapping[str, Any]] = []
+    for model in models:
+        assert isinstance(model, Mapping)
+        catalog_models.append(cast(Mapping[str, Any], model))
+    return catalog_models
+
+
+def _slugs(catalog: Mapping[str, Any]) -> list[str]:
+    slugs: list[str] = []
+    for model in _catalog_models(catalog):
+        slug = model["slug"]
+        assert isinstance(slug, str)
+        slugs.append(slug)
+    return slugs
+
+
+def test_codex_catalog_uses_direct_configured_and_cached_model_slugs() -> None:
+    catalog = build_codex_model_catalog(
+        _models_payload(
+            "nvidia_nim/nvidia/nemotron-3-super",
+            "open_router/meta-llama/llama-3.3-70b",
+        )
+    )
+
+    assert _slugs(catalog) == [
+        "nvidia_nim/nvidia/nemotron-3-super",
+        "open_router/meta-llama/llama-3.3-70b",
+    ]
+    model = _catalog_models(catalog)[0]
+    assert {
+        "slug",
+        "display_name",
+        "description",
+        "default_reasoning_level",
+        "supported_reasoning_levels",
+        "shell_type",
+        "visibility",
+        "supported_in_api",
+        "priority",
+        "additional_speed_tiers",
+        "service_tiers",
+    } <= set(model)
+
+
+def test_codex_catalog_ignores_rows_without_direct_provider_identity() -> None:
+    catalog = build_codex_model_catalog(
+        {
+            "data": [
+                {"id": "claude-opus-4-20250514"},
+                {
+                    "id": "nvidia_nim/provider-model",
+                    "provider_model_ref": "nvidia_nim/provider-model",
+                    "display_name": "NIM",
+                },
+            ]
+        }
+    )
+
+    assert _slugs(catalog) == ["nvidia_nim/provider-model"]
+
+
+def test_codex_catalog_deduplicates_direct_wire_ids() -> None:
+    catalog = build_codex_model_catalog(
+        _models_payload(
+            "nvidia_nim/provider-model",
+            "nvidia_nim/provider-model",
+        )
+    )
+
+    assert _slugs(catalog) == ["nvidia_nim/provider-model"]
+
+
+def test_codex_catalog_preserves_no_thinking_only_entries_for_routing() -> None:
+    catalog = build_codex_model_catalog(
+        _models_payload("claude-3-freecc-no-thinking/open_router/plain-model")
+    )
+
+    assert _slugs(catalog) == ["claude-3-freecc-no-thinking/open_router/plain-model"]
+
+
+def test_codex_catalog_ordering_and_priorities_are_deterministic() -> None:
+    catalog = build_codex_model_catalog(
+        _models_payload(
+            "anthropic/gemini/models/gemini-test",
+            "nvidia_nim/nvidia/test",
+            "anthropic/gemini/models/gemini-test",
+            "open_router/provider/test",
+        )
+    )
+
+    models = _catalog_models(catalog)
+    assert _slugs(catalog) == [
+        "anthropic/gemini/models/gemini-test",
+        "nvidia_nim/nvidia/test",
+        "open_router/provider/test",
+    ]
+    assert [model["priority"] for model in models] == [0, 1, 2]
+
+
+def test_codex_catalog_accepts_direct_provider_slugs_without_a_provider_registry() -> (
+    None
+):
+    catalog = build_codex_model_catalog(
+        _models_payload(
+            "nvidia_nim/provider-model",
+            "future_provider/provider-model",
+        )
+    )
+
+    assert _slugs(catalog) == [
+        "nvidia_nim/provider-model",
+        "future_provider/provider-model",
+    ]
+
+
+def test_launcher_config_composes_with_persistent_codex_config(
+    tmp_path: Path,
+) -> None:
+    codex_binary = shutil.which("codex")
+    if codex_binary is None:
+        pytest.skip("Codex CLI is not installed")
+
+    catalog_path = tmp_path / "codex-model-catalog.json"
+    write_codex_model_catalog(
+        catalog_path,
+        build_codex_model_catalog(_models_payload("nvidia_nim/test-model")),
+    )
+    codex_home = tmp_path / "codex-home"
+    codex_home.mkdir()
+    (codex_home / "config.toml").write_text(
+        "\n".join(
+            (
+                'model_provider = "fcc"',
+                'model = "nvidia_nim/test-model"',
+                f"model_catalog_json = {json.dumps(str(catalog_path))}",
+                "",
+                "[model_providers.fcc]",
+                'name = "Free Claude Code"',
+                'base_url = "http://127.0.0.1:8082/v1"',
+                'wire_api = "responses"',
+                "",
+                "[model_providers.fcc.auth]",
+                'command = "fcc-codex"',
+                'args = ["--print-proxy-auth-token"]',
+                "",
+            )
+        ),
+        encoding="utf-8",
+    )
+    codex_env = os.environ.copy()
+    for key in (
+        "CODEX_THREAD_ID",
+        "CODEX_INTERNAL_ORIGINATOR_OVERRIDE",
+        "CODEX_SHELL",
+        "CODEX_PERMISSION_PROFILE",
+    ):
+        codex_env.pop(key, None)
+    codex_env["CODEX_HOME"] = str(codex_home)
+
+    result = subprocess.run(
+        [
+            codex_binary,
+            *codex_config_args(api_url="http://127.0.0.1:8082/v1"),
+            "debug",
+            "models",
+        ],
+        capture_output=True,
+        check=False,
+        encoding="utf-8",
+        env=codex_env,
+        errors="replace",
+        text=True,
+        timeout=10,
+    )
+
+    assert result.returncode == 0, result.stderr
+    assert "nvidia_nim/test-model" in result.stdout
+
+
+def test_catalog_writer_skips_identical_content_and_replaces_changes(
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "codex-model-catalog.json"
+    first = build_codex_model_catalog(_models_payload("nvidia_nim/first"))
+    second = build_codex_model_catalog(_models_payload("nvidia_nim/second"))
+
+    assert write_codex_model_catalog(catalog_path, first) is True
+    assert write_codex_model_catalog(catalog_path, first) is False
+    assert list(tmp_path.glob(".codex-model-catalog.json.*.tmp")) == []
+
+    assert write_codex_model_catalog(catalog_path, second) is True
+    assert json.loads(catalog_path.read_text(encoding="utf-8")) == second
+    assert list(tmp_path.glob(".codex-model-catalog.json.*.tmp")) == []
+
+
+def test_catalog_writer_cleans_temporary_file_after_replace_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    catalog_path = tmp_path / "codex-model-catalog.json"
+    catalog_path.write_text("previous\n", encoding="utf-8")
+
+    def fail_replace(_source: Path, _destination: Path) -> Path:
+        raise PermissionError("destination is locked")
+
+    monkeypatch.setattr(Path, "replace", fail_replace)
+
+    with pytest.raises(PermissionError, match="locked"):
+        write_codex_model_catalog(
+            catalog_path,
+            build_codex_model_catalog(_models_payload("nvidia_nim/replacement")),
+        )
+
+    assert catalog_path.read_text(encoding="utf-8") == "previous\n"
+    assert list(tmp_path.glob(".codex-model-catalog.json.*.tmp")) == []

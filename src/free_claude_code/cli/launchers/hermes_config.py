@@ -1,0 +1,114 @@
+"""Process-local Hermes configuration for FCC model routing."""
+
+from dataclasses import dataclass, field
+
+from free_claude_code.core.json_types import JsonObject
+
+from .common import proxy_v1_url
+from .model_catalog import ClientModel
+
+HERMES_PROVIDER_PREFIX = "fcc-"
+HERMES_KEY_ENV_PREFIX = "FCC_HERMES_"
+
+_AUXILIARY_TASKS = (
+    "vision",
+    "web_extract",
+    "compression",
+    "skills_hub",
+    "approval",
+    "mcp",
+    "title_generation",
+    "memory_query_rewrite",
+    "tts_audio_tags",
+    "triage_specifier",
+    "kanban_decomposer",
+    "profile_describer",
+    "goal_judge",
+    "curator",
+    "monitor",
+    "background_review",
+    "moa_reference",
+    "moa_aggregator",
+)
+
+
+@dataclass(frozen=True, slots=True)
+class HermesManagedConfig:
+    """Secret-free managed overlay for one attached Hermes process."""
+
+    config: JsonObject = field(repr=False)
+    provider_key: str
+    provider_ref: str
+    key_env: str
+    selected_model: str
+
+
+def build_hermes_managed_config(
+    models: tuple[ClientModel, ...],
+    *,
+    proxy_root_url: str,
+    nonce: str,
+    selected_model: str | None = None,
+) -> HermesManagedConfig:
+    """Translate an FCC catalog into one invocation-specific Hermes overlay."""
+
+    if not models:
+        raise ValueError("Hermes requires at least one routable FCC model")
+    if not nonce or not nonce.isalnum():
+        raise ValueError("Hermes configuration nonce must be alphanumeric")
+
+    wire_slugs = tuple(model.wire_slug for model in models)
+    active_model = selected_model or wire_slugs[0]
+    if active_model not in wire_slugs:
+        raise ValueError(f"model is not in the FCC catalog: {active_model}")
+
+    provider_key = f"{HERMES_PROVIDER_PREFIX}{nonce.lower()}"
+    provider_ref = f"custom:{provider_key}"
+    key_env = f"{HERMES_KEY_ENV_PREFIX}{nonce.upper()}"
+    auxiliary: JsonObject = {
+        task: _auxiliary_task_config(task) for task in _AUXILIARY_TASKS
+    }
+    config: JsonObject = {
+        "providers": {
+            provider_key: {
+                "name": "Free Claude Code",
+                "api": proxy_v1_url(proxy_root_url),
+                "key_env": key_env,
+                "transport": "codex_responses",
+                "default_model": active_model,
+                "models": {wire_slug: {} for wire_slug in wire_slugs},
+                "discover_models": False,
+            }
+        },
+        "model": {
+            "provider": provider_ref,
+            "default": active_model,
+            "base_url": "",
+            "api_key": "",
+            "api_mode": "codex_responses",
+        },
+        "fallback_providers": [],
+        "fallback_model": [],
+        "auxiliary": auxiliary,
+    }
+    return HermesManagedConfig(
+        config=config,
+        provider_key=provider_key,
+        provider_ref=provider_ref,
+        key_env=key_env,
+        selected_model=active_model,
+    )
+
+
+def _auxiliary_task_config(task: str) -> JsonObject:
+    config: JsonObject = {
+        "provider": "main",
+        "model": "",
+        "base_url": "",
+        "api_key": "",
+        "extra_body": {},
+        "fallback_chain": [],
+    }
+    if task == "title_generation":
+        config["prefer_fast_model"] = False
+    return config

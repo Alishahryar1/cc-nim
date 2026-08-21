@@ -1,0 +1,1208 @@
+const state = {
+  config: null,
+  fields: new Map(),
+  modelOptions: [],
+  modelComboboxes: new Set(),
+  authPollers: new Map(),
+  activeView: "providers",
+};
+
+const MASKED_SECRET = "********";
+const NULL_VALUE = "__FCC_NULL__";
+const VIEW_GROUPS = [
+  {
+    id: "providers",
+    label: "Providers",
+    title: "Providers",
+    sections: ["providers", "runtime"],
+    containerId: "providersSections",
+  },
+  {
+    id: "model_config",
+    label: "Model Config",
+    title: "Model Config",
+    sections: ["models", "reasoning", "web_tools"],
+    containerId: "modelConfigSections",
+  },
+  {
+    id: "messaging",
+    label: "Messaging",
+    title: "Messaging",
+    sections: ["messaging", "voice"],
+    containerId: "messagingSections",
+  },
+];
+
+const byId = (id) => document.getElementById(id);
+
+function sourceLabel(source) {
+  const labels = {
+    default: "default",
+    managed_env: "",
+    process: "process env",
+  };
+  return Object.prototype.hasOwnProperty.call(labels, source) ? labels[source] : source;
+}
+
+function sourceText(field) {
+  const parts = [];
+  const label = sourceLabel(field.source);
+  if (label) {
+    parts.push(label);
+  }
+  if (field.locked) {
+    parts.push("locked");
+  }
+  return parts.join(" ");
+}
+
+function statusClass(status) {
+  if (["configured", "reachable", "running", "connected"].includes(status)) return "ok";
+  if (["missing_key", "missing_config", "missing_url", "unknown", "connecting"].includes(status)) return "warn";
+  if (["offline", "error"].includes(status)) return "error";
+  return "neutral";
+}
+
+async function api(path, options = {}) {
+  const response = await fetch(path, {
+    headers: { "Content-Type": "application/json", ...(options.headers || {}) },
+    ...options,
+    cache: "no-store",
+  });
+  if (!response.ok) {
+    let detail = "";
+    try {
+      const payload = await response.json();
+      detail = typeof payload.detail === "string" ? payload.detail : "";
+    } catch {
+      // The status remains useful when an upstream proxy returns a non-JSON page.
+    }
+    throw new Error(detail || `${response.status} ${response.statusText}`);
+  }
+  return response.json();
+}
+
+async function load() {
+  showMessage("Loading admin config");
+  const config = await api("/admin/api/config");
+  state.config = config;
+  state.fields = new Map(config.fields.map((field) => [field.key, field]));
+  renderNav();
+  renderProviders(config.provider_status);
+  renderSections(config.sections, config.fields);
+  byId("configPath").textContent = config.paths.managed;
+  await refreshConnectedAccounts();
+  await hydrateModelOptions();
+  await validate(false);
+  await refreshLocalStatus();
+  updateDirtyState();
+  showMessage("");
+}
+
+function renderNav() {
+  const nav = byId("sectionNav");
+  nav.innerHTML = "";
+  VIEW_GROUPS.forEach((view, index) => {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = `nav-link${index === 0 ? " active" : ""}`;
+    button.dataset.view = view.id;
+    button.textContent = view.label;
+    if (index === 0) {
+      button.setAttribute("aria-current", "page");
+    }
+    button.addEventListener("click", () => {
+      setActiveView(view.id, { scroll: true });
+    });
+    nav.appendChild(button);
+  });
+  setActiveView(state.activeView, { scroll: false });
+}
+
+function setActiveView(viewId, { scroll = false } = {}) {
+  const activeView =
+    VIEW_GROUPS.find((view) => view.id === viewId) || VIEW_GROUPS[0];
+  state.activeView = activeView.id;
+  byId("pageTitle").textContent = activeView.title;
+
+  document.querySelectorAll(".nav-link").forEach((link) => {
+    const selected = link.dataset.view === activeView.id;
+    link.classList.toggle("active", selected);
+    if (selected) {
+      link.setAttribute("aria-current", "page");
+    } else {
+      link.removeAttribute("aria-current");
+    }
+  });
+
+  document.querySelectorAll(".admin-view").forEach((view) => {
+    const selected = view.dataset.view === activeView.id;
+    view.classList.toggle("active", selected);
+    view.hidden = !selected;
+  });
+
+  if (scroll) {
+    window.scrollTo({ top: 0, behavior: "smooth" });
+  }
+}
+
+function renderProviders(providerStatus) {
+  const grid = byId("providerGrid");
+  const connectedGrid = byId("connectedAccountGrid");
+  grid.innerHTML = "";
+  connectedGrid.innerHTML = "";
+  const connected = providerStatus.filter(
+    (provider) => provider.kind === "connected_account",
+  );
+  byId("connectedAccountsSection").hidden = connected.length === 0;
+  providerStatus.forEach((provider) => {
+    if (provider.kind === "connected_account") {
+      connectedGrid.appendChild(renderConnectedAccountCard(provider));
+      return;
+    }
+    const card = document.createElement("article");
+    card.className = "provider-card";
+    card.dataset.provider = provider.provider_id;
+
+    const title = document.createElement("div");
+    title.className = "provider-title";
+    const name = document.createElement("strong");
+    name.textContent = provider.display_name || provider.provider_id;
+
+    const pill = document.createElement("span");
+    pill.className = `status-pill ${statusClass(provider.status)}`;
+    pill.textContent = provider.label;
+    title.append(name, pill);
+
+    const meta = document.createElement("div");
+    meta.className = "provider-meta";
+    const configurationKeys = Array.isArray(provider.configuration_keys)
+      ? provider.configuration_keys
+      : [];
+    const missingConfigurationKeys = Array.isArray(
+      provider.missing_configuration_keys,
+    )
+      ? provider.missing_configuration_keys
+      : [];
+    meta.textContent = configurationKeys.join(" + ");
+
+    const result = document.createElement("div");
+    result.className = "provider-check-result";
+    result.dataset.providerCheckResult = provider.provider_id;
+    result.setAttribute("aria-live", "polite");
+    result.hidden = true;
+
+    const actions = document.createElement("div");
+    actions.className = "provider-actions";
+    if (configurationKeys.length) {
+      const configuring = missingConfigurationKeys.length > 0;
+      actions.appendChild(
+        providerActionButton(configuring ? "Configure" : "Edit", () =>
+          navigateToProviderConfiguration(provider, configuring),
+        ),
+      );
+    }
+
+    if (missingConfigurationKeys.length === 0) {
+      const button = providerActionButton(
+        provider.kind === "local" ? "Test" : "Refresh models",
+        () => testProvider(provider.provider_id, button),
+        "secondary-button",
+      );
+      actions.appendChild(button);
+    }
+
+    card.append(title, meta, result, actions);
+    grid.appendChild(card);
+  });
+}
+
+function providerActionButton(label, action, className = "test-button") {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.textContent = label;
+  button.addEventListener("click", action);
+  return button;
+}
+
+function navigateToProviderConfiguration(provider, configuring) {
+  const keys = configuring
+    ? provider.missing_configuration_keys
+    : provider.configuration_keys;
+  const fieldKey = Array.isArray(keys) ? keys[0] : null;
+  const input = fieldKey ? byId(`field-${fieldKey}`) : null;
+  if (!input) {
+    showMessage("Provider configuration field is unavailable.", "error");
+    return;
+  }
+  const reducedMotion = window.matchMedia(
+    "(prefers-reduced-motion: reduce)",
+  ).matches;
+  input.scrollIntoView({
+    behavior: reducedMotion ? "instant" : "smooth",
+    block: "center",
+  });
+  input.focus({ preventScroll: true });
+}
+
+function renderConnectedAccountCard(provider, status = provider) {
+  const card = document.createElement("article");
+  card.className = "provider-card";
+  card.dataset.provider = provider.provider_id;
+  card.dataset.connectedAccount = "true";
+
+  const title = document.createElement("div");
+  title.className = "provider-title";
+  const name = document.createElement("strong");
+  name.textContent = provider.display_name || provider.provider_id;
+  const pill = document.createElement("span");
+  pill.className = `status-pill ${statusClass(status.state || status.status)}`;
+  pill.textContent = connectedAccountLabel(status);
+  title.append(name, pill);
+
+  const meta = document.createElement("div");
+  meta.className = "provider-meta";
+  meta.textContent = connectedAccountMeta(status);
+
+  const actions = document.createElement("div");
+  actions.className = "provider-actions";
+  populateConnectedAccountActions(provider, status, actions);
+  card.append(title, meta, actions);
+  return card;
+}
+
+function connectedAccountLabel(status) {
+  const labels = {
+    disconnected: "Not connected",
+    connecting: "Connecting",
+    connected: "Connected",
+    error: "Needs attention",
+  };
+  return labels[status.state] || status.label || "Not connected";
+}
+
+function connectedAccountMeta(status) {
+  if (status.connected) {
+    const identity = status.email || "ChatGPT subscription connected";
+    const models = Number.isInteger(status.model_count)
+      ? `${status.model_count} model${status.model_count === 1 ? "" : "s"} available. `
+      : "";
+    const error = status.message ? `${status.message} ` : "";
+    return `${identity}. ${models}${error}Restart your agent to refresh its model picker.`;
+  }
+  if (status.mode === "device" && status.user_code) {
+    return `Enter code ${status.user_code} at ${status.verification_url}`;
+  }
+  if (status.state === "connecting") {
+    return "Finish signing in, then return to this page.";
+  }
+  return status.message || "Connect a ChatGPT account to discover subscription models.";
+}
+
+function populateConnectedAccountActions(provider, status, actions) {
+  const providerId = provider.provider_id;
+  if (status.state === "connecting") {
+    const target = status.authorization_url || status.verification_url;
+    if (target) {
+      actions.appendChild(authButton("Open sign-in", () => window.open(target, "_blank", "noopener")));
+    }
+    if (status.mode === "device" && status.user_code) {
+      actions.appendChild(
+        authButton(
+          "Copy code",
+          () => copyDeviceCode(status.user_code),
+          "secondary-button",
+        ),
+      );
+    }
+    actions.appendChild(
+      authButton("Cancel", () => cancelConnectedAccountLogin(providerId), "secondary-button"),
+    );
+    return;
+  }
+  if (status.connected) {
+    actions.appendChild(
+      authButton(
+        "Reconnect",
+        (button) => startConnectedAccountLogin(providerId, "browser", button),
+      ),
+    );
+    actions.appendChild(
+      authButton(
+        "Disconnect",
+        () => disconnectConnectedAccount(providerId),
+        "secondary-button",
+      ),
+    );
+    return;
+  }
+  actions.appendChild(
+    authButton("Connect", (button) => startConnectedAccountLogin(providerId, "browser", button)),
+    authButton(
+      "Use device code",
+      (button) => startConnectedAccountLogin(providerId, "device", button),
+      "secondary-button",
+    ),
+  );
+}
+
+function authButton(label, action, className = "test-button") {
+  const button = document.createElement("button");
+  button.type = "button";
+  button.className = className;
+  button.textContent = label;
+  button.addEventListener("click", () => action(button));
+  return button;
+}
+
+async function refreshConnectedAccounts() {
+  const providers = (state.config?.provider_status || []).filter(
+    (provider) => provider.kind === "connected_account",
+  );
+  await Promise.all(
+    providers.map(async (provider) => {
+      try {
+        const status = await api(`/admin/api/providers/${provider.provider_id}/auth`);
+        updateConnectedAccountCard(provider, status);
+        if (status.state === "connecting") pollConnectedAccount(provider);
+      } catch (error) {
+        updateConnectedAccountCard(provider, {
+          state: "error",
+          connected: false,
+          message: error.message,
+        });
+      }
+    }),
+  );
+}
+
+function updateConnectedAccountCard(provider, status) {
+  const current = document.querySelector(
+    `[data-provider="${provider.provider_id}"][data-connected-account="true"]`,
+  );
+  if (current) current.replaceWith(renderConnectedAccountCard(provider, status));
+}
+
+async function startConnectedAccountLogin(providerId, mode, button) {
+  button.disabled = true;
+  const popup = window.open("about:blank", "_blank");
+  if (popup) popup.opener = null;
+  try {
+    const status = await api(`/admin/api/providers/${providerId}/auth/login`, {
+      method: "POST",
+      body: JSON.stringify({ mode }),
+    });
+    const provider = connectedAccountDescriptor(providerId);
+    updateConnectedAccountCard(provider, status);
+    const target = status.authorization_url || status.verification_url;
+    if (target && popup) {
+      popup.location.replace(target);
+    } else if (target) {
+      window.open(target, "_blank", "noopener");
+    } else if (popup) {
+      popup.close();
+    }
+    pollConnectedAccount(provider);
+  } catch (error) {
+    if (popup) popup.close();
+    showMessage(error.message, true);
+    button.disabled = false;
+  }
+}
+
+async function cancelConnectedAccountLogin(providerId) {
+  clearConnectedAccountPoll(providerId);
+  const status = await api(`/admin/api/providers/${providerId}/auth/cancel`, {
+    method: "POST",
+  });
+  updateConnectedAccountCard(connectedAccountDescriptor(providerId), status);
+}
+
+async function disconnectConnectedAccount(providerId) {
+  if (!window.confirm("Disconnect this ChatGPT account from FCC?")) return;
+  clearConnectedAccountPoll(providerId);
+  const status = await api(`/admin/api/providers/${providerId}/auth`, {
+    method: "DELETE",
+  });
+  updateConnectedAccountCard(connectedAccountDescriptor(providerId), status);
+  await hydrateModelOptions();
+}
+
+function pollConnectedAccount(provider) {
+  clearConnectedAccountPoll(provider.provider_id);
+  const poll = async () => {
+    try {
+      const status = await api(`/admin/api/providers/${provider.provider_id}/auth`);
+      updateConnectedAccountCard(provider, status);
+      if (status.state === "connecting") {
+        state.authPollers.set(provider.provider_id, window.setTimeout(poll, 1000));
+      } else {
+        state.authPollers.delete(provider.provider_id);
+        if (status.connected) await hydrateModelOptions();
+      }
+    } catch (error) {
+      state.authPollers.delete(provider.provider_id);
+      showMessage(error.message, true);
+    }
+  };
+  state.authPollers.set(provider.provider_id, window.setTimeout(poll, 1000));
+}
+
+function clearConnectedAccountPoll(providerId) {
+  const timer = state.authPollers.get(providerId);
+  if (timer) window.clearTimeout(timer);
+  state.authPollers.delete(providerId);
+}
+
+function connectedAccountDescriptor(providerId) {
+  return state.config.provider_status.find(
+    (provider) => provider.provider_id === providerId,
+  );
+}
+
+async function copyDeviceCode(code) {
+  try {
+    await navigator.clipboard.writeText(code);
+    showMessage("Device code copied.");
+  } catch {
+    showMessage(`Copy this device code: ${code}`);
+  }
+}
+
+function updateProviderCheckResult(providerId, status, message) {
+  const card = document.querySelector(`[data-provider="${providerId}"]`);
+  if (!card) return;
+  const result = card.querySelector(".provider-check-result");
+  result.className = `provider-check-result ${status}`;
+  result.textContent = message;
+  result.hidden = !message;
+}
+
+function renderSections(sections, fields) {
+  state.modelComboboxes.clear();
+  VIEW_GROUPS.forEach((view) => {
+    byId(view.containerId).innerHTML = "";
+  });
+
+  const sectionById = new Map(sections.map((section) => [section.id, section]));
+  const bySection = new Map();
+  sections.forEach((section) => bySection.set(section.id, []));
+  fields.forEach((field) => {
+    if (!bySection.has(field.section)) bySection.set(field.section, []);
+    bySection.get(field.section).push(field);
+  });
+
+  VIEW_GROUPS.forEach((view) => {
+    const container = byId(view.containerId);
+    view.sections.forEach((sectionId) => {
+      const section = sectionById.get(sectionId);
+      const sectionFields = bySection.get(sectionId) || [];
+      if (!section || sectionFields.length === 0) return;
+
+      const sectionEl = document.createElement("section");
+      sectionEl.className = "settings-section";
+      sectionEl.id = `section-${section.id}`;
+
+      const heading = document.createElement("div");
+      heading.className = "section-heading";
+      heading.innerHTML = `<div><h3>${section.label}</h3><p>${section.description}</p></div>`;
+      if (section.id === "models") {
+        const refreshButton = document.createElement("button");
+        refreshButton.type = "button";
+        refreshButton.className = "secondary-button";
+        refreshButton.textContent = "Refresh models";
+        refreshButton.addEventListener("click", () => refreshModelOptions(refreshButton));
+        heading.appendChild(refreshButton);
+      }
+      sectionEl.appendChild(heading);
+
+      const grid = document.createElement("div");
+      grid.className = "field-grid";
+      sectionFields.forEach((field) => {
+        grid.appendChild(renderField(field));
+      });
+      sectionEl.appendChild(grid);
+
+      if (sectionFields.some((field) => field.advanced)) {
+        const toggle = document.createElement("button");
+        toggle.type = "button";
+        toggle.className = "ghost-button advanced-toggle";
+        toggle.textContent = "Show advanced";
+        toggle.addEventListener("click", () => {
+          const showing = sectionEl.classList.toggle("show-advanced");
+          toggle.textContent = showing ? "Hide advanced" : "Show advanced";
+        });
+        sectionEl.appendChild(toggle);
+      }
+
+      container.appendChild(sectionEl);
+    });
+  });
+}
+
+function renderField(field) {
+  const wrapper = document.createElement("div");
+  wrapper.className = `field${field.advanced ? " advanced-field" : ""}`;
+  wrapper.dataset.key = field.key;
+
+  const label = document.createElement("label");
+  label.htmlFor = `field-${field.key}`;
+  const labelText = document.createElement("span");
+  labelText.textContent = field.label;
+  label.appendChild(labelText);
+
+  const source = sourceText(field);
+  if (source) {
+    const sourceEl = document.createElement("span");
+    sourceEl.className = "field-source";
+    sourceEl.textContent = source;
+    label.appendChild(sourceEl);
+  }
+
+  const input = inputForField(field);
+  input.id = `field-${field.key}`;
+  input.dataset.key = field.key;
+  input.dataset.original = comparableValue(field.value);
+  input.dataset.secret = field.secret ? "true" : "false";
+  input.dataset.configured = field.configured ? "true" : "false";
+  input.dataset.nullable = field.nullable ? "true" : "false";
+  input.dataset.remove = "false";
+  input.dataset.fieldType = field.type;
+  input.disabled = field.locked;
+  input.addEventListener("input", updateDirtyState);
+  input.addEventListener("change", updateDirtyState);
+  input.addEventListener("input", () => {
+    input.dataset.remove = "false";
+  });
+  if (field.type === "optional_model") {
+    input.addEventListener("blur", () => {
+      if (!input.value.trim() || input.value.trim().toLowerCase() === "none") {
+        input.value = "None";
+        updateDirtyState();
+      }
+    });
+  }
+
+  let control = input;
+  if (field.type === "model" || field.type === "optional_model") {
+    control = new ModelCombobox(input, field).element;
+  } else if (field.type === "model_list") {
+    const editor = new ModelListEditor(input, field);
+    label.htmlFor = editor.inputId;
+    control = editor.element;
+  }
+  wrapper.append(label, control);
+  if (field.secret && field.nullable && field.configured && !field.locked) {
+    const removeButton = document.createElement("button");
+    removeButton.type = "button";
+    removeButton.className = "ghost-button secret-remove";
+    removeButton.textContent = "Remove";
+    removeButton.addEventListener("click", () => {
+      const removing = input.dataset.remove !== "true";
+      input.dataset.remove = removing ? "true" : "false";
+      input.readOnly = removing;
+      removeButton.textContent = removing ? "Undo removal" : "Remove";
+      updateDirtyState();
+    });
+    wrapper.appendChild(removeButton);
+  }
+  if (field.description) {
+    const description = document.createElement("div");
+    description.className = "field-description";
+    description.textContent = field.description;
+    wrapper.appendChild(description);
+  }
+  return wrapper;
+}
+
+function inputForField(field) {
+  if (field.type === "boolean") {
+    const input = document.createElement("input");
+    input.type = "checkbox";
+    input.checked = String(field.value).toLowerCase() === "true";
+    input.dataset.original = input.checked ? "true" : "false";
+    return input;
+  }
+
+  if (field.type === "select") {
+    const select = document.createElement("select");
+    field.options.forEach((item) =>
+      select.appendChild(option(item.value, item.label)),
+    );
+    select.value = field.value || field.options[0]?.value || "";
+    return select;
+  }
+
+  if (field.type === "textarea") {
+    const textarea = document.createElement("textarea");
+    textarea.value = field.value || "";
+    return textarea;
+  }
+
+  if (field.type === "model" || field.type === "optional_model") {
+    const input = document.createElement("input");
+    input.type = "text";
+    input.value = field.value || (field.type === "optional_model" ? "None" : "");
+    input.autocomplete = "off";
+    return input;
+  }
+
+  if (field.type === "model_list") {
+    const input = document.createElement("input");
+    input.type = "hidden";
+    input.value = field.value || "";
+    return input;
+  }
+
+  const input = document.createElement("input");
+  input.type = field.type === "number" ? "number" : "text";
+  if (field.type === "secret") {
+    input.type = "password";
+    input.placeholder = field.configured
+      ? "Configured - enter a new value to replace"
+      : "Not configured";
+    input.value = "";
+    input.autocomplete = "off";
+  } else {
+    input.value = field.value || "";
+  }
+  return input;
+}
+
+class ModelCombobox {
+  constructor(input, field) {
+    this.input = input;
+    this.fieldType = field.type;
+    this.activeIndex = -1;
+    this.query = "";
+
+    this.element = document.createElement("div");
+    this.element.className = "model-combobox";
+    this.listbox = document.createElement("div");
+    this.listbox.className = "model-combobox-list";
+    this.listbox.id = `model-options-${field.key}`;
+    this.listbox.setAttribute("role", "listbox");
+    this.listbox.hidden = true;
+    this.toggle = document.createElement("button");
+    this.toggle.type = "button";
+    this.toggle.className = "model-combobox-toggle";
+    this.toggle.disabled = input.disabled;
+    this.toggle.setAttribute("aria-label", `Show ${field.label} options`);
+
+    input.setAttribute("role", "combobox");
+    input.setAttribute("aria-autocomplete", "list");
+    input.setAttribute("aria-haspopup", "listbox");
+    for (const control of [input, this.toggle]) {
+      control.setAttribute("aria-controls", this.listbox.id);
+      control.setAttribute("aria-expanded", "false");
+    }
+
+    input.addEventListener("click", () => this.open());
+    input.addEventListener("input", () => this.open(input.value));
+    input.addEventListener("keydown", (event) => this.handleKeydown(event));
+    this.toggle.addEventListener("mousedown", (event) => event.preventDefault());
+    this.toggle.addEventListener("click", () => {
+      if (this.isOpen) this.close();
+      else this.open();
+      input.focus();
+    });
+    this.listbox.addEventListener("mousedown", (event) => event.preventDefault());
+    this.listbox.addEventListener("mousemove", (event) => {
+      const optionEl = event.target.closest('[role="option"]');
+      if (optionEl) this.setActive(this.visibleOptions.indexOf(optionEl));
+    });
+    this.listbox.addEventListener("click", (event) => {
+      const optionEl = event.target.closest('[role="option"]');
+      if (optionEl) this.select(optionEl.dataset.value);
+    });
+
+    this.element.append(input, this.toggle, this.listbox);
+    state.modelComboboxes.add(this);
+  }
+
+  get isOpen() {
+    return this.element.classList.contains("open");
+  }
+
+  get values() {
+    return this.fieldType === "optional_model"
+      ? ["None", ...state.modelOptions]
+      : state.modelOptions;
+  }
+
+  get visibleOptions() {
+    return Array.from(this.listbox.querySelectorAll('[role="option"]'));
+  }
+
+  open(query = "") {
+    if (this.input.disabled) return;
+    state.modelComboboxes.forEach((combobox) => {
+      if (combobox !== this) combobox.close();
+    });
+    this.render(query);
+    this.element.classList.add("open");
+    this.listbox.hidden = false;
+    this.setExpanded(true);
+  }
+
+  close() {
+    this.element.classList.remove("open");
+    this.listbox.hidden = true;
+    this.activeIndex = -1;
+    this.input.removeAttribute("aria-activedescendant");
+    this.setExpanded(false);
+  }
+
+  setExpanded(expanded) {
+    for (const control of [this.input, this.toggle]) {
+      control.setAttribute("aria-expanded", String(expanded));
+    }
+  }
+
+  render(query) {
+    this.query = query;
+    const normalizedQuery = query.trim().toLocaleLowerCase();
+    const values = normalizedQuery
+      ? this.values.filter((value) =>
+          value.toLocaleLowerCase().includes(normalizedQuery),
+        )
+      : this.values;
+    this.listbox.innerHTML = "";
+
+    if (values.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "model-combobox-empty";
+      empty.textContent = state.modelOptions.length
+        ? "No matching models. You can still enter a custom slug."
+        : "No discovered models. Refresh models or enter a custom slug.";
+      this.listbox.appendChild(empty);
+      this.activeIndex = -1;
+      this.input.removeAttribute("aria-activedescendant");
+      return;
+    }
+
+    values.forEach((value, index) => {
+      const optionEl = document.createElement("div");
+      optionEl.className = "model-combobox-option";
+      optionEl.id = `${this.listbox.id}-option-${index}`;
+      optionEl.dataset.value = value;
+      optionEl.setAttribute("role", "option");
+      optionEl.textContent = value;
+      this.listbox.appendChild(optionEl);
+    });
+    const selectedIndex = values.indexOf(this.input.value);
+    this.setActive(selectedIndex >= 0 ? selectedIndex : 0, false);
+  }
+
+  setActive(index, scroll = true) {
+    const options = this.visibleOptions;
+    if (options.length === 0) return;
+    this.activeIndex = Math.max(0, Math.min(index, options.length - 1));
+    options.forEach((optionEl, optionIndex) => {
+      const active = optionIndex === this.activeIndex;
+      optionEl.classList.toggle("active", active);
+      optionEl.setAttribute("aria-selected", String(active));
+    });
+    const activeOption = options[this.activeIndex];
+    this.input.setAttribute("aria-activedescendant", activeOption.id);
+    if (scroll) activeOption.scrollIntoView({ block: "nearest" });
+  }
+
+  move(offset) {
+    const count = this.visibleOptions.length;
+    if (count) this.setActive((this.activeIndex + offset + count) % count);
+  }
+
+  select(value) {
+    this.input.value = value;
+    this.input.dispatchEvent(new Event("change", { bubbles: true }));
+    this.close();
+    this.input.focus();
+  }
+
+  handleKeydown(event) {
+    if (event.key === "ArrowDown" || event.key === "ArrowUp") {
+      event.preventDefault();
+      if (this.isOpen) {
+        this.move(event.key === "ArrowDown" ? 1 : -1);
+      } else {
+        this.open();
+        if (event.key === "ArrowUp") {
+          this.setActive(this.visibleOptions.length - 1);
+        }
+      }
+    } else if (this.isOpen && (event.key === "Home" || event.key === "End")) {
+      event.preventDefault();
+      this.setActive(event.key === "Home" ? 0 : this.visibleOptions.length - 1);
+    } else if (this.isOpen && event.key === "Enter") {
+      const active = this.visibleOptions[this.activeIndex];
+      if (active) {
+        event.preventDefault();
+        this.select(active.dataset.value);
+      }
+    } else if (this.isOpen && event.key === "Escape") {
+      event.preventDefault();
+      this.close();
+    } else if (this.isOpen && event.key === "Tab") {
+      this.close();
+    }
+  }
+}
+
+class ModelListEditor {
+  constructor(input, field) {
+    this.input = input;
+    this.field = field;
+    this.values = input.value
+      ? input.value.split(",").map((value) => value.trim()).filter(Boolean)
+      : [];
+    this.inputId = `field-${field.key}-add`;
+
+    this.element = document.createElement("div");
+    this.element.className = "model-list-editor";
+
+    const addRow = document.createElement("div");
+    addRow.className = "model-list-add";
+    this.addInput = document.createElement("input");
+    this.addInput.id = this.inputId;
+    this.addInput.type = "text";
+    this.addInput.autocomplete = "off";
+    this.addInput.placeholder = "provider/model";
+    this.addInput.disabled = field.locked;
+    const addCombobox = new ModelCombobox(this.addInput, {
+      ...field,
+      key: `${field.key}-add`,
+      label: "fallback model",
+      type: "model",
+    });
+
+    this.addButton = document.createElement("button");
+    this.addButton.type = "button";
+    this.addButton.className = "secondary-button";
+    this.addButton.textContent = "Add";
+    this.addButton.disabled = field.locked;
+    this.addButton.addEventListener("click", () => this.add());
+    addRow.append(addCombobox.element, this.addButton);
+
+    this.rows = document.createElement("div");
+    this.rows.className = "model-list-rows";
+    this.element.append(input, addRow, this.rows);
+    this.renderRows();
+  }
+
+  add() {
+    const value = this.addInput.value.trim();
+    if (!value) {
+      showMessage("Enter a full provider/model fallback.", "error");
+      return;
+    }
+    if (this.values.includes(value)) {
+      showMessage("That fallback model is already in the list.", "error");
+      return;
+    }
+    this.values.push(value);
+    this.addInput.value = "";
+    showMessage("");
+    this.sync();
+  }
+
+  move(index, offset) {
+    const destination = index + offset;
+    if (destination < 0 || destination >= this.values.length) return;
+    [this.values[index], this.values[destination]] = [
+      this.values[destination],
+      this.values[index],
+    ];
+    this.sync();
+  }
+
+  remove(index) {
+    this.values.splice(index, 1);
+    this.sync();
+  }
+
+  sync() {
+    this.input.value = this.values.join(",");
+    this.input.dataset.remove = "false";
+    this.input.dispatchEvent(new Event("input", { bubbles: true }));
+    this.renderRows();
+  }
+
+  renderRows() {
+    this.rows.innerHTML = "";
+    if (this.values.length === 0) {
+      const empty = document.createElement("div");
+      empty.className = "model-list-empty";
+      empty.textContent = "No fallback models configured.";
+      this.rows.appendChild(empty);
+      return;
+    }
+
+    this.values.forEach((value, index) => {
+      const row = document.createElement("div");
+      row.className = "model-list-row";
+
+      const model = document.createElement("span");
+      model.className = "model-list-value";
+      model.textContent = value;
+
+      const up = this.actionButton("Move up", `Move ${value} up`, () =>
+        this.move(index, -1),
+      );
+      up.disabled = this.field.locked || index === 0;
+      const down = this.actionButton("Move down", `Move ${value} down`, () =>
+        this.move(index, 1),
+      );
+      down.disabled = this.field.locked || index === this.values.length - 1;
+      const remove = this.actionButton("Remove", `Remove ${value}`, () =>
+        this.remove(index),
+      );
+      remove.disabled = this.field.locked;
+
+      row.append(model, up, down, remove);
+      this.rows.appendChild(row);
+    });
+  }
+
+  actionButton(text, label, action) {
+    const button = document.createElement("button");
+    button.type = "button";
+    button.className = "ghost-button model-list-action";
+    button.textContent = text;
+    button.setAttribute("aria-label", label);
+    button.addEventListener("click", action);
+    return button;
+  }
+}
+
+function option(value, label) {
+  const optionEl = document.createElement("option");
+  optionEl.value = value;
+  optionEl.textContent = label;
+  return optionEl;
+}
+
+function readFieldValue(input) {
+  if (input.type === "checkbox") return input.checked ? "true" : "false";
+  if (input.dataset.remove === "true") return null;
+  if (
+    input.dataset.fieldType === "optional_model" &&
+    input.value.trim().toLowerCase() === "none"
+  ) {
+    return null;
+  }
+  if (input.dataset.secret === "true" && input.dataset.configured === "true") {
+    return input.value ? input.value : MASKED_SECRET;
+  }
+  if (input.dataset.nullable === "true" && !input.value.trim()) return null;
+  return input.value;
+}
+
+function comparableValue(value) {
+  return value === null ? NULL_VALUE : String(value);
+}
+
+function changedValues() {
+  const values = {};
+  document.querySelectorAll("[data-key]").forEach((input) => {
+    if (input.disabled || !input.matches("input, select, textarea")) return;
+    const value = readFieldValue(input);
+    if (comparableValue(value) !== input.dataset.original) {
+      values[input.dataset.key] = value;
+    }
+  });
+  return values;
+}
+
+function updateDirtyState() {
+  const count = Object.keys(changedValues()).length;
+  byId("dirtyState").textContent =
+    count === 0 ? "No changes" : `${count} unsaved change${count === 1 ? "" : "s"}`;
+  byId("applyButton").disabled = count === 0;
+}
+
+async function validate(showResult = true) {
+  const result = await api("/admin/api/config/validate", {
+    method: "POST",
+    body: JSON.stringify({ values: changedValues() }),
+  });
+  if (showResult) {
+    showValidationResult(result);
+  }
+  return result;
+}
+
+function showValidationResult(result) {
+  if (result.valid) {
+    showMessage("Config shape is valid", "ok");
+  } else {
+    showMessage(result.errors.join("; "), "error");
+  }
+}
+
+async function apply() {
+  const result = await api("/admin/api/config/apply", {
+    method: "POST",
+    body: JSON.stringify({ values: changedValues() }),
+  });
+  if (!result.applied) {
+    showValidationResult(result);
+    return;
+  }
+  const restart = result.restart || {};
+  if (restart.required && restart.automatic) {
+    showMessage("Applied. Restarting server...", "ok");
+    byId("applyButton").disabled = true;
+    setTimeout(() => {
+      window.location.href = restart.admin_url || "/admin";
+    }, 1600);
+    return;
+  }
+  const pending = restart.required ? restart.fields || [] : result.pending_fields || [];
+  await load();
+  showMessage(
+    pending.length
+      ? `Applied. Restart fcc-server to use: ${pending.join(", ")}`
+      : "Applied",
+    "ok",
+  );
+}
+
+async function refreshLocalStatus() {
+  const result = await api("/admin/api/providers/local-status");
+  result.providers.forEach((provider) => {
+    if (provider.status === "missing_url") return;
+    if (provider.status === "reachable") {
+      updateProviderCheckResult(
+        provider.provider_id,
+        "ok",
+        `Reachable: ${provider.base_url}`,
+      );
+      return;
+    }
+    const detail = provider.message
+      ? provider.message
+      : provider.status_code
+        ? `${provider.base_url} returned HTTP ${provider.status_code}`
+        : "The local provider did not respond.";
+    updateProviderCheckResult(
+      provider.provider_id,
+      "error",
+      `Unavailable: ${detail}`,
+    );
+  });
+}
+
+async function testProvider(providerId, button) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "Checking...";
+  updateProviderCheckResult(providerId, "checking", "Checking...");
+  try {
+    const result = await api(`/admin/api/providers/${providerId}/test`, {
+      method: "POST",
+      body: "{}",
+    });
+    if (result.ok) {
+      updateProviderCheckResult(
+        providerId,
+        "ok",
+        `${result.models.length} models available`,
+      );
+      setModelOptions([
+        ...state.modelOptions,
+        ...result.models.map((model) => `${providerId}/${model}`),
+      ]);
+    } else {
+      updateProviderCheckResult(
+        providerId,
+        "error",
+        `Unavailable: ${result.message || "Provider check failed."}`,
+      );
+    }
+  } catch {
+    updateProviderCheckResult(
+      providerId,
+      "error",
+      "Provider check could not be completed.",
+    );
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+async function hydrateModelOptions() {
+  try {
+    await loadModelOptions();
+  } catch {
+    // Model fields remain editable when optional catalog hydration is unavailable.
+  }
+}
+
+async function loadModelOptions(refresh = false) {
+  const result = await api("/admin/api/models" + (refresh ? "/refresh" : ""), {
+    method: refresh ? "POST" : "GET",
+  });
+  setModelOptions(result.models);
+  return result;
+}
+
+async function refreshModelOptions(button) {
+  const original = button.textContent;
+  button.disabled = true;
+  button.textContent = "Refreshing";
+  try {
+    const result = await loadModelOptions(true);
+    const failedProviders = result.failed_providers || [];
+    if (failedProviders.length) {
+      const labels = failedProviders.map(providerDisplayName).join(", ");
+      showMessage(
+        `${state.modelOptions.length} models available; could not refresh ${labels}`,
+        "warn",
+      );
+    } else {
+      showMessage(`${state.modelOptions.length} models available`, "ok");
+    }
+  } catch (error) {
+    showMessage(`Could not refresh models: ${error.message}`, "error");
+  } finally {
+    button.disabled = false;
+    button.textContent = original;
+  }
+}
+
+function providerDisplayName(providerId) {
+  const provider = state.config?.provider_status?.find(
+    (candidate) => candidate.provider_id === providerId,
+  );
+  return provider?.display_name || providerId;
+}
+
+function setModelOptions(models) {
+  state.modelOptions = Array.from(
+    new Set(models.filter((model) => typeof model === "string" && model.trim())),
+  ).sort((left, right) => left.localeCompare(right));
+  state.modelComboboxes.forEach((combobox) => {
+    if (combobox.isOpen) combobox.render(combobox.query);
+  });
+}
+
+function showMessage(message, kind = "") {
+  const area = byId("messageArea");
+  area.textContent = message;
+  area.className = `message-area ${kind}`.trim();
+}
+
+byId("validateButton").addEventListener("click", () => validate(true));
+byId("applyButton").addEventListener("click", apply);
+document.addEventListener("pointerdown", (event) => {
+  state.modelComboboxes.forEach((combobox) => {
+    if (combobox.isOpen && !combobox.element.contains(event.target)) combobox.close();
+  });
+});
+
+load().catch((error) => {
+  showMessage(error.message, "error");
+});
