@@ -56,7 +56,7 @@ jobs:
 
       - name: Save Python
         if: steps.python-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ env.UV_PYTHON_INSTALL_DIR }}
           key: ${{ steps.python-cache.outputs.cache-primary-key }}
@@ -98,7 +98,7 @@ jobs:
 
       - name: Save uv cache
         if: steps.exact-cache.outputs.cache-hit != 'true'
-        uses: actions/cache/save@caa296126883cff596d87d8935842f9db880ef25
+        uses: actions/cache/save@55cc8345863c7cc4c66a329aec7e433d2d1c52a9
         with:
           path: ${{ env.UV_CACHE_DIR }}
           key: ${{ steps.uv-cache.outputs.cache-primary-key }}
