@@ -12,6 +12,7 @@ from free_claude_code.core.anthropic import (
     TokenCountRequest,
     get_token_count,
 )
+from free_claude_code.core.chat_completions.models import ChatCompletionsRequest
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.trace import trace_event
 
@@ -247,3 +248,54 @@ async def stop_cli(
     )
     logger.info("STOP_CLI: source=messaging_workflow cancelled_count={}", count)
     return {"status": "stopped", "cancelled_count": count}
+
+
+async def _create_chat_completions_response(
+    services: ApiServices,
+    request_data: ChatCompletionsRequest,
+) -> object:
+    lease: RequestRuntimeLease | None = None
+    try:
+        lease = await services.requests.acquire()
+        from free_claude_code.application.execution import ProviderExecutor
+
+        from .handlers.chat_completions import ChatCompletionsHandler
+
+        handler = ChatCompletionsHandler(
+            lease.settings,
+            provider_executor=ProviderExecutor(
+                _provider_resolver(lease),
+                progress_timeout_seconds=lease.settings.provider_progress_timeout,
+            ),
+        )
+        response = await handler.create(request_data)
+    except ApplicationError as exc:
+        if lease is not None:
+            await lease.release()
+        return ordinary_application_error_response(
+            exc,
+            wire_api="messages",
+            request_id="",
+        )
+    except BaseException:
+        if lease is not None:
+            await lease.release()
+        raise
+    assert lease is not None
+    return await bind_response_lifetime(response, lease.release)
+
+
+@router.post("/v1/chat/completions")
+async def create_chat_completion(
+    request: Request,
+    request_data: ChatCompletionsRequest,
+    services: ApiServices = Depends(get_services),
+    _auth=Depends(require_proxy_auth),
+):
+    """OpenAI Chat Completions endpoint. Converts to Anthropic Messages format."""
+    return await _create_chat_completions_response(services, request_data)
+
+
+@router.api_route("/v1/chat/completions", methods=["HEAD", "OPTIONS"])
+async def probe_chat_completions(_auth=Depends(require_proxy_auth)):
+    return _probe_response("POST, HEAD, OPTIONS")
