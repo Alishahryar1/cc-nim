@@ -25,6 +25,7 @@ from free_claude_code.config.provider_catalog import (
     NARAROUTE_DEFAULT_BASE,
     NEBIUS_DEFAULT_BASE,
     OLLAMA_CLOUD_DEFAULT_BASE,
+    POOLSIDE_DEFAULT_BASE,
     PROVIDER_CATALOG,
     QWENCLOUD_CODING_DEFAULT_BASE,
     QWENCLOUD_DEFAULT_BASE,
@@ -107,6 +108,7 @@ def _make_settings(**overrides):
     mock.llamacpp_base_url = "http://localhost:8080/v1"
     mock.ollama_base_url = "http://localhost:11434"
     mock.ollama_api_key = "test_ollama_cloud_key"
+    mock.poolside_api_key = "test_poolside_key"
     mock.nvidia_nim_proxy = None
     mock.open_router_proxy = None
     mock.lmstudio_proxy = None
@@ -152,6 +154,7 @@ def _make_settings(**overrides):
     mock.cerebras_api_key = ""
     mock.cerebras_proxy = None
     mock.ollama_cloud_proxy = None
+    mock.poolside_proxy = None
     mock.kilo_api_key = "test_kilo_key"
     mock.kilo_proxy = None
     mock.openai_proxy = None
@@ -231,6 +234,30 @@ def test_ollama_cloud_provider_config_uses_key_and_proxy():
     assert config.api_key == "ollama-cloud-token"
     assert config.base_url == OLLAMA_CLOUD_DEFAULT_BASE
     assert config.proxy == "http://proxy.test:8080"
+
+
+def test_poolside_provider_config_uses_key_base_and_proxy() -> None:
+    descriptor = PROVIDER_CATALOG["poolside"]
+    settings = _make_settings(
+        poolside_api_key="poolside-token",
+        poolside_proxy="http://proxy.test:8080",
+    )
+
+    config = build_provider_config(descriptor, settings)
+    with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
+        provider = create_provider("poolside", settings)
+
+    assert descriptor.display_name == "Poolside AI"
+    assert descriptor.credential_env == "POOLSIDE_API_KEY"
+    assert descriptor.credential_attr == "poolside_api_key"
+    assert descriptor.credential_url == "https://platform.poolside.ai/"
+    assert descriptor.default_base_url == POOLSIDE_DEFAULT_BASE
+    assert descriptor.base_url_attr is None
+    assert descriptor.proxy_attr == "poolside_proxy"
+    assert config.api_key == "poolside-token"
+    assert config.base_url == POOLSIDE_DEFAULT_BASE
+    assert config.proxy == "http://proxy.test:8080"
+    assert isinstance(provider, OpenAIChatProvider)
 
 
 def test_xai_provider_config_uses_key_base_and_proxy() -> None:
@@ -843,6 +870,7 @@ def test_create_provider_instantiates_each_builtin():
         "ollama_cloud": OpenAIChatProvider,
         "wafer": OpenAIChatProvider,
         "opencode_zen": OpenAIChatProvider,
+        "poolside": OpenAIChatProvider,
         "opencode_go": OpenAIChatProvider,
         "vercel": OpenAIChatProvider,
         "bedrock": OpenAIChatProvider,
