@@ -29,6 +29,7 @@ LMSTUDIO_DEFAULT_BASE = "http://localhost:1234/v1"
 LLAMACPP_DEFAULT_BASE = "http://localhost:8080/v1"
 OLLAMA_DEFAULT_BASE = "http://localhost:11434"
 OLLAMA_CLOUD_DEFAULT_BASE = "https://ollama.com/v1"
+OMLX_DEFAULT_BASE = "http://localhost:8001/v1"
 OPENCODE_ZEN_DEFAULT_BASE = "https://opencode.ai/zen/v1"
 OPENCODE_GO_DEFAULT_BASE = "https://opencode.ai/zen/go/v1"
 VERCEL_AI_GATEWAY_DEFAULT_BASE = "https://ai-gateway.vercel.sh/v1"
@@ -571,6 +572,16 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         static_credential="ollama",
         default_base_url=OLLAMA_DEFAULT_BASE,
         base_url_attr="ollama_base_url",
+        local=True,
+    ),
+    "omlx": ProviderDescriptor(
+        provider_id="omlx",
+        display_name="OMLX",
+        credential_env="OMLX_API_KEY",
+        credential_attr="omlx_api_key",
+        default_base_url=OMLX_DEFAULT_BASE,
+        base_url_attr="omlx_base_url",
+        proxy_attr="omlx_proxy",
         local=True,
     ),
 }

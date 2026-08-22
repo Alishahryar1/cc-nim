@@ -35,6 +35,25 @@ def test_local_provider_openai_models_returns_first_id(monkeypatch) -> None:
     assert calls == [("http://127.0.0.1:1234/v1/models", 1.5)]
 
 
+def test_omlx_provider_targets_v1_models_directly(monkeypatch) -> None:
+    calls: list[str] = []
+
+    def fake_get(url: str, *, timeout: float) -> FakeResponse:
+        calls.append(url)
+        return FakeResponse(200, {"data": [{"id": "omlx-model"}]})
+
+    monkeypatch.setattr("smoke.lib.local_providers.httpx.get", fake_get)
+
+    model = first_local_provider_model_id(
+        "omlx",
+        "http://127.0.0.1:8001/v1",
+        timeout_s=45,
+    )
+
+    assert model == "omlx-model"
+    assert calls == ["http://127.0.0.1:8001/v1/models"]
+
+
 @pytest.mark.parametrize(
     ("provider", "port", "model_id"),
     [

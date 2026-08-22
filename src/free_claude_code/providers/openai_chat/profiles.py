@@ -666,4 +666,11 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         normalize_base_url=True,
         reasoning_delta_field="reasoning",
     ),
+    "omlx": OpenAIChatProfile(
+        _policy(
+            "OMLX",
+            ReasoningReplayMode.DISABLED,
+        ),
+        NO_REASONING,
+    ),
 }

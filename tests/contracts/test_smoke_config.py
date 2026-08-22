@@ -75,6 +75,8 @@ def _settings(**overrides):
         "lm_studio_base_url": "",
         "llamacpp_base_url": "",
         "ollama_base_url": "http://localhost:11434",
+        "omlx_api_key": "",
+        "omlx_base_url": "http://localhost:8001/v1",
     }
     values.update(overrides)
     return SimpleNamespace(**values)
