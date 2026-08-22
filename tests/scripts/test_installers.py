@@ -420,9 +420,10 @@ chmod +x "$HOME/.local/bin/hermes"
         """#!/bin/sh
 echo "grok-install" >> "$CALL_LOG"
 [ "$FAIL_STEP" = "grok-install" ] && exit 27
-mkdir -p "$HOME/.local/bin"
-cp "$FAKE_FIXTURES/grok-command.sh" "$HOME/.local/bin/grok"
-chmod +x "$HOME/.local/bin/grok"
+grok_bin="${GROK_BIN_DIR:-$HOME/.grok/bin}"
+mkdir -p "$grok_bin"
+cp "$FAKE_FIXTURES/grok-command.sh" "$grok_bin/grok"
+chmod +x "$grok_bin/grok"
 """,
     )
     _write_executable(
@@ -526,6 +527,7 @@ printf '%s  %s\n' "$checksum" "$1"
         }
     )
     env.pop("XDG_BIN_HOME", None)
+    env.pop("GROK_BIN_DIR", None)
     return PosixHarness(tmp_path, bin_dir, fixtures, tool_bin, log, env)
 
 
@@ -565,6 +567,24 @@ def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> No
         "fcc-server:--version",
     ]
     assert not any("hermes:setup" in call for call in calls)
+    home = Path(posix_harness.env["HOME"])
+    assert (home / ".grok" / "bin" / "grok").is_file()
+    assert not (home / ".local" / "bin" / "grok").exists()
+
+
+def test_install_sh_discovers_grok_in_custom_bin_directory(
+    posix_harness: PosixHarness,
+) -> None:
+    custom_grok_bin = posix_harness.root / "custom-grok-bin"
+    posix_harness.env["GROK_BIN_DIR"] = str(custom_grok_bin)
+
+    result = posix_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert (custom_grok_bin / "grok").is_file()
+    assert not (Path(posix_harness.env["HOME"]) / ".grok" / "bin" / "grok").exists()
+    calls = posix_harness.calls()
+    assert calls.index("grok-install") < calls.index("grok:--version")
 
 
 def test_install_sh_installs_selected_hermes_without_setup(
@@ -1789,7 +1809,7 @@ Add-Content -LiteralPath $env:CALL_LOG -Value "hermes-install:${NonInteractive}:
     )
     (fixtures / "grok-installer.ps1").write_text(
         r"""if ($env:FAIL_STEP -eq "grok-install") { exit 66 }
-$bin = Join-Path $env:USERPROFILE ".local\bin"
+$bin = if ($env:GROK_BIN_DIR) { $env:GROK_BIN_DIR } else { Join-Path $env:USERPROFILE ".grok\bin" }
 New-Item -ItemType Directory -Force -Path $bin | Out-Null
 Copy-Item (Join-Path $env:FAKE_FIXTURES "grok-command.cmd") (Join-Path $bin "grok.cmd") -Force
 Add-Content -LiteralPath $env:CALL_LOG -Value "grok-install"
@@ -1940,6 +1960,7 @@ $installer = [scriptblock]::Create($installerSource)
             "FAIL_STEP": "",
         }
     )
+    env.pop("GROK_BIN_DIR", None)
     return PowerShellHarness(
         tmp_path, bin_dir, fixtures, tool_bin, log, env, powershell, wrapper
     )
@@ -1986,6 +2007,8 @@ def test_install_ps1_fresh_install_is_verified(
     ]
     home = Path(powershell_harness.env["USERPROFILE"])
     app_data = Path(powershell_harness.env["APPDATA"])
+    assert (home / ".grok" / "bin" / "grok.cmd").is_file()
+    assert not (home / ".local" / "bin" / "grok.cmd").exists()
     icon = home / ".fcc" / "app-icon.ico"
     assert icon.read_text(encoding="utf-8").strip() == "fake icon"
     assert calls[-1] == f'fcc-desktop:--export-icon "{icon}"'
@@ -2007,6 +2030,23 @@ def test_install_ps1_fresh_install_is_verified(
         / "Programs"
         / "Free Claude Code.lnk"
     ).is_file()
+
+
+def test_install_ps1_discovers_grok_in_custom_bin_directory(
+    powershell_harness: PowerShellHarness,
+) -> None:
+    custom_grok_bin = powershell_harness.root / "custom-grok-bin"
+    powershell_harness.env["GROK_BIN_DIR"] = str(custom_grok_bin)
+
+    result = powershell_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert (custom_grok_bin / "grok.cmd").is_file()
+    assert not (
+        Path(powershell_harness.env["USERPROFILE"]) / ".grok" / "bin" / "grok.cmd"
+    ).exists()
+    calls = powershell_harness.calls()
+    assert calls.index("grok-install") < calls.index("grok:--version")
 
 
 def test_install_ps1_preserves_compatible_existing_hermes(

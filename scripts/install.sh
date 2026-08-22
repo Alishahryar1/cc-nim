@@ -272,6 +272,12 @@ add_known_bin_directories() {
         add_path_entry "${XDG_DATA_HOME:-$HOME/.local/share}/pi-node/current/bin"
     fi
 
+    if [ -n "${GROK_BIN_DIR:-}" ]; then
+        add_path_entry "$GROK_BIN_DIR"
+    elif [ -n "${HOME:-}" ]; then
+        add_path_entry "$HOME/.grok/bin"
+    fi
+
     export PATH
     hash -r 2>/dev/null || true
 }
