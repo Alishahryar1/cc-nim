@@ -192,6 +192,31 @@ def is_retryable_provider_error(exc: BaseException) -> bool:
     )
 
 
+def is_retryable_stream_error(exc: BaseException) -> bool:
+    """Return whether an opened stream failure permits replay or recovery."""
+    if isinstance(exc, RetryableProviderProtocolError):
+        return True
+    if isinstance(exc, ExecutionFailure):
+        return exc.retryable
+    if isinstance(exc, openai.AuthenticationError | openai.BadRequestError):
+        return False
+    if retryable_transient_status(exc) is not None:
+        return True
+    return isinstance(
+        exc,
+        (
+            TimeoutError,
+            httpx.ReadTimeout,
+            httpx.ReadError,
+            httpx.RemoteProtocolError,
+            httpx.ConnectError,
+            httpx.NetworkError,
+            openai.APITimeoutError,
+            openai.APIConnectionError,
+        ),
+    )
+
+
 def retryable_upstream_status(exc: BaseException) -> int | None:
     """Return a status eligible for provider-opening backoff."""
     status = retryable_transient_status(exc)

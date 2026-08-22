@@ -1066,7 +1066,9 @@ map the canonical kind and status to their wire error types.
 [providers/failure_policy.py](src/free_claude_code/providers/failure_policy.py)
 owns generic raw OpenAI SDK and `httpx` exception classification,
 transient status/body inference, stable provider wording, and final diagnostic
-construction for those failures.
+construction for those failures. It also owns phase-specific retry
+qualification: admission classifies failures while opening an operation, while
+an already-open stream uses the narrower stream-failure policy.
 Concrete adapters may supply one narrow semantic override for an upstream quirk
 that the shared SDK cannot express correctly. The concrete adapter owns the
 exact upstream marker, while the shared failure policy owns its canonical
@@ -1081,6 +1083,8 @@ marker enters `core/`, another provider, or an API adapter.
 [providers/stream_recovery.py](src/free_claude_code/providers/stream_recovery.py)
 owns only the 0.75-second/65,536-byte commit holdback and the choice between
 transparent replay, request-local continuation/tool salvage, and final failure.
+It consumes an explicit retryability decision and does not import provider
+transport SDKs or classify exceptions.
 `ProviderRetrySession` owns one five-attempt budget for the whole logical
 execution: initial opening, deterministic request-shape corrections, early
 replay, continuation, and tool repair all consume that same budget. There are no

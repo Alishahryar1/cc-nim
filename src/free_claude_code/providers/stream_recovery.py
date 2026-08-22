@@ -5,12 +5,7 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 
-import httpx
-import openai
-
-from free_claude_code.core.failures import ExecutionFailure
-
-from .failure_policy import RetryableProviderProtocolError, retryable_transient_status
+from .failure_policy import RetryableProviderProtocolError
 
 EARLY_HOLDBACK_SECONDS = 0.75
 RECOVERY_BUFFER_MAX_BYTES = 65_536
@@ -120,19 +115,13 @@ class RecoveryController:
 
     def advance_failure(
         self,
-        error: BaseException,
         *,
+        retryable: bool,
         stream_opened: bool,
         generated_output: bool,
         complete_tool_salvageable: bool,
         attempts_remaining: int,
-        retryable_override: bool | None = None,
     ) -> RecoveryDecision:
-        retryable = (
-            is_retryable_stream_error(error)
-            if retryable_override is None
-            else retryable_override
-        )
         committed = self._holdback.committed
         has_buffered = self._holdback.has_buffered
         retry_available = attempts_remaining > 0
@@ -173,28 +162,3 @@ class RecoveryController:
             committed=committed,
             has_buffered=has_buffered,
         )
-
-
-def is_retryable_stream_error(exc: BaseException) -> bool:
-    """Return whether one stream failure qualifies for retry or recovery."""
-    if isinstance(exc, RetryableProviderProtocolError):
-        return True
-    if isinstance(exc, ExecutionFailure):
-        return exc.retryable
-    if isinstance(exc, openai.AuthenticationError | openai.BadRequestError):
-        return False
-    if retryable_transient_status(exc) is not None:
-        return True
-    return isinstance(
-        exc,
-        (
-            TimeoutError,
-            httpx.ReadTimeout,
-            httpx.ReadError,
-            httpx.RemoteProtocolError,
-            httpx.ConnectError,
-            httpx.NetworkError,
-            openai.APITimeoutError,
-            openai.APIConnectionError,
-        ),
-    )

@@ -43,6 +43,7 @@ from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.failure_policy import (
     RetryableToolProtocolError,
     classify_provider_failure,
+    is_retryable_stream_error,
     underlying_provider_error,
 )
 from free_claude_code.providers.http import (
@@ -58,7 +59,6 @@ from free_claude_code.providers.stream_recovery import (
     RecoveryController,
     RecoveryFailureAction,
     TruncatedProviderStreamError,
-    is_retryable_stream_error,
 )
 
 from .output_cap import clamp_output_tokens, parse_output_token_cap
@@ -733,15 +733,17 @@ class _OpenAIChatStreamRunner:
                     and ledger.has_emitted_tool_block()
                     and all_emitted_tools_complete(ledger, self._request)
                 )
+                retryable = (
+                    attempt.failure_retryable
+                    if attempt is not None and attempt.failure_retryable is not None
+                    else is_retryable_stream_error(error)
+                )
                 decision = recovery.advance_failure(
-                    error,
+                    retryable=retryable,
                     stream_opened=stream_opened,
                     generated_output=generated_output,
                     complete_tool_salvageable=complete_tool_salvageable,
                     attempts_remaining=retry_session.attempts_remaining,
-                    retryable_override=(
-                        attempt.failure_retryable if attempt is not None else None
-                    ),
                 )
                 if decision.action == RecoveryFailureAction.EARLY_RETRY:
                     trace_event(
@@ -1031,9 +1033,6 @@ class _OpenAIChatStreamRunner:
         retry_session: ProviderRetrySession,
     ) -> list[str] | None:
         """Build terminal recovery events when the interrupted stream permits it."""
-        if not is_retryable_stream_error(error):
-            return None
-
         if ledger.has_emitted_tool_block():
             if not all_emitted_tools_complete(ledger, self._request):
                 repair_events = await self._repair_tool_args(
