@@ -1,5 +1,6 @@
 """Provider streams raise canonical failures after closing committed blocks."""
 
+import asyncio
 from collections import deque
 from collections.abc import AsyncIterator
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -29,7 +30,7 @@ class _FailingStream:
         chunks: list[object],
         error: Exception | None,
         *,
-        close_error: Exception | None = None,
+        close_error: BaseException | None = None,
     ) -> None:
         self._chunks = chunks
         self._error = error
@@ -193,14 +194,26 @@ async def test_stream_close_failure_without_active_error_is_observability_only()
 
 
 @pytest.mark.asyncio
-async def test_attempt_scope_releases_attempt_when_resource_close_fails() -> None:
+@pytest.mark.parametrize(
+    "close_error",
+    [
+        pytest.param(RuntimeError("cleanup api_key=SECRET"), id="exception"),
+        pytest.param(
+            asyncio.CancelledError("cleanup api_key=SECRET"),
+            id="cleanup-cancellation",
+        ),
+    ],
+)
+async def test_attempt_scope_releases_attempt_when_resource_close_fails(
+    close_error: BaseException,
+) -> None:
     controller = immediate_admission()
     execution = controller.start_execution(request_id="req_scope_close")
     attempt = await execution.open_attempt(ProviderOperationKind.CONTINUATION)
     stream = _FailingStream(
         [],
         None,
-        close_error=RuntimeError("cleanup api_key=SECRET"),
+        close_error=close_error,
     )
     scope = ProviderAttemptScope(
         attempt,
@@ -222,14 +235,26 @@ async def test_attempt_scope_releases_attempt_when_resource_close_fails() -> Non
         source="provider",
         provider="TEST",
         request_id="req_scope_close",
-        close_exc_type="RuntimeError",
+        close_exc_type=type(close_error).__name__,
         preserved_exc_type="ValueError",
     )
     assert "SECRET" not in repr(trace_event.call_args)
 
 
 @pytest.mark.asyncio
-async def test_completed_stream_close_failure_preserves_success_lifecycle() -> None:
+@pytest.mark.parametrize(
+    "close_error",
+    [
+        pytest.param(RuntimeError("cleanup api_key=SECRET"), id="exception"),
+        pytest.param(
+            asyncio.CancelledError("cleanup api_key=SECRET"),
+            id="cleanup-cancellation",
+        ),
+    ],
+)
+async def test_completed_stream_close_failure_preserves_success_lifecycle(
+    close_error: BaseException,
+) -> None:
     provider = _provider()
     request = make_messages_request(
         "test-model",
@@ -239,7 +264,7 @@ async def test_completed_stream_close_failure_preserves_success_lifecycle() -> N
     stream = _FailingStream(
         [_chunk(content="complete", finish_reason="stop")],
         None,
-        close_error=RuntimeError("cleanup api_key=SECRET"),
+        close_error=close_error,
     )
 
     with (
@@ -270,10 +295,41 @@ async def test_completed_stream_close_failure_preserves_success_lifecycle() -> N
         source="provider",
         provider="NIM",
         request_id="req_successful_close_failure",
-        close_exc_type="RuntimeError",
+        close_exc_type=type(close_error).__name__,
         preserved_exc_type=None,
     )
     assert "SECRET" not in repr(trace_event.call_args)
+
+
+@pytest.mark.asyncio
+async def test_caller_cancellation_during_stream_close_propagates() -> None:
+    class BlockingClose:
+        def __init__(self) -> None:
+            self.started = asyncio.Event()
+            self.close_calls = 0
+
+        async def aclose(self) -> None:
+            self.close_calls += 1
+            self.started.set()
+            await asyncio.Event().wait()
+
+    stream = BlockingClose()
+    with patch("free_claude_code.providers.http.trace_event") as trace_event:
+        close_task = asyncio.create_task(
+            close_provider_stream(
+                stream,
+                active_error=None,
+                provider_name="TEST",
+                request_id="req_cancelled_close",
+            )
+        )
+        await asyncio.wait_for(stream.started.wait(), timeout=1)
+        close_task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await close_task
+
+    assert stream.close_calls == 1
+    trace_event.assert_not_called()
 
 
 @pytest.mark.asyncio

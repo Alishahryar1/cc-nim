@@ -1,5 +1,6 @@
 """Shared HTTP lifecycle helpers for upstream provider clients."""
 
+import asyncio
 import inspect
 from typing import Any, TypeVar
 
@@ -31,7 +32,15 @@ async def close_provider_stream(
     """Close one stream without letting cleanup change its established outcome."""
     try:
         await maybe_await_aclose(stream)
-    except Exception as close_error:
+    except (Exception, asyncio.CancelledError) as close_error:
+        if isinstance(close_error, asyncio.CancelledError):
+            current_task = asyncio.current_task()
+            if (
+                isinstance(active_error, asyncio.CancelledError)
+                or current_task is None
+                or current_task.cancelling()
+            ):
+                raise
         active_error_type = (
             type(active_error).__name__ if active_error is not None else None
         )
