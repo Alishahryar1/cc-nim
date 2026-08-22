@@ -50,6 +50,7 @@ from free_claude_code.providers.failure_policy import (
     underlying_provider_error,
 )
 from free_claude_code.providers.http import (
+    ProviderAttemptScope,
     close_provider_stream,
     maybe_await_aclose,
 )
@@ -155,38 +156,6 @@ class _OpenAIChatFailureResolution:
     outcome: _OpenAIChatFailureOutcome
     events: tuple[str, ...] = ()
     failure: ExecutionFailure | None = None
-
-
-class _OpenAIChatAttemptScope:
-    """Own one returned provider stream and its admitted attempt."""
-
-    def __init__(
-        self,
-        stream: Any,
-        attempt: ProviderAttempt,
-        *,
-        provider_name: str,
-        request_id: str | None,
-    ) -> None:
-        self.stream = stream
-        self.attempt = attempt
-        self._provider_name = provider_name
-        self._request_id = request_id
-        self._closed = False
-
-    async def aclose(self, *, active_error: BaseException | None) -> None:
-        if self._closed:
-            return
-        self._closed = True
-        try:
-            await close_provider_stream(
-                self.stream,
-                active_error=active_error,
-                provider_name=self._provider_name,
-                request_id=self._request_id,
-            )
-        finally:
-            await self.attempt.aclose()
 
 
 class _OpenAIChatStreamAssembler:
@@ -891,23 +860,23 @@ class _OpenAIChatStreamRunner:
             for event in assembler.start_events():
                 for out_event in hold_event(event):
                     yield out_event
-            scope: _OpenAIChatAttemptScope | None = None
+            scope: ProviderAttemptScope | None = None
             try:
                 stream, body, attempt = await self._provider._create_stream(
                     body,
                     execution,
                     ProviderOperationKind.GENERATION,
                 )
-                scope = _OpenAIChatAttemptScope(
-                    stream,
+                scope = ProviderAttemptScope(
                     attempt,
                     provider_name=tag,
                     request_id=self._request_id,
                 )
+                stream = scope.retain(stream)
                 assembler.bind_tool_argument_aliases(
                     self._provider._tool_argument_aliases(body)
                 )
-                async for chunk in scope.stream:
+                async for chunk in stream:
                     if not scope.attempt.accepted:
                         await scope.attempt.accept()
                     for event in assembler.feed(chunk):
@@ -984,7 +953,7 @@ class _OpenAIChatStreamRunner:
         self,
         *,
         error: Exception,
-        scope: _OpenAIChatAttemptScope | None,
+        scope: ProviderAttemptScope | None,
         assembler: _OpenAIChatStreamAssembler,
         body: dict[str, Any],
         execution: ProviderExecution,
@@ -1118,21 +1087,26 @@ class _OpenAIChatStreamRunner:
         """Collect one complete buffered continuation response."""
         last_error: Exception | None = None
         while execution.can_attempt:
-            stream: Any | None = None
-            attempt: ProviderAttempt | None = None
+            scope: ProviderAttemptScope | None = None
             try:
                 stream, accepted_body, attempt = await self._provider._create_stream(
                     body,
                     execution,
                     operation_kind,
                 )
+                scope = ProviderAttemptScope(
+                    attempt,
+                    provider_name=self._provider._provider_name,
+                    request_id=self._request_id,
+                )
+                stream = scope.retain(stream)
                 text_parts: list[str] = []
                 thinking_parts: list[str] = []
                 tool_calls = OpenAIToolCallCollector()
                 terminal_seen = False
                 async for chunk in stream:
-                    if not attempt.accepted:
-                        await attempt.accept()
+                    if not scope.attempt.accepted:
+                        await scope.attempt.accept()
                     if not getattr(chunk, "choices", None):
                         continue
                     choice = chunk.choices[0]
@@ -1176,8 +1150,8 @@ class _OpenAIChatStreamRunner:
             except Exception as error:
                 last_error = error
                 retryable = is_retryable_stream_error(error)
-                if attempt is not None and not attempt.accepted:
-                    failure = await attempt.fail(
+                if scope is not None and not scope.attempt.accepted:
+                    failure = await scope.attempt.fail(
                         error,
                         provider_failure_override=(
                             self._provider._provider_failure_override
@@ -1197,10 +1171,8 @@ class _OpenAIChatStreamRunner:
                     exc_type=type(error).__name__,
                 )
             finally:
-                if stream is not None:
-                    await maybe_await_aclose(stream)
-                if attempt is not None:
-                    await attempt.aclose()
+                if scope is not None:
+                    await scope.aclose(active_error=sys.exception())
         if last_error is not None:
             raise last_error
         return _CollectedRecoveryOutput(text="", thinking="", tool_calls=())

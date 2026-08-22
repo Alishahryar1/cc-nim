@@ -1,5 +1,6 @@
 """Tests for streaming error handling in providers/nvidia_nim/client.py."""
 
+import asyncio
 import json
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
@@ -72,12 +73,39 @@ def _recovery_output(
 class ClosableAsyncStreamMock(AsyncStreamMock):
     """Async stream mock that records cleanup."""
 
-    def __init__(self, chunks, error=None):
+    def __init__(self, chunks, error=None, *, close_error=None):
         super().__init__(chunks, error=error)
         self.closed = False
+        self.close_calls = 0
+        self._close_error = close_error
 
     async def aclose(self):
+        self.close_calls += 1
         self.closed = True
+        if self._close_error is not None:
+            raise self._close_error
+
+
+class BlockingClosableAsyncStreamMock:
+    """Async stream that blocks until its consumer is cancelled."""
+
+    def __init__(self, *, close_error=None):
+        self.entered = asyncio.Event()
+        self.close_calls = 0
+        self._close_error = close_error
+
+    def __aiter__(self):
+        return self._aiter()
+
+    async def _aiter(self):
+        self.entered.set()
+        await asyncio.Event().wait()
+        yield
+
+    async def aclose(self):
+        self.close_calls += 1
+        if self._close_error is not None:
+            raise self._close_error
 
 
 def _make_provider():
@@ -1403,6 +1431,139 @@ class TestStreamingExceptionHandling:
         assert result.thinking == ""
         assert result.tool_calls == ()
         assert stream.closed is True
+
+    @pytest.mark.asyncio
+    async def test_recovery_close_failure_preserves_completed_output(self):
+        """A failed stream close cannot replace completed recovery output."""
+        stream = ClosableAsyncStreamMock(
+            [
+                _make_chunk(content="world"),
+                _make_chunk(finish_reason="stop"),
+            ],
+            close_error=RuntimeError("cleanup failed"),
+        )
+        provider = _make_provider()
+        runner = _make_stream_runner(provider, request_id="req_recovery_success")
+        execution = provider._admission.start_execution(
+            request_id="req_recovery_success"
+        )
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            return_value=stream,
+        ):
+            result = await runner._collect_recovery_output(
+                {"messages": []},
+                include_reasoning=True,
+                execution=execution,
+                operation_kind=ProviderOperationKind.CONTINUATION,
+            )
+
+        replacement = await execution.open_attempt(ProviderOperationKind.CONTINUATION)
+        await replacement.aclose()
+        assert result.text == "world"
+        assert stream.close_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_recovery_close_failure_does_not_block_retry(self):
+        """Cleanup failure cannot replace a retryable recovery failure."""
+        failed = ClosableAsyncStreamMock(
+            [],
+            error=TimeoutError("original retryable failure"),
+            close_error=RuntimeError("cleanup failed"),
+        )
+        recovered = ClosableAsyncStreamMock(
+            [
+                _make_chunk(content="world"),
+                _make_chunk(finish_reason="stop"),
+            ]
+        )
+        provider = _make_provider()
+        runner = _make_stream_runner(provider)
+        execution = provider._admission.start_execution()
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=[failed, recovered],
+        ) as create:
+            result = await runner._collect_recovery_output(
+                {"messages": []},
+                include_reasoning=True,
+                execution=execution,
+                operation_kind=ProviderOperationKind.CONTINUATION,
+            )
+
+        assert result.text == "world"
+        assert create.await_count == 2
+        assert failed.close_calls == 1
+        assert recovered.close_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_recovery_close_failure_preserves_terminal_failure(self):
+        """Cleanup failure cannot mask a non-retryable recovery failure."""
+        stream = ClosableAsyncStreamMock(
+            [],
+            error=ValueError("original terminal failure"),
+            close_error=RuntimeError("cleanup failed"),
+        )
+        provider = _make_provider()
+        runner = _make_stream_runner(provider)
+        execution = provider._admission.start_execution()
+
+        with (
+            patch.object(
+                provider._client.chat.completions,
+                "create",
+                new_callable=AsyncMock,
+                return_value=stream,
+            ),
+            pytest.raises(ValueError, match="original terminal failure"),
+        ):
+            await runner._collect_recovery_output(
+                {"messages": []},
+                include_reasoning=True,
+                execution=execution,
+                operation_kind=ProviderOperationKind.CONTINUATION,
+            )
+
+        assert stream.close_calls == 1
+
+    @pytest.mark.asyncio
+    async def test_recovery_close_failure_preserves_cancellation(self):
+        """Cleanup failure cannot turn caller cancellation into a provider error."""
+        stream = BlockingClosableAsyncStreamMock(
+            close_error=RuntimeError("cleanup failed")
+        )
+        provider = _make_provider()
+        runner = _make_stream_runner(provider)
+        execution = provider._admission.start_execution()
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            return_value=stream,
+        ):
+            task = asyncio.create_task(
+                runner._collect_recovery_output(
+                    {"messages": []},
+                    include_reasoning=True,
+                    execution=execution,
+                    operation_kind=ProviderOperationKind.CONTINUATION,
+                )
+            )
+            await asyncio.wait_for(stream.entered.wait(), timeout=1)
+            task.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await task
+
+        replacement = await execution.open_attempt(ProviderOperationKind.CONTINUATION)
+        await replacement.aclose()
+        assert stream.close_calls == 1
 
     @pytest.mark.asyncio
     async def test_recovery_collect_text_honors_provider_retry_classification(self):

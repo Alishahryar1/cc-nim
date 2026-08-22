@@ -230,9 +230,10 @@ new places to add unrelated behavior:
   behavior. It separates immutable vendor profiles from per-request stream
   execution, recovery, request policy, and tool-call assembly. Within one
   request, the runner owns logical orchestration, a replaceable stream assembler
-  owns one replay epoch's ledger and parser state, the returned-attempt scope
-  owns physical stream cleanup, and `RecoveryController` alone owns downstream
-  commit policy. Shared protocol rules belong in [src/free_claude_code/core/](src/free_claude_code/core/).
+  owns one replay epoch's ledger and parser state, the shared
+  `ProviderAttemptScope` owns each returned physical stream and attempt, and
+  `RecoveryController` alone owns downstream commit policy. Shared protocol
+  rules belong in [src/free_claude_code/core/](src/free_claude_code/core/).
 - [messaging/workflow.py](src/free_claude_code/messaging/workflow.py) coordinates messaging runtime
   dependencies. Inbound turn intake, queued node execution, slash command
   dependencies, and tree queue internals live in separate modules so new
@@ -721,6 +722,14 @@ three scopes are explicit:
 - `ProviderAttempt` owns one physical provider HTTP/generation call, including
   its opaque execution claim, admission permit, concurrency lease, acceptance
   state, one idempotent outcome, and exact-once close.
+
+[providers/http.py](src/free_claude_code/providers/http.py) composes one
+`ProviderAttempt` with at most one retained transport resource through the
+idempotent `ProviderAttemptScope`. Resource cleanup is diagnostic-only: a close
+failure emits redacted type metadata but cannot replace established success,
+retry, terminal failure, or cancellation. Attempt cleanup remains authoritative
+and always runs in the scope's `finally`, releasing the execution claim and
+concurrency lease even when transport cleanup fails.
 
 Only `ProviderExecution.open_attempt()` can enter physical provider I/O. A
 strict sliding window admits the call before the concurrency bulkhead; the

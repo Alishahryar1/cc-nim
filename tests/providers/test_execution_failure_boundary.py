@@ -10,7 +10,11 @@ from free_claude_code.config.nim import NimSettings
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.core.async_iterators import AsyncCloseable
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
-from free_claude_code.providers.http import close_provider_stream
+from free_claude_code.providers.admission import ProviderOperationKind
+from free_claude_code.providers.http import (
+    ProviderAttemptScope,
+    close_provider_stream,
+)
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
@@ -186,6 +190,42 @@ async def test_stream_close_failure_without_active_error_is_observability_only()
         close_exc_type="RuntimeError",
         preserved_exc_type=None,
     )
+
+
+@pytest.mark.asyncio
+async def test_attempt_scope_releases_attempt_when_resource_close_fails() -> None:
+    controller = immediate_admission()
+    execution = controller.start_execution(request_id="req_scope_close")
+    attempt = await execution.open_attempt(ProviderOperationKind.CONTINUATION)
+    stream = _FailingStream(
+        [],
+        None,
+        close_error=RuntimeError("cleanup api_key=SECRET"),
+    )
+    scope = ProviderAttemptScope(
+        attempt,
+        provider_name="TEST",
+        request_id="req_scope_close",
+    )
+    assert scope.retain(stream) is stream
+
+    with patch("free_claude_code.providers.http.trace_event") as trace_event:
+        await scope.aclose(active_error=ValueError("original"))
+        await scope.aclose(active_error=None)
+
+    replacement = await execution.open_attempt(ProviderOperationKind.CONTINUATION)
+    await replacement.aclose()
+    assert stream.close_calls == 1
+    trace_event.assert_called_once_with(
+        stage="provider",
+        event="provider.stream.close_failed",
+        source="provider",
+        provider="TEST",
+        request_id="req_scope_close",
+        close_exc_type="RuntimeError",
+        preserved_exc_type="ValueError",
+    )
+    assert "SECRET" not in repr(trace_event.call_args)
 
 
 @pytest.mark.asyncio
