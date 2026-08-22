@@ -1544,7 +1544,7 @@ def test_admin_local_provider_status_reports_reachable(monkeypatch, tmp_path):
         async def __aexit__(self, *args):
             return None
 
-        async def get(self, url: str):
+        async def get(self, url: str, *, headers=None):
             return httpx.Response(200, json={"data": []})
 
     with patch("free_claude_code.api.admin_routes.httpx.AsyncClient", FakeAsyncClient):
@@ -1552,7 +1552,12 @@ def test_admin_local_provider_status_reports_reachable(monkeypatch, tmp_path):
 
     assert response.status_code == 200
     providers = response.json()["providers"]
-    assert {provider["status"] for provider in providers} == {"reachable"}
+    by_id = {p["provider_id"]: p for p in providers}
+    # All local providers have default base URLs -> all reachable
+    assert by_id["lmstudio"]["status"] == "reachable"
+    assert by_id["llamacpp"]["status"] == "reachable"
+    assert by_id["ollama"]["status"] == "reachable"
+    assert by_id["omlx"]["status"] == "reachable"
 
 
 def test_admin_config_exposes_structured_provider_configuration_targets(
@@ -1591,7 +1596,7 @@ def test_admin_local_provider_failure_does_not_return_exception_text(
         async def __aexit__(self, *args):
             return None
 
-        async def get(self, url: str):
+        async def get(self, url: str, *, headers=None):
             raise RuntimeError(
                 "Provider rejected credential CREDENTIAL[unrecognized-format-987654321]"
             )
@@ -1604,6 +1609,7 @@ def test_admin_local_provider_failure_does_not_return_exception_text(
 
     assert response.status_code == 200
     providers = response.json()["providers"]
+    # All local providers have default base URLs -> all attempt HTTP and fail
     assert {provider["status"] for provider in providers} == {"offline"}
     for provider in providers:
         assert provider["message"] == (
@@ -1612,6 +1618,76 @@ def test_admin_local_provider_failure_does_not_return_exception_text(
         assert "CREDENTIAL[unrecognized-format-987654321]" not in provider["message"]
         assert "RuntimeError" not in provider["message"]
         assert "error_type" not in provider
+
+
+def test_admin_local_provider_status_sends_auth_header_for_omlx(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    monkeypatch.setenv("OMLX_BASE_URL", "http://localhost:8001/v1")
+    monkeypatch.setenv("OMLX_API_KEY", "sk-test-omlx-key")
+    app = create_test_app()
+
+    captured_headers: dict[str, str] = {}
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url: str, *, headers=None):
+            if headers:
+                captured_headers.update(headers)
+            return httpx.Response(200, json={"data": [{"id": "test-model"}]})
+
+    with patch("free_claude_code.api.admin_routes.httpx.AsyncClient", FakeAsyncClient):
+        response = _local_client(app).get("/admin/api/providers/local-status")
+
+    assert response.status_code == 200
+    by_id = {p["provider_id"]: p for p in response.json()["providers"]}
+    assert by_id["omlx"]["status"] == "reachable"
+    assert captured_headers.get("Authorization") == "Bearer sk-test-omlx-key"
+
+
+def test_admin_local_provider_status_omits_auth_header_for_keyless_local(
+    monkeypatch, tmp_path
+):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    app = create_test_app()
+
+    captured: list[tuple[str, dict[str, str] | None]] = []
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url: str, *, headers=None):
+            captured.append((url, headers))
+            return httpx.Response(200, json={"data": []})
+
+    with patch("free_claude_code.api.admin_routes.httpx.AsyncClient", FakeAsyncClient):
+        _local_client(app).get("/admin/api/providers/local-status")
+
+    # omlx has credential_env -> sends auth header (default key "omlx")
+    omlx_calls = [(url, h) for url, h in captured if ":8001" in url]
+    assert len(omlx_calls) == 1
+    assert omlx_calls[0][1] is not None
+    assert omlx_calls[0][1]["Authorization"] == "Bearer omlx"
+    # keyless local providers (lmstudio/llamacpp/ollama) -> no auth header
+    keyless_calls = [(url, h) for url, h in captured if ":8001" not in url]
+    for _url, h in keyless_calls:
+        assert h is None
 
 
 @pytest.mark.parametrize(

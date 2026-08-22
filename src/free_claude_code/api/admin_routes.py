@@ -35,6 +35,7 @@ LOCAL_PROVIDER_PATHS = {
     "lmstudio": "/models",
     "llamacpp": "/models",
     "ollama": "/api/tags",
+    "omlx": "/models",
 }
 _LOCAL_PROVIDER_CHECK_FAILURE_MESSAGE = (
     "Could not connect. Verify the URL and that the local provider is running."
@@ -148,7 +149,10 @@ async def local_provider_status(request: Request):
     checks = []
     for provider_id, path in LOCAL_PROVIDER_PATHS.items():
         base_url = _local_provider_url(provider_id, values)
-        checks.append(await _check_local_provider(provider_id, base_url, path))
+        api_key = _local_provider_api_key(provider_id, values)
+        checks.append(
+            await _check_local_provider(provider_id, base_url, path, api_key=api_key)
+        )
     return {"providers": checks}
 
 
@@ -270,11 +274,21 @@ def _local_provider_url(provider_id: str, values: dict[str, str]) -> str:
         return values.get("LLAMACPP_BASE_URL", "")
     if provider_id == "ollama":
         return values.get("OLLAMA_BASE_URL", "")
+    if provider_id == "omlx":
+        return values.get("OMLX_BASE_URL", "")
     return ""
 
 
+def _local_provider_api_key(provider_id: str, values: dict[str, str]) -> str:
+    """Return the credential value for an authed local provider, if any."""
+    descriptor = PROVIDER_CATALOG.get(provider_id)
+    if descriptor is None or descriptor.credential_env is None:
+        return ""
+    return values.get(descriptor.credential_env, "")
+
+
 async def _check_local_provider(
-    provider_id: str, base_url: str, path: str
+    provider_id: str, base_url: str, path: str, *, api_key: str = ""
 ) -> JsonObject:
     clean_url = base_url.strip().rstrip("/")
     if not clean_url:
@@ -286,9 +300,10 @@ async def _check_local_provider(
         }
 
     url = f"{clean_url}{path}"
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
     try:
         async with httpx.AsyncClient(timeout=1.5) as client:
-            response = await client.get(url)
+            response = await client.get(url, headers=headers)
         ok = 200 <= response.status_code < 300
         return {
             "provider_id": provider_id,
