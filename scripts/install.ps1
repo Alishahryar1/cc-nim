@@ -282,6 +282,12 @@ function Add-KnownBinDirectories {
     if (-not [string]::IsNullOrWhiteSpace($env:APPDATA)) {
         Add-PathEntry (Join-Path $env:APPDATA "npm")
     }
+    if ($env:GROK_BIN_DIR) {
+        Add-PathEntry $env:GROK_BIN_DIR
+    }
+    elseif (-not [string]::IsNullOrWhiteSpace($env:USERPROFILE)) {
+        Add-PathEntry (Join-Path $env:USERPROFILE ".grok\bin")
+    }
 }
 
 function Add-NpmBinDirectories {
