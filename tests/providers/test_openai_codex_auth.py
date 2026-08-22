@@ -13,6 +13,7 @@ import pytest
 from free_claude_code.application.connected_accounts import (
     ConnectedAccountLoginMode,
 )
+from free_claude_code.providers.openai_codex import auth as openai_auth
 from free_claude_code.providers.openai_codex import login as openai_login
 from free_claude_code.providers.openai_codex.auth import (
     OpenAIAuthManager,
@@ -202,6 +203,47 @@ async def test_proactive_transient_refresh_failure_preserves_unauthorized_recove
     assert access.access_token == current_access
     assert manager.is_connected() is True
     assert credential_path.exists()
+    await manager.close()
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_unauthorized_recovery_retries_one_transient_refresh(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    credential_path = tmp_path / "openai.json"
+    credential_path.write_text(
+        json.dumps(_credential_document(expires_at=4_000_000_000)),
+        encoding="utf-8",
+    )
+    current_access = _jwt({"exp": 4_000_000_000})
+    refreshed_access = _jwt({"exp": 4_100_000_000})
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if len(requests) == 1:
+            return httpx.Response(503, request=request)
+        return httpx.Response(
+            200,
+            json={"access_token": refreshed_access},
+            request=request,
+        )
+
+    monkeypatch.setattr(openai_auth, "_UNAUTHORIZED_REFRESH_RETRY_DELAY_SECONDS", 0)
+    client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
+    manager = OpenAIAuthManager(
+        credential_path=credential_path,
+        lock_path=tmp_path / "openai.lock",
+        client=client,
+    )
+
+    access = await manager.recover_unauthorized(current_access)
+
+    assert access.access_token == refreshed_access
+    assert len(requests) == 2
+    assert all(request.url.path == "/oauth/token" for request in requests)
     await manager.close()
     await client.aclose()
 

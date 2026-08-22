@@ -11,6 +11,7 @@ from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.providers.admission import (
     UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS,
     ProviderAdmissionController,
+    ProviderOperationKind,
 )
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.failure_policy import (
@@ -379,8 +380,9 @@ async def test_admission_override_preserves_raw_exception_after_exhaustion() -> 
     with (
         pytest.raises(openai.BadRequestError) as exc_info,
     ):
-        await admission.run_with_retry(
+        await admission.start_execution().run_call(
             fail,
+            operation_kind=ProviderOperationKind.GENERATION,
             provider_failure_override=override,
         )
 

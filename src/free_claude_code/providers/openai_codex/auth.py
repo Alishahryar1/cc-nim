@@ -35,6 +35,8 @@ from .login import (
 )
 
 REFRESH_EARLY_SECONDS = 5 * 60
+_UNAUTHORIZED_REFRESH_TOTAL_ATTEMPTS = 2
+_UNAUTHORIZED_REFRESH_RETRY_DELAY_SECONDS = 1.0
 
 
 class OpenAIReconnectRequired(RuntimeError):
@@ -329,7 +331,7 @@ class OpenAIAuthManager:
             )
 
     async def recover_unauthorized(self, rejected_token: str) -> OpenAIAccess:
-        """Reload cross-process state, then force at most one token refresh."""
+        """Reload cross-process state, then recover one rejected access token."""
 
         async with self._state_lock:
             current = self._credentials
@@ -347,10 +349,26 @@ class OpenAIAuthManager:
                 return OpenAIAccess(
                     current.access_token, current.account_id, current.fedramp
                 )
-            refreshed = await self._refresh_locked(current)
+            refreshed = await self._recover_refresh_locked(current)
             return OpenAIAccess(
                 refreshed.access_token, refreshed.account_id, refreshed.fedramp
             )
+
+    async def _recover_refresh_locked(self, current: _Credentials) -> _Credentials:
+        """Retry one transient reactive refresh without repeating a provider call."""
+        for attempt in range(_UNAUTHORIZED_REFRESH_TOTAL_ATTEMPTS):
+            try:
+                return await self._refresh_locked(current)
+            except asyncio.CancelledError:
+                raise
+            except httpx.HTTPError as error:
+                if (
+                    not _is_transient_refresh_error(error)
+                    or attempt + 1 == _UNAUTHORIZED_REFRESH_TOTAL_ATTEMPTS
+                ):
+                    raise
+                await asyncio.sleep(_UNAUTHORIZED_REFRESH_RETRY_DELAY_SECONDS)
+        raise RuntimeError("OpenAI refresh recovery ended without an outcome")
 
     async def close(self) -> None:
         """Cancel login resources and close the owned HTTP client."""

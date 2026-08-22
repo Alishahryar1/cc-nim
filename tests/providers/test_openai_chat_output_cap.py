@@ -10,6 +10,7 @@ from unittest.mock import AsyncMock, patch
 import pytest
 
 from free_claude_code.config.provider_catalog import GROQ_DEFAULT_BASE
+from free_claude_code.providers.admission import ProviderOperationKind
 from free_claude_code.providers.groq import GroqProvider
 from free_claude_code.providers.openai_chat.output_cap import (
     clamp_output_tokens,
@@ -266,7 +267,8 @@ async def test_create_stream_clamps_and_learns_on_cap_rejection(groq_provider):
     with patch.object(groq_provider._client.chat.completions, "create", create):
         _stream, used_body, attempt = await groq_provider._create_stream(
             body,
-            groq_provider._admission.new_retry_session(),
+            groq_provider._admission.start_execution(),
+            ProviderOperationKind.GENERATION,
         )
         await attempt.aclose()
 
@@ -292,7 +294,8 @@ async def test_learned_cap_clamps_next_request_without_a_400(groq_provider):
     with patch.object(groq_provider._client.chat.completions, "create", create):
         _stream, used_body, attempt = await groq_provider._create_stream(
             body,
-            groq_provider._admission.new_retry_session(),
+            groq_provider._admission.start_execution(),
+            ProviderOperationKind.GENERATION,
         )
         await attempt.aclose()
 
@@ -318,7 +321,8 @@ async def test_unrelated_400_is_not_clamped_and_propagates(groq_provider):
     ):
         await groq_provider._create_stream(
             body,
-            groq_provider._admission.new_retry_session(),
+            groq_provider._admission.start_execution(),
+            ProviderOperationKind.GENERATION,
         )
 
     assert create.call_count == 1
@@ -351,7 +355,8 @@ async def test_mixed_field_400_does_not_retry_or_poison_learned_cap(groq_provide
     ):
         await groq_provider._create_stream(
             body,
-            groq_provider._admission.new_retry_session(),
+            groq_provider._admission.start_execution(),
+            ProviderOperationKind.GENERATION,
         )
 
     assert create.call_count == 1

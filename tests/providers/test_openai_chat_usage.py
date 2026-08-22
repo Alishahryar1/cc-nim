@@ -12,6 +12,7 @@ from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
+from free_claude_code.providers.admission import ProviderOperationKind
 from free_claude_code.providers.openai_chat import (
     OpenAIChatProfile,
     OpenAIChatProvider,
@@ -252,7 +253,8 @@ async def test_openai_chat_stream_retries_without_usage_when_option_is_rejected(
     with patch.object(provider._client.chat.completions, "create", create):
         _stream_obj, used_body, attempt = await provider._create_stream(
             body,
-            provider._admission.new_retry_session(),
+            provider._admission.start_execution(),
+            ProviderOperationKind.GENERATION,
         )
         await attempt.aclose()
 

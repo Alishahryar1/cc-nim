@@ -1,7 +1,7 @@
 """Tests for the Featherless AI OpenAI-chat provider profile."""
 
 from typing import Any
-from unittest.mock import AsyncMock
+from unittest.mock import AsyncMock, patch
 
 import httpx2
 import pytest
@@ -261,7 +261,8 @@ async def test_catalog_fetches_all_pages_filters_strictly_and_deduplicates_overl
         ]
     )
 
-    model_infos = await featherless_provider.list_model_infos()
+    with patch("free_claude_code.providers.admission.trace_event") as trace:
+        model_infos = await featherless_provider.list_model_infos()
 
     assert model_infos == frozenset(
         {
@@ -283,6 +284,19 @@ async def test_catalog_fetches_all_pages_filters_strictly_and_deduplicates_overl
             "per_page": "1000",
             "page": str(index),
         }
+    attempt_rows = [
+        call.kwargs
+        for call in trace.call_args_list
+        if call.kwargs.get("event", "").startswith("provider.attempt.")
+    ]
+    assert [row["event"] for row in attempt_rows] == [
+        "provider.attempt.started",
+        "provider.attempt.resolved",
+        "provider.attempt.started",
+        "provider.attempt.resolved",
+    ]
+    assert {row["attempt"] for row in attempt_rows} == {1}
+    assert len({row["execution_id"] for row in attempt_rows}) == 2
 
 
 @pytest.mark.parametrize(
