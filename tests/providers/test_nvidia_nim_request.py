@@ -163,6 +163,14 @@ class TestBuildRequestBody:
         body = build_request_body(req, nim, reasoning=REASONING_ON)
         assert body["max_tokens"] == 4096
 
+    @pytest.mark.parametrize("client_top_p", (None, 0.0, 0.5, 0.95, 1.0))
+    def test_top_p_always_uses_nim_policy(self, req, client_top_p):
+        req.top_p = client_top_p
+
+        body = build_request_body(req, NimSettings(), reasoning=REASONING_ON)
+
+        assert body["top_p"] == 0.95
+
     def test_presence_penalty_included_when_nonzero(self, req):
         nim = NimSettings(presence_penalty=0.5)
         body = build_request_body(req, nim, reasoning=REASONING_ON)
