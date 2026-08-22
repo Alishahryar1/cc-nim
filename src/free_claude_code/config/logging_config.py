@@ -21,6 +21,7 @@ _current_verbose: bool | None = None
 _sink_id: int | None = None
 
 _THIRD_PARTY_LOGGERS = (
+    "openai",
     "httpx",
     "httpcore",
     "httpcore.http11",

@@ -95,17 +95,48 @@ def test_bearer_substring_redacted_in_log_file(tmp_path) -> None:
     assert "Bearer" in text
 
 
-def test_httpx_logger_quieted_when_not_verbose_third_party(tmp_path) -> None:
+def test_noisy_third_party_loggers_quieted_when_not_verbose(tmp_path) -> None:
     log_file = str(tmp_path / "quiet.log")
     configure_logging(log_file, force=True, verbose_third_party=False)
+    assert logging.getLogger("openai").level >= logging.WARNING
+    assert (
+        logging.getLogger("openai._base_client").getEffectiveLevel() >= logging.WARNING
+    )
     assert logging.getLogger("httpx").level >= logging.WARNING
     assert logging.getLogger("httpcore").level >= logging.WARNING
 
 
-def test_httpx_resets_to_notset_when_verbose_third_party(tmp_path) -> None:
+def test_noisy_third_party_loggers_reset_when_verbose(tmp_path) -> None:
     log_file = str(tmp_path / "verbose.log")
     configure_logging(log_file, force=True, verbose_third_party=True)
+    assert logging.getLogger("openai").level == logging.NOTSET
     assert logging.getLogger("httpx").level == logging.NOTSET
+
+
+def test_openai_request_payload_debug_requires_verbose_third_party(tmp_path) -> None:
+    log_file = tmp_path / "openai.log"
+    marker = "Request options: sensitive-prompt"
+    openai_logger = logging.getLogger("openai._base_client")
+
+    configure_logging(
+        log_file,
+        force=True,
+        level="DEBUG",
+        verbose_third_party=False,
+    )
+    openai_logger.debug(marker)
+    logger.complete()
+    assert marker not in log_file.read_text(encoding="utf-8")
+
+    configure_logging(
+        log_file,
+        force=True,
+        level="DEBUG",
+        verbose_third_party=True,
+    )
+    openai_logger.debug(marker)
+    logger.complete()
+    assert marker in log_file.read_text(encoding="utf-8")
 
 
 def test_configure_logging_respects_level(tmp_path) -> None:
@@ -195,12 +226,14 @@ def test_configure_logging_updates_verbosity_on_same_level(tmp_path) -> None:
 
     # Start with verbosity off (third-party loggers at WARNING)
     configure_logging(log_file, force=True, level="DEBUG", verbose_third_party=False)
+    assert logging.getLogger("openai").level >= logging.WARNING
     assert logging.getLogger("httpx").level >= logging.WARNING
     assert logging.getLogger("httpcore").level >= logging.WARNING
     assert logging.getLogger("telegram").level >= logging.WARNING
 
     # Restart with same level but verbosity on
     configure_logging(log_file, level="DEBUG", verbose_third_party=True)
+    assert logging.getLogger("openai").level == logging.NOTSET
     assert logging.getLogger("httpx").level == logging.NOTSET
     assert logging.getLogger("httpcore").level == logging.NOTSET
     assert logging.getLogger("telegram").level == logging.NOTSET
