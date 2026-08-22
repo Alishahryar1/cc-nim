@@ -153,6 +153,16 @@ def _make_chunk(
     return chunk
 
 
+def _make_usage_chunk(*, prompt_tokens: int, completion_tokens: int):
+    chunk = MagicMock()
+    chunk.choices = []
+    chunk.usage = SimpleNamespace(
+        prompt_tokens=prompt_tokens,
+        completion_tokens=completion_tokens,
+    )
+    return chunk
+
+
 def _make_tool_calls_chunk(*, name: str, arguments: str, tool_id: str, index: int = 0):
     """Single OpenAI-style tool_calls delta (starts a native streamed tool block)."""
     tc = MagicMock()
@@ -1009,6 +1019,100 @@ class TestStreamingExceptionHandling:
         assert sum(event.event == "message_stop" for event in parsed) == 1
         assert parsed[0].event == "message_start"
         assert parsed[-1].event == "message_stop"
+
+    @pytest.mark.asyncio
+    async def test_precommit_retry_discards_abandoned_parser_and_usage_state(self):
+        """A replay owns fresh parsers and terminal usage metadata."""
+        provider = _make_provider()
+        request = _make_request()
+        first_stream = AsyncStreamMock(
+            [
+                _make_usage_chunk(prompt_tokens=111, completion_tokens=222),
+                _make_chunk(content="<thi"),
+            ],
+            error=httpx.ReadError("early cutoff"),
+        )
+        second_stream = AsyncStreamMock(
+            [
+                _make_chunk(content="visible"),
+                _make_chunk(finish_reason="stop"),
+                _make_usage_chunk(prompt_tokens=7, completion_tokens=3),
+            ]
+        )
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=[first_stream, second_stream],
+        ) as create:
+            events = await _collect_stream(provider, request)
+
+        parsed = parse_sse_text("".join(events))
+        visible_text = "".join(
+            event.data.get("delta", {}).get("text", "")
+            for event in parsed
+            if event.event == "content_block_delta"
+            and event.data.get("delta", {}).get("type") == "text_delta"
+        )
+        final_usage = next(
+            event.data["usage"] for event in parsed if event.event == "message_delta"
+        )
+
+        assert create.await_count == 2
+        assert visible_text == "visible"
+        assert final_usage == {"input_tokens": 7, "output_tokens": 3}
+        assert sum(event.event == "message_start" for event in parsed) == 1
+        assert sum(event.event == "message_delta" for event in parsed) == 1
+        assert sum(event.event == "message_stop" for event in parsed) == 1
+
+    @pytest.mark.asyncio
+    async def test_create_correction_survives_later_precommit_retry(self):
+        """A corrected request body outlives the replay-local stream state."""
+        provider = _make_provider()
+        request = _make_request()
+        response = httpx2.Response(
+            status_code=400,
+            request=httpx2.Request("POST", "https://example.com/v1/chat/completions"),
+        )
+        usage_rejection = openai.BadRequestError(
+            "stream_options is unsupported",
+            response=response,
+            body={"error": {"message": "stream_options is unsupported"}},
+        )
+        first_stream = AsyncStreamMock(
+            [_make_chunk(content="hidden")],
+            error=httpx.ReadError("early cutoff"),
+        )
+        second_stream = AsyncStreamMock(
+            [_make_chunk(content="visible"), _make_chunk(finish_reason="stop")]
+        )
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=[usage_rejection, first_stream, second_stream],
+        ) as create:
+            events = await _collect_stream(provider, request)
+
+        parsed = parse_sse_text("".join(events))
+        text_deltas = [
+            event.data.get("delta", {}).get("text", "")
+            for event in parsed
+            if event.event == "content_block_delta"
+            and event.data.get("delta", {}).get("type") == "text_delta"
+        ]
+
+        assert create.await_count == 3
+        assert create.await_args_list[0].kwargs["stream_options"] == {
+            "include_usage": True
+        }
+        assert "stream_options" not in create.await_args_list[1].kwargs
+        assert "stream_options" not in create.await_args_list[2].kwargs
+        assert text_deltas == ["visible"]
+        assert sum(event.event == "message_start" for event in parsed) == 1
+        assert sum(event.event == "message_stop" for event in parsed) == 1
 
     @pytest.mark.asyncio
     async def test_precommit_retry_discards_abandoned_tool_name_fragment(self):
