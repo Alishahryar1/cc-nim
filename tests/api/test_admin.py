@@ -42,6 +42,8 @@ def _clear_process_config(monkeypatch) -> None:
         "BEDROCK_BASE_URL",
         "BEDROCK_PROXY",
         "OLLAMA_API_KEY",
+        "OMLX_API_KEY",
+        "OMLX_BASE_URL",
         "ANTHROPIC_AUTH_TOKEN",
         "PROXY_AUTH_ENABLED",
         "TELEGRAM_PROXY_URL",
