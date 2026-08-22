@@ -21,6 +21,7 @@ _current_verbose: bool | None = None
 _sink_id: int | None = None
 
 _THIRD_PARTY_LOGGERS = (
+    "openai",
     "httpx",
     "httpcore",
     "httpcore.http11",
@@ -151,8 +152,8 @@ def configure_logging(
     On verbosity change alone, updates only the third-party logger levels.
     Use force=True to reconfigure from scratch.
 
-    When ``verbose_third_party`` is false, noisy HTTP and Telegram loggers are
-    capped at WARNING unless explicitly configured otherwise.
+    When ``verbose_third_party`` is false, managed noisy third-party loggers
+    are capped at WARNING unless explicitly configured otherwise.
     """
     global _configured, _current_path, _current_level, _current_verbose, _sink_id
 
