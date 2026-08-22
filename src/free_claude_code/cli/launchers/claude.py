@@ -15,6 +15,9 @@ from .common import preflight_proxy, resolve_client_binary, run_client_process
 
 _DISPLAY_NAME = "Claude Code"
 _INSTALL_HINT = "Install Claude Code with: npm install -g @anthropic-ai/claude-code"
+_DEFAULT_PERMISSION_MODE_ARGS = ("--permission-mode", "default")
+_PERMISSION_MODE_FLAG = "--permission-mode"
+_BYPASS_PERMISSIONS_FLAG = "--dangerously-skip-permissions"
 
 
 def launch(argv: Sequence[str] | None = None) -> None:
@@ -59,6 +62,25 @@ def claude_binary_name() -> str:
 def build_claude_launcher_command(
     *, binary_path: str, argv: Sequence[str]
 ) -> list[str]:
-    """Return the Claude wrapper command without changing user arguments."""
+    """Start Claude outside auto mode unless the user selected a mode."""
 
-    return [binary_path, *argv]
+    args = list(argv)
+    if not _has_explicit_permission_mode(args):
+        args[:0] = _DEFAULT_PERMISSION_MODE_ARGS
+
+    return [binary_path, *args]
+
+
+def _has_explicit_permission_mode(argv: Sequence[str]) -> bool:
+    """Return whether CLI arguments explicitly choose a permission mode."""
+
+    for arg in argv:
+        if arg == "--":
+            break
+        if arg in (
+            _PERMISSION_MODE_FLAG,
+            _BYPASS_PERMISSIONS_FLAG,
+        ) or arg.startswith(f"{_PERMISSION_MODE_FLAG}="):
+            return True
+
+    return False
