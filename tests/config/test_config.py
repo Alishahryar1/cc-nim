@@ -334,8 +334,10 @@ def test_nim_settings_keep_request_local_validation() -> None:
     assert settings.seed == 7
     assert settings.stop is None
     assert NimSettings().max_tokens == ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
-    with pytest.raises(ValidationError):
-        NimSettings(top_p=1.1)
+    assert NimSettings().top_p == 0.95
+    for unsupported_top_p in (0.0, 0.9, 1.0):
+        with pytest.raises(ValidationError):
+            NimSettings(top_p=unsupported_top_p)
 
 
 def test_settings_defaults_do_not_contain_empty_enum_strings() -> None:

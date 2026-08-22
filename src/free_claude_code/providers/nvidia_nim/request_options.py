@@ -58,8 +58,7 @@ def apply_nim_request_options(
 
     if body.get("temperature") is None and nim.temperature is not None:
         body["temperature"] = nim.temperature
-    if body.get("top_p") is None and nim.top_p is not None:
-        body["top_p"] = nim.top_p
+    body["top_p"] = nim.top_p
 
     if "stop" not in body and nim.stop:
         body["stop"] = nim.stop
