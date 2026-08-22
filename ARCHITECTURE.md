@@ -228,8 +228,11 @@ new places to add unrelated behavior:
   provider resolution, preflight, tracing, token counting, and streaming.
 - [providers/openai_chat/](src/free_claude_code/providers/openai_chat/) owns the common upstream provider
   behavior. It separates immutable vendor profiles from per-request stream
-  execution, recovery, request policy, and tool-call assembly. Shared
-  protocol rules belong in [src/free_claude_code/core/](src/free_claude_code/core/).
+  execution, recovery, request policy, and tool-call assembly. Within one
+  request, the runner owns logical orchestration, a replaceable stream assembler
+  owns one replay epoch's ledger and parser state, the returned-attempt scope
+  owns physical stream cleanup, and `RecoveryController` alone owns downstream
+  commit policy. Shared protocol rules belong in [src/free_claude_code/core/](src/free_claude_code/core/).
 - [messaging/workflow.py](src/free_claude_code/messaging/workflow.py) coordinates messaging runtime
   dependencies. Inbound turn intake, queued node execution, slash command
   dependencies, and tree queue internals live in separate modules so new

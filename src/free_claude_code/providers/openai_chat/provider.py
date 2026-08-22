@@ -5,6 +5,7 @@ import sys
 import uuid
 from collections.abc import AsyncIterator, Awaitable, Callable, Iterator, Mapping
 from dataclasses import dataclass
+from enum import StrEnum
 from typing import Any
 
 import httpx2
@@ -84,6 +85,7 @@ from .usage import (
 )
 
 OpenAIAsyncCredentialProvider = Callable[[], Awaitable[str]]
+_ExtraReasoningEvents = Callable[[Any, AnthropicStreamLedger], Iterator[str]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -132,6 +134,339 @@ def _iter_text_tool_use_events(
             tool_use,
             tool_names=tool_names,
         )
+
+
+@dataclass(frozen=True, slots=True)
+class _OpenAIChatCompletion:
+    finish_reason: Any
+    output_tokens: int
+    input_tokens: int
+    provider_input_tokens: int | None
+
+
+class _OpenAIChatFailureOutcome(StrEnum):
+    RETRY = "retry"
+    COMPLETE = "complete"
+    RAISE = "raise"
+
+
+@dataclass(frozen=True, slots=True)
+class _OpenAIChatFailureResolution:
+    outcome: _OpenAIChatFailureOutcome
+    events: tuple[str, ...] = ()
+    failure: ExecutionFailure | None = None
+
+
+class _OpenAIChatAttemptScope:
+    """Own one returned provider stream and its admitted attempt."""
+
+    def __init__(
+        self,
+        stream: Any,
+        attempt: ProviderAttempt,
+        *,
+        provider_name: str,
+        request_id: str | None,
+    ) -> None:
+        self.stream = stream
+        self.attempt = attempt
+        self._provider_name = provider_name
+        self._request_id = request_id
+        self._closed = False
+
+    async def aclose(self, *, active_error: BaseException | None) -> None:
+        if self._closed:
+            return
+        self._closed = True
+        try:
+            await close_provider_stream(
+                self.stream,
+                active_error=active_error,
+                provider_name=self._provider_name,
+                request_id=self._request_id,
+            )
+        finally:
+            await self.attempt.aclose()
+
+
+class _OpenAIChatStreamAssembler:
+    """Own one discardable OpenAI-chat replay epoch."""
+
+    def __init__(
+        self,
+        *,
+        request: MessagesRequest,
+        ledger: AnthropicStreamLedger,
+        profile: OpenAIChatProfile,
+        provider_name: str,
+        output_reasoning: bool,
+        tool_names: OpenAIToolNameCodec,
+        tool_calls: OpenAIToolCallAssembler,
+        extra_reasoning_events: _ExtraReasoningEvents,
+    ) -> None:
+        self._request = request
+        self._ledger = ledger
+        self._profile = profile
+        self._provider_name = provider_name
+        self._output_reasoning = output_reasoning
+        self._tool_names = tool_names
+        self._tool_calls = tool_calls
+        self._extra_reasoning_events = extra_reasoning_events
+        self._think_parser = ThinkTagParser()
+        self._function_tag_parser = FunctionTagToolParser(request)
+        self._heuristic_parser = HeuristicToolParser()
+        self._structured_reasoning = (
+            StructuredReasoningStream()
+            if profile.structured_reasoning_details
+            else None
+        )
+        self._finish_reason: Any = None
+        self._usage_info: Any = None
+        self._tool_argument_aliases: dict[str, dict[str, str]] = {}
+        self._tool_argument_alias_buffers: dict[int, str] = {}
+        self._tool_name_buffers: dict[int, str] = {}
+        self._started = False
+        self._aliases_bound = False
+        self._upstream_finished = False
+        self._completion: _OpenAIChatCompletion | None = None
+        self._completed = False
+
+    @property
+    def ledger(self) -> AnthropicStreamLedger:
+        return self._ledger
+
+    @property
+    def usage_info(self) -> Any:
+        return self._usage_info
+
+    @property
+    def completion(self) -> _OpenAIChatCompletion:
+        if self._completion is None:
+            raise RuntimeError("stream completion has not been prepared")
+        return self._completion
+
+    @property
+    def generated_output(self) -> bool:
+        return has_committed_sse_output(self._ledger)
+
+    @property
+    def complete_tool_salvageable(self) -> bool:
+        return (
+            self.generated_output
+            and self._ledger.has_emitted_tool_block()
+            and all_emitted_tools_complete(self._ledger, self._request)
+        )
+
+    @property
+    def tool_argument_alias_buffers(self) -> Mapping[int, str]:
+        return self._tool_argument_alias_buffers
+
+    def start_events(self) -> Iterator[str]:
+        if self._started:
+            return
+        self._started = True
+        yield self._ledger.message_start()
+
+    def bind_tool_argument_aliases(self, aliases: dict[str, dict[str, str]]) -> None:
+        if self._aliases_bound:
+            raise RuntimeError("tool argument aliases already bound")
+        self._aliases_bound = True
+        self._tool_argument_aliases = aliases
+
+    def feed(self, chunk: Any) -> Iterator[str]:
+        if not self._started or self._upstream_finished:
+            raise RuntimeError("stream assembler is not accepting chunks")
+
+        chunk_usage = getattr(chunk, "usage", None)
+        if chunk_usage is not None:
+            self._usage_info = chunk_usage
+
+        if not chunk.choices:
+            return
+
+        choice = chunk.choices[0]
+        delta = choice.delta
+        if delta is None:
+            return
+
+        if choice.finish_reason:
+            self._finish_reason = choice.finish_reason
+            logger.debug(
+                "{} finish_reason: {}",
+                self._provider_name,
+                self._finish_reason,
+            )
+
+        reasoning = self._profile.reasoning_delta(delta)
+        if self._output_reasoning:
+            if self._structured_reasoning is not None:
+                yield from self._structured_reasoning.events(
+                    delta,
+                    self._ledger,
+                    native_reasoning=reasoning,
+                )
+            elif reasoning is not None:
+                yield from self._ledger.ensure_thinking_block()
+                if reasoning:
+                    yield self._ledger.emit_thinking_delta(reasoning)
+
+        yield from self._extra_reasoning_events(delta, self._ledger)
+
+        native_tool_calls = delta.tool_calls
+        if native_tool_calls:
+            released_text = self._function_tag_parser.disable()
+            if released_text:
+                yield from _iter_visible_text_events(self._ledger, released_text)
+
+        if delta.content:
+            for part in self._think_parser.feed(delta.content):
+                if part.type == ContentType.THINKING:
+                    if not self._output_reasoning:
+                        continue
+                    yield from self._ledger.ensure_thinking_block()
+                    yield self._ledger.emit_thinking_delta(part.content)
+                else:
+                    safe_text = self._function_tag_parser.feed(part.content)
+                    if safe_text:
+                        yield from _iter_text_parser_events(
+                            self._ledger,
+                            self._heuristic_parser,
+                            safe_text,
+                            tool_names=self._tool_names,
+                        )
+
+        if native_tool_calls:
+            yield from self._ledger.close_content_blocks()
+            for tool_call in native_tool_calls:
+                extra_content = tool_call_extra_content(tool_call)
+                tool_call_info = {
+                    "index": tool_call.index,
+                    "id": tool_call.id,
+                    "function": {
+                        "name": tool_call.function.name,
+                        "arguments": tool_call.function.arguments,
+                    },
+                }
+                if extra_content:
+                    tool_call_info["extra_content"] = extra_content
+                yield from self._tool_calls.process_tool_call(
+                    tool_call_info,
+                    self._ledger,
+                    tool_names=self._tool_names,
+                    tool_name_buffers=self._tool_name_buffers,
+                    tool_argument_aliases=self._tool_argument_aliases,
+                    tool_argument_alias_buffers=self._tool_argument_alias_buffers,
+                )
+
+    def finish_upstream(self) -> Iterator[str]:
+        if self._upstream_finished:
+            return
+        if self._finish_reason is None:
+            raise TruncatedProviderStreamError(
+                "Provider stream ended without finish_reason."
+            )
+        if any(
+            not self._tool_names.is_unchanged_name(name)
+            for name in self._tool_name_buffers.values()
+        ):
+            raise TruncatedProviderStreamError(
+                "Provider stream ended with an incomplete tool name."
+            )
+
+        remaining = self._think_parser.flush()
+        if remaining:
+            if remaining.type == ContentType.THINKING:
+                if self._output_reasoning:
+                    yield from self._ledger.ensure_thinking_block()
+                    yield self._ledger.emit_thinking_delta(remaining.content)
+            else:
+                safe_text = self._function_tag_parser.feed(remaining.content)
+                if safe_text:
+                    yield from _iter_text_parser_events(
+                        self._ledger,
+                        self._heuristic_parser,
+                        safe_text,
+                        tool_names=self._tool_names,
+                    )
+
+        fallback_text, function_tag_tools = self._function_tag_parser.finish()
+        if fallback_text:
+            yield from _iter_visible_text_events(self._ledger, fallback_text)
+        yield from _iter_text_tool_use_events(
+            self._ledger,
+            function_tag_tools,
+            tool_names=self._tool_names,
+        )
+        yield from _iter_text_tool_use_events(
+            self._ledger,
+            self._heuristic_parser.flush(),
+            tool_names=self._tool_names,
+        )
+        self._upstream_finished = True
+
+    def prepare_completion(self) -> Iterator[str]:
+        if not self._upstream_finished or self._completion is not None:
+            raise RuntimeError("stream completion cannot be prepared")
+
+        yield from self._tool_calls.flush_tool_name_buffers(
+            self._ledger,
+            tool_names=self._tool_names,
+            tool_name_buffers=self._tool_name_buffers,
+            tool_argument_aliases=self._tool_argument_aliases,
+            tool_argument_alias_buffers=self._tool_argument_alias_buffers,
+        )
+
+        has_emitted_tool = self._ledger.has_emitted_tool_block()
+        has_content_blocks = (
+            self._ledger.blocks.text_index != -1
+            or self._ledger.blocks.thinking_index != -1
+            or has_emitted_tool
+        )
+        if not has_content_blocks or (
+            not has_emitted_tool
+            and not self._ledger.accumulated_text.strip()
+            and self._ledger.accumulated_reasoning.strip()
+        ):
+            yield from self._ledger.ensure_text_block()
+            yield self._ledger.emit_text_delta(" ")
+
+        yield from self._tool_calls.flush_tool_argument_alias_buffers(
+            self._ledger,
+            self._tool_argument_aliases,
+            self._tool_argument_alias_buffers,
+        )
+        yield from self._tool_calls.flush_task_arg_buffers(self._ledger)
+        yield from self._ledger.close_all_blocks()
+
+        completion = usage_int(self._usage_info, "completion_tokens")
+        output_tokens = (
+            completion
+            if isinstance(completion, int)
+            else self._ledger.estimate_output_tokens()
+        )
+        provider_input = usage_int(self._usage_info, "prompt_tokens")
+        input_tokens = (
+            provider_input if provider_input is not None else self._ledger.input_tokens
+        )
+        self._completion = _OpenAIChatCompletion(
+            finish_reason=self._finish_reason,
+            output_tokens=output_tokens,
+            input_tokens=input_tokens,
+            provider_input_tokens=provider_input,
+        )
+
+    def terminal_events(self, *, usage_fields: dict[str, int]) -> Iterator[str]:
+        if self._completed:
+            return
+        completion = self.completion
+        yield self._ledger.message_delta(
+            self._ledger.final_stop_reason(map_stop_reason(completion.finish_reason)),
+            completion.output_tokens,
+            input_tokens=completion.input_tokens,
+            usage_fields=usage_fields,
+        )
+        yield self._ledger.message_stop()
+        self._completed = True
 
 
 class OpenAIChatProvider(BaseProvider):
@@ -473,7 +808,7 @@ class OpenAIChatProvider(BaseProvider):
 
 
 class _OpenAIChatStreamRunner:
-    """Own one OpenAI-chat request's stream, parsing, and recovery state."""
+    """Orchestrate one OpenAI-chat request and its recovery lifecycle."""
 
     def __init__(
         self,
@@ -526,15 +861,10 @@ class _OpenAIChatStreamRunner:
         """Run one provider execution while retaining transport-owned state."""
         tag = self._provider._provider_name
         req_tag = f" request_id={self._request_id}" if self._request_id else ""
-        ledger = self._new_ledger()
         recovery = RecoveryController()
 
         def hold_event(event: str) -> Iterator[str]:
             yield from recovery.push(event)
-
-        def hold_events(events: Iterator[str]) -> Iterator[str]:
-            for event in events:
-                yield from hold_event(event)
 
         body = self._provider._build_request_body(
             self._request,
@@ -556,426 +886,226 @@ class _OpenAIChatStreamRunner:
             body=provider_chat_body_snapshot(body),
         )
 
-        think_parser = ThinkTagParser()
-        function_tag_parser = FunctionTagToolParser(self._request)
-        heuristic_parser = HeuristicToolParser()
-        finish_reason = None
-        usage_info = None
-        tool_argument_aliases: dict[str, dict[str, str]] = {}
-        tool_argument_alias_buffers: dict[int, str] = {}
-        tool_name_buffers: dict[int, str] = {}
-
         while True:
-            structured_reasoning = (
-                StructuredReasoningStream()
-                if self._provider._profile.structured_reasoning_details
-                else None
-            )
-            if not ledger.message_started:
-                for event in hold_event(ledger.message_start()):
-                    yield event
-            stream: Any | None = None
-            attempt: ProviderAttempt | None = None
-            stream_opened = False
+            assembler = self._new_stream_assembler(output_reasoning=output_reasoning)
+            for event in assembler.start_events():
+                for out_event in hold_event(event):
+                    yield out_event
+            scope: _OpenAIChatAttemptScope | None = None
             try:
                 stream, body, attempt = await self._provider._create_stream(
                     body,
                     execution,
                     ProviderOperationKind.GENERATION,
                 )
-                stream_opened = True
-                tool_argument_aliases = self._provider._tool_argument_aliases(body)
-                async for chunk in stream:
-                    if not attempt.accepted:
-                        await attempt.accept()
-                    chunk_usage = getattr(chunk, "usage", None)
-                    if chunk_usage is not None:
-                        usage_info = chunk_usage
-
-                    if not chunk.choices:
-                        continue
-
-                    choice = chunk.choices[0]
-                    delta = choice.delta
-                    if delta is None:
-                        continue
-
-                    if choice.finish_reason:
-                        finish_reason = choice.finish_reason
-                        logger.debug("{} finish_reason: {}", tag, finish_reason)
-
-                    reasoning = self._provider._profile.reasoning_delta(delta)
-                    if output_reasoning:
-                        if structured_reasoning is not None:
-                            for event in structured_reasoning.events(
-                                delta,
-                                ledger,
-                                native_reasoning=reasoning,
-                            ):
-                                for out_event in hold_event(event):
-                                    yield out_event
-                        elif reasoning is not None:
-                            for event in hold_events(ledger.ensure_thinking_block()):
-                                yield event
-                            if reasoning:
-                                for event in hold_event(
-                                    ledger.emit_thinking_delta(reasoning)
-                                ):
-                                    yield event
-
-                    for event in self._provider._handle_extra_reasoning(
-                        delta,
-                        ledger,
-                        output_reasoning=output_reasoning,
-                    ):
+                scope = _OpenAIChatAttemptScope(
+                    stream,
+                    attempt,
+                    provider_name=tag,
+                    request_id=self._request_id,
+                )
+                assembler.bind_tool_argument_aliases(
+                    self._provider._tool_argument_aliases(body)
+                )
+                async for chunk in scope.stream:
+                    if not scope.attempt.accepted:
+                        await scope.attempt.accept()
+                    for event in assembler.feed(chunk):
                         for out_event in hold_event(event):
                             yield out_event
 
-                    native_tool_calls = delta.tool_calls
-                    if native_tool_calls:
-                        released_text = function_tag_parser.disable()
-                        if released_text:
-                            for event in hold_events(
-                                _iter_visible_text_events(
-                                    ledger,
-                                    released_text,
-                                )
-                            ):
-                                yield event
-
-                    if delta.content:
-                        for part in think_parser.feed(delta.content):
-                            if part.type == ContentType.THINKING:
-                                if not output_reasoning:
-                                    continue
-                                for event in hold_events(
-                                    ledger.ensure_thinking_block()
-                                ):
-                                    yield event
-                                for event in hold_event(
-                                    ledger.emit_thinking_delta(part.content)
-                                ):
-                                    yield event
-                            else:
-                                safe_text = function_tag_parser.feed(part.content)
-                                if safe_text:
-                                    for event in hold_events(
-                                        _iter_text_parser_events(
-                                            ledger,
-                                            heuristic_parser,
-                                            safe_text,
-                                            tool_names=self._tool_names,
-                                        )
-                                    ):
-                                        yield event
-
-                    if native_tool_calls:
-                        for event in hold_events(ledger.close_content_blocks()):
-                            yield event
-                        for tool_call in native_tool_calls:
-                            extra_content = tool_call_extra_content(tool_call)
-                            tool_call_info = {
-                                "index": tool_call.index,
-                                "id": tool_call.id,
-                                "function": {
-                                    "name": tool_call.function.name,
-                                    "arguments": tool_call.function.arguments,
-                                },
-                            }
-                            if extra_content:
-                                tool_call_info["extra_content"] = extra_content
-                            for event in self._tool_calls.process_tool_call(
-                                tool_call_info,
-                                ledger,
-                                tool_names=self._tool_names,
-                                tool_name_buffers=tool_name_buffers,
-                                tool_argument_aliases=tool_argument_aliases,
-                                tool_argument_alias_buffers=tool_argument_alias_buffers,
-                            ):
-                                for out_event in hold_event(event):
-                                    yield out_event
-
-                if finish_reason is None:
-                    raise TruncatedProviderStreamError(
-                        "Provider stream ended without finish_reason."
-                    )
-                if any(
-                    not self._tool_names.is_unchanged_name(name)
-                    for name in tool_name_buffers.values()
-                ):
-                    raise TruncatedProviderStreamError(
-                        "Provider stream ended with an incomplete tool name."
-                    )
-
-                remaining = think_parser.flush()
-                if remaining:
-                    if remaining.type == ContentType.THINKING:
-                        if output_reasoning:
-                            for event in hold_events(ledger.ensure_thinking_block()):
-                                yield event
-                            for event in hold_event(
-                                ledger.emit_thinking_delta(remaining.content)
-                            ):
-                                yield event
-                    else:
-                        safe_text = function_tag_parser.feed(remaining.content)
-                        if safe_text:
-                            for event in hold_events(
-                                _iter_text_parser_events(
-                                    ledger,
-                                    heuristic_parser,
-                                    safe_text,
-                                    tool_names=self._tool_names,
-                                )
-                            ):
-                                yield event
-
-                fallback_text, function_tag_tools = function_tag_parser.finish()
-                if fallback_text:
-                    for event in hold_events(
-                        _iter_visible_text_events(
-                            ledger,
-                            fallback_text,
-                        )
-                    ):
-                        yield event
-                for event in hold_events(
-                    _iter_text_tool_use_events(
-                        ledger,
-                        function_tag_tools,
-                        tool_names=self._tool_names,
-                    )
-                ):
-                    yield event
-                for event in hold_events(
-                    _iter_text_tool_use_events(
-                        ledger,
-                        heuristic_parser.flush(),
-                        tool_names=self._tool_names,
-                    )
-                ):
-                    yield event
+                for event in assembler.finish_upstream():
+                    for out_event in hold_event(event):
+                        yield out_event
                 break
 
             except asyncio.CancelledError, GeneratorExit:
                 raise
             except Exception as error:
-                attempt_failure = None
-                if attempt is not None and not attempt.accepted:
-                    attempt_failure = await attempt.fail(
-                        error,
-                        provider_failure_override=(
-                            self._provider._provider_failure_override
-                        ),
-                    )
-                generated_output = has_committed_sse_output(ledger)
-                complete_tool_salvageable = (
-                    generated_output
-                    and ledger.has_emitted_tool_block()
-                    and all_emitted_tools_complete(ledger, self._request)
+                resolution = await self._resolve_attempt_failure(
+                    error=error,
+                    scope=scope,
+                    assembler=assembler,
+                    body=body,
+                    execution=execution,
+                    recovery=recovery,
+                    req_tag=req_tag,
                 )
-                retryable = (
-                    attempt_failure.retryable
-                    if attempt_failure is not None
-                    else is_retryable_stream_error(error)
-                )
-                decision = recovery.advance_failure(
-                    retryable=retryable,
-                    stream_opened=stream_opened,
-                    generated_output=generated_output,
-                    complete_tool_salvageable=complete_tool_salvageable,
-                    attempts_remaining=execution.attempts_remaining,
-                )
-                if decision.action == RecoveryFailureAction.EARLY_RETRY:
-                    trace_event(
-                        stage="provider",
-                        event="provider.recovery.early_retry",
-                        source="provider",
-                        provider=tag,
-                        request_id=self._request_id,
-                        attempts_started=execution.attempts_started,
-                        max_attempts=execution.max_attempts,
-                        retryable=True,
-                    )
-                    ledger = self._new_ledger()
-                    think_parser = ThinkTagParser()
-                    function_tag_parser = FunctionTagToolParser(self._request)
-                    heuristic_parser = HeuristicToolParser()
-                    finish_reason = None
-                    usage_info = None
-                    tool_argument_aliases = {}
-                    tool_argument_alias_buffers = {}
-                    tool_name_buffers = {}
+                if resolution.outcome is _OpenAIChatFailureOutcome.RETRY:
                     continue
-
-                if decision.action == RecoveryFailureAction.MIDSTREAM_RECOVERY:
-                    if stream is not None:
-                        await close_provider_stream(
-                            stream,
-                            active_error=error,
-                            provider_name=tag,
-                            request_id=self._request_id,
-                        )
-                        stream = None
-                    if attempt is not None:
-                        await attempt.aclose()
-                        attempt = None
-                    try:
-                        recovery_events = await self._recovery_events(
-                            body=body,
-                            ledger=ledger,
-                            error=error,
-                            tool_argument_alias_buffers=tool_argument_alias_buffers,
-                            output_reasoning=output_reasoning,
-                            execution=execution,
-                        )
-                    except Exception as recovery_error:
-                        trace_event(
-                            stage="provider",
-                            event="provider.recovery.failed",
-                            source="provider",
-                            provider=tag,
-                            request_id=self._request_id,
-                            exc_type=type(recovery_error).__name__,
-                        )
-                        recovery_events = None
-                    if recovery_events is not None:
-                        for event in recovery.flush_uncommitted(decision):
-                            yield event
-                        for event in recovery_events:
-                            yield event
-                        return
-
-                reported_error = underlying_provider_error(error)
-                self._provider._log_stream_transport_error(
-                    tag, req_tag, reported_error, request_id=self._request_id
-                )
-                failure = classify_provider_failure(
-                    reported_error,
-                    provider_name=tag,
-                    read_timeout_s=self._provider._config.http_read_timeout,
-                    request_id=self._request_id,
-                    provider_failure_override=(
-                        self._provider._provider_failure_override
-                    ),
-                )
-                error_trace: dict[str, Any] = {
-                    "stage": "provider",
-                    "event": "provider.response.error",
-                    "source": "provider",
-                    "provider": tag,
-                    "request_id": self._request_id,
-                    "exc_type": type(reported_error).__name__,
-                    "failure_kind": failure.kind.value,
-                    "status_code": failure.status_code,
-                    "provider_retryable": failure.retryable,
-                }
-                if self._provider._config.log_api_error_tracebacks:
-                    error_trace["error_message"] = failure.message
-                trace_event(**error_trace)
-                if (
-                    not decision.committed
-                    and decision.has_buffered
-                    and complete_tool_salvageable
-                ):
-                    for event in recovery.flush():
-                        yield event
-                elif not decision.committed:
-                    recovery.discard()
-                    raise failure from error
-                for event in ledger.close_unclosed_blocks():
+                for event in resolution.events:
                     yield event
-                raise failure from error
+                if resolution.outcome is _OpenAIChatFailureOutcome.COMPLETE:
+                    return
+                if resolution.failure is None:
+                    raise AssertionError(
+                        "raise resolution requires a failure"
+                    ) from error
+                raise resolution.failure from error
             finally:
-                if stream is not None:
-                    await close_provider_stream(
-                        stream,
-                        active_error=sys.exception(),
-                        provider_name=tag,
-                        request_id=self._request_id,
-                    )
-                if attempt is not None:
-                    await attempt.aclose()
+                if scope is not None:
+                    await scope.aclose(active_error=sys.exception())
 
-        for event in self._tool_calls.flush_tool_name_buffers(
-            ledger,
-            tool_names=self._tool_names,
-            tool_name_buffers=tool_name_buffers,
-            tool_argument_aliases=tool_argument_aliases,
-            tool_argument_alias_buffers=tool_argument_alias_buffers,
-        ):
+        for event in assembler.prepare_completion():
             for out_event in hold_event(event):
                 yield out_event
-
-        has_emitted_tool = ledger.has_emitted_tool_block()
-        has_content_blocks = (
-            ledger.blocks.text_index != -1
-            or ledger.blocks.thinking_index != -1
-            or has_emitted_tool
-        )
-        if not has_content_blocks or (
-            not has_emitted_tool
-            and not ledger.accumulated_text.strip()
-            and ledger.accumulated_reasoning.strip()
-        ):
-            for event in hold_events(ledger.ensure_text_block()):
-                yield event
-            for event in hold_event(ledger.emit_text_delta(" ")):
-                yield event
-
-        for event in self._tool_calls.flush_tool_argument_alias_buffers(
-            ledger, tool_argument_aliases, tool_argument_alias_buffers
-        ):
-            for out_event in hold_event(event):
-                yield out_event
-
-        for event in self._tool_calls.flush_task_arg_buffers(ledger):
-            for out_event in hold_event(event):
-                yield out_event
-
-        for event in hold_events(ledger.close_all_blocks()):
-            yield event
-
-        completion = usage_int(usage_info, "completion_tokens")
-        if isinstance(completion, int):
-            output_tokens = completion
-        else:
-            output_tokens = ledger.estimate_output_tokens()
-        provider_input = usage_int(usage_info, "prompt_tokens")
-        if provider_input is not None:
+        completion = assembler.completion
+        if completion.provider_input_tokens is not None:
             logger.debug(
                 "TOKEN_ESTIMATE: our={} provider={} diff={:+d}",
                 self._input_tokens,
-                provider_input,
-                provider_input - self._input_tokens,
+                completion.provider_input_tokens,
+                completion.provider_input_tokens - self._input_tokens,
             )
-        input_tokens = (
-            provider_input if provider_input is not None else self._input_tokens
-        )
         trace_event(
             stage="provider",
             event="provider.response.completed",
             source="provider",
             provider=tag,
             request_id=self._request_id,
-            finish_reason=(None if finish_reason is None else str(finish_reason)),
-            output_tokens=output_tokens,
-            prompt_tokens=input_tokens,
+            finish_reason=(
+                None
+                if completion.finish_reason is None
+                else str(completion.finish_reason)
+            ),
+            output_tokens=completion.output_tokens,
+            prompt_tokens=completion.input_tokens,
             prompt_tokens_estimate=self._input_tokens,
         )
-        for event in hold_event(
-            ledger.message_delta(
-                ledger.final_stop_reason(map_stop_reason(finish_reason)),
-                output_tokens,
-                input_tokens=input_tokens,
-                usage_fields=self._provider._anthropic_usage_fields(usage_info),
-            )
+        for event in assembler.terminal_events(
+            usage_fields=self._provider._anthropic_usage_fields(assembler.usage_info)
         ):
-            yield event
-        for event in hold_event(ledger.message_stop()):
-            yield event
+            for out_event in hold_event(event):
+                yield out_event
         for event in recovery.flush():
             yield event
+
+    async def _resolve_attempt_failure(
+        self,
+        *,
+        error: Exception,
+        scope: _OpenAIChatAttemptScope | None,
+        assembler: _OpenAIChatStreamAssembler,
+        body: dict[str, Any],
+        execution: ProviderExecution,
+        recovery: RecoveryController,
+        req_tag: str,
+    ) -> _OpenAIChatFailureResolution:
+        """Resolve one failed generation attempt without owning retry policy."""
+        attempt_failure = None
+        if scope is not None and not scope.attempt.accepted:
+            attempt_failure = await scope.attempt.fail(
+                error,
+                provider_failure_override=self._provider._provider_failure_override,
+            )
+
+        retryable = (
+            attempt_failure.retryable
+            if attempt_failure is not None
+            else is_retryable_stream_error(error)
+        )
+        generated_output = assembler.generated_output
+        complete_tool_salvageable = assembler.complete_tool_salvageable
+        decision = recovery.advance_failure(
+            retryable=retryable,
+            stream_opened=scope is not None,
+            generated_output=generated_output,
+            complete_tool_salvageable=complete_tool_salvageable,
+            attempts_remaining=execution.attempts_remaining,
+        )
+        tag = self._provider._provider_name
+        if decision.action == RecoveryFailureAction.EARLY_RETRY:
+            trace_event(
+                stage="provider",
+                event="provider.recovery.early_retry",
+                source="provider",
+                provider=tag,
+                request_id=self._request_id,
+                attempts_started=execution.attempts_started,
+                max_attempts=execution.max_attempts,
+                retryable=True,
+            )
+            return _OpenAIChatFailureResolution(outcome=_OpenAIChatFailureOutcome.RETRY)
+
+        if decision.action == RecoveryFailureAction.MIDSTREAM_RECOVERY:
+            if scope is not None:
+                await scope.aclose(active_error=error)
+            try:
+                recovery_events = await self._recovery_events(
+                    body=body,
+                    ledger=assembler.ledger,
+                    error=error,
+                    tool_argument_alias_buffers=(assembler.tool_argument_alias_buffers),
+                    output_reasoning=self._reasoning.output_enabled,
+                    execution=execution,
+                )
+            except Exception as recovery_error:
+                trace_event(
+                    stage="provider",
+                    event="provider.recovery.failed",
+                    source="provider",
+                    provider=tag,
+                    request_id=self._request_id,
+                    exc_type=type(recovery_error).__name__,
+                )
+                recovery_events = None
+            if recovery_events is not None:
+                return _OpenAIChatFailureResolution(
+                    outcome=_OpenAIChatFailureOutcome.COMPLETE,
+                    events=(
+                        *recovery.flush_uncommitted(decision),
+                        *recovery_events,
+                    ),
+                )
+
+        reported_error = underlying_provider_error(error)
+        self._provider._log_stream_transport_error(
+            tag,
+            req_tag,
+            reported_error,
+            request_id=self._request_id,
+        )
+        failure = classify_provider_failure(
+            reported_error,
+            provider_name=tag,
+            read_timeout_s=self._provider._config.http_read_timeout,
+            request_id=self._request_id,
+            provider_failure_override=self._provider._provider_failure_override,
+        )
+        error_trace: dict[str, Any] = {
+            "stage": "provider",
+            "event": "provider.response.error",
+            "source": "provider",
+            "provider": tag,
+            "request_id": self._request_id,
+            "exc_type": type(reported_error).__name__,
+            "failure_kind": failure.kind.value,
+            "status_code": failure.status_code,
+            "provider_retryable": failure.retryable,
+        }
+        if self._provider._config.log_api_error_tracebacks:
+            error_trace["error_message"] = failure.message
+        trace_event(**error_trace)
+
+        failure_events: list[str] = []
+        if (
+            not decision.committed
+            and decision.has_buffered
+            and complete_tool_salvageable
+        ):
+            failure_events.extend(recovery.flush())
+        elif not decision.committed:
+            recovery.discard()
+            return _OpenAIChatFailureResolution(
+                outcome=_OpenAIChatFailureOutcome.RAISE,
+                failure=failure,
+            )
+        failure_events.extend(assembler.ledger.close_unclosed_blocks())
+        return _OpenAIChatFailureResolution(
+            outcome=_OpenAIChatFailureOutcome.RAISE,
+            events=tuple(failure_events),
+            failure=failure,
+        )
 
     async def _collect_recovery_output(
         self,
@@ -1081,7 +1211,7 @@ class _OpenAIChatStreamRunner:
         body: dict[str, Any],
         ledger: AnthropicStreamLedger,
         error: Exception,
-        tool_argument_alias_buffers: dict[int, str],
+        tool_argument_alias_buffers: Mapping[int, str],
         output_reasoning: bool,
         execution: ProviderExecution,
     ) -> list[str] | None:
@@ -1175,7 +1305,7 @@ class _OpenAIChatStreamRunner:
         *,
         body: dict[str, Any],
         ledger: AnthropicStreamLedger,
-        tool_argument_alias_buffers: dict[int, str],
+        tool_argument_alias_buffers: Mapping[int, str],
         execution: ProviderExecution,
     ) -> list[str] | None:
         schemas = tool_schemas_by_name(self._request)
@@ -1241,10 +1371,30 @@ class _OpenAIChatStreamRunner:
             return None
         return events
 
-    def _new_ledger(self) -> AnthropicStreamLedger:
-        return AnthropicStreamLedger(
-            self._message_id,
-            self._response_model,
-            self._input_tokens,
-            log_raw_events=self._provider._config.log_raw_sse_events,
+    def _new_stream_assembler(
+        self, *, output_reasoning: bool
+    ) -> _OpenAIChatStreamAssembler:
+        def extra_reasoning_events(
+            delta: Any, ledger: AnthropicStreamLedger
+        ) -> Iterator[str]:
+            yield from self._provider._handle_extra_reasoning(
+                delta,
+                ledger,
+                output_reasoning=output_reasoning,
+            )
+
+        return _OpenAIChatStreamAssembler(
+            request=self._request,
+            ledger=AnthropicStreamLedger(
+                self._message_id,
+                self._response_model,
+                self._input_tokens,
+                log_raw_events=self._provider._config.log_raw_sse_events,
+            ),
+            profile=self._provider._profile,
+            provider_name=self._provider._provider_name,
+            output_reasoning=output_reasoning,
+            tool_names=self._tool_names,
+            tool_calls=self._tool_calls,
+            extra_reasoning_events=extra_reasoning_events,
         )
