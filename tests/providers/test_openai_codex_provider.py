@@ -1,6 +1,7 @@
 import json
 from collections.abc import AsyncIterator
 from typing import Any
+from unittest.mock import patch
 
 import httpx
 import pytest
@@ -631,20 +632,75 @@ async def test_unauthorized_response_forces_one_auth_refresh() -> None:
 
 
 @pytest.mark.asyncio
-async def test_transient_auth_refresh_failure_uses_coordinated_provider_retry() -> None:
-    class TransientRecoveryAuth(_FakeAuth):
+async def test_model_discovery_re_request_is_a_second_admitted_attempt() -> None:
+    authorizations: list[str] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        authorizations.append(request.headers["authorization"])
+        if len(authorizations) == 1:
+            return httpx.Response(401, request=request)
+        return httpx.Response(
+            200,
+            json={
+                "models": [
+                    {
+                        "slug": "gpt-visible",
+                        "visibility": "list",
+                        "supported_in_api": False,
+                        "supported_reasoning_levels": [{"effort": "high"}],
+                    }
+                ]
+            },
+            request=request,
+        )
+
+    client = httpx.AsyncClient(
+        base_url="https://chatgpt.com/backend-api/codex/",
+        transport=httpx.MockTransport(handler),
+    )
+    auth = _FakeAuth()
+    provider = OpenAICodexProvider(
+        _config(), auth=auth, admission=_admission(), client=client
+    )
+
+    with patch("free_claude_code.providers.admission.trace_event") as trace:
+        infos = await provider.list_model_infos()
+
+    assert {info.model_id for info in infos} == {"gpt-visible"}
+    assert authorizations == ["Bearer access_1", "Bearer access_2"]
+    assert auth.recovery_calls == 1
+    attempt_rows = [
+        call.kwargs
+        for call in trace.call_args_list
+        if call.kwargs.get("event", "").startswith("provider.attempt.")
+    ]
+    assert [row["event"] for row in attempt_rows] == [
+        "provider.attempt.started",
+        "provider.attempt.resolved",
+        "provider.attempt.started",
+        "provider.attempt.resolved",
+    ]
+    assert [row["attempt"] for row in attempt_rows] == [1, 1, 2, 2]
+    assert [row.get("outcome") for row in attempt_rows] == [
+        None,
+        "corrected",
+        None,
+        "accepted",
+    ]
+    assert len({row["execution_id"] for row in attempt_rows}) == 1
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_auth_refresh_failure_does_not_repeat_rejected_provider_call() -> None:
+    class FailingRecoveryAuth(_FakeAuth):
         async def recover_unauthorized(self, rejected_token: str) -> OpenAIAccess:
             assert rejected_token == self.current_token
             self.recovery_calls += 1
-            if self.recovery_calls == 1:
-                raise httpx.ReadError(
-                    "refresh interrupted",
-                    request=httpx.Request(
-                        "POST", "https://auth.openai.com/oauth/token"
-                    ),
-                )
-            self.current_token = "access_2"
-            return OpenAIAccess(self.current_token, "account_1", False)
+            raise httpx.ReadError(
+                "refresh interrupted",
+                request=httpx.Request("POST", "https://auth.openai.com/oauth/token"),
+            )
 
     authorizations: list[str] = []
 
@@ -664,26 +720,23 @@ async def test_transient_auth_refresh_failure_uses_coordinated_provider_retry() 
         base_url="https://chatgpt.com/backend-api/codex/",
         transport=httpx.MockTransport(handler),
     )
-    auth = TransientRecoveryAuth()
+    auth = FailingRecoveryAuth()
     provider = OpenAICodexProvider(
         _config(), auth=auth, admission=_admission(), client=client
     )
 
-    body = await _collect(
-        provider.stream_response(
-            _request(),
-            request_id="req_auth_transient",
-            response_model="claude-opus-4",
+    with pytest.raises(ExecutionFailure, match="refresh interrupted") as exc_info:
+        await _collect(
+            provider.stream_response(
+                _request(),
+                request_id="req_auth_transient",
+                response_model="claude-opus-4",
+            )
         )
-    )
 
-    assert authorizations == [
-        "Bearer access_1",
-        "Bearer access_1",
-        "Bearer access_2",
-    ]
-    assert auth.recovery_calls == 2
-    assert text_content(parse_sse_text(body)) == "recovered"
+    assert isinstance(exc_info.value.__cause__, httpx.ReadError)
+    assert authorizations == ["Bearer access_1"]
+    assert auth.recovery_calls == 1
     await client.aclose()
 
 
@@ -720,6 +773,47 @@ async def test_second_unauthorized_response_is_terminal_without_refresh_loop() -
     assert exc_info.value.status_code == 401
     assert authorizations == ["Bearer access_1", "Bearer access_2"]
     assert auth.recovery_calls == 1
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_final_attempt_unauthorized_preserves_the_provider_401() -> None:
+    attempts = 0
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        nonlocal attempts
+        attempts += 1
+        status = 503 if attempts < 5 else 401
+        return httpx.Response(
+            status,
+            json={"error": {"message": f"attempt {attempts}"}},
+            request=request,
+        )
+
+    client = httpx.AsyncClient(
+        base_url="https://chatgpt.com/backend-api/codex/",
+        transport=httpx.MockTransport(handler),
+    )
+    auth = _FakeAuth()
+    provider = OpenAICodexProvider(
+        _config(), auth=auth, admission=_admission(), client=client
+    )
+
+    with pytest.raises(ExecutionFailure) as exc_info:
+        await _collect(
+            provider.stream_response(
+                _request(),
+                request_id="req_final_401",
+                response_model="claude-opus-4",
+            )
+        )
+
+    assert attempts == 5
+    assert auth.recovery_calls == 0
+    assert exc_info.value.status_code == 401
+    assert "Request ID: req_final_401" in str(exc_info.value)
+    assert isinstance(exc_info.value.__cause__, httpx.HTTPStatusError)
+    assert exc_info.value.__cause__.response.status_code == 401
     await client.aclose()
 
 

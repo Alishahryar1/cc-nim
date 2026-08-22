@@ -21,7 +21,10 @@ from free_claude_code.core.anthropic.streaming import (
 )
 from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
-from free_claude_code.providers.admission import UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS
+from free_claude_code.providers.admission import (
+    UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS,
+    ProviderOperationKind,
+)
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.openai_chat.provider import (
     _OpenAIChatStreamRunner,
@@ -233,7 +236,7 @@ class TestStreamingExceptionHandling:
     async def test_stream_normalization_failure_closes_raw_stream(self):
         provider = _make_provider()
         stream = ClosableAsyncStreamMock([])
-        retry_session = provider._admission.new_retry_session()
+        execution = provider._admission.start_execution()
 
         with (
             patch.object(
@@ -249,7 +252,11 @@ class TestStreamingExceptionHandling:
             ),
             pytest.raises(ValueError, match="invalid stream wrapper"),
         ):
-            await provider._create_stream({"messages": []}, retry_session)
+            await provider._create_stream(
+                {"messages": []},
+                execution,
+                ProviderOperationKind.GENERATION,
+            )
 
         assert stream.closed
 
@@ -1078,12 +1085,15 @@ class TestStreamingExceptionHandling:
             ]
         )
 
-        with patch.object(
-            provider._client.chat.completions,
-            "create",
-            new_callable=AsyncMock,
-            side_effect=[*primary_streams, continuation],
-        ) as create:
+        with (
+            patch.object(
+                provider._client.chat.completions,
+                "create",
+                new_callable=AsyncMock,
+                side_effect=[*primary_streams, continuation],
+            ) as create,
+            patch("free_claude_code.providers.admission.trace_event") as attempt_trace,
+        ):
             events = await _collect_stream(provider, request)
 
         assert create.await_count == UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS
@@ -1105,6 +1115,19 @@ class TestStreamingExceptionHandling:
         assert sum(event.event == "message_start" for event in parsed) == 1
         assert sum(event.event == "message_delta" for event in parsed) == 1
         assert sum(event.event == "message_stop" for event in parsed) == 1
+        starts = [
+            call.kwargs
+            for call in attempt_trace.call_args_list
+            if call.kwargs.get("event") == "provider.attempt.started"
+        ]
+        assert [row["operation_kind"] for row in starts] == [
+            ProviderOperationKind.GENERATION.value,
+            ProviderOperationKind.GENERATION.value,
+            ProviderOperationKind.GENERATION.value,
+            ProviderOperationKind.GENERATION.value,
+            ProviderOperationKind.CONTINUATION.value,
+        ]
+        assert len({row["execution_id"] for row in starts}) == 1
 
     @pytest.mark.asyncio
     async def test_clean_eof_after_text_continues_with_overlap_trim(self):
@@ -1192,7 +1215,7 @@ class TestStreamingExceptionHandling:
         ]
         provider = _make_provider()
         runner = _make_stream_runner(provider)
-        retry_session = provider._admission.new_retry_session()
+        execution = provider._admission.start_execution()
 
         with (
             patch.object(
@@ -1206,7 +1229,8 @@ class TestStreamingExceptionHandling:
             await runner._collect_recovery_output(
                 {"messages": []},
                 include_reasoning=True,
-                retry_session=retry_session,
+                execution=execution,
+                operation_kind=ProviderOperationKind.CONTINUATION,
             )
 
         assert create.await_count == UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS
@@ -1224,7 +1248,7 @@ class TestStreamingExceptionHandling:
         ]
         provider = _make_provider()
         runner = _make_stream_runner(provider)
-        retry_session = provider._admission.new_retry_session()
+        execution = provider._admission.start_execution()
 
         with (
             patch.object(
@@ -1238,7 +1262,8 @@ class TestStreamingExceptionHandling:
             await runner._collect_recovery_output(
                 {"messages": []},
                 include_reasoning=True,
-                retry_session=retry_session,
+                execution=execution,
+                operation_kind=ProviderOperationKind.CONTINUATION,
             )
 
         assert create.await_count == UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS
@@ -1255,7 +1280,7 @@ class TestStreamingExceptionHandling:
         )
         provider = _make_provider()
         runner = _make_stream_runner(provider)
-        retry_session = provider._admission.new_retry_session()
+        execution = provider._admission.start_execution()
 
         with patch.object(
             provider._client.chat.completions,
@@ -1266,7 +1291,8 @@ class TestStreamingExceptionHandling:
             result = await runner._collect_recovery_output(
                 {"messages": []},
                 include_reasoning=True,
-                retry_session=retry_session,
+                execution=execution,
+                operation_kind=ProviderOperationKind.CONTINUATION,
             )
 
         assert result.text == "world"
@@ -1279,7 +1305,7 @@ class TestStreamingExceptionHandling:
         """Provider semantics apply before the first recovery chunk as well."""
         provider = _make_provider()
         runner = _make_stream_runner(provider)
-        retry_session = provider._admission.new_retry_session()
+        execution = provider._admission.start_execution()
         request = httpx2.Request(
             "POST", "https://test.api.nvidia.com/v1/chat/completions"
         )
@@ -1310,7 +1336,8 @@ class TestStreamingExceptionHandling:
             result = await runner._collect_recovery_output(
                 {"messages": []},
                 include_reasoning=True,
-                retry_session=retry_session,
+                execution=execution,
+                operation_kind=ProviderOperationKind.CONTINUATION,
             )
 
         assert result.text == "world"
@@ -1383,14 +1410,14 @@ class TestStreamingExceptionHandling:
                 thinking="hidden reasoning more",
             ),
         ) as mock_collect:
-            retry_session = runner._provider._admission.new_retry_session()
+            execution = runner._provider._admission.start_execution()
             events = await runner._recovery_events(
                 body={"messages": [{"role": "user", "content": "hello"}]},
                 ledger=ledger,
                 error=TimeoutError("cutoff"),
                 tool_argument_alias_buffers={},
                 output_reasoning=True,
-                retry_session=retry_session,
+                execution=execution,
             )
 
         assert events is not None

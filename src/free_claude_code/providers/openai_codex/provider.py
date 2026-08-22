@@ -33,6 +33,9 @@ from free_claude_code.core.trace import trace_event
 from free_claude_code.providers.admission import (
     ProviderAdmissionController,
     ProviderAttempt,
+    ProviderCorrectionAction,
+    ProviderExecution,
+    ProviderOperationKind,
 )
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.failure_policy import (
@@ -40,7 +43,11 @@ from free_claude_code.providers.failure_policy import (
     classify_provider_failure,
     is_retryable_stream_error,
 )
-from free_claude_code.providers.stream_recovery import RecoveryController
+from free_claude_code.providers.http import maybe_await_aclose
+from free_claude_code.providers.stream_recovery import (
+    RecoveryController,
+    RecoveryFailureAction,
+)
 
 from .auth import OpenAIAccess, OpenAIAuthManager, OpenAIReconnectRequired
 from .login import OPENAI_CODEX_ORIGINATOR
@@ -104,26 +111,67 @@ class OpenAICodexProvider(BaseProvider):
 
     async def list_model_infos(self) -> frozenset[ProviderModelInfo]:
         """Discover models visible to the currently connected ChatGPT account."""
+        return _model_infos(await self._list_models_payload())
 
-        async def fetch() -> Any:
-            access = await self._auth.access()
-            response = await self._client.get(
-                "models",
-                params={"client_version": FCC_VERSION},
-                headers={**self._client_headers, **_auth_headers(access)},
-            )
-            if response.status_code == 401:
-                access = await self._auth.recover_unauthorized(access.access_token)
+    async def _list_models_payload(self) -> Any:
+        """Fetch one Codex model catalog with each provider GET admitted once."""
+        execution = self._admission.start_execution()
+        authentication_recovered = False
+        while execution.can_attempt:
+            response: httpx.Response | None = None
+            attempt: ProviderAttempt | None = None
+            try:
+                access = await self._auth.access()
+                attempt = await execution.open_attempt(
+                    ProviderOperationKind.MODEL_DISCOVERY
+                )
                 response = await self._client.get(
                     "models",
                     params={"client_version": FCC_VERSION},
                     headers={**self._client_headers, **_auth_headers(access)},
                 )
-            response.raise_for_status()
-            return response.json()
+                if response.status_code == 401 and not authentication_recovered:
+                    error = await _response_status_error(response)
+                    correction = await attempt.correct(error)
+                    if correction is ProviderCorrectionAction.FINAL:
+                        await response.aclose()
+                        response = None
+                        await attempt.aclose()
+                        attempt = None
+                        raise error
+                    await response.aclose()
+                    response = None
+                    await attempt.aclose()
+                    attempt = None
+                    await self._auth.recover_unauthorized(access.access_token)
+                    authentication_recovered = True
+                    continue
+                if not response.is_success:
+                    raise await _response_status_error(response)
+                payload = response.json()
+                await attempt.accept()
+                execution.succeed()
+                return payload
+            except asyncio.CancelledError:
+                execution.abandon()
+                raise
+            except Exception as error:
+                if attempt is not None and not attempt.accepted:
+                    decision = await attempt.fail(error)
+                    if decision.retry_allowed:
+                        continue
+                execution.fail(error)
+                raise
+            finally:
+                if response is not None:
+                    await response.aclose()
+                if attempt is not None:
+                    await attempt.aclose()
 
-        payload = await self._admission.run_with_retry(fetch)
-        return _model_infos(payload)
+        if execution.last_failure is not None:
+            raise execution.last_failure
+        execution.abandon()
+        raise RuntimeError("OpenAI model discovery ended without an attempt outcome")
 
     def stream_response(
         self,
@@ -171,7 +219,40 @@ class OpenAICodexProvider(BaseProvider):
         response_model: str,
         tool_names: OpenAIToolNameCodec,
     ) -> AsyncIterator[str]:
-        retry_session = self._admission.new_retry_session(request_id=request_id)
+        execution = self._admission.start_execution(request_id=request_id)
+        provider_stream = self._run_stream_execution(
+            body,
+            input_tokens=input_tokens,
+            request_id=request_id,
+            response_model=response_model,
+            tool_names=tool_names,
+            execution=execution,
+        )
+        try:
+            async for event in provider_stream:
+                yield event
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            execution.fail(error)
+            raise
+        else:
+            execution.succeed()
+        finally:
+            await maybe_await_aclose(provider_stream)
+            execution.abandon()
+
+    async def _run_stream_execution(
+        self,
+        body: dict[str, Any],
+        *,
+        input_tokens: int,
+        request_id: str | None,
+        response_model: str,
+        tool_names: OpenAIToolNameCodec,
+        execution: ProviderExecution,
+    ) -> AsyncIterator[str]:
+        """Run one Codex execution while retaining Responses transport ownership."""
         recovery = RecoveryController()
         message_id = f"msg_{uuid.uuid4()}"
         session_id = str(uuid.uuid4())
@@ -182,13 +263,14 @@ class OpenAICodexProvider(BaseProvider):
             source="provider",
             provider="openai",
             request_id=request_id,
+            execution_id=execution.execution_id,
             gateway_model=response_model,
             downstream_model=body.get("model"),
             item_count=len(body.get("input", [])),
             tool_count=len(body.get("tools", [])),
         )
 
-        while retry_session.can_attempt:
+        while execution.can_attempt:
             stream = ResponsesProviderStream(
                 message_id=message_id,
                 model=response_model,
@@ -205,7 +287,7 @@ class OpenAICodexProvider(BaseProvider):
             stream_opened = False
             try:
                 access = await self._auth.access()
-                attempt = await self._admission.open_attempt(retry_session)
+                attempt = await execution.open_attempt(ProviderOperationKind.GENERATION)
                 response = await self._client.send(
                     self._client.build_request(
                         "POST",
@@ -221,23 +303,20 @@ class OpenAICodexProvider(BaseProvider):
                     stream=True,
                 )
                 if response.status_code == 401 and not authentication_recovered:
-                    await _read_bounded_body(response)
-                    await self._auth.recover_unauthorized(access.access_token)
-                    await attempt.retry_immediately()
-                    authentication_recovered = True
+                    error = await _response_status_error(response)
+                    correction = await attempt.correct(error)
+                    await response.aclose()
+                    response = None
+                    await attempt.aclose()
+                    attempt = None
+                    if correction is ProviderCorrectionAction.FINAL:
+                        raise error
                     recovery.discard()
+                    await self._auth.recover_unauthorized(access.access_token)
+                    authentication_recovered = True
                     continue
                 if not response.is_success:
-                    body_bytes, body_truncated = await _read_bounded_body(response)
-                    try:
-                        response.raise_for_status()
-                    except httpx.HTTPStatusError as exc:
-                        attach_upstream_error_body(
-                            exc,
-                            body_bytes,
-                            truncated=body_truncated,
-                        )
-                        raise
+                    raise await _response_status_error(response)
                 content_type = response.headers.get("content-type")
                 if content_type and "text/event-stream" not in content_type.lower():
                     body_bytes, body_truncated = await _read_bounded_body(response)
@@ -254,7 +333,7 @@ class OpenAICodexProvider(BaseProvider):
 
                 async for event_type, payload in _iter_sse(response):
                     if not attempt.accepted:
-                        await attempt.succeeded()
+                        await attempt.accept()
                     for event in stream.feed(event_type, payload):
                         for held in recovery.push(event):
                             yield held
@@ -276,30 +355,10 @@ class OpenAICodexProvider(BaseProvider):
                 raise
             except Exception as raw_error:
                 error = _effective_error(raw_error)
+                attempt_failure = None
                 if attempt is not None and not attempt.accepted:
-                    await attempt.retry(error)
-                retryable_override = (
-                    attempt.failure_retryable
-                    if attempt is not None and attempt.failure_retryable is not None
-                    else None
-                )
-                retryable = (
-                    retryable_override
-                    if retryable_override is not None
-                    else is_retryable_stream_error(error)
-                )
-                decision = recovery.advance_failure(
-                    retryable=retryable,
-                    stream_opened=stream_opened,
-                    generated_output=recovery.committed,
-                    complete_tool_salvageable=False,
-                    attempts_remaining=retry_session.attempts_remaining,
-                )
-                if (
-                    not decision.committed
-                    and decision.retryable
-                    and retry_session.can_attempt
-                ):
+                    attempt_failure = await attempt.fail(error)
+                if attempt_failure is not None and attempt_failure.retry_allowed:
                     recovery.discard()
                     trace_event(
                         stage="provider",
@@ -307,8 +366,32 @@ class OpenAICodexProvider(BaseProvider):
                         source="provider",
                         provider="openai",
                         request_id=request_id,
-                        attempts_started=retry_session.attempts_started,
-                        max_attempts=retry_session.max_attempts,
+                        attempts_started=execution.attempts_started,
+                        max_attempts=execution.max_attempts,
+                    )
+                    continue
+                retryable = (
+                    attempt_failure.retryable
+                    if attempt_failure is not None
+                    else is_retryable_stream_error(error)
+                )
+                decision = recovery.advance_failure(
+                    retryable=retryable,
+                    stream_opened=stream_opened,
+                    generated_output=recovery.committed,
+                    complete_tool_salvageable=False,
+                    attempts_remaining=execution.attempts_remaining,
+                )
+                if decision.action is RecoveryFailureAction.EARLY_RETRY:
+                    recovery.discard()
+                    trace_event(
+                        stage="provider",
+                        event="provider.recovery.early_retry",
+                        source="provider",
+                        provider="openai",
+                        request_id=request_id,
+                        attempts_started=execution.attempts_started,
+                        max_attempts=execution.max_attempts,
                     )
                     continue
 
@@ -336,7 +419,9 @@ class OpenAICodexProvider(BaseProvider):
                 if attempt is not None:
                     await attempt.aclose()
 
-        raise RuntimeError("OpenAI retry session ended without a terminal result.")
+        if execution.last_failure is not None:
+            raise execution.last_failure
+        raise RuntimeError("OpenAI execution ended without a terminal result.")
 
 
 async def _iter_sse(
@@ -392,6 +477,17 @@ async def _read_bounded_body(
             break
     truncated = len(body) > limit
     return bytes(body[:limit]), truncated
+
+
+async def _response_status_error(response: httpx.Response) -> httpx.HTTPStatusError:
+    """Return one bounded, diagnostic-preserving HTTP status failure."""
+    body, truncated = await _read_bounded_body(response)
+    try:
+        response.raise_for_status()
+    except httpx.HTTPStatusError as error:
+        attach_upstream_error_body(error, body, truncated=truncated)
+        return error
+    raise RuntimeError("response status is successful")
 
 
 def _auth_headers(access: OpenAIAccess) -> dict[str, str]:

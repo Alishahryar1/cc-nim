@@ -37,7 +37,9 @@ from free_claude_code.core.trace import provider_chat_body_snapshot, trace_event
 from free_claude_code.providers.admission import (
     ProviderAdmissionController,
     ProviderAttempt,
-    ProviderRetrySession,
+    ProviderCorrectionAction,
+    ProviderExecution,
+    ProviderOperationKind,
 )
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.failure_policy import (
@@ -208,20 +210,26 @@ class OpenAIChatProvider(BaseProvider):
 
     async def _list_models_payload(self) -> Any:
         """Fetch one OpenAI-compatible model-list payload with shared retries."""
-        payload = await self._admission.run_with_retry(
-            self._fetch_models_payload,
-            provider_failure_override=self._provider_failure_override,
-        )
-        return payload
+        return await self._fetch_models_payload()
 
     async def _fetch_models_payload(self) -> Any:
+        """Fetch the complete profile-selected model-list payload."""
+        listing = self._profile.model_listing
+        if listing.path is not None and listing.pagination is not None:
+            return await self._fetch_paginated_models_payload(listing.path)
+        execution = self._admission.start_execution()
+        return await execution.run_call(
+            self._fetch_models_payload_once,
+            operation_kind=ProviderOperationKind.MODEL_DISCOVERY,
+            provider_failure_override=self._provider_failure_override,
+        )
+
+    async def _fetch_models_payload_once(self) -> Any:
         """Fetch the profile-selected model-list endpoint once."""
         listing = self._profile.model_listing
         path = listing.path
         if path is None:
             return await self._client.models.list()
-        if listing.pagination is not None:
-            return await self._fetch_paginated_models_payload(path)
         if listing.query_params:
             return await self._client.get(
                 path,
@@ -231,7 +239,7 @@ class OpenAIChatProvider(BaseProvider):
         return await self._client.get(path, cast_to=object)
 
     async def _fetch_paginated_models_payload(self, path: str) -> Any:
-        """Fetch one complete bounded model catalog within a retry attempt."""
+        """Fetch a bounded model catalog with one execution per physical page."""
         listing = self._profile.model_listing
         pagination = listing.pagination
         if pagination is None:
@@ -243,10 +251,15 @@ class OpenAIChatProvider(BaseProvider):
         while total_pages is None or page < pagination.first_page + total_pages:
             params = dict(listing.query_params)
             params[pagination.page_param] = str(page)
-            payload = await self._client.get(
-                path,
-                cast_to=object,
-                options={"params": params},
+            execution = self._admission.start_execution()
+            payload = await execution.run_call(
+                lambda params=params: self._client.get(
+                    path,
+                    cast_to=object,
+                    options={"params": params},
+                ),
+                operation_kind=ProviderOperationKind.MODEL_DISCOVERY,
+                provider_failure_override=self._provider_failure_override,
             )
             total_pages = validate_model_list_page(
                 payload,
@@ -323,14 +336,15 @@ class OpenAIChatProvider(BaseProvider):
     async def _create_stream(
         self,
         body: dict,
-        retry_session: ProviderRetrySession,
+        execution: ProviderExecution,
+        operation_kind: ProviderOperationKind,
     ) -> tuple[Any, dict, ProviderAttempt]:
         """Create a streaming chat completion with bounded request fallbacks."""
         body = self._apply_learned_output_cap(body)
         used_retry_kinds: set[str] = set()
 
-        while retry_session.can_attempt:
-            attempt = await self._admission.open_attempt(retry_session)
+        while execution.can_attempt:
+            attempt = await execution.open_attempt(operation_kind)
             stream: Any | None = None
             retain_attempt = False
             try:
@@ -346,15 +360,17 @@ class OpenAIChatProvider(BaseProvider):
                 raise
             except Exception as error:
                 retry_body = self._next_create_retry_body(error, body, used_retry_kinds)
-                if retry_body is not None and retry_session.can_attempt:
-                    await attempt.retry_immediately()
-                    body = retry_body
-                    continue
-                should_retry = await attempt.retry(
+                if retry_body is not None:
+                    correction = await attempt.correct(error)
+                    if correction is ProviderCorrectionAction.RETRY:
+                        body = retry_body
+                        continue
+                    raise
+                decision = await attempt.fail(
                     error,
                     provider_failure_override=self._provider_failure_override,
                 )
-                if not should_retry:
+                if not decision.retry_allowed:
                     raise
             finally:
                 if not retain_attempt:
@@ -363,11 +379,13 @@ class OpenAIChatProvider(BaseProvider):
                             stream,
                             active_error=sys.exception(),
                             provider_name=self._provider_name,
-                            request_id=retry_session.request_id,
+                            request_id=execution.request_id,
                         )
                     await attempt.aclose()
 
-        raise RuntimeError("provider retry session exhausted without a final error")
+        if execution.last_failure is not None:
+            raise execution.last_failure
+        raise RuntimeError("provider execution ended without a final error")
 
     def _normalize_stream(self, stream: Any, _body: Mapping[str, Any]) -> Any:
         """Return the provider-specific stream view consumed by the base runner."""
@@ -483,13 +501,33 @@ class _OpenAIChatStreamRunner:
 
     async def run(self) -> AsyncIterator[str]:
         """Convert the upstream OpenAI-chat stream into Anthropic SSE."""
+        execution = self._provider._admission.start_execution(
+            request_id=self._request_id
+        )
+        provider_stream = self._run_execution(execution)
+        try:
+            async for event in provider_stream:
+                yield event
+        except asyncio.CancelledError:
+            raise
+        except Exception as error:
+            execution.fail(error)
+            raise
+        else:
+            execution.succeed()
+        finally:
+            await maybe_await_aclose(provider_stream)
+            execution.abandon()
+
+    async def _run_execution(
+        self,
+        execution: ProviderExecution,
+    ) -> AsyncIterator[str]:
+        """Run one provider execution while retaining transport-owned state."""
         tag = self._provider._provider_name
         req_tag = f" request_id={self._request_id}" if self._request_id else ""
         ledger = self._new_ledger()
         recovery = RecoveryController()
-        retry_session = self._provider._admission.new_retry_session(
-            request_id=self._request_id
-        )
 
         def hold_event(event: str) -> Iterator[str]:
             yield from recovery.push(event)
@@ -510,6 +548,7 @@ class _OpenAIChatStreamRunner:
             source="provider",
             provider=tag,
             request_id=self._request_id,
+            execution_id=execution.execution_id,
             gateway_model=self._response_model,
             downstream_model=body.get("model"),
             message_count=len(body.get("messages", [])),
@@ -541,13 +580,14 @@ class _OpenAIChatStreamRunner:
             try:
                 stream, body, attempt = await self._provider._create_stream(
                     body,
-                    retry_session,
+                    execution,
+                    ProviderOperationKind.GENERATION,
                 )
                 stream_opened = True
                 tool_argument_aliases = self._provider._tool_argument_aliases(body)
                 async for chunk in stream:
                     if not attempt.accepted:
-                        await attempt.succeeded()
+                        await attempt.accept()
                     chunk_usage = getattr(chunk, "usage", None)
                     if chunk_usage is not None:
                         usage_info = chunk_usage
@@ -720,8 +760,9 @@ class _OpenAIChatStreamRunner:
             except asyncio.CancelledError, GeneratorExit:
                 raise
             except Exception as error:
+                attempt_failure = None
                 if attempt is not None and not attempt.accepted:
-                    await attempt.retry(
+                    attempt_failure = await attempt.fail(
                         error,
                         provider_failure_override=(
                             self._provider._provider_failure_override
@@ -734,8 +775,8 @@ class _OpenAIChatStreamRunner:
                     and all_emitted_tools_complete(ledger, self._request)
                 )
                 retryable = (
-                    attempt.failure_retryable
-                    if attempt is not None and attempt.failure_retryable is not None
+                    attempt_failure.retryable
+                    if attempt_failure is not None
                     else is_retryable_stream_error(error)
                 )
                 decision = recovery.advance_failure(
@@ -743,7 +784,7 @@ class _OpenAIChatStreamRunner:
                     stream_opened=stream_opened,
                     generated_output=generated_output,
                     complete_tool_salvageable=complete_tool_salvageable,
-                    attempts_remaining=retry_session.attempts_remaining,
+                    attempts_remaining=execution.attempts_remaining,
                 )
                 if decision.action == RecoveryFailureAction.EARLY_RETRY:
                     trace_event(
@@ -752,8 +793,8 @@ class _OpenAIChatStreamRunner:
                         source="provider",
                         provider=tag,
                         request_id=self._request_id,
-                        attempts_started=retry_session.attempts_started,
-                        max_attempts=retry_session.max_attempts,
+                        attempts_started=execution.attempts_started,
+                        max_attempts=execution.max_attempts,
                         retryable=True,
                     )
                     ledger = self._new_ledger()
@@ -768,6 +809,17 @@ class _OpenAIChatStreamRunner:
                     continue
 
                 if decision.action == RecoveryFailureAction.MIDSTREAM_RECOVERY:
+                    if stream is not None:
+                        await close_provider_stream(
+                            stream,
+                            active_error=error,
+                            provider_name=tag,
+                            request_id=self._request_id,
+                        )
+                        stream = None
+                    if attempt is not None:
+                        await attempt.aclose()
+                        attempt = None
                     try:
                         recovery_events = await self._recovery_events(
                             body=body,
@@ -775,7 +827,7 @@ class _OpenAIChatStreamRunner:
                             error=error,
                             tool_argument_alias_buffers=tool_argument_alias_buffers,
                             output_reasoning=output_reasoning,
-                            retry_session=retry_session,
+                            execution=execution,
                         )
                     except Exception as recovery_error:
                         trace_event(
@@ -930,17 +982,19 @@ class _OpenAIChatStreamRunner:
         body: dict[str, Any],
         *,
         include_reasoning: bool,
-        retry_session: ProviderRetrySession,
+        execution: ProviderExecution,
+        operation_kind: ProviderOperationKind,
     ) -> _CollectedRecoveryOutput:
         """Collect one complete buffered continuation response."""
         last_error: Exception | None = None
-        while retry_session.can_attempt:
+        while execution.can_attempt:
             stream: Any | None = None
             attempt: ProviderAttempt | None = None
             try:
                 stream, accepted_body, attempt = await self._provider._create_stream(
                     body,
-                    retry_session,
+                    execution,
+                    operation_kind,
                 )
                 text_parts: list[str] = []
                 thinking_parts: list[str] = []
@@ -948,7 +1002,7 @@ class _OpenAIChatStreamRunner:
                 terminal_seen = False
                 async for chunk in stream:
                     if not attempt.accepted:
-                        await attempt.succeeded()
+                        await attempt.accept()
                     if not getattr(chunk, "choices", None):
                         continue
                     choice = chunk.choices[0]
@@ -993,15 +1047,14 @@ class _OpenAIChatStreamRunner:
                 last_error = error
                 retryable = is_retryable_stream_error(error)
                 if attempt is not None and not attempt.accepted:
-                    await attempt.retry(
+                    failure = await attempt.fail(
                         error,
                         provider_failure_override=(
                             self._provider._provider_failure_override
                         ),
                     )
-                    if attempt.failure_retryable is not None:
-                        retryable = attempt.failure_retryable
-                if not retryable or not retry_session.can_attempt:
+                    retryable = failure.retryable
+                if not retryable or not execution.can_attempt:
                     raise
                 trace_event(
                     stage="provider",
@@ -1009,8 +1062,8 @@ class _OpenAIChatStreamRunner:
                     source="provider",
                     provider=self._provider._provider_name,
                     recovery_kind="openai_text",
-                    attempts_started=retry_session.attempts_started,
-                    max_attempts=retry_session.max_attempts,
+                    attempts_started=execution.attempts_started,
+                    max_attempts=execution.max_attempts,
                     exc_type=type(error).__name__,
                 )
             finally:
@@ -1030,7 +1083,7 @@ class _OpenAIChatStreamRunner:
         error: Exception,
         tool_argument_alias_buffers: dict[int, str],
         output_reasoning: bool,
-        retry_session: ProviderRetrySession,
+        execution: ProviderExecution,
     ) -> list[str] | None:
         """Build terminal recovery events when the interrupted stream permits it."""
         if ledger.has_emitted_tool_block():
@@ -1039,7 +1092,7 @@ class _OpenAIChatStreamRunner:
                     body=body,
                     ledger=ledger,
                     tool_argument_alias_buffers=tool_argument_alias_buffers,
-                    retry_session=retry_session,
+                    execution=execution,
                 )
                 if repair_events is None:
                     return None
@@ -1083,7 +1136,8 @@ class _OpenAIChatStreamRunner:
         recovered = await self._collect_recovery_output(
             recovery_body,
             include_reasoning=output_reasoning,
-            retry_session=retry_session,
+            execution=execution,
+            operation_kind=ProviderOperationKind.CONTINUATION,
         )
         text_suffix = continuation_suffix(partial_text, recovered.text)
         thinking_suffix = continuation_suffix(partial_thinking, recovered.thinking)
@@ -1122,7 +1176,7 @@ class _OpenAIChatStreamRunner:
         body: dict[str, Any],
         ledger: AnthropicStreamLedger,
         tool_argument_alias_buffers: dict[int, str],
-        retry_session: ProviderRetrySession,
+        execution: ProviderExecution,
     ) -> list[str] | None:
         schemas = tool_schemas_by_name(self._request)
         events: list[str] = []
@@ -1151,12 +1205,13 @@ class _OpenAIChatStreamRunner:
             )
             accepted_suffix: str | None = None
             repair_attempt = 0
-            while retry_session.can_attempt:
+            while execution.can_attempt:
                 repair_attempt += 1
                 recovered = await self._collect_recovery_output(
                     recovery_body,
                     include_reasoning=False,
-                    retry_session=retry_session,
+                    execution=execution,
+                    operation_kind=ProviderOperationKind.TOOL_REPAIR,
                 )
                 repair = accept_tool_json_repair(
                     repair_prefix,
