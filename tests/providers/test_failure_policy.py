@@ -17,8 +17,10 @@ from free_claude_code.providers.failure_policy import (
     ProviderRecoveryExhausted,
     classify_provider_failure,
     is_retryable_provider_error,
+    is_retryable_stream_error,
     retryable_upstream_status,
 )
+from free_claude_code.providers.stream_recovery import TruncatedProviderStreamError
 
 
 def _openai_status_error(
@@ -53,6 +55,63 @@ def _http_status_error(status_code: int, message: str) -> httpx.HTTPStatusError:
         json={"error": {"message": message, "api_key": "SECRET"}},
     )
     return httpx.HTTPStatusError(message, request=request, response=response)
+
+
+def test_stream_retry_classification_distinguishes_protocol_and_status() -> None:
+    assert is_retryable_stream_error(TruncatedProviderStreamError("truncated"))
+    assert is_retryable_stream_error(httpx.ReadError("disconnected"))
+    assert is_retryable_stream_error(_http_status_error(503, "unavailable"))
+    assert not is_retryable_stream_error(_http_status_error(400, "bad request"))
+
+
+def test_stream_retry_classification_only_accepts_post_open_timeouts() -> None:
+    request = httpx.Request("POST", "https://provider.test/v1/messages")
+
+    assert is_retryable_stream_error(httpx.ReadTimeout("read", request=request))
+    assert not is_retryable_stream_error(
+        httpx.ConnectTimeout("connect", request=request)
+    )
+    assert not is_retryable_stream_error(httpx.WriteTimeout("write", request=request))
+    assert not is_retryable_stream_error(httpx.PoolTimeout("pool", request=request))
+
+
+@pytest.mark.parametrize(
+    ("message", "body"),
+    (
+        (
+            "stream embedded error",
+            {"error": {"message": "internal failure", "code": 500}},
+        ),
+        (
+            "stream embedded error",
+            {
+                "error": {
+                    "message": "internal failure",
+                    "type": "internal_server_error",
+                }
+            },
+        ),
+        (
+            "ResourceExhausted: limit reached while generating response",
+            {"error": {"message": "ResourceExhausted: limit reached"}},
+        ),
+    ),
+)
+def test_stream_retry_classification_accepts_statusless_transients(
+    message: str,
+    body: object,
+) -> None:
+    assert is_retryable_stream_error(_statusless_openai_error(message, body))
+
+
+def test_stream_retry_classification_rejects_openai_bad_request() -> None:
+    assert not is_retryable_stream_error(
+        _openai_status_error(
+            openai.BadRequestError,
+            status_code=400,
+            message="bad request",
+        )
+    )
 
 
 @dataclass(frozen=True, slots=True)

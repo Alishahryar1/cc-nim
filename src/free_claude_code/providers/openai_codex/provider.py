@@ -38,6 +38,7 @@ from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.failure_policy import (
     RetryableProviderProtocolError,
     classify_provider_failure,
+    is_retryable_stream_error,
 )
 from free_claude_code.providers.stream_recovery import RecoveryController
 
@@ -277,18 +278,22 @@ class OpenAICodexProvider(BaseProvider):
                 error = _effective_error(raw_error)
                 if attempt is not None and not attempt.accepted:
                     await attempt.retry(error)
-                retryable = (
+                retryable_override = (
                     attempt.failure_retryable
                     if attempt is not None and attempt.failure_retryable is not None
                     else None
                 )
+                retryable = (
+                    retryable_override
+                    if retryable_override is not None
+                    else is_retryable_stream_error(error)
+                )
                 decision = recovery.advance_failure(
-                    error,
+                    retryable=retryable,
                     stream_opened=stream_opened,
                     generated_output=recovery.committed,
                     complete_tool_salvageable=False,
                     attempts_remaining=retry_session.attempts_remaining,
-                    retryable_override=retryable,
                 )
                 if (
                     not decision.committed
