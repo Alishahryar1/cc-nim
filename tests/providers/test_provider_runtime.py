@@ -250,7 +250,7 @@ def test_poolside_provider_config_uses_key_base_and_proxy() -> None:
     assert descriptor.display_name == "Poolside AI"
     assert descriptor.credential_env == "POOLSIDE_API_KEY"
     assert descriptor.credential_attr == "poolside_api_key"
-    assert descriptor.credential_url == "https://inference.poolside.ai/"
+    assert descriptor.credential_url == "https://platform.poolside.ai/"
     assert descriptor.default_base_url == POOLSIDE_DEFAULT_BASE
     assert descriptor.base_url_attr is None
     assert descriptor.proxy_attr == "poolside_proxy"

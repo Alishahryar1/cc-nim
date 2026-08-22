@@ -67,6 +67,7 @@ def _settings(**overrides):
         "sambanova_api_key": "",
         "cerebras_api_key": "",
         "ollama_api_key": "",
+        "poolside_api_key": "",
         "fireworks_api_key": "",
         "novita_api_key": "",
         "cloudflare_api_token": "",
@@ -159,6 +160,25 @@ def test_provider_smoke_models_cover_configured_providers_independent_of_model_m
 
     assert [model.provider for model in models] == ["deepseek"]
     assert models[0].full_model == PROVIDER_SMOKE_DEFAULT_MODELS["deepseek"]
+    assert models[0].source == "provider_default"
+
+
+def test_poolside_provider_configuration_uses_documented_default_model(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_POOLSIDE", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            poolside_api_key="poolside-key",
+        )
+    )
+
+    assert config.has_provider_configuration("poolside")
+    models = config.provider_smoke_models()
+    assert [model.provider for model in models] == ["poolside"]
+    assert models[0].full_model == "poolside/poolside/laguna-s-2.1"
     assert models[0].source == "provider_default"
 
 

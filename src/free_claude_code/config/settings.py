@@ -196,6 +196,11 @@ class Settings(BaseModel):
         validation_alias="NARAROUTE_BASE_URL",
     )
 
+    # ==================== Poolside AI (OpenAI-compatible) ====================
+    poolside_api_key: OptionalNonEmptyString = Field(
+        default=None, validation_alias="POOLSIDE_API_KEY"
+    )
+
     # ==================== Fireworks AI Config ====================
     fireworks_api_key: OptionalNonEmptyString = Field(
         default=None, validation_alias="FIREWORKS_API_KEY"
@@ -305,11 +310,6 @@ class Settings(BaseModel):
     # ==================== Ollama Cloud ====================
     ollama_api_key: OptionalNonEmptyString = Field(
         default=None, validation_alias="OLLAMA_API_KEY"
-    )
-
-    # ==================== Poolside AI (OpenAI-compatible) ====================
-    poolside_api_key: OptionalNonEmptyString = Field(
-        default=None, validation_alias="POOLSIDE_API_KEY"
     )
 
     # ==================== Messaging Platform Selection ====================
@@ -487,6 +487,9 @@ class Settings(BaseModel):
     nararoute_proxy: OptionalNonEmptyString = Field(
         default=None, validation_alias="NARAROUTE_PROXY"
     )
+    poolside_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="POOLSIDE_PROXY"
+    )
     fireworks_proxy: OptionalNonEmptyString = Field(
         default=None, validation_alias="FIREWORKS_PROXY"
     )
@@ -514,10 +517,6 @@ class Settings(BaseModel):
     ollama_cloud_proxy: OptionalNonEmptyString = Field(
         default=None, validation_alias="OLLAMA_CLOUD_PROXY"
     )
-    poolside_proxy: OptionalNonEmptyString = Field(
-        default=None, validation_alias="POOLSIDE_PROXY"
-    )
-
     # ==================== Provider Rate Limiting ====================
     provider_rate_limit: int = Field(default=1, validation_alias="PROVIDER_RATE_LIMIT")
     provider_rate_window: int = Field(

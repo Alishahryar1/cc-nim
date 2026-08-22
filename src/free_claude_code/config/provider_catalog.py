@@ -77,14 +77,14 @@ FEATHERLESS_DEFAULT_BASE = "https://api.featherless.ai/v1"
 TOKENROUTER_DEFAULT_BASE = "https://api.tokenrouter.com/v1"
 # NaraRoute OpenAI-compatible Chat Completions gateway.
 NARAROUTE_DEFAULT_BASE = "https://router.bynara.id/v1"
+# Poolside AI OpenAI-compatible Chat Completions API.
+POOLSIDE_DEFAULT_BASE = "https://inference.poolside.ai/v1"
 # Agnes AI OpenAI-compatible Chat Completions API.
 AGNES_DEFAULT_BASE = "https://apihub.agnes-ai.com/v1"
 # ZenMux OpenAI-compatible Chat Completions gateway.
 ZENMUX_DEFAULT_BASE = "https://zenmux.ai/api/v1"
 # W&B Serverless Inference OpenAI-compatible API.
 WANDB_INFERENCE_DEFAULT_BASE = "https://api.inference.wandb.ai/v1"
-# Poolside AI OpenAI-compatible Chat Completions API.
-POOLSIDE_DEFAULT_BASE = "https://inference.poolside.ai/v1"
 
 
 class ProviderAuthKind(StrEnum):
@@ -529,6 +529,15 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         base_url_attr="nararoute_base_url",
         proxy_attr="nararoute_proxy",
     ),
+    "poolside": ProviderDescriptor(
+        provider_id="poolside",
+        display_name="Poolside AI",
+        credential_env="POOLSIDE_API_KEY",
+        credential_url="https://platform.poolside.ai/",
+        credential_attr="poolside_api_key",
+        default_base_url=POOLSIDE_DEFAULT_BASE,
+        proxy_attr="poolside_proxy",
+    ),
     "ollama_cloud": ProviderDescriptor(
         provider_id="ollama_cloud",
         display_name="Ollama Cloud",
@@ -563,15 +572,6 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         default_base_url=OLLAMA_DEFAULT_BASE,
         base_url_attr="ollama_base_url",
         local=True,
-    ),
-    "poolside": ProviderDescriptor(
-        provider_id="poolside",
-        display_name="Poolside AI",
-        credential_env="POOLSIDE_API_KEY",
-        credential_url="https://inference.poolside.ai/",
-        credential_attr="poolside_api_key",
-        default_base_url=POOLSIDE_DEFAULT_BASE,
-        proxy_attr="poolside_proxy",
     ),
 }
 

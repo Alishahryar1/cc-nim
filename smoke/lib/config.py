@@ -89,6 +89,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "cloudflare": "cloudflare/@cf/moonshotai/kimi-k2.6",
     "tokenrouter": "tokenrouter/moonshotai/kimi-k3-free",
     "nararoute": "nararoute/kimi-k3-free",
+    "poolside": "poolside/poolside/laguna-s-2.1",
     "agnes": "agnes/agnes-2.0-flash",
     "zenmux": "zenmux/deepseek/deepseek-v4-flash-free",
     "wandb": "wandb/openai/gpt-oss-20b",
