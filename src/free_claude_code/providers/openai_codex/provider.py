@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+import sys
 import uuid
 from collections.abc import AsyncIterator
 from importlib.metadata import PackageNotFoundError, version
@@ -32,7 +33,6 @@ from free_claude_code.core.reasoning import (
 from free_claude_code.core.trace import trace_event
 from free_claude_code.providers.admission import (
     ProviderAdmissionController,
-    ProviderAttempt,
     ProviderCorrectionAction,
     ProviderExecution,
     ProviderOperationKind,
@@ -43,7 +43,7 @@ from free_claude_code.providers.failure_policy import (
     classify_provider_failure,
     is_retryable_stream_error,
 )
-from free_claude_code.providers.http import maybe_await_aclose
+from free_claude_code.providers.http import ProviderAttemptScope, maybe_await_aclose
 from free_claude_code.providers.stream_recovery import (
     RecoveryController,
     RecoveryFailureAction,
@@ -118,55 +118,54 @@ class OpenAICodexProvider(BaseProvider):
         execution = self._admission.start_execution()
         authentication_recovered = False
         while execution.can_attempt:
-            response: httpx.Response | None = None
-            attempt: ProviderAttempt | None = None
+            scope: ProviderAttemptScope | None = None
             try:
                 access = await self._auth.access()
                 attempt = await execution.open_attempt(
                     ProviderOperationKind.MODEL_DISCOVERY
                 )
-                response = await self._client.get(
-                    "models",
-                    params={"client_version": FCC_VERSION},
-                    headers={**self._client_headers, **_auth_headers(access)},
+                scope = ProviderAttemptScope(
+                    attempt,
+                    provider_name="OpenAI",
+                    request_id=execution.request_id,
+                )
+                response = scope.retain(
+                    await self._client.get(
+                        "models",
+                        params={"client_version": FCC_VERSION},
+                        headers={**self._client_headers, **_auth_headers(access)},
+                    )
                 )
                 if response.status_code == 401 and not authentication_recovered:
                     error = await _response_status_error(response)
-                    correction = await attempt.correct(error)
+                    correction = await scope.attempt.correct(error)
+                    closing_scope = scope
+                    scope = None
+                    await closing_scope.aclose(active_error=error)
                     if correction is ProviderCorrectionAction.FINAL:
-                        await response.aclose()
-                        response = None
-                        await attempt.aclose()
-                        attempt = None
                         raise error
-                    await response.aclose()
-                    response = None
-                    await attempt.aclose()
-                    attempt = None
                     await self._auth.recover_unauthorized(access.access_token)
                     authentication_recovered = True
                     continue
                 if not response.is_success:
                     raise await _response_status_error(response)
                 payload = response.json()
-                await attempt.accept()
+                await scope.attempt.accept()
                 execution.succeed()
                 return payload
             except asyncio.CancelledError:
                 execution.abandon()
                 raise
             except Exception as error:
-                if attempt is not None and not attempt.accepted:
-                    decision = await attempt.fail(error)
+                if scope is not None and not scope.attempt.accepted:
+                    decision = await scope.attempt.fail(error)
                     if decision.retry_allowed:
                         continue
                 execution.fail(error)
                 raise
             finally:
-                if response is not None:
-                    await response.aclose()
-                if attempt is not None:
-                    await attempt.aclose()
+                if scope is not None:
+                    await scope.aclose(active_error=sys.exception())
 
         if execution.last_failure is not None:
             raise execution.last_failure
@@ -282,33 +281,38 @@ class OpenAICodexProvider(BaseProvider):
                 for held in recovery.push(event):
                     yield held
 
-            response: httpx.Response | None = None
-            attempt: ProviderAttempt | None = None
+            scope: ProviderAttemptScope | None = None
             stream_opened = False
             try:
                 access = await self._auth.access()
                 attempt = await execution.open_attempt(ProviderOperationKind.GENERATION)
-                response = await self._client.send(
-                    self._client.build_request(
-                        "POST",
-                        "responses",
-                        json=body,
-                        headers={
-                            **self._client_headers,
-                            **_auth_headers(access),
-                            "Accept": "text/event-stream",
-                            "session_id": session_id,
-                        },
-                    ),
-                    stream=True,
+                scope = ProviderAttemptScope(
+                    attempt,
+                    provider_name="OpenAI",
+                    request_id=request_id,
+                )
+                response = scope.retain(
+                    await self._client.send(
+                        self._client.build_request(
+                            "POST",
+                            "responses",
+                            json=body,
+                            headers={
+                                **self._client_headers,
+                                **_auth_headers(access),
+                                "Accept": "text/event-stream",
+                                "session_id": session_id,
+                            },
+                        ),
+                        stream=True,
+                    )
                 )
                 if response.status_code == 401 and not authentication_recovered:
                     error = await _response_status_error(response)
-                    correction = await attempt.correct(error)
-                    await response.aclose()
-                    response = None
-                    await attempt.aclose()
-                    attempt = None
+                    correction = await scope.attempt.correct(error)
+                    closing_scope = scope
+                    scope = None
+                    await closing_scope.aclose(active_error=error)
                     if correction is ProviderCorrectionAction.FINAL:
                         raise error
                     recovery.discard()
@@ -332,8 +336,8 @@ class OpenAICodexProvider(BaseProvider):
                 stream_opened = True
 
                 async for event_type, payload in _iter_sse(response):
-                    if not attempt.accepted:
-                        await attempt.accept()
+                    if not scope.attempt.accepted:
+                        await scope.attempt.accept()
                     for event in stream.feed(event_type, payload):
                         for held in recovery.push(event):
                             yield held
@@ -356,8 +360,8 @@ class OpenAICodexProvider(BaseProvider):
             except Exception as raw_error:
                 error = _effective_error(raw_error)
                 attempt_failure = None
-                if attempt is not None and not attempt.accepted:
-                    attempt_failure = await attempt.fail(error)
+                if scope is not None and not scope.attempt.accepted:
+                    attempt_failure = await scope.attempt.fail(error)
                 if attempt_failure is not None and attempt_failure.retry_allowed:
                     recovery.discard()
                     trace_event(
@@ -414,10 +418,8 @@ class OpenAICodexProvider(BaseProvider):
                     yield event
                 raise failure from raw_error
             finally:
-                if response is not None:
-                    await response.aclose()
-                if attempt is not None:
-                    await attempt.aclose()
+                if scope is not None:
+                    await scope.aclose(active_error=sys.exception())
 
         if execution.last_failure is not None:
             raise execution.last_failure

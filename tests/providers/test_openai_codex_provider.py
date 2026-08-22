@@ -1,3 +1,4 @@
+import asyncio
 import json
 from collections.abc import AsyncIterator
 from typing import Any
@@ -43,6 +44,37 @@ class _FakeAuth(OpenAIAuthManager):
         return OpenAIAccess(self.current_token, "account_1", False)
 
 
+class _CloseTrackingResponse(httpx.Response):
+    """HTTPX response that records close order and can fail during cleanup."""
+
+    def __init__(
+        self,
+        status_code: int,
+        *,
+        close_error: Exception | None = None,
+        **kwargs: Any,
+    ) -> None:
+        super().__init__(status_code, **kwargs)
+        self.close_calls = 0
+        self._close_error = close_error
+
+    async def aclose(self) -> None:
+        self.close_calls += 1
+        await super().aclose()
+        if self._close_error is not None:
+            raise self._close_error
+
+
+class _CloseAwareAuth(_FakeAuth):
+    def __init__(self, responses: list[_CloseTrackingResponse]) -> None:
+        super().__init__()
+        self._responses = responses
+
+    async def recover_unauthorized(self, rejected_token: str) -> OpenAIAccess:
+        assert self._responses[-1].close_calls == 1
+        return await super().recover_unauthorized(rejected_token)
+
+
 def _config() -> ProviderConfig:
     return make_provider_config(
         api_key="",
@@ -53,12 +85,12 @@ def _config() -> ProviderConfig:
     )
 
 
-def _admission() -> ProviderAdmissionController:
+def _admission(*, max_concurrency: int = 2) -> ProviderAdmissionController:
     return ProviderAdmissionController(
         provider_name="openai",
         rate_limit=100,
         rate_window=1,
-        max_concurrency=2,
+        max_concurrency=max_concurrency,
         base_delay=0,
         max_delay=0,
         jitter=0,
@@ -194,6 +226,127 @@ async def test_provider_uses_subscription_headers_and_visible_model_catalog() ->
     events = parse_sse_text(body)
     assert_anthropic_stream_contract(events)
     assert text_content(events) == "hello"
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_model_discovery_close_failure_preserves_success_and_permit() -> None:
+    responses: list[_CloseTrackingResponse] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        response = _CloseTrackingResponse(
+            200,
+            json={
+                "models": [
+                    {
+                        "slug": "gpt-visible",
+                        "visibility": "list",
+                        "supported_in_api": False,
+                    }
+                ]
+            },
+            request=request,
+            close_error=RuntimeError("cleanup failed"),
+        )
+        responses.append(response)
+        return response
+
+    client = httpx.AsyncClient(
+        base_url="https://chatgpt.com/backend-api/codex/",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = OpenAICodexProvider(
+        _config(),
+        auth=_FakeAuth(),
+        admission=_admission(max_concurrency=1),
+        client=client,
+    )
+
+    first = await asyncio.wait_for(provider.list_model_infos(), timeout=1)
+    second = await asyncio.wait_for(provider.list_model_infos(), timeout=1)
+
+    assert {info.model_id for info in first} == {"gpt-visible"}
+    assert {info.model_id for info in second} == {"gpt-visible"}
+    assert [response.close_calls for response in responses] == [1, 1]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_generation_close_failure_preserves_success_and_permit() -> None:
+    responses: list[_CloseTrackingResponse] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        response = _CloseTrackingResponse(
+            200,
+            text=_complete_stream("hello"),
+            headers={"content-type": "text/event-stream"},
+            request=request,
+            close_error=RuntimeError("cleanup failed"),
+        )
+        responses.append(response)
+        return response
+
+    client = httpx.AsyncClient(
+        base_url="https://chatgpt.com/backend-api/codex/",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = OpenAICodexProvider(
+        _config(),
+        auth=_FakeAuth(),
+        admission=_admission(max_concurrency=1),
+        client=client,
+    )
+
+    first = await asyncio.wait_for(
+        _collect(provider.stream_response(_request(), response_model="claude-opus-4")),
+        timeout=1,
+    )
+    second = await asyncio.wait_for(
+        _collect(provider.stream_response(_request(), response_model="claude-opus-4")),
+        timeout=1,
+    )
+
+    assert text_content(parse_sse_text(first)) == "hello"
+    assert text_content(parse_sse_text(second)) == "hello"
+    assert [response.close_calls for response in responses] == [1, 1]
+    await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_generation_close_failure_preserves_provider_failure() -> None:
+    responses: list[_CloseTrackingResponse] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        response = _CloseTrackingResponse(
+            400,
+            json={"error": {"message": "original provider failure"}},
+            request=request,
+            close_error=RuntimeError("cleanup failed"),
+        )
+        responses.append(response)
+        return response
+
+    client = httpx.AsyncClient(
+        base_url="https://chatgpt.com/backend-api/codex/",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = OpenAICodexProvider(
+        _config(), auth=_FakeAuth(), admission=_admission(), client=client
+    )
+
+    with pytest.raises(ExecutionFailure) as exc_info:
+        await _collect(
+            provider.stream_response(
+                _request(),
+                request_id="req_close_failure",
+                response_model="claude-opus-4",
+            )
+        )
+
+    assert exc_info.value.status_code == 400
+    assert "original provider failure" in exc_info.value.message
+    assert "cleanup failed" not in exc_info.value.message
+    assert [response.close_calls for response in responses] == [1]
     await client.aclose()
 
 
@@ -592,15 +745,18 @@ async def test_truncated_attempt_after_commit_is_not_retried_or_duplicated() -> 
 @pytest.mark.asyncio
 async def test_unauthorized_response_forces_one_auth_refresh() -> None:
     authorizations: list[str] = []
+    unauthorized_responses: list[_CloseTrackingResponse] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         authorizations.append(request.headers["authorization"])
         if len(authorizations) == 1:
-            return httpx.Response(
+            response = _CloseTrackingResponse(
                 401,
                 json={"error": {"message": "expired"}},
                 request=request,
             )
+            unauthorized_responses.append(response)
+            return response
         return httpx.Response(
             200,
             text=_complete_stream("recovered"),
@@ -612,7 +768,7 @@ async def test_unauthorized_response_forces_one_auth_refresh() -> None:
         base_url="https://chatgpt.com/backend-api/codex/",
         transport=httpx.MockTransport(handler),
     )
-    auth = _FakeAuth()
+    auth = _CloseAwareAuth(unauthorized_responses)
     provider = OpenAICodexProvider(
         _config(), auth=auth, admission=_admission(), client=client
     )
@@ -627,6 +783,7 @@ async def test_unauthorized_response_forces_one_auth_refresh() -> None:
 
     assert authorizations == ["Bearer access_1", "Bearer access_2"]
     assert auth.recovery_calls == 1
+    assert unauthorized_responses[0].close_calls == 1
     assert text_content(parse_sse_text(body)) == "recovered"
     await client.aclose()
 
@@ -634,11 +791,14 @@ async def test_unauthorized_response_forces_one_auth_refresh() -> None:
 @pytest.mark.asyncio
 async def test_model_discovery_re_request_is_a_second_admitted_attempt() -> None:
     authorizations: list[str] = []
+    unauthorized_responses: list[_CloseTrackingResponse] = []
 
     def handler(request: httpx.Request) -> httpx.Response:
         authorizations.append(request.headers["authorization"])
         if len(authorizations) == 1:
-            return httpx.Response(401, request=request)
+            response = _CloseTrackingResponse(401, request=request)
+            unauthorized_responses.append(response)
+            return response
         return httpx.Response(
             200,
             json={
@@ -658,7 +818,7 @@ async def test_model_discovery_re_request_is_a_second_admitted_attempt() -> None
         base_url="https://chatgpt.com/backend-api/codex/",
         transport=httpx.MockTransport(handler),
     )
-    auth = _FakeAuth()
+    auth = _CloseAwareAuth(unauthorized_responses)
     provider = OpenAICodexProvider(
         _config(), auth=auth, admission=_admission(), client=client
     )
@@ -669,6 +829,7 @@ async def test_model_discovery_re_request_is_a_second_admitted_attempt() -> None
     assert {info.model_id for info in infos} == {"gpt-visible"}
     assert authorizations == ["Bearer access_1", "Bearer access_2"]
     assert auth.recovery_calls == 1
+    assert unauthorized_responses[0].close_calls == 1
     attempt_rows = [
         call.kwargs
         for call in trace.call_args_list
