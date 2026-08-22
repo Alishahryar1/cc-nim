@@ -1,10 +1,13 @@
 """OpenAI Chat Completions API product flow."""
 
 import json
+import time
+import uuid
 
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse
 from loguru import logger
 
+from free_claude_code.api.response_streams import ManagedStreamingResponse
 from free_claude_code.application.errors import ApplicationError
 from free_claude_code.application.execution import ProviderExecutor
 from free_claude_code.application.routing import ModelRouter
@@ -68,7 +71,7 @@ class ChatCompletionsHandler:
                 ):
                     yield chunk
 
-            return StreamingResponse(
+            return ManagedStreamingResponse(
                 event_stream(),
                 media_type="text/event-stream",
                 headers={
@@ -142,9 +145,6 @@ class ChatCompletionsHandler:
         }
         if tool_calls:
             choice["message"]["tool_calls"] = tool_calls
-
-        import time
-        import uuid
 
         return {
             "id": f"chatcmpl-{uuid.uuid4().hex[:24]}",
