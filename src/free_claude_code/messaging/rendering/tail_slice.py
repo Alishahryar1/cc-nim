@@ -14,11 +14,21 @@ This module finds those points; platform modules supply their delimiter syntax.
 """
 
 
-def standalone_cut_points(text: str, delimiters: tuple[str, ...]) -> tuple[int, ...]:
+def standalone_cut_points(
+    text: str,
+    delimiters: tuple[str, ...],
+    *,
+    balanced_link_parens: bool = False,
+) -> tuple[int, ...]:
     """Return ascending indexes where ``text[index:]`` is self-contained markup.
 
     ``delimiters`` are the paired inline markers for one platform, longest
     first, so that a two-character marker is not read as two one-character ones.
+
+    ``balanced_link_parens`` selects how a link destination ends. Platforms that
+    escape ``)`` inside destinations (Telegram) end at the first unescaped one;
+    platforms that escape neither parenthesis (Discord) must match nesting, or a
+    destination such as ``/a_(b)`` ends the link early and strands its ``)``.
     """
     points: list[int] = []
     open_inline: list[str] = []
@@ -55,7 +65,7 @@ def standalone_cut_points(text: str, delimiters: tuple[str, ...]) -> tuple[int, 
             continue
 
         if character == "[":
-            link_end = _link_end(text, index)
+            link_end = _link_end(text, index, balanced_parens=balanced_link_parens)
             if link_end is not None:
                 index = link_end
                 continue
@@ -78,7 +88,13 @@ def standalone_cut_points(text: str, delimiters: tuple[str, ...]) -> tuple[int, 
     return tuple(points)
 
 
-def safe_tail(text: str, max_chars: int, delimiters: tuple[str, ...]) -> str:
+def safe_tail(
+    text: str,
+    max_chars: int,
+    delimiters: tuple[str, ...],
+    *,
+    balanced_link_parens: bool = False,
+) -> str:
     """Return the longest suffix of ``text`` within ``max_chars`` that is valid.
 
     Returns ``""`` when no cut point yields a short enough standalone suffix, so
@@ -91,7 +107,9 @@ def safe_tail(text: str, max_chars: int, delimiters: tuple[str, ...]) -> str:
         return text
 
     earliest = len(text) - max_chars
-    for index in standalone_cut_points(text, delimiters):
+    for index in standalone_cut_points(
+        text, delimiters, balanced_link_parens=balanced_link_parens
+    ):
         if index >= earliest:
             return text[index:]
     return ""
@@ -119,7 +137,7 @@ def _closing_code_span(text: str, start: int) -> int | None:
     return None
 
 
-def _link_end(text: str, start: int) -> int | None:
+def _link_end(text: str, start: int, *, balanced_parens: bool) -> int | None:
     """Return the index just past a ``[label](destination)`` run, if one starts here."""
     index = start + 1
     length = len(text)
@@ -135,11 +153,16 @@ def _link_end(text: str, start: int) -> int | None:
     if index + 1 >= length or text[index + 1] != "(":
         return None
     index += 2
+    depth = 1
     while index < length:
         if text[index] == "\\":
             index += 2
             continue
-        if text[index] == ")":
-            return index + 1
+        if balanced_parens and text[index] == "(":
+            depth += 1
+        elif text[index] == ")":
+            depth -= 1
+            if depth == 0:
+                return index + 1
         index += 1
     return None

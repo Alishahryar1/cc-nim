@@ -95,6 +95,27 @@ def test_discord_treats_double_delimiters_as_one_marker():
         assert tail.count("__") % 2 == 0
 
 
+def test_discord_link_destination_may_contain_balanced_parens():
+    """Discord escapes neither parenthesis, so link nesting must be matched."""
+    rendered = "prefix [label](https://example.test/a_(b)) trailing content"
+
+    for budget in range(4, len(rendered)):
+        tail = discord_tail_slice(rendered, budget)
+        # A ')' belonging to the omitted link wrapper must never lead the tail.
+        assert not tail.startswith(")")
+        assert tail.count("](") == tail.count("[")
+
+
+def test_telegram_link_destination_may_contain_an_open_paren():
+    """Telegram escapes ')' but not '(', so nesting must NOT be matched."""
+    rendered = "pre [a](http://x\\.io/a_(b\\)) tail here"
+
+    for budget in range(4, len(rendered)):
+        tail = mdv2_tail_slice(rendered, budget)
+        assert not tail.startswith(")")
+        assert tail.count("](") == tail.count("[")
+
+
 def test_cut_points_are_ascending_and_in_range():
     rendered = "*a* `b` [c](d) e"
     points = standalone_cut_points(rendered, MDV2)

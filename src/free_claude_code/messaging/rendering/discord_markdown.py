@@ -31,7 +31,11 @@ def escape_discord_code(text: str) -> str:
 
 def discord_tail_slice(text: str, max_chars: int) -> str:
     """Return a valid Discord-markdown suffix of rendered text within ``max_chars``."""
-    return safe_tail(text, max_chars, DISCORD_INLINE_DELIMITERS)
+    # Discord escapes neither parenthesis in a link destination, so nesting
+    # must be matched to find the real end of the link.
+    return safe_tail(
+        text, max_chars, DISCORD_INLINE_DELIMITERS, balanced_link_parens=True
+    )
 
 
 def discord_bold(text: str) -> str:
