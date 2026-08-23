@@ -7,6 +7,7 @@ from free_claude_code.messaging.command_context import StopOutcome
 from free_claude_code.messaging.models import IncomingMessage, MessageScope
 from free_claude_code.messaging.node_event_pipeline import process_parsed_cli_event
 from free_claude_code.messaging.rendering.telegram_markdown import (
+    escape_md_v2,
     render_markdown_to_mdv2,
 )
 from free_claude_code.messaging.trees import (
@@ -85,8 +86,32 @@ def test_render_markdown_to_mdv2_covers_common_structures():
     assert "3\\." in out
     assert "> quote" in out
     assert "[link]" in out
-    assert "alt (http://example.com/img.png)" in out
+    assert escape_md_v2("alt (http://example.com/img.png)") in out
     assert "```" in out
+
+
+def test_render_markdown_to_mdv2_escapes_image_fallback_as_plain_text():
+    out = render_markdown_to_mdv2("![alt](http://x.com/a_b.png)")
+
+    assert out == escape_md_v2("alt (http://x.com/a_b.png)")
+    assert "(" not in out.replace("\\(", "")
+    assert ")" not in out.replace("\\)", "")
+    assert "." not in out.replace("\\.", "")
+    assert "_" not in out.replace("\\_", "")
+
+
+def test_render_markdown_to_mdv2_escapes_image_without_alt_text():
+    out = render_markdown_to_mdv2("![](http://x.com/a-b.png)")
+
+    assert out == escape_md_v2("http://x.com/a-b.png")
+    assert "." not in out.replace("\\.", "")
+    assert "-" not in out.replace("\\-", "")
+
+
+def test_render_markdown_to_mdv2_escapes_image_embedded_in_text():
+    out = render_markdown_to_mdv2("see ![d](https://e.com/d-1.png) here")
+
+    assert escape_md_v2("d (https://e.com/d-1.png)") in out
 
 
 def test_render_markdown_to_mdv2_renders_table_as_code_block():
