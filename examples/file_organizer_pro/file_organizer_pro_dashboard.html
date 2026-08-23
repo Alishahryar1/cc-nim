@@ -1,0 +1,459 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>File Organizer Pro - Dashboard</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Oxygen, Ubuntu, Cantarell, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1200px;
+            margin: 0 auto;
+        }
+
+        header {
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+            margin-bottom: 30px;
+        }
+
+        h1 {
+            color: #333;
+            margin-bottom: 10px;
+        }
+
+        .subtitle {
+            color: #666;
+            font-size: 14px;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: white;
+            padding: 25px;
+            border-radius: 12px;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .card h2 {
+            color: #333;
+            margin-bottom: 15px;
+            font-size: 18px;
+        }
+
+        .form-group {
+            margin-bottom: 15px;
+        }
+
+        label {
+            display: block;
+            margin-bottom: 5px;
+            color: #555;
+            font-weight: 500;
+            font-size: 14px;
+        }
+
+        input[type="text"],
+        select {
+            width: 100%;
+            padding: 10px;
+            border: 1px solid #ddd;
+            border-radius: 6px;
+            font-size: 14px;
+            font-family: inherit;
+        }
+
+        input[type="text"]:focus,
+        select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .checkbox-group {
+            display: flex;
+            gap: 20px;
+            margin: 15px 0;
+        }
+
+        .checkbox-group label {
+            display: flex;
+            align-items: center;
+            margin-bottom: 0;
+            font-weight: 400;
+        }
+
+        input[type="checkbox"] {
+            margin-right: 8px;
+            cursor: pointer;
+        }
+
+        button {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 6px;
+            font-size: 14px;
+            font-weight: 600;
+            cursor: pointer;
+            transition: transform 0.2s;
+            width: 100%;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+            margin-top: 20px;
+        }
+
+        .stat-item {
+            background: #f8f9fa;
+            padding: 15px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: bold;
+            color: #667eea;
+        }
+
+        .stat-label {
+            color: #666;
+            font-size: 12px;
+            margin-top: 5px;
+        }
+
+        .tasks-list {
+            background: white;
+            border-radius: 12px;
+            overflow: hidden;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+        }
+
+        .task-item {
+            padding: 20px;
+            border-bottom: 1px solid #eee;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .task-item:last-child {
+            border-bottom: none;
+        }
+
+        .task-info {
+            flex: 1;
+        }
+
+        .task-id {
+            font-family: monospace;
+            font-size: 12px;
+            color: #999;
+            margin-bottom: 5px;
+        }
+
+        .task-status {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 12px;
+            font-weight: 600;
+            margin-top: 8px;
+        }
+
+        .status-pending {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .status-running {
+            background: #d1ecf1;
+            color: #0c5460;
+        }
+
+        .status-completed {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .status-failed {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .loading {
+            display: inline-block;
+            width: 12px;
+            height: 12px;
+            border: 2px solid #667eea;
+            border-top-color: transparent;
+            border-radius: 50%;
+            animation: spin 0.6s linear infinite;
+            margin-right: 8px;
+        }
+
+        @keyframes spin {
+            to { transform: rotate(360deg); }
+        }
+
+        .error-message {
+            background: #f8d7da;
+            color: #721c24;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+
+        .success-message {
+            background: #d4edda;
+            color: #155724;
+            padding: 12px;
+            border-radius: 6px;
+            margin-bottom: 15px;
+            font-size: 14px;
+        }
+
+        .empty-state {
+            text-align: center;
+            padding: 40px;
+            color: #999;
+        }
+
+        .empty-state-icon {
+            font-size: 48px;
+            margin-bottom: 15px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <header>
+            <h1>📁 File Organizer Pro</h1>
+            <p class="subtitle">Intelligent file organization with REST API</p>
+        </header>
+
+        <div class="grid">
+            <!-- New Task Card -->
+            <div class="card">
+                <h2>Create Task</h2>
+                <div id="message-container"></div>
+
+                <form id="organizationForm">
+                    <div class="form-group">
+                        <label for="directory">Directory Path</label>
+                        <input
+                            type="text"
+                            id="directory"
+                            placeholder="/path/to/directory"
+                            required
+                        >
+                    </div>
+
+                    <div class="form-group">
+                        <label for="mode">Organization Mode</label>
+                        <select id="mode">
+                            <option value="type">By Type</option>
+                            <option value="date">By Date</option>
+                            <option value="type_and_date">By Type & Date</option>
+                        </select>
+                    </div>
+
+                    <div class="checkbox-group">
+                        <label>
+                            <input type="checkbox" id="recursive">
+                            Recursive
+                        </label>
+                        <label>
+                            <input type="checkbox" id="dryRun" checked>
+                            Dry Run
+                        </label>
+                    </div>
+
+                    <button type="submit">Start Organization</button>
+                </form>
+            </div>
+
+            <!-- Statistics Card -->
+            <div class="card">
+                <h2>Statistics</h2>
+                <div class="stats">
+                    <div class="stat-item">
+                        <div class="stat-value" id="totalTasks">0</div>
+                        <div class="stat-label">Total Tasks</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="runningTasks">0</div>
+                        <div class="stat-label">Running</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="completedTasks">0</div>
+                        <div class="stat-label">Completed</div>
+                    </div>
+                    <div class="stat-item">
+                        <div class="stat-value" id="totalFiles">0</div>
+                        <div class="stat-label">Files Organized</div>
+                    </div>
+                </div>
+                <button style="margin-top: 20px;" onclick="refreshStats()">Refresh</button>
+            </div>
+        </div>
+
+        <!-- Tasks List -->
+        <div class="card">
+            <h2>Recent Tasks</h2>
+            <div id="tasksList" class="tasks-list">
+                <div class="empty-state">
+                    <div class="empty-state-icon">📋</div>
+                    <p>No tasks yet. Create one to get started!</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = 'http://localhost:8000';
+
+        // Form submission
+        document.getElementById('organizationForm').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const request = {
+                directory: document.getElementById('directory').value,
+                mode: document.getElementById('mode').value,
+                recursive: document.getElementById('recursive').checked,
+                dry_run: document.getElementById('dryRun').checked
+            };
+
+            try {
+                const response = await fetch(`${API_BASE}/tasks`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(request)
+                });
+
+                if (!response.ok) throw new Error('Failed to create task');
+
+                const task = await response.json();
+                showMessage(`Task created: ${task.task_id}`, 'success');
+                document.getElementById('organizationForm').reset();
+                refreshTasks();
+                refreshStats();
+            } catch (error) {
+                showMessage(`Error: ${error.message}`, 'error');
+            }
+        });
+
+        // Show message
+        function showMessage(text, type) {
+            const container = document.getElementById('message-container');
+            const className = type === 'success' ? 'success-message' : 'error-message';
+            container.innerHTML = `<div class="${className}">${text}</div>`;
+            setTimeout(() => { container.innerHTML = ''; }, 5000);
+        }
+
+        // Refresh statistics
+        async function refreshStats() {
+            try {
+                const response = await fetch(`${API_BASE}/stats`);
+                const stats = await response.json();
+
+                document.getElementById('totalTasks').textContent = stats.total_tasks;
+                document.getElementById('runningTasks').textContent = stats.running_tasks;
+                document.getElementById('completedTasks').textContent = stats.completed_tasks;
+                document.getElementById('totalFiles').textContent = stats.total_files_organized;
+            } catch (error) {
+                console.error('Error fetching stats:', error);
+            }
+        }
+
+        // Refresh tasks list
+        async function refreshTasks() {
+            try {
+                const response = await fetch(`${API_BASE}/tasks`);
+                const data = await response.json();
+
+                if (data.tasks.length === 0) {
+                    document.getElementById('tasksList').innerHTML = `
+                        <div class="empty-state">
+                            <div class="empty-state-icon">📋</div>
+                            <p>No tasks yet.</p>
+                        </div>
+                    `;
+                    return;
+                }
+
+                let html = '';
+                for (const taskId of data.tasks.slice(0, 10)) {
+                    const taskResponse = await fetch(`${API_BASE}/tasks/${taskId}`);
+                    const task = await taskResponse.json();
+
+                    const statusClass = `status-${task.status}`;
+                    const statusText = task.status.charAt(0).toUpperCase() + task.status.slice(1);
+                    const loading = task.status === 'running' ? '<span class="loading"></span>' : '';
+
+                    html += `
+                        <div class="task-item">
+                            <div class="task-info">
+                                <div class="task-id">${taskId}</div>
+                                <div>${task.directory}</div>
+                                <div class="task-status ${statusClass}">${loading}${statusText}</div>
+                            </div>
+                            <div style="text-align: right; color: #999;">
+                                <div>${task.files_organized} files</div>
+                            </div>
+                        </div>
+                    `;
+                }
+
+                document.getElementById('tasksList').innerHTML = html;
+            } catch (error) {
+                console.error('Error fetching tasks:', error);
+            }
+        }
+
+        // Auto-refresh every 3 seconds
+        setInterval(() => {
+            refreshTasks();
+            refreshStats();
+        }, 3000);
+
+        // Initial load
+        refreshTasks();
+        refreshStats();
+    </script>
+</body>
+</html>
