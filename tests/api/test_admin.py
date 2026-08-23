@@ -1692,6 +1692,35 @@ def test_admin_local_provider_status_omits_auth_header_for_keyless_local(
         assert h is None
 
 
+def test_admin_local_provider_status_normalizes_omlx_root_url(monkeypatch, tmp_path):
+    _set_home(monkeypatch, tmp_path)
+    _clear_process_config(monkeypatch)
+    monkeypatch.setenv("OMLX_BASE_URL", "http://localhost:8001")
+    monkeypatch.setenv("OMLX_API_KEY", "sk-test-omlx-key")
+    app = create_test_app()
+
+    class FakeAsyncClient:
+        def __init__(self, *args, **kwargs):
+            pass
+
+        async def __aenter__(self):
+            return self
+
+        async def __aexit__(self, *args):
+            return None
+
+        async def get(self, url: str, *, headers=None):
+            if url.endswith("/v1/models"):
+                return httpx.Response(200, json={"data": [{"id": "test-model"}]})
+            return httpx.Response(404)
+
+    with patch("free_claude_code.api.admin_routes.httpx.AsyncClient", FakeAsyncClient):
+        response = _local_client(app).get("/admin/api/providers/local-status")
+
+    by_id = {p["provider_id"]: p for p in response.json()["providers"]}
+    assert by_id["omlx"]["status"] == "reachable"
+
+
 @pytest.mark.parametrize(
     "result",
     (

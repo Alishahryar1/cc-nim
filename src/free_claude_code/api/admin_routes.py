@@ -24,6 +24,7 @@ from free_claude_code.config.provider_catalog import (
     ProviderAuthKind,
 )
 from free_claude_code.core.json_types import JsonObject, JsonValue
+from free_claude_code.core.urls import openai_v1_base_url
 
 from .dependencies import get_services
 from .ports import ApiServices
@@ -287,6 +288,20 @@ def _local_provider_api_key(provider_id: str, values: dict[str, str]) -> str:
     return values.get(descriptor.credential_env, "")
 
 
+def _local_provider_normalizes_v1(provider_id: str, path: str) -> bool:
+    """Whether the status probe should normalize the base URL to ``/v1``.
+
+    OpenAI-compatible local providers (e.g. omlx) expose models at
+    ``/v1/models``; a service-root base URL must be normalized so the probe
+    hits the versioned endpoint. Providers with non-OpenAI probe paths (e.g.
+    ollama ``/api/tags``) are left untouched.
+    """
+    if path != "/models":
+        return False
+    descriptor = PROVIDER_CATALOG.get(provider_id)
+    return descriptor is not None and descriptor.local_status_normalize_v1
+
+
 async def _check_local_provider(
     provider_id: str, base_url: str, path: str, *, api_key: str = ""
 ) -> JsonObject:
@@ -299,6 +314,8 @@ async def _check_local_provider(
             "base_url": base_url,
         }
 
+    if _local_provider_normalizes_v1(provider_id, path):
+        clean_url = openai_v1_base_url(clean_url)
     url = f"{clean_url}{path}"
     headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
     try:

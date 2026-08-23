@@ -111,6 +111,7 @@ class ProviderDescriptor:
     base_url_attr: str | None = None
     proxy_attr: str | None = None
     required_settings_attrs: tuple[str, ...] = ()
+    local_status_normalize_v1: bool = False
 
     def configuration_attrs(self) -> tuple[str, ...]:
         """Return settings fields whose non-empty values configure this provider."""
@@ -583,6 +584,7 @@ PROVIDER_CATALOG: dict[str, ProviderDescriptor] = {
         base_url_attr="omlx_base_url",
         proxy_attr="omlx_proxy",
         local=True,
+        local_status_normalize_v1=True,
     ),
 }
 
