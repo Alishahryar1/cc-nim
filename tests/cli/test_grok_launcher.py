@@ -182,6 +182,7 @@ def test_route_bypass_flags_are_rejected_before_version_probe(argv: list[str]) -
         ('{"currentVersion":"1.2.3","channel":"preview"}', 0, None),
         ('{"currentVersion":123,"channel":"stable"}', 0, None),
         ('{"currentVersion":"1.2.3","channel":"stable"}', 1, None),
+        ('{"currentVersion":"1.2.3\t(build)","channel":"stable"}', 0, None),
         ("not-json", 0, None),
         ("[]", 0, None),
     ],

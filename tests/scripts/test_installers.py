@@ -52,7 +52,7 @@ def _braced_body(text: str, declaration: str) -> str:
     raise AssertionError(f"Unclosed function body for {declaration}")
 
 
-def _posix_command(name: str) -> str:
+def _posix_command(name: str, *, version_output: str | None = None) -> str:
     version = {
         "opencode": "1.18.18",
         "cline": "3.0.55",
@@ -62,18 +62,16 @@ def _posix_command(name: str) -> str:
         "muse": "0.2.1",
         "node": "22.19.0",
     }.get(name, "1.0.0")
-    if name == "grok":
-        version_command = f'''if [ "${{1:-}}" = "version" ] && [ "${{2:-}}" = "--json" ]; then
-    echo '{{"currentVersion":"{version} (5115b46bc9)","channel":"stable"}}'
-fi'''
-    else:
+    if version_output is None:
         if name == "hermes":
             version_output = f"Hermes Agent v{version} (test build)"
+        elif name == "grok":
+            version_output = f"grok {version} (5115b46bc9) [stable]"
         elif name == "muse":
             version_output = f"Muse Code {version} ({version}-R1215.1)"
         else:
             version_output = f"{name} {version}"
-        version_command = f'''if [ "${{1:-}}" = "--version" ]; then
+    version_command = f'''if [ "${{1:-}}" = "--version" ]; then
     echo "{version_output}"
 fi'''
     help_output = (
@@ -555,7 +553,7 @@ def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> No
     assert calls.index("npm:install -g @deepseek-ai/dsh@0.1.0-rc.8") < calls.index(
         "dsh:--version"
     )
-    assert calls.index("grok-install") < calls.index("grok:version --json")
+    assert calls.index("grok-install") < calls.index("grok:--version")
     assert calls.index("muse-install") < calls.index("muse:--version")
     assert calls.index("uv-install") < calls.index("uv:--version")
     assert any(
@@ -590,7 +588,7 @@ def test_install_sh_discovers_grok_in_custom_bin_directory(
     assert (custom_grok_bin / "grok").is_file()
     assert not (Path(posix_harness.env["HOME"]) / ".grok" / "bin" / "grok").exists()
     calls = posix_harness.calls()
-    assert calls.index("grok-install") < calls.index("grok:version --json")
+    assert calls.index("grok-install") < calls.index("grok:--version")
 
 
 def test_install_sh_installs_selected_hermes_without_setup(
@@ -639,81 +637,32 @@ def test_install_sh_rejects_unsupported_hermes_platform_before_download(
     )
 
 
-def test_install_sh_preserves_compatible_existing_hermes(
+@pytest.mark.parametrize(
+    ("client", "install_call"),
+    [
+        ("opencode", "opencode-install"),
+        ("cline", "npm:install -g cline"),
+        ("hermes", "hermes-install:--non-interactive --skip-setup"),
+        ("grok", "grok-install"),
+        ("muse", "muse-install"),
+    ],
+)
+def test_install_sh_preserves_upstream_managed_harness_without_parsing_version(
     posix_harness: PosixHarness,
-) -> None:
-    posix_harness.add_client("hermes")
-
-    result = posix_harness.run()
-
-    assert result.returncode == 0, result.stderr
-    assert "Hermes Agent 0.20.4 already satisfies >=0.20.4" in result.stdout
-    assert not any(
-        "hermes-agent.nousresearch.com" in call for call in posix_harness.calls()
-    )
-
-
-def test_install_sh_preserves_compatible_existing_grok(
-    posix_harness: PosixHarness,
-) -> None:
-    posix_harness.add_client("grok")
-
-    result = posix_harness.run()
-
-    assert result.returncode == 0, result.stderr
-    assert "Grok Build 1.0.5 already satisfies >=1.0.5" in result.stdout
-    assert not any("x.ai/cli" in call for call in posix_harness.calls())
-
-
-def test_install_sh_rejects_nonstable_grok_metadata(
-    posix_harness: PosixHarness,
+    client: str,
+    install_call: str,
 ) -> None:
     _write_executable(
-        posix_harness.bin_dir / "grok",
-        _posix_command("grok").replace('"channel":"stable"', '"channel":"preview"'),
-    )
-
-    result = posix_harness.run()
-
-    assert result.returncode != 0
-    assert "did not return valid stable version metadata" in result.stderr
-    assert not any(call.startswith("uv:") for call in posix_harness.calls())
-
-
-def test_install_sh_rejects_malformed_grok_metadata(
-    posix_harness: PosixHarness,
-) -> None:
-    _write_executable(
-        posix_harness.bin_dir / "grok",
-        _posix_command("grok").replace(
-            '{"currentVersion":"1.0.5 (5115b46bc9)","channel":"stable"}',
-            'not-json "currentVersion":"1.0.5 (5115b46bc9)" "channel":"stable"',
-        ),
-    )
-
-    result = posix_harness.run()
-
-    assert result.returncode != 0
-    assert "did not return valid stable version metadata" in result.stderr
-    assert not any(call.startswith("uv:") for call in posix_harness.calls())
-
-
-def test_install_sh_upgrades_old_grok_with_official_installer(
-    posix_harness: PosixHarness,
-) -> None:
-    _write_executable(
-        posix_harness.bin_dir / "grok",
-        _posix_command("grok").replace(
-            '"currentVersion":"1.0.5', '"currentVersion":"1.0.4'
-        ),
+        posix_harness.bin_dir / client,
+        _posix_command(client, version_output="opaque upstream version output"),
     )
 
     result = posix_harness.run()
 
     assert result.returncode == 0, result.stderr
-    assert "does not satisfy stable >=1.0.5" in result.stdout
-    assert "download:https://x.ai/cli/install.sh" in posix_harness.calls()
-    assert "grok-install" in posix_harness.calls()
+    calls = posix_harness.calls()
+    assert f"{client}:--version" in calls
+    assert install_call not in calls
 
 
 @pytest.mark.parametrize("failure", ["grok-download", "grok-install"])
@@ -728,37 +677,6 @@ def test_install_sh_stops_when_grok_install_fails(
     assert result.returncode != 0
     assert "Free Claude Code is installed and verified." not in result.stdout
     assert not any(call.startswith("uv:") for call in posix_harness.calls())
-
-
-def test_install_sh_preserves_compatible_existing_muse(
-    posix_harness: PosixHarness,
-) -> None:
-    posix_harness.add_client("muse")
-
-    result = posix_harness.run()
-
-    assert result.returncode == 0, result.stderr
-    assert "Muse Code 0.2.1 already satisfies >=0.2.1" in result.stdout
-    assert not any("dev.meta.ai" in call for call in posix_harness.calls())
-
-
-def test_install_sh_upgrades_old_muse_with_official_installer(
-    posix_harness: PosixHarness,
-) -> None:
-    _write_executable(
-        posix_harness.bin_dir / "muse",
-        _posix_command("muse").replace(
-            "Muse Code 0.2.1 (0.2.1-R1215.1)",
-            "Muse Code 0.2.0 (0.2.0-R1200.1)",
-        ),
-    )
-
-    result = posix_harness.run()
-
-    assert result.returncode == 0, result.stderr
-    assert "Muse Code 0.2.0 does not satisfy >=0.2.1" in result.stdout
-    assert "download:https://dev.meta.ai/install.sh" in posix_harness.calls()
-    assert "muse-install" in posix_harness.calls()
 
 
 @pytest.mark.parametrize("failure", ["muse-download", "muse-install"])
@@ -1563,7 +1481,7 @@ def _windows_shortcut_icon(
     return completed.stdout
 
 
-def _batch_client(name: str) -> str:
+def _batch_client(name: str, *, version_output: str | None = None) -> str:
     version = {
         "opencode": "1.18.18",
         "cline": "3.0.55",
@@ -1573,8 +1491,8 @@ def _batch_client(name: str) -> str:
         "muse": "0.2.1",
         "node": "22.19.0",
     }.get(name, "1.0.0")
-    if name == "grok":
-        version_command = f'if "%1 %2"=="version --json" echo {{"currentVersion":"{version} (5115b46bc9)","channel":"stable"}}'
+    if version_output is not None:
+        version_command = f'if "%1"=="--version" echo {version_output}'
     elif name == "hermes":
         version_command = (
             f'if "%1"=="--version" echo Hermes Agent v{version} '
@@ -1584,6 +1502,10 @@ def _batch_client(name: str) -> str:
             'if "%1"=="--version" echo Python: 3.12.11\n'
             'if "%1"=="--version" echo OpenAI SDK: 2.15.0\n'
             'if "%1"=="--version" echo Up to date'
+        )
+    elif name == "grok":
+        version_command = (
+            f'if "%1"=="--version" echo grok {version} (5115b46bc9) [stable]'
         )
     elif name == "muse":
         version_command = (
@@ -2027,7 +1949,7 @@ def test_install_ps1_fresh_install_is_verified(
     assert calls.index("npm:install -g @deepseek-ai/dsh@0.1.0-rc.8") < calls.index(
         "dsh:--version"
     )
-    assert calls.index("grok-install") < calls.index("grok:version --json")
+    assert calls.index("grok-install") < calls.index("grok:--version")
     assert "Muse Code is not installed" in result.stdout
     assert not any(call.startswith("muse:") for call in calls)
     assert not any("hermes:setup" in call for call in calls)
@@ -2088,130 +2010,35 @@ def test_install_ps1_discovers_grok_in_custom_bin_directory(
         Path(powershell_harness.env["USERPROFILE"]) / ".grok" / "bin" / "grok.cmd"
     ).exists()
     calls = powershell_harness.calls()
-    assert calls.index("grok-install") < calls.index("grok:version --json")
-
-
-def test_install_ps1_preserves_compatible_existing_hermes(
-    powershell_harness: PowerShellHarness,
-) -> None:
-    powershell_harness.add_client("hermes")
-
-    result = powershell_harness.run()
-
-    assert result.returncode == 0, result.stderr
-    assert "Hermes Agent 0.20.4 already satisfies >=0.20.4" in result.stdout
-    assert not any(
-        "hermes-agent.nousresearch.com" in call for call in powershell_harness.calls()
-    )
-
-
-@pytest.mark.parametrize("unrelated_version", ["3.12.11", "v3.12.11"])
-def test_install_ps1_rejects_unrelated_versions_in_hermes_output(
-    powershell_harness: PowerShellHarness,
-    unrelated_version: str,
-) -> None:
-    hermes_command = (
-        _batch_client("hermes")
-        .replace(
-            "echo Hermes Agent v0.20.4 (2026.8.18) · upstream deadbeef",
-            "echo Hermes Agent release unavailable",
-        )
-        .replace(
-            "echo Python: 3.12.11",
-            f"echo {unrelated_version}",
-        )
-    )
-    _write_executable(powershell_harness.bin_dir / "hermes.cmd", hermes_command)
-
-    result = powershell_harness.run()
-
-    assert result.returncode != 0
-    assert "did not return a valid semantic version" in result.stderr
-    assert not any(call.startswith("uv:") for call in powershell_harness.calls())
-
-
-def test_install_ps1_preserves_compatible_existing_grok(
-    powershell_harness: PowerShellHarness,
-) -> None:
-    powershell_harness.add_client("grok")
-
-    result = powershell_harness.run()
-
-    assert result.returncode == 0, result.stderr
-    assert "Grok Build 1.0.5 already satisfies >=1.0.5" in result.stdout
-    assert not any("x.ai/cli" in call for call in powershell_harness.calls())
-
-
-def test_install_ps1_rejects_nonstable_grok_metadata(
-    powershell_harness: PowerShellHarness,
-) -> None:
-    _write_executable(
-        powershell_harness.bin_dir / "grok.cmd",
-        _batch_client("grok").replace('"channel":"stable"', '"channel":"preview"'),
-    )
-
-    result = powershell_harness.run()
-
-    assert result.returncode != 0
-    assert "did not return valid stable version metadata" in result.stderr
-    assert not any(call.startswith("uv:") for call in powershell_harness.calls())
-
-
-def test_install_ps1_preserves_compatible_existing_muse(
-    powershell_harness: PowerShellHarness,
-) -> None:
-    powershell_harness.add_client("muse")
-
-    result = powershell_harness.run()
-
-    assert result.returncode == 0, result.stderr
-    assert "Verified Muse Code 0.2.1" in result.stdout
-    assert "Run Muse Code with: fcc-muse" in result.stdout
-    assert not any("meta.ai" in call for call in powershell_harness.calls())
+    assert calls.index("grok-install") < calls.index("grok:--version")
 
 
 @pytest.mark.parametrize(
-    "version_output",
+    ("client", "install_call"),
     [
-        "Muse Code 0.2.0 (0.2.0-R1200.1)",
-        "Meta launcher build 0.2.1",
+        ("opencode", "anomalyco/opencode"),
+        ("cline", "npm:install -g cline"),
+        ("hermes", "hermes-install:True:True"),
+        ("grok", "grok-install"),
+        ("muse", "meta.ai"),
     ],
 )
-def test_install_ps1_rejects_incompatible_muse_without_inventing_an_updater(
+def test_install_ps1_preserves_upstream_managed_harness_without_parsing_version(
     powershell_harness: PowerShellHarness,
-    version_output: str,
+    client: str,
+    install_call: str,
 ) -> None:
     _write_executable(
-        powershell_harness.bin_dir / "muse.cmd",
-        _batch_client("muse").replace(
-            "Muse Code 0.2.1 (0.2.1-R1215.1)", version_output
-        ),
-    )
-
-    result = powershell_harness.run()
-
-    assert result.returncode != 0
-    assert "Muse Code" in result.stderr
-    assert not any(call.startswith("uv:") for call in powershell_harness.calls())
-    assert not any("meta.ai" in call for call in powershell_harness.calls())
-
-
-def test_install_ps1_upgrades_old_grok_with_official_installer(
-    powershell_harness: PowerShellHarness,
-) -> None:
-    (powershell_harness.bin_dir / "grok.cmd").write_text(
-        _batch_client("grok").replace(
-            '"currentVersion":"1.0.5', '"currentVersion":"1.0.4'
-        ),
-        encoding="utf-8",
+        powershell_harness.bin_dir / f"{client}.cmd",
+        _batch_client(client, version_output="opaque upstream version output"),
     )
 
     result = powershell_harness.run()
 
     assert result.returncode == 0, result.stderr
-    assert "does not satisfy stable >=1.0.5" in result.stdout
-    assert "download:https://x.ai/cli/install.ps1" in powershell_harness.calls()
-    assert "grok-install" in powershell_harness.calls()
+    calls = powershell_harness.calls()
+    assert f"{client}:--version" in calls
+    assert not any(install_call in call for call in calls)
 
 
 @pytest.mark.parametrize("failure", ["grok-download", "grok-install"])
@@ -2319,58 +2146,9 @@ def test_install_ps1_stops_when_selected_dsh_install_fails(
     assert not any(call.startswith("uv:") for call in powershell_harness.calls())
 
 
-def test_install_ps1_upgrades_old_hermes_with_noninteractive_setup_skipped(
-    powershell_harness: PowerShellHarness,
-) -> None:
-    hermes_bin = (
-        Path(powershell_harness.env["LOCALAPPDATA"]) / "hermes" / "hermes-agent" / "bin"
-    )
-    hermes_bin.mkdir(parents=True)
-    (hermes_bin / "hermes.cmd").write_text(
-        _batch_client("hermes").replace("v0.20.4", "v0.19.9"),
-        encoding="utf-8",
-    )
-
-    result = powershell_harness.run()
-
-    assert result.returncode == 0, result.stderr
-    calls = powershell_harness.calls()
-    assert any("hermes-agent.nousresearch.com/install.ps1" in call for call in calls)
-    assert "hermes-install:True:True" in calls
-    assert not any("hermes:setup" in call for call in calls)
-    assert not any(call.startswith("rtk:init") for call in calls)
-
-
-def test_install_ps1_stops_when_hermes_upgrade_fails(
-    powershell_harness: PowerShellHarness,
-) -> None:
-    hermes_bin = (
-        Path(powershell_harness.env["LOCALAPPDATA"]) / "hermes" / "hermes-agent" / "bin"
-    )
-    hermes_bin.mkdir(parents=True)
-    (hermes_bin / "hermes.cmd").write_text(
-        _batch_client("hermes").replace("v0.20.4", "v0.19.9"),
-        encoding="utf-8",
-    )
-
-    result = powershell_harness.run(fail_step="hermes-install")
-
-    assert result.returncode != 0
-    assert "Free Claude Code is installed and verified." not in result.stdout
-    assert not any("astral.sh" in call for call in powershell_harness.calls())
-
-
 def test_install_ps1_rejects_unsupported_hermes_architecture_before_download(
     powershell_harness: PowerShellHarness,
 ) -> None:
-    hermes_bin = (
-        Path(powershell_harness.env["LOCALAPPDATA"]) / "hermes" / "hermes-agent" / "bin"
-    )
-    hermes_bin.mkdir(parents=True)
-    (hermes_bin / "hermes.cmd").write_text(
-        _batch_client("hermes").replace("v0.20.4", "v0.19.9"),
-        encoding="utf-8",
-    )
     powershell_harness.env["PROCESSOR_ARCHITECTURE"] = "MIPS"
     powershell_harness.env["PROCESSOR_ARCHITEW6432"] = "MIPS"
 
