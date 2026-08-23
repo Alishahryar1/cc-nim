@@ -1,0 +1,21 @@
+version: '3.8'
+
+services:
+  file-organizer-api:
+    build: .
+    container_name: file-organizer-pro
+    ports:
+      - "8000:8000"
+    volumes:
+      - /tmp/file_organize:/tmp/file_organize
+      - ${HOME}/Downloads:/data/downloads:ro
+      - ${HOME}/Documents:/data/documents:ro
+    environment:
+      - LOG_LEVEL=INFO
+    restart: unless-stopped
+    networks:
+      - file-organizer-network
+
+networks:
+  file-organizer-network:
+    driver: bridge
