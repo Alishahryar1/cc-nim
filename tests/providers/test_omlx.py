@@ -52,6 +52,26 @@ def test_init_uses_openai_chat_client() -> None:
     assert (timeout.read, timeout.write, timeout.connect) == (600.0, 15.0, 5.0)
 
 
+@pytest.mark.parametrize(
+    ("configured", "expected"),
+    [
+        ("http://localhost:8001", "http://localhost:8001/v1"),
+        ("http://localhost:8001/", "http://localhost:8001/v1"),
+        ("http://localhost:8001/v1", "http://localhost:8001/v1"),
+        ("http://localhost:8001/v1/", "http://localhost:8001/v1"),
+    ],
+)
+def test_init_normalizes_openai_base_url(configured: str, expected: str) -> None:
+    config = make_provider_config(api_key="test-omlx-key", base_url=configured)
+    with patch(
+        "free_claude_code.providers.openai_chat.provider.AsyncOpenAI"
+    ) as openai_client:
+        provider = profiled_provider("omlx", config, admission=immediate_admission())
+
+    assert provider._base_url == expected
+    assert openai_client.call_args.kwargs["base_url"] == expected
+
+
 def test_build_request_body_uses_openai_chat_shape(
     provider: OpenAIChatProvider,
 ) -> None:

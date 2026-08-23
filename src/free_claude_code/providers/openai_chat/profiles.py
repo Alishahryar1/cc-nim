@@ -672,5 +672,6 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             ReasoningReplayMode.DISABLED,
         ),
         NO_REASONING,
+        normalize_base_url=True,
     ),
 }
