@@ -172,12 +172,19 @@ def test_route_bypass_flags_are_rejected_before_version_probe(argv: list[str]) -
 @pytest.mark.parametrize(
     ("output", "return_code", "expected"),
     [
-        ("1.0.5\n", 0, (1, 0, 5)),
-        ("grok 1.2.3\n", 0, (1, 2, 3)),
-        ("1.2.3 (abcdef)\n", 0, (1, 2, 3)),
-        ("1.2.3-alpha.1\n", 0, None),
-        ("unexpected 1.2.3\n", 0, None),
-        ("1.2.3\n", 1, None),
+        (
+            '{"currentVersion":"1.0.5 (5115b46bc9)","channel":"stable"}',
+            0,
+            (1, 0, 5),
+        ),
+        ('{"channel":"stable","currentVersion":"1.2.3+build.1"}', 0, (1, 2, 3)),
+        ('{"currentVersion":"1.2.3-alpha.1","channel":"stable"}', 0, None),
+        ('{"currentVersion":"1.2.3","channel":"preview"}', 0, None),
+        ('{"currentVersion":123,"channel":"stable"}', 0, None),
+        ('{"currentVersion":"1.2.3","channel":"stable"}', 1, None),
+        ('{"currentVersion":"1.2.3\t(build)","channel":"stable"}', 0, None),
+        ("not-json", 0, None),
+        ("[]", 0, None),
     ],
 )
 def test_grok_version_probe(
@@ -191,8 +198,16 @@ def test_grok_version_probe(
         grok.subprocess,
         "run",
         return_value=SimpleNamespace(stdout=output, returncode=return_code),
-    ):
+    ) as run:
         assert grok.grok_binary_version("resolved-grok") == expected
+    run.assert_called_once_with(
+        ["resolved-grok", "version", "--json"],
+        check=False,
+        stdout=subprocess.PIPE,
+        stderr=subprocess.STDOUT,
+        text=True,
+        timeout=5.0,
+    )
 
 
 def test_grok_version_probe_handles_timeout() -> None:

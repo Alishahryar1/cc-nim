@@ -8,16 +8,11 @@ CLAUDE_INSTALL_URL="https://claude.ai/install.sh"
 CODEX_INSTALL_URL="https://chatgpt.com/codex/install.sh"
 PI_INSTALL_URL="https://pi.dev/install.sh"
 OPENCODE_INSTALL_URL="https://opencode.ai/install"
-MIN_OPENCODE_VERSION="1.18.18"
-MIN_CLINE_VERSION="3.0.55"
 HERMES_INSTALL_URL="https://hermes-agent.nousresearch.com/install.sh"
-MIN_HERMES_VERSION="0.20.4"
 DSH_VERSION="0.1.0-rc.8"
 DSH_PACKAGE="@deepseek-ai/dsh@$DSH_VERSION"
 GROK_INSTALL_URL="https://x.ai/cli/install.sh"
-MIN_GROK_VERSION="1.0.5"
 MUSE_INSTALL_URL="https://dev.meta.ai/install.sh"
-MIN_MUSE_VERSION="0.2.1"
 RTK_VERSION="0.44.2"
 RTK_RELEASE_BASE_URL="https://github.com/rtk-ai/rtk/releases/download/v$RTK_VERSION"
 UV_INSTALL_URL="https://astral.sh/uv/install.sh"
@@ -673,161 +668,29 @@ ensure_pi() {
     pi_available=1
 }
 
-current_opencode_version() {
-    if output=$(opencode --version 2>/dev/null); then
-        :
-    else
-        return 1
-    fi
-
-    version=$(printf '%s\n' "$output" | awk '
-        /^[[:space:]]*((opencode( version)?[[:space:]]+)|v)?[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?[[:space:]]*$/ &&
-        match($0, /[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?/) {
-            print substr($0, RSTART, RLENGTH)
-            exit
-        }
-    ')
-    [ -n "$version" ] || return 1
-    printf '%s\n' "$version"
-}
-
-verify_opencode_command() {
-    if [ "$dry_run" -eq 1 ]; then
-        print_command opencode --version
-        return 0
-    fi
-
-    command_path=$(command -v opencode 2>/dev/null) || fail "OpenCode was installed, but 'opencode' is not available on PATH."
-    version=$(current_opencode_version) || fail "OpenCode is present, but 'opencode --version' did not return a valid semantic version."
-    if ! stable_version_is_supported "$version" "$MIN_OPENCODE_VERSION"; then
-        fail "Stable OpenCode V1 $MIN_OPENCODE_VERSION or newer is required; found OpenCode $version after installation."
-    fi
-    printf 'Verified OpenCode %s.\n' "$version"
-}
-
 ensure_opencode() {
-    if [ "$dry_run" -eq 1 ]; then
-        if command -v opencode >/dev/null 2>&1; then
-            print_command opencode --version
-            printf 'A compatible OpenCode will be preserved; an older version will be upgraded with opencode upgrade.\n'
-        else
-            download_and_run "$OPENCODE_INSTALL_URL" bash "OpenCode"
-        fi
-        verify_opencode_command
-        return 0
-    fi
-
     if command -v opencode >/dev/null 2>&1; then
-        version=$(current_opencode_version) || fail "OpenCode is present, but 'opencode --version' did not return a valid semantic version."
-        if stable_version_is_supported "$version" "$MIN_OPENCODE_VERSION"; then
-            printf 'OpenCode %s already satisfies >=%s; leaving it unchanged.\n' "$version" "$MIN_OPENCODE_VERSION"
-            return 0
-        fi
-        printf 'OpenCode %s does not satisfy stable V1 >=%s; upgrading it with OpenCode.\n' "$version" "$MIN_OPENCODE_VERSION"
-        run opencode upgrade
-        add_known_bin_directories
+        printf 'OpenCode already found on PATH; verifying it.\n'
     else
         download_and_run "$OPENCODE_INSTALL_URL" bash "OpenCode"
         add_known_bin_directories
     fi
 
-    verify_opencode_command
-}
-
-current_cline_version() {
-    if output=$(cline --version 2>/dev/null); then
-        :
-    else
-        return 1
-    fi
-
-    version=$(printf '%s\n' "$output" | awk '
-        /^[[:space:]]*((cline( version)?[[:space:]]+)|v)?[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?[[:space:]]*$/ &&
-        match($0, /[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?/) {
-            print substr($0, RSTART, RLENGTH)
-            exit
-        }
-    ')
-    [ -n "$version" ] || return 1
-    printf '%s\n' "$version"
-}
-
-verify_cline_command() {
-    if [ "$dry_run" -eq 1 ]; then
-        print_command cline --version
-        return 0
-    fi
-
-    command -v cline >/dev/null 2>&1 || fail "Cline was installed, but 'cline' is not available on PATH."
-    version=$(current_cline_version) || fail "Cline is present, but 'cline --version' did not return a valid semantic version."
-    if ! stable_version_is_supported "$version" "$MIN_CLINE_VERSION"; then
-        fail "Stable Cline $MIN_CLINE_VERSION or newer is required; found Cline $version after installation."
-    fi
-    printf 'Verified Cline %s.\n' "$version"
+    verify_command opencode "OpenCode"
 }
 
 ensure_cline() {
     add_npm_bin_directories
 
-    if [ "$dry_run" -eq 1 ]; then
-        if command -v cline >/dev/null 2>&1; then
-            print_command cline --version
-            printf 'A compatible Cline will be preserved; an older version will be upgraded with cline update.\n'
-        elif command -v npm >/dev/null 2>&1; then
-            print_command npm install -g cline
-        else
-            fail "Cline installation requires npm. Install Node.js from https://nodejs.org/en/download, then rerun the installer."
-        fi
-        verify_cline_command
-        return 0
-    fi
-
     if command -v cline >/dev/null 2>&1; then
-        version=$(current_cline_version) || fail "Cline is present, but 'cline --version' did not return a valid semantic version."
-        if stable_version_is_supported "$version" "$MIN_CLINE_VERSION"; then
-            printf 'Cline %s already satisfies >=%s; leaving it unchanged.\n' "$version" "$MIN_CLINE_VERSION"
-            return 0
-        fi
-        printf 'Cline %s does not satisfy stable >=%s; upgrading it with Cline.\n' "$version" "$MIN_CLINE_VERSION"
-        run cline update
+        printf 'Cline already found on PATH; verifying it.\n'
     else
         command -v npm >/dev/null 2>&1 || fail "Cline installation requires npm. Install Node.js from https://nodejs.org/en/download, then rerun the installer."
         run npm install -g cline
+        add_npm_bin_directories
     fi
 
-    add_npm_bin_directories
-    verify_cline_command
-}
-
-current_hermes_version() {
-    if output=$(hermes --version 2>/dev/null); then
-        :
-    else
-        return 1
-    fi
-
-    version=$(printf '%s\n' "$output" | awk '
-        match($0, /[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?/) {
-            print substr($0, RSTART, RLENGTH)
-            exit
-        }
-    ')
-    [ -n "$version" ] || return 1
-    printf '%s\n' "$version"
-}
-
-verify_hermes_command() {
-    if [ "$dry_run" -eq 1 ]; then
-        print_command hermes --version
-        return 0
-    fi
-
-    command -v hermes >/dev/null 2>&1 || fail "Hermes Agent was installed, but 'hermes' is not available on PATH."
-    version=$(current_hermes_version) || fail "Hermes Agent is present, but 'hermes --version' did not return a valid semantic version."
-    if ! stable_version_is_supported "$version" "$MIN_HERMES_VERSION"; then
-        fail "Hermes Agent $MIN_HERMES_VERSION or newer is required; found Hermes $version after installation."
-    fi
-    printf 'Verified Hermes Agent %s.\n' "$version"
+    verify_command cline "Cline"
 }
 
 hermes_platform_is_supported() {
@@ -857,28 +720,13 @@ install_hermes() {
 }
 
 ensure_hermes() {
-    if [ "$dry_run" -eq 1 ]; then
-        if command -v hermes >/dev/null 2>&1; then
-            print_command hermes --version
-            printf 'A compatible Hermes Agent will be preserved; an older version will be upgraded with the official installer.\n'
-        else
-            install_hermes
-        fi
-        verify_hermes_command
-        return 0
-    fi
-
     if command -v hermes >/dev/null 2>&1; then
-        version=$(current_hermes_version) || fail "Hermes Agent is present, but 'hermes --version' did not return a valid semantic version."
-        if stable_version_is_supported "$version" "$MIN_HERMES_VERSION"; then
-            printf 'Hermes Agent %s already satisfies >=%s; leaving it unchanged.\n' "$version" "$MIN_HERMES_VERSION"
-            return 0
-        fi
-        printf 'Hermes Agent %s does not satisfy >=%s; upgrading it with the official installer.\n' "$version" "$MIN_HERMES_VERSION"
+        printf 'Hermes Agent already found on PATH; verifying it.\n'
+    else
+        install_hermes
     fi
 
-    install_hermes
-    verify_hermes_command
+    verify_command hermes "Hermes Agent"
 }
 
 current_dsh_version() {
@@ -993,98 +841,19 @@ ensure_dsh() {
     verify_dsh_command
 }
 
-current_grok_version() {
-    if output=$(grok --version 2>/dev/null); then
-        :
-    else
-        return 1
-    fi
-
-    version=$(printf '%s\n' "$output" | awk '
-        /^[[:space:]]*(grok[[:space:]]+|v)?[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?([[:space:]]+\([^\r\n]*\))?[[:space:]]*$/ &&
-        match($0, /[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?/) {
-            print substr($0, RSTART, RLENGTH)
-            exit
-        }
-    ')
-    [ -n "$version" ] || return 1
-    printf '%s\n' "$version"
-}
-
-verify_grok_command() {
-    if [ "$dry_run" -eq 1 ]; then
-        print_command grok --version
-        return 0
-    fi
-
-    command -v grok >/dev/null 2>&1 || fail "Grok Build was installed, but 'grok' is not available on PATH."
-    version=$(current_grok_version) || fail "Grok Build is present, but 'grok --version' did not return a valid semantic version."
-    if ! stable_version_is_supported "$version" "$MIN_GROK_VERSION"; then
-        fail "Stable Grok Build $MIN_GROK_VERSION or newer is required; found Grok Build $version after installation."
-    fi
-    printf 'Verified Grok Build %s.\n' "$version"
-}
-
 install_grok_build() {
     download_and_run "$GROK_INSTALL_URL" bash "Grok Build"
     add_known_bin_directories
 }
 
 ensure_grok() {
-    if [ "$dry_run" -eq 1 ]; then
-        if command -v grok >/dev/null 2>&1; then
-            print_command grok --version
-            printf 'A compatible Grok Build will be preserved; an older version will be upgraded with the official installer.\n'
-        else
-            install_grok_build
-        fi
-        verify_grok_command
-        return 0
-    fi
-
     if command -v grok >/dev/null 2>&1; then
-        version=$(current_grok_version) || fail "Grok Build is present, but 'grok --version' did not return a valid semantic version."
-        if stable_version_is_supported "$version" "$MIN_GROK_VERSION"; then
-            printf 'Grok Build %s already satisfies >=%s; leaving it unchanged.\n' "$version" "$MIN_GROK_VERSION"
-            return 0
-        fi
-        printf 'Grok Build %s does not satisfy stable >=%s; upgrading it with the official installer.\n' "$version" "$MIN_GROK_VERSION"
-    fi
-
-    install_grok_build
-    verify_grok_command
-}
-
-current_muse_version() {
-    if output=$(muse --version 2>/dev/null); then
-        :
+        printf 'Grok Build already found on PATH; verifying it.\n'
     else
-        return 1
+        install_grok_build
     fi
 
-    version=$(printf '%s\n' "$output" | awk '
-        /^[[:space:]]*Muse Code[[:space:]]+[0-9]+\.[0-9]+\.[0-9]+([[:space:]]+\([^\r\n]+\))?[[:space:]]*$/ &&
-        match($0, /[0-9]+\.[0-9]+\.[0-9]+/) {
-            print substr($0, RSTART, RLENGTH)
-            exit
-        }
-    ')
-    [ -n "$version" ] || return 1
-    printf '%s\n' "$version"
-}
-
-verify_muse_command() {
-    if [ "$dry_run" -eq 1 ]; then
-        print_command muse --version
-        return 0
-    fi
-
-    command -v muse >/dev/null 2>&1 || fail "Muse Code was installed, but 'muse' is not available on PATH."
-    version=$(current_muse_version) || fail "Muse Code is present, but 'muse --version' did not return the expected 'Muse Code x.y.z' version."
-    if ! stable_version_is_supported "$version" "$MIN_MUSE_VERSION"; then
-        fail "Muse Code $MIN_MUSE_VERSION or newer is required; found Muse Code $version after installation."
-    fi
-    printf 'Verified Muse Code %s.\n' "$version"
+    verify_command grok "Grok Build"
 }
 
 install_muse_code() {
@@ -1097,28 +866,13 @@ install_muse_code() {
 }
 
 ensure_muse() {
-    if [ "$dry_run" -eq 1 ]; then
-        if command -v muse >/dev/null 2>&1; then
-            print_command muse --version
-            printf 'A compatible Muse Code will be preserved; an older version will be upgraded with the official installer.\n'
-        else
-            install_muse_code
-        fi
-        verify_muse_command
-        return 0
-    fi
-
     if command -v muse >/dev/null 2>&1; then
-        version=$(current_muse_version) || fail "Muse Code is present, but 'muse --version' did not return the expected 'Muse Code x.y.z' version."
-        if stable_version_is_supported "$version" "$MIN_MUSE_VERSION"; then
-            printf 'Muse Code %s already satisfies >=%s; leaving it unchanged.\n' "$version" "$MIN_MUSE_VERSION"
-            return 0
-        fi
-        printf 'Muse Code %s does not satisfy >=%s; upgrading it with the official installer.\n' "$version" "$MIN_MUSE_VERSION"
+        printf 'Muse Code already found on PATH; verifying it.\n'
+    else
+        install_muse_code
     fi
 
-    install_muse_code
-    verify_muse_command
+    verify_command muse "Muse Code"
 }
 
 ensure_selected_coding_agents() {
@@ -1565,11 +1319,11 @@ else
     if [ "$install_grok" -eq 1 ]; then
         printf 'Run Grok Build with: fcc-grok\n'
     else
-        printf 'The fcc-grok wrapper is ready after you install Grok Build %s or newer.\n' "$MIN_GROK_VERSION"
+        printf 'The fcc-grok wrapper is ready after you install Grok Build.\n'
     fi
     if [ "$install_muse" -eq 1 ]; then
         printf 'Run Muse Code with: fcc-muse\n'
     else
-        printf 'The fcc-muse wrapper is ready after you install Muse Code %s or newer.\n' "$MIN_MUSE_VERSION"
+        printf 'The fcc-muse wrapper is ready after you install Muse Code.\n'
     fi
 fi

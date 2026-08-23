@@ -22,15 +22,10 @@ $ClaudeInstallUrl = "https://claude.ai/install.ps1"
 $CodexInstallUrl = "https://chatgpt.com/codex/install.ps1"
 $PiInstallUrl = "https://pi.dev/install.ps1"
 $OpenCodeReleaseBaseUrl = "https://github.com/anomalyco/opencode/releases/latest/download"
-$MinOpenCodeVersion = "1.18.18"
-$MinClineVersion = "3.0.55"
 $HermesInstallUrl = "https://hermes-agent.nousresearch.com/install.ps1"
-$MinHermesVersion = "0.20.4"
 $DshVersion = "0.1.0-rc.8"
 $DshPackage = "@deepseek-ai/dsh@$DshVersion"
 $GrokInstallUrl = "https://x.ai/cli/install.ps1"
-$MinGrokVersion = "1.0.5"
-$MinMuseVersion = "0.2.1"
 $RtkVersion = "0.44.2"
 $RtkReleaseBaseUrl = "https://github.com/rtk-ai/rtk/releases/download/v$RtkVersion"
 $RtkWindowsAssetName = "rtk-x86_64-pc-windows-msvc.zip"
@@ -662,7 +657,7 @@ function Convert-SemanticVersionOutput {
     if ([string]::IsNullOrWhiteSpace($Output)) {
         return ""
     }
-    if ($Output -match '(?m)^\s*(?:(?:uv|opencode|cline|dsh|grok|node)(?:\s+version)?\s+|Hermes Agent\s+v?|v)?(?<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?)(?:\s+\([^\r\n]*\))?\s*$') {
+    if ($Output -match '(?m)^\s*(?:(?:uv|opencode|cline|dsh|node)(?:\s+version)?\s+|Hermes Agent\s+v?|v)?(?<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?)(?:\s+\([^\r\n]*\))?\s*$') {
         return $Matches["version"]
     }
     return ""
@@ -686,34 +681,6 @@ function Test-SupportedStableVersion {
     $normalizedVersion = $parsedVersion -replace '\+.*$', ''
     $normalizedMinimum = $parsedMinimum -replace '\+.*$', ''
     return ([version] $normalizedVersion) -ge ([version] $normalizedMinimum)
-}
-
-function Get-OpenCodeVersion {
-    param([string] $OpenCodePath)
-
-    $output = Invoke-Utf8NativeCapture -FilePath $OpenCodePath -Arguments @("--version")
-    $version = Convert-SemanticVersionOutput $output
-    if ([string]::IsNullOrWhiteSpace($version)) {
-        throw "OpenCode is present, but 'opencode --version' did not return a valid semantic version."
-    }
-    return $version
-}
-
-function Confirm-OpenCodeApplication {
-    if ($DryRun) {
-        Write-Host "+ opencode --version"
-        return
-    }
-
-    $command = Get-ApplicationCommand "opencode"
-    if (-not $command) {
-        throw "OpenCode was installed, but 'opencode' is not available on PATH."
-    }
-    $version = Get-OpenCodeVersion $command.Source
-    if (-not (Test-SupportedStableVersion -Version $version -Minimum $MinOpenCodeVersion)) {
-        throw "Stable OpenCode V1 $MinOpenCodeVersion or newer is required; found OpenCode $version after installation."
-    }
-    Write-Host "Verified OpenCode $version."
 }
 
 function Get-OpenCodeWindowsAssetName {
@@ -776,92 +743,24 @@ function Install-OpenCode {
 }
 
 function Ensure-OpenCode {
-    if ($DryRun) {
-        if (Get-ApplicationCommand "opencode") {
-            Write-Host "+ opencode --version"
-            Write-Host "A compatible OpenCode will be preserved; an older version will be upgraded with opencode upgrade."
-        }
-        else {
-            Install-OpenCode
-        }
-        Confirm-OpenCodeApplication
-        return
-    }
-
     $command = Get-ApplicationCommand "opencode"
     if ($command) {
-        $version = Get-OpenCodeVersion $command.Source
-        if (Test-SupportedStableVersion -Version $version -Minimum $MinOpenCodeVersion) {
-            Write-Host "OpenCode $version already satisfies >=$MinOpenCodeVersion; leaving it unchanged."
-            return
-        }
-        Write-Host "OpenCode $version does not satisfy stable V1 >=$MinOpenCodeVersion; upgrading it with OpenCode."
-        Invoke-NativeCommand -FilePath $command.Source -Arguments @("upgrade")
-        Add-KnownBinDirectories
+        Write-Host "OpenCode already found on PATH; verifying it."
     }
     else {
         Install-OpenCode
         Add-KnownBinDirectories
     }
 
-    Confirm-OpenCodeApplication
-}
-
-function Get-ClineVersion {
-    param([string] $ClinePath)
-
-    $output = Invoke-Utf8NativeCapture -FilePath $ClinePath -Arguments @("--version")
-    $version = Convert-SemanticVersionOutput $output
-    if ([string]::IsNullOrWhiteSpace($version)) {
-        throw "Cline is present, but 'cline --version' did not return a valid semantic version."
-    }
-    return $version
-}
-
-function Confirm-ClineApplication {
-    if ($DryRun) {
-        Write-Host "+ cline --version"
-        return
-    }
-
-    $command = Get-ApplicationCommand "cline"
-    if (-not $command) {
-        throw "Cline was installed, but 'cline' is not available on PATH."
-    }
-    $version = Get-ClineVersion $command.Source
-    if (-not (Test-SupportedStableVersion -Version $version -Minimum $MinClineVersion)) {
-        throw "Stable Cline $MinClineVersion or newer is required; found Cline $version after installation."
-    }
-    Write-Host "Verified Cline $version."
+    Confirm-Application -CommandName "opencode" -DisplayName "OpenCode"
 }
 
 function Ensure-Cline {
     Add-NpmBinDirectories
 
-    if ($DryRun) {
-        if (Get-ApplicationCommand "cline") {
-            Write-Host "+ cline --version"
-            Write-Host "A compatible Cline will be preserved; an older version will be upgraded with cline update."
-        }
-        elseif (Get-ApplicationCommand "npm") {
-            Write-Host "+ npm install -g cline"
-        }
-        else {
-            throw "Cline installation requires npm. Install Node.js from https://nodejs.org/en/download, then rerun the installer."
-        }
-        Confirm-ClineApplication
-        return
-    }
-
     $command = Get-ApplicationCommand "cline"
     if ($command) {
-        $version = Get-ClineVersion $command.Source
-        if (Test-SupportedStableVersion -Version $version -Minimum $MinClineVersion) {
-            Write-Host "Cline $version already satisfies >=$MinClineVersion; leaving it unchanged."
-            return
-        }
-        Write-Host "Cline $version does not satisfy stable >=$MinClineVersion; upgrading it with Cline."
-        Invoke-NativeCommand -FilePath $command.Source -Arguments @("update")
+        Write-Host "Cline already found on PATH; verifying it."
     }
     else {
         $npm = Get-ApplicationCommand "npm"
@@ -869,21 +768,10 @@ function Ensure-Cline {
             throw "Cline installation requires npm. Install Node.js from https://nodejs.org/en/download, then rerun the installer."
         }
         Invoke-NativeCommand -FilePath $npm.Source -Arguments @("install", "-g", "cline")
+        Add-NpmBinDirectories
     }
 
-    Add-NpmBinDirectories
-    Confirm-ClineApplication
-}
-
-function Get-HermesVersion {
-    param([string] $HermesPath)
-
-    $output = Invoke-Utf8NativeCapture -FilePath $HermesPath -Arguments @("--version")
-    if ($output -match '(?im)^\s*Hermes Agent\s+v?(?<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?)(?=\s|$)') {
-        return $Matches["version"]
-    }
-
-    throw "Hermes Agent is present, but 'hermes --version' did not return a valid semantic version."
+    Confirm-Application -CommandName "cline" -DisplayName "Cline"
 }
 
 function Confirm-HermesArchitecture {
@@ -899,23 +787,6 @@ function Confirm-HermesArchitecture {
     }
 }
 
-function Confirm-HermesApplication {
-    if ($DryRun) {
-        Write-Host "+ hermes --version"
-        return
-    }
-
-    $command = Get-ApplicationCommand "hermes"
-    if (-not $command) {
-        throw "Hermes Agent was installed, but 'hermes' is not available on PATH."
-    }
-    $version = Get-HermesVersion $command.Source
-    if (-not (Test-SupportedStableVersion -Version $version -Minimum $MinHermesVersion)) {
-        throw "Hermes Agent $MinHermesVersion or newer is required; found Hermes $version after installation."
-    }
-    Write-Host "Verified Hermes Agent $version."
-}
-
 function Install-Hermes {
     Confirm-HermesArchitecture
     Invoke-DownloadedPowerShellInstaller `
@@ -926,58 +797,15 @@ function Install-Hermes {
 }
 
 function Ensure-Hermes {
-    if ($DryRun) {
-        if (Get-ApplicationCommand "hermes") {
-            Write-Host "+ hermes --version"
-            Write-Host "A compatible Hermes Agent will be preserved; an older version will be upgraded with the official installer."
-        }
-        else {
-            Install-Hermes
-        }
-        Confirm-HermesApplication
-        return
-    }
-
     $command = Get-ApplicationCommand "hermes"
     if ($command) {
-        $version = Get-HermesVersion $command.Source
-        if (Test-SupportedStableVersion -Version $version -Minimum $MinHermesVersion) {
-            Write-Host "Hermes Agent $version already satisfies >=$MinHermesVersion; leaving it unchanged."
-            return
-        }
-        Write-Host "Hermes Agent $version does not satisfy >=$MinHermesVersion; upgrading it with the official installer."
+        Write-Host "Hermes Agent already found on PATH; verifying it."
+    }
+    else {
+        Install-Hermes
     }
 
-    Install-Hermes
-    Confirm-HermesApplication
-}
-
-function Get-GrokVersion {
-    param([string] $GrokPath)
-
-    $output = Invoke-Utf8NativeCapture -FilePath $GrokPath -Arguments @("--version")
-    $version = Convert-SemanticVersionOutput $output
-    if ([string]::IsNullOrWhiteSpace($version)) {
-        throw "Grok Build is present, but 'grok --version' did not return a valid semantic version."
-    }
-    return $version
-}
-
-function Confirm-GrokApplication {
-    if ($DryRun) {
-        Write-Host "+ grok --version"
-        return
-    }
-
-    $command = Get-ApplicationCommand "grok"
-    if (-not $command) {
-        throw "Grok Build was installed, but 'grok' is not available on PATH."
-    }
-    $version = Get-GrokVersion $command.Source
-    if (-not (Test-SupportedStableVersion -Version $version -Minimum $MinGrokVersion)) {
-        throw "Stable Grok Build $MinGrokVersion or newer is required; found Grok Build $version after installation."
-    }
-    Write-Host "Verified Grok Build $version."
+    Confirm-Application -CommandName "hermes" -DisplayName "Hermes Agent"
 }
 
 function Install-Grok {
@@ -986,63 +814,27 @@ function Install-Grok {
 }
 
 function Ensure-Grok {
-    if ($DryRun) {
-        if (Get-ApplicationCommand "grok") {
-            Write-Host "+ grok --version"
-            Write-Host "A compatible Grok Build will be preserved; an older version will be upgraded with the official installer."
-        }
-        else {
-            Install-Grok
-        }
-        Confirm-GrokApplication
-        return
-    }
-
     $command = Get-ApplicationCommand "grok"
     if ($command) {
-        $version = Get-GrokVersion $command.Source
-        if (Test-SupportedStableVersion -Version $version -Minimum $MinGrokVersion) {
-            Write-Host "Grok Build $version already satisfies >=$MinGrokVersion; leaving it unchanged."
-            return
-        }
-        Write-Host "Grok Build $version does not satisfy stable >=$MinGrokVersion; upgrading it with the official installer."
+        Write-Host "Grok Build already found on PATH; verifying it."
+    }
+    else {
+        Install-Grok
     }
 
-    Install-Grok
-    Confirm-GrokApplication
-}
-
-function Get-MuseVersion {
-    param([string] $MusePath)
-
-    $output = Invoke-Utf8NativeCapture -FilePath $MusePath -Arguments @("--version")
-    if ($output -match '(?m)^\s*Muse Code\s+(?<version>\d+\.\d+\.\d+)(?:\s+\([^\r\n]+\))?\s*$') {
-        return $Matches["version"]
-    }
-
-    throw "Muse Code is present, but 'muse --version' did not return the expected 'Muse Code x.y.z' version."
+    Confirm-Application -CommandName "grok" -DisplayName "Grok Build"
 }
 
 function Ensure-Muse {
     $script:MuseAvailable = $false
     $command = Get-ApplicationCommand "muse"
     if (-not $command) {
-        Write-Host "Muse Code is not installed. Meta does not currently publish an official Windows installer; fcc-muse will be ready when a compatible Muse binary is on PATH."
+        Write-Host "Muse Code is not installed. Meta does not currently publish an official Windows installer; fcc-muse will be ready when Muse Code is on PATH."
         return
     }
 
-    if ($DryRun) {
-        Write-Host "+ muse --version"
-        Write-Host "A compatible preinstalled Muse Code will be preserved; FCC does not update Muse on Windows."
-        $script:MuseAvailable = $true
-        return
-    }
-
-    $version = Get-MuseVersion $command.Source
-    if (-not (Test-SupportedStableVersion -Version $version -Minimum $MinMuseVersion)) {
-        throw "Muse Code $MinMuseVersion or newer is required; found Muse Code $version. Meta does not currently publish an official Windows updater."
-    }
-    Write-Host "Verified Muse Code $version."
+    Write-Host "Muse Code already found on PATH; verifying it."
+    Confirm-Application -CommandName "muse" -DisplayName "Muse Code"
     $script:MuseAvailable = $true
 }
 
@@ -1575,12 +1367,12 @@ else {
         Write-Host "Run Grok Build with: fcc-grok"
     }
     else {
-        Write-Host "The fcc-grok wrapper is ready after you install Grok Build $MinGrokVersion or newer."
+        Write-Host "The fcc-grok wrapper is ready after you install Grok Build."
     }
     if ($script:MuseAvailable) {
         Write-Host "Run Muse Code with: fcc-muse"
     }
     else {
-        Write-Host "The fcc-muse wrapper is ready after you install Muse Code $MinMuseVersion or newer."
+        Write-Host "The fcc-muse wrapper is ready after you install Muse Code."
     }
 }
