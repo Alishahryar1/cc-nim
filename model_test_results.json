@@ -1,0 +1,128 @@
+[
+  {
+    "model": "claude-3-freecc-no-thinking/open_router/meta-llama/llama-3.1-70b-instruct",
+    "status": "success",
+    "time": 2.702036142349243,
+    "input_tokens": 14,
+    "output_tokens": 100,
+    "content": "Artificial Intelligence (AI) refers to the simulation of human intelligence in machines that are pro",
+    "stop_reason": "max_tokens"
+  },
+  {
+    "model": "anthropic/open_router/aion-labs/aion-2.0",
+    "status": "success",
+    "time": 3.4722211360931396,
+    "input_tokens": 8,
+    "output_tokens": 200,
+    "content": "",
+    "stop_reason": "max_tokens"
+  },
+  {
+    "model": "claude-3-freecc-no-thinking/open_router/aion-labs/aion-2.0",
+    "status": "error",
+    "error": "HTTP 400",
+    "time": 0.3816843032836914
+  },
+  {
+    "model": "anthropic/open_router/aion-labs/aion-3.0",
+    "status": "success",
+    "time": 4.912476301193237,
+    "input_tokens": 10,
+    "output_tokens": 100,
+    "content": "",
+    "stop_reason": "max_tokens"
+  },
+  {
+    "model": "claude-3-freecc-no-thinking/open_router/aion-labs/aion-3.0",
+    "status": "error",
+    "error": "HTTP 400",
+    "time": 0.3965885639190674
+  },
+  {
+    "model": "anthropic/open_router/aion-labs/aion-3.0-mini",
+    "status": "success",
+    "time": 5.36033821105957,
+    "input_tokens": 8,
+    "output_tokens": 200,
+    "content": "",
+    "stop_reason": "max_tokens"
+  },
+  {
+    "model": "claude-3-freecc-no-thinking/open_router/aion-labs/aion-3.0-mini",
+    "status": "error",
+    "error": "HTTP 400",
+    "time": 0.3420422077178955
+  },
+  {
+    "model": "anthropic/open_router/amazon/nova-2-lite-v1",
+    "status": "success",
+    "time": 2.5332272052764893,
+    "input_tokens": 50,
+    "output_tokens": 100,
+    "content": "### **What is AI?**\n\n**AI** stands for **Artificial Intelligence**. It refers to the simulation of h",
+    "stop_reason": "max_tokens"
+  },
+  {
+    "model": "claude-3-freecc-no-thinking/open_router/amazon/nova-2-lite-v1",
+    "status": "success",
+    "time": 2.468038558959961,
+    "input_tokens": 50,
+    "output_tokens": 100,
+    "content": "### **What is AI?**\n\n**AI** stands for **Artificial Intelligence**. It refers to the simulation of h",
+    "stop_reason": "max_tokens"
+  },
+  {
+    "model": "claude-3-freecc-no-thinking/open_router/amazon/nova-lite-v1",
+    "status": "success",
+    "time": 3.707521438598633,
+    "input_tokens": 4,
+    "output_tokens": 100,
+    "content": "Artificial Intelligence (AI) refers to the simulation of human intelligence processes by machines, p",
+    "stop_reason": "max_tokens"
+  },
+  {
+    "model": "claude-3-freecc-no-thinking/open_router/amazon/nova-micro-v1",
+    "status": "success",
+    "time": 2.870820999145508,
+    "input_tokens": 4,
+    "output_tokens": 100,
+    "content": "AI, or Artificial Intelligence, refers to the simulation of human intelligence processes by machines",
+    "stop_reason": "max_tokens"
+  },
+  {
+    "model": "claude-3-freecc-no-thinking/open_router/amazon/nova-premier-v1",
+    "status": "success",
+    "time": 3.3794291019439697,
+    "input_tokens": 38,
+    "output_tokens": 100,
+    "content": "Artificial Intelligence (AI) is a branch of computer science focused on creating systems capable of ",
+    "stop_reason": "max_tokens"
+  },
+  {
+    "model": "claude-3-freecc-no-thinking/open_router/amazon/nova-pro-v1",
+    "status": "success",
+    "time": 1.4272255897521973,
+    "input_tokens": 4,
+    "output_tokens": 100,
+    "content": "AI, or Artificial Intelligence, refers to the development of computer systems that are able to perfo",
+    "stop_reason": "max_tokens"
+  },
+  {
+    "model": "claude-3-freecc-no-thinking/open_router/anthropic/claude-3-haiku",
+    "status": "success",
+    "time": 2.1778194904327393,
+    "input_tokens": 11,
+    "output_tokens": 100,
+    "content": "AI, or Artificial Intelligence, refers to the field of computer science that aims to create systems ",
+    "stop_reason": "max_tokens"
+  },
+  {
+    "model": "anthropic/open_router/anthropic/claude-fable-5",
+    "status": "success",
+    "time": 3.150219440460205,
+    "input_tokens": 11,
+    "output_tokens": 100,
+    "content": "# What is AI?\n\n**Artificial Intelligence (AI)** refers to computer systems designed to perform tasks",
+    "stop_reason": "max_tokens"
+  }
+]
