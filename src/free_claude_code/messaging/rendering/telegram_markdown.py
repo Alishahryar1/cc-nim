@@ -7,8 +7,11 @@ Used by the message handler and Telegram platform adapter.
 from markdown_it import MarkdownIt
 
 from .markdown_tables import normalize_gfm_tables
+from .tail_slice import safe_tail
 
 MDV2_SPECIAL_CHARS = set("\\_*[]()~`>#+-=|{}.!")
+# Paired inline markers this renderer emits, longest first.
+MDV2_INLINE_DELIMITERS = ("*", "_", "~")
 MDV2_LINK_ESCAPE = set("\\)")
 
 _MD = MarkdownIt("commonmark", {"html": False, "breaks": False})
@@ -29,6 +32,11 @@ def escape_md_v2_code(text: str) -> str:
 def escape_md_v2_link_url(text: str) -> str:
     """Escape URL for Telegram MarkdownV2 link destination."""
     return "".join(f"\\{ch}" if ch in MDV2_LINK_ESCAPE else ch for ch in text)
+
+
+def mdv2_tail_slice(text: str, max_chars: int) -> str:
+    """Return a valid MarkdownV2 suffix of rendered text within ``max_chars``."""
+    return safe_tail(text, max_chars, MDV2_INLINE_DELIMITERS)
 
 
 def mdv2_bold(text: str) -> str:
@@ -327,5 +335,6 @@ __all__ = [
     "format_status",
     "mdv2_bold",
     "mdv2_code_inline",
+    "mdv2_tail_slice",
     "render_markdown_to_mdv2",
 ]

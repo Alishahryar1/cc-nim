@@ -49,14 +49,14 @@ def render_segments(
     if dropped and last_part:
         budget = limit_chars - len(prefix_marker) - len(status_text)
         if budget > 20:
-            tail = (
-                "..." + last_part[-(budget - 3) :]
-                if len(last_part) > budget
-                else last_part
-            )
-            candidate = prefix_marker + tail + status_text
-            if len(candidate) <= limit_chars:
-                return candidate
+            # ``last_part`` is finished markup, so only the platform slicer knows
+            # where it can be cut. ``prefix_marker`` already announces the
+            # truncation, so no extra ellipsis is spliced into the markup here.
+            tail = ctx.tail_slice(last_part, budget)
+            if tail:
+                candidate = prefix_marker + tail + status_text
+                if len(candidate) <= limit_chars:
+                    return candidate
 
     if dropped:
         minimal = prefix_marker + status_text.lstrip("\n")

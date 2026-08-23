@@ -6,6 +6,7 @@ from dataclasses import dataclass
 from free_claude_code.messaging.rendering.discord_markdown import (
     discord_bold,
     discord_code_inline,
+    discord_tail_slice,
     escape_discord,
     escape_discord_code,
     render_markdown_to_discord,
@@ -18,6 +19,7 @@ from free_claude_code.messaging.rendering.telegram_markdown import (
     escape_md_v2_code,
     mdv2_bold,
     mdv2_code_inline,
+    mdv2_tail_slice,
     render_markdown_to_mdv2,
 )
 from free_claude_code.messaging.rendering.telegram_markdown import (
@@ -48,6 +50,7 @@ def build_rendering_profile(platform_name: str) -> RenderingProfile:
             render_markdown=render_markdown_to_discord
             if is_discord
             else render_markdown_to_mdv2,
+            tail_slice=discord_tail_slice if is_discord else mdv2_tail_slice,
         ),
         limit_chars=1900 if is_discord else 3900,
     )
