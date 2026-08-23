@@ -13,6 +13,7 @@ from typing import Never
 from free_claude_code.cli.local_http import with_local_proxy_bypass
 from free_claude_code.config.loader import get_settings
 from free_claude_code.config.server_urls import local_proxy_root_url
+from free_claude_code.core.json_types import JsonValue
 
 from .common import (
     preflight_proxy,
@@ -35,7 +36,8 @@ _INSTALL_HINT = (
 _MINIMUM_VERSION = (1, 0, 5)
 _VERSION_TIMEOUT_SECONDS = 5.0
 _VERSION_PATTERN = re.compile(
-    r"(?im)^\s*(?:grok\s+)?v?(\d+)\.(\d+)\.(\d+)(?:\s+\([^\r\n]*\))?\s*$"
+    r"^(\d+)\.(\d+)\.(\d+)(?:\+[0-9A-Za-z.-]+)?"
+    r"(?:\s+\([^\r\n]*\))?$"
 )
 _PASSTHROUGH_COMMANDS = frozenset(
     {
@@ -268,11 +270,11 @@ def require_compatible_grok(binary_path: str) -> None:
 
 
 def grok_binary_version(binary_path: str) -> tuple[int, int, int] | None:
-    """Read a stable Grok Build version without invoking a shell."""
+    """Read Grok Build's machine-readable stable release metadata."""
 
     try:
         result = subprocess.run(
-            [binary_path, "--version"],
+            [binary_path, "version", "--json"],
             check=False,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
@@ -284,7 +286,17 @@ def grok_binary_version(binary_path: str) -> tuple[int, int, int] | None:
     if result.returncode != 0:
         return None
 
-    match = _VERSION_PATTERN.search(result.stdout)
+    try:
+        payload: JsonValue = json.loads(result.stdout)
+    except json.JSONDecodeError:
+        return None
+    if not isinstance(payload, dict) or payload.get("channel") != "stable":
+        return None
+
+    current_version = payload.get("currentVersion")
+    if not isinstance(current_version, str):
+        return None
+    match = _VERSION_PATTERN.fullmatch(current_version.strip())
     if match is None:
         return None
     return int(match.group(1)), int(match.group(2)), int(match.group(3))

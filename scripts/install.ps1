@@ -662,7 +662,7 @@ function Convert-SemanticVersionOutput {
     if ([string]::IsNullOrWhiteSpace($Output)) {
         return ""
     }
-    if ($Output -match '(?m)^\s*(?:(?:uv|opencode|cline|dsh|grok|node)(?:\s+version)?\s+|Hermes Agent\s+v?|v)?(?<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?)(?:\s+\([^\r\n]*\))?\s*$') {
+    if ($Output -match '(?m)^\s*(?:(?:uv|opencode|cline|dsh|node)(?:\s+version)?\s+|Hermes Agent\s+v?|v)?(?<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?)(?:\s+\([^\r\n]*\))?\s*$') {
         return $Matches["version"]
     }
     return ""
@@ -955,17 +955,40 @@ function Ensure-Hermes {
 function Get-GrokVersion {
     param([string] $GrokPath)
 
-    $output = Invoke-Utf8NativeCapture -FilePath $GrokPath -Arguments @("--version")
-    $version = Convert-SemanticVersionOutput $output
-    if ([string]::IsNullOrWhiteSpace($version)) {
-        throw "Grok Build is present, but 'grok --version' did not return a valid semantic version."
+    $output = Invoke-Utf8NativeCapture -FilePath $GrokPath -Arguments @("version", "--json")
+    $invalidMetadata = "Grok Build is present, but 'grok version --json' did not return valid stable version metadata."
+    try {
+        $metadata = ConvertFrom-Json -InputObject $output -ErrorAction Stop
     }
-    return $version
+    catch {
+        throw $invalidMetadata
+    }
+    if ($null -eq $metadata) {
+        throw $invalidMetadata
+    }
+
+    $currentVersionProperty = $metadata.PSObject.Properties["currentVersion"]
+    $channelProperty = $metadata.PSObject.Properties["channel"]
+    if (
+        ($null -eq $currentVersionProperty) -or
+        ($currentVersionProperty.Value -isnot [string]) -or
+        ($null -eq $channelProperty) -or
+        ($channelProperty.Value -isnot [string]) -or
+        ($channelProperty.Value -cne "stable")
+    ) {
+        throw $invalidMetadata
+    }
+
+    $currentVersion = $currentVersionProperty.Value.Trim()
+    if ($currentVersion -notmatch '^(?<version>\d+\.\d+\.\d+(?:[-+][0-9A-Za-z][0-9A-Za-z.-]*)?)(?:\s+\([^\r\n]*\))?$') {
+        throw $invalidMetadata
+    }
+    return $Matches["version"]
 }
 
 function Confirm-GrokApplication {
     if ($DryRun) {
-        Write-Host "+ grok --version"
+        Write-Host "+ grok version --json"
         return
     }
 
@@ -988,7 +1011,7 @@ function Install-Grok {
 function Ensure-Grok {
     if ($DryRun) {
         if (Get-ApplicationCommand "grok") {
-            Write-Host "+ grok --version"
+            Write-Host "+ grok version --json"
             Write-Host "A compatible Grok Build will be preserved; an older version will be upgraded with the official installer."
         }
         else {

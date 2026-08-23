@@ -994,14 +994,18 @@ ensure_dsh() {
 }
 
 current_grok_version() {
-    if output=$(grok --version 2>/dev/null); then
+    if output=$(grok version --json 2>/dev/null); then
         :
     else
         return 1
     fi
 
-    version=$(printf '%s\n' "$output" | awk '
-        /^[[:space:]]*(grok[[:space:]]+|v)?[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?([[:space:]]+\([^\r\n]*\))?[[:space:]]*$/ &&
+    current_version=$(printf '%s\n' "$output" | sed -n 's/.*"currentVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    channel=$(printf '%s\n' "$output" | sed -n 's/.*"channel"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
+    [ "$channel" = "stable" ] || return 1
+
+    version=$(printf '%s\n' "$current_version" | awk '
+        /^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z][0-9A-Za-z.-]*)?([[:space:]]+\([^\r\n]*\))?$/ &&
         match($0, /[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?/) {
             print substr($0, RSTART, RLENGTH)
             exit
@@ -1013,12 +1017,12 @@ current_grok_version() {
 
 verify_grok_command() {
     if [ "$dry_run" -eq 1 ]; then
-        print_command grok --version
+        print_command grok version --json
         return 0
     fi
 
     command -v grok >/dev/null 2>&1 || fail "Grok Build was installed, but 'grok' is not available on PATH."
-    version=$(current_grok_version) || fail "Grok Build is present, but 'grok --version' did not return a valid semantic version."
+    version=$(current_grok_version) || fail "Grok Build is present, but 'grok version --json' did not return valid stable version metadata."
     if ! stable_version_is_supported "$version" "$MIN_GROK_VERSION"; then
         fail "Stable Grok Build $MIN_GROK_VERSION or newer is required; found Grok Build $version after installation."
     fi
@@ -1033,7 +1037,7 @@ install_grok_build() {
 ensure_grok() {
     if [ "$dry_run" -eq 1 ]; then
         if command -v grok >/dev/null 2>&1; then
-            print_command grok --version
+            print_command grok version --json
             printf 'A compatible Grok Build will be preserved; an older version will be upgraded with the official installer.\n'
         else
             install_grok_build
@@ -1043,7 +1047,7 @@ ensure_grok() {
     fi
 
     if command -v grok >/dev/null 2>&1; then
-        version=$(current_grok_version) || fail "Grok Build is present, but 'grok --version' did not return a valid semantic version."
+        version=$(current_grok_version) || fail "Grok Build is present, but 'grok version --json' did not return valid stable version metadata."
         if stable_version_is_supported "$version" "$MIN_GROK_VERSION"; then
             printf 'Grok Build %s already satisfies >=%s; leaving it unchanged.\n' "$version" "$MIN_GROK_VERSION"
             return 0
