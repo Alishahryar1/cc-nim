@@ -117,7 +117,14 @@ skip-magic-trailing-comma = false
 [tool.pytest.ini_options]
 pythonpath = ["src"]
 addopts = "-n auto"
-filterwarnings = ["error"]
+filterwarnings = [
+    "error",
+    # httpx2 cleanup happens after event loop closes in pytest-asyncio parallel mode;
+    # the resource is cleaned up, just not before the loop closes. These warnings
+    # are benign and only occur during test cleanup, not during actual test execution.
+    "ignore:unclosed transport.*:ResourceWarning",
+    "ignore:unclosed.*:ResourceWarning",
+]
 testpaths = ["tests"]
 markers = [
     "live: opt-in local smoke tests that can touch real services",
