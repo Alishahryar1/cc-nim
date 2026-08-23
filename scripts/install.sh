@@ -1000,9 +1000,10 @@ current_grok_version() {
         return 1
     fi
 
-    current_version=$(printf '%s\n' "$output" | sed -n 's/.*"currentVersion"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-    channel=$(printf '%s\n' "$output" | sed -n 's/.*"channel"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p')
-    [ "$channel" = "stable" ] || return 1
+    current_version=$(printf '%s\n' "$output" | sed -n \
+        -e 's/^[[:space:]]*{[[:space:]]*"currentVersion"[[:space:]]*:[[:space:]]*"\([^"\\]*\)"[[:space:]]*,[[:space:]]*"channel"[[:space:]]*:[[:space:]]*"stable"[[:space:]]*}[[:space:]]*$/\1/p' \
+        -e 's/^[[:space:]]*{[[:space:]]*"channel"[[:space:]]*:[[:space:]]*"stable"[[:space:]]*,[[:space:]]*"currentVersion"[[:space:]]*:[[:space:]]*"\([^"\\]*\)"[[:space:]]*}[[:space:]]*$/\1/p')
+    [ -n "$current_version" ] || return 1
 
     version=$(printf '%s\n' "$current_version" | awk '
         /^[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z][0-9A-Za-z.-]*)?([[:space:]]+\([^\r\n]*\))?$/ &&

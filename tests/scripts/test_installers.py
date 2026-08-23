@@ -680,6 +680,24 @@ def test_install_sh_rejects_nonstable_grok_metadata(
     assert not any(call.startswith("uv:") for call in posix_harness.calls())
 
 
+def test_install_sh_rejects_malformed_grok_metadata(
+    posix_harness: PosixHarness,
+) -> None:
+    _write_executable(
+        posix_harness.bin_dir / "grok",
+        _posix_command("grok").replace(
+            '{"currentVersion":"1.0.5 (5115b46bc9)","channel":"stable"}',
+            'not-json "currentVersion":"1.0.5 (5115b46bc9)" "channel":"stable"',
+        ),
+    )
+
+    result = posix_harness.run()
+
+    assert result.returncode != 0
+    assert "did not return valid stable version metadata" in result.stderr
+    assert not any(call.startswith("uv:") for call in posix_harness.calls())
+
+
 def test_install_sh_upgrades_old_grok_with_official_installer(
     posix_harness: PosixHarness,
 ) -> None:
