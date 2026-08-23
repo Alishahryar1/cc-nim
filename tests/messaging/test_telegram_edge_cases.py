@@ -414,11 +414,16 @@ async def test_telegram_start_retries_on_network_error(monkeypatch):
 
             mock_builder.return_value.token.return_value.request.return_value.build.return_value = mock_app
 
-            await platform.start()
-            assert platform.is_connected is True
-            assert mock_app.initialize.await_count == 2
-            mock_app.start.assert_awaited_once_with()
-            platform._limiter.start.assert_called_once_with()
+            try:
+                await platform.start()
+                assert platform.is_connected is True
+                assert mock_app.initialize.await_count == 2
+                mock_app.start.assert_awaited_once_with()
+                platform._limiter.start.assert_called_once_with()
+            finally:
+                # Clean up async resources created during start()
+                platform._application = None
+                await platform.close()
 
 
 @pytest.mark.asyncio
@@ -441,13 +446,18 @@ async def test_telegram_polling_retry_does_not_restart_running_application(
             )
             mock_builder.return_value.token.return_value.request.return_value.build.return_value = mock_app
 
-            await platform.start()
+            try:
+                await platform.start()
 
-            assert platform.is_connected is True
-            mock_app.initialize.assert_awaited_once_with()
-            mock_app.start.assert_awaited_once_with()
-            assert mock_app.updater.start_polling.await_count == 2
-            platform._limiter.start.assert_called_once_with()
+                assert platform.is_connected is True
+                mock_app.initialize.assert_awaited_once_with()
+                mock_app.start.assert_awaited_once_with()
+                assert mock_app.updater.start_polling.await_count == 2
+                platform._limiter.start.assert_called_once_with()
+            finally:
+                # Clean up async resources created during start()
+                platform._application = None
+                await platform.close()
 
 
 @pytest.mark.asyncio
