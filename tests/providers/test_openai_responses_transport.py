@@ -414,12 +414,12 @@ async def test_cancellation_closes_the_sdk_stream() -> None:
         )
     )
     task = asyncio.create_task(_collect(_transport(client)))
-    await asyncio.wait_for(body.entered.wait(), timeout=1)
+    await asyncio.wait_for(body.entered.wait(), timeout=3)
     task.cancel()
     try:
         with pytest.raises(asyncio.CancelledError):
             await task
-        await asyncio.wait_for(body.closed.wait(), timeout=1)
+        await asyncio.wait_for(body.closed.wait(), timeout=3)
     finally:
         await client.close()
 

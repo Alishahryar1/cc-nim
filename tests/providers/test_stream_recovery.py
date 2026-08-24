@@ -8,8 +8,8 @@ from free_claude_code.core.inference import (
 from free_claude_code.providers.stream_recovery import (
     RecoveryController,
     RecoveryFailureAction,
-    RecoveryHoldbackBuffer,
 )
+from free_claude_code.providers.streaming import PublicationBuffer
 
 
 def _event(label: str) -> TextDelta:
@@ -150,9 +150,9 @@ def test_non_retryable_error_is_final() -> None:
     assert not decision.retryable
 
 
-def test_holdback_buffers_until_delay_then_commits() -> None:
+def test_holdback_records_deadline_until_supervisor_commits() -> None:
     now = [10.0]
-    holdback = RecoveryHoldbackBuffer(holdback_seconds=0.75, now=lambda: now[0])
+    holdback = PublicationBuffer(holdback_seconds=0.75, now=lambda: now[0])
 
     started = _event("started")
     delta = _event("delta")
@@ -162,11 +162,13 @@ def test_holdback_buffers_until_delay_then_commits() -> None:
     assert holdback.push(started) == []
     now[0] += 0.74
     assert holdback.push(delta) == []
-    assert not holdback.committed
+    assert not holdback.published
 
     now[0] += 0.01
-    assert holdback.push(completed) == [started, delta, completed]
-    assert holdback.committed
+    assert holdback.push(completed) == []
+    assert holdback.seconds_until_deadline == 0
+    assert holdback.flush() == [started, delta, completed]
+    assert holdback.published
     assert holdback.push(terminal) == [terminal]
 
 
@@ -174,30 +176,30 @@ def test_synthetic_response_start_does_not_age_holdback_before_provider_output()
     None
 ):
     now = [10.0]
-    holdback = RecoveryHoldbackBuffer(holdback_seconds=0.75, now=lambda: now[0])
+    holdback = PublicationBuffer(holdback_seconds=0.75, now=lambda: now[0])
     started = ResponseStarted("response_test", "test-model")
 
     assert holdback.push(started) == []
     now[0] += 10.0
     assert holdback.push(_event("first-provider-output")) == []
-    assert not holdback.committed
+    assert not holdback.published
 
 
 def test_holdback_flushes_at_internal_buffer_cap() -> None:
     first = _event("ab")
     second = _event("cde")
-    holdback = RecoveryHoldbackBuffer(
+    holdback = PublicationBuffer(
         max_bytes=inference_event_size(first) + inference_event_size(second),
         now=lambda: 1.0,
     )
 
     assert holdback.push(first) == []
     assert holdback.push(second) == [first, second]
-    assert holdback.committed
+    assert holdback.published
 
 
 def test_holdback_discard_drops_uncommitted_events() -> None:
-    holdback = RecoveryHoldbackBuffer(now=lambda: 1.0)
+    holdback = PublicationBuffer(now=lambda: 1.0)
 
     assert holdback.push(_event("hidden")) == []
     holdback.discard()

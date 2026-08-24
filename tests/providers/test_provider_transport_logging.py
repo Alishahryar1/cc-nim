@@ -25,7 +25,7 @@ def _provider(*, verbose: bool = False) -> NvidiaNimProvider:
             log_api_error_tracebacks=verbose,
         ),
         nim_settings=NimSettings(),
-        admission=immediate_admission(),
+        admission=immediate_admission(max_attempts=1),
     )
 
 
@@ -34,8 +34,8 @@ async def test_stream_failure_default_logs_exclude_exception_text(caplog) -> Non
     provider = _provider()
     with (
         patch.object(
-            provider,
-            "_create_stream",
+            provider._client.chat.completions,
+            "create",
             new_callable=AsyncMock,
             side_effect=RuntimeError("SECRET_OPENAI_COMPAT"),
         ),
@@ -64,8 +64,8 @@ async def test_stream_failure_default_logs_cause_types_only(caplog) -> None:
     error.__cause__ = httpx2.ConnectError("SECRET_CAUSE_DETAIL")
     with (
         patch.object(
-            provider,
-            "_create_stream",
+            provider._client.chat.completions,
+            "create",
             new_callable=AsyncMock,
             side_effect=error,
         ),
@@ -91,8 +91,8 @@ async def test_stream_failure_verbose_traceback_redacts_credentials(caplog) -> N
     provider = _provider(verbose=True)
     with (
         patch.object(
-            provider,
-            "_create_stream",
+            provider._client.chat.completions,
+            "create",
             new_callable=AsyncMock,
             side_effect=RuntimeError(
                 "api_key=SECRET_OPENAI_COMPAT useful traceback detail"

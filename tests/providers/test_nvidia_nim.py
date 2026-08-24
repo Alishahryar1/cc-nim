@@ -14,7 +14,7 @@ from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.nvidia_nim.tool_schema import (
     NIM_TOOL_ARGUMENT_ALIASES_KEY,
 )
-from free_claude_code.providers.stream_recovery import RecoveryHoldbackBuffer
+from free_claude_code.providers.streaming import PublicationBuffer
 from tests.inference_support import collect_anthropic
 from tests.providers.request_factory import canonical_request, make_messages_request
 from tests.providers.support import (
@@ -897,7 +897,7 @@ async def test_midstream_native_tool_suffix_failure_recovers_without_duplication
         yield _content_chunk(recovered, finish_reason="tool_calls")
 
     def immediate_holdback():
-        return RecoveryHoldbackBuffer(holdback_seconds=0.0)
+        return PublicationBuffer(holdback_seconds=0.0)
 
     with (
         patch.object(
@@ -906,7 +906,7 @@ async def test_midstream_native_tool_suffix_failure_recovers_without_duplication
             new_callable=AsyncMock,
         ) as mock_create,
         patch(
-            "free_claude_code.providers.stream_recovery.RecoveryHoldbackBuffer",
+            "free_claude_code.providers.openai_chat.provider.PublicationBuffer",
             side_effect=immediate_holdback,
         ),
     ):
