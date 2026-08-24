@@ -34,7 +34,12 @@ class StreamTraceContext:
 
 @dataclass(frozen=True, slots=True)
 class StreamFeed:
-    """Canonical events produced by one raw item or end-of-stream transition."""
+    """Canonical events produced by one raw item or end-of-stream transition.
+
+    A terminal feed is the logical end of the response. The supervisor must stop
+    pulling the raw transport immediately, even if the transport has not reached
+    physical EOF yet.
+    """
 
     events: tuple[InferenceEvent, ...] = ()
     terminal: bool = False
@@ -304,6 +309,7 @@ class StreamExecutionSupervisor:
                     feed = epoch.feed(raw)
                     if feed.terminal:
                         terminal_events.extend(feed.events)
+                        break
                     else:
                         for event in feed.events:
                             for publishable in publication.push(event):

@@ -357,6 +357,24 @@ async def test_terminal_events_publish_only_after_attempt_scope_closes() -> None
 
 
 @pytest.mark.asyncio
+async def test_terminal_feed_stops_raw_reads_and_closes_attempt_scope() -> None:
+    admission = immediate_admission(provider_name="TEST_STREAM", max_attempts=1)
+    epoch = _Epoch("terminal", block_after=1)
+    source = _Source(epoch)
+
+    events, execution = await asyncio.wait_for(
+        _collect(admission, source),
+        timeout=1,
+    )
+
+    assert epoch.read_calls == 1
+    assert epoch.closed
+    assert not epoch.blocked.is_set()
+    assert sum(isinstance(event, ResponseCompleted) for event in events) == 1
+    assert execution.state is ProviderExecutionState.SUCCEEDED
+
+
+@pytest.mark.asyncio
 async def test_active_deadline_publishes_without_restarting_blocked_read() -> None:
     admission = immediate_admission(provider_name="TEST_STREAM", max_attempts=2)
     epoch = _Epoch("content", block_after=1)
