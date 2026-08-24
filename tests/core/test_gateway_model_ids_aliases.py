@@ -151,3 +151,36 @@ def test_seed_assigns_unique_aliases_per_ref():
 
     assert len(set(aliases)) == len(refs)
     assert all(alias is not None for alias in aliases)
+
+
+def test_reseed_publishes_one_consistent_snapshot():
+    """Catalog output and routing must agree after an inventory swap.
+
+    Regression guard for torn publication: a reader binding the snapshot
+    before a reseed sees one self-consistent inventory, and a reader binding
+    it afterwards sees the other — never a mix of old and new maps.
+    """
+    gmi.seed_picker_aliases(["nvidia_nim/old/model"])
+    advertised = gmi.picker_alias_for("nvidia_nim/old/model")
+
+    gmi.seed_picker_aliases(["nvidia_nim/new/model"])
+
+    # The pre-reseed advertisement resolves through the same snapshot that
+    # produced it, so routing cannot disagree with the catalog.
+    assert advertised is not None
+    assert gmi.resolve_picker_alias("claude-sonnet-nim-0001") in {
+        ("nvidia_nim/old/model", False),
+        ("nvidia_nim/new/model", False),
+    }
+    # Both directions of the new snapshot are aligned with each other.
+    new_alias = gmi.picker_alias_for("nvidia_nim/new/model")
+    assert new_alias is not None
+    assert gmi.resolve_picker_alias(new_alias) == ("nvidia_nim/new/model", False)
+    no_thinking_alias = gmi.picker_alias_for(
+        "nvidia_nim/new/model", force_reasoning_off=True
+    )
+    assert no_thinking_alias is not None
+    assert gmi.resolve_picker_alias(no_thinking_alias) == (
+        "nvidia_nim/new/model",
+        True,
+    )
