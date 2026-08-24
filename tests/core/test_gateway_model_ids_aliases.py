@@ -168,6 +168,26 @@ def test_returning_ref_regains_its_previous_alias():
     assert gmi.picker_alias_for("nvidia_nim/01-ai/yi-large") == original
 
 
+def test_empty_refresh_keeps_retired_numbers_consumed():
+    """Disconnect-everything must not recycle aliases on the next refresh."""
+    gmi.seed_picker_aliases(["nvidia_nim/old/model"])
+    advertised = gmi.picker_alias_for("nvidia_nim/old/model")
+    assert advertised is not None
+
+    # Inventory drains to empty (final provider disconnected)...
+    gmi.seed_picker_aliases([])
+    assert gmi.has_picker_aliases() is False
+    assert gmi.resolve_picker_alias(advertised) is None
+
+    # ...and a different model arrives later.
+    gmi.seed_picker_aliases(["openai/new/model"])
+
+    new_alias = gmi.picker_alias_for("openai/new/model")
+    assert new_alias is not None
+    assert new_alias != advertised
+    assert gmi.resolve_picker_alias(advertised) is None
+
+
 def test_aliases_are_four_digit_zero_padded():
     refs = [f"openai_chat/provider-{i}/model" for i in range(15)]
     gmi.seed_picker_aliases(refs)

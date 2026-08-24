@@ -109,14 +109,14 @@ def seed_picker_aliases(provider_model_refs: Iterable[str]) -> None:
 
     An empty inventory publishes the inert empty snapshot so a cold-start
     ``/v1/models`` request still falls back to the canonical
-    ``gateway_model_id`` wrappers.
+    ``gateway_model_id`` wrappers, while sticky assignments and consumed
+    alias numbers are preserved so a later refresh can never re-point a
+    previously advertised alias.
     """
     global _picker_aliases, _sticky_ref_to_alias, _used_alias_numbers
 
     wanted = [ref for ref in sorted(set(provider_model_refs)) if ref]
     if not wanted:
-        _sticky_ref_to_alias = {}
-        _used_alias_numbers = set()
         _picker_aliases = _EMPTY_PICKER_ALIAS_MAPS
         return
 
