@@ -47,6 +47,8 @@ flowchart LR
     Executor --> Lease[Provider Generation Lease]
     Lease --> Providers[ProviderRuntime]
     Providers --> OpenAIChat[OpenAI Chat Provider Profiles And Specialized Adapters]
+    Providers --> OpenAIResponses[Standard OpenAI Responses Transport]
+    Providers --> NativeProviders[Native And Private Provider Adapters]
 ```
 
 ## Package Boundaries
@@ -794,7 +796,7 @@ compatibility layer.
   `list_model_infos()`. Providers return application-owned `ProviderModelInfo`
   values directly; there is no parallel IDs-only catalog contract.
 
-There are two upstream transport families:
+Provider execution is organized around explicit protocol owners.
 [providers/openai_chat/](src/free_claude_code/providers/openai_chat/) implements the concrete
 `OpenAIChatProvider` used by every OpenAI-compatible `/chat/completions`
 upstream. `OpenAIChatProfile` contains immutable request policy, an explicit
@@ -805,6 +807,27 @@ empty subclasses. The package also
 owns the exactly typed private per-request runner, recovery operations, tool-call
 assembly, and streamed usage handling. No obsolete generic transport namespace
 or untyped provider backchannel remains.
+
+[providers/openai_responses/](src/free_claude_code/providers/openai_responses/)
+owns standard API-key `/responses` execution. Its transport borrows the owning
+provider's configured SDK client and admission controller, builds and parses the
+public protocol through `core.openai_responses`, and owns stream attempts,
+failure classification, recovery holdback, cancellation, and exact closure. It
+owns no credentials, model discovery, provider configuration, or client
+lifecycle. This boundary is deliberately separate from the Codex subscription
+adapter's OAuth and private-backend contract.
+
+[providers/opencode/](src/free_claude_code/providers/opencode/) is specialized
+because OpenCode Zen and Go advertise heterogeneous per-model transports. Each
+provider instance owns a separately proxied, admitted rich-catalog client and
+an immutable last-good route snapshot. The model selector remains the public
+FCC ID while the catalog record's `id` is sent upstream. Exact effective package
+metadata selects standard Responses only for `@ai-sdk/openai`; every other
+accepted package uses the inherited OpenAI Chat path. Listing and direct
+generation resolve from the same status-filtered snapshot, a cold load is
+coalesced, and missing route metadata fails before generation rather than
+probing endpoints or treating HTTP 500 as transport discovery. Both branches
+share the one provider-generation admission controller.
 
 [providers/groq/](src/free_claude_code/providers/groq/) is a specialized
 `OpenAIChatProvider` because Groq exposes incompatible `reasoning_effort`
