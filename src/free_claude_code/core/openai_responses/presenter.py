@@ -1,6 +1,7 @@
 """Present canonical inference events through the OpenAI Responses protocol."""
 
 import asyncio
+import json
 import sys
 import time
 import uuid
@@ -17,7 +18,6 @@ from free_claude_code.core.inference import (
     ReasoningBlockStarted,
     ReasoningDelta,
     ReplayArtifact,
-    ReplayArtifactKind,
     ResponseCompleted,
     ResponseStarted,
     TextBlockCompleted,
@@ -28,9 +28,9 @@ from free_claude_code.core.inference import (
     ToolCallKind,
     ToolCallStarted,
     UsageUpdated,
-    replay_payload_text,
 )
 from free_claude_code.core.json_types import JsonObject, JsonValue
+from free_claude_code.core.replay_envelope import encode_replay_envelope
 from free_claude_code.core.token_estimation import estimate_text_tokens
 from free_claude_code.core.trace import close_stream_input, trace_event
 
@@ -45,14 +45,9 @@ from .ids import (
     new_reasoning_item_id,
     new_response_id,
 )
-from .models import OpenAIResponsesRequest
+from .models import ResponsesPresentationSnapshot
 from .streaming.error_mapping import replay_unsafe_function_call_error
 from .streaming.event_builders import ResponseEventBuilder
-from .tools import (
-    custom_tool_input_text_from_arguments,
-    normalized_function_call_arguments,
-    responses_tool_identity_from_anthropic_name,
-)
 
 PostStartTerminalFailureObserver = Callable[[BaseException], None]
 
@@ -89,8 +84,8 @@ type _OutputState = _TextState | _ReasoningState | _ToolState
 class ResponsesEventPresenter:
     """Serialize one canonical stream while owning Responses envelope state."""
 
-    def __init__(self, request: OpenAIResponsesRequest) -> None:
-        self._request = request
+    def __init__(self, snapshot: ResponsesPresentationSnapshot) -> None:
+        self._snapshot = snapshot
         self._response_id = new_response_id()
         self._created_at = int(time.time())
         self._events = ResponseEventBuilder()
@@ -145,21 +140,21 @@ class ResponsesEventPresenter:
             "object": "response",
             "created_at": self._created_at,
             "status": status,
-            "model": self._request.model,
+            "model": self._snapshot.model,
             "output": [item for item in self._output if item is not None],
             "parallel_tool_calls": (
                 True
-                if self._request.parallel_tool_calls is None
-                else self._request.parallel_tool_calls
+                if self._snapshot.parallel_tool_calls is None
+                else self._snapshot.parallel_tool_calls
             ),
             "tool_choice": _json_value(
                 "auto"
-                if self._request.tool_choice is None
-                else self._request.tool_choice
+                if self._snapshot.tool_choice is None
+                else self._snapshot.tool_choice
             ),
-            "temperature": self._request.temperature,
-            "top_p": self._request.top_p,
-            "max_output_tokens": self._request.max_output_tokens,
+            "temperature": self._snapshot.temperature,
+            "top_p": self._snapshot.top_p,
+            "max_output_tokens": self._snapshot.max_output_tokens,
             "usage": _responses_usage(
                 self._usage,
                 reasoning_estimate=self._reasoning_tokens_estimate,
@@ -271,23 +266,15 @@ class ResponsesEventPresenter:
         return chunks
 
     def _tool_started(self, event: ToolCallStarted) -> list[str]:
-        identity = responses_tool_identity_from_anthropic_name(
-            self._request.tools,
-            event.name,
-        )
-        kind = (
-            ToolCallKind.CUSTOM
-            if event.kind is ToolCallKind.CUSTOM or identity.kind == "custom"
-            else ToolCallKind.FUNCTION
-        )
+        kind = event.kind
         state = _ToolState(
             output_index=self._reserve_output(),
             item_id=f"{'ctc' if kind is ToolCallKind.CUSTOM else 'fc'}_"
             f"{uuid.uuid4().hex[:24]}",
             call_id=event.call_id or new_call_id(),
             kind=kind,
-            name=identity.name if identity.name else event.name,
-            namespace=identity.namespace or event.namespace,
+            name=event.name,
+            namespace=event.namespace,
         )
         self._set_block(event.block_id, state)
         return [
@@ -308,7 +295,7 @@ class ResponsesEventPresenter:
         if state.kind is ToolCallKind.CUSTOM:
             return self._complete_custom_tool(state, arguments)
         try:
-            normalized = normalized_function_call_arguments(arguments or "{}")
+            normalized = _normalized_function_call_arguments(arguments or "{}")
         except ResponsesConversionError as exc:
             trace_event(
                 stage="responses",
@@ -344,7 +331,7 @@ class ResponsesEventPresenter:
         return chunks
 
     def _complete_custom_tool(self, state: _ToolState, arguments: str) -> list[str]:
-        input_text = custom_tool_input_text_from_arguments(arguments)
+        input_text = _custom_tool_input_text_from_arguments(arguments)
         item = _tool_item(state, status="completed", input_text=input_text)
         self._commit_output(state.output_index, item)
         chunks: list[str] = []
@@ -425,13 +412,13 @@ class ResponsesEventPresenter:
 
 async def iter_responses_sse_from_events(
     events: AsyncIterator[InferenceEvent],
-    request: OpenAIResponsesRequest,
+    snapshot: ResponsesPresentationSnapshot,
     *,
     on_post_start_terminal_failure: PostStartTerminalFailureObserver | None = None,
 ) -> AsyncIterator[str]:
     """Serialize canonical events and map only post-start failures to wire events."""
 
-    presenter = ResponsesEventPresenter(request)
+    presenter = ResponsesEventPresenter(snapshot)
     emitted_any = False
     try:
         async for event in events:
@@ -526,14 +513,41 @@ def _reasoning_item(
 def _encrypted_reasoning(
     artifacts: tuple[ReplayArtifact, ...],
 ) -> str | None:
-    for artifact in artifacts:
-        if artifact.kind in {
-            ReplayArtifactKind.REDACTED_THINKING,
-            ReplayArtifactKind.ENCRYPTED_REASONING,
-            ReplayArtifactKind.REASONING_DETAILS,
-        }:
-            return replay_payload_text(artifact)
-    return None
+    return encode_replay_envelope(artifacts) if artifacts else None
+
+
+def _normalized_function_call_arguments(value: str) -> str:
+    try:
+        parsed = json.loads(value)
+    except json.JSONDecodeError as exc:
+        raise ResponsesConversionError(
+            f"Responses function_call arguments are invalid JSON: {exc.msg}"
+        ) from exc
+    if not isinstance(parsed, dict):
+        raise ResponsesConversionError(
+            "Responses function_call arguments must decode to an object"
+        )
+    return json.dumps(parsed, separators=(",", ":"))
+
+
+def _custom_tool_input_text_from_arguments(arguments: str) -> str:
+    if not arguments:
+        return ""
+    try:
+        parsed = json.loads(arguments)
+    except json.JSONDecodeError:
+        return arguments
+    if isinstance(parsed, Mapping):
+        value = parsed.get("input")
+        if value is None and not parsed:
+            return ""
+        if value is None:
+            value = parsed
+    else:
+        value = parsed
+    if isinstance(value, str):
+        return value
+    return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
 
 
 def _tool_item(

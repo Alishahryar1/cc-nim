@@ -16,7 +16,7 @@ from .reasoning import (
     NamedEffortReasoning,
     ReasoningObject,
 )
-from .reasoning_details import apply_reasoning_details_replay
+from .request_codec import ReasoningReplayMode
 from .request_policy import OpenAIChatRequestPolicy, build_openai_chat_request_body
 from .usage import usage_int
 
@@ -50,7 +50,7 @@ __all__ = [
     "OpenAIChatProvider",
     "OpenAIChatRequestPolicy",
     "ReasoningObject",
-    "apply_reasoning_details_replay",
+    "ReasoningReplayMode",
     "build_openai_chat_request_body",
     "create_openai_chat_provider",
     "openai_v1_base_url",

@@ -14,6 +14,7 @@ from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.json_types import JsonObject, JsonValue
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
+from tests.providers.request_factory import canonical_request
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
@@ -60,8 +61,9 @@ def test_encodes_documented_chat_template_thinking_control(
     enabled: bool,
 ) -> None:
     body = poolside_provider._build_request_body(
-        _request(extra_body={"top_k": 20}),
+        canonical_request(_request(extra_body={"top_k": 20})),
         reasoning=reasoning,
+        provider_model=(_request(extra_body={"top_k": 20})).model,
     )
 
     assert body["max_tokens"] == ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
@@ -75,8 +77,9 @@ def test_omits_thinking_control_for_poolside_default(
     poolside_provider: OpenAIChatProvider,
 ) -> None:
     body = poolside_provider._build_request_body(
-        _request(),
+        canonical_request(_request()),
         reasoning=ReasoningPolicy.provider_default(),
+        provider_model=(_request()).model,
     )
 
     assert "extra_body" not in body
@@ -93,7 +96,11 @@ def test_rejects_caller_reasoning_override(
     request = _request(extra_body={field: "caller-owned"})
 
     with pytest.raises(InvalidRequestError, match="must not override reasoning"):
-        poolside_provider._build_request_body(request, reasoning=REASONING_ON)
+        poolside_provider._build_request_body(
+            canonical_request(request),
+            reasoning=REASONING_ON,
+            provider_model=(request).model,
+        )
 
 
 def test_replays_reasoning_content_with_tool_history(
@@ -129,8 +136,9 @@ def test_replays_reasoning_content_with_tool_history(
     )
 
     body = poolside_provider._build_request_body(
-        request,
+        canonical_request(request),
         reasoning=reasoning_for(request),
+        provider_model=(request).model,
     )
 
     assert body["messages"][1] == {
@@ -143,7 +151,7 @@ def test_replays_reasoning_content_with_tool_history(
                 "type": "function",
                 "function": {
                     "name": "read_file",
-                    "arguments": '{"path": "example.py"}',
+                    "arguments": '{"path":"example.py"}',
                 },
             }
         ],
@@ -166,8 +174,9 @@ async def test_thinking_control_reaches_wire_as_top_level_extension(
     poolside_provider: OpenAIChatProvider,
 ) -> None:
     body = poolside_provider._build_request_body(
-        _request(),
+        canonical_request(_request()),
         reasoning=REASONING_OFF,
+        provider_model=(_request()).model,
     )
 
     wire = await capture_openai_chat_wire_body(body)

@@ -12,18 +12,15 @@ import openai
 import pytest
 
 from free_claude_code.config.nim import NimSettings
-from free_claude_code.core.anthropic import AnthropicEventPresenter, OpenAIToolNameCodec
+from free_claude_code.core.anthropic import AnthropicEventPresenter
 from free_claude_code.core.anthropic.stream_contracts import (
     parse_sse_text,
-)
-from free_claude_code.core.anthropic.streaming import (
-    make_response_recovery_body,
-    make_text_recovery_body,
 )
 from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.core.inference import (
     InferenceEvent,
     InferenceStreamLedger,
+    ReplayCompatibilityScope,
     ResponseStarted,
 )
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
@@ -35,14 +32,19 @@ from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.openai_chat.provider import (
     _OpenAIChatStreamRunner,
 )
+from free_claude_code.providers.openai_chat.recovery import (
+    make_response_recovery_body,
+    make_text_recovery_body,
+)
 from free_claude_code.providers.openai_chat.tool_calls import (
     OpenAIToolCallAssembler,
     OpenAIToolCallCollector,
     has_generated_output,
     iter_heuristic_tool_use_events,
 )
+from free_claude_code.providers.openai_compat import OpenAIToolNameCodec
 from free_claude_code.providers.stream_recovery import TruncatedProviderStreamError
-from tests.providers.request_factory import make_messages_request
+from tests.providers.request_factory import canonical_request, make_messages_request
 from tests.providers.support import (
     REASONING_OFF,
     immediate_admission,
@@ -130,7 +132,8 @@ def _make_provider():
 
 def _make_tool_assembler(provider: NvidiaNimProvider) -> OpenAIToolCallAssembler:
     return OpenAIToolCallAssembler(
-        record_extra_content=provider._record_tool_call_extra_content
+        record_extra_content=provider._record_tool_call_extra_content,
+        replay_scope=ReplayCompatibilityScope("test-chat-route"),
     )
 
 
@@ -157,12 +160,14 @@ def _make_stream_runner(
     request=None,
     request_id: str | None = None,
 ) -> _OpenAIChatStreamRunner:
+    effective_request = request or _make_request()
     return _OpenAIChatStreamRunner(
         provider,
-        request=request or _make_request(),
+        request=effective_request,
+        provider_model=effective_request.model,
         input_tokens=0,
         request_id=request_id,
-        response_model=None,
+        response_model=effective_request.model,
         reasoning=DEFAULT_REASONING_POLICY,
     )
 
@@ -217,14 +222,21 @@ async def _collect_stream(
     """Collect all SSE events from a stream."""
     presenter = AnthropicEventPresenter()
     output: list[str] = []
-    async for event in provider.stream_response(request, reasoning=reasoning):
+    async for event in provider.stream_response(
+        canonical_request(request), reasoning=reasoning, provider_model=(request).model
+    ):
         output.extend(presenter.present(event))
     return output
 
 
 async def _collect_stream_error(provider, request, **kwargs) -> ExecutionFailure:
     with pytest.raises(ExecutionFailure) as exc_info:
-        [e async for e in provider.stream_response(request, **kwargs)]
+        [
+            e
+            async for e in provider.stream_response(
+                canonical_request(request), **kwargs, provider_model=(request).model
+            )
+        ]
     return exc_info.value
 
 
@@ -234,7 +246,9 @@ async def _collect_stream_and_error(
     events: list[str] = []
     presenter = AnthropicEventPresenter()
     with pytest.raises(ExecutionFailure) as exc_info:
-        async for event in provider.stream_response(request, **kwargs):
+        async for event in provider.stream_response(
+            canonical_request(request), **kwargs, provider_model=(request).model
+        ):
             events.extend(presenter.present(event))
     return events, exc_info.value
 
@@ -1936,7 +1950,7 @@ class TestProcessToolCall:
         )
 
     def test_tool_name_restores_before_nim_argument_alias_lookup(self):
-        """Generic name decoding composes with original-name NIM arg metadata."""
+        """Wire-name argument metadata composes with canonical identity decoding."""
         provider = _make_provider()
         original = "mcp__nim_argument_composition__" + "x" * 70
         request = _make_request(
@@ -1967,7 +1981,9 @@ class TestProcessToolCall:
                 sse,
                 tool_names=codec,
                 tool_name_buffers={},
-                tool_argument_aliases={original: {"_fcc_arg_type": "type"}},
+                tool_argument_aliases={
+                    codec.encode(original): {"_fcc_arg_type": "type"}
+                },
                 tool_argument_alias_buffers={},
             )
         )
@@ -2082,7 +2098,7 @@ class TestProcessToolCall:
         assert buffers == {}
 
     def test_buffered_collector_decodes_before_schema_validation(self):
-        """Recovery validates the original tool identity, not its wire alias."""
+        """Recovery validates canonically while preserving its upstream wire name."""
         original = "mcp__recovery_output__" + "x" * 70
         request = _make_request(
             tools=[{"name": original, "input_schema": {"type": "object"}}]
@@ -2100,7 +2116,7 @@ class TestProcessToolCall:
         calls = collector.completed_calls(request, tool_names=codec)
 
         assert calls is not None
-        assert calls[0]["function"]["name"] == original
+        assert calls[0]["function"]["name"] == codec.encode(original)
 
     def test_heuristic_tool_call_restores_original_name(self):
         """Complete heuristic calls share the same outbound name contract."""
@@ -2146,9 +2162,10 @@ class TestProcessToolCall:
             "id": "call_split",
             "function": {"name": None, "arguments": "{}"},
         }
-        events1 = list(_make_tool_assembler(provider).process_tool_call(t1, sse))
-        events2 = list(_make_tool_assembler(provider).process_tool_call(t2, sse))
-        events3 = list(_make_tool_assembler(provider).process_tool_call(t3, sse))
+        assembler = _make_tool_assembler(provider)
+        events1 = list(assembler.process_tool_call(t1, sse))
+        events2 = list(assembler.process_tool_call(t2, sse))
+        events3 = list(assembler.process_tool_call(t3, sse))
         combined = _wire(events1 + events2 + events3)
         assert "call_split" in combined
         assert "Grep" in combined
@@ -2168,8 +2185,9 @@ class TestProcessToolCall:
             "id": "call_buf",
             "function": {"name": "Read", "arguments": "1}"},
         }
-        events1 = list(_make_tool_assembler(provider).process_tool_call(t1, sse))
-        events2 = list(_make_tool_assembler(provider).process_tool_call(t2, sse))
+        assembler = _make_tool_assembler(provider)
+        events1 = list(assembler.process_tool_call(t1, sse))
+        events2 = list(assembler.process_tool_call(t2, sse))
         assert events1 == []
         combined = _wire(events1 + events2)
         assert "Read" in combined
@@ -2219,11 +2237,12 @@ class TestProcessToolCall:
             "function": {"name": None, "arguments": ' "prompt": "test"}'},
         }
 
-        events1 = list(_make_tool_assembler(provider).process_tool_call(tc1, sse))
+        assembler = _make_tool_assembler(provider)
+        events1 = list(assembler.process_tool_call(tc1, sse))
         assert len(events1) > 0
         assert "false" not in _wire(events1).lower()
 
-        events2 = list(_make_tool_assembler(provider).process_tool_call(tc2, sse))
+        events2 = list(assembler.process_tool_call(tc2, sse))
         event_text = _wire(events1 + events2)
         assert "false" in event_text.lower()
 
@@ -2236,11 +2255,12 @@ class TestProcessToolCall:
             "id": "call_task2",
             "function": {"name": "Task", "arguments": "not json"},
         }
-        events = list(_make_tool_assembler(provider).process_tool_call(tc, sse))
+        assembler = _make_tool_assembler(provider)
+        events = list(assembler.process_tool_call(tc, sse))
         assert len(events) > 0
 
         with caplog.at_level("WARNING"):
-            flushed = list(_make_tool_assembler(provider).flush_task_arg_buffers(sse))
+            flushed = list(assembler.flush_task_arg_buffers(sse))
         assert len(flushed) > 0
         assert "{}" in _wire(events + flushed)
         assert any("Task args invalid JSON" in r.message for r in caplog.records)
@@ -2385,9 +2405,10 @@ class TestStreamChunkEdgeCases:
             "function": {"name": None, "arguments": " never valid }"},
         }
 
-        events1 = list(_make_tool_assembler(provider).process_tool_call(tc1, sse))
-        events2 = list(_make_tool_assembler(provider).process_tool_call(tc2, sse))
-        flushed = list(_make_tool_assembler(provider).flush_task_arg_buffers(sse))
+        assembler = _make_tool_assembler(provider)
+        events1 = list(assembler.process_tool_call(tc1, sse))
+        events2 = list(assembler.process_tool_call(tc2, sse))
+        flushed = list(assembler.flush_task_arg_buffers(sse))
 
         event_text = _wire(events1 + events2 + flushed)
         assert "tool_use" in event_text

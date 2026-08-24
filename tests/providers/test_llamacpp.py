@@ -8,7 +8,7 @@ from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKEN
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
 from tests.inference_support import collect_anthropic
-from tests.providers.request_factory import make_messages_request
+from tests.providers.request_factory import canonical_request, make_messages_request
 from tests.providers.support import (
     REASONING_OFF,
     immediate_admission,
@@ -79,7 +79,11 @@ def test_build_request_body_uses_openai_chat_shape(
 ) -> None:
     request = make_messages_request(LLAMACPP_MODEL, max_tokens=None)
 
-    body = provider._build_request_body(request, reasoning=reasoning_for(request))
+    body = provider._build_request_body(
+        canonical_request(request),
+        reasoning=reasoning_for(request),
+        provider_model=(request).model,
+    )
 
     assert body["model"] == LLAMACPP_MODEL
     assert body["max_tokens"] == ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
@@ -105,7 +109,11 @@ def test_replay_is_independent_of_current_turn_reasoning_control(
         ],
     )
 
-    body = provider._build_request_body(request, reasoning=REASONING_OFF)
+    body = provider._build_request_body(
+        canonical_request(request),
+        reasoning=REASONING_OFF,
+        provider_model=(request).model,
+    )
 
     assert body["messages"][1]["content"] == ("<think>\nprivate\n</think>\n\nvisible")
     assert body["extra_body"]["thinking_budget_tokens"] == 0
@@ -139,7 +147,10 @@ async def test_stream_response_uses_shared_openai_chat_provider(
     ) as create:
         output = "".join(
             await collect_anthropic(
-                provider.stream_response(make_messages_request(LLAMACPP_MODEL))
+                provider.stream_response(
+                    canonical_request(make_messages_request(LLAMACPP_MODEL)),
+                    provider_model=(make_messages_request(LLAMACPP_MODEL)).model,
+                )
             )
         )
 

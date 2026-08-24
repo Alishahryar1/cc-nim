@@ -3,8 +3,6 @@
 from collections.abc import Mapping
 from typing import Any
 
-from .tools import optional_str
-
 
 def reasoning_text_from_item(item: Mapping[str, Any]) -> str | None:
     content_parts = _text_parts_from_items(
@@ -23,7 +21,7 @@ def reasoning_text_from_item(item: Mapping[str, Any]) -> str | None:
 def encrypted_reasoning_from_item(item: Mapping[str, Any]) -> str | None:
     """Return opaque reasoning content without interpreting it."""
 
-    return optional_str(item.get("encrypted_content"))
+    return _optional_str(item.get("encrypted_content"))
 
 
 def combine_reasoning(existing: str | None, addition: str | None) -> str | None:
@@ -54,7 +52,11 @@ def _text_parts_from_items(value: Any, *, item_type: str) -> list[str]:
     parts: list[str] = []
     for item in value:
         if isinstance(item, dict) and item.get("type") == item_type:
-            text = optional_str(item.get("text"))
+            text = _optional_str(item.get("text"))
             if text is not None:
                 parts.append(text)
     return parts
+
+
+def _optional_str(value: object) -> str | None:
+    return value if isinstance(value, str) else None

@@ -1,14 +1,9 @@
 """Semantic state for one provider-neutral inference stream."""
 
-import hashlib
-import json
 import uuid
 from collections.abc import Iterator
 from dataclasses import dataclass, field
 
-from loguru import logger
-
-from free_claude_code.core.json_types import JsonValue
 from free_claude_code.core.token_estimation import estimate_text_tokens
 
 from .events import (
@@ -19,6 +14,7 @@ from .events import (
     ReasoningBlockStarted,
     ReasoningDelta,
     ReplayArtifact,
+    ReplayAttachment,
     ResponseCompleted,
     ResponseStarted,
     TextBlockCompleted,
@@ -50,8 +46,6 @@ class ToolCallState:
     namespace: str | None = None
     artifacts: tuple[ReplayArtifact, ...] = ()
     started: bool = False
-    task_arg_buffer: str = ""
-    task_args_emitted: bool = False
     pre_start_args: str = ""
 
 
@@ -99,62 +93,22 @@ class InferenceBlockLedger:
             state = self.ensure_tool_state(index)
             state.artifacts = _merge_artifacts(state.artifacts, artifacts)
 
-    def register_tool_name(self, index: int, name: str) -> None:
+    def register_tool_identity(
+        self,
+        index: int,
+        name: str,
+        *,
+        kind: ToolCallKind,
+        namespace: str | None,
+    ) -> None:
         state = self.ensure_tool_state(index)
         previous = state.name
         if not previous or name.startswith(previous):
             state.name = name
         elif not previous.startswith(name):
             state.name = "".join((previous, name))
-
-    def buffer_task_args(self, index: int, args: str) -> dict[str, JsonValue] | None:
-        state = self.tool_states.get(index)
-        if state is None or state.task_args_emitted:
-            return None
-
-        state.task_arg_buffer += args
-        try:
-            parsed: JsonValue = json.loads(state.task_arg_buffer)
-        except json.JSONDecodeError, TypeError, ValueError:
-            return None
-        if not isinstance(parsed, dict):
-            return None
-
-        normalized = {str(key): value for key, value in parsed.items()}
-        _normalize_task_run_in_background(normalized)
-        state.task_args_emitted = True
-        state.task_arg_buffer = ""
-        return normalized
-
-    def flush_task_arg_buffers(self) -> list[tuple[int, str]]:
-        results: list[tuple[int, str]] = []
-        for tool_index, state in list(self.tool_states.items()):
-            if not state.task_arg_buffer or state.task_args_emitted:
-                continue
-
-            output = "{}"
-            try:
-                parsed: JsonValue = json.loads(state.task_arg_buffer)
-                if isinstance(parsed, dict):
-                    normalized = {str(key): value for key, value in parsed.items()}
-                    _normalize_task_run_in_background(normalized)
-                    output = json.dumps(normalized)
-            except (json.JSONDecodeError, TypeError, ValueError) as exc:
-                digest = hashlib.sha256(
-                    state.task_arg_buffer.encode("utf-8", errors="replace")
-                ).hexdigest()[:16]
-                logger.warning(
-                    "Task args invalid JSON (id={} len={} buffer_sha256_prefix={}): {}",
-                    state.call_id or "unknown",
-                    len(state.task_arg_buffer),
-                    digest,
-                    exc,
-                )
-
-            state.task_args_emitted = True
-            state.task_arg_buffer = ""
-            results.append((tool_index, output))
-        return results
+        state.kind = kind
+        state.namespace = namespace
 
 
 class InferenceStreamLedger:
@@ -191,6 +145,7 @@ class InferenceStreamLedger:
         self, *, artifacts: tuple[ReplayArtifact, ...] = ()
     ) -> ReasoningBlockStarted:
         self._require_response_open()
+        _require_artifact_attachment(artifacts, ReplayAttachment.REASONING)
         block_id = _new_identity("block")
         item_id = _new_identity("item")
         self.blocks.reasoning_block_id = block_id
@@ -265,6 +220,7 @@ class InferenceStreamLedger:
         artifacts: tuple[ReplayArtifact, ...] = (),
     ) -> ToolCallStarted:
         self._require_response_open()
+        _require_artifact_attachment(artifacts, ReplayAttachment.TOOL_CALL)
         block_id = _new_identity("block")
         item_id = _new_identity("item")
         state = self.blocks.ensure_tool_state(tool_index)
@@ -300,6 +256,7 @@ class InferenceStreamLedger:
     def set_tool_artifacts(
         self, tool_index: int, artifacts: tuple[ReplayArtifact, ...]
     ) -> None:
+        _require_artifact_attachment(artifacts, ReplayAttachment.TOOL_CALL)
         self.blocks.set_tool_artifacts(tool_index, artifacts)
         state = self.blocks.tool_states[tool_index]
         if not state.block_id:
@@ -498,6 +455,10 @@ def _merge_artifacts(
     return (*existing, *(artifact for artifact in incoming if artifact not in existing))
 
 
-def _normalize_task_run_in_background(args: dict[str, JsonValue]) -> None:
-    if args.get("run_in_background") is not False:
-        args["run_in_background"] = False
+def _require_artifact_attachment(
+    artifacts: tuple[ReplayArtifact, ...], expected: ReplayAttachment
+) -> None:
+    if any(artifact.attachment is not expected for artifact in artifacts):
+        raise ValueError(
+            f"replay artifacts on {expected.value} output must use that attachment"
+        )

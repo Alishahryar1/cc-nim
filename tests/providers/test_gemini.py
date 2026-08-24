@@ -6,13 +6,16 @@ import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.provider_catalog import GEMINI_DEFAULT_BASE
+from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
+from free_claude_code.core.inference import ReplayArtifactKind, ReplayAttachment
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
+from free_claude_code.core.replay_envelope import decode_replay_envelope
 from free_claude_code.providers.gemini import GeminiProvider
 from free_claude_code.providers.google_openai import (
     GOOGLE_SKIP_THOUGHT_SIGNATURE_VALIDATOR,
 )
 from tests.inference_support import collect_anthropic
-from tests.providers.request_factory import make_messages_request
+from tests.providers.request_factory import canonical_request, make_messages_request
 from tests.providers.support import (
     immediate_admission,
     make_provider_config,
@@ -81,7 +84,9 @@ def test_default_base_url_constant():
 def test_build_request_body_basic(gemini_provider):
     """Basic body conversion attaches Gemini thinking fields when thinking is on."""
     req = make_request()
-    body = gemini_provider._build_request_body(req, reasoning=reasoning_for(req))
+    body = gemini_provider._build_request_body(
+        canonical_request(req), reasoning=reasoning_for(req), provider_model=(req).model
+    )
 
     assert body["model"] == "models/gemini-3.1-flash-lite"
     assert body["messages"][0]["role"] == "system"
@@ -102,7 +107,9 @@ def test_build_request_body_sdk_wire_json_has_literal_extra_body(gemini_provider
     """Regression for issue #542: SDK merge must not send top-level google."""
     req = make_request()
 
-    body = gemini_provider._build_request_body(req, reasoning=reasoning_for(req))
+    body = gemini_provider._build_request_body(
+        canonical_request(req), reasoning=reasoning_for(req), provider_model=(req).model
+    )
     wire_json = _simulate_openai_sdk_wire_json(body)
 
     assert "reasoning_effort" not in wire_json
@@ -128,7 +135,9 @@ def test_build_request_body_reasoning_off_sets_reasoning_none():
         admission=immediate_admission(),
     )
     req = make_request(thinking={"type": "disabled"})
-    body = provider._build_request_body(req, reasoning=reasoning_for(req))
+    body = provider._build_request_body(
+        canonical_request(req), reasoning=reasoning_for(req), provider_model=(req).model
+    )
 
     assert body["reasoning_effort"] == "none"
     roles = [m.get("role") for m in body.get("messages", [])]
@@ -168,8 +177,9 @@ def test_gemini_reasoning_uses_exactly_one_wire_channel(
     expected_thinking_config: dict | None,
 ) -> None:
     body = gemini_provider._build_request_body(
-        make_request(thinking=None),
+        canonical_request(make_request(thinking=None)),
         reasoning=reasoning,
+        provider_model=(make_request(thinking=None)).model,
     )
     wire = _simulate_openai_sdk_wire_json(body)
 
@@ -190,8 +200,9 @@ def test_gemini_adaptive_thinking_with_effort_does_not_emit_custom_config(
     )
 
     body = gemini_provider._build_request_body(
-        request,
+        canonical_request(request),
         reasoning=reasoning_for(request),
+        provider_model=(request).model,
     )
     wire = _simulate_openai_sdk_wire_json(body)
 
@@ -202,7 +213,9 @@ def test_gemini_adaptive_thinking_with_effort_does_not_emit_custom_config(
 def test_build_request_body_preserves_caller_extra_body(gemini_provider):
     req = make_request(extra_body={"metadata": {"user": "u1"}})
 
-    body = gemini_provider._build_request_body(req, reasoning=reasoning_for(req))
+    body = gemini_provider._build_request_body(
+        canonical_request(req), reasoning=reasoning_for(req), provider_model=(req).model
+    )
 
     assert "reasoning_effort" not in body
     eb = body.get("extra_body")
@@ -231,7 +244,9 @@ def test_build_request_body_merges_caller_nested_google(gemini_provider):
         },
     )
 
-    body = gemini_provider._build_request_body(req, reasoning=reasoning_for(req))
+    body = gemini_provider._build_request_body(
+        canonical_request(req), reasoning=reasoning_for(req), provider_model=(req).model
+    )
 
     assert "reasoning_effort" not in body
     eb = body.get("extra_body")
@@ -262,8 +277,9 @@ def test_gemini_rejects_caller_thinking_config_with_fcc_reasoning_control(
 
     with pytest.raises(InvalidRequestError, match="thinking_config"):
         gemini_provider._build_request_body(
-            request,
+            canonical_request(request),
             reasoning=ReasoningPolicy.on(effort=ReasoningEffort.HIGH),
+            provider_model=(request).model,
         )
 
 
@@ -277,12 +293,15 @@ def test_gemini_rejects_malformed_google_extension_container(
 
     with pytest.raises(InvalidRequestError, match="thinking_config must be an object"):
         gemini_provider._build_request_body(
-            request,
+            canonical_request(request),
             reasoning=ReasoningPolicy.provider_default(),
+            provider_model=(request).model,
         )
 
 
-def test_build_request_body_preserves_tool_call_extra_content(gemini_provider):
+def test_build_request_body_does_not_replay_unscoped_tool_extra_content(
+    gemini_provider,
+):
     req = make_request(
         system=None,
         messages=[
@@ -314,11 +333,15 @@ def test_build_request_body_preserves_tool_call_extra_content(gemini_provider):
         ],
     )
 
-    body = gemini_provider._build_request_body(req, reasoning=reasoning_for(req))
+    body = gemini_provider._build_request_body(
+        canonical_request(req), reasoning=reasoning_for(req), provider_model=(req).model
+    )
 
     tool_call = body["messages"][1]["tool_calls"][0]
     assert tool_call["extra_content"] == {
-        "google": {"thought_signature": "sig-from-client"}
+        "google": {
+            "thought_signature": GOOGLE_SKIP_THOUGHT_SIGNATURE_VALIDATOR,
+        }
     }
 
 
@@ -354,7 +377,9 @@ def test_build_request_body_uses_cached_tool_call_signature(gemini_provider):
         ],
     )
 
-    body = gemini_provider._build_request_body(req, reasoning=reasoning_for(req))
+    body = gemini_provider._build_request_body(
+        canonical_request(req), reasoning=reasoning_for(req), provider_model=(req).model
+    )
 
     tool_call = body["messages"][1]["tool_calls"][0]
     assert tool_call["extra_content"] == {
@@ -404,7 +429,9 @@ def test_build_request_body_adds_current_turn_fallback_signature(
         ],
     )
 
-    body = gemini_provider._build_request_body(req, reasoning=reasoning_for(req))
+    body = gemini_provider._build_request_body(
+        canonical_request(req), reasoning=reasoning_for(req), provider_model=(req).model
+    )
 
     tool_calls = body["messages"][1]["tool_calls"]
     assert tool_calls[0]["extra_content"] == {
@@ -439,7 +466,11 @@ async def test_stream_response_text(gemini_provider):
         mock_create.return_value = mock_stream()
 
         events = await collect_anthropic(
-            gemini_provider.stream_response(req, reasoning=reasoning_for(req))
+            gemini_provider.stream_response(
+                canonical_request(req),
+                reasoning=reasoning_for(req),
+                provider_model=(req).model,
+            )
         )
 
         assert any(
@@ -491,16 +522,32 @@ async def test_stream_response_preserves_tool_call_extra_content(gemini_provider
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = await collect_anthropic(gemini_provider.stream_response(req))
+        events = await collect_anthropic(
+            gemini_provider.stream_response(
+                canonical_request(req), provider_model=(req).model
+            )
+        )
 
     tool_starts = [
         event
-        for event in events
-        if '"content_block_start"' in event and '"tool_use"' in event
+        for event in parse_sse_text("".join(events))
+        if event.event == "content_block_start"
+        and event.data.get("content_block", {}).get("type") == "tool_use"
     ]
-    assert any(
-        '"extra_content"' in event and "sig-stream" in event for event in tool_starts
+    assert len(tool_starts) == 1
+    extra_content = tool_starts[0].data["content_block"]["extra_content"]
+    assert isinstance(extra_content, dict)
+    carrier = extra_content.get("fcc_replay")
+    assert isinstance(carrier, str)
+    artifacts = decode_replay_envelope(
+        carrier,
+        attachment=ReplayAttachment.TOOL_CALL,
     )
+    assert artifacts is not None
+    assert len(artifacts) == 1
+    assert artifacts[0].kind is ReplayArtifactKind.THOUGHT_SIGNATURE
+    assert artifacts[0].payload == "sig-stream"
+    assert artifacts[0].scope is not None
     assert gemini_provider._tool_call_extra_content_by_id["function-call-1"] == {
         "google": {"thought_signature": "sig-stream"}
     }
@@ -531,7 +578,11 @@ async def test_stream_response_reasoning_content(gemini_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = await collect_anthropic(gemini_provider.stream_response(req))
+        events = await collect_anthropic(
+            gemini_provider.stream_response(
+                canonical_request(req), provider_model=(req).model
+            )
+        )
 
         assert any(
             '"thinking_delta"' in event and "Thinking..." in event for event in events

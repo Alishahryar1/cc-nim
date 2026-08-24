@@ -15,11 +15,23 @@ from free_claude_code.core.anthropic.stream_contracts import (
     text_content,
     thinking_content,
 )
+from free_claude_code.core.inference import (
+    ReplayArtifact,
+    ReplayArtifactKind,
+    ReplayArtifactOrigin,
+    ReplayAttachment,
+)
 from free_claude_code.core.reasoning import ReasoningPolicy
+from free_claude_code.core.replay_envelope import (
+    decode_replay_envelope,
+    encode_replay_envelope,
+)
 from free_claude_code.providers.kilo import KiloProvider
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
+from free_claude_code.providers.openai_compat import openai_replay_scope
 from tests.inference_support import collect_anthropic
+from tests.providers.request_factory import canonical_request
 from tests.providers.support import (
     immediate_admission,
     make_provider_config,
@@ -100,7 +112,11 @@ def test_build_request_body_openai_shape(kilo_provider):
         }
     )
 
-    body = kilo_provider._build_request_body(request, reasoning=reasoning_for(request))
+    body = kilo_provider._build_request_body(
+        canonical_request(request),
+        reasoning=reasoning_for(request),
+        provider_model=(request).model,
+    )
 
     assert body["model"] == "anthropic/claude-sonnet-4.5"
     assert body["messages"][0] == {"role": "user", "content": "Hello"}
@@ -116,7 +132,11 @@ def test_build_request_body_forwards_caller_extra_body(kilo_provider):
         }
     )
 
-    body = kilo_provider._build_request_body(request, reasoning=reasoning_for(request))
+    body = kilo_provider._build_request_body(
+        canonical_request(request),
+        reasoning=reasoning_for(request),
+        provider_model=(request).model,
+    )
 
     assert body.get("extra_body", {}).get("custom_field") == "value"
 
@@ -142,7 +162,11 @@ def test_extra_body_cannot_override_canonical_request_fields(kilo_provider, fiel
     )
 
     with pytest.raises(InvalidRequestError, match=field):
-        kilo_provider._build_request_body(request, reasoning=reasoning_for(request))
+        kilo_provider._build_request_body(
+            canonical_request(request),
+            reasoning=reasoning_for(request),
+            provider_model=(request).model,
+        )
 
 
 def test_build_request_body_sends_reasoning_object(kilo_provider):
@@ -154,7 +178,11 @@ def test_build_request_body_sends_reasoning_object(kilo_provider):
         }
     )
 
-    body = kilo_provider._build_request_body(request, reasoning=reasoning_for(request))
+    body = kilo_provider._build_request_body(
+        canonical_request(request),
+        reasoning=reasoning_for(request),
+        provider_model=(request).model,
+    )
 
     assert body.get("extra_body", {}).get("reasoning") is not None
 
@@ -168,8 +196,9 @@ def test_build_request_body_sends_reasoning_disabled(kilo_provider):
     )
 
     body = kilo_provider._build_request_body(
-        request,
+        canonical_request(request),
         reasoning=ReasoningPolicy.off(),
+        provider_model=(request).model,
     )
 
     assert body["extra_body"]["reasoning"] == {"enabled": False}
@@ -182,6 +211,21 @@ def test_build_request_body_replays_opaque_reasoning_details_on_tool_turn(
         "type": "reasoning.opaque",
         "data": {"signature": "opaque-value"},
     }
+    carrier = encode_replay_envelope(
+        (
+            ReplayArtifact(
+                origin=ReplayArtifactOrigin.OPENAI_COMPATIBLE,
+                kind=ReplayArtifactKind.REASONING_DETAILS,
+                attachment=ReplayAttachment.REASONING,
+                scope=openai_replay_scope(
+                    "KILO",
+                    "m",
+                    replay_format="chat-completions",
+                ),
+                payload=detail,
+            ),
+        )
+    )
     request = MessagesRequest.model_validate(
         {
             "model": "m",
@@ -191,7 +235,7 @@ def test_build_request_body_replays_opaque_reasoning_details_on_tool_turn(
                     "content": [
                         {
                             "type": "redacted_thinking",
-                            "data": json.dumps(detail),
+                            "data": carrier,
                         },
                         {
                             "type": "tool_use",
@@ -216,8 +260,9 @@ def test_build_request_body_replays_opaque_reasoning_details_on_tool_turn(
     )
 
     body = kilo_provider._build_request_body(
-        request,
+        canonical_request(request),
         reasoning=reasoning_for(request),
+        provider_model=(request).model,
     )
 
     assistant = next(msg for msg in body["messages"] if msg["role"] == "assistant")
@@ -266,7 +311,11 @@ async def test_stream_uses_reasoning_field_without_duplicating_plain_details(
         return_value=stream,
     ):
         event_text = "".join(
-            await collect_anthropic(kilo_provider.stream_response(request))
+            await collect_anthropic(
+                kilo_provider.stream_response(
+                    canonical_request(request), provider_model=(request).model
+                )
+            )
         )
 
     events = parse_sse_text(event_text)
@@ -279,7 +328,16 @@ async def test_stream_uses_reasoning_field_without_duplicating_plain_details(
         and event.data.get("content_block", {}).get("type") == "redacted_thinking"
     ]
     assert len(redacted_blocks) == 1
-    assert json.loads(redacted_blocks[0]["data"]) == encrypted
+    artifacts = decode_replay_envelope(
+        redacted_blocks[0]["data"],
+        attachment=ReplayAttachment.REASONING,
+    )
+    assert artifacts is not None
+    assert len(artifacts) == 1
+    assert artifacts[0].kind is ReplayArtifactKind.REASONING_DETAILS
+    assert isinstance(artifacts[0].payload, str)
+    assert json.loads(artifacts[0].payload) == encrypted
+    assert artifacts[0].scope is not None
     assert stream.closed
 
 
@@ -307,7 +365,11 @@ async def test_stream_restarts_reasoning_reconciliation_after_early_retry(
         side_effect=[abandoned, recovered],
     ) as create:
         event_text = "".join(
-            await collect_anthropic(kilo_provider.stream_response(request))
+            await collect_anthropic(
+                kilo_provider.stream_response(
+                    canonical_request(request), provider_model=(request).model
+                )
+            )
         )
 
     events = parse_sse_text(event_text)
@@ -349,8 +411,9 @@ async def test_stream_omits_all_reasoning_representations_when_disabled(
         event_text = "".join(
             await collect_anthropic(
                 kilo_provider.stream_response(
-                    request,
+                    canonical_request(request),
                     reasoning=ReasoningPolicy.off(),
+                    provider_model=(request).model,
                 )
             )
         )

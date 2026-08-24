@@ -9,6 +9,7 @@ from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKEN
 from free_claude_code.config.provider_catalog import FIREWORKS_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
+from tests.providers.request_factory import canonical_request
 from tests.providers.support import (
     REASONING_OFF,
     immediate_admission,
@@ -51,7 +52,9 @@ def test_build_request_body_openai_chat_shape(fireworks_provider):
     )
 
     body = fireworks_provider._build_request_body(
-        request, reasoning=reasoning_for(request)
+        canonical_request(request),
+        reasoning=reasoning_for(request),
+        provider_model=(request).model,
     )
 
     assert body["model"] == "accounts/fireworks/models/glm-5p1"
@@ -69,7 +72,9 @@ def test_build_request_body_default_max_tokens(fireworks_provider):
     )
 
     body = fireworks_provider._build_request_body(
-        request, reasoning=reasoning_for(request)
+        canonical_request(request),
+        reasoning=reasoning_for(request),
+        provider_model=(request).model,
     )
 
     assert body["max_tokens"] == ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
@@ -98,7 +103,11 @@ def test_replay_is_independent_of_current_turn_reasoning_control():
         }
     )
 
-    body = provider._build_request_body(request, reasoning=REASONING_OFF)
+    body = provider._build_request_body(
+        canonical_request(request),
+        reasoning=REASONING_OFF,
+        provider_model=(request).model,
+    )
 
     assert body["messages"][0]["reasoning_content"] == "hidden"
     assert body["reasoning_effort"] == "none"
@@ -114,7 +123,9 @@ def test_build_request_body_preserves_validated_extra_body(fireworks_provider):
     )
 
     body = fireworks_provider._build_request_body(
-        request, reasoning=reasoning_for(request)
+        canonical_request(request),
+        reasoning=reasoning_for(request),
+        provider_model=(request).model,
     )
 
     assert body["extra_body"] == {"custom_param": "value"}
@@ -131,7 +142,9 @@ def test_build_request_body_rejects_reserved_extra_body_keys(fireworks_provider)
 
     with pytest.raises(InvalidRequestError, match="extra_body must not override"):
         fireworks_provider._build_request_body(
-            request, reasoning=reasoning_for(request)
+            canonical_request(request),
+            reasoning=reasoning_for(request),
+            provider_model=(request).model,
         )
 
 

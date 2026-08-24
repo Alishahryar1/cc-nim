@@ -14,6 +14,7 @@ from free_claude_code.core.json_types import JsonObject, JsonValue
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
+from tests.providers.request_factory import canonical_request
 from tests.providers.support import (
     REASONING_DEFAULT,
     REASONING_OFF,
@@ -98,7 +99,11 @@ def test_preserves_provider_reasoning_default_and_standard_request_fields(
     llm7_provider: OpenAIChatProvider,
     reasoning: ReasoningPolicy,
 ) -> None:
-    body = llm7_provider._build_request_body(_request(), reasoning=reasoning)
+    body = llm7_provider._build_request_body(
+        canonical_request(_request()),
+        reasoning=reasoning,
+        provider_model=(_request()).model,
+    )
 
     assert body["max_tokens"] == ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
     assert body["model"] == _MODEL
@@ -142,8 +147,9 @@ def test_replays_reasoning_content_with_tool_history(
     )
 
     body = llm7_provider._build_request_body(
-        request,
+        canonical_request(request),
         reasoning=reasoning_for(request),
+        provider_model=(request).model,
     )
 
     assert body["messages"][1] == {
@@ -156,7 +162,7 @@ def test_replays_reasoning_content_with_tool_history(
                 "type": "function",
                 "function": {
                     "name": "read_file",
-                    "arguments": '{"path": "example.py"}',
+                    "arguments": '{"path":"example.py"}',
                 },
             }
         ],

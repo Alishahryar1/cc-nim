@@ -1,6 +1,7 @@
 """Tests for the OpenRouter OpenAI-chat provider."""
 
 import json
+from collections.abc import Mapping
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -14,10 +15,22 @@ from free_claude_code.core.anthropic.stream_contracts import (
     text_content,
     thinking_content,
 )
+from free_claude_code.core.inference import (
+    ReplayArtifact,
+    ReplayArtifactKind,
+    ReplayArtifactOrigin,
+    ReplayAttachment,
+)
+from free_claude_code.core.json_types import JsonValue
+from free_claude_code.core.replay_envelope import (
+    decode_replay_envelope,
+    encode_replay_envelope,
+)
 from free_claude_code.providers.open_router import OpenRouterProvider
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
+from free_claude_code.providers.openai_compat import openai_replay_scope
 from tests.inference_support import collect_anthropic
-from tests.providers.request_factory import make_messages_request
+from tests.providers.request_factory import canonical_request, make_messages_request
 from tests.providers.support import (
     REASONING_OFF,
     immediate_admission,
@@ -44,6 +57,24 @@ class AsyncStream:
 
 def make_request(**overrides):
     return make_messages_request("moonshotai/kimi-k2.6:free", **overrides)
+
+
+def _reasoning_carrier(detail: Mapping[str, JsonValue], *, model: str = "m") -> str:
+    return encode_replay_envelope(
+        (
+            ReplayArtifact(
+                origin=ReplayArtifactOrigin.OPENROUTER,
+                kind=ReplayArtifactKind.REASONING_DETAILS,
+                attachment=ReplayAttachment.REASONING,
+                scope=openai_replay_scope(
+                    "OPENROUTER",
+                    model,
+                    replay_format="chat-completions",
+                ),
+                payload=detail,
+            ),
+        )
+    )
 
 
 @pytest.fixture
@@ -84,7 +115,9 @@ def test_init_uses_openai_chat_provider(open_router_provider):
 
 
 def test_build_request_body_uses_openai_chat_shape(open_router_provider):
-    body = open_router_provider._build_request_body(make_request())
+    body = open_router_provider._build_request_body(
+        canonical_request(make_request()), provider_model=(make_request()).model
+    )
 
     assert body["model"] == "moonshotai/kimi-k2.6:free"
     assert body["temperature"] == 0.5
@@ -97,7 +130,10 @@ def test_build_request_body_uses_openai_chat_shape(open_router_provider):
 
 
 def test_build_request_body_default_max_tokens(open_router_provider):
-    body = open_router_provider._build_request_body(make_request(max_tokens=None))
+    body = open_router_provider._build_request_body(
+        canonical_request(make_request(max_tokens=None)),
+        provider_model=(make_request(max_tokens=None)).model,
+    )
 
     assert body["max_tokens"] == ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 
@@ -107,14 +143,20 @@ def test_openrouter_extra_body_rejects_overriding_reserved_fields(
 ):
     with pytest.raises(InvalidRequestError, match="model"):
         open_router_provider._build_request_body(
-            make_request(extra_body={"model": "hijack"})
+            canonical_request(make_request(extra_body={"model": "hijack"})),
+            provider_model=(make_request(extra_body={"model": "hijack"})).model,
         )
 
 
 def test_openrouter_extra_body_allows_provider_keys(open_router_provider):
     body = open_router_provider._build_request_body(
-        make_request(extra_body={"transforms": ["no-web"], "plugins": []}),
+        canonical_request(
+            make_request(extra_body={"transforms": ["no-web"], "plugins": []})
+        ),
         reasoning=REASONING_OFF,
+        provider_model=(
+            make_request(extra_body={"transforms": ["no-web"], "plugins": []})
+        ).model,
     )
 
     assert body["extra_body"] == {
@@ -129,7 +171,9 @@ def test_build_request_body_disables_reasoning_when_client_disables_it(
 ):
     request = make_request(thinking={"type": "disabled"})
     body = open_router_provider._build_request_body(
-        request, reasoning=reasoning_for(request)
+        canonical_request(request),
+        reasoning=reasoning_for(request),
+        provider_model=(request).model,
     )
 
     assert body["extra_body"]["reasoning"] == {"enabled": False}
@@ -140,7 +184,9 @@ def test_build_request_body_maps_thinking_budget_to_reasoning_max_tokens(
 ):
     request = make_request(thinking={"type": "enabled", "budget_tokens": 4096})
     body = open_router_provider._build_request_body(
-        request, reasoning=reasoning_for(request)
+        canonical_request(request),
+        reasoning=reasoning_for(request),
+        provider_model=(request).model,
     )
 
     assert body["extra_body"]["reasoning"] == {"max_tokens": 4096}
@@ -159,7 +205,7 @@ def test_build_request_body_replays_openrouter_reasoning_details(
                     "content": [
                         {
                             "type": "redacted_thinking",
-                            "data": '{"type":"reasoning.encrypted","data":"opaque"}',
+                            "data": _reasoning_carrier(detail),
                         },
                         {"type": "text", "text": "Need a tool."},
                     ],
@@ -170,7 +216,9 @@ def test_build_request_body_replays_openrouter_reasoning_details(
     )
 
     body = open_router_provider._build_request_body(
-        request, reasoning=reasoning_for(request)
+        canonical_request(request),
+        reasoning=reasoning_for(request),
+        provider_model=(request).model,
     )
 
     assistant = next(msg for msg in body["messages"] if msg["role"] == "assistant")
@@ -189,7 +237,7 @@ def test_reasoning_details_skip_neutral_tool_turn_boundary(open_router_provider)
                     "content": [
                         {
                             "type": "redacted_thinking",
-                            "data": json.dumps(first_detail),
+                            "data": _reasoning_carrier(first_detail),
                         },
                         {
                             "type": "tool_use",
@@ -215,7 +263,7 @@ def test_reasoning_details_skip_neutral_tool_turn_boundary(open_router_provider)
                     "content": [
                         {
                             "type": "redacted_thinking",
-                            "data": json.dumps(second_detail),
+                            "data": _reasoning_carrier(second_detail),
                         },
                         {"type": "text", "text": "done"},
                     ],
@@ -225,7 +273,9 @@ def test_reasoning_details_skip_neutral_tool_turn_boundary(open_router_provider)
     )
 
     body = open_router_provider._build_request_body(
-        request, reasoning=reasoning_for(request)
+        canonical_request(request),
+        reasoning=reasoning_for(request),
+        provider_model=(request).model,
     )
 
     assistants = [
@@ -250,7 +300,7 @@ def test_reasoning_details_preserve_redacted_only_assistant_after_tool(
                     "content": [
                         {
                             "type": "redacted_thinking",
-                            "data": json.dumps(first_detail),
+                            "data": _reasoning_carrier(first_detail),
                         },
                         {
                             "type": "tool_use",
@@ -275,7 +325,7 @@ def test_reasoning_details_preserve_redacted_only_assistant_after_tool(
                     "content": [
                         {
                             "type": "redacted_thinking",
-                            "data": json.dumps(second_detail),
+                            "data": _reasoning_carrier(second_detail),
                         }
                     ],
                 },
@@ -286,7 +336,9 @@ def test_reasoning_details_preserve_redacted_only_assistant_after_tool(
     )
 
     body = open_router_provider._build_request_body(
-        request, reasoning=reasoning_for(request)
+        canonical_request(request),
+        reasoning=reasoning_for(request),
+        provider_model=(request).model,
     )
 
     assistants = [
@@ -319,14 +371,31 @@ async def test_stream_maps_reasoning_content_and_details(open_router_provider):
         return_value=stream,
     ):
         events = await collect_anthropic(
-            open_router_provider.stream_response(make_request())
+            open_router_provider.stream_response(
+                canonical_request(make_request()), provider_model=(make_request()).model
+            )
         )
 
     event_text = "".join(events)
     parsed = parse_sse_text(event_text)
     assert thinking_content(parsed) == "plan "
-    assert "redacted_thinking" in event_text
-    assert "opaque" in event_text
+    redacted_blocks = [
+        event.data["content_block"]
+        for event in parsed
+        if event.event == "content_block_start"
+        and event.data.get("content_block", {}).get("type") == "redacted_thinking"
+    ]
+    assert len(redacted_blocks) == 1
+    artifacts = decode_replay_envelope(
+        redacted_blocks[0]["data"],
+        attachment=ReplayAttachment.REASONING,
+    )
+    assert artifacts is not None
+    assert len(artifacts) == 1
+    assert artifacts[0].kind is ReplayArtifactKind.REASONING_DETAILS
+    assert isinstance(artifacts[0].payload, str)
+    assert json.loads(artifacts[0].payload) == redacted
+    assert artifacts[0].scope is not None
     assert text_content(parsed) == "done"
     assert stream.closed
 
