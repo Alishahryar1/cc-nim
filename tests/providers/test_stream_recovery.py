@@ -1,5 +1,10 @@
 """Provider stream commit-boundary and recovery policy."""
 
+from free_claude_code.core.inference import (
+    ResponseStarted,
+    TextDelta,
+    inference_event_size,
+)
 from free_claude_code.providers.stream_recovery import (
     RecoveryController,
     RecoveryFailureAction,
@@ -7,10 +12,14 @@ from free_claude_code.providers.stream_recovery import (
 )
 
 
+def _event(label: str) -> TextDelta:
+    return TextDelta(block_id="test-block", delta=label)
+
+
 def test_early_retry_discards_uncommitted_holdback() -> None:
     controller = RecoveryController()
 
-    assert controller.push("hidden") == []
+    assert controller.push(_event("hidden")) == []
     decision = controller.advance_failure(
         retryable=True,
         stream_opened=True,
@@ -29,7 +38,7 @@ def test_early_retry_discards_uncommitted_holdback() -> None:
 
 def test_early_retry_requires_remaining_execution_budget() -> None:
     controller = RecoveryController()
-    assert controller.push("hidden") == []
+    assert controller.push(_event("hidden")) == []
 
     decision = controller.advance_failure(
         retryable=True,
@@ -46,7 +55,7 @@ def test_early_retry_requires_remaining_execution_budget() -> None:
 
 def test_last_attempt_is_reserved_for_partial_output_recovery() -> None:
     controller = RecoveryController()
-    assert controller.push("partial") == []
+    assert controller.push(_event("partial")) == []
 
     decision = controller.advance_failure(
         retryable=True,
@@ -90,8 +99,9 @@ def test_statusless_transient_api_error_allows_early_retry() -> None:
 def test_committed_output_allows_midstream_recovery() -> None:
     controller = RecoveryController()
 
-    assert controller.push("event: content_block_delta\n\n") == []
-    assert controller.flush() == ["event: content_block_delta\n\n"]
+    event = _event("committed")
+    assert controller.push(event) == []
+    assert controller.flush() == [event]
     decision = controller.advance_failure(
         retryable=True,
         stream_opened=True,
@@ -109,7 +119,8 @@ def test_committed_output_allows_midstream_recovery() -> None:
 def test_uncommitted_complete_tool_can_be_salvaged() -> None:
     controller = RecoveryController()
 
-    assert controller.push("event: content_block_delta\n\n") == []
+    event = _event("salvageable")
+    assert controller.push(event) == []
     decision = controller.advance_failure(
         retryable=True,
         stream_opened=True,
@@ -121,7 +132,7 @@ def test_uncommitted_complete_tool_can_be_salvaged() -> None:
     assert decision.action == RecoveryFailureAction.MIDSTREAM_RECOVERY
     assert not decision.committed
     assert decision.has_buffered
-    assert controller.flush_uncommitted(decision) == ["event: content_block_delta\n\n"]
+    assert controller.flush_uncommitted(decision) == [event]
     assert controller.committed
     assert not controller.has_buffered
 
@@ -143,33 +154,52 @@ def test_holdback_buffers_until_delay_then_commits() -> None:
     now = [10.0]
     holdback = RecoveryHoldbackBuffer(holdback_seconds=0.75, now=lambda: now[0])
 
-    assert holdback.push("event: content_block_start\n\n") == []
+    started = _event("started")
+    delta = _event("delta")
+    completed = _event("completed")
+    terminal = _event("terminal")
+
+    assert holdback.push(started) == []
     now[0] += 0.74
-    assert holdback.push("event: content_block_delta\n\n") == []
+    assert holdback.push(delta) == []
     assert not holdback.committed
 
     now[0] += 0.01
-    assert holdback.push("event: content_block_stop\n\n") == [
-        "event: content_block_start\n\n",
-        "event: content_block_delta\n\n",
-        "event: content_block_stop\n\n",
-    ]
+    assert holdback.push(completed) == [started, delta, completed]
     assert holdback.committed
-    assert holdback.push("event: message_stop\n\n") == ["event: message_stop\n\n"]
+    assert holdback.push(terminal) == [terminal]
+
+
+def test_synthetic_response_start_does_not_age_holdback_before_provider_output() -> (
+    None
+):
+    now = [10.0]
+    holdback = RecoveryHoldbackBuffer(holdback_seconds=0.75, now=lambda: now[0])
+    started = ResponseStarted("response_test", "test-model")
+
+    assert holdback.push(started) == []
+    now[0] += 10.0
+    assert holdback.push(_event("first-provider-output")) == []
+    assert not holdback.committed
 
 
 def test_holdback_flushes_at_internal_buffer_cap() -> None:
-    holdback = RecoveryHoldbackBuffer(max_bytes=5, now=lambda: 1.0)
+    first = _event("ab")
+    second = _event("cde")
+    holdback = RecoveryHoldbackBuffer(
+        max_bytes=inference_event_size(first) + inference_event_size(second),
+        now=lambda: 1.0,
+    )
 
-    assert holdback.push("ab") == []
-    assert holdback.push("cde") == ["ab", "cde"]
+    assert holdback.push(first) == []
+    assert holdback.push(second) == [first, second]
     assert holdback.committed
 
 
 def test_holdback_discard_drops_uncommitted_events() -> None:
     holdback = RecoveryHoldbackBuffer(now=lambda: 1.0)
 
-    assert holdback.push("hidden") == []
+    assert holdback.push(_event("hidden")) == []
     holdback.discard()
 
     assert holdback.flush() == []

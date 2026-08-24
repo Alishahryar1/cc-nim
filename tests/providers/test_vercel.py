@@ -6,6 +6,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from free_claude_code.config.provider_catalog import VERCEL_AI_GATEWAY_DEFAULT_BASE
+from tests.inference_support import collect_anthropic
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     immediate_admission,
@@ -117,9 +118,9 @@ async def test_stream_response_text(vercel_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = [
-            event async for event in vercel_provider.stream_response(make_request())
-        ]
+        events = await collect_anthropic(
+            vercel_provider.stream_response(make_request())
+        )
 
     assert any(
         '"text_delta"' in event and "Hello from Vercel" in event for event in events
@@ -149,9 +150,9 @@ async def test_stream_response_reasoning_content(vercel_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = [
-            event async for event in vercel_provider.stream_response(make_request())
-        ]
+        events = await collect_anthropic(
+            vercel_provider.stream_response(make_request())
+        )
 
     assert any(
         '"thinking_delta"' in event and "Thinking via gateway" in event

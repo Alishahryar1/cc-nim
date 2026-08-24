@@ -16,6 +16,7 @@ from free_claude_code.core.anthropic.stream_contracts import (
 )
 from free_claude_code.providers.open_router import OpenRouterProvider
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
+from tests.inference_support import collect_anthropic
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     REASONING_OFF,
@@ -317,10 +318,9 @@ async def test_stream_maps_reasoning_content_and_details(open_router_provider):
         new_callable=AsyncMock,
         return_value=stream,
     ):
-        events = [
-            event
-            async for event in open_router_provider.stream_response(make_request())
-        ]
+        events = await collect_anthropic(
+            open_router_provider.stream_response(make_request())
+        )
 
     event_text = "".join(events)
     parsed = parse_sse_text(event_text)

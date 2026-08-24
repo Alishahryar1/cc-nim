@@ -1,7 +1,7 @@
 """Anthropic SSE serialization helpers."""
 
 import json
-from typing import Any
+from collections.abc import Mapping
 
 from loguru import logger
 
@@ -30,7 +30,7 @@ def map_stop_reason(openai_reason: str | None) -> str:
     )
 
 
-def format_sse_event(event_type: str, data: dict[str, Any]) -> str:
+def format_sse_event(event_type: str, data: Mapping[str, object]) -> str:
     """Format one Anthropic-style SSE event."""
     return f"event: {event_type}\ndata: {json.dumps(data)}\n\n"
 
@@ -55,7 +55,7 @@ class AnthropicSseEmitter:
     def __init__(self, *, log_raw_events: bool = False) -> None:
         self._log_raw_events = log_raw_events
 
-    def event(self, event_type: str, data: dict[str, Any]) -> str:
+    def event(self, event_type: str, data: Mapping[str, object]) -> str:
         event = format_sse_event(event_type, data)
         if self._log_raw_events:
             logger.debug("SSE_EVENT: {} - {}", event_type, event.strip())

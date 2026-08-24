@@ -13,6 +13,7 @@ from free_claude_code.core.anthropic.stream_contracts import (
     thinking_content,
 )
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
+from tests.inference_support import collect_anthropic
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     REASONING_OFF,
@@ -193,12 +194,9 @@ async def test_stream_response_uses_shared_openai_chat_provider() -> None:
         return_value=stream(),
     ) as create:
         output = "".join(
-            [
-                event
-                async for event in provider.stream_response(
-                    make_messages_request(OLLAMA_MODEL)
-                )
-            ]
+            await collect_anthropic(
+                provider.stream_response(make_messages_request(OLLAMA_MODEL))
+            )
         )
 
     assert create.call_args.kwargs["stream"] is True
@@ -233,12 +231,9 @@ async def test_cloud_stream_maps_ollama_reasoning_delta_to_anthropic_thinking() 
         return_value=stream(),
     ):
         output = "".join(
-            [
-                event
-                async for event in client.stream_response(
-                    make_messages_request(OLLAMA_CLOUD_MODEL)
-                )
-            ]
+            await collect_anthropic(
+                client.stream_response(make_messages_request(OLLAMA_CLOUD_MODEL))
+            )
         )
 
     events = parse_sse_text(output)

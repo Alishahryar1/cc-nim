@@ -2,6 +2,7 @@
 
 import asyncio
 import json
+from collections.abc import Iterable
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, MagicMock, patch
 
@@ -11,16 +12,20 @@ import openai
 import pytest
 
 from free_claude_code.config.nim import NimSettings
-from free_claude_code.core.anthropic import OpenAIToolNameCodec
+from free_claude_code.core.anthropic import AnthropicEventPresenter, OpenAIToolNameCodec
 from free_claude_code.core.anthropic.stream_contracts import (
     parse_sse_text,
 )
 from free_claude_code.core.anthropic.streaming import (
-    AnthropicStreamLedger,
     make_response_recovery_body,
     make_text_recovery_body,
 )
 from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.inference import (
+    InferenceEvent,
+    InferenceStreamLedger,
+    ResponseStarted,
+)
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.admission import (
     UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS,
@@ -33,8 +38,8 @@ from free_claude_code.providers.openai_chat.provider import (
 from free_claude_code.providers.openai_chat.tool_calls import (
     OpenAIToolCallAssembler,
     OpenAIToolCallCollector,
-    has_committed_sse_output,
-    iter_heuristic_tool_use_sse,
+    has_generated_output,
+    iter_heuristic_tool_use_events,
 )
 from free_claude_code.providers.stream_recovery import TruncatedProviderStreamError
 from tests.providers.request_factory import make_messages_request
@@ -210,7 +215,11 @@ async def _collect_stream(
     reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
 ):
     """Collect all SSE events from a stream."""
-    return [e async for e in provider.stream_response(request, reasoning=reasoning)]
+    presenter = AnthropicEventPresenter()
+    output: list[str] = []
+    async for event in provider.stream_response(request, reasoning=reasoning):
+        output.extend(presenter.present(event))
+    return output
 
 
 async def _collect_stream_error(provider, request, **kwargs) -> ExecutionFailure:
@@ -223,10 +232,25 @@ async def _collect_stream_and_error(
     provider, request, **kwargs
 ) -> tuple[list[str], ExecutionFailure]:
     events: list[str] = []
+    presenter = AnthropicEventPresenter()
     with pytest.raises(ExecutionFailure) as exc_info:
         async for event in provider.stream_response(request, **kwargs):
-            events.extend((event,))
+            events.extend(presenter.present(event))
     return events, exc_info.value
+
+
+def _test_ledger() -> InferenceStreamLedger:
+    ledger = InferenceStreamLedger("response_test", "test-model")
+    ledger.start_response()
+    return ledger
+
+
+def _wire(events: Iterable[InferenceEvent]) -> str:
+    presenter = AnthropicEventPresenter()
+    chunks = presenter.present(ResponseStarted("response_test", "test-model"))
+    for event in events:
+        chunks.extend(presenter.present(event))
+    return "".join(chunks)
 
 
 def _assert_no_content_deltas_after_error_text(
@@ -1660,9 +1684,9 @@ class TestStreamingExceptionHandling:
         runner = _make_stream_runner(
             _make_provider(), request=_make_request(), request_id="req_recovery"
         )
-        ledger = AnthropicStreamLedger("msg_recovery", "model")
-        ledger.start_thinking_block()
-        ledger.emit_thinking_delta("hidden reasoning")
+        ledger = _test_ledger()
+        ledger.start_reasoning_block()
+        ledger.emit_reasoning_delta("hidden reasoning")
         list(ledger.ensure_text_block())
         ledger.emit_text_delta("visible answer")
 
@@ -1844,11 +1868,9 @@ class TestProcessToolCall:
 
     def test_heuristic_tool_use_sse_marks_committed_tool_output(self):
         """Heuristic tool blocks are emitted content, even without OpenAI tool state."""
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        ledger = AnthropicStreamLedger("msg_test", "test-model")
+        ledger = _test_ledger()
         events = list(
-            iter_heuristic_tool_use_sse(
+            iter_heuristic_tool_use_events(
                 ledger,
                 {
                     "id": "toolu_heuristic",
@@ -1858,24 +1880,22 @@ class TestProcessToolCall:
             )
         )
 
-        event_text = "".join(events)
+        event_text = _wire(events)
         assert "tool_use" in event_text
         assert ledger.has_emitted_tool_block()
-        assert has_committed_sse_output(ledger)
+        assert has_generated_output(ledger)
 
     def test_tool_call_with_id(self):
         """Tool call with id starts a tool block."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _test_ledger()
         tc = {
             "index": 0,
             "id": "call_123",
             "function": {"name": "search", "arguments": '{"q": "test"}'},
         }
         events = list(_make_tool_assembler(provider).process_tool_call(tc, sse))
-        event_text = "".join(events)
+        event_text = _wire(events)
         assert "tool_use" in event_text
         assert "search" in event_text
         assert "call_123" in event_text
@@ -1889,7 +1909,7 @@ class TestProcessToolCall:
         )
         codec = OpenAIToolNameCodec.from_request(request)
         alias = codec.encode(original)
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _test_ledger()
 
         events = list(
             _make_tool_assembler(provider).process_tool_call(
@@ -1904,7 +1924,7 @@ class TestProcessToolCall:
             )
         )
 
-        event_text = "".join(events)
+        event_text = _wire(events)
         assert original in event_text
         assert alias not in event_text
         assert (
@@ -1932,7 +1952,7 @@ class TestProcessToolCall:
             ]
         )
         codec = OpenAIToolNameCodec.from_request(request)
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _test_ledger()
 
         events = list(
             _make_tool_assembler(provider).process_tool_call(
@@ -1952,7 +1972,7 @@ class TestProcessToolCall:
             )
         )
 
-        parsed = parse_sse_text("".join(events))
+        parsed = parse_sse_text(_wire(events))
         start = next(
             event.data["content_block"]
             for event in parsed
@@ -1977,7 +1997,7 @@ class TestProcessToolCall:
         alias = codec.encode(original)
         split = len(alias) // 2
         buffers: dict[int, str] = {}
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _test_ledger()
         assembler = _make_tool_assembler(provider)
 
         first = list(
@@ -2006,7 +2026,7 @@ class TestProcessToolCall:
         )
 
         assert first == []
-        event_text = "".join(second)
+        event_text = _wire(second)
         assert original in event_text
         assert alias not in event_text
         assert (
@@ -2032,7 +2052,7 @@ class TestProcessToolCall:
         codec = OpenAIToolNameCodec.from_request(request)
         assert codec.is_alias_prefix(original)
         buffers: dict[int, str] = {}
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _test_ledger()
         assembler = _make_tool_assembler(provider)
 
         initial = list(
@@ -2058,7 +2078,7 @@ class TestProcessToolCall:
         )
 
         assert initial == []
-        assert original in "".join(flushed)
+        assert original in _wire(flushed)
         assert buffers == {}
 
     def test_buffered_collector_decodes_before_schema_validation(self):
@@ -2089,10 +2109,10 @@ class TestProcessToolCall:
             tools=[{"name": original, "input_schema": {"type": "object"}}]
         )
         codec = OpenAIToolNameCodec.from_request(request)
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _test_ledger()
 
         events = list(
-            iter_heuristic_tool_use_sse(
+            iter_heuristic_tool_use_events(
                 sse,
                 {
                     "id": "call_heuristic",
@@ -2103,16 +2123,14 @@ class TestProcessToolCall:
             )
         )
 
-        event_text = "".join(events)
+        event_text = _wire(events)
         assert original in event_text
         assert codec.encode(original) not in event_text
 
     def test_tool_call_id_arrives_before_name_still_emits_id_and_name(self):
         """Split-stream tool: id (no name) then name then args; id preserved on start."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _test_ledger()
         t1 = {
             "index": 0,
             "id": "call_split",
@@ -2128,20 +2146,18 @@ class TestProcessToolCall:
             "id": "call_split",
             "function": {"name": None, "arguments": "{}"},
         }
-        b1 = "".join(_make_tool_assembler(provider).process_tool_call(t1, sse))
-        b2 = "".join(_make_tool_assembler(provider).process_tool_call(t2, sse))
-        b3 = "".join(_make_tool_assembler(provider).process_tool_call(t3, sse))
-        combined = b1 + b2 + b3
+        events1 = list(_make_tool_assembler(provider).process_tool_call(t1, sse))
+        events2 = list(_make_tool_assembler(provider).process_tool_call(t2, sse))
+        events3 = list(_make_tool_assembler(provider).process_tool_call(t3, sse))
+        combined = _wire(events1 + events2 + events3)
         assert "call_split" in combined
         assert "Grep" in combined
-        assert b1 == ""
+        assert events1 == []
 
     def test_tool_call_arguments_buffered_until_name(self):
         """Argument deltas before tool name are emitted after the block starts."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _test_ledger()
         t1 = {
             "index": 0,
             "id": "call_buf",
@@ -2152,10 +2168,10 @@ class TestProcessToolCall:
             "id": "call_buf",
             "function": {"name": "Read", "arguments": "1}"},
         }
-        b1 = "".join(_make_tool_assembler(provider).process_tool_call(t1, sse))
-        b2 = "".join(_make_tool_assembler(provider).process_tool_call(t2, sse))
-        assert b1 == ""
-        combined = b2
+        events1 = list(_make_tool_assembler(provider).process_tool_call(t1, sse))
+        events2 = list(_make_tool_assembler(provider).process_tool_call(t2, sse))
+        assert events1 == []
+        combined = _wire(events1 + events2)
         assert "Read" in combined
         assert "call_buf" in combined
         assert '{"x":' in combined or "partial_json" in combined
@@ -2163,24 +2179,20 @@ class TestProcessToolCall:
     def test_tool_call_without_id_generates_uuid(self):
         """Tool call without id generates a uuid-based id."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _test_ledger()
         tc = {
             "index": 0,
             "id": None,
             "function": {"name": "test", "arguments": "{}"},
         }
         events = list(_make_tool_assembler(provider).process_tool_call(tc, sse))
-        event_text = "".join(events)
+        event_text = _wire(events)
         assert "tool_" in event_text
 
     def test_task_tool_forces_background_false(self):
         """Task tool with run_in_background=true is forced to false."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _test_ledger()
         args = json.dumps({"run_in_background": True, "prompt": "test"})
         tc = {
             "index": 0,
@@ -2188,16 +2200,14 @@ class TestProcessToolCall:
             "function": {"name": "Task", "arguments": args},
         }
         events = list(_make_tool_assembler(provider).process_tool_call(tc, sse))
-        event_text = "".join(events)
+        event_text = _wire(events)
         # The intercepted args should have run_in_background=false
         assert "false" in event_text.lower()
 
     def test_task_tool_chunked_args_forces_background_false(self):
         """Chunked Task args are buffered until valid JSON, then forced to false."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _test_ledger()
         tc1 = {
             "index": 0,
             "id": "call_task_chunked",
@@ -2211,18 +2221,16 @@ class TestProcessToolCall:
 
         events1 = list(_make_tool_assembler(provider).process_tool_call(tc1, sse))
         assert len(events1) > 0
-        assert "false" not in "".join(events1).lower()
+        assert "false" not in _wire(events1).lower()
 
         events2 = list(_make_tool_assembler(provider).process_tool_call(tc2, sse))
-        event_text = "".join(events1 + events2)
+        event_text = _wire(events1 + events2)
         assert "false" in event_text.lower()
 
     def test_task_tool_invalid_json_logs_warning_on_flush(self, caplog):
         """Invalid JSON args for Task tool emits {} on flush and logs a warning."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _test_ledger()
         tc = {
             "index": 0,
             "id": "call_task2",
@@ -2234,15 +2242,13 @@ class TestProcessToolCall:
         with caplog.at_level("WARNING"):
             flushed = list(_make_tool_assembler(provider).flush_task_arg_buffers(sse))
         assert len(flushed) > 0
-        assert "{}" in "".join(flushed)
+        assert "{}" in _wire(events + flushed)
         assert any("Task args invalid JSON" in r.message for r in caplog.records)
 
     def test_negative_tool_index_fallback(self):
         """tc_index < 0 uses len(tool_indices) as fallback."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _test_ledger()
         tc = {
             "index": -1,
             "id": "call_neg",
@@ -2255,16 +2261,14 @@ class TestProcessToolCall:
     def test_none_tool_index_defaults_to_zero(self):
         """Gemini may stream tool_call deltas with a null index."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _test_ledger()
         tc = {
             "index": None,
             "id": "call_none",
             "function": {"name": "test", "arguments": "{}"},
         }
         events = list(_make_tool_assembler(provider).process_tool_call(tc, sse))
-        event_text = "".join(events)
+        event_text = _wire(events)
 
         assert "tool_use" in event_text
         assert "call_none" in event_text
@@ -2272,16 +2276,14 @@ class TestProcessToolCall:
     def test_tool_args_emitted_as_delta(self):
         """Arguments are emitted as input_json_delta events."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _test_ledger()
         tc = {
             "index": 0,
             "id": "call_args",
             "function": {"name": "grep", "arguments": '{"pattern": "test"}'},
         }
         events = list(_make_tool_assembler(provider).process_tool_call(tc, sse))
-        event_text = "".join(events)
+        event_text = _wire(events)
         assert "input_json_delta" in event_text
 
 
@@ -2371,9 +2373,7 @@ class TestStreamChunkEdgeCases:
     def test_stream_malformed_tool_args_chunked(self):
         """Chunked tool args that never form valid JSON are flushed with {}."""
         provider = _make_provider()
-        from free_claude_code.core.anthropic import AnthropicStreamLedger
-
-        sse = AnthropicStreamLedger("msg_test", "test-model")
+        sse = _test_ledger()
         tc1 = {
             "index": 0,
             "id": "call_malformed",
@@ -2389,7 +2389,7 @@ class TestStreamChunkEdgeCases:
         events2 = list(_make_tool_assembler(provider).process_tool_call(tc2, sse))
         flushed = list(_make_tool_assembler(provider).flush_task_arg_buffers(sse))
 
-        event_text = "".join(events1 + events2 + flushed)
+        event_text = _wire(events1 + events2 + flushed)
         assert "tool_use" in event_text
         assert "{}" in event_text
 

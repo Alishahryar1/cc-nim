@@ -11,6 +11,10 @@ from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_catalog import CLOUDFLARE_AI_REST_ROOT
 from free_claude_code.core.anthropic import ReasoningReplayMode
+from free_claude_code.core.inference import (
+    InferenceEvent,
+    InferenceStreamLedger,
+)
 from free_claude_code.providers.admission import (
     ProviderAdmissionController,
     ProviderOperationKind,
@@ -131,14 +135,14 @@ class CloudflareProvider(OpenAIChatProvider):
             await maybe_await_aclose(response)
 
     def _handle_extra_reasoning(
-        self, delta: Any, ledger: Any, *, output_reasoning: bool
-    ) -> Iterator[str]:
-        """Map Cloudflare's ``reasoning`` delta field to Anthropic thinking."""
+        self, delta: Any, ledger: InferenceStreamLedger, *, output_reasoning: bool
+    ) -> Iterator[InferenceEvent]:
+        """Map Cloudflare's ``reasoning`` delta field to canonical reasoning."""
         reasoning = _cloudflare_reasoning(delta)
         if not output_reasoning or not reasoning:
             return
-        yield from ledger.ensure_thinking_block()
-        yield ledger.emit_thinking_delta(reasoning)
+        yield from ledger.ensure_reasoning_block()
+        yield ledger.emit_reasoning_delta(reasoning)
 
     def _model_list_headers(self) -> dict[str, str]:
         if self._api_key is None:

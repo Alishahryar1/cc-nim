@@ -49,11 +49,16 @@ from free_claude_code.core.anthropic.stream_contracts import (
     parse_sse_text,
     text_content,
 )
-from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
+from free_claude_code.core.inference import (
+    FinishReason,
+    InferenceEvent,
+    InferenceStreamLedger,
+)
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.core.version import package_version
 from free_claude_code.messaging.event_parser import parse_cli_event
+from tests.inference_support import reported_usage, text_event_stream
 
 _STRICT_EGRESS = WebFetchEgressPolicy(
     allow_private_network_targets=False,
@@ -111,7 +116,7 @@ class ScriptedSelectionProvider:
 
     def __init__(
         self,
-        events: list[str],
+        events: list[InferenceEvent],
         *,
         failure: ExecutionFailure | None = None,
         failure_after_events: bool = False,
@@ -139,7 +144,7 @@ class ScriptedSelectionProvider:
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[InferenceEvent]:
         self.requests.append(request)
         self.stream_kwargs.append(
             {
@@ -163,53 +168,13 @@ class ScriptedSelectionProvider:
             self.close_count += 1
 
 
-def _provider_text_events(text: str) -> list[str]:
-    return [
-        format_sse_event(
-            "message_start",
-            {
-                "type": "message_start",
-                "message": {
-                    "id": "msg_provider",
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [],
-                    "model": "gateway-model",
-                    "stop_reason": None,
-                    "stop_sequence": None,
-                    "usage": {"input_tokens": 11, "output_tokens": 1},
-                },
-            },
-        ),
-        format_sse_event(
-            "content_block_start",
-            {
-                "type": "content_block_start",
-                "index": 0,
-                "content_block": {"type": "text", "text": ""},
-            },
-        ),
-        format_sse_event(
-            "content_block_delta",
-            {
-                "type": "content_block_delta",
-                "index": 0,
-                "delta": {"type": "text_delta", "text": text},
-            },
-        ),
-        format_sse_event(
-            "content_block_stop", {"type": "content_block_stop", "index": 0}
-        ),
-        format_sse_event(
-            "message_delta",
-            {
-                "type": "message_delta",
-                "delta": {"stop_reason": "end_turn", "stop_sequence": None},
-                "usage": {"output_tokens": 3},
-            },
-        ),
-        format_sse_event("message_stop", {"type": "message_stop"}),
-    ]
+def _provider_text_events(text: str) -> list[InferenceEvent]:
+    return text_event_stream(
+        text,
+        model="gateway-model",
+        input_tokens=11,
+        output_tokens=3,
+    )
 
 
 def _provider_tool_events(
@@ -217,78 +182,30 @@ def _provider_tool_events(
     name: str = HIDDEN_WEB_SEARCH_NAME,
     arguments: dict[str, object] | None = None,
     additional_calls: int = 0,
-) -> list[str]:
+) -> list[InferenceEvent]:
     calls = [(name, arguments if arguments is not None else {"query": "selected"})]
     calls.extend(
         (name, {"query": f"extra-{index}"}) for index in range(additional_calls)
     )
-    events = [
-        format_sse_event(
-            "message_start",
-            {
-                "type": "message_start",
-                "message": {
-                    "id": "msg_provider",
-                    "type": "message",
-                    "role": "assistant",
-                    "content": [],
-                    "model": "gateway-model",
-                    "stop_reason": None,
-                    "stop_sequence": None,
-                    "usage": {
-                        "input_tokens": 17,
-                        "output_tokens": 1,
-                        "cache_read_input_tokens": 5,
-                    },
-                },
-            },
-        )
-    ]
+    ledger = InferenceStreamLedger("msg_provider", "gateway-model", 17)
+    events: list[InferenceEvent] = [ledger.start_response()]
     for index, (tool_name, tool_input) in enumerate(calls):
         events.extend(
             [
-                format_sse_event(
-                    "content_block_start",
-                    {
-                        "type": "content_block_start",
-                        "index": index,
-                        "content_block": {
-                            "type": "tool_use",
-                            "id": f"call_{index}",
-                            "name": tool_name,
-                            "input": {},
-                        },
-                    },
-                ),
-                format_sse_event(
-                    "content_block_delta",
-                    {
-                        "type": "content_block_delta",
-                        "index": index,
-                        "delta": {
-                            "type": "input_json_delta",
-                            "partial_json": json.dumps(tool_input),
-                        },
-                    },
-                ),
-                format_sse_event(
-                    "content_block_stop",
-                    {"type": "content_block_stop", "index": index},
-                ),
+                ledger.start_tool_block(index, f"call_{index}", tool_name),
+                ledger.emit_tool_delta(index, json.dumps(tool_input)),
+                ledger.stop_tool_block(index),
             ]
         )
     events.extend(
-        [
-            format_sse_event(
-                "message_delta",
-                {
-                    "type": "message_delta",
-                    "delta": {"stop_reason": "tool_use", "stop_sequence": None},
-                    "usage": {"output_tokens": 9},
-                },
+        ledger.finish_events(
+            FinishReason.TOOL_CALLS,
+            reported_usage(
+                input_tokens=17,
+                output_tokens=9,
+                cache_read_input_tokens=5,
             ),
-            format_sse_event("message_stop", {"type": "message_stop"}),
-        ]
+        )
     )
     return events
 
@@ -578,7 +495,13 @@ async def test_automatic_web_search_replays_provider_response_when_declined(
     )
 
     assert isinstance(response, StreamingResponse)
-    assert await _streaming_body_text(response) == "".join(events)
+    replayed = parse_sse_text(await _streaming_body_text(response))
+    assert_anthropic_stream_contract(replayed)
+    assert text_content(replayed) == "No search needed"
+    final_usage = next(
+        event.data["usage"] for event in replayed if event.event == "message_delta"
+    )
+    assert final_usage == {"input_tokens": 11, "output_tokens": 3}
     search.assert_not_awaited()
     assert provider.close_count == 1
     assert len(provider.requests) == 1
@@ -723,7 +646,7 @@ async def test_automatic_web_search_aggregates_when_stream_false(
     ids=["blank-query", "wrong-tool", "multiple-tools"],
 )
 async def test_automatic_web_search_rejects_malformed_provider_selection(
-    events: list[str],
+    events: list[InferenceEvent],
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     provider = ScriptedSelectionProvider(events)

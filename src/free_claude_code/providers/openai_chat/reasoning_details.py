@@ -8,7 +8,14 @@ from free_claude_code.core.anthropic import (
     is_synthetic_openai_tool_turn_boundary,
 )
 from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.core.anthropic.streaming import AnthropicStreamLedger
+from free_claude_code.core.inference import (
+    InferenceEvent,
+    InferenceStreamLedger,
+    ReplayArtifact,
+    ReplayArtifactKind,
+    ReplayArtifactOrigin,
+    ReplayAttachment,
+)
 from free_claude_code.core.reasoning import ReasoningPolicy
 
 
@@ -51,10 +58,10 @@ class StructuredReasoningStream:
     def events(
         self,
         delta: Any,
-        ledger: AnthropicStreamLedger,
+        ledger: InferenceStreamLedger,
         *,
         native_reasoning: str | None,
-    ) -> Iterator[str]:
+    ) -> Iterator[InferenceEvent]:
         """Emit plaintext once while preserving every opaque reasoning detail."""
         details = _reasoning_details(delta)
         if self._text_source is None:
@@ -64,26 +71,26 @@ class StructuredReasoningStream:
                 self._text_source = "details"
 
         if self._text_source == "native" and native_reasoning:
-            yield from ledger.ensure_thinking_block()
-            yield ledger.emit_thinking_delta(native_reasoning)
+            yield from ledger.ensure_reasoning_block()
+            yield ledger.emit_reasoning_delta(native_reasoning)
 
         for detail in details:
             if self._text_source == "details":
                 text = _reasoning_detail_text(detail)
                 if text:
-                    yield from ledger.ensure_thinking_block()
-                    yield ledger.emit_thinking_delta(text)
+                    yield from ledger.ensure_reasoning_block()
+                    yield ledger.emit_reasoning_delta(text)
 
             preserved = _preserved_reasoning_detail(detail)
             if preserved:
-                yield from ledger.close_content_blocks()
-                index = ledger.blocks.allocate_index()
-                yield ledger.content_block_start(
-                    index,
-                    "redacted_thinking",
-                    data=preserved,
+                yield from ledger.emit_reasoning_artifact(
+                    ReplayArtifact(
+                        origin=ReplayArtifactOrigin.OPENROUTER,
+                        kind=ReplayArtifactKind.REASONING_DETAILS,
+                        attachment=ReplayAttachment.REASONING,
+                        payload=preserved,
+                    )
                 )
-                yield ledger.content_block_stop(index)
 
 
 def _reasoning_details(delta: Any) -> Sequence[Any]:

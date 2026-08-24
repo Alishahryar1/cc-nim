@@ -11,8 +11,12 @@ from fastapi.testclient import TestClient
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
-from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
+from free_claude_code.core.inference import (
+    InferenceEvent,
+    InferenceStreamLedger,
+    ResponseStarted,
+)
 from free_claude_code.core.reasoning import ReasoningPolicy
 from tests.api.support import create_test_app
 
@@ -24,7 +28,7 @@ class CanonicalFailureProvider:
 
     def __init__(
         self,
-        chunks: list[str],
+        chunks: list[InferenceEvent],
         *,
         kind: FailureKind,
         status_code: int,
@@ -45,7 +49,7 @@ class CanonicalFailureProvider:
         self,
         _request: object,
         **kwargs: Any,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[InferenceEvent]:
         self.stream_kwargs.append(kwargs)
         for chunk in self._chunks:
             yield chunk
@@ -89,11 +93,11 @@ class StalledProvider:
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[InferenceEvent]:
         del input_tokens, request_id, response_model, reasoning
         try:
             await asyncio.Event().wait()
-            yield ""
+            yield ResponseStarted("response_unreachable", "test-model")
         finally:
             self.close_calls += 1
 
@@ -115,33 +119,13 @@ def _responses_payload() -> dict[str, object]:
     }
 
 
-def _partial_anthropic_stream(*, close_block: bool) -> list[str]:
-    chunks = [
-        format_sse_event("message_start", {"type": "message_start", "message": {}}),
-        format_sse_event(
-            "content_block_start",
-            {
-                "type": "content_block_start",
-                "index": 0,
-                "content_block": {"type": "text", "text": ""},
-            },
-        ),
-        format_sse_event(
-            "content_block_delta",
-            {
-                "type": "content_block_delta",
-                "index": 0,
-                "delta": {"type": "text_delta", "text": _PARTIAL_CONTENT},
-            },
-        ),
-    ]
+def _partial_anthropic_stream(*, close_block: bool) -> list[InferenceEvent]:
+    ledger = InferenceStreamLedger("response_partial", "test-model")
+    chunks: list[InferenceEvent] = [ledger.start_response()]
+    chunks.extend(ledger.ensure_text_block())
+    chunks.append(ledger.emit_text_delta(_PARTIAL_CONTENT))
     if close_block:
-        chunks.append(
-            format_sse_event(
-                "content_block_stop",
-                {"type": "content_block_stop", "index": 0},
-            )
-        )
+        chunks.append(ledger.stop_text_block())
     return chunks
 
 
@@ -168,7 +152,9 @@ def _terminal_trace(trace_mock: MagicMock) -> dict[str, Any]:
     )
 
 
-def _grouped_rate_limit_provider(chunks: list[str]) -> CanonicalFailureProvider:
+def _grouped_rate_limit_provider(
+    chunks: list[InferenceEvent],
+) -> CanonicalFailureProvider:
     return CanonicalFailureProvider(
         chunks,
         kind=FailureKind.RATE_LIMIT,
@@ -179,7 +165,7 @@ def _grouped_rate_limit_provider(chunks: list[str]) -> CanonicalFailureProvider:
     )
 
 
-def _timeout_provider(chunks: list[str]) -> CanonicalFailureProvider:
+def _timeout_provider(chunks: list[InferenceEvent]) -> CanonicalFailureProvider:
     return CanonicalFailureProvider(
         chunks,
         kind=FailureKind.TIMEOUT,

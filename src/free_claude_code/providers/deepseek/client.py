@@ -44,7 +44,7 @@ class DeepSeekProvider(OpenAIChatProvider):
             reasoning=reasoning,
         )
 
-    def _anthropic_usage_fields(self, usage_info: Any) -> dict[str, int]:
+    def _usage_fields(self, usage_info: Any) -> dict[str, int]:
         cache_hit_tokens = usage_int(usage_info, "prompt_cache_hit_tokens")
         cache_miss_tokens = usage_int(usage_info, "prompt_cache_miss_tokens")
         if (

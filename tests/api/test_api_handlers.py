@@ -19,10 +19,11 @@ from free_claude_code.core.anthropic.models import (
     MessagesRequest,
     TokenCountRequest,
 )
-from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
+from free_claude_code.core.inference import InferenceEvent
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import ReasoningPolicy
+from tests.inference_support import text_event_stream
 
 _LEGACY_CLASSIFIER_SYSTEM = (
     "You are a security monitor. Respond with <block>yes</block> or <block>no</block>."
@@ -38,14 +39,17 @@ _CLASSIFIER_USER = (
 
 
 class FakeProvider:
-    def __init__(self, events: list[str] | None = None) -> None:
+    def __init__(
+        self,
+        events: list[InferenceEvent] | None = None,
+        *,
+        failure: ExecutionFailure | None = None,
+    ) -> None:
         self.preflight_calls: list[tuple[MessagesRequest, ReasoningPolicy]] = []
         self.requests: list[MessagesRequest] = []
         self.stream_kwargs: list[dict[str, Any]] = []
-        self.events = events or [
-            'event: message_start\ndata: {"type":"message_start"}\n\n',
-            'event: message_stop\ndata: {"type":"message_stop"}\n\n',
-        ]
+        self.events = text_event_stream("ok") if events is None else events
+        self.failure = failure
 
     def preflight_stream(
         self, request: MessagesRequest, *, reasoning: ReasoningPolicy
@@ -66,7 +70,7 @@ class FakeProvider:
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[InferenceEvent]:
         self.requests.append(request)
         self.stream_kwargs.append(
             {
@@ -78,6 +82,8 @@ class FakeProvider:
         )
         for event in self.events:
             yield event
+        if self.failure is not None:
+            raise self.failure
 
 
 async def _streaming_body_text(response: StreamingResponse) -> str:
@@ -158,56 +164,13 @@ async def test_messages_handler_preflight_invalid_request_stays_http_error(
 @pytest.mark.asyncio
 async def test_messages_handler_aggregates_provider_stream_when_stream_false() -> None:
     provider = FakeProvider(
-        [
-            format_sse_event(
-                "message_start",
-                {
-                    "type": "message_start",
-                    "message": {
-                        "id": "msg_test",
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [],
-                        "model": "test-model",
-                        "stop_reason": None,
-                        "stop_sequence": None,
-                        "usage": {"input_tokens": 7, "output_tokens": 1},
-                    },
-                },
-            ),
-            format_sse_event(
-                "content_block_start",
-                {
-                    "type": "content_block_start",
-                    "index": 0,
-                    "content_block": {"type": "text", "text": ""},
-                },
-            ),
-            format_sse_event(
-                "content_block_delta",
-                {
-                    "type": "content_block_delta",
-                    "index": 0,
-                    "delta": {"type": "text_delta", "text": "OK"},
-                },
-            ),
-            format_sse_event(
-                "content_block_stop", {"type": "content_block_stop", "index": 0}
-            ),
-            format_sse_event(
-                "message_delta",
-                {
-                    "type": "message_delta",
-                    "delta": {"stop_reason": "end_turn", "stop_sequence": None},
-                    "usage": {
-                        "input_tokens": 20,
-                        "output_tokens": 2,
-                        "cache_read_input_tokens": 10,
-                    },
-                },
-            ),
-            format_sse_event("message_stop", {"type": "message_stop"}),
-        ]
+        text_event_stream(
+            "OK",
+            model="test-model",
+            input_tokens=20,
+            output_tokens=2,
+            cache_read_input_tokens=10,
+        )
     )
     handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
     request = MessagesRequest(
@@ -222,7 +185,7 @@ async def test_messages_handler_aggregates_provider_stream_when_stream_false() -
     assert isinstance(response, JSONResponse)
     assert response.headers["content-type"].startswith("application/json")
     body = _json_response_content(response)
-    assert body["id"] == "msg_test"
+    assert body["id"].startswith("msg_")
     assert body["type"] == "message"
     assert body["role"] == "assistant"
     assert body["model"] == "test-model"
@@ -238,15 +201,13 @@ async def test_messages_handler_aggregates_provider_stream_when_stream_false() -
 @pytest.mark.asyncio
 async def test_messages_handler_returns_error_json_for_stream_false_sse_error() -> None:
     provider = FakeProvider(
-        [
-            format_sse_event(
-                "error",
-                {
-                    "type": "error",
-                    "error": {"type": "api_error", "message": "upstream failed"},
-                },
-            )
-        ]
+        [],
+        failure=ExecutionFailure(
+            kind=FailureKind.UPSTREAM,
+            status_code=500,
+            message="upstream failed",
+            retryable=False,
+        ),
     )
     handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
     request = MessagesRequest(
@@ -269,51 +230,15 @@ async def test_messages_handler_returns_error_json_for_stream_false_sse_error() 
 
 @pytest.mark.asyncio
 async def test_messages_handler_discards_partial_stream_false_output_on_error() -> None:
+    partial = text_event_stream("incomplete", model="test-model")[:3]
     provider = FakeProvider(
-        [
-            format_sse_event(
-                "message_start",
-                {
-                    "type": "message_start",
-                    "message": {
-                        "id": "msg_partial",
-                        "type": "message",
-                        "role": "assistant",
-                        "content": [],
-                        "model": "test-model",
-                        "stop_reason": None,
-                        "stop_sequence": None,
-                        "usage": {"input_tokens": 1, "output_tokens": 1},
-                    },
-                },
-            ),
-            format_sse_event(
-                "content_block_start",
-                {
-                    "type": "content_block_start",
-                    "index": 0,
-                    "content_block": {"type": "text", "text": ""},
-                },
-            ),
-            format_sse_event(
-                "content_block_delta",
-                {
-                    "type": "content_block_delta",
-                    "index": 0,
-                    "delta": {"type": "text_delta", "text": "incomplete"},
-                },
-            ),
-            format_sse_event(
-                "error",
-                {
-                    "type": "error",
-                    "error": {
-                        "type": "overloaded_error",
-                        "message": "provider overloaded",
-                    },
-                },
-            ),
-        ]
+        partial,
+        failure=ExecutionFailure(
+            kind=FailureKind.OVERLOADED,
+            status_code=529,
+            message="provider overloaded",
+            retryable=False,
+        ),
     )
     handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
     request = MessagesRequest(
@@ -347,7 +272,7 @@ async def test_messages_handler_stream_false_provider_exception_keeps_status() -
             request_id: str | None = None,
             response_model: str | None = None,
             reasoning: ReasoningPolicy,
-        ) -> AsyncIterator[str]:
+        ) -> AsyncIterator[InferenceEvent]:
             self.requests.append(request)
             self.stream_kwargs.append(
                 {
@@ -363,7 +288,7 @@ async def test_messages_handler_stream_false_provider_exception_keeps_status() -
                 message="upstream is busy",
                 retryable=True,
             )
-            yield "unreachable"
+            yield text_event_stream("unreachable")[0]
 
     provider = FailingProvider()
     handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)

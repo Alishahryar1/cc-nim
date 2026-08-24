@@ -12,6 +12,7 @@ from free_claude_code.core.diagnostics import (
     exception_cause_types,
     redacted_exception_traceback,
 )
+from free_claude_code.core.inference import InferenceEvent
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.core.trace import trace_event
 
@@ -112,5 +113,5 @@ class BaseProvider(ABC):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
-    ) -> AsyncIterator[str]:
-        """Stream response in Anthropic SSE format."""
+    ) -> AsyncIterator[InferenceEvent]:
+        """Stream provider-neutral inference events."""

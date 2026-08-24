@@ -6,6 +6,7 @@ import pytest
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
+from free_claude_code.core.inference import InferenceEvent, InferenceStreamLedger
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
@@ -41,9 +42,9 @@ class ProviderWithoutPreflight(BaseProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[InferenceEvent]:
         if False:
-            yield ""
+            yield InferenceStreamLedger("unused", "unused").start_response()
 
 
 def test_provider_base_requires_an_explicit_preflight_implementation() -> None:

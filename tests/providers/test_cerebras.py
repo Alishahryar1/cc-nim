@@ -5,6 +5,7 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from free_claude_code.config.provider_catalog import CEREBRAS_DEFAULT_BASE
+from tests.inference_support import collect_anthropic
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     REASONING_OFF,
@@ -211,7 +212,7 @@ async def test_stream_response_text(cerebras_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = [event async for event in cerebras_provider.stream_response(req)]
+        events = await collect_anthropic(cerebras_provider.stream_response(req))
 
         assert any(
             '"text_delta"' in event and "Hello back!" in event for event in events
@@ -244,7 +245,7 @@ async def test_stream_response_reasoning(cerebras_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = [event async for event in cerebras_provider.stream_response(req)]
+        events = await collect_anthropic(cerebras_provider.stream_response(req))
 
         assert any(
             '"thinking_delta"' in event and "Thinking..." in event for event in events

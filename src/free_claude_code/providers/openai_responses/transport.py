@@ -15,9 +15,10 @@ from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.diagnostics import extract_upstream_error_detail
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
+from free_claude_code.core.inference import InferenceEvent
 from free_claude_code.core.openai_responses import (
     ResponsesConversionError,
-    ResponsesProviderStream,
+    ResponsesEventDecoder,
     ResponsesStreamFailure,
     build_responses_provider_request,
 )
@@ -70,13 +71,11 @@ class OpenAIResponsesTransport:
         admission: ProviderAdmissionController,
         provider_name: str,
         read_timeout_s: float,
-        log_raw_sse_events: bool,
     ) -> None:
         self._client = client
         self._admission = admission
         self._provider_name = provider_name
         self._read_timeout_s = read_timeout_s
-        self._log_raw_sse_events = log_raw_sse_events
 
     def preflight_stream(
         self,
@@ -94,7 +93,7 @@ class OpenAIResponsesTransport:
         request_id: str | None,
         response_model: str,
         reasoning: ReasoningPolicy,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[InferenceEvent]:
         body = self._build_body(request, reasoning=reasoning)
         tool_names = OpenAIToolNameCodec.from_request(request)
         return self._run_stream(
@@ -127,7 +126,7 @@ class OpenAIResponsesTransport:
         request_id: str | None,
         response_model: str,
         tool_names: OpenAIToolNameCodec,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[InferenceEvent]:
         execution = self._admission.start_execution(request_id=request_id)
         provider_stream = self._run_execution(
             body,
@@ -160,9 +159,9 @@ class OpenAIResponsesTransport:
         response_model: str,
         tool_names: OpenAIToolNameCodec,
         execution: ProviderExecution,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[InferenceEvent]:
         recovery = RecoveryController()
-        message_id = f"msg_{uuid.uuid4()}"
+        response_id = f"response_{uuid.uuid4().hex}"
         trace_event(
             stage="provider",
             event="provider.request.sent",
@@ -176,12 +175,11 @@ class OpenAIResponsesTransport:
         )
 
         while execution.can_attempt:
-            stream_adapter = ResponsesProviderStream(
-                message_id=message_id,
+            stream_adapter = ResponsesEventDecoder(
+                response_id=response_id,
                 model=response_model,
                 input_tokens=input_tokens,
                 tool_names=tool_names,
-                log_raw_events=self._log_raw_sse_events,
             )
             for event in stream_adapter.start():
                 for held in recovery.push(event):

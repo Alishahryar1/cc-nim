@@ -17,6 +17,7 @@ from free_claude_code.providers.groq.client import (
     _parse_reasoning_vocabulary,
     _rewrite_reasoning_effort,
 )
+from tests.inference_support import collect_anthropic
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     capture_openai_chat_wire_body,
@@ -705,13 +706,12 @@ async def test_reasoning_correction_emits_one_downstream_lifecycle() -> None:
 
     with patch.object(provider._client.chat.completions, "create", create):
         raw = "".join(
-            [
-                event
-                async for event in provider.stream_response(
+            await collect_anthropic(
+                provider.stream_response(
                     request,
                     reasoning=policy,
                 )
-            ]
+            )
         )
 
     events = parse_sse_text(raw)

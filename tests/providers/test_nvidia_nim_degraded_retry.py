@@ -20,6 +20,7 @@ from free_claude_code.providers.failure_policy import (
 )
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.open_router import OpenRouterProvider
+from tests.inference_support import collect_anthropic
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import make_provider_config
 
@@ -136,12 +137,11 @@ async def test_degraded_function_retries_unchanged_request_then_succeeds() -> No
             side_effect=[_bad_request(), _successful_stream()],
         ) as create,
     ):
-        events = [
-            event
-            async for event in provider.stream_response(
+        events = await collect_anthropic(
+            provider.stream_response(
                 make_messages_request(), request_id="req_recovered"
             )
-        ]
+        )
 
     assert create.await_count == 2
     assert create.call_args_list[0].kwargs == create.call_args_list[1].kwargs
@@ -172,12 +172,9 @@ async def test_degraded_function_exhaustion_is_detailed_redacted_overload() -> N
         patch("free_claude_code.providers.openai_chat.provider.trace_event") as trace,
         pytest.raises(ExecutionFailure) as exc_info,
     ):
-        [
-            event
-            async for event in provider.stream_response(
-                make_messages_request(), request_id="req_degraded"
-            )
-        ]
+        await collect_anthropic(
+            provider.stream_response(make_messages_request(), request_id="req_degraded")
+        )
 
     assert create.await_count == UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS
 
@@ -219,12 +216,9 @@ async def test_negative_derived_max_tokens_is_context_window_failure(
         ) as create,
         pytest.raises(ExecutionFailure) as exc_info,
     ):
-        [
-            event
-            async for event in provider.stream_response(
-                make_messages_request(), request_id="req_context"
-            )
-        ]
+        await collect_anthropic(
+            provider.stream_response(make_messages_request(), request_id="req_context")
+        )
 
     assert create.await_count == 1
     failure = exc_info.value
@@ -255,12 +249,11 @@ async def test_negative_derived_max_tokens_is_context_window_failure_on_500(
         ) as create,
         pytest.raises(ExecutionFailure) as exc_info,
     ):
-        [
-            event
-            async for event in provider.stream_response(
+        await collect_anthropic(
+            provider.stream_response(
                 make_messages_request(), request_id="req_context_500"
             )
-        ]
+        )
 
     assert create.await_count == 1
     failure = exc_info.value
@@ -299,7 +292,7 @@ async def test_other_nim_max_token_errors_remain_invalid_requests(
         ) as create,
         pytest.raises(ExecutionFailure) as exc_info,
     ):
-        [event async for event in provider.stream_response(make_messages_request())]
+        await collect_anthropic(provider.stream_response(make_messages_request()))
 
     assert create.await_count == 1
     assert exc_info.value.kind is FailureKind.INVALID_REQUEST
@@ -330,7 +323,7 @@ async def test_unrelated_nim_bad_request_is_not_retried(detail: str) -> None:
         ) as create,
         pytest.raises(ExecutionFailure) as exc_info,
     ):
-        [event async for event in provider.stream_response(make_messages_request())]
+        await collect_anthropic(provider.stream_response(make_messages_request()))
 
     assert create.await_count == 1
     assert exc_info.value.kind is FailureKind.INVALID_REQUEST
@@ -357,7 +350,7 @@ async def test_degraded_wording_remains_non_retryable_for_other_providers() -> N
         ) as create,
         pytest.raises(ExecutionFailure) as exc_info,
     ):
-        [event async for event in provider.stream_response(make_messages_request())]
+        await collect_anthropic(provider.stream_response(make_messages_request()))
 
     assert create.await_count == 1
     assert exc_info.value.kind is FailureKind.INVALID_REQUEST

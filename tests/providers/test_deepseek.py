@@ -18,6 +18,7 @@ from free_claude_code.core.anthropic.models import (
 )
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.providers.deepseek import DeepSeekProvider
+from tests.inference_support import collect_anthropic
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
@@ -141,7 +142,7 @@ def test_init(deepseek_config):
 def test_maps_only_complete_consistent_cache_usage(
     deepseek_provider, usage, expected
 ) -> None:
-    assert deepseek_provider._anthropic_usage_fields(usage) == expected
+    assert deepseek_provider._usage_fields(usage) == expected
 
 
 def test_build_request_body_openai_chat_shape(deepseek_provider):
@@ -1079,12 +1080,9 @@ async def test_stream_uses_chat_completions_and_maps_cache_usage(deepseek_provid
 
     create = AsyncMock(return_value=fake_stream())
     with patch.object(deepseek_provider._client.chat.completions, "create", create):
-        chunks = [
-            chunk
-            async for chunk in deepseek_provider.stream_response(
-                request, input_tokens=7, request_id="r1"
-            )
-        ]
+        chunks = await collect_anthropic(
+            deepseek_provider.stream_response(request, input_tokens=7, request_id="r1")
+        )
 
     create.assert_awaited_once()
     await_args = create.await_args

@@ -8,10 +8,11 @@ from urllib.parse import urlsplit
 from free_claude_code.application.execution import ProviderExecutor
 from free_claude_code.application.routing import RoutedMessagesRequest
 from free_claude_code.core.anthropic import (
-    aggregate_anthropic_sse_to_message,
-    anthropic_status_for_error_type,
+    aggregate_inference_events_to_message,
+    iter_anthropic_sse,
 )
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
+from free_claude_code.core.inference import InferenceEvent
 from free_claude_code.core.trace import close_stream_input, trace_event
 
 from .request import (
@@ -30,6 +31,7 @@ async def stream_automatic_web_search_response(
     request_id: str,
     fallback_input_tokens: int,
     verbose_client_errors: bool,
+    log_raw_events: bool,
 ) -> AsyncIterator[str]:
     """Buffer one model decision, then replay it or execute one local search."""
     translated = replace(routed, request=plan.request)
@@ -47,9 +49,9 @@ async def stream_automatic_web_search_response(
         raw_log_payload=plan.request.model_dump(),
         request_id=request_id,
     )
-    chunks: list[str] = []
+    events: list[InferenceEvent] = []
     try:
-        chunks.extend([chunk async for chunk in provider_stream])
+        events.extend([event async for event in provider_stream])
     finally:
         await close_stream_input(
             provider_stream,
@@ -58,11 +60,7 @@ async def stream_automatic_web_search_response(
             preserved_error=sys.exception(),
         )
 
-    message, stream_error = await aggregate_anthropic_sse_to_message(
-        _iterate_chunks(chunks)
-    )
-    if stream_error is not None:
-        raise _execution_failure_from_stream_error(stream_error)
+    message = await aggregate_inference_events_to_message(_iterate_events(events))
 
     tool_calls = _tool_calls(message)
     if not tool_calls:
@@ -73,7 +71,10 @@ async def stream_automatic_web_search_response(
             request_id=request_id,
             model=routed.resolved.original_model,
         )
-        for chunk in chunks:
+        async for chunk in iter_anthropic_sse(
+            _iterate_events(events),
+            log_raw_events=log_raw_events,
+        ):
             yield chunk
         return
     if len(tool_calls) != 1:
@@ -131,9 +132,11 @@ async def stream_automatic_web_search_response(
     )
 
 
-async def _iterate_chunks(chunks: list[str]) -> AsyncIterator[str]:
-    for chunk in chunks:
-        yield chunk
+async def _iterate_events(
+    events: list[InferenceEvent],
+) -> AsyncIterator[InferenceEvent]:
+    for event in events:
+        yield event
 
 
 def _tool_calls(message: Mapping[str, object]) -> list[dict[str, object]]:
@@ -192,37 +195,6 @@ def _hostname_is_allowed(url: str, domains: WebSearchDomainFilter) -> bool:
 
 def _is_hostname_or_subdomain(hostname: str, domain: str) -> bool:
     return hostname == domain or hostname.endswith(f".{domain}")
-
-
-def _execution_failure_from_stream_error(
-    error: Mapping[str, object],
-) -> ExecutionFailure:
-    raw_type = error.get("type")
-    error_type = raw_type if isinstance(raw_type, str) else "api_error"
-    raw_message = error.get("message")
-    message = (
-        raw_message
-        if isinstance(raw_message, str) and raw_message.strip()
-        else "Provider request failed unexpectedly."
-    )
-    status = anthropic_status_for_error_type(error_type)
-    kind = {
-        400: FailureKind.INVALID_REQUEST,
-        401: FailureKind.AUTHENTICATION,
-        402: FailureKind.PERMISSION,
-        403: FailureKind.PERMISSION,
-        404: FailureKind.INVALID_REQUEST,
-        413: FailureKind.INVALID_REQUEST,
-        429: FailureKind.RATE_LIMIT,
-        504: FailureKind.TIMEOUT,
-        529: FailureKind.OVERLOADED,
-    }.get(status, FailureKind.UPSTREAM)
-    return ExecutionFailure(
-        kind=kind,
-        status_code=status,
-        message=message,
-        retryable=False,
-    )
 
 
 def _protocol_failure(message: str, *, request_id: str) -> ExecutionFailure:

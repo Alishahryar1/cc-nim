@@ -21,6 +21,7 @@ from free_claude_code.core.json_types import JsonObject, JsonValue
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
+from tests.inference_support import collect_anthropic
 from tests.providers.support import (
     REASONING_DEFAULT,
     REASONING_OFF,
@@ -314,13 +315,12 @@ async def test_stream_uses_upstream_sse_and_preserves_reasoning_details(
         create,
     ):
         event_text = "".join(
-            [
-                event
-                async for event in cline_pass_provider.stream_response(
+            await collect_anthropic(
+                cline_pass_provider.stream_response(
                     _request(),
                     reasoning=ReasoningPolicy.on(),
                 )
-            ]
+            )
         )
 
     events = parse_sse_text(event_text)

@@ -1,12 +1,8 @@
-"""Stream/SSE contract tests. Strict transcript *ordering* is covered here for
-``AnthropicStreamLedger`` output; for integration ordering, add messaging or API
-integration tests.
-"""
+"""Cross-protocol stream ordering contracts."""
 
 from collections.abc import Iterable
 
 from free_claude_code.core.anthropic import (
-    AnthropicStreamLedger,
     ContentType,
     HeuristicToolParser,
     ThinkTagParser,
@@ -19,6 +15,12 @@ from free_claude_code.core.anthropic.stream_contracts import (
     thinking_content,
 )
 from free_claude_code.core.anthropic.streaming import format_sse_event
+from free_claude_code.core.inference import (
+    FinishReason,
+    InferenceEvent,
+    InferenceStreamLedger,
+)
+from tests.inference_support import present_anthropic, reported_usage
 
 
 def test_interleaved_thinking_text_blocks_are_valid() -> None:
@@ -43,21 +45,28 @@ def test_split_think_tags_preserve_text_and_thinking() -> None:
 
 
 def test_mixed_reasoning_content_and_think_tags_keep_order() -> None:
-    builder = AnthropicStreamLedger("msg_contract", "contract-model")
-    chunks = [builder.message_start()]
-    chunks.extend(builder.ensure_thinking_block())
-    chunks.append(builder.emit_thinking_delta("reasoning field"))
-    chunks.extend(
-        _events_from_text_chunks([" visible <think>tagged</think> done"], builder)
+    ledger = InferenceStreamLedger("response_contract", "contract-model")
+    events: list[InferenceEvent] = [ledger.start_response()]
+    events.extend(ledger.ensure_reasoning_block())
+    events.append(ledger.emit_reasoning_delta("reasoning field"))
+    events.extend(
+        _events_from_text_chunks(
+            [" visible <think>tagged</think> done"],
+            ledger,
+        )
     )
-    chunks.extend(builder.close_all_blocks())
-    chunks.append(builder.message_delta("end_turn", 10))
-    chunks.append(builder.message_stop())
+    events.extend(ledger.close_all_blocks())
+    events.extend(
+        ledger.finish_events(
+            FinishReason.END_TURN,
+            reported_usage(input_tokens=0, output_tokens=10),
+        )
+    )
 
-    events = parse_sse_text("".join(chunks))
-    assert_anthropic_stream_contract(events)
-    assert thinking_content(events) == "reasoning fieldtagged"
-    assert text_content(events) == " visible  done"
+    parsed = parse_sse_text("".join(present_anthropic(events)))
+    assert_anthropic_stream_contract(parsed)
+    assert thinking_content(parsed) == "reasoning fieldtagged"
+    assert text_content(parsed) == " visible  done"
 
 
 def test_redacted_thinking_block_start_stop_is_valid() -> None:
@@ -133,62 +142,71 @@ def test_task_tool_arguments_force_foreground_execution() -> None:
 
 def _interleaved_thinking_text_events(
     parts: tuple[str, str, str, str],
-) -> Iterable[str]:
-    builder = AnthropicStreamLedger("msg_contract", "contract-model")
-    yield builder.message_start()
-    yield from builder.ensure_thinking_block()
-    yield builder.emit_thinking_delta(parts[0])
-    yield from builder.ensure_text_block()
-    yield builder.emit_text_delta(parts[1])
-    yield from builder.ensure_thinking_block()
-    yield builder.emit_thinking_delta(parts[2])
-    yield from builder.ensure_text_block()
-    yield builder.emit_text_delta(parts[3])
-    yield from builder.close_all_blocks()
-    yield builder.message_delta("end_turn", 20)
-    yield builder.message_stop()
+) -> Iterable[InferenceEvent]:
+    ledger = InferenceStreamLedger("response_contract", "contract-model")
+    yield ledger.start_response()
+    yield from ledger.ensure_reasoning_block()
+    yield ledger.emit_reasoning_delta(parts[0])
+    yield from ledger.ensure_text_block()
+    yield ledger.emit_text_delta(parts[1])
+    yield from ledger.ensure_reasoning_block()
+    yield ledger.emit_reasoning_delta(parts[2])
+    yield from ledger.ensure_text_block()
+    yield ledger.emit_text_delta(parts[3])
+    yield from ledger.close_all_blocks()
+    yield from ledger.finish_events(
+        FinishReason.END_TURN,
+        reported_usage(input_tokens=0, output_tokens=20),
+    )
 
 
 def _events_from_text_chunks(
     chunks: list[str],
-    builder: AnthropicStreamLedger | None = None,
+    ledger: InferenceStreamLedger | None = None,
     *,
     enable_thinking: bool = True,
-) -> list[str]:
-    sse = builder or AnthropicStreamLedger("msg_contract", "contract-model")
-    out: list[str] = [] if builder else [sse.message_start()]
+) -> list[InferenceEvent]:
+    stream = ledger or InferenceStreamLedger(
+        "response_contract",
+        "contract-model",
+    )
+    out: list[InferenceEvent] = [] if ledger else [stream.start_response()]
     parser = ThinkTagParser()
 
     for chunk in chunks:
-        out.extend(_emit_parser_parts(sse, parser.feed(chunk), enable_thinking))
+        out.extend(_emit_parser_parts(stream, parser.feed(chunk), enable_thinking))
 
     remaining = parser.flush()
     if remaining is not None:
-        out.extend(_emit_parser_parts(sse, [remaining], enable_thinking))
+        out.extend(_emit_parser_parts(stream, [remaining], enable_thinking))
 
-    if builder is None:
-        out.extend(sse.close_all_blocks())
-        out.append(sse.message_delta("end_turn", 20))
-        out.append(sse.message_stop())
+    if ledger is None:
+        out.extend(stream.close_all_blocks())
+        out.extend(
+            stream.finish_events(
+                FinishReason.END_TURN,
+                reported_usage(input_tokens=0, output_tokens=20),
+            )
+        )
     return out
 
 
 def _emit_parser_parts(
-    builder: AnthropicStreamLedger,
+    ledger: InferenceStreamLedger,
     parts: Iterable,
     enable_thinking: bool,
-) -> list[str]:
-    out: list[str] = []
+) -> list[InferenceEvent]:
+    out: list[InferenceEvent] = []
     for part in parts:
         if part.type == ContentType.THINKING:
             if enable_thinking:
-                out.extend(builder.ensure_thinking_block())
-                out.append(builder.emit_thinking_delta(part.content))
+                out.extend(ledger.ensure_reasoning_block())
+                out.append(ledger.emit_reasoning_delta(part.content))
             continue
-        out.extend(builder.ensure_text_block())
-        out.append(builder.emit_text_delta(part.content))
+        out.extend(ledger.ensure_text_block())
+        out.append(ledger.emit_text_delta(part.content))
     return out
 
 
-def _parse_builder_events(chunks: Iterable[str]):
-    return parse_sse_text("".join(chunks))
+def _parse_builder_events(events: Iterable[InferenceEvent]):
+    return parse_sse_text("".join(present_anthropic(events)))

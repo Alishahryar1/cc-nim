@@ -11,6 +11,7 @@ from free_claude_code.providers.gemini import GeminiProvider
 from free_claude_code.providers.google_openai import (
     GOOGLE_SKIP_THOUGHT_SIGNATURE_VALIDATOR,
 )
+from tests.inference_support import collect_anthropic
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     immediate_admission,
@@ -437,12 +438,9 @@ async def test_stream_response_text(gemini_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = [
-            event
-            async for event in gemini_provider.stream_response(
-                req, reasoning=reasoning_for(req)
-            )
-        ]
+        events = await collect_anthropic(
+            gemini_provider.stream_response(req, reasoning=reasoning_for(req))
+        )
 
         assert any(
             '"text_delta"' in event and "Hello back!" in event for event in events
@@ -493,7 +491,7 @@ async def test_stream_response_preserves_tool_call_extra_content(gemini_provider
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = [event async for event in gemini_provider.stream_response(req)]
+        events = await collect_anthropic(gemini_provider.stream_response(req))
 
     tool_starts = [
         event
@@ -533,7 +531,7 @@ async def test_stream_response_reasoning_content(gemini_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = [event async for event in gemini_provider.stream_response(req)]
+        events = await collect_anthropic(gemini_provider.stream_response(req))
 
         assert any(
             '"thinking_delta"' in event and "Thinking..." in event for event in events

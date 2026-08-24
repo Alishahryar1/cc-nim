@@ -10,6 +10,7 @@ from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.inference import InferenceEvent
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
@@ -96,7 +97,6 @@ class OpenCodeProvider(OpenAIChatProvider):
             admission=admission,
             provider_name=profile.provider_name,
             read_timeout_s=config.http_read_timeout,
-            log_raw_sse_events=config.log_raw_sse_events,
         )
 
     async def cleanup(self) -> None:
@@ -144,7 +144,7 @@ class OpenCodeProvider(OpenAIChatProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[InferenceEvent]:
         return self._dispatch_stream(
             request,
             input_tokens=input_tokens,
@@ -161,11 +161,11 @@ class OpenCodeProvider(OpenAIChatProvider):
         request_id: str | None,
         response_model: str,
         reasoning: ReasoningPolicy,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[InferenceEvent]:
         snapshot = await self._catalog.snapshot(request_id=request_id)
         route = self._require_route(snapshot, request.model)
         routed = _routed_request(request, route)
-        selected_stream: AsyncIterator[str] | None = None
+        selected_stream: AsyncIterator[InferenceEvent] | None = None
         try:
             if route.transport is OpenCodeUpstreamTransport.RESPONSES:
                 self._responses.preflight_stream(routed, reasoning=reasoning)

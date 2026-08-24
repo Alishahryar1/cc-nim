@@ -1,10 +1,21 @@
-"""Translate upstream OpenAI Responses events into Anthropic Messages SSE."""
+"""Decode upstream OpenAI Responses events into canonical inference events."""
 
+from collections.abc import Mapping
 from dataclasses import dataclass
-from typing import Any
 
 from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
-from free_claude_code.core.anthropic.streaming import AnthropicStreamLedger
+from free_claude_code.core.inference import (
+    FinishReason,
+    InferenceEvent,
+    InferenceStreamLedger,
+    InferenceUsage,
+    ReplayArtifact,
+    ReplayArtifactKind,
+    ReplayArtifactOrigin,
+    ReplayAttachment,
+    TokenMeasurement,
+    UsageSource,
+)
 
 
 class ResponsesStreamFailure(RuntimeError):
@@ -26,38 +37,28 @@ class _ToolState:
     stopped: bool = False
 
 
-class ResponsesProviderStream:
-    """Stateful one-way adapter for one upstream response."""
+class ResponsesEventDecoder:
+    """Decode one upstream Responses stream without assigning public wire IDs."""
 
     def __init__(
         self,
         *,
-        message_id: str,
+        response_id: str,
         model: str,
         input_tokens: int,
-        log_raw_events: bool = False,
         tool_names: OpenAIToolNameCodec | None = None,
     ) -> None:
-        self.ledger = AnthropicStreamLedger(
-            message_id,
-            model,
-            input_tokens,
-            log_raw_events=log_raw_events,
-        )
+        self.ledger = InferenceStreamLedger(response_id, model, input_tokens)
         self.completed = False
         self.generated_output = False
         self._tool_names = tool_names or OpenAIToolNameCodec.from_names(())
         self._tools: dict[str, _ToolState] = {}
         self._encrypted_reasoning: dict[str, str] = {}
 
-    def start(self) -> list[str]:
-        """Return the Anthropic message_start event."""
+    def start(self) -> list[InferenceEvent]:
+        return [self.ledger.start_response()]
 
-        return [self.ledger.message_start()]
-
-    def feed(self, event_type: str, data: dict[str, Any]) -> list[str]:
-        """Consume one Responses event and return zero or more Anthropic events."""
-
+    def feed(self, event_type: str, data: Mapping[str, object]) -> list[InferenceEvent]:
         if self.completed:
             return []
         if event_type == "response.output_item.added":
@@ -79,7 +80,7 @@ class ResponsesProviderStream:
             raise _stream_failure(data)
         return []
 
-    def _item_added(self, data: dict[str, Any]) -> list[str]:
+    def _item_added(self, data: Mapping[str, object]) -> list[InferenceEvent]:
         item = data.get("item")
         if not isinstance(item, dict):
             return []
@@ -96,16 +97,16 @@ class ResponsesProviderStream:
                 self._encrypted_reasoning[item_id] = encrypted
         return []
 
-    def _reasoning_delta(self, data: dict[str, Any]) -> list[str]:
+    def _reasoning_delta(self, data: Mapping[str, object]) -> list[InferenceEvent]:
         delta = data.get("delta")
         if not isinstance(delta, str) or not delta:
             return []
-        events = list(self.ledger.ensure_thinking_block())
-        events.append(self.ledger.emit_thinking_delta(delta))
+        events = list(self.ledger.ensure_reasoning_block())
+        events.append(self.ledger.emit_reasoning_delta(delta))
         self.generated_output = True
         return events
 
-    def _text_delta(self, data: dict[str, Any]) -> list[str]:
+    def _text_delta(self, data: Mapping[str, object]) -> list[InferenceEvent]:
         delta = data.get("delta")
         if not isinstance(delta, str) or not delta:
             return []
@@ -114,7 +115,7 @@ class ResponsesProviderStream:
         self.generated_output = True
         return events
 
-    def _tool_delta(self, data: dict[str, Any]) -> list[str]:
+    def _tool_delta(self, data: Mapping[str, object]) -> list[InferenceEvent]:
         item_id = _string(data.get("item_id"))
         delta = data.get("delta")
         if not item_id or not isinstance(delta, str):
@@ -135,7 +136,7 @@ class ResponsesProviderStream:
             self.generated_output = True
         return events
 
-    def _item_done(self, data: dict[str, Any]) -> list[str]:
+    def _item_done(self, data: Mapping[str, object]) -> list[InferenceEvent]:
         item = data.get("item")
         if not isinstance(item, dict):
             return []
@@ -161,26 +162,28 @@ class ResponsesProviderStream:
             if not state.stopped:
                 events.append(self.ledger.stop_tool_block(state.tool_index))
                 state.stopped = True
-                self.ledger.blocks.tool_states[state.tool_index].started = False
             return events
         if item_type == "reasoning":
+            events = list(self.ledger.close_content_blocks())
             encrypted = item.get("encrypted_content")
             if not isinstance(encrypted, str) or not encrypted:
                 encrypted = self._encrypted_reasoning.get(item_id)
             if isinstance(encrypted, str) and encrypted:
-                events = list(self.ledger.close_content_blocks())
-                index = self.ledger.blocks.allocate_index()
-                events.append(
-                    self.ledger.content_block_start(
-                        index, "redacted_thinking", data=encrypted
+                events.extend(
+                    self.ledger.emit_reasoning_artifact(
+                        ReplayArtifact(
+                            origin=ReplayArtifactOrigin.OPENAI,
+                            kind=ReplayArtifactKind.ENCRYPTED_REASONING,
+                            attachment=ReplayAttachment.REASONING,
+                            payload=encrypted,
+                        )
                     )
                 )
-                events.append(self.ledger.content_block_stop(index))
                 self.generated_output = True
-                return events
+            return events
         return []
 
-    def _ensure_tool_started(self, state: _ToolState) -> list[str]:
+    def _ensure_tool_started(self, state: _ToolState) -> list[InferenceEvent]:
         if state.started:
             return []
         state.started = True
@@ -193,7 +196,9 @@ class ResponsesProviderStream:
             )
         ]
 
-    def _finish(self, data: dict[str, Any], *, incomplete: bool) -> list[str]:
+    def _finish(
+        self, data: Mapping[str, object], *, incomplete: bool
+    ) -> list[InferenceEvent]:
         response = data.get("response")
         response = response if isinstance(response, dict) else {}
         events = list(self.ledger.close_all_blocks())
@@ -201,39 +206,77 @@ class ResponsesProviderStream:
             events.extend(self.ledger.ensure_text_block())
             events.append(self.ledger.emit_text_delta(" "))
             events.append(self.ledger.stop_text_block())
-        usage = response.get("usage")
-        usage = usage if isinstance(usage, dict) else {}
-        input_tokens = _integer(usage.get("input_tokens"))
-        output_tokens = _integer(usage.get("output_tokens"))
-        details = usage.get("input_tokens_details")
-        details = details if isinstance(details, dict) else {}
-        cached_tokens = _integer(details.get("cached_tokens"))
-        usage_fields = None
-        if (
-            input_tokens is not None
-            and input_tokens >= 0
-            and cached_tokens is not None
-            and 0 <= cached_tokens <= input_tokens
-        ):
-            input_tokens -= cached_tokens
-            usage_fields = {"cache_read_input_tokens": cached_tokens}
-        stop_reason = "max_tokens" if incomplete else "end_turn"
-        events.append(
-            self.ledger.message_delta(
-                self.ledger.final_stop_reason(stop_reason),
-                output_tokens
-                if output_tokens is not None
-                else self.ledger.estimate_output_tokens(),
-                input_tokens=input_tokens,
-                usage_fields=usage_fields,
+
+        usage = _response_usage(response, self.ledger)
+        events.extend(
+            self.ledger.finish_events(
+                FinishReason.OUTPUT_LIMIT if incomplete else FinishReason.END_TURN,
+                usage,
             )
         )
-        events.append(self.ledger.message_stop())
         self.completed = True
         return events
 
 
-def _stream_failure(data: dict[str, Any]) -> ResponsesStreamFailure:
+def _response_usage(
+    response: Mapping[str, object], ledger: InferenceStreamLedger
+) -> InferenceUsage:
+    raw_usage = response.get("usage")
+    raw_usage = raw_usage if isinstance(raw_usage, dict) else {}
+    input_tokens = _integer(raw_usage.get("input_tokens"))
+    output_tokens = _integer(raw_usage.get("output_tokens"))
+
+    input_details = raw_usage.get("input_tokens_details")
+    input_details = input_details if isinstance(input_details, dict) else {}
+    cached_tokens = _integer(input_details.get("cached_tokens"))
+    if input_tokens is None:
+        cached_tokens = None
+    if (
+        input_tokens is not None
+        and cached_tokens is not None
+        and (cached_tokens < 0 or cached_tokens > input_tokens)
+    ):
+        cached_tokens = None
+    uncached_tokens = (
+        input_tokens - cached_tokens
+        if input_tokens is not None and cached_tokens is not None
+        else input_tokens
+    )
+
+    output_details = raw_usage.get("output_tokens_details")
+    output_details = output_details if isinstance(output_details, dict) else {}
+    reasoning_tokens = _integer(output_details.get("reasoning_tokens"))
+    estimated_reasoning = ledger.estimate_reasoning_tokens()
+
+    return InferenceUsage(
+        input_tokens=_measurement(
+            uncached_tokens,
+            fallback=ledger.input_tokens,
+        ),
+        cache_read_input_tokens=(
+            TokenMeasurement(cached_tokens, UsageSource.REPORTED)
+            if cached_tokens is not None
+            else None
+        ),
+        output_tokens=_measurement(
+            output_tokens,
+            fallback=ledger.estimate_output_tokens(),
+        ),
+        reasoning_output_tokens=(
+            TokenMeasurement(reasoning_tokens, UsageSource.REPORTED)
+            if reasoning_tokens is not None
+            else TokenMeasurement(estimated_reasoning, UsageSource.ESTIMATED)
+        ),
+    )
+
+
+def _measurement(value: int | None, *, fallback: int) -> TokenMeasurement:
+    if value is not None and value >= 0:
+        return TokenMeasurement(value, UsageSource.REPORTED)
+    return TokenMeasurement(max(fallback, 0), UsageSource.ESTIMATED)
+
+
+def _stream_failure(data: Mapping[str, object]) -> ResponsesStreamFailure:
     response = data.get("response")
     response = response if isinstance(response, dict) else {}
     error = response.get("error", data.get("error"))
@@ -246,9 +289,9 @@ def _stream_failure(data: dict[str, Any]) -> ResponsesStreamFailure:
     )
 
 
-def _string(value: Any) -> str:
+def _string(value: object) -> str:
     return value if isinstance(value, str) else ""
 
 
-def _integer(value: Any) -> int | None:
+def _integer(value: object) -> int | None:
     return value if isinstance(value, int) and not isinstance(value, bool) else None

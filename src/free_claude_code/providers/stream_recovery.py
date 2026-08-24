@@ -5,6 +5,12 @@ from collections.abc import Callable
 from dataclasses import dataclass
 from enum import StrEnum
 
+from free_claude_code.core.inference import (
+    InferenceEvent,
+    ResponseStarted,
+    inference_event_size,
+)
+
 from .failure_policy import RetryableProviderProtocolError
 
 EARLY_HOLDBACK_SECONDS = 0.75
@@ -34,7 +40,7 @@ class RecoveryDecision:
 
 
 class RecoveryHoldbackBuffer:
-    """Briefly retain SSE so early cutoffs can be retried invisibly."""
+    """Briefly retain canonical output so early cutoffs retry invisibly."""
 
     def __init__(
         self,
@@ -46,26 +52,26 @@ class RecoveryHoldbackBuffer:
         self._holdback_seconds = holdback_seconds
         self._max_bytes = max_bytes
         self._now = now or time.monotonic
-        self._events: list[str] = []
+        self._events: list[InferenceEvent] = []
         self._bytes = 0
         self._started_at: float | None = None
         self.committed = False
 
-    def push(self, event: str) -> list[str]:
+    def push(self, event: InferenceEvent) -> list[InferenceEvent]:
         if self.committed:
             return [event]
-        if self._started_at is None:
+        if self._started_at is None and not isinstance(event, ResponseStarted):
             self._started_at = self._now()
         self._events.append(event)
-        self._bytes += len(event.encode("utf-8", errors="replace"))
-        if (
-            self._bytes >= self._max_bytes
-            or self._now() - self._started_at >= self._holdback_seconds
+        self._bytes += inference_event_size(event)
+        if self._bytes >= self._max_bytes or (
+            self._started_at is not None
+            and self._now() - self._started_at >= self._holdback_seconds
         ):
             return self.flush()
         return []
 
-    def flush(self) -> list[str]:
+    def flush(self) -> list[InferenceEvent]:
         if self.committed:
             return []
         self.committed = True
@@ -99,16 +105,16 @@ class RecoveryController:
     def has_buffered(self) -> bool:
         return self._holdback.has_buffered
 
-    def push(self, event: str) -> list[str]:
+    def push(self, event: InferenceEvent) -> list[InferenceEvent]:
         return self._holdback.push(event)
 
-    def flush(self) -> list[str]:
+    def flush(self) -> list[InferenceEvent]:
         return self._holdback.flush()
 
     def discard(self) -> None:
         self._holdback.discard()
 
-    def flush_uncommitted(self, decision: RecoveryDecision) -> list[str]:
+    def flush_uncommitted(self, decision: RecoveryDecision) -> list[InferenceEvent]:
         if not decision.committed and decision.has_buffered:
             return self.flush()
         return []
