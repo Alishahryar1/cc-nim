@@ -760,6 +760,12 @@ def test_install_sh_rejects_incompatible_node_for_selected_dsh(
 def test_install_sh_noninteractive_skips_dsh_without_node(
     posix_harness: PosixHarness,
 ) -> None:
+    if shutil.which("node", path="/usr/bin:/bin") or shutil.which(
+        "npm", path="/usr/bin:/bin"
+    ):
+        pytest.skip(
+            "system node/npm in the harness PATH fallback defeats the no-node setup"
+        )
     (posix_harness.bin_dir / "node").unlink()
     (posix_harness.bin_dir / "npm").unlink()
 
