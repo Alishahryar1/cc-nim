@@ -6,7 +6,6 @@ from typing import Any
 import httpx
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
-from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.providers.admission import (
     ProviderAdmissionController,
     ProviderOperationKind,
@@ -22,6 +21,7 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProfile,
     OpenAIChatProvider,
     OpenAIChatRequestPolicy,
+    ReasoningReplayMode,
 )
 
 GITHUB_MODELS_CATALOG_URL = "https://models.github.ai/catalog/models"

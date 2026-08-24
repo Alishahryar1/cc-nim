@@ -26,9 +26,9 @@ from free_claude_code.core.inference import (
     ToolCallCompleted,
     ToolCallStarted,
     UsageUpdated,
-    replay_payload_text,
 )
 from free_claude_code.core.json_types import JsonObject, JsonValue
+from free_claude_code.core.replay_envelope import encode_replay_envelope
 from free_claude_code.core.trace import close_stream_input
 
 from .streaming.emitter import AnthropicSseEmitter
@@ -39,7 +39,6 @@ class _WireBlock:
     index: int | None
     block_type: str
     open: bool
-    emitted_artifacts: int = 0
 
 
 class AnthropicEventPresenter:
@@ -146,7 +145,6 @@ class AnthropicEventPresenter:
             for artifact in event.artifacts
         ):
             chunks.append(self._start_reasoning_wire_block(block))
-        chunks.extend(self._emit_reasoning_artifacts(block, event.artifacts))
         return chunks
 
     def _reasoning_delta(self, event: ReasoningDelta) -> list[str]:
@@ -173,10 +171,16 @@ class AnthropicEventPresenter:
     def _reasoning_completed(self, event: ReasoningBlockCompleted) -> list[str]:
         block = self._require_block(event.block_id, "reasoning")
         chunks: list[str] = []
-        if block.open:
+        if event.artifacts:
+            if block.open or event.reasoning:
+                if not block.open:
+                    chunks.append(self._start_reasoning_wire_block(block))
+                chunks.append(self._signature_delta(block, event.artifacts))
+                chunks.append(self._stop_wire_block(block))
+            else:
+                chunks.extend(self._redacted_reasoning_block(event.artifacts))
+        elif block.open:
             chunks.append(self._stop_wire_block(block))
-        remaining = event.artifacts[block.emitted_artifacts :]
-        chunks.extend(self._emit_reasoning_artifacts(block, remaining))
         block.open = False
         return chunks
 
@@ -241,58 +245,44 @@ class AnthropicEventPresenter:
             self._emitter.event("message_stop", {"type": "message_stop"}),
         ]
 
-    def _emit_reasoning_artifacts(
+    def _signature_delta(
         self,
         block: _WireBlock,
         artifacts: tuple[ReplayArtifact, ...],
+    ) -> str:
+        return self._emitter.event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": _required_index(block),
+                "delta": {
+                    "type": "signature_delta",
+                    "signature": encode_replay_envelope(artifacts),
+                },
+            },
+        )
+
+    def _redacted_reasoning_block(
+        self, artifacts: tuple[ReplayArtifact, ...]
     ) -> list[str]:
-        chunks: list[str] = []
-        for artifact in artifacts:
-            if artifact.kind is ReplayArtifactKind.THINKING_SIGNATURE:
-                if not block.open:
-                    chunks.append(self._start_reasoning_wire_block(block))
-                chunks.append(
-                    self._emitter.event(
-                        "content_block_delta",
-                        {
-                            "type": "content_block_delta",
-                            "index": _required_index(block),
-                            "delta": {
-                                "type": "signature_delta",
-                                "signature": replay_payload_text(artifact),
-                            },
-                        },
-                    )
-                )
-            elif artifact.kind in {
-                ReplayArtifactKind.REDACTED_THINKING,
-                ReplayArtifactKind.ENCRYPTED_REASONING,
-                ReplayArtifactKind.REASONING_DETAILS,
-            }:
-                if block.open:
-                    chunks.append(self._stop_wire_block(block))
-                index = self._allocate_index()
-                chunks.extend(
-                    [
-                        self._emitter.event(
-                            "content_block_start",
-                            {
-                                "type": "content_block_start",
-                                "index": index,
-                                "content_block": {
-                                    "type": "redacted_thinking",
-                                    "data": replay_payload_text(artifact),
-                                },
-                            },
-                        ),
-                        self._emitter.event(
-                            "content_block_stop",
-                            {"type": "content_block_stop", "index": index},
-                        ),
-                    ]
-                )
-            block.emitted_artifacts += 1
-        return chunks
+        index = self._allocate_index()
+        return [
+            self._emitter.event(
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": index,
+                    "content_block": {
+                        "type": "redacted_thinking",
+                        "data": encode_replay_envelope(artifacts),
+                    },
+                },
+            ),
+            self._emitter.event(
+                "content_block_stop",
+                {"type": "content_block_stop", "index": index},
+            ),
+        ]
 
     def _start_reasoning_wire_block(self, block: _WireBlock) -> str:
         block.index = self._allocate_index()
@@ -390,7 +380,8 @@ async def aggregate_inference_events_to_message(
                         "signature": _reasoning_signature(event.artifacts),
                     }
                     content.append(block)
-                content.extend(_redacted_reasoning_blocks(event.artifacts))
+                elif event.artifacts:
+                    content.extend(_redacted_reasoning_blocks(event.artifacts))
             elif isinstance(event, ToolCallCompleted):
                 tool_input: JsonValue = {}
                 if event.arguments.strip():
@@ -472,43 +463,22 @@ def _usage_value(measurement: TokenMeasurement | None) -> int:
 def _tool_extra_content(
     artifacts: tuple[ReplayArtifact, ...],
 ) -> JsonObject | None:
-    result: JsonObject = {}
-    for artifact in artifacts:
-        if artifact.kind is ReplayArtifactKind.THOUGHT_SIGNATURE:
-            result["google"] = {"thought_signature": replay_payload_text(artifact)}
-        elif artifact.kind is ReplayArtifactKind.TOOL_EXTRA_CONTENT and isinstance(
-            artifact.payload, Mapping
-        ):
-            result.update(
-                {
-                    str(key): _json_value(value)
-                    for key, value in artifact.payload.items()
-                }
-            )
-    return result or None
+    return {"fcc_replay": encode_replay_envelope(artifacts)} if artifacts else None
 
 
 def _reasoning_signature(artifacts: tuple[ReplayArtifact, ...]) -> str:
-    for artifact in artifacts:
-        if artifact.kind is ReplayArtifactKind.THINKING_SIGNATURE:
-            return replay_payload_text(artifact)
-    return ""
+    return encode_replay_envelope(artifacts) if artifacts else ""
 
 
 def _redacted_reasoning_blocks(
     artifacts: tuple[ReplayArtifact, ...],
 ) -> list[JsonValue]:
+    if not artifacts:
+        return []
     return [
         {
             "type": "redacted_thinking",
-            "data": replay_payload_text(artifact),
-        }
-        for artifact in artifacts
-        if artifact.kind
-        in {
-            ReplayArtifactKind.REDACTED_THINKING,
-            ReplayArtifactKind.ENCRYPTED_REASONING,
-            ReplayArtifactKind.REASONING_DETAILS,
+            "data": encode_replay_envelope(artifacts),
         }
     ]
 

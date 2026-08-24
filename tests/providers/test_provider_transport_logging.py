@@ -10,7 +10,7 @@ import pytest
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
-from tests.providers.request_factory import make_messages_request
+from tests.providers.request_factory import canonical_request, make_messages_request
 from tests.providers.support import (
     immediate_admission,
     make_provider_config,
@@ -42,7 +42,13 @@ async def test_stream_failure_default_logs_exclude_exception_text(caplog) -> Non
         caplog.at_level(logging.ERROR),
         pytest.raises(ExecutionFailure),
     ):
-        [event async for event in provider.stream_response(make_messages_request())]
+        [
+            event
+            async for event in provider.stream_response(
+                canonical_request(make_messages_request()),
+                provider_model=(make_messages_request()).model,
+            )
+        ]
 
     messages = " | ".join(record.getMessage() for record in caplog.records)
     assert "SECRET_OPENAI_COMPAT" not in messages
@@ -66,7 +72,13 @@ async def test_stream_failure_default_logs_cause_types_only(caplog) -> None:
         caplog.at_level(logging.ERROR),
         pytest.raises(ExecutionFailure),
     ):
-        [event async for event in provider.stream_response(make_messages_request())]
+        [
+            event
+            async for event in provider.stream_response(
+                canonical_request(make_messages_request()),
+                provider_model=(make_messages_request()).model,
+            )
+        ]
 
     messages = " | ".join(record.getMessage() for record in caplog.records)
     assert "SECRET_CAUSE_DETAIL" not in messages
@@ -89,7 +101,13 @@ async def test_stream_failure_verbose_traceback_redacts_credentials(caplog) -> N
         caplog.at_level(logging.ERROR),
         pytest.raises(ExecutionFailure),
     ):
-        [event async for event in provider.stream_response(make_messages_request())]
+        [
+            event
+            async for event in provider.stream_response(
+                canonical_request(make_messages_request()),
+                provider_model=(make_messages_request()).model,
+            )
+        ]
 
     messages = " | ".join(record.getMessage() for record in caplog.records)
     assert "api_key=<redacted>" in messages

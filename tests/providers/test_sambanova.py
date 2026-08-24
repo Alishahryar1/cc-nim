@@ -8,7 +8,7 @@ import pytest
 from free_claude_code.config.provider_catalog import SAMBANOVA_DEFAULT_BASE
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from tests.inference_support import collect_anthropic
-from tests.providers.request_factory import make_messages_request
+from tests.providers.request_factory import canonical_request, make_messages_request
 from tests.providers.support import (
     immediate_admission,
     make_provider_config,
@@ -67,7 +67,9 @@ def test_init_strips_trailing_slash(sambanova_config):
 
 def test_build_request_body_basic(sambanova_provider):
     """Basic request body conversion attaches system message and keeps max_tokens."""
-    body = sambanova_provider._build_request_body(make_request())
+    body = sambanova_provider._build_request_body(
+        canonical_request(make_request()), provider_model=(make_request()).model
+    )
 
     assert body["model"] == "Meta-Llama-3.3-70B-Instruct"
     assert body["messages"][0]["role"] == "system"
@@ -78,7 +80,9 @@ def test_build_request_body_basic(sambanova_provider):
 def test_build_request_body_preserves_caller_extra_body(sambanova_provider):
     req = make_request(extra_body={"metadata": {"user": "u1"}})
 
-    body = sambanova_provider._build_request_body(req)
+    body = sambanova_provider._build_request_body(
+        canonical_request(req), provider_model=(req).model
+    )
 
     eb = body.get("extra_body")
     assert isinstance(eb, dict)
@@ -99,8 +103,9 @@ def test_build_request_body_uses_only_documented_reasoning_efforts(
     sambanova_provider, reasoning, expected
 ):
     body = sambanova_provider._build_request_body(
-        make_request(),
+        canonical_request(make_request()),
         reasoning=reasoning,
+        provider_model=(make_request()).model,
     )
 
     assert body.get("reasoning_effort") == expected
@@ -131,7 +136,9 @@ async def test_stream_response_text(sambanova_provider):
         mock_create.return_value = mock_stream()
 
         events = await collect_anthropic(
-            sambanova_provider.stream_response(make_request())
+            sambanova_provider.stream_response(
+                canonical_request(make_request()), provider_model=(make_request()).model
+            )
         )
 
     assert any(
@@ -166,7 +173,9 @@ async def test_stream_response_tool_call(sambanova_provider):
         mock_create.return_value = mock_stream()
 
         events = await collect_anthropic(
-            sambanova_provider.stream_response(make_request())
+            sambanova_provider.stream_response(
+                canonical_request(make_request()), provider_model=(make_request()).model
+            )
         )
 
     assert any(
@@ -202,7 +211,9 @@ async def test_stream_response_reasoning_content(sambanova_provider):
         mock_create.return_value = mock_stream()
 
         events = await collect_anthropic(
-            sambanova_provider.stream_response(make_request())
+            sambanova_provider.stream_response(
+                canonical_request(make_request()), provider_model=(make_request()).model
+            )
         )
 
     assert any(

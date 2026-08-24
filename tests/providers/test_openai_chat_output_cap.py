@@ -16,7 +16,7 @@ from free_claude_code.providers.openai_chat.output_cap import (
     clamp_output_tokens,
     parse_output_token_cap,
 )
-from tests.providers.request_factory import make_messages_request
+from tests.providers.request_factory import canonical_request, make_messages_request
 from tests.providers.support import (
     immediate_admission,
     make_provider_config,
@@ -241,11 +241,20 @@ def groq_provider():
 @pytest.mark.asyncio
 async def test_create_stream_clamps_and_learns_on_cap_rejection(groq_provider):
     body = groq_provider._build_request_body(
-        make_messages_request(
-            "llama-3.3-70b-versatile",
-            max_tokens=64000,
-            thinking={"enabled": False},
-        )
+        canonical_request(
+            make_messages_request(
+                "llama-3.3-70b-versatile",
+                max_tokens=64000,
+                thinking={"enabled": False},
+            )
+        ),
+        provider_model=(
+            make_messages_request(
+                "llama-3.3-70b-versatile",
+                max_tokens=64000,
+                thinking={"enabled": False},
+            )
+        ).model,
     )
     assert body["max_completion_tokens"] == 64000
     model = body["model"]
@@ -281,11 +290,20 @@ async def test_create_stream_clamps_and_learns_on_cap_rejection(groq_provider):
 @pytest.mark.asyncio
 async def test_learned_cap_clamps_next_request_without_a_400(groq_provider):
     body = groq_provider._build_request_body(
-        make_messages_request(
-            "llama-3.3-70b-versatile",
-            max_tokens=64000,
-            thinking={"enabled": False},
-        )
+        canonical_request(
+            make_messages_request(
+                "llama-3.3-70b-versatile",
+                max_tokens=64000,
+                thinking={"enabled": False},
+            )
+        ),
+        provider_model=(
+            make_messages_request(
+                "llama-3.3-70b-versatile",
+                max_tokens=64000,
+                thinking={"enabled": False},
+            )
+        ).model,
     )
     model = body["model"]
     groq_provider._model_output_caps[model] = 40960
@@ -307,11 +325,20 @@ async def test_learned_cap_clamps_next_request_without_a_400(groq_provider):
 @pytest.mark.asyncio
 async def test_unrelated_400_is_not_clamped_and_propagates(groq_provider):
     body = groq_provider._build_request_body(
-        make_messages_request(
-            "llama-3.3-70b-versatile",
-            max_tokens=100,
-            thinking={"enabled": False},
-        )
+        canonical_request(
+            make_messages_request(
+                "llama-3.3-70b-versatile",
+                max_tokens=100,
+                thinking={"enabled": False},
+            )
+        ),
+        provider_model=(
+            make_messages_request(
+                "llama-3.3-70b-versatile",
+                max_tokens=100,
+                thinking={"enabled": False},
+            )
+        ).model,
     )
     create = AsyncMock(side_effect=_BadRequest("messages: invalid role 'wizard'"))
 
@@ -332,11 +359,20 @@ async def test_unrelated_400_is_not_clamped_and_propagates(groq_provider):
 @pytest.mark.asyncio
 async def test_mixed_field_400_does_not_retry_or_poison_learned_cap(groq_provider):
     body = groq_provider._build_request_body(
-        make_messages_request(
-            "llama-3.3-70b-versatile",
-            max_tokens=64000,
-            thinking={"enabled": False},
-        )
+        canonical_request(
+            make_messages_request(
+                "llama-3.3-70b-versatile",
+                max_tokens=64000,
+                thinking={"enabled": False},
+            )
+        ),
+        provider_model=(
+            make_messages_request(
+                "llama-3.3-70b-versatile",
+                max_tokens=64000,
+                thinking={"enabled": False},
+            )
+        ).model,
     )
     error_body = {
         "param": "temperature",

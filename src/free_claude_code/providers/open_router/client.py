@@ -2,7 +2,6 @@
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
-from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.reasoning import ReasoningEffort
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
@@ -12,7 +11,7 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProvider,
     OpenAIChatRequestPolicy,
     ReasoningObject,
-    apply_reasoning_details_replay,
+    ReasoningReplayMode,
     validate_extra_body_does_not_override_canonical_fields,
 )
 
@@ -48,6 +47,5 @@ class OpenRouterProvider(OpenAIChatProvider):
 _PROFILE = OpenAIChatProfile(
     _REQUEST_POLICY,
     ReasoningObject(tuple((effort, effort.value) for effort in ReasoningEffort)),
-    postprocessors=(apply_reasoning_details_replay,),
     structured_reasoning_details=True,
 )

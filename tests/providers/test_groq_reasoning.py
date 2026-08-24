@@ -18,7 +18,7 @@ from free_claude_code.providers.groq.client import (
     _rewrite_reasoning_effort,
 )
 from tests.inference_support import collect_anthropic
-from tests.providers.request_factory import make_messages_request
+from tests.providers.request_factory import canonical_request, make_messages_request
 from tests.providers.support import (
     capture_openai_chat_wire_body,
     immediate_admission,
@@ -332,7 +332,11 @@ async def test_initial_reasoning_policy_reaches_sdk_wire(
     policy: ReasoningPolicy,
     expected: str | None,
 ) -> None:
-    body = _provider()._build_request_body(_request(), reasoning=policy)
+    body = _provider()._build_request_body(
+        canonical_request(_request()),
+        reasoning=policy,
+        provider_model=(_request()).model,
+    )
 
     wire = await capture_openai_chat_wire_body(body)
 
@@ -343,7 +347,11 @@ async def test_initial_reasoning_policy_reaches_sdk_wire(
 async def test_exact_issue_retries_with_default_and_learns_model() -> None:
     provider = _provider()
     policy = ReasoningPolicy.on(effort=ReasoningEffort.HIGH)
-    body = provider._build_request_body(_request(), reasoning=policy)
+    body = provider._build_request_body(
+        canonical_request(_request()),
+        reasoning=policy,
+        provider_model=(_request()).model,
+    )
     create = AsyncMock(side_effect=[_vocabulary_error(), object()])
 
     with patch.object(provider._client.chat.completions, "create", create):
@@ -362,7 +370,11 @@ async def test_exact_issue_retries_with_default_and_learns_model() -> None:
         _MODEL: frozenset({"none", "default"})
     }
 
-    next_body = provider._build_request_body(_request(), reasoning=policy)
+    next_body = provider._build_request_body(
+        canonical_request(_request()),
+        reasoning=policy,
+        provider_model=(_request()).model,
+    )
     assert next_body["reasoning_effort"] == "default"
     next_create = AsyncMock(return_value=object())
     with patch.object(provider._client.chat.completions, "create", next_create):
@@ -380,7 +392,11 @@ def test_cached_none_default_preserves_off() -> None:
     provider = _provider()
     provider._model_reasoning_vocabularies[_MODEL] = frozenset({"none", "default"})
 
-    body = provider._build_request_body(_request(), reasoning=ReasoningPolicy.off())
+    body = provider._build_request_body(
+        canonical_request(_request()),
+        reasoning=ReasoningPolicy.off(),
+        provider_model=(_request()).model,
+    )
 
     assert body["reasoning_effort"] == "none"
 
@@ -403,8 +419,9 @@ def test_cached_named_vocabulary_preserves_enabled_efforts(
     )
 
     body = provider._build_request_body(
-        _request(),
+        canonical_request(_request()),
         reasoning=ReasoningPolicy.on(effort=effort),
+        provider_model=(_request()).model,
     )
 
     assert body["reasoning_effort"] == expected
@@ -416,7 +433,11 @@ def test_cached_named_vocabulary_omits_unrepresentable_off() -> None:
         {"low", "medium", "high"}
     )
 
-    body = provider._build_request_body(_request(), reasoning=ReasoningPolicy.off())
+    body = provider._build_request_body(
+        canonical_request(_request()),
+        reasoning=ReasoningPolicy.off(),
+        provider_model=(_request()).model,
+    )
 
     assert "reasoning_effort" not in body
 
@@ -425,8 +446,9 @@ def test_cached_named_vocabulary_omits_unrepresentable_off() -> None:
 async def test_unknown_vocabulary_retries_without_effort_and_negative_caches() -> None:
     provider = _provider()
     body = provider._build_request_body(
-        _request(),
+        canonical_request(_request()),
         reasoning=ReasoningPolicy.on(effort=ReasoningEffort.HIGH),
+        provider_model=(_request()).model,
     )
     create = AsyncMock(
         side_effect=[
@@ -447,8 +469,9 @@ async def test_unknown_vocabulary_retries_without_effort_and_negative_caches() -
     assert "reasoning_effort" not in used_body
     assert provider._model_reasoning_vocabularies[_MODEL] == frozenset()
     assert "reasoning_effort" not in provider._build_request_body(
-        _request(),
+        canonical_request(_request()),
         reasoning=ReasoningPolicy.on(effort=ReasoningEffort.HIGH),
+        provider_model=(_request()).model,
     )
 
 
@@ -457,9 +480,15 @@ def test_reasoning_cache_isolated_by_opaque_model_id() -> None:
     policy = ReasoningPolicy.on(effort=ReasoningEffort.HIGH)
     provider._model_reasoning_vocabularies[_MODEL] = frozenset({"none", "default"})
 
-    learned = provider._build_request_body(_request(_MODEL), reasoning=policy)
+    learned = provider._build_request_body(
+        canonical_request(_request(_MODEL)),
+        reasoning=policy,
+        provider_model=(_request(_MODEL)).model,
+    )
     unlearned = provider._build_request_body(
-        _request("opaque-model-b"), reasoning=policy
+        canonical_request(_request("opaque-model-b")),
+        reasoning=policy,
+        provider_model=(_request("opaque-model-b")).model,
     )
 
     assert learned["reasoning_effort"] == "default"
@@ -471,8 +500,16 @@ async def test_concurrent_first_requests_can_learn_without_state_corruption() ->
     provider = _provider()
     policy = ReasoningPolicy.on(effort=ReasoningEffort.HIGH)
     bodies = [
-        provider._build_request_body(_request(), reasoning=policy),
-        provider._build_request_body(_request(), reasoning=policy),
+        provider._build_request_body(
+            canonical_request(_request()),
+            reasoning=policy,
+            provider_model=(_request()).model,
+        ),
+        provider._build_request_body(
+            canonical_request(_request()),
+            reasoning=policy,
+            provider_model=(_request()).model,
+        ),
     ]
     initial_calls = 0
     release_initial_errors = asyncio.Event()
@@ -517,7 +554,11 @@ async def test_stale_cache_self_heals_without_guessing_original_effort() -> None
     provider = _provider()
     policy = ReasoningPolicy.on(effort=ReasoningEffort.HIGH)
     provider._model_reasoning_vocabularies[_MODEL] = frozenset({"none", "default"})
-    cached_body = provider._build_request_body(_request(), reasoning=policy)
+    cached_body = provider._build_request_body(
+        canonical_request(_request()),
+        reasoning=policy,
+        provider_model=(_request()).model,
+    )
     assert cached_body["reasoning_effort"] == "default"
     create = AsyncMock(
         side_effect=[
@@ -538,7 +579,11 @@ async def test_stale_cache_self_heals_without_guessing_original_effort() -> None
     assert provider._model_reasoning_vocabularies[_MODEL] == frozenset(
         {"low", "medium", "high"}
     )
-    rebuilt = provider._build_request_body(_request(), reasoning=policy)
+    rebuilt = provider._build_request_body(
+        canonical_request(_request()),
+        reasoning=policy,
+        provider_model=(_request()).model,
+    )
     assert rebuilt["reasoning_effort"] == "high"
 
 
@@ -546,8 +591,9 @@ async def test_stale_cache_self_heals_without_guessing_original_effort() -> None
 async def test_unrelated_400_propagates_without_cache_poisoning() -> None:
     provider = _provider()
     body = provider._build_request_body(
-        _request(),
+        canonical_request(_request()),
         reasoning=ReasoningPolicy.on(effort=ReasoningEffort.HIGH),
+        provider_model=(_request()).model,
     )
     create = AsyncMock(side_effect=_BadRequest("messages: invalid role 'wizard'"))
 
@@ -569,8 +615,9 @@ async def test_unrelated_400_propagates_without_cache_poisoning() -> None:
 async def test_nested_unrelated_allow_list_cannot_retry_or_poison_cache() -> None:
     provider = _provider()
     body = provider._build_request_body(
-        _request(),
+        canonical_request(_request()),
         reasoning=ReasoningPolicy.off(),
+        provider_model=(_request()).model,
     )
     error = _BadRequest(
         "invalid request",
@@ -600,8 +647,9 @@ async def test_nested_unrelated_allow_list_cannot_retry_or_poison_cache() -> Non
 async def test_advertised_current_value_does_not_retry_or_cache() -> None:
     provider = _provider()
     body = provider._build_request_body(
-        _request(),
+        canonical_request(_request()),
         reasoning=ReasoningPolicy.on(effort=ReasoningEffort.HIGH),
+        provider_model=(_request()).model,
     )
     create = AsyncMock(side_effect=_vocabulary_error("`low`, `medium`, or `high`"))
 
@@ -623,7 +671,11 @@ async def test_advertised_current_value_does_not_retry_or_cache() -> None:
 async def test_last_attempt_learns_but_does_not_exceed_budget() -> None:
     provider = _provider(max_attempts=1)
     policy = ReasoningPolicy.on(effort=ReasoningEffort.HIGH)
-    body = provider._build_request_body(_request(), reasoning=policy)
+    body = provider._build_request_body(
+        canonical_request(_request()),
+        reasoning=policy,
+        provider_model=(_request()).model,
+    )
     create = AsyncMock(side_effect=_vocabulary_error())
 
     with (
@@ -641,7 +693,11 @@ async def test_last_attempt_learns_but_does_not_exceed_budget() -> None:
         {"none", "default"}
     )
     assert (
-        provider._build_request_body(_request(), reasoning=policy)["reasoning_effort"]
+        provider._build_request_body(
+            canonical_request(_request()),
+            reasoning=policy,
+            provider_model=(_request()).model,
+        )["reasoning_effort"]
         == "default"
     )
 
@@ -650,8 +706,9 @@ async def test_last_attempt_learns_but_does_not_exceed_budget() -> None:
 async def test_output_cap_and_reasoning_corrections_share_one_session() -> None:
     provider = _provider()
     body = provider._build_request_body(
-        make_messages_request(_MODEL, max_tokens=64_000),
+        canonical_request(make_messages_request(_MODEL, max_tokens=64_000)),
         reasoning=ReasoningPolicy.on(effort=ReasoningEffort.HIGH),
+        provider_model=(make_messages_request(_MODEL, max_tokens=64_000)).model,
     )
     cap_error = _BadRequest("max_completion_tokens must be less than or equal to 40960")
     create = AsyncMock(side_effect=[cap_error, _vocabulary_error(), object()])
@@ -679,8 +736,9 @@ async def test_output_cap_and_reasoning_corrections_share_one_session() -> None:
 async def test_corrected_request_cannot_enter_vocabulary_retry_loop() -> None:
     provider = _provider()
     body = provider._build_request_body(
-        _request(),
+        canonical_request(_request()),
         reasoning=ReasoningPolicy.on(effort=ReasoningEffort.HIGH),
+        provider_model=(_request()).model,
     )
     create = AsyncMock(side_effect=[_vocabulary_error(), _vocabulary_error()])
 
@@ -708,8 +766,9 @@ async def test_reasoning_correction_emits_one_downstream_lifecycle() -> None:
         raw = "".join(
             await collect_anthropic(
                 provider.stream_response(
-                    request,
+                    canonical_request(request),
                     reasoning=policy,
+                    provider_model=(request).model,
                 )
             )
         )

@@ -14,6 +14,7 @@ from free_claude_code.config.provider_catalog import XAI_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
+from tests.providers.request_factory import canonical_request
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
@@ -81,8 +82,9 @@ def test_build_request_body_preserves_common_chat_tools_and_images(
     )
 
     body = xai_provider._build_request_body(
-        request,
+        canonical_request(request),
         reasoning=reasoning_for(request),
+        provider_model=(request).model,
     )
 
     assert body["model"] == "grok-4.5"
@@ -109,7 +111,9 @@ def test_build_request_body_does_not_invent_catalog_wide_reasoning_control(
         }
     )
 
-    body = xai_provider._build_request_body(request, reasoning=reasoning)
+    body = xai_provider._build_request_body(
+        canonical_request(request), reasoning=reasoning, provider_model=(request).model
+    )
 
     assert "reasoning_effort" not in body
     assert "reasoning" not in body.get("extra_body", {})
@@ -136,8 +140,9 @@ def test_build_request_body_replays_prior_reasoning_content(
     )
 
     body = xai_provider._build_request_body(
-        request,
+        canonical_request(request),
         reasoning=reasoning_for(request),
+        provider_model=(request).model,
     )
 
     assert body["messages"][1] == {

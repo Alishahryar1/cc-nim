@@ -20,6 +20,7 @@ from free_claude_code.core.anthropic.stream_contracts import (
 from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.providers.openai_responses import OpenAIResponsesTransport
 from tests.inference_support import collect_anthropic
+from tests.providers.request_factory import canonical_request
 from tests.providers.support import REASONING_ON, immediate_admission
 
 
@@ -135,11 +136,12 @@ async def _collect(
 ) -> list[str]:
     return await collect_anthropic(
         transport.stream_response(
-            request or _request(),
+            canonical_request(request or _request()),
             input_tokens=11,
             request_id="req_responses",
             response_model="public-model",
             reasoning=REASONING_ON,
+            provider_model=(request or _request()).model,
         )
     )
 
@@ -371,11 +373,12 @@ async def test_post_commit_truncation_is_not_replayed() -> None:
     try:
         with pytest.raises(ExecutionFailure):
             async for event in _transport(client).stream_response(
-                _request(),
+                canonical_request(_request()),
                 input_tokens=1,
                 request_id="req_committed",
                 response_model="public-model",
                 reasoning=REASONING_ON,
+                provider_model=(_request()).model,
             ):
                 chunks.extend(presenter.present(event))
     finally:
@@ -429,6 +432,10 @@ async def test_preflight_rejects_fields_responses_cannot_represent() -> None:
 
     try:
         with pytest.raises(InvalidRequestError, match="stop_sequences"):
-            transport.preflight_stream(request, reasoning=REASONING_ON)
+            transport.preflight_stream(
+                canonical_request(request),
+                reasoning=REASONING_ON,
+                provider_model=(request).model,
+            )
     finally:
         await client.close()

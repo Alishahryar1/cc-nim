@@ -4,7 +4,7 @@ from collections.abc import Mapping
 from copy import deepcopy
 from typing import Any
 
-from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.inference import InferenceRequest
 from free_claude_code.core.reasoning import (
     DEFAULT_REASONING_POLICY,
     ReasoningPolicy,
@@ -16,6 +16,10 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProfile,
     OpenAIChatProvider,
     build_openai_chat_request_body,
+)
+from free_claude_code.providers.openai_compat import (
+    OpenAIToolNameCodec,
+    openai_replay_scope,
 )
 
 from .thought_signatures import apply_google_thought_signatures
@@ -59,14 +63,22 @@ class GoogleOpenAIProvider(OpenAIChatProvider):
 
     def _build_request_body(
         self,
-        request: MessagesRequest,
+        request: InferenceRequest,
         *,
+        provider_model: str,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> dict[str, Any]:
         return build_openai_chat_request_body(
             request,
+            provider_model=provider_model,
             reasoning=reasoning,
             policy=self._profile.request_policy,
+            tool_names=OpenAIToolNameCodec.from_request(request),
+            replay_scope=openai_replay_scope(
+                self._provider_name,
+                provider_model,
+                replay_format="chat-completions",
+            ),
             postprocessors=(
                 lambda body, _request_data, _policy: apply_google_thought_signatures(
                     body,

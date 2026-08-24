@@ -12,6 +12,7 @@ from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
+from tests.providers.request_factory import canonical_request
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
@@ -65,7 +66,9 @@ def test_preserves_upstream_reasoning_default(
         }
     )
 
-    body = chutes_provider._build_request_body(request, reasoning=reasoning)
+    body = chutes_provider._build_request_body(
+        canonical_request(request), reasoning=reasoning, provider_model=(request).model
+    )
 
     assert "reasoning_effort" not in body
     assert "reasoning" not in body
@@ -108,8 +111,9 @@ def test_does_not_replay_reasoning_but_preserves_tool_history(
     )
 
     body = chutes_provider._build_request_body(
-        request,
+        canonical_request(request),
         reasoning=reasoning_for(request),
+        provider_model=(request).model,
     )
 
     assistant = body["messages"][1]

@@ -8,15 +8,14 @@ from typing import Literal
 
 from loguru import logger
 
-from free_claude_code.core.anthropic import (
-    Message,
-    SystemContent,
-    Tool,
-    anthropic_request_snapshot,
-    get_token_count,
-)
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
-from free_claude_code.core.inference import InferenceEvent, inference_event_size
+from free_claude_code.core.inference import (
+    InferenceEvent,
+    InferenceRequest,
+    get_inference_token_count,
+    inference_event_size,
+    inference_request_snapshot,
+)
 from free_claude_code.core.trace import (
     close_stream_input,
     trace_event,
@@ -24,24 +23,21 @@ from free_claude_code.core.trace import (
 )
 
 from .ports import ProviderResolver
-from .routing import ProviderModelTarget, RoutedMessagesRequest
+from .routing import ProviderModelTarget, RoutedInferenceRequest
 
-TokenCounter = Callable[
-    [list[Message], str | list[SystemContent] | None, list[Tool] | None],
-    int,
-]
+TokenCounter = Callable[[InferenceRequest], int]
 WireApi = Literal["messages", "responses"]
 
 
 class ProviderExecutor:
-    """Resolve a provider and execute one routed Anthropic Messages stream."""
+    """Resolve a provider and execute one routed canonical inference stream."""
 
     def __init__(
         self,
         provider_resolver: ProviderResolver,
         *,
         progress_timeout_seconds: float,
-        token_counter: TokenCounter = get_token_count,
+        token_counter: TokenCounter = get_inference_token_count,
         generation_id: int | None = None,
         log_raw_payloads: bool = False,
     ) -> None:
@@ -143,7 +139,7 @@ class ProviderExecutor:
 
     def stream(
         self,
-        routed: RoutedMessagesRequest,
+        routed: RoutedInferenceRequest,
         *,
         wire_api: WireApi,
         raw_log_label: str,
@@ -153,9 +149,9 @@ class ProviderExecutor:
         """Preflight synchronously, then return the traced provider stream."""
         primary = routed.resolved.primary
         primary_provider = self._provider_resolver(primary.provider_id)
-        primary_request = routed.request.model_copy(deep=True)
         primary_provider.preflight_stream(
-            primary_request,
+            routed.request,
+            provider_model=primary.provider_model,
             reasoning=routed.reasoning,
         )
         candidates = (primary, *routed.resolved.fallbacks)
@@ -185,8 +181,7 @@ class ProviderExecutor:
             route_trace["generation_id"] = self._generation_id
         trace_event(**route_trace)
 
-        request_snapshot = anthropic_request_snapshot(routed.request)
-        request_snapshot["model"] = gateway_model
+        request_snapshot = inference_request_snapshot(routed.request)
         trace_event(
             stage="ingress",
             event=(
@@ -195,7 +190,7 @@ class ProviderExecutor:
                 else "free_claude_code.api.request.received"
             ),
             source="api",
-            message_count=len(routed.request.messages),
+            message_count=routed.request.message_count,
             snapshot=request_snapshot,
             request_id=request_id,
         )
@@ -203,11 +198,7 @@ class ProviderExecutor:
         if self._log_raw_payloads:
             logger.debug(f"{raw_log_label} [{{}}]: {{}}", request_id, raw_log_payload)
 
-        input_tokens = self._token_counter(
-            routed.request.messages,
-            routed.request.system,
-            routed.request.tools,
-        )
+        input_tokens = self._token_counter(routed.request)
 
         async def provider_body() -> AsyncIterator[InferenceEvent]:
             loop = asyncio.get_running_loop()
@@ -218,17 +209,10 @@ class ProviderExecutor:
                     if index == 0
                     else self._provider_resolver(target.provider_id)
                 )
-                candidate_request = (
-                    primary_request
-                    if index == 0
-                    else routed.request.model_copy(
-                        update={"model": target.provider_model},
-                        deep=True,
-                    )
-                )
                 if index > 0:
                     provider.preflight_stream(
-                        candidate_request,
+                        routed.request,
+                        provider_model=target.provider_model,
                         reasoning=routed.reasoning,
                     )
 
@@ -237,7 +221,8 @@ class ProviderExecutor:
                 advance_failure: ExecutionFailure | None = None
                 try:
                     provider_stream = provider.stream_response(
-                        candidate_request,
+                        routed.request,
+                        provider_model=target.provider_model,
                         input_tokens=input_tokens,
                         request_id=request_id,
                         response_model=gateway_model,

@@ -16,8 +16,11 @@ from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config import env_migrations, paths
 from free_claude_code.config.env_migrations import recognized_env_keys
 from free_claude_code.config.loader import clear_settings_cache, get_settings
-from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.core.inference import InferenceEvent, InferenceStreamLedger
+from free_claude_code.core.inference import (
+    InferenceEvent,
+    InferenceRequest,
+    InferenceStreamLedger,
+)
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.runtime import ProviderRuntime
@@ -52,8 +55,9 @@ class _ModelListingProvider(BaseProvider):
 
     def preflight_stream(
         self,
-        request: MessagesRequest,
+        request: InferenceRequest,
         *,
+        provider_model: str,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> None:
         return None
@@ -68,9 +72,10 @@ class _ModelListingProvider(BaseProvider):
 
     async def stream_response(
         self,
-        request: MessagesRequest,
+        request: InferenceRequest,
         input_tokens: int = 0,
         *,
+        provider_model: str,
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,

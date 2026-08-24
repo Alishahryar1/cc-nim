@@ -2,11 +2,10 @@
 
 import sys
 from collections.abc import AsyncIterator, Mapping
-from dataclasses import replace
 from urllib.parse import urlsplit
 
 from free_claude_code.application.execution import ProviderExecutor
-from free_claude_code.application.routing import RoutedMessagesRequest
+from free_claude_code.application.routing import RoutedInferenceRequest
 from free_claude_code.core.anthropic import (
     aggregate_inference_events_to_message,
     iter_anthropic_sse,
@@ -25,7 +24,7 @@ from .streaming import stream_selected_web_search_response
 
 async def stream_automatic_web_search_response(
     provider_executor: ProviderExecutor,
-    routed: RoutedMessagesRequest,
+    routed: RoutedInferenceRequest,
     plan: AutomaticWebSearchPlan,
     *,
     request_id: str,
@@ -34,7 +33,6 @@ async def stream_automatic_web_search_response(
     log_raw_events: bool,
 ) -> AsyncIterator[str]:
     """Buffer one model decision, then replay it or execute one local search."""
-    translated = replace(routed, request=plan.request)
     trace_event(
         stage="routing",
         event="free_claude_code.api.web_search.automatic_recognized",
@@ -43,7 +41,7 @@ async def stream_automatic_web_search_response(
         model=routed.resolved.original_model,
     )
     provider_stream = provider_executor.stream(
-        translated,
+        routed,
         wire_api="messages",
         raw_log_label="FULL_PAYLOAD",
         raw_log_payload=plan.request.model_dump(),

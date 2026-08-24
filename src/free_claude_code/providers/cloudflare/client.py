@@ -10,7 +10,6 @@ import httpx
 from free_claude_code.application.errors import ApplicationUnavailableError
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.provider_catalog import CLOUDFLARE_AI_REST_ROOT
-from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.inference import (
     InferenceEvent,
     InferenceStreamLedger,
@@ -30,6 +29,7 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProfile,
     OpenAIChatProvider,
     OpenAIChatRequestPolicy,
+    ReasoningReplayMode,
     validate_extra_body_does_not_override_canonical_fields,
 )
 
