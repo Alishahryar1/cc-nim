@@ -14,6 +14,7 @@ from free_claude_code.application.model_metadata import (
 )
 from free_claude_code.application.ports import RequestRuntimePort
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.gateway_model_ids import seed_picker_aliases
 from free_claude_code.core.trace import trace_event
 from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.runtime import ProviderRuntime
@@ -355,6 +356,13 @@ class ProviderRuntimeManager:
         self._run_model_catalog_publication(publisher.ensure_exists)
 
     def _publish_model_catalog(self) -> None:
+        # Every successful cache mutation funnels through here, so reconcile
+        # the process-global picker aliases with the same inventory snapshot
+        # the catalog is about to expose. Deterministic numbering keeps alias
+        # ids stable across refreshes that do not change the sorted ref set.
+        seed_picker_aliases(
+            info.model_id for info in self._model_cache.cached_prefixed_model_infos()
+        )
         publisher = self._model_catalog_publisher
         if publisher is None:
             return
