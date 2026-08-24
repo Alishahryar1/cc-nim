@@ -9,8 +9,33 @@ Enable the existing `fcc-desktop` tray shell on Linux with feature parity to
 Windows/macOS, plus graceful degradation to a foreground console mode when no
 tray backend is available.
 
-Non-goals: Claude Desktop integration (picker aliasing, `claude_desktop_config.json`
-merge) — parked as separate future work.
+Non-goal: picker aliasing — upstream's `/v1/models` already advertises canonical
+Anthropic model IDs, and `ModelRouter` keyword-routes them to settings slots, so
+no client-side aliases are needed.
+
+## Claude Desktop rerouting (follow-up)
+
+Claude Desktop is rerouted through the FCC server without a new entrypoint;
+everything rides on the existing `fcc-desktop` command.
+
+### Components
+
+| Component | Change |
+|---|---|
+| `cli/claude_desktop.py` (new) | `configure`/`unconfigure` merge of `modelDiscoveryEnabled` + `inference` gateway block into `claude_desktop_config.json`; atomic write; aborts with log on malformed JSON; preserves foreign keys. Gateway URL and auth key derive from live `Settings` (`local_proxy_root_url`, `proxy_auth_token`) — never hardcoded. Also locates the binary (PATH + platform candidates) and spawns it with `--ignore-certificate-errors`. `python -m free_claude_code.cli.claude_desktop --configure|--unconfigure` for explicit runs |
+| `cli/desktop.py` | `launch_desktop()` best-effort merges the routing block after preflight; failure is logged, never fatal |
+| `cli/desktop_tray.py` | "Launch Claude Desktop" menu item: re-merges config then spawns the binary; tray notification when the binary is missing or spawn fails |
+| `cli/desktop_console.py` | Prints a hint that Claude Desktop is auto-routed when installed |
+
+### Failure handling
+
+| Failure | Behavior |
+|---|---|
+| Config malformed | Merge skipped with warning; server continues |
+| Binary not found | Tray notification; no crash |
+| Spawn failure | Tray notification |
+
+## Testing
 
 ## Background
 
@@ -72,5 +97,11 @@ shutdown.
 1. Probe: import failure / construct failure / success → correct tuples
 2. Null tray: run blocks, stop releases, full controller lifecycle completes
 3. Entrypoint branch table per platform × probe result
-4. install.sh dry-run on Linux: `.desktop` contents, owned-file guard
-5. Live smoke on real Linux desktop: tray appears or fallback engages cleanly
+4. Config merge: missing file / idempotency / foreign-key preservation / partial
+   inference overwrite / malformed abort / roundtrip unconfigure
+5. Binary spawn: certificate flag forwarded, FileNotFoundError surfaced,
+   configure-then-spawn ordering, `--configure` never spawns
+6. Desktop integration: `launch_desktop` merges once with live settings and
+   swallows failures; tray item spawns or notifies; console hint printed
+7. install.sh dry-run on Linux: `.desktop` contents, owned-file guard
+8. Live smoke on real Linux desktop: tray appears or fallback engages cleanly

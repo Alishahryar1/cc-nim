@@ -37,4 +37,9 @@ def launch() -> None:
         flush=True,
     )
     print(f"Reason: {reason}", flush=True)
+    print(
+        "Claude Desktop is routed through this server automatically when "
+        "installed; launch it from your app launcher as usual.",
+        flush=True,
+    )
     launch_desktop(ConsoleDesktopTray)

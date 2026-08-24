@@ -1,5 +1,6 @@
 """Linux desktop shell: tray probe, console fallback, and entrypoint routing."""
 
+import contextlib
 import sys
 import threading
 from unittest.mock import MagicMock, patch
@@ -177,3 +178,93 @@ def test_console_tray_lifecycle_drives_controller_to_clean_stop():
     # the idempotent stop; the null tray must survive both.
     assert events[0] == "server-run"
     assert events.count("server-stop") >= 1
+
+
+def test_merge_claude_desktop_config_forwards_settings():
+    from free_claude_code.cli.desktop import _merge_claude_desktop_config
+
+    settings = MagicMock(name="settings")
+    with (
+        patch(
+            "free_claude_code.cli.desktop.configure_claude_desktop_config"
+        ) as configure,
+    ):
+        _merge_claude_desktop_config(settings)
+
+    configure.assert_called_once_with(settings=settings)
+
+
+def test_merge_claude_desktop_config_swallows_failures():
+    from free_claude_code.cli.desktop import _merge_claude_desktop_config
+
+    with (
+        patch(
+            "free_claude_code.cli.desktop.configure_claude_desktop_config",
+            side_effect=OSError("disk full"),
+        ),
+    ):
+        _merge_claude_desktop_config(MagicMock(name="settings"))  # must not raise
+
+
+def test_launch_desktop_merges_claude_desktop_config():
+    from free_claude_code.cli import desktop as desktop_module
+
+    merged: list[object] = []
+
+    def fake_configure(path=None, settings=None):
+        merged.append(settings)
+        return True
+
+    supervisor = MagicMock()
+    supervisor.schedule_run.return_value = True
+    supervisor.status = ServerStatus.STOPPED
+
+    with (
+        patch.object(desktop_module, "load_server_settings") as load_settings,
+        patch.object(desktop_module.InterprocessFileLock, "acquire", return_value=True),
+        patch.object(desktop_module, "preflight_proxy", return_value=object()),
+        patch.object(desktop_module, "_merge_claude_desktop_config", fake_configure),
+        patch.object(desktop_module, "DesktopController", MagicMock()) as controller,
+    ):
+        load_settings.return_value = MagicMock(name="settings")
+        controller.return_value.run.side_effect = RuntimeError("stop loop")
+
+        with contextlib.suppress(RuntimeError):
+            desktop_module.launch_desktop(MagicMock())
+
+    assert len(merged) == 1
+
+
+def test_tray_launch_item_spawns_claude_desktop_without_notification():
+    from free_claude_code.cli.desktop_tray import PystrayDesktopTray
+
+    controller = MagicMock(spec=DesktopController)
+    with (
+        patch("free_claude_code.cli.desktop_tray._create_icon"),
+        patch("free_claude_code.cli.desktop_tray.Icon", MagicMock()),
+        patch(
+            "free_claude_code.cli.desktop_tray.ensure_configured_and_launch"
+        ) as spawn,
+    ):
+        tray = PystrayDesktopTray(controller)
+        tray._launch_claude_desktop(tray._icon, MagicMock(name="item"))
+
+    spawn.assert_called_once()
+
+
+def test_tray_launch_item_notifies_when_binary_missing():
+    from free_claude_code.cli.desktop_tray import PystrayDesktopTray
+
+    controller = MagicMock(spec=DesktopController)
+    with (
+        patch("free_claude_code.cli.desktop_tray._create_icon"),
+        patch("free_claude_code.cli.desktop_tray.Icon", MagicMock()),
+        patch(
+            "free_claude_code.cli.desktop_tray.ensure_configured_and_launch",
+            side_effect=FileNotFoundError("claude-desktop"),
+        ),
+    ):
+        tray = PystrayDesktopTray(controller)
+        tray._launch_claude_desktop(tray._icon, MagicMock(name="item"))
+
+    tray._icon.notify.assert_called_once()
