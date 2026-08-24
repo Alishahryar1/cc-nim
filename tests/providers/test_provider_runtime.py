@@ -57,6 +57,7 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProvider,
 )
 from free_claude_code.providers.openai_codex import OpenAICodexProvider
+from free_claude_code.providers.opencode import OpenCodeProvider
 from free_claude_code.providers.runtime import (
     ProviderRuntime,
     build_provider_config,
@@ -721,20 +722,22 @@ def test_opencode_zen_provider_config_uses_explicit_id_and_name():
     with patch("httpx.AsyncClient"):
         provider = create_provider("opencode_zen", _make_settings())
 
-    assert isinstance(provider, OpenAIChatProvider)
+    assert isinstance(provider, OpenCodeProvider)
     assert provider._base_url == "https://opencode.ai/zen/v1"
     assert provider._provider_name == "OPENCODE_ZEN"
     assert provider._api_key == "test_opencode_key"
+    assert provider._responses._admission is provider._admission
 
 
 def test_opencode_go_provider_config_uses_correct_base_url_and_name():
     with patch("httpx.AsyncClient"):
         provider = create_provider("opencode_go", _make_settings())
 
-    assert isinstance(provider, OpenAIChatProvider)
+    assert isinstance(provider, OpenCodeProvider)
     assert provider._base_url == "https://opencode.ai/zen/go/v1"
     assert provider._provider_name == "OPENCODE_GO"
     assert provider._api_key == "test_opencode_key"
+    assert provider._responses._admission is provider._admission
 
 
 def test_opencode_go_catalog_uses_opencode_api_key() -> None:
@@ -896,10 +899,10 @@ def test_create_provider_instantiates_each_builtin():
         "ollama": OpenAIChatProvider,
         "ollama_cloud": OpenAIChatProvider,
         "wafer": OpenAIChatProvider,
-        "opencode_zen": OpenAIChatProvider,
+        "opencode_zen": OpenCodeProvider,
         "poolside": OpenAIChatProvider,
         "llm7": OpenAIChatProvider,
-        "opencode_go": OpenAIChatProvider,
+        "opencode_go": OpenCodeProvider,
         "vercel": OpenAIChatProvider,
         "bedrock": OpenAIChatProvider,
         "huggingface": OpenAIChatProvider,

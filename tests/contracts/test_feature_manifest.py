@@ -19,6 +19,7 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProvider,
 )
 from free_claude_code.providers.openai_codex import OpenAICodexProvider
+from free_claude_code.providers.opencode import OpenCodeProvider
 from free_claude_code.providers.vertex import VertexProvider
 from smoke.features import FEATURE_INVENTORY
 
@@ -65,6 +66,8 @@ def test_product_coverage_is_not_satisfied_by_prereq_probes() -> None:
 def test_provider_and_platform_registries_include_builtins() -> None:
     specialized_provider_classes = {
         "openai": OpenAICodexProvider,
+        "opencode_zen": OpenCodeProvider,
+        "opencode_go": OpenCodeProvider,
         "nvidia_nim": NvidiaNimProvider,
         "open_router": OpenRouterProvider,
         "mistral": MistralProvider,
