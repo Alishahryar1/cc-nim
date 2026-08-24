@@ -131,7 +131,7 @@ def test_require_proxy_auth_rejects_missing_authorization():
     assert exc_info.value.detail == "Missing proxy authentication token"
 
 
-@pytest.mark.parametrize("header_name", ["x-api-key", "anthropic-auth-token"])
+@pytest.mark.parametrize("header_name", ["anthropic-auth-token"])
 def test_require_proxy_auth_rejects_legacy_header_only(header_name: str):
     request, settings = _request(headers={header_name: "secret"}, token="secret")
 
@@ -140,6 +140,22 @@ def test_require_proxy_auth_rejects_legacy_header_only(header_name: str):
 
     assert exc_info.value.status_code == 401
     assert exc_info.value.detail == "Missing proxy authentication token"
+
+
+def test_require_proxy_auth_accepts_exact_x_api_key_token():
+    request, settings = _request(headers={"x-api-key": "secret"}, token="secret")
+
+    require_proxy_auth(request, settings)
+
+
+def test_require_proxy_auth_rejects_wrong_x_api_key_token():
+    request, settings = _request(headers={"x-api-key": "wrong"}, token="secret")
+
+    with pytest.raises(HTTPException) as exc_info:
+        require_proxy_auth(request, settings)
+
+    assert exc_info.value.status_code == 401
+    assert exc_info.value.detail == "Invalid proxy authentication token"
 
 
 def test_require_proxy_auth_accepts_exact_bearer_token():

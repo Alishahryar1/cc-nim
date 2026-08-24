@@ -9,7 +9,7 @@ from tests.api.support import create_test_app
 app = create_test_app()
 
 
-def test_proxy_auth_requires_canonical_bearer_header():
+def test_proxy_auth_accepts_x_api_key_and_rejects_other_legacy_headers():
     client = TestClient(app)
     settings = Settings(proxy_auth_enabled=True, proxy_auth_token="s3cr3t")
     app.dependency_overrides[get_settings] = lambda: settings
@@ -26,17 +26,22 @@ def test_proxy_auth_requires_canonical_bearer_header():
         assert r.headers["request-id"].startswith("req_")
         assert "x-should-retry" not in r.headers
 
-        for headers in (
-            {"X-API-Key": "s3cr3t"},
-            {"anthropic-auth-token": "s3cr3t"},
-        ):
-            r = client.post(
-                "/v1/messages/count_tokens",
-                json=payload,
-                headers=headers,
-            )
-            assert r.status_code == 401
-            assert r.json() == {"detail": "Missing proxy authentication token"}
+        r = client.post(
+            "/v1/messages/count_tokens",
+            json=payload,
+            headers={"anthropic-auth-token": "s3cr3t"},
+        )
+        assert r.status_code == 401
+        assert r.json() == {"detail": "Missing proxy authentication token"}
+
+        # Anthropic-native scheme used by Claude Desktop's inference gateway.
+        r = client.post(
+            "/v1/messages/count_tokens",
+            json=payload,
+            headers={"X-API-Key": "s3cr3t"},
+        )
+        assert r.status_code == 200
+        assert r.json()["input_tokens"] == 1
 
         r = client.post(
             "/v1/messages/count_tokens",
