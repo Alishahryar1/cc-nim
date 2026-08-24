@@ -16,8 +16,7 @@ import time
 import httpx
 from loguru import logger
 
-from free_claude_code.core.anthropic import ReasoningReplayMode, get_token_count
-from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.inference import InferenceRequest, get_inference_token_count
 from free_claude_code.core.reasoning import (
     DEFAULT_REASONING_POLICY,
     ReasoningEffort,
@@ -33,6 +32,7 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProfile,
     OpenAIChatProvider,
     OpenAIChatRequestPolicy,
+    ReasoningReplayMode,
 )
 
 _PROFILE = OpenAIChatProfile(
@@ -78,22 +78,23 @@ class LMStudioProvider(OpenAIChatProvider):
 
     def preflight_stream(
         self,
-        request: MessagesRequest,
+        request: InferenceRequest,
         *,
+        provider_model: str,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> None:
-        super().preflight_stream(request, reasoning=reasoning)
+        super().preflight_stream(
+            request,
+            provider_model=provider_model,
+            reasoning=reasoning,
+        )
         self._preflight_context_budget(request)
 
-    def _preflight_context_budget(self, request: MessagesRequest) -> None:
+    def _preflight_context_budget(self, request: InferenceRequest) -> None:
         loaded_context = self._loaded_context_length()
         if loaded_context is None:
             return
-        estimate = get_token_count(
-            request.messages,
-            request.system,
-            request.tools,
-        )
+        estimate = get_inference_token_count(request)
         # The estimate is cl100k-based and undercounts local tokenizers
         # (observed ~8% low vs devstral); a request above 90% of the loaded
         # context is already past where client-side compaction should have

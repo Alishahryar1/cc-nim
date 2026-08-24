@@ -21,8 +21,11 @@ from free_claude_code.application.ports import (
     TaskController,
 )
 from free_claude_code.config.settings import Settings
-from free_claude_code.core.anthropic import MessagesRequest
-from free_claude_code.core.inference import InferenceEvent, InferenceStreamLedger
+from free_claude_code.core.inference import (
+    InferenceEvent,
+    InferenceRequest,
+    InferenceStreamLedger,
+)
 from free_claude_code.core.reasoning import ReasoningPolicy
 
 
@@ -386,22 +389,24 @@ class _ControlledProvider:
 
     def preflight_stream(
         self,
-        _request: MessagesRequest,
+        _request: InferenceRequest,
         *,
+        provider_model: str,
         reasoning: ReasoningPolicy,
     ) -> None:
-        del reasoning
+        del provider_model, reasoning
 
     async def stream_response(
         self,
-        _request: MessagesRequest,
+        _request: InferenceRequest,
         *,
         input_tokens: int,
+        provider_model: str,
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
     ) -> AsyncIterator[InferenceEvent]:
-        del input_tokens, response_model, reasoning
+        del input_tokens, provider_model, response_model, reasoning
         self.request_ids.append(request_id)
         try:
             for chunk in self._chunks:

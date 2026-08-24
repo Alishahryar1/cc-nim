@@ -80,7 +80,10 @@ def test_messages_round_trip_works_under_desktop_prefix() -> None:
     app = create_test_app()
 
     with (
-        patch("free_claude_code.api.routes.get_token_count", return_value=1),
+        patch(
+            "free_claude_code.api.routes.get_inference_token_count",
+            return_value=1,
+        ),
     ):
         response = TestClient(app).post(
             "/claude-desktop/v1/messages/count_tokens",

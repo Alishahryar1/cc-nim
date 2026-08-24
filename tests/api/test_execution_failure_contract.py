@@ -9,11 +9,11 @@ import pytest
 from fastapi.testclient import TestClient
 
 from free_claude_code.config.settings import Settings
-from free_claude_code.core.anthropic import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.inference import (
     InferenceEvent,
+    InferenceRequest,
     InferenceStreamLedger,
     ResponseStarted,
 )
@@ -79,22 +79,24 @@ class StalledProvider:
 
     def preflight_stream(
         self,
-        _request: MessagesRequest,
+        _request: InferenceRequest,
         *,
+        provider_model: str,
         reasoning: ReasoningPolicy,
     ) -> None:
-        del reasoning
+        del provider_model, reasoning
 
     async def stream_response(
         self,
-        _request: MessagesRequest,
+        _request: InferenceRequest,
         *,
         input_tokens: int,
+        provider_model: str,
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
     ) -> AsyncIterator[InferenceEvent]:
-        del input_tokens, request_id, response_model, reasoning
+        del input_tokens, provider_model, request_id, response_model, reasoning
         try:
             await asyncio.Event().wait()
             yield ResponseStarted("response_unreachable", "test-model")

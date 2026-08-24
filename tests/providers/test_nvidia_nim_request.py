@@ -8,13 +8,12 @@ import pytest
 
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.core.anthropic import set_if_not_none
-from free_claude_code.core.anthropic.models import MessagesRequest, Tool
+from free_claude_code.core.anthropic.models import Tool
+from free_claude_code.core.inference import InferenceRequest
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.nvidia_nim.request_options import (
     _set_extra,
-)
-from free_claude_code.providers.nvidia_nim.request_options import (
-    build_nim_request_body as build_request_body,
+    build_nim_request_body,
 )
 from free_claude_code.providers.nvidia_nim.retry import (
     clone_body_without_chat_template,
@@ -51,19 +50,41 @@ GREP_SCHEMA_FROM_SERVER_LOG: dict[str, Any] = {
 
 
 @pytest.fixture
-def req() -> MessagesRequest:
+def req() -> InferenceRequest:
+    return make_request()
+
+
+def make_request(**overrides: object) -> InferenceRequest:
+    data: dict[str, object] = {
+        "messages": [{"role": "user", "content": "hi"}],
+        "max_tokens": 100,
+        "system": None,
+        "temperature": None,
+        "top_p": None,
+        "stop_sequences": None,
+        "tools": None,
+        "extra_body": None,
+        "top_k": None,
+        "thinking": None,
+    }
+    data.update(overrides)
     return make_messages_request(
         model="test",
-        messages=[{"role": "user", "content": "hi"}],
-        max_tokens=100,
-        system=None,
-        temperature=None,
-        top_p=None,
-        stop_sequences=None,
-        tools=None,
-        extra_body=None,
-        top_k=None,
-        thinking=None,
+        **data,
+    )
+
+
+def build_request_body(
+    request: InferenceRequest,
+    nim: NimSettings,
+    *,
+    reasoning: ReasoningPolicy,
+) -> dict[str, Any]:
+    return build_nim_request_body(
+        request,
+        nim,
+        provider_model=request.model,
+        reasoning=reasoning,
     )
 
 
@@ -157,15 +178,15 @@ class TestBuildRequestBody:
             "reasoning_budget": 2048,
         }
 
-    def test_max_tokens_capped_by_nim(self, req):
-        req.max_tokens = 100000
+    def test_max_tokens_capped_by_nim(self):
+        req = make_request(max_tokens=100000)
         nim = NimSettings(max_tokens=4096)
         body = build_request_body(req, nim, reasoning=REASONING_ON)
         assert body["max_tokens"] == 4096
 
     @pytest.mark.parametrize("client_top_p", (None, 0.0, 0.5, 0.95, 1.0))
-    def test_top_p_always_uses_nim_policy(self, req, client_top_p):
-        req.top_p = client_top_p
+    def test_top_p_always_uses_nim_policy(self, client_top_p):
+        req = make_request(top_p=client_top_p)
 
         body = build_request_body(req, NimSettings(), reasoning=REASONING_ON)
 
@@ -186,7 +207,7 @@ class TestBuildRequestBody:
         assert body["parallel_tool_calls"] is False
 
     def test_tool_schema_boolean_subschemas_are_removed_without_mutating_request(
-        self, req
+        self,
     ):
         tool_schema = {
             "type": "object",
@@ -199,13 +220,15 @@ class TestBuildRequestBody:
             "additionalProperties": False,
             "required": ["query"],
         }
-        req.tools = [
-            Tool(
-                name="search",
-                description="search",
-                input_schema=tool_schema,
-            )
-        ]
+        req = make_request(
+            tools=[
+                Tool(
+                    name="search",
+                    description="search",
+                    input_schema=tool_schema,
+                )
+            ]
+        )
 
         body = build_request_body(req, NimSettings(), reasoning=REASONING_OFF)
 
@@ -219,7 +242,7 @@ class TestBuildRequestBody:
         assert tool_schema["additionalProperties"] is False
         assert tool_schema["properties"]["nested"]["additionalProperties"] is False
 
-    def test_grep_schema_type_parameter_is_aliased_without_mutating_request(self, req):
+    def test_grep_schema_type_parameter_is_aliased_without_mutating_request(self):
         tool_schema = deepcopy(GREP_SCHEMA_FROM_SERVER_LOG)
         tool_schema["properties"]["_fcc_arg_type"] = {
             "type": "string",
@@ -227,13 +250,15 @@ class TestBuildRequestBody:
         }
         tool_schema["required"] = ["pattern", "-A", "_fcc_arg_type"]
         original_schema = deepcopy(tool_schema)
-        req.tools = [
-            Tool(
-                name="Grep",
-                description="Search file contents",
-                input_schema=tool_schema,
-            )
-        ]
+        req = make_request(
+            tools=[
+                Tool(
+                    name="Grep",
+                    description="Search file contents",
+                    input_schema=tool_schema,
+                )
+            ]
+        )
 
         body = build_request_body(req, NimSettings(), reasoning=REASONING_OFF)
 
@@ -263,7 +288,7 @@ class TestBuildRequestBody:
         assert "_fcc_arg_type" in parameters["required"]
         assert tool_schema == original_schema
 
-    def test_reported_long_tool_name_uses_generic_alias_after_nim_repairs(self, req):
+    def test_reported_long_tool_name_uses_generic_alias_after_nim_repairs(self):
         """Issue #1307's 52nd tool is portable without losing NIM arg aliases."""
         long_name = "mcp__issue_1307__" + "x" * 85
         assert len(long_name) == 102
@@ -281,8 +306,8 @@ class TestBuildRequestBody:
                 },
             )
         )
-        req.tools = tools
-        snapshot = req.model_dump()
+        req = make_request(tools=tools)
+        snapshot = req
 
         body = build_request_body(req, NimSettings(), reasoning=REASONING_OFF)
 
@@ -290,15 +315,15 @@ class TestBuildRequestBody:
         assert wire_name != long_name
         assert re.fullmatch(r"[A-Za-z0-9_-]{1,64}", wire_name)
         assert body[NIM_TOOL_ARGUMENT_ALIASES_KEY] == {
-            long_name: {"_fcc_arg_type": "type"}
+            wire_name: {"_fcc_arg_type": "type"}
         }
         assert (
             NIM_TOOL_ARGUMENT_ALIASES_KEY
             not in body_without_nim_tool_argument_aliases(body)
         )
-        assert req.model_dump() == snapshot
+        assert req is snapshot
 
-    def test_safe_tool_schema_does_not_add_alias_metadata(self, req):
+    def test_safe_tool_schema_does_not_add_alias_metadata(self):
         tool_schema = {
             "type": "object",
             "properties": {
@@ -308,13 +333,15 @@ class TestBuildRequestBody:
             },
             "required": ["pattern"],
         }
-        req.tools = [
-            Tool(
-                name="Glob",
-                description="Find files",
-                input_schema=tool_schema,
-            )
-        ]
+        req = make_request(
+            tools=[
+                Tool(
+                    name="Glob",
+                    description="Find files",
+                    input_schema=tool_schema,
+                )
+            ]
+        )
 
         body = build_request_body(req, NimSettings(), reasoning=REASONING_OFF)
 
@@ -324,7 +351,7 @@ class TestBuildRequestBody:
         assert parameters["required"] == ["pattern"]
 
     def test_nested_schema_keyword_properties_are_aliased_without_mutating_request(
-        self, req
+        self,
     ):
         tool_schema = {
             "type": "object",
@@ -341,13 +368,15 @@ class TestBuildRequestBody:
             "required": ["parent"],
         }
         original_schema = deepcopy(tool_schema)
-        req.tools = [
-            Tool(
-                name="NotionLike",
-                description="Nested type schema",
-                input_schema=tool_schema,
-            )
-        ]
+        req = make_request(
+            tools=[
+                Tool(
+                    name="NotionLike",
+                    description="Nested type schema",
+                    input_schema=tool_schema,
+                )
+            ]
+        )
 
         body = build_request_body(req, NimSettings(), reasoning=REASONING_OFF)
 

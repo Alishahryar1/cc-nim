@@ -33,7 +33,7 @@ from free_claude_code.application.routing import (
     ModelRouter,
     ProviderModelTarget,
     ResolvedModelRoute,
-    RoutedMessagesRequest,
+    RoutedInferenceRequest,
 )
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.reasoning import ReasoningPreference
@@ -53,7 +53,9 @@ from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.inference import (
     FinishReason,
     InferenceEvent,
+    InferenceRequest,
     InferenceStreamLedger,
+    ToolChoiceMode,
 )
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.core.version import package_version
@@ -87,9 +89,9 @@ class FixedProviderModelRouter(ModelRouter):
         self._fixed_provider_id = provider_id
         self._fixed_provider_model = provider_model
 
-    def resolve_messages_request(
-        self, request: MessagesRequest
-    ) -> RoutedMessagesRequest:
+    def resolve_inference_request(
+        self, request: InferenceRequest
+    ) -> RoutedInferenceRequest:
         provider_model = self._fixed_provider_model or request.model
         target = ProviderModelTarget(
             provider_id=self._fixed_provider_id,
@@ -102,10 +104,8 @@ class FixedProviderModelRouter(ModelRouter):
             fallbacks=(),
             reasoning_preference=ReasoningPreference.OFF,
         )
-        routed = request.model_copy(deep=True)
-        routed.model = resolved.primary.provider_model
-        return RoutedMessagesRequest(
-            request=routed,
+        return RoutedInferenceRequest(
+            request=request,
             resolved=resolved,
             reasoning=ReasoningPolicy.off(),
         )
@@ -127,19 +127,24 @@ class ScriptedSelectionProvider:
         self.failure_after_events = failure_after_events
         self.wait_for = wait_for
         self.started = asyncio.Event()
-        self.requests: list[MessagesRequest] = []
+        self.requests: list[InferenceRequest] = []
         self.stream_kwargs: list[dict[str, object]] = []
         self.close_count = 0
 
     def preflight_stream(
-        self, request: MessagesRequest, *, reasoning: ReasoningPolicy
+        self,
+        request: InferenceRequest,
+        *,
+        provider_model: str,
+        reasoning: ReasoningPolicy,
     ) -> None:
         return None
 
     async def stream_response(
         self,
-        request: MessagesRequest,
+        request: InferenceRequest,
         *,
+        provider_model: str,
         input_tokens: int,
         request_id: str,
         response_model: str,
@@ -149,6 +154,7 @@ class ScriptedSelectionProvider:
         self.stream_kwargs.append(
             {
                 "input_tokens": input_tokens,
+                "provider_model": provider_model,
                 "request_id": request_id,
                 "response_model": response_model,
                 "reasoning": reasoning,
@@ -506,13 +512,14 @@ async def test_automatic_web_search_replays_provider_response_when_declined(
     assert provider.close_count == 1
     assert len(provider.requests) == 1
     translated = provider.requests[0]
-    assert translated.model == "upstream-model"
-    assert translated.tool_choice == {"type": "auto"}
-    assert translated.tools is not None
+    assert translated.model == "claude-haiku-4-5-20251001"
+    assert translated.tool_choice is not None
+    assert translated.tool_choice.mode is ToolChoiceMode.AUTO
     assert [tool.name for tool in translated.tools] == [HIDDEN_WEB_SEARCH_NAME]
     assert provider.stream_kwargs == [
         {
             "input_tokens": provider.stream_kwargs[0]["input_tokens"],
+            "provider_model": "upstream-model",
             "request_id": "req_automatic_declined",
             "response_model": "claude-haiku-4-5-20251001",
             "reasoning": ReasoningPolicy.off(),

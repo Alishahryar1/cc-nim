@@ -6,24 +6,30 @@ import pytest
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
-from free_claude_code.core.inference import InferenceEvent, InferenceStreamLedger
+from free_claude_code.core.inference import (
+    InferenceEvent,
+    InferenceRequest,
+    InferenceStreamLedger,
+)
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
+from tests.providers.request_factory import canonical_request
 from tests.providers.support import make_provider_config
 
 
 class RecordingOpenAIProvider(OpenAIChatProvider):
     def __init__(self) -> None:
-        self.build_calls: list[tuple[MessagesRequest, ReasoningPolicy]] = []
+        self.build_calls: list[tuple[InferenceRequest, str, ReasoningPolicy]] = []
 
     def _build_request_body(
         self,
-        request: MessagesRequest,
+        request: InferenceRequest,
         *,
+        provider_model: str,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> dict:
-        self.build_calls.append((request, reasoning))
+        self.build_calls.append((request, provider_model, reasoning))
         return {}
 
 
@@ -36,9 +42,10 @@ class ProviderWithoutPreflight(BaseProvider):
 
     async def stream_response(
         self,
-        request: MessagesRequest,
+        request: InferenceRequest,
         input_tokens: int = 0,
         *,
+        provider_model: str,
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
@@ -65,6 +72,12 @@ def test_provider_preflight_calls_builder_and_preserves_policy() -> None:
         messages=[Message(role="user", content="hello")],
     )
 
-    provider.preflight_stream(request, reasoning=ReasoningPolicy.off())
+    provider.preflight_stream(
+        canonical_request(request),
+        reasoning=ReasoningPolicy.off(),
+        provider_model=(request).model,
+    )
 
-    assert provider.build_calls == [(request, ReasoningPolicy.off())]
+    assert provider.build_calls == [
+        (canonical_request(request), request.model, ReasoningPolicy.off())
+    ]

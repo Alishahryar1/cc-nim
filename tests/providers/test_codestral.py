@@ -6,7 +6,7 @@ import pytest
 
 from free_claude_code.config.provider_catalog import CODESTRAL_DEFAULT_BASE
 from tests.inference_support import collect_anthropic
-from tests.providers.request_factory import make_messages_request
+from tests.providers.request_factory import canonical_request, make_messages_request
 from tests.providers.support import (
     immediate_admission,
     make_provider_config,
@@ -57,7 +57,9 @@ def test_default_base_url():
 def test_build_request_body_basic(codestral_provider):
     """Basic request body conversion works for Codestral."""
     req = make_request()
-    body = codestral_provider._build_request_body(req)
+    body = codestral_provider._build_request_body(
+        canonical_request(req), provider_model=(req).model
+    )
 
     assert body["model"] == "devstral-small-latest"
     assert body["messages"][0]["role"] == "system"
@@ -76,7 +78,9 @@ def test_build_request_body_global_disable_blocks_reasoning_mapping():
         admission=immediate_admission(),
     )
     req = make_request()
-    body = provider._build_request_body(req)
+    body = provider._build_request_body(
+        canonical_request(req), provider_model=(req).model
+    )
 
     roles = [m.get("role") for m in body.get("messages", [])]
     assert "assistant_reasoning_content" not in roles
@@ -108,7 +112,11 @@ async def test_stream_response_text(codestral_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = await collect_anthropic(codestral_provider.stream_response(req))
+        events = await collect_anthropic(
+            codestral_provider.stream_response(
+                canonical_request(req), provider_model=(req).model
+            )
+        )
 
         assert any(
             '"text_delta"' in event and "Hello back!" in event for event in events
@@ -141,7 +149,11 @@ async def test_stream_response_reasoning_content(codestral_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = await collect_anthropic(codestral_provider.stream_response(req))
+        events = await collect_anthropic(
+            codestral_provider.stream_response(
+                canonical_request(req), provider_model=(req).model
+            )
+        )
 
         assert any(
             '"thinking_delta"' in event and "Thinking..." in event for event in events

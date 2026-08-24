@@ -11,6 +11,7 @@ from free_claude_code.core.anthropic.models import Message, MessagesRequest, Too
 from free_claude_code.providers.openai_chat import (
     OpenAIChatProvider,
 )
+from tests.providers.request_factory import canonical_request
 from tests.providers.support import (
     REASONING_OFF,
     immediate_admission,
@@ -66,7 +67,11 @@ def test_build_request_body_openai_shape_and_defaults(wafer_provider):
         }
     )
 
-    body = wafer_provider._build_request_body(request, reasoning=reasoning_for(request))
+    body = wafer_provider._build_request_body(
+        canonical_request(request),
+        reasoning=reasoning_for(request),
+        provider_model=(request).model,
+    )
 
     assert body["model"] == "DeepSeek-V4-Pro"
     assert body["messages"][0] == {"role": "user", "content": "Hello"}
@@ -83,7 +88,11 @@ def test_build_request_body_honors_effective_no_thinking(wafer_provider):
         }
     )
 
-    body = wafer_provider._build_request_body(request, reasoning=REASONING_OFF)
+    body = wafer_provider._build_request_body(
+        canonical_request(request),
+        reasoning=REASONING_OFF,
+        provider_model=(request).model,
+    )
 
     assert body["reasoning_effort"] == "none"
 
@@ -97,7 +106,11 @@ def test_build_request_body_preserves_request_disabled_thinking(wafer_provider):
         }
     )
 
-    body = wafer_provider._build_request_body(request, reasoning=reasoning_for(request))
+    body = wafer_provider._build_request_body(
+        canonical_request(request),
+        reasoning=reasoning_for(request),
+        provider_model=(request).model,
+    )
 
     assert body["reasoning_effort"] == "none"
 
@@ -112,7 +125,11 @@ def test_build_request_body_uses_resolved_policy_without_inspecting_model(
         }
     )
 
-    body = wafer_provider._build_request_body(request, reasoning=REASONING_OFF)
+    body = wafer_provider._build_request_body(
+        canonical_request(request),
+        reasoning=REASONING_OFF,
+        provider_model=(request).model,
+    )
 
     assert body["reasoning_effort"] == "none"
 

@@ -6,7 +6,7 @@ import pytest
 
 from free_claude_code.config.provider_catalog import CEREBRAS_DEFAULT_BASE
 from tests.inference_support import collect_anthropic
-from tests.providers.request_factory import make_messages_request
+from tests.providers.request_factory import canonical_request, make_messages_request
 from tests.providers.support import (
     REASONING_OFF,
     immediate_admission,
@@ -89,7 +89,9 @@ def test_default_base_url_constant():
 def test_build_request_body_basic(cerebras_provider):
     """Basic request body conversion attaches system message from Claude request."""
     req = make_request()
-    body = cerebras_provider._build_request_body(req, reasoning=reasoning_for(req))
+    body = cerebras_provider._build_request_body(
+        canonical_request(req), reasoning=reasoning_for(req), provider_model=(req).model
+    )
 
     assert body["model"] == "llama3.1-8b"
     assert body["messages"][0]["role"] == "system"
@@ -97,7 +99,10 @@ def test_build_request_body_basic(cerebras_provider):
 
 
 def test_build_request_body_replays_reasoning_as_tagged_content(cerebras_provider):
-    body = cerebras_provider._build_request_body(make_reasoning_tool_history_request())
+    body = cerebras_provider._build_request_body(
+        canonical_request(make_reasoning_tool_history_request()),
+        provider_model=(make_reasoning_tool_history_request()).model,
+    )
 
     assistant = next(
         message for message in body["messages"] if message["role"] == "assistant"
@@ -129,7 +134,9 @@ def test_replay_is_independent_of_current_turn_reasoning_control():
         admission=immediate_admission(),
     )
     body = provider._build_request_body(
-        make_reasoning_tool_history_request(), reasoning=REASONING_OFF
+        canonical_request(make_reasoning_tool_history_request()),
+        reasoning=REASONING_OFF,
+        provider_model=(make_reasoning_tool_history_request()).model,
     )
 
     assistant = next(
@@ -153,7 +160,11 @@ def test_build_request_body_remaps_max_tokens_preserves_message_name(cerebras_pr
             "max_tokens": 42,
         }
         req = make_request()
-        body = cerebras_provider._build_request_body(req, reasoning=reasoning_for(req))
+        body = cerebras_provider._build_request_body(
+            canonical_request(req),
+            reasoning=reasoning_for(req),
+            provider_model=(req).model,
+        )
 
     assert body["messages"][0].get("name") == "alice"
     assert body.get("max_tokens") is None
@@ -170,7 +181,9 @@ def test_build_request_body_prefers_existing_max_completion_tokens(cerebras_prov
             "max_completion_tokens": 77,
             "max_tokens": 999,
         }
-        body = cerebras_provider._build_request_body(make_request())
+        body = cerebras_provider._build_request_body(
+            canonical_request(make_request()), provider_model=(make_request()).model
+        )
 
     assert body["max_completion_tokens"] == 77
     assert "max_tokens" not in body
@@ -179,7 +192,9 @@ def test_build_request_body_prefers_existing_max_completion_tokens(cerebras_prov
 def test_build_request_body_preserves_caller_extra_body(cerebras_provider):
     req = make_request(extra_body={"clear_thinking": False})
 
-    body = cerebras_provider._build_request_body(req, reasoning=reasoning_for(req))
+    body = cerebras_provider._build_request_body(
+        canonical_request(req), reasoning=reasoning_for(req), provider_model=(req).model
+    )
 
     eb = body.get("extra_body")
     assert isinstance(eb, dict)
@@ -212,7 +227,11 @@ async def test_stream_response_text(cerebras_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = await collect_anthropic(cerebras_provider.stream_response(req))
+        events = await collect_anthropic(
+            cerebras_provider.stream_response(
+                canonical_request(req), provider_model=(req).model
+            )
+        )
 
         assert any(
             '"text_delta"' in event and "Hello back!" in event for event in events
@@ -245,7 +264,11 @@ async def test_stream_response_reasoning(cerebras_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = await collect_anthropic(cerebras_provider.stream_response(req))
+        events = await collect_anthropic(
+            cerebras_provider.stream_response(
+                canonical_request(req), provider_model=(req).model
+            )
+        )
 
         assert any(
             '"thinking_delta"' in event and "Thinking..." in event for event in events

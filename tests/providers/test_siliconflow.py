@@ -16,6 +16,7 @@ from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
+from tests.providers.request_factory import canonical_request
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
@@ -94,8 +95,9 @@ def test_build_request_body_preserves_common_chat_tools_and_images(
     )
 
     body = siliconflow_provider._build_request_body(
-        request,
+        canonical_request(request),
         reasoning=ReasoningPolicy.provider_default(),
+        provider_model=(request).model,
     )
 
     assert body["model"] == _MODEL
@@ -126,7 +128,11 @@ def test_build_request_body_omits_model_specific_thinking_controls(
     siliconflow_provider: OpenAIChatProvider,
     reasoning: ReasoningPolicy,
 ) -> None:
-    body = siliconflow_provider._build_request_body(_request(), reasoning=reasoning)
+    body = siliconflow_provider._build_request_body(
+        canonical_request(_request()),
+        reasoning=reasoning,
+        provider_model=(_request()).model,
+    )
 
     assert "extra_body" not in body
 
@@ -137,8 +143,9 @@ def test_build_request_body_preserves_unrelated_extra_body(
     request = _request(extra_body={"min_p": 0.05})
 
     body = siliconflow_provider._build_request_body(
-        request,
+        canonical_request(request),
         reasoning=ReasoningPolicy.on(effort=ReasoningEffort.HIGH),
+        provider_model=(request).model,
     )
 
     assert body["extra_body"] == {
@@ -154,7 +161,11 @@ def test_build_request_body_rejects_caller_thinking_override(
     request = _request(extra_body={field: "caller-owned"})
 
     with pytest.raises(InvalidRequestError, match="must not override reasoning"):
-        siliconflow_provider._build_request_body(request, reasoning=REASONING_ON)
+        siliconflow_provider._build_request_body(
+            canonical_request(request),
+            reasoning=REASONING_ON,
+            provider_model=(request).model,
+        )
 
 
 def test_build_request_body_replays_reasoning_content_verbatim(
@@ -175,8 +186,9 @@ def test_build_request_body_replays_reasoning_content_verbatim(
     )
 
     body = siliconflow_provider._build_request_body(
-        request,
+        canonical_request(request),
         reasoning=reasoning_for(request),
+        provider_model=(request).model,
     )
 
     assert body["messages"][1] == {

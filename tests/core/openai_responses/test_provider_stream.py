@@ -1,16 +1,23 @@
 import pytest
 
-from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.anthropic.stream_contracts import (
     assert_anthropic_stream_contract,
     parse_sse_text,
     thinking_content,
 )
-from free_claude_code.core.openai_responses.provider_events import (
+from free_claude_code.core.inference import (
+    ReplayAttachment,
+    ReplayCompatibilityScope,
+)
+from free_claude_code.core.replay_envelope import decode_replay_envelope
+from free_claude_code.providers.openai_compat import OpenAIToolNameCodec
+from free_claude_code.providers.openai_responses.events import (
     ResponsesEventDecoder,
     ResponsesStreamFailure,
 )
 from tests.inference_support import present_anthropic
+
+_REPLAY_SCOPE = ReplayCompatibilityScope("openai_responses:test-model")
 
 
 def test_responses_decoder_preserves_reasoning_tools_usage_and_ids() -> None:
@@ -18,6 +25,7 @@ def test_responses_decoder_preserves_reasoning_tools_usage_and_ids() -> None:
         response_id="response_test",
         model="openai/gpt-test",
         input_tokens=12,
+        replay_scope=_REPLAY_SCOPE,
     )
     output = stream.start()
     output.extend(
@@ -111,7 +119,15 @@ def test_responses_decoder_preserves_reasoning_tools_usage_and_ids() -> None:
         for event in events
         if event.event == "content_block_start"
     ]
-    assert {"type": "redacted_thinking", "data": "opaque"} in starts
+    redacted = next(block for block in starts if block["type"] == "redacted_thinking")
+    assert isinstance(redacted["data"], str)
+    artifacts = decode_replay_envelope(
+        redacted["data"],
+        attachment=ReplayAttachment.REASONING,
+    )
+    assert artifacts is not None
+    assert [artifact.payload for artifact in artifacts] == ["opaque"]
+    assert [artifact.scope for artifact in artifacts] == [_REPLAY_SCOPE]
     assert {
         "type": "tool_use",
         "id": "call_1",
@@ -150,6 +166,7 @@ def test_responses_decoder_ignores_invalid_cache_partitions(
         response_id="response_test",
         model="openai/gpt-test",
         input_tokens=12,
+        replay_scope=_REPLAY_SCOPE,
     )
     output = stream.start()
     output.extend(
@@ -183,6 +200,7 @@ def test_responses_decoder_surfaces_failed_event() -> None:
         response_id="response_test",
         model="gpt-test",
         input_tokens=0,
+        replay_scope=_REPLAY_SCOPE,
     )
 
     with pytest.raises(ResponsesStreamFailure, match="capacity") as exc_info:
@@ -212,6 +230,7 @@ def test_responses_decoder_restores_added_and_done_only_tool_names() -> None:
         model="gpt-test",
         input_tokens=0,
         tool_names=codec,
+        replay_scope=_REPLAY_SCOPE,
     )
     output = stream.start()
     output.extend(

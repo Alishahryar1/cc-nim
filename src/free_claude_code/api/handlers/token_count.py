@@ -9,17 +9,20 @@ from free_claude_code.api.request_errors import (
     require_non_empty_messages,
 )
 from free_claude_code.api.request_ids import new_request_id
-from free_claude_code.application.errors import ApplicationError
+from free_claude_code.application.errors import ApplicationError, InvalidRequestError
 from free_claude_code.application.execution import TokenCounter
 from free_claude_code.application.routing import ModelRouter
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import (
     TokenCountRequest,
     TokenCountResponse,
-    anthropic_request_snapshot,
-    get_token_count,
+    token_count_to_inference_request,
 )
 from free_claude_code.core.diagnostics import safe_exception_message
+from free_claude_code.core.inference import (
+    get_inference_token_count,
+    inference_request_snapshot,
+)
 from free_claude_code.core.trace import trace_event
 
 
@@ -31,7 +34,7 @@ class TokenCountHandler:
         settings: Settings,
         *,
         model_router: ModelRouter | None = None,
-        token_counter: TokenCounter = get_token_count,
+        token_counter: TokenCounter = get_inference_token_count,
     ) -> None:
         self._settings = settings
         self._model_router = model_router or ModelRouter(settings)
@@ -45,10 +48,12 @@ class TokenCountHandler:
         with logger.contextualize(request_id=request_id):
             try:
                 require_non_empty_messages(request_data.messages)
-                routed = self._model_router.resolve_token_count_request(request_data)
-                tokens = self._token_counter(
-                    routed.request.messages, routed.request.system, routed.request.tools
-                )
+                try:
+                    canonical = token_count_to_inference_request(request_data)
+                except ValueError as exc:
+                    raise InvalidRequestError(str(exc)) from exc
+                routed = self._model_router.resolve_token_count_request(canonical)
+                tokens = self._token_counter(routed.request)
                 trace_event(
                     stage="routing",
                     event="free_claude_code.api.route.resolved",
@@ -60,14 +65,13 @@ class TokenCountHandler:
                     provider_model_ref=routed.resolved.primary.provider_model_ref,
                     gateway_model=routed.resolved.original_model,
                 )
-                request_snapshot = anthropic_request_snapshot(routed.request)
-                request_snapshot["model"] = routed.resolved.original_model
+                request_snapshot = inference_request_snapshot(routed.request)
                 trace_event(
                     stage="ingress",
                     event="free_claude_code.api.count_tokens.completed",
                     source="api",
                     request_id=request_id,
-                    message_count=len(routed.request.messages),
+                    message_count=routed.request.message_count,
                     input_tokens=tokens,
                     snapshot=request_snapshot,
                 )
