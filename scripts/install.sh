@@ -20,7 +20,7 @@ FCC_MACOS_BUNDLE_ID="io.github.alishahryar1.free-claude-code"
 FCC_MACOS_OWNER_FILE=".free-claude-code-owner"
 FCC_LINUX_DESKTOP_MARKER="# Owned by Free Claude Code. Remove this line to unclaim."
 # Include retired entry points so updates reject older FCC processes before replacement.
-FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-grok fcc-muse fcc-init free-claude-code"
+FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-grok fcc-muse fcc-init fcc-claude-desktop free-claude-code"
 
 dry_run=0
 voice_nim=0
@@ -1127,11 +1127,80 @@ configure_and_verify_free_claude_code() {
     export PATH
     hash -r 2>/dev/null || true
 
-    for command_name in fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-grok fcc-muse; do
+    for command_name in fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-grok fcc-muse fcc-claude-desktop; do
         [ -x "$tool_bin/$command_name" ] || fail "Free Claude Code installation did not create $tool_bin/$command_name."
     done
 
     run "$tool_bin/fcc-server" --version
+
+    configure_claude_desktop_app
+}
+
+configure_claude_desktop_app() {
+    # Best-effort: write the FCC 3P-gateway block into the user's
+    # ``claude_desktop_config.json`` so Claude Desktop's model picker
+    # discovers every NIM/OpenRouter model exposed by FCC. Delegate JSON
+    # parsing to the Python helper installed by ``uv tool install`` so the
+    # script doesn't depend on ``jq``.
+    if [ "$dry_run" -eq 1 ]; then
+        print_command "$tool_bin/python3" -m \
+            free_claude_code.cli.launchers.claude_desktop --configure
+        return 0
+    fi
+
+    configure_status=0
+    "$tool_bin/python3" -m \
+        free_claude_code.cli.launchers.claude_desktop --configure \
+        || configure_status=$?
+    if [ "$configure_status" -ne 0 ]; then
+        printf 'warning: Failed to auto-configure Claude Desktop (exit code %d). Run `fcc-claude-desktop --configure` manually.\n' "$configure_status" >&2
+    fi
+
+    install_claude_desktop_cert
+}
+
+install_claude_desktop_cert() {
+    # Electron's TLS stack does not always honor NODE_TLS_REJECT_UNAUTHORIZED
+    # nor the operating system certificate store. Best-effort: copy Caddy's
+    # self-signed cert into the system trust chain so users who launch
+    # ``claude-desktop`` directly still see FCC as trusted. Electron still
+    # ignores this on some hosts; the canonical workaround is the
+    # ``fcc-claude-desktop`` launcher.
+    cert_src="/etc/caddy/localhost+2.pem"
+    if [ ! -f "$cert_src" ]; then
+        return 0
+    fi
+
+    cert_dst="/usr/local/share/ca-certificates/fcc-caddy-localhost.crt"
+    if [ -e "$cert_dst" ] && cmp -s "$cert_src" "$cert_dst"; then
+        return 0
+    fi
+
+    if [ "$(id -u)" -ne 0 ] && ! command -v sudo >/dev/null 2>&1; then
+        printf 'note: skipping cert trust step (%s requires root or sudo).\n' "$cert_src" >&2
+        return 0
+    fi
+
+    copy_cmd="cp"
+    update_cmd="update-ca-certificates"
+    if [ "$(id -u)" -ne 0 ]; then
+        copy_cmd="sudo cp"
+        update_cmd="sudo update-ca-certificates"
+    fi
+
+    if [ "$dry_run" -eq 1 ]; then
+        print_command "$copy_cmd" "$cert_src" "$cert_dst"
+        print_command "$update_cmd" --fresh
+        return 0
+    fi
+
+    if ! $copy_cmd "$cert_src" "$cert_dst" 2>/dev/null; then
+        printf 'note: cert trust step failed (cp returned %d) — claude-desktop TLS may still reject Caddy.\n' "$?" >&2
+        return 0
+    fi
+    if ! $update_cmd --fresh >/dev/null 2>&1; then
+        printf 'note: update-ca-certificates failed — claude-desktop TLS may still reject Caddy.\n' >&2
+    fi
 }
 
 shell_quote() {
