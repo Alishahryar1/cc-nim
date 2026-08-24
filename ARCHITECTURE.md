@@ -46,8 +46,9 @@ flowchart LR
     Handlers --> Executor[application ProviderExecutor]
     Executor --> Lease[Provider Generation Lease]
     Lease --> Providers[ProviderRuntime]
-    Providers --> OpenAIChat[OpenAI Chat Provider Profiles And Specialized Adapters]
-    Providers --> OpenAIResponses[Standard OpenAI Responses Transport]
+    Providers --> StreamSupervisor[Shared Stream Execution Supervisor]
+    StreamSupervisor --> OpenAIChat[OpenAI Chat Provider Profiles And Specialized Adapters]
+    StreamSupervisor --> OpenAIResponses[Standard OpenAI Responses Transport]
     Providers --> NativeProviders[Native And Private Provider Adapters]
 ```
 
@@ -68,11 +69,11 @@ The installable wheel packages are declared in [pyproject.toml](pyproject.toml):
   management, and client adapter contracts.
 - [src/free_claude_code/config/](src/free_claude_code/config/) owns settings, provider metadata, filesystem paths,
   logging setup, constants, and provider ID catalogs.
-- [src/free_claude_code/core/](src/free_claude_code/core/) owns provider-neutral protocol logic: wire request and response
-  models, Anthropic conversion, SSE construction, OpenAI Responses conversion,
-  canonical execution-failure semantics, credential-safe diagnostics, token
-  counting, and structured trace helpers. It never classifies provider SDK or
-  HTTP client exceptions.
+- [src/free_claude_code/core/](src/free_claude_code/core/) owns provider-neutral inference requests and events plus
+  protocol logic: wire request and response models, ingress codecs, public
+  presenters, canonical execution-failure semantics, credential-safe
+  diagnostics, token counting, and structured trace helpers. It never
+  classifies provider SDK or HTTP client exceptions.
 - [src/free_claude_code/messaging/](src/free_claude_code/messaging/) owns optional platform adapters, incoming message
   handling, tree queues, transcript rendering, persistence, commands, and voice
   support.
@@ -228,14 +229,15 @@ new places to add unrelated behavior:
   thin, keep Claude-only behavior in the Messages handler, and use
   [application/execution.py](src/free_claude_code/application/execution.py) only for shared
   provider resolution, preflight, tracing, token counting, and streaming.
-- [providers/openai_chat/](src/free_claude_code/providers/openai_chat/) owns the common upstream provider
-  behavior. It separates immutable vendor profiles from per-request stream
-  execution, recovery, request policy, and tool-call assembly. Within one
-  request, the runner owns logical orchestration, a replaceable stream assembler
-  owns one replay epoch's ledger and parser state, the shared
-  `ProviderAttemptScope` owns each returned physical stream and attempt, and
-  `RecoveryController` alone owns downstream commit policy. Shared protocol
-  rules belong in [src/free_claude_code/core/](src/free_claude_code/core/).
+- [providers/streaming/](src/free_claude_code/providers/streaming/) owns the transport-neutral streamed-attempt
+  lifecycle for standard Responses and OpenAI Chat. `PublicationBuffer` owns
+  only reversible holdback and the irreversible provider publication boundary;
+  `StreamExecutionSupervisor` composes admitted attempts, first-raw acceptance,
+  active deadline publication, local replay, cancellation, and exact cleanup.
+  Transport sources and epochs retain request encoding, raw decoding, terminal
+  validation, and typed recovery snapshots. OpenAI Chat supplies its own typed
+  continuation/tool-repair strategy; standard Responses supplies none. Private
+  Codex retains its staged recovery controller until its separate migration.
 - [messaging/workflow.py](src/free_claude_code/messaging/workflow.py) coordinates messaging runtime
   dependencies. Inbound turn intake, queued node execution, slash command
   dependencies, and tree queue internals live in separate modules so new
@@ -535,7 +537,8 @@ than presenting a partial success.
 The public response chain follows a transitive close-ownership rule. A response
 owns its replay iterator; replay owns the active protocol adapter; each protocol
 adapter owns its direct input; tracing owns the executor body; the executor body
-owns the provider iterator; and the provider runner owns its upstream stream.
+owns the provider iterator; and the provider lifecycle owner owns its upstream
+stream.
 Each of these response-chain owners closes its direct input on normal completion,
 failure, cancellation, and early consumer close. Failures from those explicit
 cleanup calls are trace metadata and cannot replace an established wire outcome;
@@ -579,10 +582,11 @@ sequenceDiagram
 
 OpenAI Responses uses the same provider execution primitive without importing
 Claude-only message intercepts. `ResponsesHandler` delegates protocol work to
-the `OpenAIResponsesAdapter` in
-[src/free_claude_code/core/openai_responses/adapter.py](src/free_claude_code/core/openai_responses/adapter.py). The adapter
-converts the Responses payload into an Anthropic Messages payload before
-provider execution, then converts Anthropic SSE back to Responses SSE.
+the ingress codec and `ResponsesEventPresenter` in
+[src/free_claude_code/core/openai_responses/](src/free_claude_code/core/openai_responses/). Ingress produces the same
+`InferenceRequest` consumed by provider execution, and the presenter maps the
+resulting `InferenceEvent` stream directly to Responses SSE. Anthropic wire
+models and SSE are not an intermediate provider representation.
 
 ## Model Routing
 
@@ -757,6 +761,26 @@ New work fails fast during the provider-directed cooldown; once it expires,
 exactly one new caller becomes the next probe. There is no background retry
 worker, copied request queue, or second scheduling system.
 
+[providers/streaming/](src/free_claude_code/providers/streaming/) composes those admission primitives for streamed
+generation. A request-scoped source performs exactly one upstream call per
+`open()`, while every returned epoch owns a fresh decoder, ledger, parsers,
+usage state, tool assembler, and closeable raw stream. Receipt of the first raw
+upstream item calls `ProviderAttempt.accept()` before decoding it: failures
+before that point participate in provider-wide recovery, while decoder or read
+failures afterward remain request-local.
+
+The policy-free `PublicationBuffer` retains canonical events for at most 0.75
+seconds or 65,536 semantic bytes. Its first non-`ResponseStarted` event starts
+the monotonic deadline. The supervisor races that deadline against one
+already-started raw read; publication never cancels and recreates the read.
+Before publication, a retryable accepted failure may discard the complete epoch
+and consume another attempt from the same `ProviderExecution`. After
+publication, neither provider replay nor application fallback may replace the
+response. OpenAI Chat may append through its typed recovery strategy; standard
+Responses reports the terminal failure. Attempt resources and concurrency are
+released before terminal output or recovery is exposed to downstream
+backpressure.
+
 The one-call helper on `ProviderExecution` accepts only a callback that performs
 one quota-bearing provider call. Higher-level orchestration remains with its
 protocol owner: every model-catalog page receives a separate logical execution,
@@ -803,16 +827,19 @@ upstream. `OpenAIChatProfile` contains immutable request policy, an explicit
 reasoning encoder, an explicit history replay mode, its standard
 streamed-reasoning field, postprocessors, and base-URL normalization for
 ordinary vendors. Configuration differences therefore remain data rather than
-empty subclasses. The package also
-owns the exactly typed private per-request runner, recovery operations, tool-call
-assembly, and streamed usage handling. No obsolete generic transport namespace
-or untyped provider backchannel remains.
+empty subclasses. The package also owns its request-scoped attempt source,
+fresh per-attempt Chat epoch, typed continuation/tool-repair strategy,
+tool-call assembly, and streamed usage handling. Provider corrections persist
+across physical calls, but a discarded epoch cannot leak parser, tool, usage,
+or ledger state into its replacement.
 
 [providers/openai_responses/](src/free_claude_code/providers/openai_responses/)
 owns standard API-key `/responses` execution. Its transport borrows the owning
 provider's configured SDK client and admission controller, builds and parses the
-public protocol through `core.openai_responses`, and owns stream attempts,
-failure classification, recovery holdback, cancellation, and exact closure. It
+public protocol through `core.openai_responses`, and supplies a Responses
+attempt source and decoder epoch to the shared stream supervisor. It retains
+Responses failure classification and terminal validation but has no Chat
+continuation policy or post-publication replay. It
 owns no credentials, model discovery, provider configuration, or client
 lifecycle. This boundary is deliberately separate from the Codex subscription
 adapter's OAuth and private-backend contract.
@@ -1187,79 +1214,40 @@ same commit-state split but do not acquire provider retry semantics.
 
 [src/free_claude_code/core/openai_responses/](src/free_claude_code/core/openai_responses/) owns OpenAI Responses support:
 
-- the permissive `OpenAIResponsesRequest` ingress model used directly by the
-  FastAPI route and the protocol adapter;
-- the `OpenAIResponsesAdapter` facade used by the API layer;
+- the wire-facing `OpenAIResponsesRequest` ingress model and explicit field
+  policy used by the API handler;
+- conversion from supported Responses semantics into immutable
+  `InferenceRequest` values;
+- `ResponsesPresentationSnapshot` for validated fields echoed by public
+  response envelopes;
+- `ResponsesEventPresenter`, which maps `InferenceEvent` directly to Responses
+  lifecycle events;
 - streaming-only `/v1/responses` support for Codex/FCC workflows;
-- Responses request conversion into Anthropic Messages payloads;
-- Anthropic SSE conversion into Responses SSE;
 - OpenAI-compatible error envelopes.
 
 The package intentionally does not implement the full OpenAI Responses surface.
 FCC accepts omitted `stream` or `stream: true`; `stream: false` is rejected with
 an OpenAI-shaped client error because installed FCC/Codex workflows only need
-streaming. Request conversion, stream transformation, Anthropic SSE parsing,
-Responses SSE event formatting, output item construction, tool identity mapping,
-reasoning mapping, ID generation, and error envelope construction each live
-behind the adapter boundary. The concrete request object crosses that boundary
-unchanged; nested Responses input and tool data stays permissive and is
-interpreted by the conversion functions. `stream.py` is the public streaming
-entrypoint;
-[src/free_claude_code/core/openai_responses/streaming/](src/free_claude_code/core/openai_responses/streaming/) owns the
-block-indexed Responses stream assembler. The package separates Anthropic SSE
-dispatch, block state, output ledger ordering, block completion, SSE event
-builders, and error mapping. API code should depend on the adapter, not on
-those internal module owners directly. Responses output payloads stay
-OpenAI-shaped. Canonical execution failures enter the assembler directly, so
-Responses does not infer provider failure semantics by parsing an Anthropic
-terminal error.
-Post-start Responses failures are assembler-owned: the active
-`ResponsesStreamAssembler` emits `response.failed` so the terminal event keeps
-the same `response.id`, output ledger, and usage state as the earlier
-`response.created`.
-Provider completion reasons remain canonical until that same assembler chooses
-the Responses terminal event. Anthropic `max_tokens` becomes
-`response.incomplete` with `incomplete_details.reason=max_output_tokens` while
-preserving partial output and usage; normal terminal reasons remain
-`response.completed`.
+streaming. Known passive compatibility fields are normalized explicitly; active
+unsupported semantics and unknown top-level fields fail before provider I/O.
+Function/custom tools, reasoning, scoped opaque replay artifacts, tool identity,
+usage, completion reasons, and partial-output failure state remain canonical
+until the Responses presenter chooses their public wire shape.
 
-Responses custom tools are also boundary-owned. The adapter accepts native
-Responses `custom` tool declarations, represents them internally as Anthropic
-tools with a single string `input` field, and restores `custom_tool_call`,
-`custom_tool_call_output`, and `response.custom_tool_call_input.*` shapes at the
-Responses edge. Text or grammar format metadata is preserved as model guidance;
-FCC does not validate custom-tool grammars.
+The presenter owns Responses IDs, indexes, output ledger ordering, block
+completion, and terminal serialization. A post-start failure emits
+`response.failed` with the same public response identity; an output-limit finish
+emits `response.incomplete` with `max_output_tokens`; ordinary success emits
+`response.completed`. It consumes `ExecutionFailure` directly and never infers
+provider semantics by parsing Anthropic SSE.
 
-Client-facing Responses tool identity mapping is distinct from upstream wire
-portability. Namespaces and custom-tool identities are restored at the public
-Responses edge; the OpenAI tool-name codec operates beneath that mapping only
-while the canonical Anthropic request crosses an OpenAI upstream transport.
-
-Responses reasoning is handled as lossless protocol conversion before provider
-policy. The adapter preserves `reasoning.effort` in Anthropic `output_config`;
-the application reasoning boundary then interprets `none` as off and preserves
-all other named efforts. It never translates OpenAI effort names into Anthropic
-token budgets.
-Application-resolved source controls remain on the immutable canonical request;
-provider adapters consume the resolved `ReasoningPolicy` rather than parsing
-those controls again. A target converter validates only the unrepresented
-semantic remainder: it may omit an application-consumed control or an exact
-no-op, but must reject active or unknown behavior before upstream I/O. For the
-connected OpenAI Responses transport, `output_config.effort` is already
-represented by the policy and an empty context edit or exact
-`clear_thinking_20251015` edit with `keep: "all"` is inert. Structured-output
-configuration and any active, malformed, or extended context edit remain
-unsupported and fail preflight rather than being silently discarded.
-Prior Responses `reasoning` input items replay plaintext `reasoning_text`, or
-fallback `summary_text`, into assistant `reasoning_content`. Encrypted reasoning
-input is ignored because the proxy cannot decrypt it.
-
-Provider thinking output maps back to Responses reasoning in the same block
-order the upstream Anthropic stream produced. Anthropic `thinking` blocks become
-Responses `reasoning` output items and `response.reasoning_text.*` stream
-events. Anthropic `redacted_thinking` becomes a Responses `reasoning` item with
-`encrypted_content`; the opaque value is not exposed as visible text and FCC
-does not synthesize reasoning summaries.
+Client-facing Responses tool identity is distinct from upstream wire
+portability. Canonical function/custom tool values preserve namespaces, call
+IDs, schemas or formats, and string versus object input. The selected upstream
+codec alone applies reversible OpenAI-compatible name encoding. Reasoning intent
+is resolved once by the application, while typed replay artifacts remain opaque
+and are forwarded only when their exact compatibility scope matches the
+selected upstream route.
 
 Provider code should delegate protocol details to these modules. Avoid copying
 conversion code into individual providers, and avoid provider-to-provider imports

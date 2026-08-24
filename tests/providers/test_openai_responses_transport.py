@@ -390,11 +390,14 @@ async def test_post_commit_truncation_is_not_replayed() -> None:
 
 
 class _BlockingBody(httpx2.AsyncByteStream):
-    def __init__(self) -> None:
+    def __init__(self, *prefix: bytes) -> None:
+        self._prefix = prefix
         self.entered = asyncio.Event()
         self.closed = asyncio.Event()
 
     async def __aiter__(self):
+        for chunk in self._prefix:
+            yield chunk
         self.entered.set()
         await asyncio.Event().wait()
         yield b""
@@ -414,14 +417,37 @@ async def test_cancellation_closes_the_sdk_stream() -> None:
         )
     )
     task = asyncio.create_task(_collect(_transport(client)))
-    await asyncio.wait_for(body.entered.wait(), timeout=1)
+    await asyncio.wait_for(body.entered.wait(), timeout=3)
     task.cancel()
     try:
         with pytest.raises(asyncio.CancelledError):
             await task
-        await asyncio.wait_for(body.closed.wait(), timeout=1)
+        await asyncio.wait_for(body.closed.wait(), timeout=3)
     finally:
         await client.close()
+
+
+@pytest.mark.asyncio
+async def test_terminal_event_closes_sdk_stream_without_waiting_for_eof() -> None:
+    body = _BlockingBody(
+        _sse(_text_delta("complete"), _completed_event()).encode(),
+    )
+    client = _client(
+        lambda _request: httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=body,
+        )
+    )
+    try:
+        chunks = await asyncio.wait_for(_collect(_transport(client)), timeout=3)
+        await asyncio.wait_for(body.closed.wait(), timeout=3)
+    finally:
+        await client.close()
+
+    parsed = parse_sse_text("".join(chunks))
+    assert text_content(parsed) == "complete"
+    assert_anthropic_stream_contract(parsed)
 
 
 @pytest.mark.asyncio

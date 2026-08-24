@@ -11,7 +11,6 @@ from httpx2 import Request, Response
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.core.inference import InferenceRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
-from free_claude_code.providers.admission import ProviderOperationKind
 from free_claude_code.providers.openai_chat import (
     OpenAIChatProfile,
     OpenAIChatProvider,
@@ -244,27 +243,25 @@ async def test_openai_chat_stream_keeps_response_model_separate_from_upstream_mo
 @pytest.mark.asyncio
 async def test_openai_chat_stream_retries_without_usage_when_option_is_rejected():
     provider = _UsageTestProvider()
-    body = {"model": "m", "messages": [{"role": "user", "content": "x"}]}
-    request_stream_usage(body)
+    request = make_messages_request(model="m")
     create = AsyncMock(
         side_effect=[
             _bad_request(
                 "stream_options is unsupported",
                 {"error": {"message": "stream_options is unsupported"}},
             ),
-            object(),
+            _stream([_chunk(finish_reason="stop")]),
         ]
     )
 
     with patch.object(provider._client.chat.completions, "create", create):
-        _stream_obj, used_body, attempt = await provider._create_stream(
-            body,
-            provider._admission.start_execution(),
-            ProviderOperationKind.GENERATION,
+        await collect_anthropic(
+            provider.stream_response(
+                canonical_request(request),
+                provider_model=request.model,
+            )
         )
-        await attempt.aclose()
 
     assert create.await_count == 2
     assert create.await_args_list[0].kwargs["stream_options"] == {"include_usage": True}
     assert "stream_options" not in create.await_args_list[1].kwargs
-    assert "stream_options" not in used_body
