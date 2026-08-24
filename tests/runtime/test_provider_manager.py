@@ -266,7 +266,8 @@ async def test_publish_reconciles_picker_aliases_with_cache_mutations() -> None:
         assert old_alias is not None
 
         # A later cache mutation replaces the inventory: the new ref must gain
-        # an alias immediately and the removed ref must stop resolving.
+        # an alias immediately, and the removed ref's alias retires instead of
+        # silently re-pointing at the replacement model.
         manager.cache_model_infos(
             "openai",
             [ProviderModelInfo(model_id="new-model", supports_thinking=None)],
@@ -275,9 +276,8 @@ async def test_publish_reconciles_picker_aliases_with_cache_mutations() -> None:
         new_alias = gmi.picker_alias_for("openai/new-model")
         assert new_alias is not None
         assert gmi.picker_alias_for("openai/old-model") is None
-        # Deterministic sorted numbering reuses the freed slot for the new ref.
-        assert old_alias == new_alias == "claude-sonnet-nim-0001"
-        assert gmi.resolve_picker_alias(old_alias) == ("openai/new-model", False)
+        assert new_alias != old_alias
+        assert gmi.resolve_picker_alias(old_alias) is None
         await manager.close()
     finally:
         gmi.clear_picker_aliases()

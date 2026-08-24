@@ -36,6 +36,21 @@ _EMPTY_PICKER_ALIAS_MAPS = _PickerAliasMaps({}, {}, {}, {})
 # ``clear_picker_aliases()`` between runs to restore the inert empty snapshot.
 _picker_aliases = _EMPTY_PICKER_ALIAS_MAPS
 
+# Sticky ref-to-alias assignments that survive reseeds: once an alias has been
+# advertised for a ref, that alias is never re-pointed to a different ref, so
+# a desktop picker holding a stale catalog cannot silently route to another
+# model. Numbers of retired refs stay consumed; a returning ref regains its
+# previous alias. Reset only by ``clear_picker_aliases()``.
+_sticky_ref_to_alias: dict[str, str] = {}
+_used_alias_numbers: set[int] = set()
+
+
+def _next_unused_alias_number(used_numbers: set[int]) -> int:
+    candidate = 1
+    while candidate in used_numbers:
+        candidate += 1
+    return candidate
+
 
 @dataclass(frozen=True, slots=True)
 class DecodedGatewayModelId:
@@ -86,29 +101,45 @@ def _format_picker_alias(index: int, *, no_thinking: bool) -> str:
 def seed_picker_aliases(provider_model_refs: Iterable[str]) -> None:
     """Publish a fresh immutable alias snapshot built from the supplied refs.
 
-    Stable across restarts: counter is assigned by ``sorted(refs)``, so the
-    same input order produces the same numbering.
+    Aliases are stable across reseeds: a ref that already holds an alias keeps
+    it, and new refs take previously unused numbers, so an alias already shown
+    in a client picker can never silently resolve to a different model.
+    Numbering is deterministic on restart when starting from the same initial
+    inventory (counters assigned by ``sorted(refs)`` order).
 
-    The snapshot stays empty when the iterable is empty so a cold-start
+    An empty inventory publishes the inert empty snapshot so a cold-start
     ``/v1/models`` request still falls back to the canonical
     ``gateway_model_id`` wrappers.
     """
+    global _picker_aliases, _sticky_ref_to_alias, _used_alias_numbers
+
+    wanted = [ref for ref in sorted(set(provider_model_refs)) if ref]
+    if not wanted:
+        _sticky_ref_to_alias = {}
+        _used_alias_numbers = set()
+        _picker_aliases = _EMPTY_PICKER_ALIAS_MAPS
+        return
+
     thinking_aliases: dict[str, str] = {}
     no_thinking_aliases: dict[str, str] = {}
     ref_to_thinking: dict[str, str] = {}
     ref_to_no_thinking: dict[str, str] = {}
+    used_numbers = set(_used_alias_numbers)
 
-    for index, ref in enumerate(sorted(provider_model_refs), start=1):
-        if not ref:
-            continue
-        alias = _format_picker_alias(index, no_thinking=False)
-        no_thinking_alias = _format_picker_alias(index, no_thinking=True)
+    for ref in wanted:
+        alias = _sticky_ref_to_alias.get(ref)
+        if alias is None:
+            number = _next_unused_alias_number(used_numbers)
+            used_numbers.add(number)
+            alias = _format_picker_alias(number, no_thinking=False)
         thinking_aliases[alias] = ref
-        no_thinking_aliases[no_thinking_alias] = ref
+        alias_no_thinking = f"{alias}{_PICKER_ALIAS_NO_THINKING_SUFFIX}"
+        no_thinking_aliases[alias_no_thinking] = ref
         ref_to_thinking[ref] = alias
-        ref_to_no_thinking[ref] = no_thinking_alias
+        ref_to_no_thinking[ref] = alias_no_thinking
 
-    global _picker_aliases
+    _sticky_ref_to_alias = {**_sticky_ref_to_alias, **ref_to_thinking}
+    _used_alias_numbers = used_numbers
     _picker_aliases = _PickerAliasMaps(
         alias_to_ref=thinking_aliases,
         alias_to_ref_no_thinking=no_thinking_aliases,
@@ -148,6 +179,8 @@ def has_picker_aliases() -> bool:
 
 
 def clear_picker_aliases() -> None:
-    """Drop every alias entry. Used by tests and hardening paths."""
-    global _picker_aliases
+    """Drop every alias entry and sticky assignment. Tests and hardening."""
+    global _picker_aliases, _sticky_ref_to_alias, _used_alias_numbers
     _picker_aliases = _EMPTY_PICKER_ALIAS_MAPS
+    _sticky_ref_to_alias = {}
+    _used_alias_numbers = set()

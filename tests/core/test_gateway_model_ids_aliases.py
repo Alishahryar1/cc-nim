@@ -50,6 +50,33 @@ def test_alias_counter_is_deterministic_from_sorted_input():
     )
 
 
+def test_reseed_keeps_existing_refs_on_their_alias():
+    gmi.seed_picker_aliases(
+        [
+            "nvidia_nim/01-ai/yi-large",
+            "nvidia_nim/meta/llama-3.3-70b-instruct",
+        ]
+    )
+
+    # A refresh that adds a ref must not renumber the advertised ones.
+    gmi.seed_picker_aliases(
+        [
+            "nvidia_nim/01-ai/yi-large",
+            "nvidia_nim/meta/llama-3.3-70b-instruct",
+            "openai/gpt-x",
+        ]
+    )
+
+    assert gmi.picker_alias_for("nvidia_nim/01-ai/yi-large") == (
+        "claude-sonnet-nim-0001"
+    )
+    assert (
+        gmi.picker_alias_for("nvidia_nim/meta/llama-3.3-70b-instruct")
+        == "claude-sonnet-nim-0002"
+    )
+    assert gmi.picker_alias_for("openai/gpt-x") == "claude-sonnet-nim-0003"
+
+
 def test_alias_lookup_thinking_and_no_thinking_variants():
     gmi.seed_picker_aliases(["nvidia_nim/01-ai/yi-large"])
 
@@ -113,17 +140,32 @@ def test_seed_empty_iterable_keeps_state_empty():
     assert gmi.has_picker_aliases() is False
 
 
-def test_seed_replaces_previous_aliases():
+def test_seed_replaces_previous_aliases_without_slot_reuse():
     gmi.seed_picker_aliases(["nvidia_nim/01-ai/yi-large"])
     assert gmi.picker_alias_for("nvidia_nim/01-ai/yi-large") == "claude-sonnet-nim-0001"
 
     gmi.seed_picker_aliases(["nvidia_nim/meta/llama-3.3-70b-instruct"])
 
+    # The removed ref's alias is retired, never recycled onto the new ref.
     assert gmi.picker_alias_for("nvidia_nim/01-ai/yi-large") is None
+    assert gmi.resolve_picker_alias("claude-sonnet-nim-0001") is None
     assert (
         gmi.picker_alias_for("nvidia_nim/meta/llama-3.3-70b-instruct")
-        == "claude-sonnet-nim-0001"
+        == "claude-sonnet-nim-0002"
     )
+
+
+def test_returning_ref_regains_its_previous_alias():
+    gmi.seed_picker_aliases(["nvidia_nim/01-ai/yi-large"])
+    original = gmi.picker_alias_for("nvidia_nim/01-ai/yi-large")
+    assert original is not None
+
+    gmi.seed_picker_aliases(["openai/gpt-x"])
+    assert gmi.resolve_picker_alias(original) is None
+
+    gmi.seed_picker_aliases(["nvidia_nim/01-ai/yi-large", "openai/gpt-x"])
+
+    assert gmi.picker_alias_for("nvidia_nim/01-ai/yi-large") == original
 
 
 def test_aliases_are_four_digit_zero_padded():
@@ -158,23 +200,26 @@ def test_reseed_publishes_one_consistent_snapshot():
 
     Regression guard for torn publication: a reader binding the snapshot
     before a reseed sees one self-consistent inventory, and a reader binding
-    it afterwards sees the other — never a mix of old and new maps.
+    it afterwards sees the other — never a mix of old and new maps. Sticky
+    assignments additionally guarantee the pre-reseed alias keeps resolving
+    to the same ref it advertised (or retires entirely).
     """
     gmi.seed_picker_aliases(["nvidia_nim/old/model"])
     advertised = gmi.picker_alias_for("nvidia_nim/old/model")
 
     gmi.seed_picker_aliases(["nvidia_nim/new/model"])
 
-    # The pre-reseed advertisement resolves through the same snapshot that
-    # produced it, so routing cannot disagree with the catalog.
     assert advertised is not None
-    assert gmi.resolve_picker_alias("claude-sonnet-nim-0001") in {
+    # The previously advertised alias either still routes to its original ref
+    # or is retired outright; it can never re-point to another model.
+    assert gmi.resolve_picker_alias(advertised) in {
         ("nvidia_nim/old/model", False),
-        ("nvidia_nim/new/model", False),
+        None,
     }
     # Both directions of the new snapshot are aligned with each other.
     new_alias = gmi.picker_alias_for("nvidia_nim/new/model")
     assert new_alias is not None
+    assert new_alias != advertised
     assert gmi.resolve_picker_alias(new_alias) == ("nvidia_nim/new/model", False)
     no_thinking_alias = gmi.picker_alias_for(
         "nvidia_nim/new/model", force_reasoning_off=True
