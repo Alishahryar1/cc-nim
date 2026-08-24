@@ -68,6 +68,7 @@ def _settings(**overrides):
         "cerebras_api_key": "",
         "ollama_api_key": "",
         "poolside_api_key": "",
+        "llm7_api_key": "",
         "fireworks_api_key": "",
         "novita_api_key": "",
         "cloudflare_api_token": "",
@@ -180,6 +181,53 @@ def test_poolside_provider_configuration_uses_documented_default_model(
     assert [model.provider for model in models] == ["poolside"]
     assert models[0].full_model == "poolside/poolside/laguna-s-2.1"
     assert models[0].source == "provider_default"
+
+
+def test_llm7_provider_configuration_uses_stable_default_selector(
+    monkeypatch,
+) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_LLM7", raising=False)
+    config = _smoke_config(
+        settings=_settings(
+            model="ollama/llama3.1",
+            ollama_base_url="",
+            llm7_api_key="llm7-key",
+        )
+    )
+
+    assert config.has_provider_configuration("llm7")
+    models = config.provider_smoke_models()
+    assert [model.provider for model in models] == ["llm7"]
+    assert models[0].full_model == "llm7/default"
+    assert models[0].source == "provider_default"
+
+
+def test_llm7_smoke_override_accepts_selector_with_or_without_prefix(
+    monkeypatch,
+) -> None:
+    settings = _settings(
+        model="ollama/llama3.1",
+        ollama_base_url="",
+        llm7_api_key="llm7-key",
+    )
+    for override in ("fast", "llm7/fast"):
+        monkeypatch.setenv("FCC_SMOKE_MODEL_LLM7", override)
+        models = _smoke_config(settings=settings).provider_smoke_models()
+
+        assert [model.provider for model in models] == ["llm7"]
+        assert models[0].full_model == "llm7/fast"
+        assert models[0].source == "FCC_SMOKE_MODEL_LLM7"
+
+
+def test_llm7_is_not_enabled_without_explicit_credential(monkeypatch) -> None:
+    monkeypatch.delenv("FCC_SMOKE_MODEL_LLM7", raising=False)
+    config = _smoke_config(
+        provider_matrix=frozenset({"llm7"}),
+        settings=_settings(ollama_base_url="", llm7_api_key=""),
+    )
+
+    assert not config.has_provider_configuration("llm7")
+    assert config.provider_smoke_models() == []
 
 
 def test_xai_provider_smoke_uses_current_grok_model(monkeypatch) -> None:
