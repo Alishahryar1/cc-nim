@@ -509,28 +509,58 @@ Configure integrations from **Admin UI → Messaging**, then click **Validate** 
 <details>
 <summary><strong>Voice notes</strong></summary>
 
-Choose the voice backend you want, then re-run the installer with its option.
-
-| Voice backend | macOS/Linux option | Windows option |
-| --- | --- | --- |
-| NVIDIA NIM transcription | `--voice-nim` | `-VoiceNim` |
-| Local Whisper on CPU or CUDA | `--voice-local` | `-VoiceLocal` |
-| Both backends | `--voice-all` | `-VoiceAll` |
-| Local Whisper with CUDA 13.0 | `--voice-local --torch-backend cu130` | `-VoiceLocal -TorchBackend cu130` |
-
-The examples below install NVIDIA NIM transcription. To use another backend,
-replace the final option with the matching one from the table.
+Re-run the installer with the command for your voice backend.
 
 macOS/Linux:
+
+NVIDIA NIM transcription:
 
 ```bash
 curl -fsSL "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.sh" | sh -s -- --voice-nim
 ```
 
+Local Whisper on CPU or CUDA:
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.sh" | sh -s -- --voice-local
+```
+
+Both backends:
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.sh" | sh -s -- --voice-all
+```
+
+Local Whisper with CUDA 13.0:
+
+```bash
+curl -fsSL "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.sh" | sh -s -- --voice-local --torch-backend cu130
+```
+
 Windows PowerShell:
+
+NVIDIA NIM transcription:
 
 ```powershell
 & ([scriptblock]::Create((irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.ps1"))) -VoiceNim
+```
+
+Local Whisper on CPU or CUDA:
+
+```powershell
+& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.ps1"))) -VoiceLocal
+```
+
+Both backends:
+
+```powershell
+& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.ps1"))) -VoiceAll
+```
+
+Local Whisper with CUDA 13.0:
+
+```powershell
+& ([scriptblock]::Create((irm "https://raw.githubusercontent.com/Alishahryar1/free-claude-code/main/scripts/install.ps1"))) -VoiceLocal -TorchBackend cu130
 ```
 
 Restart `fcc-server`. In **Admin UI → Messaging → Voice**, enable voice notes, select `cpu`, `cuda`, or `nvidia_nim`, and choose the Whisper model. Local gated models need `HUGGINGFACE_API_KEY`; NVIDIA NIM transcription needs `NVIDIA_NIM_API_KEY`.
