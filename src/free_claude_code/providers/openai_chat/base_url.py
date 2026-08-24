@@ -1,7 +1,9 @@
-"""OpenAI-compatible API base URL policy."""
+"""OpenAI-compatible API base URL policy.
 
+Re-exports the shared URL normalization helper from :mod:`free_claude_code.core.urls`
+so provider adapters and external consumers share one canonical implementation.
+"""
 
-def openai_v1_base_url(base_url: str) -> str:
-    """Return the canonical ``/v1`` API base for a server root or API base."""
-    normalized = base_url.rstrip("/")
-    return normalized if normalized.endswith("/v1") else f"{normalized}/v1"
+from free_claude_code.core.urls import openai_v1_base_url
+
+__all__ = ["openai_v1_base_url"]

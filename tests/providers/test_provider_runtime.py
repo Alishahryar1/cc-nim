@@ -108,11 +108,14 @@ def _make_settings(**overrides):
     mock.llamacpp_base_url = "http://localhost:8080/v1"
     mock.ollama_base_url = "http://localhost:11434"
     mock.ollama_api_key = "test_ollama_cloud_key"
+    mock.omlx_api_key = "test_omlx_key"
+    mock.omlx_base_url = "http://localhost:8001/v1"
     mock.poolside_api_key = "test_poolside_key"
     mock.nvidia_nim_proxy = None
     mock.open_router_proxy = None
     mock.lmstudio_proxy = None
     mock.llamacpp_proxy = None
+    mock.omlx_proxy = None
     mock.mistral_proxy = None
     mock.codestral_proxy = None
     mock.kimi_proxy = None
@@ -603,6 +606,21 @@ def test_local_provider_factory_resolves_catalog_static_credential(
     assert provider._api_key == expected_api_key
 
 
+def test_omlx_factory_resolves_credential_from_settings() -> None:
+    descriptor = PROVIDER_CATALOG["omlx"]
+    settings = _make_settings()
+
+    config = build_provider_config(descriptor, settings)
+    with patch("free_claude_code.providers.openai_chat.provider.AsyncOpenAI"):
+        provider = create_provider("omlx", settings)
+
+    assert config.api_key == "test_omlx_key"
+    assert config.base_url == "http://localhost:8001/v1"
+    assert isinstance(provider, OpenAIChatProvider)
+    assert provider._api_key == "test_omlx_key"
+    assert provider._provider_name == "OMLX"
+
+
 def test_zai_coding_descriptor_uses_fixed_cloud_base_url():
     descriptor = PROVIDER_CATALOG["zai"]
 
@@ -867,6 +885,7 @@ def test_create_provider_instantiates_each_builtin():
         "lmstudio": LMStudioProvider,
         "llamacpp": OpenAIChatProvider,
         "ollama": OpenAIChatProvider,
+        "omlx": OpenAIChatProvider,
         "ollama_cloud": OpenAIChatProvider,
         "wafer": OpenAIChatProvider,
         "opencode_zen": OpenAIChatProvider,

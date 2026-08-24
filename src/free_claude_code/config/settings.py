@@ -348,6 +348,16 @@ class Settings(BaseModel):
         validation_alias="OLLAMA_BASE_URL",
     )
 
+    # ==================== OMLX Config (local OpenAI-compatible server) ====================
+    omlx_api_key: NonEmptyString = Field(
+        default="omlx",
+        validation_alias="OMLX_API_KEY",
+    )
+    omlx_base_url: NonEmptyString = Field(
+        default="http://localhost:8001/v1",
+        validation_alias="OMLX_BASE_URL",
+    )
+
     # ==================== Model ====================
     # All Claude model requests are mapped to this single model (fallback)
     # Format: provider_type/model/name
@@ -435,6 +445,9 @@ class Settings(BaseModel):
     )
     llamacpp_proxy: OptionalNonEmptyString = Field(
         default=None, validation_alias="LLAMACPP_PROXY"
+    )
+    omlx_proxy: OptionalNonEmptyString = Field(
+        default=None, validation_alias="OMLX_PROXY"
     )
     kimi_proxy: OptionalNonEmptyString = Field(
         default=None, validation_alias="KIMI_PROXY"

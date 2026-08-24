@@ -24,6 +24,7 @@ from free_claude_code.config.provider_catalog import (
     ProviderAuthKind,
 )
 from free_claude_code.core.json_types import JsonObject, JsonValue
+from free_claude_code.core.urls import openai_v1_base_url
 
 from .dependencies import get_services
 from .ports import ApiServices
@@ -35,6 +36,7 @@ LOCAL_PROVIDER_PATHS = {
     "lmstudio": "/models",
     "llamacpp": "/models",
     "ollama": "/api/tags",
+    "omlx": "/models",
 }
 _LOCAL_PROVIDER_CHECK_FAILURE_MESSAGE = (
     "Could not connect. Verify the URL and that the local provider is running."
@@ -148,7 +150,10 @@ async def local_provider_status(request: Request):
     checks = []
     for provider_id, path in LOCAL_PROVIDER_PATHS.items():
         base_url = _local_provider_url(provider_id, values)
-        checks.append(await _check_local_provider(provider_id, base_url, path))
+        api_key = _local_provider_api_key(provider_id, values)
+        checks.append(
+            await _check_local_provider(provider_id, base_url, path, api_key=api_key)
+        )
     return {"providers": checks}
 
 
@@ -270,11 +275,35 @@ def _local_provider_url(provider_id: str, values: dict[str, str]) -> str:
         return values.get("LLAMACPP_BASE_URL", "")
     if provider_id == "ollama":
         return values.get("OLLAMA_BASE_URL", "")
+    if provider_id == "omlx":
+        return values.get("OMLX_BASE_URL", "")
     return ""
 
 
+def _local_provider_api_key(provider_id: str, values: dict[str, str]) -> str:
+    """Return the credential value for an authed local provider, if any."""
+    descriptor = PROVIDER_CATALOG.get(provider_id)
+    if descriptor is None or descriptor.credential_env is None:
+        return ""
+    return values.get(descriptor.credential_env, "")
+
+
+def _local_provider_normalizes_v1(provider_id: str, path: str) -> bool:
+    """Whether the status probe should normalize the base URL to ``/v1``.
+
+    OpenAI-compatible local providers (e.g. omlx) expose models at
+    ``/v1/models``; a service-root base URL must be normalized so the probe
+    hits the versioned endpoint. Providers with non-OpenAI probe paths (e.g.
+    ollama ``/api/tags``) are left untouched.
+    """
+    if path != "/models":
+        return False
+    descriptor = PROVIDER_CATALOG.get(provider_id)
+    return descriptor is not None and descriptor.local_status_normalize_v1
+
+
 async def _check_local_provider(
-    provider_id: str, base_url: str, path: str
+    provider_id: str, base_url: str, path: str, *, api_key: str = ""
 ) -> JsonObject:
     clean_url = base_url.strip().rstrip("/")
     if not clean_url:
@@ -285,10 +314,13 @@ async def _check_local_provider(
             "base_url": base_url,
         }
 
+    if _local_provider_normalizes_v1(provider_id, path):
+        clean_url = openai_v1_base_url(clean_url)
     url = f"{clean_url}{path}"
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
     try:
         async with httpx.AsyncClient(timeout=1.5) as client:
-            response = await client.get(url)
+            response = await client.get(url, headers=headers)
         ok = 200 <= response.status_code < 300
         return {
             "provider_id": provider_id,

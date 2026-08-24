@@ -5,6 +5,7 @@ from urllib.parse import urljoin
 import httpx
 import pytest
 
+from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.providers.openai_chat import openai_v1_base_url
 
 LOCAL_PROVIDER_PROBE_TIMEOUT_S = 1.5
@@ -16,6 +17,7 @@ def first_local_provider_model_id(
     base_url: str,
     *,
     timeout_s: float,
+    api_key: str = "",
 ) -> str:
     """Return the first local model id, or skip when the local server is absent."""
     base_url = base_url.strip()
@@ -29,6 +31,7 @@ def first_local_provider_model_id(
         provider,
         base_url,
         timeout_s=timeout,
+        api_key=api_key,
     )
 
 
@@ -37,9 +40,12 @@ def _first_openai_compatible_model_id(
     base_url: str,
     *,
     timeout_s: float,
+    api_key: str = "",
 ) -> str:
     models_url = urljoin(base_url.rstrip("/") + "/", "models")
-    response = _get_local_provider_response(provider, models_url, timeout_s=timeout_s)
+    response = _get_local_provider_response(
+        provider, models_url, timeout_s=timeout_s, api_key=api_key
+    )
     assert response.status_code == 200, response.text
     payload = response.json()
     data = payload.get("data") if isinstance(payload, dict) else None
@@ -56,17 +62,33 @@ def _get_local_provider_response(
     url: str,
     *,
     timeout_s: float,
+    api_key: str = "",
 ) -> httpx.Response:
+    headers = {"Authorization": f"Bearer {api_key}"} if api_key else None
     try:
-        response = httpx.get(url, timeout=timeout_s)
+        response = httpx.get(url, timeout=timeout_s, headers=headers)
     except httpx.TimeoutException as exc:
         pytest.skip(f"missing_env: {provider} local server is not reachable: {exc}")
     except httpx.NetworkError as exc:
         pytest.skip(f"missing_env: {provider} local server is not running: {exc}")
 
+    if response.status_code in {401, 403}:
+        pytest.skip(
+            f"missing_env: {provider} local server rejected credentials: "
+            f"HTTP {response.status_code}"
+        )
     if response.status_code in {404, 405, 502, 503}:
         pytest.skip(
             f"missing_env: {provider} local server is not available at {url}: "
             f"HTTP {response.status_code}"
         )
     return response
+
+
+def local_provider_api_key(provider: str, settings: object) -> str:
+    """Return the credential value for an authed local provider, if any."""
+    descriptor = PROVIDER_CATALOG.get(provider)
+    if descriptor is None or descriptor.credential_attr is None:
+        return ""
+    value = getattr(settings, descriptor.credential_attr, None)
+    return value if isinstance(value, str) else ""

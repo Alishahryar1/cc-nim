@@ -2,7 +2,10 @@ import pytest
 
 from smoke.lib.config import SmokeConfig
 from smoke.lib.e2e import ConversationDriver, SmokeServerDriver, assert_product_stream
-from smoke.lib.local_providers import first_local_provider_model_id
+from smoke.lib.local_providers import (
+    first_local_provider_model_id,
+    local_provider_api_key,
+)
 
 pytestmark = [pytest.mark.live]
 
@@ -34,6 +37,15 @@ def test_ollama_openai_chat_e2e(smoke_config: SmokeConfig) -> None:
     )
 
 
+@pytest.mark.smoke_target("omlx")
+def test_omlx_openai_chat_e2e(smoke_config: SmokeConfig) -> None:
+    _local_provider_messages_e2e(
+        smoke_config,
+        provider="omlx",
+        base_url=smoke_config.settings.omlx_base_url,
+    )
+
+
 def _local_provider_messages_e2e(
     smoke_config: SmokeConfig,
     *,
@@ -44,6 +56,7 @@ def _local_provider_messages_e2e(
         provider,
         base_url,
         timeout_s=smoke_config.timeout_s,
+        api_key=local_provider_api_key(provider, smoke_config.settings),
     )
 
     with SmokeServerDriver(
