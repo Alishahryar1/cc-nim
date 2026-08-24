@@ -16,6 +16,7 @@ from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
+from tests.providers.request_factory import canonical_request
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
@@ -119,8 +120,9 @@ def test_build_request_body_preserves_common_chat_tools_and_images(
     )
 
     body = deepinfra_provider._build_request_body(
-        request,
+        canonical_request(request),
         reasoning=reasoning_for(request),
+        provider_model=(request).model,
     )
 
     assert body["model"] == "deepseek-ai/DeepSeek-V4-Flash"
@@ -154,7 +156,9 @@ def test_build_request_body_encodes_documented_reasoning_effort(
 ) -> None:
     request = _request()
 
-    body = deepinfra_provider._build_request_body(request, reasoning=reasoning)
+    body = deepinfra_provider._build_request_body(
+        canonical_request(request), reasoning=reasoning, provider_model=(request).model
+    )
 
     assert body["extra_body"] == {"reasoning_effort": expected}
 
@@ -164,7 +168,11 @@ def test_build_request_body_preserves_extra_body_without_reasoning_override(
 ) -> None:
     request = _request(extra_body={"service_tier": "priority"})
 
-    body = deepinfra_provider._build_request_body(request, reasoning=REASONING_ON)
+    body = deepinfra_provider._build_request_body(
+        canonical_request(request),
+        reasoning=REASONING_ON,
+        provider_model=(request).model,
+    )
 
     assert body["extra_body"] == {
         "service_tier": "priority",
@@ -180,7 +188,11 @@ def test_build_request_body_rejects_caller_reasoning_override(
     request = _request(extra_body={field: "caller-owned"})
 
     with pytest.raises(InvalidRequestError, match="must not override reasoning"):
-        deepinfra_provider._build_request_body(request, reasoning=REASONING_ON)
+        deepinfra_provider._build_request_body(
+            canonical_request(request),
+            reasoning=REASONING_ON,
+            provider_model=(request).model,
+        )
 
 
 def test_build_request_body_replays_documented_reasoning_content(
@@ -204,8 +216,9 @@ def test_build_request_body_replays_documented_reasoning_content(
     )
 
     body = deepinfra_provider._build_request_body(
-        request,
+        canonical_request(request),
         reasoning=reasoning_for(request),
+        provider_model=(request).model,
     )
 
     assert body["messages"][1] == {

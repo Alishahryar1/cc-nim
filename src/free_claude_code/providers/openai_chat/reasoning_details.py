@@ -4,10 +4,6 @@ import json
 from collections.abc import Iterator, Mapping, Sequence
 from typing import Any, Literal
 
-from free_claude_code.core.anthropic import (
-    is_synthetic_openai_tool_turn_boundary,
-)
-from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.inference import (
     InferenceEvent,
     InferenceStreamLedger,
@@ -15,45 +11,16 @@ from free_claude_code.core.inference import (
     ReplayArtifactKind,
     ReplayArtifactOrigin,
     ReplayAttachment,
+    ReplayCompatibilityScope,
 )
-from free_claude_code.core.reasoning import ReasoningPolicy
-
-
-def apply_reasoning_details_replay(
-    body: dict[str, Any], request: MessagesRequest, _policy: ReasoningPolicy
-) -> None:
-    """Replay opaque reasoning details on their converted assistant messages."""
-    assistant_details = _assistant_reasoning_details(request.messages)
-    if not assistant_details:
-        return
-    messages = body.get("messages")
-    if not isinstance(messages, list):
-        return
-
-    cursor = 0
-    for details in assistant_details:
-        for index in range(cursor, len(messages)):
-            message = messages[index]
-            if (
-                not isinstance(message, dict)
-                or message.get("role") != "assistant"
-                or is_synthetic_openai_tool_turn_boundary(message)
-            ):
-                continue
-            existing = message.get("reasoning_details")
-            if isinstance(existing, list):
-                existing.extend(details)
-            else:
-                message["reasoning_details"] = list(details)
-            cursor = index + 1
-            break
 
 
 class StructuredReasoningStream:
     """Reconcile alternate plaintext reasoning representations for one stream."""
 
-    def __init__(self) -> None:
+    def __init__(self, replay_scope: ReplayCompatibilityScope) -> None:
         self._text_source: Literal["native", "details"] | None = None
+        self._replay_scope = replay_scope
 
     def events(
         self,
@@ -89,6 +56,7 @@ class StructuredReasoningStream:
                         kind=ReplayArtifactKind.REASONING_DETAILS,
                         attachment=ReplayAttachment.REASONING,
                         payload=preserved,
+                        scope=self._replay_scope,
                     )
                 )
 
@@ -100,39 +68,6 @@ def _reasoning_details(delta: Any) -> Sequence[Any]:
         if isinstance(extra, Mapping):
             details = extra.get("reasoning_details")
     return details if _is_sequence(details) else ()
-
-
-def _assistant_reasoning_details(messages: Any) -> list[list[dict[str, Any]]]:
-    if not _is_sequence(messages):
-        return []
-    result: list[list[dict[str, Any]]] = []
-    for message in messages:
-        if _field(message, "role") != "assistant":
-            continue
-        details = _redacted_reasoning_details(_field(message, "content"))
-        if details:
-            result.append(details)
-    return result
-
-
-def _redacted_reasoning_details(content: Any) -> list[dict[str, Any]]:
-    if not _is_sequence(content):
-        return []
-    details: list[dict[str, Any]] = []
-    for block in content:
-        if _field(block, "type") != "redacted_thinking":
-            continue
-        data = _field(block, "data")
-        if not isinstance(data, str) or not data:
-            continue
-        parsed = _json_payload(data)
-        if isinstance(parsed, list):
-            details.extend(item for item in parsed if isinstance(item, dict))
-        elif isinstance(parsed, dict):
-            details.append(parsed)
-        else:
-            details.append({"type": "reasoning.encrypted", "data": data})
-    return details
 
 
 def _reasoning_detail_text(detail: Any) -> str | None:
@@ -160,13 +95,6 @@ def _preserved_reasoning_detail(detail: Any) -> str | None:
     ):
         return json.dumps(dict(detail), separators=(",", ":"))
     return None
-
-
-def _json_payload(value: str) -> Any:
-    try:
-        return json.loads(value)
-    except json.JSONDecodeError:
-        return None
 
 
 def _field(item: Any, name: str) -> Any:

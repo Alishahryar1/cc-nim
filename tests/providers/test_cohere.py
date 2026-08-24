@@ -8,7 +8,7 @@ import pytest
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.provider_catalog import COHERE_DEFAULT_BASE
 from tests.inference_support import collect_anthropic
-from tests.providers.request_factory import make_messages_request
+from tests.providers.request_factory import canonical_request, make_messages_request
 from tests.providers.support import (
     immediate_admission,
     make_provider_config,
@@ -82,7 +82,9 @@ def test_build_request_body_sanitizes_documented_unsupported_fields(cohere_provi
             "parallel_tool_calls": True,
         }
 
-        body = cohere_provider._build_request_body(make_request())
+        body = cohere_provider._build_request_body(
+            canonical_request(make_request()), provider_model=(make_request()).model
+        )
 
     assert body["messages"][0].get("name") is None
     assert body["max_tokens"] == 42
@@ -105,7 +107,9 @@ def test_build_request_body_sanitizes_documented_unsupported_fields(cohere_provi
 def test_build_request_body_maps_reasoning_on_to_high(cohere_provider):
     request = make_request()
     body = cohere_provider._build_request_body(
-        request, reasoning=reasoning_for(request)
+        canonical_request(request),
+        reasoning=reasoning_for(request),
+        provider_model=(request).model,
     )
 
     assert body["reasoning_effort"] == "high"
@@ -128,7 +132,9 @@ def test_build_request_body_preserves_replayed_reasoning_content(cohere_provider
 
         request = make_request()
         body = cohere_provider._build_request_body(
-            request, reasoning=reasoning_for(request)
+            canonical_request(request),
+            reasoning=reasoning_for(request),
+            provider_model=(request).model,
         )
 
     assert body["messages"] == [
@@ -154,7 +160,11 @@ def test_build_request_body_maps_reasoning_off_to_none():
     )
 
     request = make_request(thinking={"type": "disabled"})
-    body = provider._build_request_body(request, reasoning=reasoning_for(request))
+    body = provider._build_request_body(
+        canonical_request(request),
+        reasoning=reasoning_for(request),
+        provider_model=(request).model,
+    )
 
     assert body["reasoning_effort"] == "none"
 
@@ -169,7 +179,9 @@ def test_build_request_body_promotes_allowed_extra_body(cohere_provider):
         }
     )
 
-    body = cohere_provider._build_request_body(req, reasoning=reasoning_for(req))
+    body = cohere_provider._build_request_body(
+        canonical_request(req), reasoning=reasoning_for(req), provider_model=(req).model
+    )
 
     assert body["frequency_penalty"] == 0.1
     assert body["presence_penalty"] == 0.2
@@ -182,7 +194,11 @@ def test_build_request_body_rejects_unsupported_extra_body(cohere_provider):
     req = make_request(extra_body={"documents": [{"text": "x"}]})
 
     with pytest.raises(InvalidRequestError, match="Unsupported"):
-        cohere_provider._build_request_body(req, reasoning=reasoning_for(req))
+        cohere_provider._build_request_body(
+            canonical_request(req),
+            reasoning=reasoning_for(req),
+            provider_model=(req).model,
+        )
 
 
 @pytest.mark.asyncio
@@ -209,7 +225,9 @@ async def test_stream_response_text(cohere_provider):
         mock_create.return_value = mock_stream()
 
         events = await collect_anthropic(
-            cohere_provider.stream_response(make_request())
+            cohere_provider.stream_response(
+                canonical_request(make_request()), provider_model=(make_request()).model
+            )
         )
 
     assert any(
@@ -244,7 +262,9 @@ async def test_stream_response_tool_call(cohere_provider):
         mock_create.return_value = mock_stream()
 
         events = await collect_anthropic(
-            cohere_provider.stream_response(make_request())
+            cohere_provider.stream_response(
+                canonical_request(make_request()), provider_model=(make_request()).model
+            )
         )
 
     assert any(
@@ -279,7 +299,9 @@ async def test_stream_response_reasoning_content(cohere_provider):
         mock_create.return_value = mock_stream()
 
         events = await collect_anthropic(
-            cohere_provider.stream_response(make_request())
+            cohere_provider.stream_response(
+                canonical_request(make_request()), provider_model=(make_request()).model
+            )
         )
 
     assert any(

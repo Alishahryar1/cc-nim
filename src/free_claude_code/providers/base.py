@@ -7,12 +7,11 @@ from dataclasses import dataclass
 from loguru import logger
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
-from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.diagnostics import (
     exception_cause_types,
     redacted_exception_traceback,
 )
-from free_claude_code.core.inference import InferenceEvent
+from free_claude_code.core.inference import InferenceEvent, InferenceRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.core.trace import trace_event
 
@@ -47,8 +46,9 @@ class BaseProvider(ABC):
     @abstractmethod
     def preflight_stream(
         self,
-        request: MessagesRequest,
+        request: InferenceRequest,
         *,
+        provider_model: str,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> None:
         """Validate the upstream request before opening an SSE stream."""
@@ -107,9 +107,10 @@ class BaseProvider(ABC):
     @abstractmethod
     def stream_response(
         self,
-        request: MessagesRequest,
+        request: InferenceRequest,
         input_tokens: int = 0,
         *,
+        provider_model: str,
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,

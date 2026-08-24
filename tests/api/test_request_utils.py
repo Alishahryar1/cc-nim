@@ -10,11 +10,27 @@ from free_claude_code.api.detection import (
     is_quota_check_request,
     is_title_generation_request,
 )
-from free_claude_code.core.anthropic import get_token_count
 from free_claude_code.core.anthropic.models import (
     Message,
     MessagesRequest,
-    SystemContent,
+)
+from free_claude_code.core.inference import (
+    Base64MediaSource,
+    FunctionTool,
+    ImageContent,
+    InferenceItem,
+    InferenceRequest,
+    InstructionItem,
+    InstructionOrigin,
+    InstructionPlacement,
+    MessageItem,
+    MessageRole,
+    ReasoningItem,
+    TextContent,
+    ToolCallItem,
+    ToolCallKind,
+    ToolResultItem,
+    get_inference_token_count,
 )
 
 
@@ -326,240 +342,145 @@ class TestPrefixDetectionRequest:
         assert command == "ls -la"
 
 
-class TestGetTokenCount:
-    """Tests for get_token_count function."""
+def _message(turn_id: str, text: str) -> MessageItem:
+    return MessageItem(
+        turn_id=turn_id,
+        role=MessageRole.USER,
+        content=(TextContent(text),),
+    )
 
-    def test_empty_messages(self):
-        """Test token count with empty messages."""
-        count = get_token_count([])
-        assert count >= 1  # Returns max(1, tokens)
 
-    def test_simple_message(self):
-        """Test token count with simple text message."""
-        msg = MagicMock()
-        msg.content = "Hello world"
+def _token_request(
+    *items: InferenceItem,
+    tools: tuple[FunctionTool, ...] = (),
+) -> InferenceRequest:
+    return InferenceRequest(model="provider/model", items=items, tools=tools)
 
-        count = get_token_count([msg])
-        assert count > 0
-        # "Hello world" is ~2-3 tokens plus overhead
-        assert count >= 3
 
-    def test_special_token_text_is_counted_as_plain_text(self):
-        """Tiktoken special-token strings should not break token estimates."""
-        msg = MagicMock()
-        msg.content = "<|endoftext|>"
+class TestGetInferenceTokenCount:
+    """Canonical token accounting uses the same transcript as execution."""
 
-        count = get_token_count([msg], system="<|endoftext|>")
-        assert count > 0
+    def test_empty_request_has_nonzero_floor(self) -> None:
+        assert get_inference_token_count(_token_request()) == 1
 
-    def test_message_with_system_prompt(self):
-        """Test token count includes system prompt."""
-        msg = MagicMock()
-        msg.content = "Hello"
+    def test_plain_and_special_token_text_are_counted(self) -> None:
+        ordinary = get_inference_token_count(_token_request(_message("turn_0", "Hi")))
+        special = get_inference_token_count(
+            _token_request(_message("turn_0", "<|endoftext|>"))
+        )
 
-        count = get_token_count([msg], system="You are a helpful assistant")
-        assert count > 0
+        assert ordinary > 0
+        assert special > 0
 
-    def test_message_with_list_content(self):
-        """Test token count with list content blocks."""
-        text_block = MagicMock()
-        text_block.type = "text"
-        text_block.text = "Hello world"
+    def test_top_level_instruction_contributes_content_and_overhead(self) -> None:
+        message = _message("turn_0", "Hello")
+        without_instruction = get_inference_token_count(_token_request(message))
+        with_instruction = get_inference_token_count(
+            _token_request(
+                InstructionItem(
+                    text="You are a helpful assistant.",
+                    origin=InstructionOrigin.SYSTEM,
+                    placement=InstructionPlacement.TOP_LEVEL,
+                ),
+                message,
+            )
+        )
 
-        msg = MagicMock()
-        msg.content = [text_block]
+        assert with_instruction >= without_instruction + 4
 
-        count = get_token_count([msg])
-        assert count > 0
+    def test_transcript_instruction_contributes_to_same_turn(self) -> None:
+        message = _message("turn_0", "Hello")
+        instruction = InstructionItem(
+            text="New instructions",
+            origin=InstructionOrigin.SYSTEM,
+            placement=InstructionPlacement.TRANSCRIPT,
+            turn_id="turn_1",
+        )
 
-    def test_message_with_thinking_block(self):
-        """Test token count includes thinking blocks."""
-        thinking_block = MagicMock()
-        thinking_block.type = "thinking"
-        thinking_block.thinking = "Let me think about this..."
+        assert get_inference_token_count(
+            _token_request(message, instruction)
+        ) > get_inference_token_count(_token_request(message))
 
-        msg = MagicMock()
-        msg.content = [thinking_block]
+    def test_reasoning_tool_call_and_tool_result_are_counted(self) -> None:
+        request = _token_request(
+            _message("turn_0", "Use the search tool"),
+            ReasoningItem(turn_id="turn_1", reasoning="Need current information"),
+            ToolCallItem(
+                turn_id="turn_1",
+                call_id="call_abc123",
+                kind=ToolCallKind.FUNCTION,
+                name="search",
+                input={"query": "test"},
+            ),
+            ToolResultItem(
+                turn_id="turn_2",
+                call_id="call_abc123",
+                content={"result": "data"},
+            ),
+        )
 
-        count = get_token_count([msg])
-        assert count > 0
+        assert get_inference_token_count(request) > 0
 
-    def test_message_with_tool_use(self):
-        """Test token count includes tool use blocks."""
-        tool_block = MagicMock()
-        tool_block.type = "tool_use"
-        tool_block.name = "search"
-        tool_block.input = {"query": "test"}
+    def test_tool_definition_contributes_to_count(self) -> None:
+        message = _message("turn_0", "Use the search tool")
+        without_tool = get_inference_token_count(_token_request(message))
+        with_tool = get_inference_token_count(
+            _token_request(
+                message,
+                tools=(
+                    FunctionTool(
+                        name="search",
+                        description="Search for information",
+                        input_schema={"type": "object", "properties": {}},
+                    ),
+                ),
+            )
+        )
 
-        msg = MagicMock()
-        msg.content = [tool_block]
+        assert with_tool > without_tool
 
-        count = get_token_count([msg])
-        assert count > 0
+    def test_multiple_messages_include_per_turn_overhead(self) -> None:
+        first = _message("turn_0", "Hi")
+        second = _message("turn_1", "Hello")
 
-    def test_message_with_tool_result(self):
-        """Test token count includes tool result blocks."""
-        result_block = MagicMock()
-        result_block.type = "tool_result"
-        result_block.content = "Search results here"
+        assert get_inference_token_count(
+            _token_request(first, second)
+        ) > get_inference_token_count(_token_request(first))
 
-        msg = MagicMock()
-        msg.content = [result_block]
+    def test_base64_image_uses_media_floor(self) -> None:
+        request = _token_request(
+            MessageItem(
+                turn_id="turn_0",
+                role=MessageRole.USER,
+                content=(
+                    ImageContent(
+                        Base64MediaSource(
+                            media_type="image/png",
+                            data="x" * 3_000,
+                        )
+                    ),
+                ),
+            )
+        )
 
-        count = get_token_count([msg])
-        assert count > 0
+        assert get_inference_token_count(request) >= 85
 
-    def test_message_with_tools(self):
-        """Test token count includes tool definitions."""
-        msg = MagicMock()
-        msg.content = "Use the search tool"
-
-        tool = MagicMock()
-        tool.name = "search"
-        tool.description = "Search for information"
-        tool.input_schema = {"type": "object", "properties": {}}
-
-        count = get_token_count([msg], tools=[tool])
-        assert count > 0
-
-    def test_system_as_list(self):
-        """Test token count with system as list of blocks."""
-        msg = MagicMock()
-        msg.content = "Hello"
-
-        block = MagicMock()
-        block.text = "System prompt"
-
-        count = get_token_count([msg], system=[block])
-        assert count > 0
-
-    def test_tool_result_with_dict_content(self):
-        """Test token count with tool result containing dict content."""
-        result_block = MagicMock()
-        result_block.type = "tool_result"
-        result_block.content = {"result": "data"}
-
-        msg = MagicMock()
-        msg.content = [result_block]
-
-        count = get_token_count([msg])
-        assert count > 0
-
-    def test_multiple_messages_overhead(self):
-        """Test that multiple messages include overhead."""
-        msg1 = MagicMock()
-        msg1.content = "Hi"
-
-        msg2 = MagicMock()
-        msg2.content = "Hello"
-
-        count_single = get_token_count([msg1])
-        count_double = get_token_count([msg1, msg2])
-
-        # Double message should have more tokens (including overhead)
-        assert count_double > count_single
-
-    def test_inline_system_message_contributes_to_token_count(self):
-        """Mid-conversation system content remains part of the counted transcript."""
-        user_message = Message(role="user", content="Hello")
-        inline_system = Message(role="system", content="New instructions")
-
-        without_inline_system = get_token_count([user_message])
-        with_inline_system = get_token_count([user_message, inline_system])
-
-        assert with_inline_system > without_inline_system
-
-    def test_per_message_overhead_four_tokens(self):
-        """Per-message overhead is 4 tokens (was 3)."""
-        msg = MagicMock()
-        msg.content = "x"  # Minimal content
-        count = get_token_count([msg])
-        # 1 msg * 4 overhead + content tokens
-        assert count >= 5
-
-    def test_system_overhead_added(self):
-        """System prompt adds ~4 tokens overhead."""
-        msg = MagicMock()
-        msg.content = "Hi"
-        count_no_sys = get_token_count([msg])
-        count_with_sys = get_token_count([msg], system="You are helpful")
-        assert count_with_sys >= count_no_sys + 4
-
-    def test_system_as_typed_content_blocks(self):
-        """Typed system content blocks are counted."""
-        msg = MagicMock()
-        msg.content = "Hi"
-        count_no_sys = get_token_count([msg])
-        system_blocks = [
-            SystemContent(type="text", text="System prompt from typed block")
-        ]
-        count_with_system = get_token_count([msg], system=system_blocks)
-        assert count_with_system > count_no_sys
-
-    def test_tool_use_includes_id(self):
-        """Tool use blocks count id field."""
-        tool_block = MagicMock()
-        tool_block.type = "tool_use"
-        tool_block.name = "search"
-        tool_block.input = {"q": "test"}
-        tool_block.id = "call_abc123"
-        msg = MagicMock()
-        msg.content = [tool_block]
-        count = get_token_count([msg])
-        assert count > 0
-
-    def test_tool_result_includes_tool_use_id(self):
-        """Tool result blocks count tool_use_id field."""
-        result_block = MagicMock()
-        result_block.type = "tool_result"
-        result_block.content = "ok"
-        result_block.tool_use_id = "call_xyz"
-        msg = MagicMock()
-        msg.content = [result_block]
-        count = get_token_count([msg])
-        assert count > 0
-
-    def test_unrecognized_block_type_fallback(self):
-        """Unrecognized block types are tokenized via json.dumps fallback."""
-        unknown_block = {"type": "custom", "spec": "data"}
-        msg = MagicMock()
-        msg.content = [unknown_block]
-        count = get_token_count([msg])
-        assert count > 0
-
-    def test_message_with_image_block(self):
-        """Test token count includes image blocks."""
-        image_block = MagicMock()
-        image_block.type = "image"
-        image_block.source = {
-            "type": "base64",
-            "media_type": "image/png",
-            "data": "x" * 3000,
-        }
-        msg = MagicMock()
-        msg.content = [image_block]
-        count = get_token_count([msg])
-        assert count >= 85
-
-    def test_image_block_with_dict_source(self):
-        """Image block with dict-style source is counted."""
-        image_block = {"type": "image", "source": {"data": "a" * 10000}}
-        msg = MagicMock()
-        msg.content = [image_block]
-        count = get_token_count([msg])
-        assert count >= 85
-
-    def test_known_payload_structural_overhead(self):
-        """Protocol overhead remains separate from plain-text estimation."""
+    def test_known_payload_structural_overhead(self) -> None:
         system_text = "You are a helpful assistant."
         user_text = "Hello, how are you?"
-        msg = MagicMock()
-        msg.content = user_text
+        request = _token_request(
+            InstructionItem(
+                text=system_text,
+                origin=InstructionOrigin.SYSTEM,
+                placement=InstructionPlacement.TOP_LEVEL,
+            ),
+            _message("turn_0", user_text),
+        )
         with patch(
-            "free_claude_code.core.anthropic.tokens.estimate_text_tokens",
+            "free_claude_code.core.inference.tokens.estimate_text_tokens",
             side_effect=len,
         ):
-            count = get_token_count([msg], system=system_text)
+            count = get_inference_token_count(request)
 
         assert count == len(system_text) + len(user_text) + 4 + 4
 

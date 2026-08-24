@@ -4,6 +4,15 @@ import pytest
 from fastapi.testclient import TestClient
 
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
+from free_claude_code.core.inference import (
+    InferenceRequest,
+    InstructionItem,
+    InstructionOrigin,
+    InstructionPlacement,
+    MessageItem,
+    MessageRole,
+    TextContent,
+)
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from tests.api.support import create_test_app
@@ -161,7 +170,7 @@ def test_auto_mode_classifier_without_stream_returns_json(client: TestClient):
     assert body["type"] == "message"
     assert body["usage"] == {"input_tokens": 0, "output_tokens": 0}
     routed_request = _stream_response_calls[0][0][0]
-    assert routed_request.stream is False
+    assert isinstance(routed_request, InferenceRequest)
     assert _stream_response_calls[0][1]["reasoning"] == ReasoningPolicy.off()
 
 
@@ -261,13 +270,16 @@ def test_create_message_preserves_system_role_messages(client: TestClient):
 
     assert response.status_code == 200
     routed_request = _stream_response_calls[0][0][0]
-    assert [message.role for message in routed_request.messages] == [
-        "user",
-        "system",
-        "user",
-    ]
-    assert routed_request.messages[1].content == "system prompt"
-    assert routed_request.system is None
+    assert routed_request.items == (
+        MessageItem("turn_0", MessageRole.USER, (TextContent("context"),)),
+        InstructionItem(
+            text="system prompt",
+            origin=InstructionOrigin.SYSTEM,
+            placement=InstructionPlacement.TRANSCRIPT,
+            turn_id="turn_1",
+        ),
+        MessageItem("turn_2", MessageRole.USER, (TextContent("Hi"),)),
+    )
 
 
 def test_model_mapping(client: TestClient):
@@ -283,7 +295,8 @@ def test_model_mapping(client: TestClient):
     assert len(_stream_response_calls) == 1
     args = _stream_response_calls[0][0]
     kwargs = _stream_response_calls[0][1]
-    assert args[0].model != "claude-3-haiku-20240307"
+    assert args[0].model == "claude-3-haiku-20240307"
+    assert kwargs["provider_model"] != args[0].model
     assert kwargs["reasoning"] == ReasoningPolicy.provider_default()
 
 

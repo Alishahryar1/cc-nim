@@ -12,20 +12,19 @@ import httpx
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.application.model_metadata import ProviderModelInfo
-from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.diagnostics import (
     ERROR_DETAIL_DISPLAY_CAP_BYTES,
     attach_upstream_error_body,
     extract_upstream_error_detail,
 )
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
-from free_claude_code.core.inference import InferenceEvent
+from free_claude_code.core.inference import (
+    InferenceEvent,
+    InferenceRequest,
+    ReplayCompatibilityScope,
+)
 from free_claude_code.core.openai_responses import (
     ResponsesConversionError,
-    ResponsesEventDecoder,
-    ResponsesStreamFailure,
-    build_responses_provider_request,
 )
 from free_claude_code.core.reasoning import (
     DEFAULT_REASONING_POLICY,
@@ -45,6 +44,16 @@ from free_claude_code.providers.failure_policy import (
     is_retryable_stream_error,
 )
 from free_claude_code.providers.http import ProviderAttemptScope, maybe_await_aclose
+from free_claude_code.providers.openai_compat import (
+    OpenAIToolNameCodec,
+    openai_replay_scope,
+)
+from free_claude_code.providers.openai_responses import (
+    ResponsesEventDecoder,
+    ResponsesRequestEncodingError,
+    ResponsesStreamFailure,
+    build_responses_request_body,
+)
 from free_claude_code.providers.stream_recovery import (
     RecoveryController,
     RecoveryFailureAction,
@@ -96,13 +105,18 @@ class OpenAICodexProvider(BaseProvider):
 
     def preflight_stream(
         self,
-        request: MessagesRequest,
+        request: InferenceRequest,
         *,
+        provider_model: str,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> None:
         """Validate and adapt the private Codex request before upstream I/O."""
 
-        self._build_body(request, reasoning=reasoning)
+        self._build_body(
+            request,
+            provider_model=provider_model,
+            reasoning=reasoning,
+        )
 
     async def cleanup(self) -> None:
         """Close only provider-owned transport resources."""
@@ -175,9 +189,10 @@ class OpenAICodexProvider(BaseProvider):
 
     def stream_response(
         self,
-        request: MessagesRequest,
+        request: InferenceRequest,
         input_tokens: int = 0,
         *,
+        provider_model: str,
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
@@ -185,30 +200,51 @@ class OpenAICodexProvider(BaseProvider):
         """Stream private Responses output as canonical inference events."""
 
         tool_names = OpenAIToolNameCodec.from_request(request)
-        body = self._build_body(request, reasoning=reasoning)
+        replay_scope = self._replay_scope(provider_model)
+        body = self._build_body(
+            request,
+            provider_model=provider_model,
+            reasoning=reasoning,
+        )
         return self._run_stream(
             body,
             input_tokens=input_tokens,
             request_id=request_id,
             response_model=response_model or request.model,
             tool_names=tool_names,
+            replay_scope=replay_scope,
         )
 
-    @staticmethod
     def _build_body(
-        request: MessagesRequest,
+        self,
+        request: InferenceRequest,
         *,
+        provider_model: str,
         reasoning: ReasoningPolicy,
     ) -> dict[str, Any]:
         try:
-            body = build_responses_provider_request(request, reasoning=reasoning)
-        except ResponsesConversionError as exc:
+            body = build_responses_request_body(
+                request,
+                provider_model=provider_model,
+                reasoning=reasoning,
+                tool_names=OpenAIToolNameCodec.from_request(request),
+                replay_scope=self._replay_scope(provider_model),
+            )
+        except (ResponsesConversionError, ResponsesRequestEncodingError) as exc:
             raise InvalidRequestError(str(exc)) from exc
         # The private Codex backend rejects these public Responses fields.
         # Codex itself omits the output cap and uses separate internal metadata.
         body.pop("max_output_tokens", None)
         body.pop("metadata", None)
         return body
+
+    @staticmethod
+    def _replay_scope(provider_model: str) -> ReplayCompatibilityScope:
+        return openai_replay_scope(
+            "openai",
+            provider_model,
+            replay_format="codex-responses",
+        )
 
     async def _run_stream(
         self,
@@ -218,6 +254,7 @@ class OpenAICodexProvider(BaseProvider):
         request_id: str | None,
         response_model: str,
         tool_names: OpenAIToolNameCodec,
+        replay_scope: ReplayCompatibilityScope,
     ) -> AsyncIterator[InferenceEvent]:
         execution = self._admission.start_execution(request_id=request_id)
         provider_stream = self._run_stream_execution(
@@ -226,6 +263,7 @@ class OpenAICodexProvider(BaseProvider):
             request_id=request_id,
             response_model=response_model,
             tool_names=tool_names,
+            replay_scope=replay_scope,
             execution=execution,
         )
         try:
@@ -250,6 +288,7 @@ class OpenAICodexProvider(BaseProvider):
         request_id: str | None,
         response_model: str,
         tool_names: OpenAIToolNameCodec,
+        replay_scope: ReplayCompatibilityScope,
         execution: ProviderExecution,
     ) -> AsyncIterator[InferenceEvent]:
         """Run one Codex execution while retaining Responses transport ownership."""
@@ -276,6 +315,7 @@ class OpenAICodexProvider(BaseProvider):
                 model=response_model,
                 input_tokens=input_tokens,
                 tool_names=tool_names,
+                replay_scope=replay_scope,
             )
             for event in stream.start():
                 for held in recovery.push(event):

@@ -11,7 +11,7 @@ from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.lmstudio import LMStudioProvider
 from tests.inference_support import collect_anthropic
-from tests.providers.request_factory import make_messages_request
+from tests.providers.request_factory import canonical_request, make_messages_request
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
@@ -57,7 +57,9 @@ def test_default_base_url_constant():
 
 def test_build_request_body_basic(lmstudio_provider):
     req = make_request()
-    body = lmstudio_provider._build_request_body(req)
+    body = lmstudio_provider._build_request_body(
+        canonical_request(req), provider_model=(req).model
+    )
 
     assert body["model"] == "lmstudio-community/qwen2.5-7b-instruct"
     assert body["messages"][0]["role"] == "system"
@@ -66,7 +68,9 @@ def test_build_request_body_basic(lmstudio_provider):
 def test_adaptive_client_reasoning_uses_documented_named_effort(lmstudio_provider):
     req = make_request()
 
-    body = lmstudio_provider._build_request_body(req, reasoning=REASONING_ON)
+    body = lmstudio_provider._build_request_body(
+        canonical_request(req), reasoning=REASONING_ON, provider_model=(req).model
+    )
 
     assert body["extra_body"]["reasoning_effort"] == "high"
     assert "reasoning_effort" not in body
@@ -76,11 +80,12 @@ def test_exact_client_budget_is_not_derived_from_output_tokens(lmstudio_provider
     req = make_request(max_tokens=8192)
 
     body = lmstudio_provider._build_request_body(
-        req,
+        canonical_request(req),
         reasoning=ReasoningPolicy.on(
             effort=ReasoningEffort.HIGH,
             budget_tokens=1024,
         ),
+        provider_model=(req).model,
     )
 
     assert body["extra_body"]["reasoning_tokens"] == 1024
@@ -106,7 +111,9 @@ def test_build_request_body_never_replays_prior_thinking(lmstudio_provider):
             },
         ]
     )
-    body = lmstudio_provider._build_request_body(req)
+    body = lmstudio_provider._build_request_body(
+        canonical_request(req), provider_model=(req).model
+    )
 
     roles = [m.get("role") for m in body.get("messages", [])]
     assert "assistant_reasoning_content" not in roles
@@ -117,15 +124,17 @@ def test_preflight_builds_before_context_budget_and_preserves_policy(
     lmstudio_provider,
 ):
     request = make_request()
+    canonical = canonical_request(request)
     calls: list[tuple[str, object]] = []
 
-    def build(request_arg, *, reasoning):
-        assert request_arg is request
+    def build(request_arg, *, provider_model, reasoning):
+        assert request_arg is canonical
+        assert provider_model == request.model
         calls.append(("build", reasoning))
         return {}
 
     def check_context(request_arg):
-        assert request_arg is request
+        assert request_arg is canonical
         calls.append(("context", request_arg))
 
     with (
@@ -136,9 +145,13 @@ def test_preflight_builds_before_context_budget_and_preserves_policy(
             side_effect=check_context,
         ),
     ):
-        lmstudio_provider.preflight_stream(request, reasoning=REASONING_OFF)
+        lmstudio_provider.preflight_stream(
+            canonical,
+            reasoning=REASONING_OFF,
+            provider_model=request.model,
+        )
 
-    assert calls == [("build", REASONING_OFF), ("context", request)]
+    assert calls == [("build", REASONING_OFF), ("context", canonical)]
 
 
 def test_preflight_conversion_failure_skips_context_budget(lmstudio_provider):
@@ -154,7 +167,11 @@ def test_preflight_conversion_failure_skips_context_budget(lmstudio_provider):
         patch.object(lmstudio_provider, "_preflight_context_budget") as context,
         pytest.raises(InvalidRequestError, match="invalid request conversion"),
     ):
-        lmstudio_provider.preflight_stream(request, reasoning=REASONING_ON)
+        lmstudio_provider.preflight_stream(
+            canonical_request(request),
+            reasoning=REASONING_ON,
+            provider_model=(request).model,
+        )
 
     context.assert_not_called()
 
@@ -183,7 +200,11 @@ async def test_stream_response_text(lmstudio_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = await collect_anthropic(lmstudio_provider.stream_response(req))
+        events = await collect_anthropic(
+            lmstudio_provider.stream_response(
+                canonical_request(req), provider_model=(req).model
+            )
+        )
 
         assert any(
             '"text_delta"' in event and "Hello back!" in event for event in events
@@ -219,8 +240,7 @@ async def test_stream_response_passes_exact_reasoning_budget_via_extra_body(
 
         events = await collect_anthropic(
             lmstudio_provider.stream_response(
-                req,
-                reasoning=policy,
+                canonical_request(req), reasoning=policy, provider_model=(req).model
             )
         )
 
@@ -262,7 +282,7 @@ def test_preflight_context_budget_rejects_request_over_90_percent(lmstudio_provi
     with (
         patch.object(lmstudio_provider, "_loaded_context_length", return_value=1000),
         patch(
-            "free_claude_code.providers.lmstudio.client.get_token_count",
+            "free_claude_code.providers.lmstudio.client.get_inference_token_count",
             return_value=901,
         ),
         pytest.raises(ExecutionFailure) as exc_info,

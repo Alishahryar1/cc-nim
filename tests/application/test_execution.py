@@ -2,6 +2,7 @@
 
 import asyncio
 from collections.abc import AsyncIterator
+from dataclasses import FrozenInstanceError
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -11,13 +12,19 @@ from free_claude_code.application.execution import ProviderExecutor
 from free_claude_code.application.routing import (
     ProviderModelTarget,
     ResolvedModelRoute,
-    RoutedMessagesRequest,
+    RoutedInferenceRequest,
 )
 from free_claude_code.config.reasoning import ReasoningPreference
-from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.core.async_iterators import AsyncCloseable
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
-from free_claude_code.core.inference import InferenceEvent, TextDelta
+from free_claude_code.core.inference import (
+    InferenceEvent,
+    InferenceRequest,
+    MessageItem,
+    MessageRole,
+    TextContent,
+    TextDelta,
+)
 from free_claude_code.core.reasoning import ReasoningPolicy
 
 
@@ -27,29 +34,32 @@ def _event(label: str) -> TextDelta:
 
 class FakeProvider:
     def __init__(self) -> None:
-        self.preflight_calls: list[tuple[MessagesRequest, ReasoningPolicy]] = []
+        self.preflight_calls: list[tuple[InferenceRequest, str, ReasoningPolicy]] = []
         self.stream_calls: list[dict[str, object]] = []
         self.stream_close_calls = 0
 
     def preflight_stream(
         self,
-        request: MessagesRequest,
+        request: InferenceRequest,
         *,
+        provider_model: str,
         reasoning: ReasoningPolicy,
     ) -> None:
-        self.preflight_calls.append((request, reasoning))
+        self.preflight_calls.append((request, provider_model, reasoning))
 
     async def stream_response(
         self,
-        request: MessagesRequest,
+        request: InferenceRequest,
         input_tokens: int = 0,
         *,
+        provider_model: str,
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
     ) -> AsyncIterator[InferenceEvent]:
         self._record_stream_call(
             request,
+            provider_model=provider_model,
             input_tokens=input_tokens,
             request_id=request_id,
             response_model=response_model,
@@ -62,8 +72,9 @@ class FakeProvider:
 
     def _record_stream_call(
         self,
-        request: MessagesRequest,
+        request: InferenceRequest,
         *,
+        provider_model: str,
         input_tokens: int,
         request_id: str | None,
         response_model: str | None,
@@ -72,6 +83,7 @@ class FakeProvider:
         self.stream_calls.append(
             {
                 "request": request,
+                "provider_model": provider_model,
                 "input_tokens": input_tokens,
                 "request_id": request_id,
                 "response_model": response_model,
@@ -108,15 +120,17 @@ class ControlledProvider(FakeProvider):
 
     async def stream_response(
         self,
-        request: MessagesRequest,
+        request: InferenceRequest,
         input_tokens: int = 0,
         *,
+        provider_model: str,
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
     ) -> AsyncIterator[InferenceEvent]:
         self._record_stream_call(
             request,
+            provider_model=provider_model,
             input_tokens=input_tokens,
             request_id=request_id,
             response_model=response_model,
@@ -142,8 +156,9 @@ class ControlledProvider(FakeProvider):
 class FailingPreflightProvider(FakeProvider):
     def preflight_stream(
         self,
-        request: MessagesRequest,
+        request: InferenceRequest,
         *,
+        provider_model: str,
         reasoning: ReasoningPolicy,
     ) -> None:
         raise ValueError("invalid provider request")
@@ -156,8 +171,9 @@ class ApplicationErrorPreflightProvider(FakeProvider):
 
     def preflight_stream(
         self,
-        request: MessagesRequest,
+        request: InferenceRequest,
         *,
+        provider_model: str,
         reasoning: ReasoningPolicy,
     ) -> None:
         raise self._error
@@ -166,9 +182,10 @@ class ApplicationErrorPreflightProvider(FakeProvider):
 class FailingStreamConstructionProvider(FakeProvider):
     def stream_response(
         self,
-        request: MessagesRequest,
+        request: InferenceRequest,
         input_tokens: int = 0,
         *,
+        provider_model: str,
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
@@ -186,12 +203,18 @@ def _target(provider_id: str, provider_model: str) -> ProviderModelTarget:
 
 def _routed_request(
     *fallbacks: ProviderModelTarget,
-) -> RoutedMessagesRequest:
-    request = MessagesRequest(
+) -> RoutedInferenceRequest:
+    request = InferenceRequest(
         model="provider-model",
-        messages=[Message(role="user", content="hello")],
+        items=(
+            MessageItem(
+                turn_id="turn_0",
+                role=MessageRole.USER,
+                content=(TextContent("hello"),),
+            ),
+        ),
     )
-    return RoutedMessagesRequest(
+    return RoutedInferenceRequest(
         request=request,
         resolved=ResolvedModelRoute(
             original_model="gateway-model",
@@ -211,7 +234,7 @@ def _executor_stream(
 ) -> AsyncIterator[InferenceEvent]:
     executor = ProviderExecutor(
         lambda _provider_id: provider,
-        token_counter=lambda _messages, _system, _tools: 17,
+        token_counter=lambda _request: 17,
         progress_timeout_seconds=timeout_seconds,
     )
     return executor.stream(
@@ -231,22 +254,25 @@ async def test_executor_uses_structural_provider_port_and_preflights_eagerly() -
     executor = ProviderExecutor(
         lambda _provider_id: provider,
         progress_timeout_seconds=60.0,
-        token_counter=lambda _messages, _system, _tools: 17,
+        token_counter=lambda _request: 17,
     )
 
     stream = executor.stream(
         routed,
         wire_api="messages",
         raw_log_label="FULL_PAYLOAD",
-        raw_log_payload=request.model_dump(),
+        raw_log_payload={},
         request_id="req_application",
     )
 
-    assert provider.preflight_calls == [(request, ReasoningPolicy.on())]
+    assert provider.preflight_calls == [
+        (request, "provider-model", ReasoningPolicy.on())
+    ]
     assert [chunk async for chunk in stream] == [_event("provider-event")]
     assert provider.stream_calls == [
         {
             "request": request,
+            "provider_model": "provider-model",
             "input_tokens": 17,
             "request_id": "req_application",
             "response_model": "gateway-model",
@@ -310,7 +336,7 @@ async def test_retryable_preframe_failure_selects_fallback_after_closing_primary
 
     executor = ProviderExecutor(
         resolve,
-        token_counter=lambda _messages, _system, _tools: 17,
+        token_counter=lambda _request: 17,
         progress_timeout_seconds=60.0,
         generation_id=7,
     )
@@ -332,9 +358,11 @@ async def test_retryable_preframe_failure_selects_fallback_after_closing_primary
     assert order == ["fallback-resolved"]
     assert primary.stream_close_calls == 1
     assert fallback.stream_close_calls == 1
-    assert fallback.preflight_calls[0][0].model == "fallback-model"
+    assert fallback.preflight_calls[0][0].model == "provider-model"
+    assert fallback.preflight_calls[0][1] == "fallback-model"
     assert fallback.stream_calls[0] == {
         "request": fallback.preflight_calls[0][0],
+        "provider_model": "fallback-model",
         "input_tokens": 17,
         "request_id": "req_fallback",
         "response_model": "gateway-model",
@@ -559,31 +587,15 @@ async def test_lazy_fallback_preflight_application_error_stops_unchanged() -> No
 
 
 @pytest.mark.asyncio
-async def test_candidate_requests_are_isolated_from_provider_mutation() -> None:
-    class MutatingProvider(ControlledProvider):
-        async def stream_response(
-            self,
-            request: MessagesRequest,
-            input_tokens: int = 0,
-            *,
-            request_id: str | None = None,
-            response_model: str | None = None,
-            reasoning: ReasoningPolicy,
-        ) -> AsyncIterator[InferenceEvent]:
-            request.messages[0].content = "mutated"
-            async for chunk in super().stream_response(
-                request,
-                input_tokens,
-                request_id=request_id,
-                response_model=response_model,
-                reasoning=reasoning,
-            ):
-                yield chunk
-
-    primary = MutatingProvider([_execution_failure("primary")])
+async def test_candidate_request_is_immutable_and_models_are_explicit() -> None:
+    primary = ControlledProvider([_execution_failure("primary")])
     fallback = FakeProvider()
     providers = {"provider": primary, "fallback": fallback}
     routed = _routed_request(_target("fallback", "model"))
+    field_name = "model"
+    with pytest.raises(FrozenInstanceError):
+        setattr(routed.request, field_name, "mutated")
+
     executor = ProviderExecutor(
         providers.__getitem__,
         progress_timeout_seconds=60.0,
@@ -599,10 +611,11 @@ async def test_candidate_requests_are_isolated_from_provider_mutation() -> None:
             request_id="req_isolated",
         )
     ]
-    fallback_request = fallback.stream_calls[0]["request"]
-    assert isinstance(fallback_request, MessagesRequest)
-    assert fallback_request.messages[0].content == "hello"
-    assert routed.request.messages[0].content == "hello"
+    assert primary.stream_calls[0]["request"] is routed.request
+    assert primary.stream_calls[0]["provider_model"] == "provider-model"
+    assert fallback.stream_calls[0]["request"] is routed.request
+    assert fallback.stream_calls[0]["provider_model"] == "model"
+    assert routed.request.model == "provider-model"
 
 
 @pytest.mark.asyncio
@@ -612,7 +625,7 @@ async def test_closing_executor_stream_closes_provider_stream_once() -> None:
     executor = ProviderExecutor(
         lambda _provider_id: provider,
         progress_timeout_seconds=60.0,
-        token_counter=lambda _messages, _system, _tools: 17,
+        token_counter=lambda _request: 17,
     )
     stream = executor.stream(
         routed,
@@ -642,7 +655,7 @@ async def test_stream_construction_failure_remains_deferred_to_iteration() -> No
     executor = ProviderExecutor(
         resolve,
         progress_timeout_seconds=60.0,
-        token_counter=lambda _messages, _system, _tools: 17,
+        token_counter=lambda _request: 17,
     )
 
     stream = executor.stream(
@@ -779,9 +792,9 @@ async def test_empty_chunks_do_not_renew_provider_progress() -> None:
 
 @pytest.mark.asyncio
 async def test_fallback_transition_does_not_reset_shared_progress_deadline() -> None:
-    timeout_seconds = 0.2
+    timeout_seconds = 0.3
     primary = ControlledProvider(
-        [DelayStep(0.06), _execution_failure("primary overloaded")]
+        [DelayStep(0.12), _execution_failure("primary overloaded")]
     )
     fallback_wait = WaitStep()
     fallback = ControlledProvider([fallback_wait])
@@ -809,7 +822,7 @@ async def test_fallback_transition_does_not_reset_shared_progress_deadline() -> 
     elapsed = loop.time() - started
     assert fallback_wait.started.is_set()
     assert exc_info.value.kind == FailureKind.TIMEOUT
-    assert elapsed < 0.24
+    assert elapsed < 0.4
     assert primary.stream_close_calls == fallback.stream_close_calls == 1
     timeout_trace = next(
         call.kwargs

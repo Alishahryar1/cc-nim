@@ -82,6 +82,17 @@ class ReplayAttachment(StrEnum):
 
 
 @dataclass(frozen=True, slots=True)
+class ReplayCompatibilityScope:
+    """Opaque route identity required for safe upstream replay."""
+
+    value: str
+
+    def __post_init__(self) -> None:
+        if not self.value.strip():
+            raise ValueError("replay compatibility scope must be non-empty")
+
+
+@dataclass(frozen=True, slots=True)
 class ReplayArtifact:
     """Opaque provider replay material with a typed owner and scope."""
 
@@ -89,6 +100,7 @@ class ReplayArtifact:
     kind: ReplayArtifactKind
     attachment: ReplayAttachment
     payload: JsonValue
+    scope: ReplayCompatibilityScope | None = None
 
 
 class ToolCallKind(StrEnum):
@@ -316,6 +328,7 @@ def _artifacts(artifacts: tuple[ReplayArtifact, ...]) -> JsonValue:
             artifact.origin.value,
             artifact.kind.value,
             artifact.attachment.value,
+            artifact.scope.value if artifact.scope is not None else None,
             _json_projection(artifact.payload),
         ]
         for artifact in artifacts

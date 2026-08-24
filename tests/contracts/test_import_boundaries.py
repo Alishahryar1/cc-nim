@@ -500,6 +500,56 @@ def test_core_does_not_import_provider_transport_sdks() -> None:
     assert sorted(offenders) == []
 
 
+def test_application_and_providers_do_not_import_protocol_request_models() -> None:
+    forbidden_symbols = {
+        "Message",
+        "MessagesRequest",
+        "SystemContent",
+        "TokenCountRequest",
+        "Tool",
+    }
+    owner_modules = {
+        "free_claude_code.core.anthropic",
+        "free_claude_code.core.anthropic.models",
+    }
+    offenders: list[str] = []
+    for root in (_PACKAGE_ROOT / "application", _PACKAGE_ROOT / "providers"):
+        for path in root.rglob("*.py"):
+            tree = ast.parse(path.read_text(encoding="utf-8"), filename=str(path))
+            relative = path.relative_to(_REPO_ROOT).as_posix()
+            for node in ast.walk(tree):
+                if (
+                    not isinstance(node, ast.ImportFrom)
+                    or node.module not in owner_modules
+                ):
+                    continue
+                offenders.extend(
+                    f"{relative}:{node.lineno}: {node.module}.{alias.name}"
+                    for alias in node.names
+                    if alias.name in forbidden_symbols
+                )
+
+    assert sorted(offenders) == []
+
+
+def test_removed_request_bridge_modules_do_not_return() -> None:
+    removed_modules = {
+        "core/anthropic/conversion.py",
+        "core/anthropic/openai_tool_names.py",
+        "core/anthropic/request_serialization.py",
+        "core/anthropic/request_snapshot.py",
+        "core/anthropic/streaming/recovery.py",
+        "core/anthropic/tokens.py",
+        "core/openai_responses/adapter.py",
+        "core/openai_responses/input.py",
+        "core/openai_responses/provider_events.py",
+        "core/openai_responses/provider_input.py",
+        "core/openai_responses/tools.py",
+    }
+
+    assert all(not (_PACKAGE_ROOT / module).exists() for module in removed_modules)
+
+
 def test_providers_do_not_own_wire_error_type_literals() -> None:
     wire_types = {
         "api_error",

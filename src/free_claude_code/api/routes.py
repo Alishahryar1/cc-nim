@@ -10,8 +10,8 @@ from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import (
     MessagesRequest,
     TokenCountRequest,
-    get_token_count,
 )
+from free_claude_code.core.inference import get_inference_token_count
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.trace import trace_event
 
@@ -51,7 +51,7 @@ async def _create_messages_response(
         handler = MessagesHandler(
             lease.settings,
             provider_resolver=_provider_resolver(lease),
-            token_counter=get_token_count,
+            token_counter=get_inference_token_count,
             generation_id=lease.generation_id,
         )
         response = await handler.create(request_data, request_id=request_id)
@@ -154,7 +154,7 @@ async def count_tokens(
     _auth=Depends(require_proxy_auth),
 ):
     """Count tokens for a request."""
-    handler = TokenCountHandler(settings, token_counter=get_token_count)
+    handler = TokenCountHandler(settings, token_counter=get_inference_token_count)
     return handler.count(request_data, request_id=get_request_id(request))
 
 
