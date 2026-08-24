@@ -25,6 +25,7 @@ from free_claude_code.core.failures import ExecutionFailure, find_execution_fail
 from free_claude_code.core.openai_responses import (
     OpenAIResponsesAdapter,
     OpenAIResponsesRequest,
+    iter_responses_sse_from_events,
     openai_error_type_for_failure,
     openai_failure_payload,
 )
@@ -80,7 +81,7 @@ class ResponsesHandler:
                 request_id=request_id,
             )
             return await openai_responses_sse_streaming_response(
-                self._responses_adapter.iter_sse_from_anthropic(
+                iter_responses_sse_from_events(
                     streamed,
                     request_data,
                     on_post_start_terminal_failure=lambda exc: (

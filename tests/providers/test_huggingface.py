@@ -8,6 +8,7 @@ import pytest
 from free_claude_code.config.provider_catalog import HUGGINGFACE_DEFAULT_BASE
 from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
+from tests.inference_support import collect_anthropic
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     immediate_admission,
@@ -186,10 +187,9 @@ async def test_stream_response_text(huggingface_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = [
-            event
-            async for event in huggingface_provider.stream_response(make_request())
-        ]
+        events = await collect_anthropic(
+            huggingface_provider.stream_response(make_request())
+        )
 
     assert any(
         '"text_delta"' in event and "Hello from Hugging Face" in event
@@ -220,10 +220,9 @@ async def test_stream_response_reasoning_content(huggingface_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = [
-            event
-            async for event in huggingface_provider.stream_response(make_request())
-        ]
+        events = await collect_anthropic(
+            huggingface_provider.stream_response(make_request())
+        )
 
     assert any(
         '"thinking_delta"' in event and "Thinking via router" in event

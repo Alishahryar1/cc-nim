@@ -17,6 +17,7 @@ from free_claude_code.providers.cloudflare import (
     CloudflareProvider,
     cloudflare_ai_base_url,
 )
+from tests.inference_support import collect_anthropic
 from tests.providers.support import (
     immediate_admission,
     make_provider_config,
@@ -224,9 +225,9 @@ async def test_stream_uses_openai_chat_completions(
         new_callable=AsyncMock,
         return_value=_stream(_chunk(delta)),
     ) as mock_create:
-        events = [
-            event async for event in cloudflare_provider.stream_response(_request())
-        ]
+        events = await collect_anthropic(
+            cloudflare_provider.stream_response(_request())
+        )
 
     parsed = parse_sse_text("".join(events))
     assert any(
@@ -255,9 +256,9 @@ async def test_stream_maps_cloudflare_reasoning_delta_to_thinking(
         new_callable=AsyncMock,
         return_value=_stream(_chunk(delta)),
     ):
-        events = [
-            event async for event in cloudflare_provider.stream_response(_request())
-        ]
+        events = await collect_anthropic(
+            cloudflare_provider.stream_response(_request())
+        )
 
     parsed = parse_sse_text("".join(events))
     assert any(
@@ -306,7 +307,7 @@ async def test_stream_maps_openai_tool_calls_to_tool_use(
         new_callable=AsyncMock,
         return_value=_stream(_chunk(delta, finish_reason="tool_calls")),
     ):
-        events = [event async for event in cloudflare_provider.stream_response(request)]
+        events = await collect_anthropic(cloudflare_provider.stream_response(request))
 
     parsed = parse_sse_text("".join(events))
     assert any(

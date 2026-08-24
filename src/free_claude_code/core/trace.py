@@ -8,7 +8,7 @@ INFO log level excludes these detailed request traces.
 
 import asyncio
 import sys
-from collections.abc import AsyncGenerator, AsyncIterator, Mapping
+from collections.abc import AsyncGenerator, AsyncIterator, Callable, Mapping
 from typing import Any
 
 from loguru import logger
@@ -100,8 +100,8 @@ def extract_claude_session_id_from_headers(headers: Mapping[str, str]) -> str | 
     return None
 
 
-async def traced_async_stream(
-    agen: AsyncIterator[str],
+async def traced_async_stream[StreamValue](
+    agen: AsyncIterator[StreamValue],
     *,
     stage: str,
     source: str,
@@ -110,8 +110,9 @@ async def traced_async_stream(
     chunk_event: str | None = None,
     chunk_interval: int = 250,
     extra: Mapping[str, Any] | None = None,
-) -> AsyncGenerator[str]:
-    """Emit TRACE rows when a text stream completes, fails, cancels, or periodically."""
+    item_size: Callable[[StreamValue], int] | None = None,
+) -> AsyncGenerator[StreamValue]:
+    """Trace completion and interruption for one typed asynchronous stream."""
     common = dict(extra or {})
     count = 0
     nbytes = 0
@@ -119,7 +120,13 @@ async def traced_async_stream(
     try:
         async for chunk in agen:
             count += 1
-            nbytes += len(chunk.encode("utf-8", errors="replace"))
+            nbytes += (
+                item_size(chunk)
+                if item_size is not None
+                else len(chunk.encode("utf-8", errors="replace"))
+                if isinstance(chunk, str)
+                else 0
+            )
             if chunk_event and chunk_interval > 0 and count % chunk_interval == 0:
                 trace_event(
                     stage=stage,

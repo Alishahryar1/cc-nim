@@ -7,6 +7,7 @@ import pytest
 
 from free_claude_code.config.provider_catalog import SAMBANOVA_DEFAULT_BASE
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
+from tests.inference_support import collect_anthropic
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     immediate_admission,
@@ -129,9 +130,9 @@ async def test_stream_response_text(sambanova_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = [
-            event async for event in sambanova_provider.stream_response(make_request())
-        ]
+        events = await collect_anthropic(
+            sambanova_provider.stream_response(make_request())
+        )
 
     assert any(
         '"text_delta"' in event and "Hello from SambaNova" in event for event in events
@@ -164,9 +165,9 @@ async def test_stream_response_tool_call(sambanova_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = [
-            event async for event in sambanova_provider.stream_response(make_request())
-        ]
+        events = await collect_anthropic(
+            sambanova_provider.stream_response(make_request())
+        )
 
     assert any(
         '"content_block_start"' in event and '"tool_use"' in event for event in events
@@ -200,9 +201,9 @@ async def test_stream_response_reasoning_content(sambanova_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = [
-            event async for event in sambanova_provider.stream_response(make_request())
-        ]
+        events = await collect_anthropic(
+            sambanova_provider.stream_response(make_request())
+        )
 
     assert any(
         '"thinking_delta"' in event and "Thinking via SambaNova" in event

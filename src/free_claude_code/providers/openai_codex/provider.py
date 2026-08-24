@@ -20,9 +20,10 @@ from free_claude_code.core.diagnostics import (
     extract_upstream_error_detail,
 )
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
+from free_claude_code.core.inference import InferenceEvent
 from free_claude_code.core.openai_responses import (
     ResponsesConversionError,
-    ResponsesProviderStream,
+    ResponsesEventDecoder,
     ResponsesStreamFailure,
     build_responses_provider_request,
 )
@@ -180,8 +181,8 @@ class OpenAICodexProvider(BaseProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
-    ) -> AsyncIterator[str]:
-        """Stream Responses output in Anthropic Messages format."""
+    ) -> AsyncIterator[InferenceEvent]:
+        """Stream private Responses output as canonical inference events."""
 
         tool_names = OpenAIToolNameCodec.from_request(request)
         body = self._build_body(request, reasoning=reasoning)
@@ -217,7 +218,7 @@ class OpenAICodexProvider(BaseProvider):
         request_id: str | None,
         response_model: str,
         tool_names: OpenAIToolNameCodec,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[InferenceEvent]:
         execution = self._admission.start_execution(request_id=request_id)
         provider_stream = self._run_stream_execution(
             body,
@@ -250,10 +251,10 @@ class OpenAICodexProvider(BaseProvider):
         response_model: str,
         tool_names: OpenAIToolNameCodec,
         execution: ProviderExecution,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[InferenceEvent]:
         """Run one Codex execution while retaining Responses transport ownership."""
         recovery = RecoveryController()
-        message_id = f"msg_{uuid.uuid4()}"
+        response_id = f"response_{uuid.uuid4().hex}"
         session_id = str(uuid.uuid4())
         authentication_recovered = False
         trace_event(
@@ -270,11 +271,10 @@ class OpenAICodexProvider(BaseProvider):
         )
 
         while execution.can_attempt:
-            stream = ResponsesProviderStream(
-                message_id=message_id,
+            stream = ResponsesEventDecoder(
+                response_id=response_id,
                 model=response_model,
                 input_tokens=input_tokens,
-                log_raw_events=self._config.log_raw_sse_events,
                 tool_names=tool_names,
             )
             for event in stream.start():

@@ -36,13 +36,15 @@ from .models import (
     Usage,
 )
 from .openai_tool_names import OpenAIToolNameCodec
+from .presenter import (
+    AnthropicEventPresenter,
+    aggregate_inference_events_to_message,
+    iter_anthropic_sse,
+)
 from .request_serialization import dump_messages_request, serialize_tool_result_content
 from .request_snapshot import anthropic_request_snapshot
 from .sse_aggregation import aggregate_anthropic_sse_to_message
 from .streaming import (
-    AnthropicStreamLedger,
-    StreamBlockLedger,
-    ToolBlockState,
     format_sse_event,
     map_stop_reason,
 )
@@ -52,7 +54,7 @@ from .tools import FunctionTagToolParser, HeuristicToolParser
 from .utils import set_if_not_none
 
 __all__ = [
-    "AnthropicStreamLedger",
+    "AnthropicEventPresenter",
     "AnthropicToOpenAIConverter",
     "ContentBlockDocument",
     "ContentBlockImage",
@@ -74,16 +76,15 @@ __all__ = [
     "OpenAIConversionError",
     "OpenAIToolNameCodec",
     "ReasoningReplayMode",
-    "StreamBlockLedger",
     "SystemContent",
     "ThinkTagParser",
     "ThinkingConfig",
     "TokenCountRequest",
     "TokenCountResponse",
     "Tool",
-    "ToolBlockState",
     "Usage",
     "aggregate_anthropic_sse_to_message",
+    "aggregate_inference_events_to_message",
     "anthropic_error_payload",
     "anthropic_error_type_for_failure",
     "anthropic_failure_payload",
@@ -97,6 +98,7 @@ __all__ = [
     "get_block_type",
     "get_token_count",
     "is_synthetic_openai_tool_turn_boundary",
+    "iter_anthropic_sse",
     "map_stop_reason",
     "serialize_tool_result_content",
     "set_if_not_none",

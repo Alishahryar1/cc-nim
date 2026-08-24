@@ -5,7 +5,7 @@ import pytest
 
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.config.provider_catalog import NVIDIA_NIM_DEFAULT_BASE
-from free_claude_code.core.anthropic import StreamBlockLedger
+from free_claude_code.core.inference import InferenceBlockLedger
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.openai_chat.tool_calls import (
     OpenAIToolCallAssembler,
@@ -26,12 +26,12 @@ async def test_task_tool_interception():
         admission=immediate_admission(),
     )
 
-    # Mock request and stream ledger with real StreamBlockLedger
+    # Mock request and stream ledger with the real canonical block ledger.
     request = MagicMock()
     request.model = "test-model"
 
     sse = MagicMock()
-    sse.blocks = StreamBlockLedger()
+    sse.blocks = InferenceBlockLedger()
 
     # Tool call data (Task tool)
     tc = {

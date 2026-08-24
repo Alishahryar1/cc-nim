@@ -7,6 +7,7 @@ from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from tests.api.support import create_test_app
+from tests.inference_support import text_event_stream
 
 app = create_test_app()
 
@@ -20,8 +21,13 @@ _stream_response_calls: list = []
 async def _mock_stream_response(*args, **kwargs):
     """Minimal async generator for streaming tests."""
     _stream_response_calls.append((args, kwargs))
-    yield "event: message_start\ndata: {}\n\n"
-    yield "[DONE]\n\n"
+    for event in text_event_stream(
+        "",
+        model=kwargs.get("response_model", "test-model"),
+        input_tokens=0,
+        output_tokens=0,
+    ):
+        yield event
 
 
 async def _mock_pre_start_rate_limit(*args, **kwargs):

@@ -9,6 +9,7 @@ import pytest
 from openai import AsyncOpenAI
 
 from free_claude_code.application.errors import InvalidRequestError
+from free_claude_code.core.anthropic import AnthropicEventPresenter
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import (
     assert_anthropic_stream_contract,
@@ -18,6 +19,7 @@ from free_claude_code.core.anthropic.stream_contracts import (
 )
 from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.providers.openai_responses import OpenAIResponsesTransport
+from tests.inference_support import collect_anthropic
 from tests.providers.support import REASONING_ON, immediate_admission
 
 
@@ -124,7 +126,6 @@ def _transport(client: AsyncOpenAI, *, max_attempts: int = 5):
         ),
         provider_name="TEST_RESPONSES",
         read_timeout_s=120.0,
-        log_raw_sse_events=False,
     )
 
 
@@ -132,16 +133,15 @@ async def _collect(
     transport: OpenAIResponsesTransport,
     request: MessagesRequest | None = None,
 ) -> list[str]:
-    return [
-        chunk
-        async for chunk in transport.stream_response(
+    return await collect_anthropic(
+        transport.stream_response(
             request or _request(),
             input_tokens=11,
             request_id="req_responses",
             response_model="public-model",
             reasoning=REASONING_ON,
         )
-    ]
+    )
 
 
 @pytest.mark.asyncio
@@ -367,16 +367,17 @@ async def test_post_commit_truncation_is_not_replayed() -> None:
 
     client = _client(handler)
     chunks: list[str] = []
+    presenter = AnthropicEventPresenter()
     try:
         with pytest.raises(ExecutionFailure):
-            async for chunk in _transport(client).stream_response(
+            async for event in _transport(client).stream_response(
                 _request(),
                 input_tokens=1,
                 request_id="req_committed",
                 response_model="public-model",
                 reasoning=REASONING_ON,
             ):
-                chunks.extend((chunk,))
+                chunks.extend(presenter.present(event))
     finally:
         await client.close()
 

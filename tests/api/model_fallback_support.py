@@ -9,10 +9,11 @@ from fastapi.testclient import TestClient
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import MessagesRequest
-from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
+from free_claude_code.core.inference import InferenceEvent
 from free_claude_code.core.reasoning import ReasoningPolicy
 from tests.api.support import create_test_app
+from tests.inference_support import text_event_stream
 
 
 def execution_failure(message: str, *, retryable: bool = True) -> ExecutionFailure:
@@ -24,54 +25,8 @@ def execution_failure(message: str, *, retryable: bool = True) -> ExecutionFailu
     )
 
 
-def text_stream(text: str, *, model: str) -> list[str]:
-    return [
-        format_sse_event(
-            "message_start",
-            {
-                "type": "message_start",
-                "message": {
-                    "id": "msg_fallback",
-                    "type": "message",
-                    "role": "assistant",
-                    "model": model,
-                    "content": [],
-                    "stop_reason": None,
-                    "stop_sequence": None,
-                    "usage": {"input_tokens": 3, "output_tokens": 0},
-                },
-            },
-        ),
-        format_sse_event(
-            "content_block_start",
-            {
-                "type": "content_block_start",
-                "index": 0,
-                "content_block": {"type": "text", "text": ""},
-            },
-        ),
-        format_sse_event(
-            "content_block_delta",
-            {
-                "type": "content_block_delta",
-                "index": 0,
-                "delta": {"type": "text_delta", "text": text},
-            },
-        ),
-        format_sse_event(
-            "content_block_stop",
-            {"type": "content_block_stop", "index": 0},
-        ),
-        format_sse_event(
-            "message_delta",
-            {
-                "type": "message_delta",
-                "delta": {"stop_reason": "end_turn", "stop_sequence": None},
-                "usage": {"input_tokens": 3, "output_tokens": 4},
-            },
-        ),
-        format_sse_event("message_stop", {"type": "message_stop"}),
-    ]
+def text_stream(text: str, *, model: str) -> list[InferenceEvent]:
+    return text_event_stream(text, model=model)
 
 
 class ControlledFallbackProvider:
@@ -79,7 +34,7 @@ class ControlledFallbackProvider:
         self,
         *,
         failure: ExecutionFailure | None = None,
-        chunks_before_failure: tuple[str, ...] = (),
+        chunks_before_failure: tuple[InferenceEvent, ...] = (),
         text: str | None = None,
         preflight_error: InvalidRequestError | None = None,
     ) -> None:
@@ -111,7 +66,7 @@ class ControlledFallbackProvider:
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
-    ) -> AsyncIterator[str]:
+    ) -> AsyncIterator[InferenceEvent]:
         del input_tokens, request_id, reasoning
         self.stream_models.append(request.model)
         public_model = response_model or request.model

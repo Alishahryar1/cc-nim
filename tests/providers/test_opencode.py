@@ -30,6 +30,7 @@ from free_claude_code.providers.opencode.catalog import (
     OpenCodeUpstreamTransport,
     parse_open_code_catalog,
 )
+from tests.inference_support import collect_anthropic
 from tests.providers.support import (
     capture_openai_chat_wire_body,
     immediate_admission,
@@ -231,14 +232,13 @@ def _provider_with_wire_transports(
 
 async def _collect(provider: OpenCodeProvider, model: str, **overrides: object) -> str:
     return "".join(
-        [
-            chunk
-            async for chunk in provider.stream_response(
+        await collect_anthropic(
+            provider.stream_response(
                 _request(model, **overrides),
                 input_tokens=2,
                 request_id="req_opencode",
             )
-        ]
+        )
     )
 
 
