@@ -57,6 +57,7 @@ from free_claude_code.providers.http import (
 from free_claude_code.providers.model_listing import (
     extract_openai_model_infos,
     merge_model_list_pages,
+    model_infos_from_ids,
     validate_model_list_page,
 )
 from free_claude_code.providers.stream_recovery import (
@@ -496,7 +497,7 @@ class OpenAIChatProvider(BaseProvider):
         if not self._profile.model_ids_are_routable:
             return frozenset()
         listing = self._profile.model_listing
-        return extract_openai_model_infos(
+        live_model_infos = extract_openai_model_infos(
             payload,
             provider_name=self._provider_name,
             collection_field=listing.collection_field,
@@ -511,6 +512,12 @@ class OpenAIChatProvider(BaseProvider):
             non_thinking_tag=listing.non_thinking_tag,
             thinking_boolean_path=listing.thinking_boolean_path,
         )
+        model_infos_by_id = {
+            model_info.model_id: model_info for model_info in live_model_infos
+        }
+        for model_info in model_infos_from_ids(listing.additional_model_ids):
+            model_infos_by_id.setdefault(model_info.model_id, model_info)
+        return frozenset(model_infos_by_id.values())
 
     async def _list_models_payload(self) -> Any:
         """Fetch one OpenAI-compatible model-list payload with shared retries."""
