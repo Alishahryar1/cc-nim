@@ -25,8 +25,8 @@ from pathlib import Path
 
 from loguru import logger
 
+from free_claude_code.cli.tls_proxy import resolve_gateway_base_url
 from free_claude_code.config.loader import get_settings
-from free_claude_code.config.server_urls import local_proxy_root_url
 from free_claude_code.config.settings import Settings
 
 
@@ -68,15 +68,23 @@ def _config_path() -> Path:
     return Path.home() / ".config" / "Claude" / CONFIG_FILENAME
 
 
-def fcc_managed_block(settings: Settings) -> dict[str, object]:
-    """Inference keys FCC owns in Claude Desktop's config, from live settings."""
+def fcc_managed_block(
+    settings: Settings,
+    gateway_base_url: str | None = None,
+) -> dict[str, object]:
+    """Inference keys FCC owns in Claude Desktop's config, from live settings.
+
+    ``gateway_base_url`` overrides the resolved URL (HTTPS when a TLS front
+    answers, plain HTTP otherwise).
+    """
 
     return {
         "provider": "gateway",
         "credentialKind": "static",
         "inferenceProvider": "gateway",
         "inferenceCredentialKind": "static",
-        "inferenceGatewayBaseUrl": local_proxy_root_url(settings),
+        "inferenceGatewayBaseUrl": gateway_base_url
+        or resolve_gateway_base_url(settings),
         "inferenceGatewayAuthScheme": "x-api-key",
         "inferenceAnthropicApiKey": settings.proxy_auth_token,
     }
@@ -116,6 +124,7 @@ def _save_config(path: Path, data: dict[str, object]) -> None:
 def configure_claude_desktop_config(
     path: Path | None = None,
     settings: Settings | None = None,
+    gateway_base_url: str | None = None,
 ) -> bool:
     """Merge the FCC routing block into ``path``. Returns whether anything changed.
 
@@ -124,7 +133,7 @@ def configure_claude_desktop_config(
     """
 
     resolved_settings = settings or get_settings()
-    managed = fcc_managed_block(resolved_settings)
+    managed = fcc_managed_block(resolved_settings, gateway_base_url)
     config_path = path or _config_path()
     try:
         data: dict[str, object] = load_existing_config(config_path)
@@ -167,15 +176,17 @@ def configure_claude_desktop_config(
 def unconfigure_claude_desktop_config(
     path: Path | None = None,
     settings: Settings | None = None,
+    gateway_base_url: str | None = None,
 ) -> bool:
     """Reverse the merge. Preserves every key outside the FCC-managed surface.
 
+    ``gateway_base_url`` must match the value a previous ``configure`` wrote.
     Returns ``False`` without writing when the existing config is malformed,
     or silently when the file does not exist.
     """
 
     resolved_settings = settings or get_settings()
-    managed = fcc_managed_block(resolved_settings)
+    managed = fcc_managed_block(resolved_settings, gateway_base_url)
     config_path = path or _config_path()
     if not config_path.exists():
         return False

@@ -19,14 +19,36 @@ def fake_settings() -> Settings:
     return Settings(host="127.0.0.1", port=8082, proxy_auth_token="tok-123")
 
 
+@pytest.fixture(autouse=True)
+def deterministic_gateway_url(monkeypatch: pytest.MonkeyPatch) -> None:
+    """Pin the gateway URL resolution so tests never probe the network."""
+
+    monkeypatch.setattr(
+        claude_desktop,
+        "resolve_gateway_base_url",
+        lambda settings: f"http://127.0.0.1:{settings.port}",
+        raising=False,
+    )
+
+
 def test_managed_block_derives_url_and_key_from_settings(
+    fake_settings: Settings,
+) -> None:
+    block = claude_desktop.fcc_managed_block(
+        fake_settings, gateway_base_url="https://localhost:8443"
+    )
+
+    assert block["inferenceGatewayBaseUrl"] == "https://localhost:8443"
+    assert block["inferenceAnthropicApiKey"] == "tok-123"
+    assert block["provider"] == "gateway"
+
+
+def test_managed_block_resolves_url_when_not_overridden(
     fake_settings: Settings,
 ) -> None:
     block = claude_desktop.fcc_managed_block(fake_settings)
 
     assert block["inferenceGatewayBaseUrl"] == "http://127.0.0.1:8082"
-    assert block["inferenceAnthropicApiKey"] == "tok-123"
-    assert block["provider"] == "gateway"
 
 
 def test_configure_applies_block_when_file_is_missing(

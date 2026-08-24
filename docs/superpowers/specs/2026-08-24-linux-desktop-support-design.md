@@ -35,6 +35,24 @@ everything rides on the existing `fcc-desktop` command.
 | Binary not found | Tray notification; no crash |
 | Spawn failure | Tray notification |
 
+## HTTPS front proxy (Claude Desktop requires TLS)
+
+Claude Desktop refuses plain-HTTP gateway URLs. `cli/tls_proxy.py` provides:
+
+| Piece | Behavior |
+|---|---|
+| `probe_https` | Unverified-context loopback probe; **any** HTTP status (incl. 404/401) counts as "front alive" — verified against a real caddy during live smoke |
+| `resolve_gateway_base_url` | `https://localhost:<TLS_PROXY_PORT>` when something answers there, else the plain HTTP root |
+| `CaddyTlsProxy` | Reuses an external front (system Caddy service) without spawning; otherwise generates `~/.fcc/caddy/Caddyfile` (`admin off`, `auto_https disable_redirects`, `tls internal`, `flush_interval -1`) and runs a sandboxed `caddy run` child, stopped alongside the server |
+
+Settings: `TLS_PROXY_ENABLED` (default true), `TLS_PROXY_PORT` (default 8443).
+
+Caddyfile notes from live testing:
+- `admin off` is mandatory — a system Caddy may own port 2019.
+- `auto_https disable_redirects` (not `off`): plain `off` skips certificate
+  provisioning entirely (handshake fails), while the default redirect binds
+  privileged :80. Disabling just redirects keeps the internal CA working.
+
 ## Testing
 
 ## Background
@@ -104,4 +122,8 @@ shutdown.
 6. Desktop integration: `launch_desktop` merges once with live settings and
    swallows failures; tray item spawns or notifies; console hint printed
 7. install.sh dry-run on Linux: `.desktop` contents, owned-file guard
-8. Live smoke on real Linux desktop: tray appears or fallback engages cleanly
+8. TLS proxy unit tests: probe semantics (plain-HTTP listener, error status,
+   silence), Caddyfile invariants (admin off / auto_https disable_redirects /
+   tls internal), lifecycle (reuse external front, spawn, early exit, stop)
+9. Live smoke on real Linux desktop: tray appears or fallback engages cleanly;
+   managed caddy fronts a throwaway server instance and tears down cleanly

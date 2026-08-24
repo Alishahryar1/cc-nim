@@ -260,9 +260,12 @@ def test_fresh_desktop_launch_uses_console_free_supervisor() -> None:
         patch.object(desktop, "load_server_settings", return_value=settings),
         patch.object(desktop, "InterprocessFileLock", return_value=instance_lock),
         patch.object(desktop, "preflight_proxy", return_value="connection refused"),
+        patch.object(desktop, "CaddyTlsProxy") as tls_proxy,
+        patch.object(desktop, "_merge_claude_desktop_config"),
         patch.object(desktop, "ServerSupervisor", return_value=supervisor) as owner,
         patch.object(desktop, "DesktopController", return_value=controller) as shell,
     ):
+        tls_proxy.return_value.start.return_value = True
         tray_factory = MagicMock()
         desktop.launch_desktop(tray_factory)
 

@@ -223,16 +223,20 @@ def test_launch_desktop_merges_claude_desktop_config():
         patch.object(desktop_module, "load_server_settings") as load_settings,
         patch.object(desktop_module.InterprocessFileLock, "acquire", return_value=True),
         patch.object(desktop_module, "preflight_proxy", return_value=object()),
+        patch.object(desktop_module, "CaddyTlsProxy") as tls_proxy_cls,
         patch.object(desktop_module, "_merge_claude_desktop_config", fake_configure),
         patch.object(desktop_module, "DesktopController", MagicMock()) as controller,
     ):
         load_settings.return_value = MagicMock(name="settings")
+        tls_proxy_cls.return_value.start.return_value = True
         controller.return_value.run.side_effect = RuntimeError("stop loop")
 
         with contextlib.suppress(RuntimeError):
             desktop_module.launch_desktop(MagicMock())
 
     assert len(merged) == 1
+    tls_proxy_cls.return_value.start.assert_called_once()
+    tls_proxy_cls.return_value.stop.assert_called_once()
 
 
 def test_tray_launch_item_spawns_claude_desktop_without_notification():
