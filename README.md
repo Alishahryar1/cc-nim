@@ -143,12 +143,6 @@ DeepSeek Harness Web:
 fcc-dsh
 ```
 
-DeepSeek Harness headless:
-
-```bash
-fcc-dsh --profile headless "your task"
-```
-
 Grok Build:
 
 ```bash
@@ -160,25 +154,6 @@ Muse Code:
 ```bash
 fcc-muse
 ```
-
-All nine launchers use the current Admin UI settings. Use the agent's model picker to choose from the models FCC exposes. Normal CLI arguments still work, for example:
-
-```bash
-fcc-codex exec "hello"
-```
-
-FCC launchers leave your existing agent settings, sessions, credentials, and
-extensions unchanged. `fcc-hermes` starts attached sessions through FCC; choosing
-another provider with Hermes `/model` intentionally leaves the FCC route.
-`fcc-dsh` keeps DeepSeek Harness sessions and plugins while applying temporary
-FCC provider settings. It currently supports the preview release `0.1.0-rc.8`
-on Node.js `^22.19` or `>=24`.
-`fcc-grok` keeps Grok Build's sessions and plugins, while routing attached
-sessions through FCC. Web search and fetch stay disabled until FCC supports
-Grok Build's Responses-side web-tool contract.
-`fcc-muse` keeps Muse Code's native sessions and settings while routing attached
-sessions through FCC. Muse is beta; Meta's official installer currently supports
-macOS, Linux, and WSL, while Windows requires a compatible preinstalled binary.
 
 <a id="model-picker"></a>
 
