@@ -7,9 +7,12 @@ Used by the message handler and Discord platform adapter.
 from markdown_it import MarkdownIt
 
 from .markdown_tables import normalize_gfm_tables
+from .tail_slice import safe_tail
 
 # Discord escapes: \ * _ ` ~ | >
 DISCORD_SPECIAL = set("\\*_`~|>")
+# Paired inline markers this renderer emits, longest first.
+DISCORD_INLINE_DELIMITERS = ("**", "__", "~~", "||", "*", "_")
 
 _MD = MarkdownIt("commonmark", {"html": False, "breaks": False})
 _MD.enable("strikethrough")
@@ -24,6 +27,15 @@ def escape_discord(text: str) -> str:
 def escape_discord_code(text: str) -> str:
     """Escape text for Discord code spans/blocks."""
     return text.replace("\\", "\\\\").replace("`", "\\`")
+
+
+def discord_tail_slice(text: str, max_chars: int) -> str:
+    """Return a valid Discord-markdown suffix of rendered text within ``max_chars``."""
+    # Discord escapes neither parenthesis in a link destination, so nesting
+    # must be matched to find the real end of the link.
+    return safe_tail(
+        text, max_chars, DISCORD_INLINE_DELIMITERS, balanced_link_parens=True
+    )
 
 
 def discord_bold(text: str) -> str:

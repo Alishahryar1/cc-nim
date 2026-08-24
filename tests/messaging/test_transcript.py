@@ -1,8 +1,10 @@
+from free_claude_code.messaging.rendering.profiles import build_rendering_profile
 from free_claude_code.messaging.rendering.telegram_markdown import (
     escape_md_v2,
     escape_md_v2_code,
     mdv2_bold,
     mdv2_code_inline,
+    mdv2_tail_slice,
     render_markdown_to_mdv2,
 )
 from free_claude_code.messaging.transcript import RenderCtx, TranscriptBuffer
@@ -18,6 +20,7 @@ def _ctx() -> RenderCtx:
         escape_code=escape_md_v2_code,
         escape_text=escape_md_v2,
         render_markdown=render_markdown_to_mdv2,
+        tail_slice=mdv2_tail_slice,
         thinking_tail_max=1000,
         tool_input_tail_max=1200,
         tool_output_tail_max=1600,
@@ -359,3 +362,74 @@ def test_transcript_truncation_preserves_last_segment_tail():
     assert escape_md_v2("... (truncated)") in msg
     assert "✅ *Complete*" in msg
     assert "actual output" in msg or "content" in msg or "x" in msg
+
+
+def _telegram_ctx() -> RenderCtx:
+    """Context wired exactly as the Telegram profile wires it."""
+    return build_rendering_profile("telegram").render_ctx
+
+
+class _RenderedSegment(Segment):
+    """A segment that emits pre-rendered markup verbatim."""
+
+    def __init__(self, markup: str) -> None:
+        super().__init__(kind="text")
+        self._markup = markup
+
+    def render(self, ctx: RenderCtx) -> str:
+        return self._markup
+
+
+def _has_unescaped(text: str, character: str) -> bool:
+    index = 0
+    while index < len(text):
+        if text[index] == "\\":
+            index += 2
+            continue
+        if text[index] == character:
+            return True
+        index += 1
+    return False
+
+
+def test_truncated_tail_never_emits_a_bare_ellipsis():
+    """The truncation marker is escaped; no raw '...' is spliced into markup."""
+    segment = _RenderedSegment(escape_md_v2("step-1.done " * 60))
+
+    for limit in range(120, 400, 7):
+        out = render_segments(
+            [segment], _telegram_ctx(), limit_chars=limit, status=None
+        )
+        assert not _has_unescaped(out, ".")
+        assert not _has_unescaped(out, "-")
+
+
+def test_truncated_tail_keeps_fenced_blocks_balanced():
+    markup = "lead\n```\n" + ("x" * 400) + "\n```\ntail text here"
+    segment = _RenderedSegment(markup)
+
+    for limit in range(120, 460, 11):
+        out = render_segments(
+            [segment], _telegram_ctx(), limit_chars=limit, status=None
+        )
+        assert out.count("```") % 2 == 0
+
+
+def test_truncated_tail_keeps_inline_entities_balanced():
+    segment = _RenderedSegment("*bold* plain _it_ ~s~ " * 30)
+
+    for limit in range(120, 400, 9):
+        out = render_segments(
+            [segment], _telegram_ctx(), limit_chars=limit, status="✅ *Done*"
+        )
+        for delimiter in ("*", "_", "~"):
+            assert out.count(delimiter) % 2 == 0
+
+
+def test_truncated_tail_still_preserves_recent_content():
+    """Validity must not come at the cost of dropping everything."""
+    segment = _RenderedSegment(escape_md_v2("step-1.done " * 60))
+
+    out = render_segments([segment], _telegram_ctx(), limit_chars=300, status=None)
+    assert escape_md_v2("... (truncated)") in out
+    assert len(out) > 200
