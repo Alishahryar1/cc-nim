@@ -32,8 +32,8 @@ def test_resolves_alias_before_gateway_prefix(settings):
 
     resolved = ModelRouter(settings).resolve("claude-sonnet-nim-0001")
 
-    assert resolved.provider_id == "nvidia_nim"
-    assert resolved.provider_model == "meta/llama-3.3-70b-instruct"
+    assert resolved.primary.provider_id == "nvidia_nim"
+    assert resolved.primary.provider_model == "meta/llama-3.3-70b-instruct"
     assert resolved.original_model == "claude-sonnet-nim-0001"
     assert resolved.reasoning_preference is ReasoningPreference.CLIENT
 
@@ -43,8 +43,8 @@ def test_resolves_alias_no_thinking_variant_forces_reasoning_off(settings):
 
     resolved = ModelRouter(settings).resolve("claude-sonnet-nim-0001-no-thinking")
 
-    assert resolved.provider_id == "nvidia_nim"
-    assert resolved.provider_model == "meta/llama-3.3-70b-instruct"
+    assert resolved.primary.provider_id == "nvidia_nim"
+    assert resolved.primary.provider_model == "meta/llama-3.3-70b-instruct"
     assert resolved.reasoning_preference is ReasoningPreference.OFF
 
 
@@ -59,10 +59,14 @@ def test_alias_takes_priority_over_anthropic_prefix(settings):
         "anthropic/nvidia_nim/meta/llama-3.3-70b-instruct"
     )
 
-    assert alias_resolved.provider_id == gateway_resolved.provider_id == "nvidia_nim"
     assert (
-        alias_resolved.provider_model
-        == gateway_resolved.provider_model
+        alias_resolved.primary.provider_id
+        == gateway_resolved.primary.provider_id
+        == "nvidia_nim"
+    )
+    assert (
+        alias_resolved.primary.provider_model
+        == gateway_resolved.primary.provider_model
         == "meta/llama-3.3-70b-instruct"
     )
 
@@ -77,10 +81,10 @@ def test_alias_for_unknown_provider_falls_through_to_existing_chain(settings):
     resolved = ModelRouter(settings).resolve("claude-sonnet-nim-0001")
 
     # Not the bogus provider we accidentally aliased to.
-    assert resolved.provider_id != "bogus_provider"
+    assert resolved.primary.provider_id != "bogus_provider"
     # Falls through to the configured default.
-    assert resolved.provider_id == "nvidia_nim"
-    assert resolved.provider_model == "fallback-model"
+    assert resolved.primary.provider_id == "nvidia_nim"
+    assert resolved.primary.provider_model == "fallback-model"
 
 
 def test_unknown_alias_falls_through_to_existing_routing(settings):
@@ -100,5 +104,5 @@ def test_unseeded_alias_returns_none_from_resolver(settings):
     resolved = ModelRouter(settings).resolve("claude-sonnet-nim-0500")
 
     # Falls through and lands on the configured default.
-    assert resolved.provider_id == "nvidia_nim"
-    assert resolved.provider_model == "fallback-model"
+    assert resolved.primary.provider_id == "nvidia_nim"
+    assert resolved.primary.provider_model == "fallback-model"

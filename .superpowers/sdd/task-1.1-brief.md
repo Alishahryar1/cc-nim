@@ -20,11 +20,14 @@ Phase 1: Native Tool Approvals (Issue 1) — First task, foundational for Tasks 
 # tests/config/test_settings.py
 def test_settings_enable_native_tool_approvals_default_true():
     from free_claude_code.config.settings import Settings
+
     s = Settings()
     assert s.enable_native_tool_approvals is True
 
+
 def test_settings_enable_native_tool_approvals_configurable():
     from free_claude_code.config.settings import Settings
+
     s = Settings(enable_native_tool_approvals=False)
     assert s.enable_native_tool_approvals is False
 ```

@@ -149,6 +149,7 @@ if [ "${{1:-}}" = "tool" ] && [ "${{2:-}}" = "install" ]; then
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-dsh"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-grok"
     cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-muse"
+    cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-claude-desktop"
     if [ "$FAIL_STEP" != "fcc-missing" ]; then
         cp "$FAKE_FIXTURES/fcc-command.sh" "$FAKE_TOOL_BIN/fcc-codex"
     fi
@@ -760,6 +761,12 @@ def test_install_sh_rejects_incompatible_node_for_selected_dsh(
 def test_install_sh_noninteractive_skips_dsh_without_node(
     posix_harness: PosixHarness,
 ) -> None:
+    if shutil.which("node", path="/usr/bin:/bin") or shutil.which(
+        "npm", path="/usr/bin:/bin"
+    ):
+        pytest.skip(
+            "system node/npm in the harness PATH fallback defeats the no-node setup"
+        )
     (posix_harness.bin_dir / "node").unlink()
     (posix_harness.bin_dir / "npm").unlink()
 

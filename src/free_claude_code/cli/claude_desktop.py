@@ -25,7 +25,7 @@ from pathlib import Path
 
 from loguru import logger
 
-from free_claude_code.cli.tls_proxy import resolve_gateway_base_url
+from free_claude_code.cli.tls_proxy import desktop_gateway_base_url
 from free_claude_code.config.loader import get_settings
 from free_claude_code.config.settings import Settings
 
@@ -74,8 +74,8 @@ def fcc_managed_block(
 ) -> dict[str, object]:
     """Inference keys FCC owns in Claude Desktop's config, from live settings.
 
-    ``gateway_base_url`` overrides the resolved URL (HTTPS when a TLS front
-    answers, plain HTTP otherwise).
+    ``gateway_base_url`` overrides the resolved URL (desktop-scoped: HTTPS
+    root when a TLS front answers plus the desktop path prefix).
     """
 
     return {
@@ -84,7 +84,7 @@ def fcc_managed_block(
         "inferenceProvider": "gateway",
         "inferenceCredentialKind": "static",
         "inferenceGatewayBaseUrl": gateway_base_url
-        or resolve_gateway_base_url(settings),
+        or desktop_gateway_base_url(settings),
         "inferenceGatewayAuthScheme": "x-api-key",
         "inferenceAnthropicApiKey": settings.proxy_auth_token,
     }

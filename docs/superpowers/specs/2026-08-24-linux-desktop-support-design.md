@@ -47,6 +47,24 @@ Claude Desktop refuses plain-HTTP gateway URLs. `cli/tls_proxy.py` provides:
 
 Settings: `TLS_PROXY_ENABLED` (default true), `TLS_PROXY_PORT` (default 8443).
 
+## Picker-alias scoping (desktop-only)
+
+Claude Desktop's picker drops model ids that fail its client-side validator;
+PR1's aliases (`claude-sonnet-nim-*`) fix that but must never reach Claude
+Code, Codex, Pi, Muse, or any other FCC client. Scoping is by API mount, not
+User-Agent sniffing:
+
+| Piece | Behavior |
+|---|---|
+| `settings.desktop_gateway_prefix` | Path prefix for the desktop-scoped mount (env `DESKTOP_GATEWAY_PREFIX`, default `claude-desktop`) |
+| `api/app.py` | The gateway router is mounted twice: bare paths (always raw provider refs) and `/{desktop_gateway_prefix}` |
+| `api/routes.py` | `list_models` enables `picker_aliases` only when `request.url.path` starts with the prefix |
+| `cli/tls_proxy.py` | `desktop_gateway_base_url` appends the prefix to the resolved gateway URL |
+| `cli/claude_desktop.py` | Writes the prefixed URL into `inferenceGatewayBaseUrl`, so only Claude Desktop talks to the alias-serving mount |
+
+Chat ingress (`/v1/messages`) still reverse-decodes aliases universally —
+harmless for other clients since they never receive alias ids.
+
 Caddyfile notes from live testing:
 - `admin off` is mandatory — a system Caddy may own port 2019.
 - `auto_https disable_redirects` (not `off`): plain `off` skips certificate

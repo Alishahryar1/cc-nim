@@ -5,7 +5,7 @@ from pathlib import Path
 
 import pytest
 
-from free_claude_code.cli import claude_desktop
+from free_claude_code.cli import claude_desktop, tls_proxy
 from free_claude_code.config.settings import Settings
 
 
@@ -21,14 +21,14 @@ def fake_settings() -> Settings:
 
 @pytest.fixture(autouse=True)
 def deterministic_gateway_url(monkeypatch: pytest.MonkeyPatch) -> None:
-    """Pin the gateway URL resolution so tests never probe the network."""
+    """Pin gateway URL resolution so tests never probe the network.
 
-    monkeypatch.setattr(
-        claude_desktop,
-        "resolve_gateway_base_url",
-        lambda settings: f"http://127.0.0.1:{settings.port}",
-        raising=False,
-    )
+    The TLS-front probe is disabled at its source (a developer machine may
+    have a live front on 8443); ``desktop_gateway_base_url`` still runs for
+    real, so these tests also pin the desktop path prefix wiring.
+    """
+
+    monkeypatch.setattr(tls_proxy, "probe_https", lambda *a, **kw: False)
 
 
 def test_managed_block_derives_url_and_key_from_settings(
@@ -48,7 +48,7 @@ def test_managed_block_resolves_url_when_not_overridden(
 ) -> None:
     block = claude_desktop.fcc_managed_block(fake_settings)
 
-    assert block["inferenceGatewayBaseUrl"] == "http://127.0.0.1:8082"
+    assert block["inferenceGatewayBaseUrl"] == ("http://127.0.0.1:8082/claude-desktop")
 
 
 def test_configure_applies_block_when_file_is_missing(
@@ -64,7 +64,10 @@ def test_configure_applies_block_when_file_is_missing(
     assert changed is True
     data = json.loads(fake_config.read_text(encoding="utf-8"))
     assert data["modelDiscoveryEnabled"] is True
-    assert data["inference"]["inferenceGatewayBaseUrl"] == "http://127.0.0.1:8082"
+    assert (
+        data["inference"]["inferenceGatewayBaseUrl"]
+        == "http://127.0.0.1:8082/claude-desktop"
+    )
     assert data["inference"]["inferenceAnthropicApiKey"] == "tok-123"
 
 
@@ -127,7 +130,9 @@ def test_configure_overwrites_partial_inference_block(
     inference = data["inference"]
     assert inference["provider"] == "gateway"
     assert inference["keep_me"] is True
-    assert inference["inferenceGatewayBaseUrl"] == "http://127.0.0.1:8082"
+    assert (
+        inference["inferenceGatewayBaseUrl"] == "http://127.0.0.1:8082/claude-desktop"
+    )
 
 
 def test_configure_aborts_on_malformed_json(

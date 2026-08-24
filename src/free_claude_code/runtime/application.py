@@ -33,7 +33,7 @@ from free_claude_code.config.loader import clear_settings_cache
 from free_claude_code.config.model_refs import parse_provider_type
 from free_claude_code.config.paths import messaging_state_dir_path
 from free_claude_code.config.server_urls import local_admin_url, local_proxy_root_url
-from free_claude_code.config.settings import Settings, get_settings
+from free_claude_code.config.settings import Settings
 from free_claude_code.core.gateway_model_ids import seed_picker_aliases
 from free_claude_code.core.json_types import JsonObject
 from free_claude_code.messaging.platforms import factory as messaging_platform_factory

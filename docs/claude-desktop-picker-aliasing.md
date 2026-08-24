@@ -107,14 +107,20 @@ def seed_picker_aliases(provider_model_refs: Iterable[str]) -> None:
     Stable across restarts (sorted input, sequential numbering).
     """
 
-def picker_alias_for(provider_model_ref: str, *, force_reasoning_off: bool = False) -> str | None:
+
+def picker_alias_for(
+    provider_model_ref: str, *, force_reasoning_off: bool = False
+) -> str | None:
     """Return the picker alias for `provider_model_ref`, if seeded."""
+
 
 def resolve_picker_alias(model_name: str) -> tuple[str, bool] | None:
     """Reverse-lookup alias. Returns ``(provider_ref, force_reasoning_off)``."""
 
+
 def has_picker_aliases() -> bool:
     """Whether `seed_picker_aliases` has been called at least once."""
+
 
 def clear_picker_aliases() -> None:
     """Drop every alias entry. Used by tests and hardening paths."""
@@ -166,8 +172,7 @@ When the alias is unknown (cold-start, unseeded prefix, or passthrough caller), 
 await self.provider_manager.warm_referenced_model_cache()
 self.provider_manager.start_model_list_refresh()
 seed_picker_aliases(
-    info.model_id
-    for info in self.provider_manager.cached_prefixed_model_infos()
+    info.model_id for info in self.provider_manager.cached_prefixed_model_infos()
 )
 ```
 
@@ -215,6 +220,23 @@ The launcher wraps `subprocess.run([shutil.which("claude-desktop"), "--ignore-ce
 The 3P gateway block flips Claude Desktop out of first-party override mode so `/v1/models` is actually consulted. The `env` block was kept as a redundant fallback so a misstep never breaks chat routing while iterating.
 
 The `YB()` bootstrap-only loopback guard does not fire on direct file writes, so `https://localhost:8443` is acceptable inside the inference block.
+
+### 5.1 Alias scoping — desktop-only mount
+
+Aliases must never reach Claude Code, Codex, Pi, Muse, or any other FCC
+client. Scoping is by API mount, not User-Agent sniffing:
+
+- New setting `desktop_gateway_prefix` (env `DESKTOP_GATEWAY_PREFIX`, default
+  `claude-desktop`).
+- The gateway router is mounted twice in `create_app`: bare paths always serve
+  raw provider refs; `/{desktop_gateway_prefix}` serves picker aliases.
+- `list_models` enables aliases only when `request.url.path` starts with the
+  prefix (`api/routes.py`).
+- The launcher writes the prefixed URL (`https://localhost:8443/claude-desktop`)
+  into `inferenceGatewayBaseUrl`, so only Claude Desktop talks to the
+  alias-serving mount.
+- Chat ingress still reverse-decodes aliases universally — harmless for other
+  clients since they never receive alias ids.
 
 ---
 

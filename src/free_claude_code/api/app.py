@@ -43,6 +43,11 @@ def create_app(services: ApiServices) -> FastAPI:
 
     app.include_router(admin_router)
     app.include_router(router)
+    # Claude Desktop-only alias mount: same handlers under the desktop path
+    # prefix; the models handler serves picker aliases only on this mount.
+    app.include_router(
+        router, prefix=f"/{services.requests.current_settings().desktop_gateway_prefix}"
+    )
 
     @app.exception_handler(RequestValidationError)
     async def validation_error_handler(request: Request, exc: RequestValidationError):

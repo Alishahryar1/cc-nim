@@ -374,11 +374,11 @@ class ToolResult:
 
 class MCPClientManager:
     """Manages MCP client connections for a single request."""
-    
+
     def __init__(self) -> None:
         self._sessions: list[ClientSession] = []
         self._streams: list[Any] = []
-    
+
     async def connect(self, servers: list[MCPServerConfig]) -> list[MCPTool]:
         all_tools: list[MCPTool] = []
         for config in servers:
@@ -393,23 +393,26 @@ class MCPClientManager:
             else:  # sse
                 # SSE transport not in stdio_client — use sse_client
                 from mcp.client.sse import sse_client
+
                 read_stream, write_stream = await sse_client(config.url).__aenter__()
                 self._streams.append((read_stream, write_stream))
                 session = ClientSession(read_stream, write_stream)
-            
+
             await session.__aenter__()
             await session.initialize()
             self._sessions.append(session)
-            
+
             tools_result = await session.list_tools()
             for tool in tools_result.tools:
-                all_tools.append(MCPTool(
-                    name=tool.name,
-                    description=tool.description or "",
-                    input_schema=tool.inputSchema,
-                ))
+                all_tools.append(
+                    MCPTool(
+                        name=tool.name,
+                        description=tool.description or "",
+                        input_schema=tool.inputSchema,
+                    )
+                )
         return all_tools
-    
+
     async def execute_tool(self, tool_name: str, arguments: dict) -> ToolResult:
         for session in self._sessions:
             try:
@@ -421,7 +424,7 @@ class MCPClientManager:
             except Exception:
                 continue
         raise ValueError(f"Tool {tool_name} not found in any MCP server")
-    
+
     async def close(self) -> None:
         for session in self._sessions:
             await session.__aexit__(None, None, None)
@@ -515,7 +518,9 @@ async def test_mcp_skipped_for_non_localhost_request():
 
 ```python
 # In mcp_client.py
-async def connect(self, servers: list[MCPServerConfig], client_host: str | None = None) -> list[MCPTool]:
+async def connect(
+    self, servers: list[MCPServerConfig], client_host: str | None = None
+) -> list[MCPTool]:
     if client_host not in ("127.0.0.1", "::1", "localhost", None):
         logger.warning("MCP skipped for non-localhost request: {}", client_host)
         return []
@@ -565,8 +570,12 @@ async def test_provider_executes_mcp_tool_via_client():
 ```python
 # In stream_response, after preflight_stream:
 if request.mcp_servers and self._config.enable_mcp:
-    from .mcp_client import MCPClientManager, MCPServerConfig, mcp_tool_to_openai_function
-    
+    from .mcp_client import (
+        MCPClientManager,
+        MCPServerConfig,
+        mcp_tool_to_openai_function,
+    )
+
     manager = MCPClientManager()
     try:
         mcp_configs = [
@@ -579,20 +588,20 @@ if request.mcp_servers and self._config.enable_mcp:
             )
             for s in request.mcp_servers
         ]
-        
+
         client_host = request.client.host if getattr(request, "client", None) else None
         mcp_tools = await manager.connect(mcp_configs, client_host=client_host)
-        
+
         # Convert to OpenAI format and merge with existing tools
         mcp_openai_tools = [mcp_tool_to_openai_function(t) for t in mcp_tools]
         if routed_request.request.tools:
             all_tools = list(routed_request.request.tools) + mcp_openai_tools
         else:
             all_tools = mcp_openai_tools
-        
+
         # Store manager for tool execution during streaming
         self._mcp_manager = manager
-        
+
     except Exception as e:
         logger.warning("MCP initialization failed: {}", e)
         await manager.close()
@@ -602,7 +611,7 @@ if hasattr(self, "_mcp_manager") and tool_name in mcp_tool_names:
     result = await self._mcp_manager.execute_tool(tool_name, arguments)
     # Emit tool_result block
     yield format_sse_event(...)
-    
+
 # In finally block:
 if hasattr(self, "_mcp_manager"):
     await self._mcp_manager.close()
@@ -724,10 +733,10 @@ async def upload_file(
 ) -> FileObject:
     file_id = f"file-{uuid.uuid4().hex}"
     content = await file.read()
-    
+
     file_path = UPLOAD_DIR / file_id
     file_path.write_bytes(content)
-    
+
     metadata = {
         "id": file_id,
         "object": "file",
@@ -738,10 +747,10 @@ async def upload_file(
         "path": str(file_path),
     }
     _file_metadata[file_id] = metadata
-    
+
     # Cleanup old files (simple approach)
     _cleanup_expired_files()
-    
+
     return FileObject(**metadata)
 
 
@@ -750,27 +759,30 @@ async def download_file_content(file_id: str) -> StreamingResponse:
     metadata = _file_metadata.get(file_id)
     if not metadata:
         raise HTTPException(status_code=404, detail="File not found")
-    
+
     file_path = Path(metadata["path"])
     if not file_path.exists():
         raise HTTPException(status_code=404, detail="File content missing")
-    
+
     def iter_file():
         with file_path.open("rb") as f:
             while chunk := f.read(65536):
                 yield chunk
-    
+
     return StreamingResponse(
         iter_file(),
         media_type="application/octet-stream",
-        headers={"Content-Disposition": f'attachment; filename="{metadata["filename"]}"'},
+        headers={
+            "Content-Disposition": f'attachment; filename="{metadata["filename"]}"'
+        },
     )
 
 
 def _cleanup_expired_files() -> None:
     now = time.time()
     expired = [
-        fid for fid, meta in _file_metadata.items()
+        fid
+        for fid, meta in _file_metadata.items()
         if now - meta["created_at"] > FILE_TTL_SECONDS
     ]
     for fid in expired:
@@ -783,6 +795,7 @@ def _cleanup_expired_files() -> None:
 ```python
 # src/free_claude_code/api/main.py
 from free_claude_code.api.handlers.files import router as files_router
+
 app.include_router(files_router)
 ```
 
@@ -838,24 +851,26 @@ def _openai_user_document_part(
     profile: OpenAIChatProfile,
 ) -> dict[str, Any] | None:
     source = block.source
-    
+
     # If provider supports documents natively, try to pass through
     if profile.supports_documents:
         # ... existing logic for native document support
         return _openai_document_native(block)
-    
+
     # FALLBACK: Extract text locally
     if source.get("type") == "file_id":
         file_id = source["file_id"]
         # Read from file storage
         from free_claude_code.api.handlers.files import _file_metadata
+
         meta = _file_metadata.get(file_id)
         if not meta:
             return None
-        
+
         file_path = Path(meta["path"])
         if file_path.suffix.lower() == ".pdf":
             import pypdf
+
             reader = pypdf.PdfReader(file_path)
             text_parts = []
             for page in reader.pages:
@@ -866,12 +881,12 @@ def _openai_user_document_part(
         else:
             # Plain text, markdown, etc.
             extracted = file_path.read_text()
-        
+
         return {
             "type": "text",
             "text": f"<document name='{meta['filename']}'>\n{extracted}\n</document>",
         }
-    
+
     return None
 ```
 
@@ -949,20 +964,21 @@ async def transcribe_audio(
 ) -> TranscriptionResponse:
     # Read audio content
     audio_content = await file.read()
-    
+
     # Determine provider from model or settings
     # For now, proxy to NVIDIA NIM parakeet or OpenAI-compatible
     from free_claude_code.config.settings import Settings
+
     settings = Settings()
     provider_name = settings.voice_provider or "nvidia_nim/parakeet"
-    
+
     # Get provider from resolver
     from free_claude_code.application.ports import ProviderResolver
     # ... resolve provider and call audio endpoint
-    
+
     # Simplified: return placeholder
     # Real impl: call provider with audio bytes
-    
+
     return TranscriptionResponse(
         text="[Transcription would be here]",
         language=language or "en",

@@ -711,6 +711,10 @@ class Settings(BaseModel):
         default=8443,
         validation_alias="TLS_PROXY_PORT",
     )
+    desktop_gateway_prefix: NonEmptyString = Field(
+        default="claude-desktop",
+        validation_alias="DESKTOP_GATEWAY_PREFIX",
+    )
 
     @field_validator("max_message_log_entries_per_chat", mode="before")
     @classmethod

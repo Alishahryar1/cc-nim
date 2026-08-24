@@ -130,11 +130,11 @@ def test_aliases_are_four_digit_zero_padded():
     refs = [f"openai_chat/provider-{i}/model" for i in range(15)]
     gmi.seed_picker_aliases(refs)
 
-    aliases = {
-        gmi.picker_alias_for(ref): None
+    aliases = [
+        alias
         for ref in refs
-        if gmi.picker_alias_for(ref) is not None
-    }
+        if (alias := gmi.picker_alias_for(ref)) is not None
+    ]
 
     assert len(aliases) == 15
     for alias in aliases:

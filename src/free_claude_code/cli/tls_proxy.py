@@ -73,6 +73,20 @@ def resolve_gateway_base_url(settings: Settings) -> str:
     return local_proxy_root_url(settings)
 
 
+def desktop_gateway_base_url(settings: Settings) -> str:
+    """Gateway URL scoped to Claude Desktop: root plus the desktop path prefix.
+
+    The prefix routes Claude Desktop onto the alias-emitting API mount while
+    every other FCC client keeps hitting the bare paths, which always serve
+    raw provider refs.
+    """
+
+    return (
+        f"{resolve_gateway_base_url(settings).rstrip('/')}"
+        f"/{settings.desktop_gateway_prefix}"
+    )
+
+
 class CaddyTlsProxy:
     """Lifecycle owner of one FCC-managed ``caddy run`` child process."""
 

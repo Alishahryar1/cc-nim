@@ -196,14 +196,26 @@ async def probe_health():
     response_model_exclude_none=True,
 )
 async def list_models(
+    request: Request,
     view: ModelCatalogView = ModelCatalogView.CLAUDE,
     services: ApiServices = Depends(get_services),
     settings: Settings = Depends(get_settings),
     _auth=Depends(require_proxy_auth),
 ):
-    """List the model ids this proxy advertises to compatible clients."""
+    """List the model ids this proxy advertises to compatible clients.
+
+    Served both bare and under the desktop path prefix. Picker aliases are
+    emitted only on the prefixed mount so Claude Code, Codex, Pi and every
+    other FCC client keep seeing raw provider refs.
+    """
     trace_event(stage="ingress", event="free_claude_code.api.models.list", source="api")
-    return build_models_list_response(settings, services.requests, view=view)
+    picker_aliases = request.url.path.startswith(f"/{settings.desktop_gateway_prefix}/")
+    return build_models_list_response(
+        settings,
+        services.requests,
+        view=view,
+        picker_aliases=picker_aliases,
+    )
 
 
 @router.get(

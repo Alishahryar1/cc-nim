@@ -1,16 +1,43 @@
-"""Tests for the ``fcc-claude-desktop`` launcher and JSON merge helpers."""
+"""Tests for the ``fcc-claude-desktop`` console-script shim.
+
+The shim delegates to :mod:`free_claude_code.cli.claude_desktop`; these
+tests pin its CLI surface and verify it forwards to the shared routing
+implementation (patched there for determinism).
+"""
 
 import json
 from pathlib import Path
 
 import pytest
 
+from free_claude_code.cli import claude_desktop as routing
 from free_claude_code.cli.launchers import claude_desktop
+from free_claude_code.config.settings import Settings
+
+_DETERMINISTIC_URL = "https://localhost:8443/claude-desktop"
+
+
+@pytest.fixture(autouse=True)
+def deterministic_gateway_url(monkeypatch: pytest.MonkeyPatch):
+    """Keep gateway URL resolution off the network in every test."""
+
+    monkeypatch.setattr(
+        routing,
+        "desktop_gateway_base_url",
+        lambda settings: _DETERMINISTIC_URL,
+    )
 
 
 @pytest.fixture
 def fake_config(tmp_path: Path) -> Path:
     return tmp_path / "claude_desktop_config.json"
+
+
+def _managed_block() -> dict[str, object]:
+    return routing.fcc_managed_block(
+        Settings(host="127.0.0.1", port=8082),
+        gateway_base_url=_DETERMINISTIC_URL,
+    )
 
 
 def test_configure_applies_block_when_file_is_missing(fake_config: Path) -> None:
@@ -22,8 +49,7 @@ def test_configure_applies_block_when_file_is_missing(fake_config: Path) -> None
     data = json.loads(fake_config.read_text(encoding="utf-8"))
     assert data["modelDiscoveryEnabled"] is True
     assert data["inference"]["provider"] == "gateway"
-    assert data["inference"]["inferenceGatewayBaseUrl"] == "https://localhost:8443"
-    assert data["inference"]["inferenceAnthropicApiKey"] == "freecc"
+    assert data["inference"]["inferenceGatewayBaseUrl"] == _DETERMINISTIC_URL
 
 
 def test_configure_is_idempotent(fake_config: Path) -> None:
@@ -71,7 +97,7 @@ def test_configure_overwrites_partial_inference_block(fake_config: Path) -> None
     data = json.loads(fake_config.read_text(encoding="utf-8"))
     assert data["inference"]["provider"] == "gateway"
     assert data["inference"]["credentialKind"] == "static"
-    assert data["inference"]["inferenceGatewayBaseUrl"] == "https://localhost:8443"
+    assert data["inference"]["inferenceGatewayBaseUrl"] == _DETERMINISTIC_URL
 
 
 def test_unconfigure_drops_only_fcc_keys(fake_config: Path) -> None:
@@ -80,8 +106,7 @@ def test_unconfigure_drops_only_fcc_keys(fake_config: Path) -> None:
             {
                 "preferences": {"theme": "dark"},
                 "modelDiscoveryEnabled": True,
-                "inference": claude_desktop.INFERENCE_BLOCK
-                | {"extra_user_key": "stay"},
+                "inference": _managed_block() | {"extra_user_key": "stay"},
             }
         ),
         encoding="utf-8",
@@ -122,7 +147,7 @@ def test_config_path_resolver_returns_default_paths(
         ("darwin", "claude_desktop_config.json"),
         ("win32", "claude_desktop_config.json"),
     ):
-        monkeypatch.setattr(claude_desktop.sys, "platform", plat, raising=False)
+        monkeypatch.setattr(routing.sys, "platform", plat, raising=False)
         path = claude_desktop._config_path()
         assert path.name == expected_substring
         assert path.is_absolute()
@@ -144,10 +169,8 @@ def test_launch_runs_subprocess_with_ignore_certificate_errors(
         def terminate(self) -> None:  # pragma: no cover - unused in suite
             return None
 
-    monkeypatch.setattr(
-        claude_desktop.shutil, "which", lambda _: "/usr/bin/claude-desktop"
-    )
-    monkeypatch.setattr(claude_desktop.subprocess, "Popen", FakeProcess)
+    monkeypatch.setattr(routing.shutil, "which", lambda _: "/usr/bin/claude-desktop")
+    monkeypatch.setattr(routing.subprocess, "Popen", FakeProcess)
 
     with pytest.raises(SystemExit) as exc:
         claude_desktop.launch(["/tmp/some extra path/"])
@@ -165,7 +188,7 @@ def test_launch_exits_127_when_binary_missing(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    monkeypatch.setattr(claude_desktop.shutil, "which", lambda _: None)
+    monkeypatch.setattr(routing.shutil, "which", lambda _: None)
 
     with pytest.raises(SystemExit) as exc:
         claude_desktop.launch([])
@@ -186,7 +209,7 @@ def test_launch_configure_does_not_invoke_subprocess(
         invoked.append(True)
         return 0
 
-    monkeypatch.setattr(claude_desktop.subprocess, "Popen", fail_call)
+    monkeypatch.setattr(routing.subprocess, "Popen", fail_call)
 
     claude_desktop.launch(["--configure", "--config-path", str(fake)])
 

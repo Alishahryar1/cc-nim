@@ -288,7 +288,6 @@ unconfigure_claude_desktop_config() {
     if ! "$python_bin" -m \
             free_claude_code.cli.launchers.claude_desktop --unconfigure 2>/dev/null; then
         printf 'warning: Failed to auto-unconfigure Claude Desktop (exit code %d). Run `fcc-claude-desktop --unconfigure` manually.\n' "$?" >&2
->>>>>>> origin/main
     fi
 }
 
