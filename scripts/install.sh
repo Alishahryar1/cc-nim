@@ -18,6 +18,7 @@ RTK_RELEASE_BASE_URL="https://github.com/rtk-ai/rtk/releases/download/v$RTK_VERS
 UV_INSTALL_URL="https://astral.sh/uv/install.sh"
 FCC_MACOS_BUNDLE_ID="io.github.alishahryar1.free-claude-code"
 FCC_MACOS_OWNER_FILE=".free-claude-code-owner"
+FCC_LINUX_DESKTOP_MARKER="# Owned by Free Claude Code. Remove this line to unclaim."
 # Include retired entry points so updates reject older FCC processes before replacement.
 FCC_COMMANDS="fcc-desktop fcc-server fcc-claude fcc-codex fcc-pi fcc-opencode fcc-cline fcc-hermes fcc-dsh fcc-grok fcc-muse fcc-init free-claude-code"
 
@@ -1222,6 +1223,51 @@ PLIST
     ln -s "$app_dir" "$desktop_link"
 }
 
+linux_desktop_entry_is_fcc_owned() {
+    entry_file=$1
+    [ -f "$entry_file" ] &&
+        [ "$(head -n 1 "$entry_file")" = "$FCC_LINUX_DESKTOP_MARKER"
+    ]
+}
+
+install_linux_desktop_entry() {
+    [ "$(uname -s)" = "Linux" ] || return 0
+
+    data_home="${XDG_DATA_HOME:-$HOME/.local/share}"
+    applications_dir="$data_home/applications"
+    icons_dir="$data_home/icons"
+    entry_file="$applications_dir/free-claude-code.desktop"
+    icon_path="$icons_dir/free-claude-code.png"
+
+    if [ -e "$entry_file" ] &&
+        ! linux_desktop_entry_is_fcc_owned "$entry_file"; then
+        printf 'A non-FCC launcher already exists at %s; leaving it unchanged.\n' "$entry_file"
+        return 0
+    fi
+
+    if [ "$dry_run" -eq 1 ]; then
+        print_command mkdir -p "$applications_dir" "$icons_dir"
+        print_command fcc-desktop --export-icon "$icon_path"
+        printf '+ write %s\n' "$entry_file"
+        return 0
+    fi
+
+    mkdir -p "$applications_dir" "$icons_dir"
+    run "$tool_bin/fcc-desktop" --export-icon "$icon_path"
+    [ -f "$icon_path" ] || fail "Free Claude Code did not export its desktop icon to $icon_path."
+    {
+        printf '%s\n' "$FCC_LINUX_DESKTOP_MARKER"
+        printf '[Desktop Entry]\n'
+        printf 'Type=Application\n'
+        printf 'Name=Free Claude Code\n'
+        printf 'Comment=Run the Free Claude Code proxy in the background\n'
+        printf 'Exec=%s\n' "$(shell_quote "$tool_bin/fcc-desktop")"
+        printf 'Icon=%s\n' "$icon_path"
+        printf 'Terminal=false\n'
+        printf 'Categories=Development;\n'
+    } > "$entry_file"
+}
+
 parse_args "$@"
 validate_args
 add_known_bin_directories
@@ -1278,6 +1324,9 @@ configure_and_verify_free_claude_code
 if [ "$(uname -s)" = "Darwin" ]; then
     step "Installing the Free Claude Code desktop launcher"
     install_macos_desktop_app
+elif [ "$(uname -s)" = "Linux" ]; then
+    step "Installing the Free Claude Code desktop launcher"
+    install_linux_desktop_entry
 fi
 
 if [ "$dry_run" -eq 1 ]; then
@@ -1286,6 +1335,8 @@ else
     if [ "$(uname -s)" = "Darwin" ]; then
         printf '\nFree Claude Code is installed and verified. Open Free Claude Code from Applications or the desktop to run it in the background.\n'
         printf 'For terminal use, start the proxy with: fcc-server\n'
+    elif [ "$(uname -s)" = "Linux" ] && [ -f "${XDG_DATA_HOME:-$HOME/.local/share}/applications/free-claude-code.desktop" ]; then
+        printf '\nFree Claude Code is installed and verified. Open Free Claude Code from your application launcher to run it in the background, or start the proxy with: fcc-server\n'
     else
         printf '\nFree Claude Code is installed and verified. Start the proxy with: fcc-server\n'
     fi

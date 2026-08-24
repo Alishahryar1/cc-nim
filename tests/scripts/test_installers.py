@@ -565,11 +565,12 @@ def test_install_sh_fresh_install_is_verified(posix_harness: PosixHarness) -> No
         for call in calls
     )
     assert not any(call.startswith("git:") for call in calls)
-    assert calls[-3:] == [
+    assert calls[-4:-1] == [
         "uv:tool update-shell",
         "uv:tool dir --bin",
         "fcc-server:--version",
     ]
+    assert calls[-1].startswith("fcc-desktop:--export-icon ")
     assert not any("hermes:setup" in call for call in calls)
     home = Path(posix_harness.env["HOME"])
     assert (home / ".grok" / "bin" / "grok").is_file()
@@ -2963,3 +2964,71 @@ if ($resolved -ne {str(fallback)!r}) {{
     )
 
     assert result.returncode == 0, result.stderr
+
+
+LINUX_DESKTOP_MARKER = "# Owned by Free Claude Code. Remove this line to unclaim."
+
+
+def _linux_desktop_entry_path(posix_harness: PosixHarness) -> Path:
+    return (
+        Path(posix_harness.env["XDG_DATA_HOME"])
+        / "applications"
+        / "free-claude-code.desktop"
+    )
+
+
+def test_install_sh_writes_linux_desktop_entry_and_icon(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.env["XDG_DATA_HOME"] = str(posix_harness.root / "xdgdata")
+    tool_bin = posix_harness.root / "tool's bin"
+    posix_harness.env["FAKE_TOOL_BIN"] = str(tool_bin)
+
+    result = posix_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    entry = _linux_desktop_entry_path(posix_harness)
+    icon = posix_harness.root / "xdgdata" / "icons" / "free-claude-code.png"
+    text = entry.read_text(encoding="utf-8")
+    assert text.splitlines()[0] == LINUX_DESKTOP_MARKER
+    assert "[Desktop Entry]" in text
+    assert "Name=Free Claude Code" in text
+    expected_command = str(tool_bin / "fcc-desktop").replace("'", "'\\''")
+    assert f"Exec={expected_command}" in text or f"Exec='{expected_command}'" in text
+    assert f"Icon={icon}" in text
+    assert icon.read_bytes() == b"fake icon\n"
+    assert any(
+        call.startswith("fcc-desktop:--export-icon ") and call.endswith(str(icon))
+        for call in posix_harness.calls()
+    )
+    assert "Open Free Claude Code from your application launcher" in result.stdout
+
+
+def test_install_sh_preserves_unowned_linux_desktop_entry(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.env["XDG_DATA_HOME"] = str(posix_harness.root / "xdgdata")
+    entry = _linux_desktop_entry_path(posix_harness)
+    entry.parent.mkdir(parents=True)
+    entry.write_text("[Desktop Entry]\nName=User Custom\n", encoding="utf-8")
+
+    result = posix_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    assert entry.read_text(encoding="utf-8") == "[Desktop Entry]\nName=User Custom\n"
+    assert "leaving it unchanged" in result.stdout
+    assert not (
+        posix_harness.root / "xdgdata" / "icons" / "free-claude-code.png"
+    ).exists()
+
+
+def test_install_sh_stops_when_linux_icon_export_fails(
+    posix_harness: PosixHarness,
+) -> None:
+    posix_harness.env["XDG_DATA_HOME"] = str(posix_harness.root / "xdgdata")
+    posix_harness.env["FAIL_STEP"] = "desktop-icon-export"
+
+    result = posix_harness.run(fail_step="desktop-icon-export")
+
+    assert result.returncode != 0
+    assert not _linux_desktop_entry_path(posix_harness).exists()
