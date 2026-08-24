@@ -109,7 +109,7 @@ def test_preserves_provider_reasoning_default_and_standard_request_fields(
     assert "extra_body" not in body
 
 
-def test_drops_thinking_replay_but_preserves_tool_history(
+def test_replays_reasoning_content_with_tool_history(
     llm7_provider: OpenAIChatProvider,
 ) -> None:
     request = _request(
@@ -149,6 +149,7 @@ def test_drops_thinking_replay_but_preserves_tool_history(
     assert body["messages"][1] == {
         "role": "assistant",
         "content": "I will inspect it.",
+        "reasoning_content": "Read it first.",
         "tool_calls": [
             {
                 "id": "toolu_1",
