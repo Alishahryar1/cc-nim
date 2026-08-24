@@ -324,6 +324,51 @@ For terminal use, start `fcc-server`, then run `fcc-claude`, `fcc-codex`,
 Use the guides below for editor integrations.
 
 <details>
+<summary><strong>Claude Desktop (Linux)</strong></summary>
+
+Route the Claude Desktop app through FCC instead of Anthropic's first-party API.
+Prerequisites: [Claude Desktop for Linux](https://claude.ai/download) installed,
+and `caddy` on PATH (any recent version) unless an HTTPS front already answers
+on port 8443.
+
+Most of the setup is automatic:
+
+1. Start `fcc-server`. It probes `https://localhost:8443` and reuses an existing
+   front; otherwise it spawns a sandboxed Caddy instance with a generated
+   config under `~/.fcc/caddy/` and provisions its own local CA. Nothing binds
+   privileged ports and no global Caddy settings are touched.
+2. Run `fcc-claude-desktop`. On launch it merges the gateway block (base URL,
+   auth key, model discovery) into `~/.config/Claude/claude_desktop_config.json`
+   — you never edit inference settings inside the app — and starts Claude
+   Desktop with your extra arguments forwarded verbatim.
+3. The model picker discovers every model FCC advertises. Ids that the app's
+   picker filter would drop are served as stable `claude-sonnet-nim-*` aliases
+   on a dedicated `/claude-desktop` path, so only Claude Desktop sees them;
+   other clients keep raw provider ids.
+
+Certificate trust: the installer copies the active Caddy certificate into the
+system trust chain and, when `certutil` (package `libnss3-tools`) is available,
+into Chromium/Electron's NSS database (`~/.pki/nssdb`). If the managed front's
+root certificate did not exist yet at install time, run the installer once more
+after the first `fcc-server` start. Manual fallback:
+
+```sh
+certutil -A -d sql:$HOME/.pki/nssdb -t "C,," -n "FCC-Caddy" \
+  -i ~/.fcc/caddy/data/caddy/pki/authorities/local/root.crt
+```
+
+Troubleshooting:
+
+- **`ERR_CERT_AUTHORITY_INVALID` in the app** — trust step above missing;
+  restart Claude Desktop after trusting the certificate.
+- **Model discovery unreachable** — confirm `curl -sk https://localhost:8443/claude-desktop/v1/models`
+  returns JSON while `fcc-server` runs.
+- **Config edits seem ignored** — a running Claude Desktop does not reload its
+  config; quit and relaunch via `fcc-claude-desktop`.
+
+</details>
+
+<details>
 <summary><strong>Claude Code in VS Code</strong></summary>
 
 Install the [Claude Code extension](https://marketplace.visualstudio.com/items?itemName=anthropic.claude-code). Open VS Code's user settings as JSON and add:

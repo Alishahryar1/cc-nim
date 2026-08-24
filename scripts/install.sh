@@ -1160,24 +1160,75 @@ configure_claude_desktop_app() {
 }
 
 install_claude_desktop_cert() {
-    # Electron's TLS stack does not always honor NODE_TLS_REJECT_UNAUTHORIZED
-    # nor the operating system certificate store. Best-effort: copy Caddy's
-    # self-signed cert into the system trust chain so users who launch
-    # ``claude-desktop`` directly still see FCC as trusted. Electron still
-    # ignores this on some hosts; the canonical workaround is the
-    # ``fcc-claude-desktop`` launcher.
-    cert_src="/etc/caddy/localhost+2.pem"
-    if [ ! -f "$cert_src" ]; then
+    # Electron's TLS stack does not reliably honor NODE_TLS_REJECT_UNAUTHORIZED
+    # nor the operating system certificate store: Chromium-based apps read the
+    # per-user NSS database (~/.pki/nssdb). Best-effort, never fatal: pick the
+    # active Caddy certificate and trust it in both stores so users who launch
+    # ``claude-desktop`` directly (or via ``fcc-claude-desktop``) see FCC as
+    # trusted.
+    cert_src=""
+    for candidate in \
+        "/etc/caddy/localhost+2.pem" \
+        "${FCC_CONFIG_HOME:-$HOME/.fcc}/caddy/data/caddy/pki/authorities/local/root.crt"; do
+        if [ -f "$candidate" ]; then
+            cert_src="$candidate"
+            break
+        fi
+    done
+    if [ -z "$cert_src" ]; then
         return 0
     fi
 
-    cert_dst="/usr/local/share/ca-certificates/fcc-caddy-localhost.crt"
+    install_claude_desktop_cert_nss
+    install_claude_desktop_cert_system
+}
+
+trust_cert_in_nss_db() {
+    nss_dir=$1
+    nss_profile_dir="$nss_dir/nssdb"
+    [ -d "$nss_profile_dir" ] || mkdir -p "$nss_profile_dir" || return 0
+    if [ ! -f "$nss_profile_dir/cert9.db" ]; then
+        certutil -N -d "sql:$nss_profile_dir" --empty-password >/dev/null 2>&1 || return 0
+    fi
+    certutil -A -d "sql:$nss_profile_dir" -t "C,," -n "FCC-Caddy" -i "$cert_src" >/dev/null 2>&1 || {
+        printf 'note: could not add FCC certificate to %s — Claude Desktop may prompt about TLS.\n' "$nss_profile_dir" >&2
+    }
+}
+
+install_claude_desktop_cert_nss() {
+    # Chromium/Electron TLS uses the NSS user database. No root required.
+    command -v certutil >/dev/null 2>&1 || {
+        printf 'note: certutil (libnss3-tools) not found — skipping NSS trust for Claude Desktop.\n' >&2
+        return 0
+    }
+
+    if [ "$dry_run" -eq 1 ]; then
+        print_command certutil -A -d "sql:$HOME/.pki/nssdb" -t "C,," -n "FCC-Caddy" -i "$cert_src"
+        return 0
+    fi
+
+    trust_cert_in_nss_db "$HOME/.pki"
+    firefox_home="$HOME/.mozilla/firefox"
+    if [ -d "$firefox_home" ]; then
+        for profile_dir in "$firefox_home"/*/;
+        do
+            [ -f "${profile_dir}cert9.db" ] || continue
+            certutil -A -d "sql:${profile_dir%/}" -t "C,," -n "FCC-Caddy" -i "$cert_src" >/dev/null 2>&1 || true
+        done
+    fi
+}
+
+install_claude_desktop_cert_system() {
+    case "$cert_src" in
+        /etc/caddy/*) cert_dst="/usr/local/share/ca-certificates/fcc-caddy-localhost.crt" ;;
+        *) cert_dst="/usr/local/share/ca-certificates/fcc-caddy-root.crt" ;;
+    esac
     if [ -e "$cert_dst" ] && cmp -s "$cert_src" "$cert_dst"; then
         return 0
     fi
 
     if [ "$(id -u)" -ne 0 ] && ! command -v sudo >/dev/null 2>&1; then
-        printf 'note: skipping cert trust step (%s requires root or sudo).\n' "$cert_src" >&2
+        printf 'note: skipping system cert trust step (%s requires root or sudo).\n' "$cert_src" >&2
         return 0
     fi
 

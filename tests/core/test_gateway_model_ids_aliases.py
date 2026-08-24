@@ -131,9 +131,7 @@ def test_aliases_are_four_digit_zero_padded():
     gmi.seed_picker_aliases(refs)
 
     aliases = [
-        alias
-        for ref in refs
-        if (alias := gmi.picker_alias_for(ref)) is not None
+        alias for ref in refs if (alias := gmi.picker_alias_for(ref)) is not None
     ]
 
     assert len(aliases) == 15

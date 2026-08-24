@@ -1,6 +1,7 @@
 import hashlib
 import io
 import os
+import pathlib
 import shutil
 import subprocess
 import sys
@@ -1247,6 +1248,50 @@ def test_install_sh_dry_run_never_executes_commands(
     assert posix_harness.calls() == []
     assert "Dry run complete. No changes were made." in result.stdout
     assert "Free Claude Code is installed and verified." not in result.stdout
+
+
+def test_install_sh_trusts_managed_caddy_cert_in_nss(
+    posix_harness: PosixHarness,
+) -> None:
+    """Managed-front root cert is trusted in Chromium/Electron's NSS database."""
+
+    def fake_logging_tool(name: str) -> None:
+        _write_executable(
+            posix_harness.bin_dir / name,
+            f"""#!/bin/sh
+echo "{name}:$*" >> "$CALL_LOG"
+exit 0
+""",
+        )
+
+    # certutil exercises the NSS trust path; sudo/update-ca-certificates are
+    # faked so the system-store step never mutates the real host.
+    for tool in ("certutil", "sudo", "update-ca-certificates"):
+        fake_logging_tool(tool)
+    managed_root = (
+        pathlib.Path(posix_harness.env["HOME"])
+        / ".fcc"
+        / "caddy"
+        / "data"
+        / "caddy"
+        / "pki"
+        / "authorities"
+        / "local"
+    )
+    managed_root.mkdir(parents=True)
+    (managed_root / "root.crt").write_text("-----BEGIN CERTIFICATE-----\n")
+    result = posix_harness.run()
+
+    assert result.returncode == 0, result.stderr
+    home = posix_harness.env["HOME"]
+    certutil_calls = [
+        call for call in posix_harness.calls() if call.startswith("certutil:")
+    ]
+    assert any(
+        call.startswith("certutil:-A ") and f"sql:{home}/.pki/nssdb" in call
+        for call in certutil_calls
+    ), certutil_calls
+    assert any("-n FCC-Caddy" in call for call in certutil_calls)
 
 
 def test_install_sh_rejects_broken_existing_client_without_replacing_it(
