@@ -192,14 +192,26 @@ def is_retryable_provider_error(exc: BaseException) -> bool:
     )
 
 
-def is_retryable_stream_error(exc: BaseException) -> bool:
-    """Return whether an opened stream failure permits replay or recovery."""
+def is_retryable_stream_error(
+    exc: BaseException, *, stream_committed: bool = True
+) -> bool:
+    """Return whether an opened stream failure permits replay or recovery.
+
+    `stream_committed` should be False when no output has yet reached the
+    client. A BAD_REQUEST-shaped error can surface mid-stream, after HTTP 200,
+    reflecting the provider's internal state rather than a genuinely invalid
+    request; if nothing has been delivered yet, treating it as retryable so a
+    fallback candidate can be tried is safe (#1543). Defaults to the prior,
+    strict behavior for call sites that haven't been updated to pass this.
+    """
     if isinstance(exc, RetryableProviderProtocolError):
         return True
     if isinstance(exc, ExecutionFailure):
         return exc.retryable
-    if isinstance(exc, openai.AuthenticationError | openai.BadRequestError):
+    if isinstance(exc, openai.AuthenticationError):
         return False
+    if isinstance(exc, openai.BadRequestError):
+        return not stream_committed
     if retryable_transient_status(exc) is not None:
         return True
     return isinstance(

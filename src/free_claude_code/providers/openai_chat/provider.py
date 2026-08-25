@@ -975,12 +975,12 @@ class _OpenAIChatStreamRunner:
                 provider_failure_override=self._provider._provider_failure_override,
             )
 
+        generated_output = assembler.generated_output
         retryable = (
             attempt_failure.retryable
             if attempt_failure is not None
-            else is_retryable_stream_error(error)
+            else is_retryable_stream_error(error, stream_committed=generated_output)
         )
-        generated_output = assembler.generated_output
         complete_tool_salvageable = assembler.complete_tool_salvageable
         decision = recovery.advance_failure(
             retryable=retryable,

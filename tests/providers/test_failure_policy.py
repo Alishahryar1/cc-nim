@@ -105,13 +105,42 @@ def test_stream_retry_classification_accepts_statusless_transients(
 
 
 def test_stream_retry_classification_rejects_openai_bad_request() -> None:
-    assert not is_retryable_stream_error(
-        _openai_status_error(
-            openai.BadRequestError,
-            status_code=400,
-            message="bad request",
-        )
+    error = _openai_status_error(
+        openai.BadRequestError,
+        status_code=400,
+        message="bad request",
     )
+    assert not is_retryable_stream_error(error)
+    assert not is_retryable_stream_error(error, stream_committed=True)
+
+
+def test_stream_retry_classification_accepts_uncommitted_mid_stream_bad_request() -> (
+    None
+):
+    # A BAD_REQUEST-shaped error can surface mid-stream, after HTTP 200,
+    # reflecting the provider's internal state rather than a genuinely
+    # invalid request. If nothing has reached the client yet, retrying
+    # against another candidate is safe (#1543).
+    error = _openai_status_error(
+        openai.BadRequestError,
+        status_code=400,
+        message="bad request",
+    )
+    assert is_retryable_stream_error(error, stream_committed=False)
+
+
+def test_stream_retry_classification_still_rejects_uncommitted_authentication_error() -> (
+    None
+):
+    # Unlike BAD_REQUEST, an authentication failure is about the credentials
+    # themselves, not the provider's stream state -- it must stay
+    # non-retryable regardless of whether anything has been committed yet.
+    error = _openai_status_error(
+        openai.AuthenticationError,
+        status_code=401,
+        message="unauthorized",
+    )
+    assert not is_retryable_stream_error(error, stream_committed=False)
 
 
 @dataclass(frozen=True, slots=True)
