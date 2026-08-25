@@ -1,6 +1,7 @@
 """Kilo.ai provider implementation."""
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.reasoning import ReasoningEffort
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
@@ -9,7 +10,7 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProvider,
     OpenAIChatRequestPolicy,
     ReasoningObject,
-    ReasoningReplayMode,
+    apply_reasoning_details_replay,
     validate_extra_body_does_not_override_canonical_fields,
 )
 
@@ -23,6 +24,7 @@ _PROFILE = OpenAIChatProfile(
         extra_body_validator=validate_extra_body_does_not_override_canonical_fields,
     ),
     ReasoningObject(tuple((effort, effort.value) for effort in ReasoningEffort)),
+    postprocessors=(apply_reasoning_details_replay,),
     reasoning_delta_field="reasoning",
     structured_reasoning_details=True,
 )

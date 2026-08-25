@@ -15,17 +15,27 @@ from openai import AsyncOpenAI, DefaultAsyncHttpx2Client
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic import (
     ContentType,
+    FunctionTagToolParser,
     HeuristicToolParser,
+    OpenAIToolNameCodec,
     ThinkTagParser,
+)
+from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.anthropic.streaming import (
+    accept_tool_json_repair,
+    continuation_suffix,
+    make_response_recovery_body,
+    make_text_recovery_body,
+    make_tool_repair_body,
+    parse_complete_tool_input,
+    tool_schemas_by_name,
 )
 from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.core.inference import (
     FinishReason,
     InferenceEvent,
-    InferenceRequest,
     InferenceStreamLedger,
     InferenceUsage,
-    ReplayCompatibilityScope,
     TokenMeasurement,
     UsageSource,
 )
@@ -55,20 +65,6 @@ from free_claude_code.providers.model_listing import (
     merge_model_list_pages,
     model_infos_from_ids,
     validate_model_list_page,
-)
-from free_claude_code.providers.openai_chat.function_tags import FunctionTagToolParser
-from free_claude_code.providers.openai_chat.recovery import (
-    accept_tool_json_repair,
-    continuation_suffix,
-    make_response_recovery_body,
-    make_text_recovery_body,
-    make_tool_repair_body,
-    parse_complete_tool_input,
-    tool_schemas_by_name,
-)
-from free_claude_code.providers.openai_compat import (
-    OpenAIToolNameCodec,
-    openai_replay_scope,
 )
 from free_claude_code.providers.stream_recovery import (
     RecoveryController,
@@ -245,7 +241,7 @@ class _OpenAIChatStreamAssembler:
     def __init__(
         self,
         *,
-        request: InferenceRequest,
+        request: MessagesRequest,
         ledger: InferenceStreamLedger,
         profile: OpenAIChatProfile,
         provider_name: str,
@@ -253,7 +249,6 @@ class _OpenAIChatStreamAssembler:
         tool_names: OpenAIToolNameCodec,
         tool_calls: OpenAIToolCallAssembler,
         extra_reasoning_events: _ExtraReasoningEvents,
-        replay_scope: ReplayCompatibilityScope,
     ) -> None:
         self._request = request
         self._ledger = ledger
@@ -267,7 +262,7 @@ class _OpenAIChatStreamAssembler:
         self._function_tag_parser = FunctionTagToolParser(request)
         self._heuristic_parser = HeuristicToolParser()
         self._structured_reasoning = (
-            StructuredReasoningStream(replay_scope)
+            StructuredReasoningStream()
             if profile.structured_reasoning_details
             else None
         )
@@ -479,7 +474,6 @@ class _OpenAIChatStreamAssembler:
 
         yield from self._tool_calls.flush_tool_argument_alias_buffers(
             self._ledger,
-            self._tool_names,
             self._tool_argument_aliases,
             self._tool_argument_alias_buffers,
         )
@@ -670,39 +664,26 @@ class OpenAIChatProvider(BaseProvider):
 
     def _build_request_body(
         self,
-        request: InferenceRequest,
+        request: MessagesRequest,
         *,
-        provider_model: str,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> dict[str, Any]:
         """Build a provider request from the immutable profile."""
         return build_openai_chat_request_body(
             request,
-            provider_model=provider_model,
             reasoning=reasoning,
             policy=self._profile.request_policy,
-            tool_names=OpenAIToolNameCodec.from_request(request),
-            replay_scope=openai_replay_scope(
-                self._provider_name,
-                provider_model,
-                replay_format="chat-completions",
-            ),
             postprocessors=self._profile.request_postprocessors,
         )
 
     def preflight_stream(
         self,
-        request: InferenceRequest,
+        request: MessagesRequest,
         *,
-        provider_model: str,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> None:
         """Validate OpenAI-chat request conversion before streaming."""
-        self._build_request_body(
-            request,
-            provider_model=provider_model,
-            reasoning=reasoning,
-        )
+        self._build_request_body(request, reasoning=reasoning)
 
     def _handle_extra_reasoning(
         self, delta: Any, ledger: InferenceStreamLedger, *, output_reasoning: bool
@@ -855,10 +836,9 @@ class OpenAIChatProvider(BaseProvider):
 
     def stream_response(
         self,
-        request: InferenceRequest,
+        request: MessagesRequest,
         input_tokens: int = 0,
         *,
-        provider_model: str,
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
@@ -867,10 +847,9 @@ class OpenAIChatProvider(BaseProvider):
         runner = _OpenAIChatStreamRunner(
             self,
             request=request,
-            provider_model=provider_model,
             input_tokens=input_tokens,
             request_id=request_id,
-            response_model=response_model or request.model,
+            response_model=response_model,
             reasoning=reasoning,
         )
         return runner.run()
@@ -883,30 +862,24 @@ class _OpenAIChatStreamRunner:
         self,
         provider: OpenAIChatProvider,
         *,
-        request: InferenceRequest,
-        provider_model: str,
+        request: MessagesRequest,
         input_tokens: int,
         request_id: str | None,
-        response_model: str,
+        response_model: str | None,
         reasoning: ReasoningPolicy,
     ) -> None:
         self._provider = provider
         self._request = request
-        self._provider_model = provider_model
         self._input_tokens = input_tokens
         self._request_id = request_id
-        self._response_model = response_model
+        self._response_model = (
+            request.model if response_model is None else response_model
+        )
         self._reasoning = reasoning
         self._tool_names = OpenAIToolNameCodec.from_request(request)
-        self._replay_scope = openai_replay_scope(
-            provider._provider_name,
-            provider_model,
-            replay_format="chat-completions",
-        )
         self._response_id = f"response_{uuid.uuid4().hex}"
         self._tool_calls = OpenAIToolCallAssembler(
-            record_extra_content=provider._record_tool_call_extra_content,
-            replay_scope=self._replay_scope,
+            record_extra_content=provider._record_tool_call_extra_content
         )
 
     async def run(self) -> AsyncIterator[InferenceEvent]:
@@ -943,7 +916,6 @@ class _OpenAIChatStreamRunner:
 
         body = self._provider._build_request_body(
             self._request,
-            provider_model=self._provider_model,
             reasoning=self._reasoning,
         )
         request_stream_usage(body)
@@ -1362,13 +1334,7 @@ class _OpenAIChatStreamRunner:
         if recovered.tool_calls:
             events.extend(ledger.close_content_blocks())
             for tool_call in recovered.tool_calls:
-                events.extend(
-                    self._tool_calls.process_tool_call(
-                        tool_call,
-                        ledger,
-                        tool_names=self._tool_names,
-                    )
-                )
+                events.extend(self._tool_calls.process_tool_call(tool_call, ledger))
         if not events:
             return None
         events.extend(ledger.close_all_blocks())
@@ -1404,8 +1370,8 @@ class _OpenAIChatStreamRunner:
             block = ledger.tool_block_for_tool_index(tool_index)
             emitted_prefix = block.content if block is not None else ""
             repair_prefix = emitted_prefix
-            if not repair_prefix and state.name == "Task":
-                repair_prefix = self._tool_calls.buffered_task_args(tool_index)
+            if not repair_prefix and state.name == "Task" and state.task_arg_buffer:
+                repair_prefix = state.task_arg_buffer
             if not repair_prefix and tool_index in tool_argument_alias_buffers:
                 repair_prefix = tool_argument_alias_buffers[tool_index]
             if (
@@ -1486,5 +1452,4 @@ class _OpenAIChatStreamRunner:
             tool_names=self._tool_names,
             tool_calls=self._tool_calls,
             extra_reasoning_events=extra_reasoning_events,
-            replay_scope=self._replay_scope,
         )

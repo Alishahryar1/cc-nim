@@ -1,8 +1,10 @@
 import pytest
 
-from free_claude_code.providers.openai_chat import function_tags as tool_parsers
-from free_claude_code.providers.openai_chat.function_tags import FunctionTagToolParser
-from free_claude_code.providers.openai_compat import OpenAIToolNameCodec
+from free_claude_code.core.anthropic import (
+    FunctionTagToolParser,
+    OpenAIToolNameCodec,
+)
+from free_claude_code.core.anthropic import tools as tool_parsers
 from tests.providers.request_factory import make_messages_request
 
 

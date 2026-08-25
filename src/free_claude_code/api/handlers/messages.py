@@ -39,7 +39,7 @@ from free_claude_code.api.web_tools.streaming import stream_web_server_tool_resp
 from free_claude_code.application.errors import ApplicationError, InvalidRequestError
 from free_claude_code.application.execution import ProviderExecutor, TokenCounter
 from free_claude_code.application.ports import ProviderResolver
-from free_claude_code.application.routing import ModelRouter, RoutedInferenceRequest
+from free_claude_code.application.routing import ModelRouter, RoutedMessagesRequest
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import (
     MessagesRequest,
@@ -49,17 +49,12 @@ from free_claude_code.core.anthropic import (
     anthropic_error_type_for_failure,
     anthropic_failure_payload,
     anthropic_status_for_error_type,
+    get_token_count,
     iter_anthropic_sse,
-    messages_to_inference_request,
-    validate_messages_field_policy,
 )
 from free_claude_code.core.diagnostics import safe_exception_message
 from free_claude_code.core.failures import ExecutionFailure, find_execution_failure
-from free_claude_code.core.inference import (
-    InferenceEvent,
-    InferenceRequest,
-    get_inference_token_count,
-)
+from free_claude_code.core.inference import InferenceEvent
 from free_claude_code.core.reasoning import ReasoningControl, ReasoningPolicy
 from free_claude_code.core.trace import trace_event
 
@@ -82,7 +77,7 @@ class _MessagesCompleteResult:
 _MessagesResult = (
     _MessagesEventResult | _MessagesWireStreamResult | _MessagesCompleteResult
 )
-MessageIntercept = Callable[[MessagesRequest], _MessagesResult | None]
+MessageIntercept = Callable[[RoutedMessagesRequest], _MessagesResult | None]
 
 
 class MessagesHandler:
@@ -94,7 +89,7 @@ class MessagesHandler:
         provider_resolver: ProviderResolver,
         *,
         model_router: ModelRouter | None = None,
-        token_counter: TokenCounter = get_inference_token_count,
+        token_counter: TokenCounter = get_token_count,
         provider_executor: ProviderExecutor | None = None,
         generation_id: int | None = None,
     ) -> None:
@@ -120,47 +115,32 @@ class MessagesHandler:
         request_id = request_id or new_request_id()
         try:
             require_non_empty_messages(request_data.messages)
-            self._validate_wire_request(request_data)
+            routed = self._model_router.resolve_messages_request(request_data)
+            routed = self._apply_message_routing_policies(routed)
             automatic_search = plan_automatic_web_search(
-                request_data,
+                routed.request,
                 web_tools_enabled=self._settings.enable_web_server_tools,
             )
             if automatic_search is None:
-                self._reject_unsupported_server_tools(request_data)
-                result = self._run_message_intercepts(request_data)
-                if result is not None:
-                    return await self._to_public_response(
-                        result,
-                        stream=request_data.stream,
-                        request_id=request_id,
-                    )
-
-            canonical = self._canonical_request(
-                automatic_search.request
-                if automatic_search is not None
-                else request_data
-            )
-            routed = self._model_router.resolve_inference_request(canonical)
-            routed = self._apply_message_routing_policies(
-                routed,
-                classifier_stop_sequence=detect_safety_classifier_stop_sequence(
-                    request_data
-                ),
-            )
-            if automatic_search is not None:
+                self._reject_unsupported_server_tools(routed)
+                result = self._run_message_intercepts(routed)
+            else:
+                input_tokens = self._token_counter(
+                    routed.request.messages,
+                    routed.request.system,
+                    routed.request.tools,
+                )
                 result = _MessagesWireStreamResult(
                     stream_automatic_web_search_response(
                         self._provider_executor,
                         routed,
                         automatic_search,
                         request_id=request_id,
-                        fallback_input_tokens=self._token_counter(routed.request),
+                        fallback_input_tokens=input_tokens,
                         verbose_client_errors=self._settings.log_api_error_tracebacks,
                         log_raw_events=self._settings.log_raw_sse_events,
                     )
                 )
-            else:
-                result = None
             if result is None:
                 logger.debug("No optimization matched, routing to provider")
                 result = _MessagesEventResult(
@@ -168,7 +148,7 @@ class MessagesHandler:
                         routed,
                         wire_api="messages",
                         raw_log_label="FULL_PAYLOAD",
-                        raw_log_payload=request_data.model_dump(),
+                        raw_log_payload=routed.request.model_dump(),
                         request_id=request_id,
                     )
                 )
@@ -338,43 +318,33 @@ class MessagesHandler:
             ),
         )
 
-    @staticmethod
-    def _validate_wire_request(request: MessagesRequest) -> None:
-        try:
-            validate_messages_field_policy(request)
-        except ValueError as exc:
-            raise InvalidRequestError(str(exc)) from exc
-
-    @staticmethod
-    def _canonical_request(request: MessagesRequest) -> InferenceRequest:
-        try:
-            return messages_to_inference_request(request)
-        except ValueError as exc:
-            raise InvalidRequestError(str(exc)) from exc
-
-    def _reject_unsupported_server_tools(self, request: MessagesRequest) -> None:
+    def _reject_unsupported_server_tools(self, routed: RoutedMessagesRequest) -> None:
         tool_err = unsupported_server_tool_error(
-            request,
+            routed.request,
             web_tools_enabled=self._settings.enable_web_server_tools,
         )
         if tool_err is not None:
             raise InvalidRequestError(tool_err)
 
     def _apply_message_routing_policies(
-        self,
-        routed: RoutedInferenceRequest,
-        *,
-        classifier_stop_sequence: str | None,
-    ) -> RoutedInferenceRequest:
+        self, routed: RoutedMessagesRequest
+    ) -> RoutedMessagesRequest:
+        classifier_stop_sequence = detect_safety_classifier_stop_sequence(
+            routed.request
+        )
         if classifier_stop_sequence is None:
             return routed
 
         reasoning_changed = routed.reasoning.control is not ReasoningControl.OFF
         stop_sequences = routed.request.stop_sequences
-        remaining_stop_sequences = tuple(
-            stop_sequence
-            for stop_sequence in stop_sequences
-            if stop_sequence != classifier_stop_sequence
+        remaining_stop_sequences = (
+            [
+                stop_sequence
+                for stop_sequence in stop_sequences
+                if stop_sequence != classifier_stop_sequence
+            ]
+            if stop_sequences is not None
+            else None
         )
         stop_sequence_removed = remaining_stop_sequences != stop_sequences
         trace_event(
@@ -391,7 +361,9 @@ class MessagesHandler:
 
         request = routed.request
         if stop_sequence_removed:
-            request = request.with_stop_sequences(remaining_stop_sequences)
+            request = request.model_copy(
+                update={"stop_sequences": remaining_stop_sequences or None}
+            )
         return replace(
             routed,
             request=request,
@@ -401,32 +373,30 @@ class MessagesHandler:
         )
 
     def _run_message_intercepts(
-        self, request: MessagesRequest
+        self, routed: RoutedMessagesRequest
     ) -> _MessagesResult | None:
         for intercept in self._message_intercepts:
-            result = intercept(request)
+            result = intercept(routed)
             if result is not None:
                 return result
         return None
 
     def _intercept_web_server_tool(
-        self, request: MessagesRequest
+        self, routed: RoutedMessagesRequest
     ) -> _MessagesResult | None:
         if not self._settings.enable_web_server_tools:
             return None
-        if not is_web_server_tool_request(request):
+        if not is_web_server_tool_request(routed.request):
             return None
 
-        token_request = request.model_copy(
-            update={"tools": None, "tool_choice": None},
-            deep=True,
+        input_tokens = self._token_counter(
+            routed.request.messages, routed.request.system, routed.request.tools
         )
-        input_tokens = self._token_counter(self._canonical_request(token_request))
         trace_event(
             stage="routing",
             event="free_claude_code.api.optimization.web_server_tool",
             source="api",
-            model=request.model,
+            model=routed.resolved.original_model,
         )
         egress = WebFetchEgressPolicy(
             allow_private_network_targets=self._settings.web_fetch_allow_private_networks,
@@ -436,21 +406,21 @@ class MessagesHandler:
         )
         return _MessagesWireStreamResult(
             stream_web_server_tool_response(
-                request,
+                routed.request,
                 input_tokens=input_tokens,
                 web_fetch_egress=egress,
-                response_model=request.model,
+                response_model=routed.resolved.original_model,
                 verbose_client_errors=self._settings.log_api_error_tracebacks,
             ),
         )
 
     def _intercept_local_optimization(
-        self, request: MessagesRequest
+        self, routed: RoutedMessagesRequest
     ) -> _MessagesResult | None:
         optimized = try_optimizations(
-            request,
+            routed.request,
             self._settings,
-            response_model=request.model,
+            response_model=routed.resolved.original_model,
         )
         if optimized is None:
             return None
@@ -458,7 +428,7 @@ class MessagesHandler:
             stage="routing",
             event="free_claude_code.api.optimization.short_circuit",
             source="api",
-            model=request.model,
+            model=routed.resolved.original_model,
         )
         return _MessagesCompleteResult(optimized)
 

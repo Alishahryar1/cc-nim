@@ -18,7 +18,6 @@ from free_claude_code.providers.cloudflare import (
     cloudflare_ai_base_url,
 )
 from tests.inference_support import collect_anthropic
-from tests.providers.request_factory import canonical_request
 from tests.providers.support import (
     immediate_admission,
     make_provider_config,
@@ -129,9 +128,7 @@ def test_build_request_body_preserves_literal_cf_model_id_and_controls_thinking(
     )
 
     body = cloudflare_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
 
     assert body["model"] == "@cf/moonshotai/kimi-k2.6"
@@ -152,9 +149,7 @@ def test_build_request_body_disabled_thinking_sets_cloudflare_template_flag(
     )
 
     body = cloudflare_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
 
     assert body["extra_body"]["chat_template_kwargs"]["thinking"] is False
@@ -172,9 +167,7 @@ def test_build_request_body_preserves_user_extra_body_without_overriding_thinkin
     )
 
     body = cloudflare_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
 
     assert body["extra_body"]["chat_template_kwargs"]["thinking"] is False
@@ -233,9 +226,7 @@ async def test_stream_uses_openai_chat_completions(
         return_value=_stream(_chunk(delta)),
     ) as mock_create:
         events = await collect_anthropic(
-            cloudflare_provider.stream_response(
-                canonical_request(_request()), provider_model=(_request()).model
-            )
+            cloudflare_provider.stream_response(_request())
         )
 
     parsed = parse_sse_text("".join(events))
@@ -266,9 +257,7 @@ async def test_stream_maps_cloudflare_reasoning_delta_to_thinking(
         return_value=_stream(_chunk(delta)),
     ):
         events = await collect_anthropic(
-            cloudflare_provider.stream_response(
-                canonical_request(_request()), provider_model=(_request()).model
-            )
+            cloudflare_provider.stream_response(_request())
         )
 
     parsed = parse_sse_text("".join(events))
@@ -318,11 +307,7 @@ async def test_stream_maps_openai_tool_calls_to_tool_use(
         new_callable=AsyncMock,
         return_value=_stream(_chunk(delta, finish_reason="tool_calls")),
     ):
-        events = await collect_anthropic(
-            cloudflare_provider.stream_response(
-                canonical_request(request), provider_model=(request).model
-            )
-        )
+        events = await collect_anthropic(cloudflare_provider.stream_response(request))
 
     parsed = parse_sse_text("".join(events))
     assert any(

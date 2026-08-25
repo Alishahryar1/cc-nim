@@ -3,6 +3,7 @@
 from collections.abc import Mapping
 from dataclasses import dataclass
 
+from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.inference import (
     FinishReason,
     InferenceEvent,
@@ -12,12 +13,9 @@ from free_claude_code.core.inference import (
     ReplayArtifactKind,
     ReplayArtifactOrigin,
     ReplayAttachment,
-    ReplayCompatibilityScope,
     TokenMeasurement,
-    ToolCallKind,
     UsageSource,
 )
-from free_claude_code.providers.openai_compat import OpenAIToolNameCodec
 
 
 class ResponsesStreamFailure(RuntimeError):
@@ -34,8 +32,6 @@ class _ToolState:
     tool_index: int
     call_id: str
     name: str
-    kind: ToolCallKind
-    namespace: str | None
     started: bool = False
     received_delta: bool = False
     stopped: bool = False
@@ -51,13 +47,11 @@ class ResponsesEventDecoder:
         model: str,
         input_tokens: int,
         tool_names: OpenAIToolNameCodec | None = None,
-        replay_scope: ReplayCompatibilityScope,
     ) -> None:
         self.ledger = InferenceStreamLedger(response_id, model, input_tokens)
         self.completed = False
         self.generated_output = False
         self._tool_names = tool_names or OpenAIToolNameCodec.from_names(())
-        self._replay_scope = replay_scope
         self._tools: dict[str, _ToolState] = {}
         self._encrypted_reasoning: dict[str, str] = {}
 
@@ -76,10 +70,7 @@ class ResponsesEventDecoder:
             return self._reasoning_delta(data)
         if event_type == "response.output_text.delta":
             return self._text_delta(data)
-        if event_type in {
-            "response.function_call_arguments.delta",
-            "response.custom_tool_call_input.delta",
-        }:
+        if event_type == "response.function_call_arguments.delta":
             return self._tool_delta(data)
         if event_type == "response.output_item.done":
             return self._item_done(data)
@@ -94,18 +85,11 @@ class ResponsesEventDecoder:
         if not isinstance(item, dict):
             return []
         item_id = _string(item.get("id"))
-        if item.get("type") in {"function_call", "custom_tool_call"} and item_id:
-            identity = self._tool_names.decode_identity(_string(item.get("name")))
+        if item.get("type") == "function_call" and item_id:
             self._tools[item_id] = _ToolState(
                 tool_index=len(self._tools),
                 call_id=_string(item.get("call_id")) or item_id,
-                name=identity.name,
-                kind=(
-                    ToolCallKind.CUSTOM
-                    if item.get("type") == "custom_tool_call"
-                    else identity.kind
-                ),
-                namespace=identity.namespace,
+                name=self._tool_names.decode(_string(item.get("name"))),
             )
         if item.get("type") == "reasoning" and item_id:
             encrypted = item.get("encrypted_content")
@@ -142,8 +126,6 @@ class ResponsesEventDecoder:
                 tool_index=len(self._tools),
                 call_id=item_id,
                 name="",
-                kind=ToolCallKind.FUNCTION,
-                namespace=None,
             )
             self._tools[item_id] = state
         events = list(self.ledger.close_content_blocks())
@@ -160,32 +142,20 @@ class ResponsesEventDecoder:
             return []
         item_type = item.get("type")
         item_id = _string(item.get("id"))
-        if item_type in {"function_call", "custom_tool_call"}:
+        if item_type == "function_call":
             state = self._tools.get(item_id)
             if state is None:
-                identity = self._tool_names.decode_identity(_string(item.get("name")))
                 state = _ToolState(
                     tool_index=len(self._tools),
                     call_id=_string(item.get("call_id")) or item_id,
-                    name=identity.name,
-                    kind=(
-                        ToolCallKind.CUSTOM
-                        if item_type == "custom_tool_call"
-                        else identity.kind
-                    ),
-                    namespace=identity.namespace,
+                    name=self._tool_names.decode(_string(item.get("name"))),
                 )
                 self._tools[item_id] = state
             if not state.name:
-                identity = self._tool_names.decode_identity(_string(item.get("name")))
-                state.name = identity.name
-                state.kind = identity.kind
-                state.namespace = identity.namespace
+                state.name = self._tool_names.decode(_string(item.get("name")))
             events = list(self.ledger.close_content_blocks())
             events.extend(self._ensure_tool_started(state))
-            arguments = item.get(
-                "input" if item_type == "custom_tool_call" else "arguments"
-            )
+            arguments = item.get("arguments")
             if not state.received_delta and isinstance(arguments, str) and arguments:
                 events.append(self.ledger.emit_tool_delta(state.tool_index, arguments))
                 self.generated_output = True
@@ -206,7 +176,6 @@ class ResponsesEventDecoder:
                             kind=ReplayArtifactKind.ENCRYPTED_REASONING,
                             attachment=ReplayAttachment.REASONING,
                             payload=encrypted,
-                            scope=self._replay_scope,
                         )
                     )
                 )
@@ -224,8 +193,6 @@ class ResponsesEventDecoder:
                 state.tool_index,
                 state.call_id,
                 state.name,
-                kind=state.kind,
-                namespace=state.namespace,
             )
         ]
 

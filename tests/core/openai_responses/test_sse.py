@@ -17,12 +17,11 @@ from free_claude_code.core.inference import (
     ReplayAttachment,
     ResponseStarted,
 )
-from free_claude_code.core.openai_responses import ResponsesPresentationSnapshot
+from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.openai_responses.presenter import (
     ResponsesEventPresenter,
     iter_responses_sse_from_events,
 )
-from free_claude_code.core.replay_envelope import decode_replay_envelope
 from tests.inference_support import reported_usage, text_event_stream
 
 
@@ -58,15 +57,14 @@ class _CloseTrackingEvents:
             raise self._close_error
 
 
-def _snapshot() -> ResponsesPresentationSnapshot:
-    return ResponsesPresentationSnapshot(
-        model="nvidia_nim/test-model",
-        parallel_tool_calls=True,
-        tool_choice="auto",
-        temperature=None,
-        top_p=None,
-        max_output_tokens=None,
-    )
+def _request(**overrides: object) -> OpenAIResponsesRequest:
+    payload: dict[str, object] = {
+        "model": "nvidia_nim/test-model",
+        "input": "hello",
+        "stream": True,
+    }
+    payload.update(overrides)
+    return OpenAIResponsesRequest.model_validate(payload)
 
 
 async def _aiter(events: list[InferenceEvent]) -> AsyncIterator[InferenceEvent]:
@@ -79,7 +77,7 @@ async def _collect(events: list[InferenceEvent]) -> list[str]:
         chunk
         async for chunk in iter_responses_sse_from_events(
             _aiter(events),
-            _snapshot(),
+            _request(),
         )
     ]
 
@@ -151,14 +149,7 @@ async def test_reasoning_replay_and_tool_call_remain_semantic_until_presented() 
     final = parsed[-1].data["response"]
     reasoning, tool = final["output"]
     assert reasoning["type"] == "reasoning"
-    encrypted = reasoning["encrypted_content"]
-    assert isinstance(encrypted, str)
-    artifacts = decode_replay_envelope(
-        encrypted,
-        attachment=ReplayAttachment.REASONING,
-    )
-    assert artifacts is not None
-    assert [artifact.payload for artifact in artifacts] == ["opaque"]
+    assert reasoning["encrypted_content"] == "opaque"
     assert tool == {
         "id": tool["id"],
         "type": "function_call",
@@ -204,7 +195,7 @@ async def test_pre_start_failure_is_not_hidden_in_a_responses_envelope() -> None
     source = _CloseTrackingEvents([], iteration_error=failure)
 
     with pytest.raises(ExecutionFailure) as exc_info:
-        [chunk async for chunk in iter_responses_sse_from_events(source, _snapshot())]
+        [chunk async for chunk in iter_responses_sse_from_events(source, _request())]
 
     assert exc_info.value is failure
     assert source.close_calls == 1
@@ -228,7 +219,7 @@ async def test_post_start_failure_becomes_one_terminal_response_event() -> None:
         chunk
         async for chunk in iter_responses_sse_from_events(
             source,
-            _snapshot(),
+            _request(),
             on_post_start_terminal_failure=observed.append,
         )
     ]
@@ -246,7 +237,7 @@ async def test_post_start_failure_becomes_one_terminal_response_event() -> None:
 @pytest.mark.asyncio
 async def test_early_consumer_close_closes_canonical_source_once() -> None:
     source = _CloseTrackingEvents(text_event_stream("hello"))
-    stream = iter_responses_sse_from_events(source, _snapshot())
+    stream = iter_responses_sse_from_events(source, _request())
 
     assert parse_sse_text(await anext(stream))[0].event == "response.created"
     assert isinstance(stream, AsyncCloseable)
@@ -256,7 +247,7 @@ async def test_early_consumer_close_closes_canonical_source_once() -> None:
 
 
 def test_presenter_rejects_events_after_terminal_completion() -> None:
-    presenter = ResponsesEventPresenter(_snapshot())
+    presenter = ResponsesEventPresenter(_request())
     for event in text_event_stream("done"):
         presenter.present(event)
 

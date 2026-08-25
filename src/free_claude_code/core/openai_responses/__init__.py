@@ -1,34 +1,30 @@
 """OpenAI Responses protocol adapter."""
 
+from .adapter import OpenAIResponsesAdapter
 from .errors import (
     ResponsesConversionError,
     openai_error_payload,
     openai_error_type_for_failure,
     openai_failure_payload,
 )
-from .events import OPENAI_RESPONSES_SSE_HEADERS
-from .ingress import (
-    ResponsesIngressResult,
-    responses_to_inference_request,
-    validate_responses_field_policy,
-)
-from .models import OpenAIResponsesRequest, ResponsesPresentationSnapshot
+from .models import OpenAIResponsesRequest
 from .presenter import (
     ResponsesEventPresenter,
     iter_responses_sse_from_events,
 )
+from .provider_events import ResponsesEventDecoder, ResponsesStreamFailure
+from .provider_input import build_responses_provider_request
 
 __all__ = [
-    "OPENAI_RESPONSES_SSE_HEADERS",
+    "OpenAIResponsesAdapter",
     "OpenAIResponsesRequest",
     "ResponsesConversionError",
+    "ResponsesEventDecoder",
     "ResponsesEventPresenter",
-    "ResponsesIngressResult",
-    "ResponsesPresentationSnapshot",
+    "ResponsesStreamFailure",
+    "build_responses_provider_request",
     "iter_responses_sse_from_events",
     "openai_error_payload",
     "openai_error_type_for_failure",
     "openai_failure_payload",
-    "responses_to_inference_request",
-    "validate_responses_field_policy",
 ]

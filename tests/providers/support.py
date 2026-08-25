@@ -7,7 +7,6 @@ from openai import AsyncOpenAI
 
 from free_claude_code.application.reasoning import client_reasoning_policy
 from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.core.inference import InferenceRequest
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
@@ -15,7 +14,6 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProvider,
     create_openai_chat_provider,
 )
-from tests.providers.request_factory import canonical_request
 
 REASONING_DEFAULT = ReasoningPolicy.provider_default()
 REASONING_ON = ReasoningPolicy.on()
@@ -114,9 +112,7 @@ def profiled_provider(
     )
 
 
-def reasoning_for(
-    request: MessagesRequest | InferenceRequest,
-) -> ReasoningPolicy:
+def reasoning_for(request: MessagesRequest) -> ReasoningPolicy:
     """Resolve provider-test input through the production client boundary."""
 
-    return client_reasoning_policy(canonical_request(request).reasoning)
+    return client_reasoning_policy(request)

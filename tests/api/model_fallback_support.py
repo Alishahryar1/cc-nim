@@ -8,8 +8,9 @@ from fastapi.testclient import TestClient
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.anthropic import MessagesRequest
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
-from free_claude_code.core.inference import InferenceEvent, InferenceRequest
+from free_claude_code.core.inference import InferenceEvent
 from free_claude_code.core.reasoning import ReasoningPolicy
 from tests.api.support import create_test_app
 from tests.inference_support import text_event_stream
@@ -48,28 +49,26 @@ class ControlledFallbackProvider:
 
     def preflight_stream(
         self,
-        request: InferenceRequest,
+        request: MessagesRequest,
         *,
-        provider_model: str,
         reasoning: ReasoningPolicy,
     ) -> None:
-        del request, reasoning
-        self.preflight_models.append(provider_model)
+        del reasoning
+        self.preflight_models.append(request.model)
         if self._preflight_error is not None:
             raise self._preflight_error
 
     async def stream_response(
         self,
-        request: InferenceRequest,
+        request: MessagesRequest,
         input_tokens: int = 0,
         *,
-        provider_model: str,
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
     ) -> AsyncIterator[InferenceEvent]:
         del input_tokens, request_id, reasoning
-        self.stream_models.append(provider_model)
+        self.stream_models.append(request.model)
         public_model = response_model or request.model
         self.response_models.append(public_model)
         try:

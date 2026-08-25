@@ -17,7 +17,6 @@ from free_claude_code.providers.github_models import GitHubModelsProvider
 from free_claude_code.providers.github_models.client import GITHUB_MODELS_CATALOG_URL
 from free_claude_code.providers.model_listing import ModelListResponseError
 from tests.inference_support import collect_anthropic
-from tests.providers.request_factory import canonical_request
 from tests.providers.support import (
     REASONING_ON,
     immediate_admission,
@@ -122,11 +121,7 @@ def test_build_request_body_uses_shared_openai_chat_policy(
 ) -> None:
     request = _request()
 
-    body = github_models_provider._build_request_body(
-        canonical_request(request),
-        reasoning=REASONING_ON,
-        provider_model=(request).model,
-    )
+    body = github_models_provider._build_request_body(request, reasoning=REASONING_ON)
 
     assert body["model"] == "openai/gpt-4.1"
     assert body["max_tokens"] == 100
@@ -223,9 +218,7 @@ async def test_stream_response_text(
         return_value=_stream(_chunk(delta)),
     ) as mock_create:
         events = await collect_anthropic(
-            github_models_provider.stream_response(
-                canonical_request(_request()), provider_model=(_request()).model
-            )
+            github_models_provider.stream_response(_request())
         )
 
     parsed = parse_sse_text("".join(events))
@@ -275,9 +268,7 @@ async def test_stream_response_tool_call(
         return_value=_stream(_chunk(delta, finish_reason="tool_calls")),
     ):
         events = await collect_anthropic(
-            github_models_provider.stream_response(
-                canonical_request(request), provider_model=(request).model
-            )
+            github_models_provider.stream_response(request)
         )
 
     parsed = parse_sse_text("".join(events))
@@ -311,9 +302,7 @@ async def test_stream_response_reasoning_content(
         return_value=_stream(_chunk(delta)),
     ):
         events = await collect_anthropic(
-            github_models_provider.stream_response(
-                canonical_request(_request()), provider_model=(_request()).model
-            )
+            github_models_provider.stream_response(_request())
         )
 
     parsed = parse_sse_text("".join(events))

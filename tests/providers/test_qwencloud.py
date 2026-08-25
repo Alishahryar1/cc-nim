@@ -13,7 +13,6 @@ from free_claude_code.config.provider_catalog import QWENCLOUD_DEFAULT_BASE
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
-from tests.providers.request_factory import canonical_request
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
@@ -83,9 +82,8 @@ def test_build_request_body_preserves_common_chat_tools_and_images(
     )
 
     body = qwencloud_provider._build_request_body(
-        canonical_request(request),
+        request,
         reasoning=reasoning_for(request),
-        provider_model=(request).model,
     )
 
     assert body["model"] == "qwen3.7-plus"
@@ -113,9 +111,7 @@ def test_build_request_body_does_not_invent_catalog_wide_reasoning_control(
         }
     )
 
-    body = qwencloud_provider._build_request_body(
-        canonical_request(request), reasoning=reasoning, provider_model=(request).model
-    )
+    body = qwencloud_provider._build_request_body(request, reasoning=reasoning)
     extra_body = body.get("extra_body", {})
 
     for field in (
@@ -149,9 +145,8 @@ def test_build_request_body_replays_prior_reasoning_content(
     )
 
     body = qwencloud_provider._build_request_body(
-        canonical_request(request),
+        request,
         reasoning=reasoning_for(request),
-        provider_model=(request).model,
     )
 
     assert body["messages"][1] == {

@@ -9,7 +9,8 @@ from typing import Any
 import openai
 from loguru import logger
 
-from free_claude_code.core.inference import InferenceRequest
+from free_claude_code.core.anthropic import ReasoningReplayMode
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.reasoning import (
     DEFAULT_REASONING_POLICY,
     ReasoningEffort,
@@ -22,7 +23,6 @@ from free_claude_code.providers.openai_chat import (
     OpenAIChatProfile,
     OpenAIChatProvider,
     OpenAIChatRequestPolicy,
-    ReasoningReplayMode,
     validate_extra_body_does_not_override_reasoning_fields,
 )
 
@@ -99,16 +99,11 @@ class GroqProvider(OpenAIChatProvider):
 
     def _build_request_body(
         self,
-        request: InferenceRequest,
+        request: MessagesRequest,
         *,
-        provider_model: str,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> dict[str, Any]:
-        body = super()._build_request_body(
-            request,
-            provider_model=provider_model,
-            reasoning=reasoning,
-        )
+        body = super()._build_request_body(request, reasoning=reasoning)
         model = body.get("model")
         if not isinstance(model, str):
             return body

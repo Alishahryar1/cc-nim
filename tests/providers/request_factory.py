@@ -1,34 +1,15 @@
-"""Canonical request factories for provider tests."""
+"""Concrete Anthropic request factory for provider tests."""
 
-from free_claude_code.core.anthropic import messages_to_inference_request
+from typing import Any
+
 from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.core.inference import InferenceRequest
-
-type ProviderTestRequest = MessagesRequest | InferenceRequest
-
-
-def canonical_request(request: ProviderTestRequest) -> InferenceRequest:
-    """Cross the production Messages ingress at a provider-test boundary."""
-
-    if isinstance(request, InferenceRequest):
-        return request
-    return messages_to_inference_request(request)
 
 
 def make_messages_request(
-    model: str = "test-model", **overrides: object
-) -> InferenceRequest:
-    """Build canonical provider input through the real Messages ingress."""
-
-    return messages_to_inference_request(make_messages_wire_request(model, **overrides))
-
-
-def make_messages_wire_request(
-    model: str = "test-model", **overrides: object
+    model: str = "test-model", **overrides: Any
 ) -> MessagesRequest:
-    """Build a real Messages wire request with provider-test defaults."""
-
-    data: dict[str, object] = {
+    """Build a real Messages request with provider-test defaults."""
+    data: dict[str, Any] = {
         "model": model,
         "messages": [{"role": "user", "content": "Hello"}],
         "max_tokens": 100,

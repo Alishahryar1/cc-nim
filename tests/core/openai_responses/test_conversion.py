@@ -1,43 +1,22 @@
+from typing import Any
+
 import pytest
 
-from free_claude_code.core.inference import (
-    CustomTool,
-    CustomToolFormatType,
-    FunctionTool,
-    InstructionItem,
-    InstructionOrigin,
-    InstructionPlacement,
-    MessageItem,
-    MessageRole,
-    ReasoningItem,
-    ReplayArtifact,
-    ReplayArtifactKind,
-    ReplayArtifactOrigin,
-    ReplayAttachment,
-    ReplayCompatibilityScope,
-    TextContent,
-    ToolCallItem,
-    ToolCallKind,
-    ToolChoiceMode,
-    ToolResultItem,
-)
 from free_claude_code.core.openai_responses import (
+    OpenAIResponsesAdapter,
     OpenAIResponsesRequest,
-    ResponsesConversionError,
-    responses_to_inference_request,
 )
-from free_claude_code.core.reasoning import ReasoningControl, ReasoningEffort
-from free_claude_code.core.replay_envelope import encode_replay_envelope
+
+_ADAPTER = OpenAIResponsesAdapter()
+_CONVERSION_ERROR = OpenAIResponsesAdapter.ConversionError
 
 
-def _ingest(payload: dict[str, object]):
-    return responses_to_inference_request(
-        OpenAIResponsesRequest.model_validate(payload)
-    ).request
+def _to_anthropic_payload(request: dict[str, Any]) -> dict[str, Any]:
+    return _ADAPTER.to_anthropic_payload(OpenAIResponsesRequest.model_validate(request))
 
 
-def test_responses_string_input_becomes_canonical_instruction_and_message() -> None:
-    request = _ingest(
+def test_responses_string_input_converts_to_anthropic_message() -> None:
+    payload = _to_anthropic_payload(
         {
             "model": "nvidia_nim/test-model",
             "instructions": "System instructions",
@@ -49,41 +28,20 @@ def test_responses_string_input_becomes_canonical_instruction_and_message() -> N
         }
     )
 
-    assert request.model == "nvidia_nim/test-model"
-    assert request.items == (
-        InstructionItem(
-            text="System instructions",
-            origin=InstructionOrigin.SYSTEM,
-            placement=InstructionPlacement.TOP_LEVEL,
-        ),
-        MessageItem(
-            turn_id="turn_0",
-            role=MessageRole.USER,
-            content=(TextContent("Hello"),),
-        ),
-    )
-    assert request.max_output_tokens == 64
-    assert request.temperature == 0.2
-    assert request.top_p == 0.9
-    assert request.metadata == {"trace": "abc"}
+    assert payload["model"] == "nvidia_nim/test-model"
+    assert payload["system"] == "System instructions"
+    assert payload["messages"] == [{"role": "user", "content": "Hello"}]
+    assert payload["max_tokens"] == 64
+    assert payload["temperature"] == 0.2
+    assert payload["top_p"] == 0.9
+    assert payload["metadata"] == {"trace": "abc"}
 
 
-@pytest.mark.parametrize(
-    ("effort", "control", "expected_effort"),
-    [
-        ("none", ReasoningControl.OFF, None),
-        ("low", ReasoningControl.ON, ReasoningEffort.LOW),
-        ("medium", ReasoningControl.ON, ReasoningEffort.MEDIUM),
-        ("high", ReasoningControl.ON, ReasoningEffort.HIGH),
-        ("xhigh", ReasoningControl.ON, ReasoningEffort.XHIGH),
-    ],
-)
-def test_responses_reasoning_effort_becomes_canonical_intent(
+@pytest.mark.parametrize("effort", ["none", "low", "medium", "high", "xhigh"])
+def test_responses_reasoning_effort_is_preserved_for_application_policy(
     effort: str,
-    control: ReasoningControl,
-    expected_effort: ReasoningEffort | None,
 ) -> None:
-    request = _ingest(
+    payload = _to_anthropic_payload(
         {
             "model": "nvidia_nim/test-model",
             "input": "Hello",
@@ -91,12 +49,12 @@ def test_responses_reasoning_effort_becomes_canonical_intent(
         }
     )
 
-    assert request.reasoning.control is control
-    assert request.reasoning.effort is expected_effort
+    assert payload["output_config"] == {"effort": effort}
+    assert "thinking" not in payload
 
 
-def test_responses_messages_tools_and_results_preserve_semantics() -> None:
-    request = _ingest(
+def test_responses_messages_tools_and_tool_results_convert() -> None:
+    payload = _to_anthropic_payload(
         {
             "model": "deepseek/deepseek-chat",
             "input": [
@@ -131,137 +89,195 @@ def test_responses_messages_tools_and_results_preserve_semantics() -> None:
                         "type": "object",
                         "properties": {"value": {"type": "string"}},
                     },
-                    "strict": True,
                 }
             ],
             "tool_choice": {"type": "function", "name": "echo"},
         }
     )
 
-    assert request.items == (
-        InstructionItem(
-            text="Developer rules",
-            origin=InstructionOrigin.DEVELOPER,
-            placement=InstructionPlacement.TRANSCRIPT,
-            turn_id="turn_0",
-        ),
-        MessageItem(
-            turn_id="turn_1",
-            role=MessageRole.USER,
-            content=(TextContent("Use the tool"),),
-        ),
-        ToolCallItem(
-            turn_id="turn_2",
-            call_id="call_1",
-            kind=ToolCallKind.FUNCTION,
-            name="echo",
-            input={"value": "FCC"},
-        ),
-        ToolResultItem(
-            turn_id="turn_3",
-            call_id="call_1",
-            content="FCC",
-        ),
-    )
-    assert request.tools == (
-        FunctionTool(
-            name="echo",
-            description="Echo a value",
-            input_schema={
+    assert payload["system"] == "Developer rules"
+    assert payload["messages"] == [
+        {"role": "user", "content": [{"type": "text", "text": "Use the tool"}]},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "echo",
+                    "input": {"value": "FCC"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "call_1",
+                    "content": "FCC",
+                }
+            ],
+        },
+    ]
+    assert payload["tools"] == [
+        {
+            "name": "echo",
+            "description": "Echo a value",
+            "input_schema": {
                 "type": "object",
                 "properties": {"value": {"type": "string"}},
             },
-            strict=True,
-        ),
-    )
-    assert request.tool_choice is not None
-    assert request.tool_choice.mode is ToolChoiceMode.SPECIFIC
-    assert request.tool_choice.name == "echo"
+        }
+    ]
+    assert payload["tool_choice"] == {"type": "tool", "name": "echo"}
 
 
-def test_none_choice_retains_definitions_but_disables_tool_calls() -> None:
-    request = _ingest(
+def test_responses_tool_choice_none_disables_forwarded_tools() -> None:
+    payload = _to_anthropic_payload(
         {
-            "model": "model",
+            "model": "deepseek/deepseek-chat",
             "input": "Reply without tools",
             "tools": [
                 {
                     "type": "function",
                     "name": "echo",
-                    "parameters": {"type": "object", "properties": {}},
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"value": {"type": "string"}},
+                    },
                 }
             ],
             "tool_choice": "none",
         }
     )
 
-    assert [tool.name for tool in request.tools] == ["echo"]
-    assert request.tool_choice is not None
-    assert request.tool_choice.mode is ToolChoiceMode.NONE
+    assert "tools" not in payload
+    assert "tool_choice" not in payload
 
 
-def test_passive_responses_controls_are_accepted_only_at_the_settled_values() -> None:
-    request = _ingest(
+def test_responses_namespace_tools_flatten_for_anthropic() -> None:
+    payload = _to_anthropic_payload(
         {
-            "model": "model",
-            "input": "Hello",
-            "stream": True,
-            "store": False,
-            "previous_response_id": None,
-            "include": ["reasoning.encrypted_content"],
-            "prompt_cache_key": "session-1",
-            "reasoning": {"summary": "auto"},
+            "model": "nvidia_nim/test-model",
+            "input": "Use JS",
+            "tools": [
+                {
+                    "type": "namespace",
+                    "name": "mcp__node_repl",
+                    "description": "Node tools",
+                    "tools": [
+                        {
+                            "type": "function",
+                            "name": "js",
+                            "description": "Run JavaScript",
+                            "parameters": {
+                                "type": "object",
+                                "properties": {"code": {"type": "string"}},
+                                "required": ["code"],
+                            },
+                        }
+                    ],
+                }
+            ],
+            "tool_choice": {
+                "type": "function",
+                "namespace": "mcp__node_repl",
+                "name": "js",
+            },
         }
     )
 
-    assert request.model == "model"
-    assert request.reasoning.control is ReasoningControl.DEFAULT
-
-
-@pytest.mark.parametrize(
-    ("override", "match"),
-    [
-        ({"stream": False}, "stream=false"),
-        ({"store": True}, "store=true"),
-        ({"previous_response_id": "resp_1"}, "previous_response_id"),
-        ({"include": []}, "include must be exactly"),
-        (
-            {
-                "include": [
-                    "reasoning.encrypted_content",
-                    "reasoning.encrypted_content",
-                ]
-            },
-            "include must be exactly",
-        ),
-        (
-            {"include": ["reasoning.encrypted_content", "message.output_text"]},
-            "include must be exactly",
-        ),
-        ({"include": ["reasoning.encrypted_contents"]}, "include must be exactly"),
-        ({"prompt_cache_key": ""}, "prompt_cache_key"),
-        ({"prompt_cache_key": "   "}, "prompt_cache_key"),
-        ({"prompt_cache_key": 42}, "prompt_cache_key"),
-        ({"reasoning": {"summary": "concise"}}, "reasoning.summary"),
-        ({"reasoning": {"summary": []}}, "reasoning.summary"),
-        ({"provider_extension": True}, "request.provider_extension"),
-    ],
-)
-def test_responses_passive_field_near_misses_are_rejected(
-    override: dict[str, object],
-    match: str,
-) -> None:
-    payload: dict[str, object] = {"model": "model", "input": "Hello"}
-    payload.update(override)
-
-    with pytest.raises(ResponsesConversionError, match=match):
-        _ingest(payload)
-
-
-def test_namespace_and_custom_tool_identity_remain_structured() -> None:
-    request = _ingest(
+    assert payload["tools"] == [
         {
-            "model": "model",
+            "name": "mcp__node_repl__js",
+            "description": "Run JavaScript",
+            "input_schema": {
+                "type": "object",
+                "properties": {"code": {"type": "string"}},
+                "required": ["code"],
+            },
+        }
+    ]
+    assert payload["tool_choice"] == {"type": "tool", "name": "mcp__node_repl__js"}
+
+
+def test_responses_namespaced_tool_choice_type_tool_flattens_for_anthropic() -> None:
+    payload = _to_anthropic_payload(
+        {
+            "model": "nvidia_nim/test-model",
+            "input": "Use JS",
+            "tools": [
+                {
+                    "type": "namespace",
+                    "name": "mcp__node_repl",
+                    "tools": [
+                        {
+                            "type": "function",
+                            "name": "js",
+                            "parameters": {"type": "object", "properties": {}},
+                        }
+                    ],
+                }
+            ],
+            "tool_choice": {
+                "type": "tool",
+                "namespace": "mcp__node_repl",
+                "name": "js",
+            },
+        }
+    )
+
+    assert payload["tool_choice"] == {"type": "tool", "name": "mcp__node_repl__js"}
+
+
+def test_responses_custom_tool_converts_to_anthropic_string_tool() -> None:
+    payload = _to_anthropic_payload(
+        {
+            "model": "nvidia_nim/test-model",
+            "input": "Use apply_patch",
+            "tools": [
+                {
+                    "type": "custom",
+                    "name": "apply_patch",
+                    "description": "Apply a repo patch",
+                    "format": {
+                        "type": "grammar",
+                        "syntax": "lark",
+                        "definition": "start: /.+/",
+                    },
+                }
+            ],
+            "tool_choice": {"type": "custom", "name": "apply_patch"},
+        }
+    )
+
+    assert payload["tools"] == [
+        {
+            "name": "apply_patch",
+            "description": (
+                "Apply a repo patch\n\n"
+                "Custom tool input format: grammar (lark): start: /.+/"
+            ),
+            "input_schema": {
+                "type": "object",
+                "properties": {
+                    "input": {
+                        "type": "string",
+                        "description": "Free-form input for the custom tool.",
+                    }
+                },
+                "required": ["input"],
+            },
+        }
+    ]
+    assert payload["tool_choice"] == {"type": "tool", "name": "apply_patch"}
+
+
+def test_responses_namespaced_custom_tool_flattens_for_anthropic() -> None:
+    payload = _to_anthropic_payload(
+        {
+            "model": "nvidia_nim/test-model",
             "input": "Use shell",
             "tools": [
                 {
@@ -285,26 +301,17 @@ def test_namespace_and_custom_tool_identity_remain_structured() -> None:
         }
     )
 
-    assert request.tools == (
-        CustomTool(
-            name="exec",
-            description="Run shell text",
-            format=request.tools[0].format,
-            namespace="mcp__shell",
-        ),
+    assert payload["tools"][0]["name"] == "mcp__shell__exec"
+    assert payload["tools"][0]["description"] == (
+        "Run shell text\n\nCustom tool input format: unconstrained text."
     )
-    assert isinstance(request.tools[0], CustomTool)
-    assert request.tools[0].format.type is CustomToolFormatType.TEXT
-    assert request.tool_choice is not None
-    assert request.tool_choice.kind is ToolCallKind.CUSTOM
-    assert request.tool_choice.name == "exec"
-    assert request.tool_choice.namespace == "mcp__shell"
+    assert payload["tool_choice"] == {"type": "tool", "name": "mcp__shell__exec"}
 
 
-def test_passive_hosted_tools_are_removed_but_executable_tools_remain() -> None:
-    request = _ingest(
+def test_responses_passive_codex_built_in_tools_are_ignored() -> None:
+    payload = _to_anthropic_payload(
         {
-            "model": "model",
+            "model": "nvidia_nim/test-model",
             "input": "Hello",
             "tools": [
                 {"type": "web_search", "external_web_access": True},
@@ -319,80 +326,39 @@ def test_passive_hosted_tools_are_removed_but_executable_tools_remain() -> None:
         }
     )
 
-    assert [tool.name for tool in request.tools] == ["echo"]
+    assert payload["tools"] == [
+        {"name": "echo", "input_schema": {"type": "object", "properties": {}}}
+    ]
 
 
-@pytest.mark.parametrize(
-    ("raw_choice", "expected_mode"),
-    [
-        (None, None),
-        ("auto", ToolChoiceMode.AUTO),
-        ("none", ToolChoiceMode.NONE),
-        ("required", ToolChoiceMode.REQUIRED),
-        ({"type": "function", "name": "echo"}, ToolChoiceMode.SPECIFIC),
-    ],
-)
-def test_ambient_and_executable_tool_combinations_preserve_client_choice(
-    raw_choice: object,
-    expected_mode: ToolChoiceMode | None,
-) -> None:
-    payload: dict[str, object] = {
-        "model": "model",
-        "input": "Hello",
-        "tools": [
-            {"type": "web_search"},
-            {"type": "image_generation"},
-            {"type": "tool_search"},
-            {
-                "type": "function",
-                "name": "echo",
-                "parameters": {"type": "object"},
-            },
-        ],
-    }
-    if raw_choice is not None:
-        payload["tool_choice"] = raw_choice
-
-    request = _ingest(payload)
-
-    assert [tool.name for tool in request.tools] == ["echo"]
-    assert (
-        request.tool_choice.mode if request.tool_choice is not None else None
-    ) is expected_mode
-
-
-@pytest.mark.parametrize(
-    ("raw_choice", "expected_mode"),
-    [
-        (None, None),
-        ("auto", ToolChoiceMode.AUTO),
-        ("none", ToolChoiceMode.NONE),
-    ],
-)
-def test_ambient_only_tools_are_safe_no_ops_when_not_required(
-    raw_choice: object,
-    expected_mode: ToolChoiceMode | None,
-) -> None:
-    payload: dict[str, object] = {
-        "model": "model",
-        "input": "Hello",
-        "tools": [{"type": "web_search"}, {"type": "tool_search"}],
-    }
-    if raw_choice is not None:
-        payload["tool_choice"] = raw_choice
-
-    request = _ingest(payload)
-
-    assert request.tools == ()
-    assert (
-        request.tool_choice.mode if request.tool_choice is not None else None
-    ) is expected_mode
-
-
-def test_prior_custom_call_preserves_kind_namespace_and_raw_input() -> None:
-    request = _ingest(
+def test_responses_namespaced_prior_function_call_flattens_tool_use_name() -> None:
+    payload = _to_anthropic_payload(
         {
-            "model": "model",
+            "model": "nvidia_nim/test-model",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "namespace": "mcp__node_repl",
+                    "name": "js",
+                    "arguments": '{"code":"1+1"}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "2",
+                },
+            ],
+        }
+    )
+
+    assert payload["messages"][0]["content"][0]["name"] == "mcp__node_repl__js"
+
+
+def test_responses_prior_custom_tool_call_flattens_tool_use_name() -> None:
+    payload = _to_anthropic_payload(
+        {
+            "model": "nvidia_nim/test-model",
             "input": [
                 {
                     "type": "custom_tool_call",
@@ -410,23 +376,164 @@ def test_prior_custom_call_preserves_kind_namespace_and_raw_input() -> None:
         }
     )
 
-    call, result = request.items
-    assert isinstance(call, ToolCallItem)
-    assert call.kind is ToolCallKind.CUSTOM
-    assert call.namespace == "mcp__shell"
-    assert call.input == "printf FCC"
-    assert isinstance(result, ToolResultItem)
-    assert result.call_id == call.call_id
-
-
-def test_reasoning_stays_attached_to_the_following_tool_turn() -> None:
-    request = _ingest(
+    assert payload["messages"] == [
         {
-            "model": "model",
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "mcp__shell__exec",
+                    "input": {"input": "printf FCC"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "call_1",
+                    "content": "FCC",
+                }
+            ],
+        },
+    ]
+
+
+def test_responses_groups_consecutive_prior_tool_calls() -> None:
+    payload = _to_anthropic_payload(
+        {
+            "model": "nvidia_nim/test-model",
             "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "echo",
+                    "arguments": '{"value":"FCC"}',
+                },
+                {
+                    "type": "custom_tool_call",
+                    "call_id": "call_2",
+                    "name": "apply_patch",
+                    "input": "*** Begin Patch",
+                },
+            ],
+        }
+    )
+
+    assert payload["messages"] == [
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "call_1",
+                    "name": "echo",
+                    "input": {"value": "FCC"},
+                },
+                {
+                    "type": "tool_use",
+                    "id": "call_2",
+                    "name": "apply_patch",
+                    "input": {"input": "*** Begin Patch"},
+                },
+            ],
+        }
+    ]
+
+
+def test_responses_groups_consecutive_prior_tool_outputs() -> None:
+    payload = _to_anthropic_payload(
+        {
+            "model": "nvidia_nim/test-model",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "echo",
+                    "arguments": '{"value":"FCC"}',
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_2",
+                    "name": "echo",
+                    "arguments": '{"value":"Codex"}',
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "FCC",
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_2",
+                    "output": "Codex",
+                },
+            ],
+        }
+    )
+
+    assert len(payload["messages"]) == 2
+    assert payload["messages"][0]["role"] == "assistant"
+    assert len(payload["messages"][0]["content"]) == 2
+    assert payload["messages"][1] == {
+        "role": "user",
+        "content": [
+            {
+                "type": "tool_result",
+                "tool_use_id": "call_1",
+                "content": "FCC",
+            },
+            {
+                "type": "tool_result",
+                "tool_use_id": "call_2",
+                "content": "Codex",
+            },
+        ],
+    }
+
+
+def test_responses_reasoning_between_tool_call_and_output_attaches_to_tool_message() -> (
+    None
+):
+    payload = _to_anthropic_payload(
+        {
+            "model": "nvidia_nim/test-model",
+            "input": [
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "echo",
+                    "arguments": '{"value":"FCC"}',
+                },
                 {
                     "type": "reasoning",
                     "content": [{"type": "reasoning_text", "text": "Need the result."}],
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "FCC",
+                },
+            ],
+        }
+    )
+
+    assert payload["messages"][0]["reasoning_content"] == "Need the result."
+    assert payload["messages"][0]["content"][0]["id"] == "call_1"
+    assert payload["messages"][1]["content"][0]["tool_use_id"] == "call_1"
+
+
+def test_responses_encrypted_reasoning_attaches_before_tool_call() -> None:
+    payload = _to_anthropic_payload(
+        {
+            "model": "openai/gpt-test",
+            "input": [
+                {
+                    "type": "reasoning",
+                    "summary": [{"type": "summary_text", "text": "Need the result."}],
+                    "encrypted_content": "opaque-reasoning",
                 },
                 {
                     "type": "function_call",
@@ -443,44 +550,62 @@ def test_reasoning_stays_attached_to_the_following_tool_turn() -> None:
         }
     )
 
-    reasoning, call, result = request.items
-    assert isinstance(reasoning, ReasoningItem)
-    assert isinstance(call, ToolCallItem)
-    assert reasoning.turn_id == call.turn_id
-    assert reasoning.reasoning == "Need the result."
-    assert isinstance(result, ToolResultItem)
-
-
-def test_responses_encrypted_reasoning_carrier_restores_scoped_artifacts() -> None:
-    artifact = ReplayArtifact(
-        origin=ReplayArtifactOrigin.OPENAI_COMPATIBLE,
-        kind=ReplayArtifactKind.REASONING_DETAILS,
-        attachment=ReplayAttachment.REASONING,
-        scope=ReplayCompatibilityScope("provider:model"),
-        payload=[{"type": "reasoning.text", "text": "opaque"}],
-    )
-    request = _ingest(
+    assistant = payload["messages"][0]
+    assert assistant["reasoning_content"] == "Need the result."
+    assert assistant["content"] == [
+        {"type": "redacted_thinking", "data": "opaque-reasoning"},
         {
-            "model": "model",
+            "type": "tool_use",
+            "id": "call_1",
+            "name": "echo",
+            "input": {"value": "FCC"},
+        },
+    ]
+    assert payload["messages"][1]["content"][0]["tool_use_id"] == "call_1"
+
+
+def test_responses_empty_reasoning_attaches_to_prior_tool_call() -> None:
+    payload = _to_anthropic_payload(
+        {
+            "model": "nvidia_nim/test-model",
             "input": [
                 {
-                    "type": "reasoning",
-                    "encrypted_content": encode_replay_envelope((artifact,)),
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "echo",
+                    "arguments": '{"value":"FCC"}',
                 },
-                {"role": "assistant", "content": "Done"},
-                {"role": "user", "content": "Continue"},
+                {
+                    "type": "reasoning",
+                    "content": [{"type": "reasoning_text", "text": ""}],
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1",
+                    "output": "FCC",
+                },
             ],
         }
     )
 
-    reasoning = next(item for item in request.items if isinstance(item, ReasoningItem))
-    assert reasoning.artifacts == (artifact,)
+    assert payload["messages"][0]["reasoning_content"] == ""
 
 
-def test_malformed_prior_call_quarantines_only_it_and_matching_output() -> None:
-    request = _ingest(
+def test_responses_unsupported_tool_type_is_clear() -> None:
+    with pytest.raises(_CONVERSION_ERROR, match="Unsupported Responses tool type"):
+        _to_anthropic_payload(
+            {
+                "model": "nvidia_nim/test-model",
+                "input": "Hello",
+                "tools": [{"type": "web_search_preview"}],
+            }
+        )
+
+
+def test_responses_malformed_prior_function_call_is_quarantined() -> None:
+    payload = _to_anthropic_payload(
         {
-            "model": "model",
+            "model": "nvidia_nim/test-model",
             "input": [
                 {"role": "user", "content": "hello"},
                 {
@@ -510,26 +635,38 @@ def test_malformed_prior_call_quarantines_only_it_and_matching_output() -> None:
         }
     )
 
-    assert all(
-        not isinstance(item, ToolCallItem | ToolResultItem)
-        or item.call_id != "call_bad"
-        for item in request.items
-    )
-    assert any(
-        isinstance(item, ToolCallItem) and item.call_id == "call_good"
-        for item in request.items
-    )
-    assert any(
-        isinstance(item, ToolResultItem) and item.call_id == "call_good"
-        for item in request.items
-    )
+    assert payload["messages"] == [
+        {"role": "user", "content": "hello"},
+        {
+            "role": "assistant",
+            "content": [
+                {
+                    "type": "tool_use",
+                    "id": "call_good",
+                    "name": "echo",
+                    "input": {"value": "ok"},
+                }
+            ],
+        },
+        {
+            "role": "user",
+            "content": [
+                {
+                    "type": "tool_result",
+                    "tool_use_id": "call_good",
+                    "content": "ok",
+                }
+            ],
+        },
+        {"role": "user", "content": "continue"},
+    ]
 
 
-def test_malformed_only_call_has_no_routable_message() -> None:
-    with pytest.raises(ResponsesConversionError, match="must contain a message"):
-        _ingest(
+def test_responses_malformed_only_function_call_still_has_no_routable_message() -> None:
+    with pytest.raises(_CONVERSION_ERROR, match="must contain a message"):
+        _to_anthropic_payload(
             {
-                "model": "model",
+                "model": "nvidia_nim/test-model",
                 "input": [
                     {
                         "type": "function_call",
@@ -543,56 +680,5 @@ def test_malformed_only_call_has_no_routable_message() -> None:
                         "output": "stale output",
                     },
                 ],
-            }
-        )
-
-
-@pytest.mark.parametrize(
-    ("payload", "match"),
-    [
-        (
-            {
-                "model": "model",
-                "input": "Hello",
-                "tools": [{"type": "web_search_preview"}],
-            },
-            "tools\\[0\\]\\.type",
-        ),
-        (
-            {
-                "model": "model",
-                "input": "Hello",
-                "tools": [{"type": "web_search"}],
-                "tool_choice": "required",
-            },
-            "needs at least one executable",
-        ),
-        (
-            {
-                "model": "model",
-                "input": "Hello",
-                "tool_choice": {"type": "web_search"},
-            },
-            "cannot be selected explicitly",
-        ),
-    ],
-)
-def test_unsupported_or_active_hosted_tool_semantics_are_rejected(
-    payload: dict[str, object],
-    match: str,
-) -> None:
-    with pytest.raises(ResponsesConversionError, match=match):
-        _ingest(payload)
-
-
-@pytest.mark.parametrize("part_type", ["input_image", "input_file", "computer_call"])
-def test_unsupported_responses_input_types_are_rejected_explicitly(
-    part_type: str,
-) -> None:
-    with pytest.raises(ResponsesConversionError, match=part_type):
-        _ingest(
-            {
-                "model": "model",
-                "input": [{"type": part_type, "image_url": "https://example.invalid"}],
             }
         )

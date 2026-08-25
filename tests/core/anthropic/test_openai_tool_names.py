@@ -1,27 +1,25 @@
 import re
 
-import pytest
-
-from free_claude_code.core.anthropic.ingress import AnthropicIngressError
-from free_claude_code.core.inference import InferenceRequest
-from free_claude_code.providers.openai_compat import OpenAIToolNameCodec
-from tests.providers.request_factory import make_messages_request
+from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
 
 _PORTABLE_NAME = re.compile(r"^[A-Za-z0-9_-]{1,64}$")
 
 
-def _request(*names: str) -> InferenceRequest:
-    return make_messages_request(
-        "test-model",
-        messages=[{"role": "user", "content": "hello"}],
-        tools=[
-            {
-                "name": name,
-                "description": "test",
-                "input_schema": {"type": "object"},
-            }
-            for name in names
-        ],
+def _request(*names: str) -> MessagesRequest:
+    return MessagesRequest.model_validate(
+        {
+            "model": "test-model",
+            "messages": [{"role": "user", "content": "hello"}],
+            "tools": [
+                {
+                    "name": name,
+                    "description": "test",
+                    "input_schema": {"type": "object"},
+                }
+                for name in names
+            ],
+        }
     )
 
 
@@ -100,41 +98,44 @@ def test_codec_collects_forced_choice_and_history_names_without_mutation() -> No
     declared = "safe_tool"
     forced = "mcp__forced__" + "f" * 70
     historical = "mcp__historical__" + "h" * 70
-    request = make_messages_request(
-        "test-model",
-        messages=[
-            {
-                "role": "assistant",
-                "content": [
-                    {
-                        "type": "tool_use",
-                        "id": "call_1",
-                        "name": historical,
-                        "input": {},
-                    }
-                ],
-            },
-            {
-                "role": "user",
-                "content": [
-                    {
-                        "type": "tool_result",
-                        "tool_use_id": "call_1",
-                        "content": "done",
-                    }
-                ],
-            },
-        ],
-        tools=[{"name": declared, "input_schema": {"type": "object"}}],
-        tool_choice={"type": "tool", "name": forced},
+    request = MessagesRequest.model_validate(
+        {
+            "model": "test-model",
+            "messages": [
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "call_1",
+                            "name": historical,
+                            "input": {},
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "call_1",
+                            "content": "done",
+                        }
+                    ],
+                },
+            ],
+            "tools": [{"name": declared, "input_schema": {"type": "object"}}],
+            "tool_choice": {"type": "tool", "name": forced},
+        }
     )
+    snapshot = request.model_dump()
 
     codec = OpenAIToolNameCodec.from_request(request)
 
     assert codec.encode(declared) == declared
     assert codec.decode(codec.encode(forced)) == forced
     assert codec.decode(codec.encode(historical)) == historical
-    assert request.model == "test-model"
+    assert request.model_dump() == snapshot
 
 
 def test_only_generated_aliases_are_decoded_and_prefixes_are_detected() -> None:
@@ -151,6 +152,8 @@ def test_only_generated_aliases_are_decoded_and_prefixes_are_detected() -> None:
     assert codec.decode("unknown_tool") == "unknown_tool"
 
 
-def test_empty_tool_name_is_rejected_before_codec_construction() -> None:
-    with pytest.raises(AnthropicIngressError, match="non-empty"):
-        _request("")
+def test_empty_name_retains_existing_invalid_identity() -> None:
+    codec = OpenAIToolNameCodec.from_request(_request(""))
+
+    assert codec.encode("") == ""
+    assert codec.decode("") == ""

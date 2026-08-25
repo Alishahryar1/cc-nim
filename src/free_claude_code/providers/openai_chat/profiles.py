@@ -1,13 +1,14 @@
 """Declarative profiles for ordinary OpenAI-compatible providers."""
 
+from collections.abc import Mapping
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Literal
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
-from free_claude_code.core.inference import InferenceRequest, thaw_json_object
-from free_claude_code.core.json_types import JsonObject
+from free_claude_code.core.anthropic import ReasoningReplayMode
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.model_listing import RequiredPathValues
 
@@ -26,7 +27,7 @@ from .reasoning import (
     ReasoningObject,
     ThinkingObjectReasoning,
 )
-from .request_codec import ReasoningReplayMode
+from .reasoning_details import apply_reasoning_details_replay
 from .request_policy import OpenAIChatPostprocessor, OpenAIChatRequestPolicy
 
 _ALL_EFFORTS = tuple((effort, effort.value) for effort in ReasoningEffort)
@@ -136,8 +137,8 @@ class OpenAIChatProfile:
 
     def apply_reasoning(
         self,
-        body: JsonObject,
-        _request: InferenceRequest,
+        body: dict[str, Any],
+        _request: MessagesRequest,
         policy: ReasoningPolicy,
     ) -> None:
         self.reasoning.encode(body, policy)
@@ -148,13 +149,9 @@ class OpenAIChatProfile:
 
 
 def _apply_cohere_request_quirks(
-    body: JsonObject, request: InferenceRequest, _policy: ReasoningPolicy
+    body: dict[str, Any], request: MessagesRequest, _policy: ReasoningPolicy
 ) -> None:
-    extension = request.openai_chat_extension
-    _merge_allowed_cohere_extra_body(
-        body,
-        thaw_json_object(extension.extra_body) if extension is not None else None,
-    )
+    _merge_allowed_cohere_extra_body(body, request.extra_body)
 
 
 _COHERE_EXTRA_BODY_KEYS = frozenset(
@@ -167,11 +164,11 @@ _COHERE_EXTRA_BODY_KEYS = frozenset(
 )
 
 
-def _merge_allowed_cohere_extra_body(
-    body: JsonObject, extra_body: JsonObject | None
-) -> None:
+def _merge_allowed_cohere_extra_body(body: dict[str, Any], extra_body: Any) -> None:
     if extra_body in (None, {}):
         return
+    if not isinstance(extra_body, Mapping):
+        raise InvalidRequestError("Cohere extra_body must be an object when provided.")
 
     unsupported = sorted(
         str(key) for key in extra_body if key not in _COHERE_EXTRA_BODY_KEYS
@@ -218,6 +215,7 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
     "cline_pass": OpenAIChatProfile(
         _policy("CLINE_PASS", ReasoningReplayMode.DISABLED),
         NO_REASONING,
+        postprocessors=(apply_reasoning_details_replay,),
         model_listing=OpenAIModelListing(
             path="/ai/cline/recommended-models",
             collection_field="clinePass",
@@ -385,6 +383,7 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
             max_tokens_field="max_completion_tokens",
         ),
         ReasoningObject(_MINIMAL_TO_XHIGH),
+        postprocessors=(apply_reasoning_details_replay,),
         model_listing=OpenAIModelListing(
             required_sequence_items=(
                 ("input_modalities", "text"),
@@ -452,7 +451,6 @@ OPENAI_CHAT_PROFILES: dict[str, OpenAIChatProfile] = {
         _policy(
             "COHERE",
             ReasoningReplayMode.REASONING_CONTENT,
-            postprocessor_consumes_extra_body=True,
             strip_message_names=True,
             unsupported_body_keys=frozenset(
                 {

@@ -15,7 +15,6 @@ from free_claude_code.config.provider_catalog import WANDB_INFERENCE_DEFAULT_BAS
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
-from tests.providers.request_factory import canonical_request
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
@@ -65,11 +64,7 @@ def test_build_request_body_encodes_documented_thinking_control(
     reasoning: ReasoningPolicy,
     enabled: bool,
 ) -> None:
-    body = wandb_provider._build_request_body(
-        canonical_request(_request()),
-        reasoning=reasoning,
-        provider_model=(_request()).model,
-    )
+    body = wandb_provider._build_request_body(_request(), reasoning=reasoning)
 
     assert body["extra_body"] == {"chat_template_kwargs": {"enable_thinking": enabled}}
 
@@ -78,9 +73,8 @@ def test_build_request_body_uses_provider_defaults_when_reasoning_is_inherited(
     wandb_provider: OpenAIChatProvider,
 ) -> None:
     body = wandb_provider._build_request_body(
-        canonical_request(_request()),
+        _request(),
         reasoning=ReasoningPolicy.provider_default(),
-        provider_model=(_request()).model,
     )
 
     assert "extra_body" not in body
@@ -119,9 +113,8 @@ def test_build_request_body_drops_undocumented_reasoning_replay_but_keeps_tools(
     )
 
     body = wandb_provider._build_request_body(
-        canonical_request(request),
+        request,
         reasoning=reasoning_for(request),
-        provider_model=(request).model,
     )
 
     assert body["messages"][1] == {
@@ -133,7 +126,7 @@ def test_build_request_body_drops_undocumented_reasoning_replay_but_keeps_tools(
                 "type": "function",
                 "function": {
                     "name": "read_file",
-                    "arguments": '{"path":"example.py"}',
+                    "arguments": '{"path": "example.py"}',
                 },
             }
         ],
@@ -162,22 +155,14 @@ def test_build_request_body_rejects_caller_reasoning_override(
     request = _request(extra_body={field: "caller-owned"})
 
     with pytest.raises(InvalidRequestError, match="must not override reasoning"):
-        wandb_provider._build_request_body(
-            canonical_request(request),
-            reasoning=REASONING_ON,
-            provider_model=(request).model,
-        )
+        wandb_provider._build_request_body(request, reasoning=REASONING_ON)
 
 
 @pytest.mark.asyncio
 async def test_wire_body_uses_current_output_limit_and_thinking_fields(
     wandb_provider: OpenAIChatProvider,
 ) -> None:
-    body = wandb_provider._build_request_body(
-        canonical_request(_request()),
-        reasoning=REASONING_ON,
-        provider_model=(_request()).model,
-    )
+    body = wandb_provider._build_request_body(_request(), reasoning=REASONING_ON)
 
     wire_body = await capture_openai_chat_wire_body(body)
 

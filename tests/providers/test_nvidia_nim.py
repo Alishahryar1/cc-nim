@@ -16,7 +16,7 @@ from free_claude_code.providers.nvidia_nim.tool_schema import (
 )
 from free_claude_code.providers.stream_recovery import RecoveryHoldbackBuffer
 from tests.inference_support import collect_anthropic
-from tests.providers.request_factory import canonical_request, make_messages_request
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
@@ -178,9 +178,7 @@ async def test_build_request_body(provider_config):
         admission=immediate_admission(),
     )
     req = make_request()
-    body = provider._build_request_body(
-        canonical_request(req), reasoning=reasoning_for(req), provider_model=(req).model
-    )
+    body = provider._build_request_body(req, reasoning=reasoning_for(req))
 
     assert body["model"] == "test-model"
     assert body["temperature"] == 0.5
@@ -206,9 +204,7 @@ async def test_build_request_body_encodes_explicit_reasoning_off(
         admission=immediate_admission(),
     )
     req = make_request()
-    body = provider._build_request_body(
-        canonical_request(req), reasoning=REASONING_OFF, provider_model=(req).model
-    )
+    body = provider._build_request_body(req, reasoning=REASONING_OFF)
 
     extra = body.get("extra_body", {})
     assert extra["chat_template_kwargs"] == {
@@ -219,7 +215,7 @@ async def test_build_request_body_encodes_explicit_reasoning_off(
 
 
 @pytest.mark.asyncio
-async def test_build_request_body_does_not_reresolve_client_reasoning(
+async def test_build_request_body_omits_reasoning_when_request_disables_thinking(
     provider_config,
 ):
     provider = NvidiaNimProvider(
@@ -227,10 +223,9 @@ async def test_build_request_body_does_not_reresolve_client_reasoning(
         nim_settings=NimSettings(),
         admission=immediate_admission(),
     )
-    req = make_request(thinking={"enabled": False})
-    body = provider._build_request_body(
-        canonical_request(req), provider_model=(req).model
-    )
+    req = make_request()
+    req.thinking.enabled = False
+    body = provider._build_request_body(req)
 
     extra = body.get("extra_body", {})
     assert "chat_template_kwargs" not in extra
@@ -267,12 +262,8 @@ def test_preflight_and_build_request_issue_206_post_tool_text(nim_provider):
             ),
         ],
     )
-    nim_provider.preflight_stream(
-        canonical_request(req), reasoning=REASONING_OFF, provider_model=(req).model
-    )
-    body = nim_provider._build_request_body(
-        canonical_request(req), reasoning=REASONING_OFF, provider_model=(req).model
-    )
+    nim_provider.preflight_stream(req, reasoning=REASONING_OFF)
+    body = nim_provider._build_request_body(req, reasoning=REASONING_OFF)
     assert "messages" in body
     assert any(m.get("role") == "tool" for m in body["messages"])
 
@@ -309,11 +300,7 @@ async def test_stream_response_text(nim_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = await collect_anthropic(
-            nim_provider.stream_response(
-                canonical_request(req), provider_model=(req).model
-            )
-        )
+        events = await collect_anthropic(nim_provider.stream_response(req))
 
         assert len(events) > 0
         assert "event: message_start" in events[0]
@@ -361,11 +348,7 @@ async def test_stream_response_thinking_reasoning_content(nim_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = await collect_anthropic(
-            nim_provider.stream_response(
-                canonical_request(req), provider_model=(req).model
-            )
-        )
+        events = await collect_anthropic(nim_provider.stream_response(req))
 
         # Check for thinking_delta
         found_thinking = False
@@ -408,11 +391,7 @@ async def test_stream_response_suppresses_thinking_when_disabled(provider_config
         mock_create.return_value = mock_stream()
 
         events = await collect_anthropic(
-            provider.stream_response(
-                canonical_request(req),
-                reasoning=REASONING_OFF,
-                provider_model=(req).model,
-            )
+            provider.stream_response(req, reasoning=REASONING_OFF)
         )
 
     event_text = "".join(events)
@@ -459,11 +438,7 @@ async def test_stream_response_retries_without_chat_template(provider_config):
         mock_create.side_effect = [first_error, mock_stream()]
 
         events = await collect_anthropic(
-            provider.stream_response(
-                canonical_request(req),
-                reasoning=REASONING_ON,
-                provider_model=(req).model,
-            )
+            provider.stream_response(req, reasoning=REASONING_ON)
         )
 
     assert mock_create.await_count == 2
@@ -520,11 +495,7 @@ async def test_stream_response_retries_without_chat_template_kwargs_issue_993(
         mock_create.side_effect = [first_error, mock_stream()]
 
         events = await collect_anthropic(
-            provider.stream_response(
-                canonical_request(req),
-                reasoning=REASONING_ON,
-                provider_model=(req).model,
-            )
+            provider.stream_response(req, reasoning=REASONING_ON)
         )
 
     assert mock_create.await_count == 2
@@ -561,11 +532,7 @@ async def test_stream_response_does_not_retry_unrelated_bad_request(provider_con
         mock_create.side_effect = _make_bad_request_error("unrelated bad request")
 
         with pytest.raises(ExecutionFailure) as exc_info:
-            await collect_anthropic(
-                provider.stream_response(
-                    canonical_request(req), provider_model=(req).model
-                )
-            )
+            await collect_anthropic(provider.stream_response(req))
 
     assert mock_create.await_count == 1
     assert "Invalid request sent to provider" in exc_info.value.message
@@ -600,11 +567,7 @@ async def test_tool_call_stream(nim_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = await collect_anthropic(
-            nim_provider.stream_response(
-                canonical_request(req), provider_model=(req).model
-            )
-        )
+        events = await collect_anthropic(nim_provider.stream_response(req))
 
         starts = [
             e for e in events if "event: content_block_start" in e and '"tool_use"' in e
@@ -646,11 +609,7 @@ async def test_native_minimax_tool_markup_becomes_anthropic_tool_use(nim_provide
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = await collect_anthropic(
-            nim_provider.stream_response(
-                canonical_request(req), provider_model=(req).model
-            )
-        )
+        events = await collect_anthropic(nim_provider.stream_response(req))
 
     event_text = "".join(events)
     assert namespace not in event_text
@@ -698,11 +657,7 @@ async def test_native_minimax_reasoning_markup_becomes_anthropic_tool_use(
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = await collect_anthropic(
-            nim_provider.stream_response(
-                canonical_request(req), provider_model=(req).model
-            )
-        )
+        events = await collect_anthropic(nim_provider.stream_response(req))
 
     event_text = "".join(events)
     assert namespace not in event_text
@@ -738,11 +693,7 @@ async def test_native_minimax_markup_without_tools_retries_without_leaking(
     ) as mock_create:
         mock_create.side_effect = attempts
 
-        events = await collect_anthropic(
-            nim_provider.stream_response(
-                canonical_request(req), provider_model=(req).model
-            )
-        )
+        events = await collect_anthropic(nim_provider.stream_response(req))
 
     event_text = "".join(events)
     assert mock_create.await_count == UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS
@@ -787,11 +738,7 @@ async def test_native_minimax_tool_markup_restores_nim_argument_aliases(nim_prov
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = await collect_anthropic(
-            nim_provider.stream_response(
-                canonical_request(req), provider_model=(req).model
-            )
-        )
+        events = await collect_anthropic(nim_provider.stream_response(req))
 
     assert json.loads(_input_json_deltas(events)[0]) == {
         "pattern": "needle",
@@ -842,11 +789,7 @@ async def test_malformed_native_minimax_tool_call_retries_without_leaking(
     ) as mock_create:
         mock_create.side_effect = [malformed_stream(), recovered_stream()]
 
-        events = await collect_anthropic(
-            nim_provider.stream_response(
-                canonical_request(req), provider_model=(req).model
-            )
-        )
+        events = await collect_anthropic(nim_provider.stream_response(req))
 
     assert mock_create.await_count == 2
     event_text = "".join(events)
@@ -912,11 +855,7 @@ async def test_midstream_native_tool_suffix_failure_recovers_without_duplication
     ):
         mock_create.side_effect = [malformed_stream(), recovered_stream()]
 
-        events = await collect_anthropic(
-            nim_provider.stream_response(
-                canonical_request(req), provider_model=(req).model
-            )
-        )
+        events = await collect_anthropic(nim_provider.stream_response(req))
 
     assert mock_create.await_count == 2
     event_text = "".join(events)
@@ -960,11 +899,7 @@ async def test_stream_response_restores_aliased_tool_arguments(nim_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = await collect_anthropic(
-            nim_provider.stream_response(
-                canonical_request(req), provider_model=(req).model
-            )
-        )
+        events = await collect_anthropic(nim_provider.stream_response(req))
 
     await_args = mock_create.await_args
     assert await_args is not None
@@ -1021,11 +956,7 @@ async def test_stream_response_buffers_chunked_aliased_tool_arguments(nim_provid
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = await collect_anthropic(
-            nim_provider.stream_response(
-                canonical_request(req), provider_model=(req).model
-            )
-        )
+        events = await collect_anthropic(nim_provider.stream_response(req))
 
     deltas = _input_json_deltas(events)
     assert len(deltas) == 1
@@ -1071,11 +1002,7 @@ async def test_stream_response_restores_nested_aliased_tool_arguments(nim_provid
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = await collect_anthropic(
-            nim_provider.stream_response(
-                canonical_request(req), provider_model=(req).model
-            )
-        )
+        events = await collect_anthropic(nim_provider.stream_response(req))
 
     deltas = _input_json_deltas(events)
     assert len(deltas) == 1
@@ -1121,11 +1048,7 @@ async def test_stream_response_task_tool_still_forces_background_false(nim_provi
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = await collect_anthropic(
-            nim_provider.stream_response(
-                canonical_request(req), provider_model=(req).model
-            )
-        )
+        events = await collect_anthropic(nim_provider.stream_response(req))
 
     deltas = _input_json_deltas(events)
     assert len(deltas) == 1
@@ -1157,9 +1080,8 @@ async def test_stream_response_retries_without_reasoning_budget(nim_provider):
 
         events = await collect_anthropic(
             nim_provider.stream_response(
-                canonical_request(req),
+                req,
                 reasoning=ReasoningPolicy.on(effort=ReasoningEffort.XHIGH),
-                provider_model=(req).model,
             )
         )
 
@@ -1204,9 +1126,7 @@ async def test_stream_response_retries_without_budget_for_thinking_token_error(
 
         events = await collect_anthropic(
             nim_provider.stream_response(
-                canonical_request(req),
-                reasoning=ReasoningPolicy.on(budget_tokens=77),
-                provider_model=(req).model,
+                req, reasoning=ReasoningPolicy.on(budget_tokens=77)
             )
         )
 
@@ -1271,11 +1191,7 @@ async def test_stream_response_retries_without_reasoning_content(nim_provider):
     ) as mock_create:
         mock_create.side_effect = [error, mock_stream()]
 
-        events = await collect_anthropic(
-            nim_provider.stream_response(
-                canonical_request(req), provider_model=(req).model
-            )
-        )
+        events = await collect_anthropic(nim_provider.stream_response(req))
 
     assert mock_create.await_count == 2
     first_call = mock_create.await_args_list[0].kwargs
@@ -1300,11 +1216,7 @@ async def test_stream_response_bad_request_without_reasoning_budget_does_not_ret
         mock_create.side_effect = error
 
         with pytest.raises(ExecutionFailure) as exc_info:
-            await collect_anthropic(
-                nim_provider.stream_response(
-                    canonical_request(req), provider_model=(req).model
-                )
-            )
+            await collect_anthropic(nim_provider.stream_response(req))
 
     assert mock_create.await_count == 1
     assert "Invalid request sent to provider" in exc_info.value.message
@@ -1323,11 +1235,7 @@ async def test_stream_response_unrelated_internal_error_does_not_downgrade(
         mock_create.side_effect = error
 
         with pytest.raises(ExecutionFailure) as exc_info:
-            await collect_anthropic(
-                nim_provider.stream_response(
-                    canonical_request(req), provider_model=(req).model
-                )
-            )
+            await collect_anthropic(nim_provider.stream_response(req))
 
     assert mock_create.await_count == UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS
     assert all(
@@ -1352,11 +1260,7 @@ async def test_stream_response_internal_reasoning_content_error_does_not_downgra
         mock_create.side_effect = error
 
         with pytest.raises(ExecutionFailure) as exc_info:
-            await collect_anthropic(
-                nim_provider.stream_response(
-                    canonical_request(req), provider_model=(req).model
-                )
-            )
+            await collect_anthropic(nim_provider.stream_response(req))
 
     assert mock_create.await_count == UPSTREAM_TRANSIENT_TOTAL_ATTEMPTS
     assert all(

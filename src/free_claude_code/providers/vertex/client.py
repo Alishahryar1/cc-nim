@@ -6,6 +6,7 @@ from typing import Any
 import httpx
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.providers.admission import (
     ProviderAdmissionController,
     ProviderOperationKind,
@@ -24,7 +25,6 @@ from free_claude_code.providers.model_listing import (
 from free_claude_code.providers.openai_chat import (
     OpenAIChatProfile,
     OpenAIChatRequestPolicy,
-    ReasoningReplayMode,
 )
 
 from .auth import GoogleAccessTokenProvider
