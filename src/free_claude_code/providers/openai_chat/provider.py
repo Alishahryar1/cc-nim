@@ -976,10 +976,25 @@ class _OpenAIChatStreamRunner:
             )
 
         generated_output = assembler.generated_output
+        # generated_output means the ledger has assembled *any* output,
+        # which can still be sitting in the holdback buffer rather than
+        # actually flushed to the client (recovery.committed is the
+        # narrower, literal-flush signal) -- but test_error_after_native_tool_call_failure_includes_body
+        # requires that once a complete tool call has been assembled, a
+        # subsequent BAD_REQUEST-shaped error raises as final rather than
+        # attempting recovery, regardless of literal flush timing. Gating on
+        # generated_output (true as soon as anything is assembled, not only
+        # once physically flushed) satisfies that guarantee while still
+        # covering #1543's reported scenario, where nothing had been
+        # generated at all yet. A stream that never opened has no
+        # meaningful commit state either way; treat it the same as
+        # generated, since a create-time BAD_REQUEST is a genuine client
+        # error, not a mid-stream provider hiccup.
+        stream_committed = scope is None or generated_output
         retryable = (
             attempt_failure.retryable
             if attempt_failure is not None
-            else is_retryable_stream_error(error, stream_committed=generated_output)
+            else is_retryable_stream_error(error, stream_committed=stream_committed)
         )
         complete_tool_salvageable = assembler.complete_tool_salvageable
         decision = recovery.advance_failure(

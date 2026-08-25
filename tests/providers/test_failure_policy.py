@@ -129,6 +129,22 @@ def test_stream_retry_classification_accepts_uncommitted_mid_stream_bad_request(
     assert is_retryable_stream_error(error, stream_committed=False)
 
 
+def test_stream_retry_classification_accepts_uncommitted_statusless_bad_request() -> (
+    None
+):
+    # The mid-stream failure actually reported in #1543: no HTTP response at
+    # all (the SSE connection stayed open), just a statusless openai.APIError
+    # whose body carries type: "BAD_REQUEST". This must be recognized the
+    # same way as the HTTP-status-bound openai.BadRequestError case above.
+    error = _statusless_openai_error(
+        "stream embedded error",
+        {"error": {"message": "stream embedded error", "type": "BAD_REQUEST"}},
+    )
+    assert not is_retryable_stream_error(error)
+    assert not is_retryable_stream_error(error, stream_committed=True)
+    assert is_retryable_stream_error(error, stream_committed=False)
+
+
 def test_stream_retry_classification_still_rejects_uncommitted_authentication_error() -> (
     None
 ):

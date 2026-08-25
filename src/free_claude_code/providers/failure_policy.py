@@ -29,6 +29,7 @@ _OVERLOAD_MARKERS = frozenset(
     }
 )
 _INTERNAL_ERROR_MARKERS = frozenset({"internal_server_error", "internal server error"})
+_BAD_REQUEST_MARKERS = frozenset({"bad_request", "bad request"})
 _AUTHENTICATION_MESSAGE = "Provider authentication failed. Check API key."
 _PERMISSION_MESSAGE = (
     "Provider denied access. Check credential permissions and model access."
@@ -210,7 +211,7 @@ def is_retryable_stream_error(
         return exc.retryable
     if isinstance(exc, openai.AuthenticationError):
         return False
-    if isinstance(exc, openai.BadRequestError):
+    if _is_bad_request_shaped(exc):
         return not stream_committed
     if retryable_transient_status(exc) is not None:
         return True
@@ -454,6 +455,19 @@ def _body_to_text(body: Any) -> str:
 
 def _has_marker(text: str, markers: frozenset[str]) -> bool:
     return any(marker in text for marker in markers)
+
+
+def _is_bad_request_shaped(exc: BaseException) -> bool:
+    """Return whether an exception represents a BAD_REQUEST-classified failure.
+
+    Covers both `openai.BadRequestError` (bound to an actual HTTP 400
+    response) and the statusless `openai.APIError` shape reported in #1543,
+    where a mid-stream SSE error event carries no HTTP response at all but
+    a body with `type: "BAD_REQUEST"`.
+    """
+    if isinstance(exc, openai.BadRequestError):
+        return True
+    return _has_marker(transient_error_text(exc), _BAD_REQUEST_MARKERS)
 
 
 def underlying_provider_error(exc: Exception) -> Exception:
