@@ -80,7 +80,7 @@ def test_console_tray_run_blocks_until_stop():
 
 def test_console_fallback_uses_null_tray_with_reason_notice(capsys):
     with (
-        patch("free_claude_code.cli.desktop_console.tray_is_available") as probe,
+        patch("free_claude_code.cli.desktop_tray.tray_is_available") as probe,
         patch("free_claude_code.cli.desktop_console.launch_desktop") as start,
     ):
         probe.return_value = (False, "backend missing")
@@ -93,9 +93,32 @@ def test_console_fallback_uses_null_tray_with_reason_notice(capsys):
     assert "backend missing" in output
 
 
+class _RaisingModule:
+    """Stands in for ``desktop_tray`` when its pystray import would raise."""
+
+    def __getattr__(self, name: str):
+        raise RuntimeError("no display")
+
+
+def test_launch_falls_back_to_console_when_native_adapter_import_raises(capsys):
+    with (
+        patch.dict(
+            sys.modules, {"free_claude_code.cli.desktop_tray": _RaisingModule()}
+        ),
+        patch("free_claude_code.cli.desktop_console.launch_desktop") as start,
+    ):
+        launch()
+
+    assert start.call_args.args[0] is ConsoleDesktopTray
+    output = capsys.readouterr().out
+    assert "console mode" in output
+    assert "failed to load" in output
+    assert "no display" in output
+
+
 def test_console_launch_uses_native_tray_when_probe_succeeds():
     with (
-        patch("free_claude_code.cli.desktop_console.tray_is_available") as probe,
+        patch("free_claude_code.cli.desktop_tray.tray_is_available") as probe,
         patch("free_claude_code.cli.desktop_console.launch_desktop") as start,
     ):
         probe.return_value = (True, "")
@@ -120,7 +143,7 @@ def test_entrypoint_routes_supported_native_platforms_to_tray(platform):
 def test_entrypoint_routes_linux_through_probe_and_console_mode(capsys):
     with (
         patch.object(sys, "platform", "linux"),
-        patch("free_claude_code.cli.desktop_console.tray_is_available") as probe,
+        patch("free_claude_code.cli.desktop_tray.tray_is_available") as probe,
         patch("free_claude_code.cli.desktop_console.launch_desktop") as start,
     ):
         probe.return_value = (False, "backend missing")

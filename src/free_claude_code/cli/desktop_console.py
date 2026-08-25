@@ -3,7 +3,6 @@
 import threading
 
 from free_claude_code.cli.desktop import DesktopController, launch_desktop
-from free_claude_code.cli.desktop_tray import PystrayDesktopTray, tray_is_available
 
 
 class ConsoleDesktopTray:
@@ -24,13 +23,7 @@ class ConsoleDesktopTray:
         self._stop_event.set()
 
 
-def launch() -> None:
-    """Launch the tray when available, otherwise fall back to console mode."""
-
-    available, reason = tray_is_available()
-    if available:
-        launch_desktop(PystrayDesktopTray)
-        return
+def _print_console_notice(reason: str) -> None:
     print(
         "Native system tray is unavailable on this session; "
         "running in console mode instead.",
@@ -42,4 +35,24 @@ def launch() -> None:
         "installed; launch it from your app launcher as usual.",
         flush=True,
     )
+
+
+def launch() -> None:
+    """Launch the tray when available, otherwise fall back to console mode."""
+    # The import selects pystray's platform backend; on a headless Linux
+    # session that raises before any probe can run, so a failed import is
+    # reported as an unavailable tray rather than crashing the fallback.
+    try:
+        from free_claude_code.cli.desktop_tray import (
+            PystrayDesktopTray,
+            tray_is_available,
+        )
+    except Exception as exc:
+        _print_console_notice(f"the native tray adapter failed to load: {exc}")
+    else:
+        available, reason = tray_is_available()
+        if available:
+            launch_desktop(PystrayDesktopTray)
+            return
+        _print_console_notice(reason)
     launch_desktop(ConsoleDesktopTray)
