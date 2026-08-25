@@ -17,12 +17,7 @@ from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
 from free_claude_code.core.async_iterators import AsyncCloseable
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
-from free_claude_code.core.inference import InferenceEvent, TextDelta
 from free_claude_code.core.reasoning import ReasoningPolicy
-
-
-def _event(label: str) -> TextDelta:
-    return TextDelta(block_id="test-block", delta=label)
 
 
 class FakeProvider:
@@ -47,7 +42,7 @@ class FakeProvider:
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
-    ) -> AsyncIterator[InferenceEvent]:
+    ) -> AsyncIterator[str]:
         self._record_stream_call(
             request,
             input_tokens=input_tokens,
@@ -56,7 +51,7 @@ class FakeProvider:
             reasoning=reasoning,
         )
         try:
-            yield _event("provider-event")
+            yield "event: message_stop\ndata: {}\n\n"
         finally:
             self.stream_close_calls += 1
 
@@ -98,7 +93,7 @@ class DelayStep:
         self.seconds = seconds
 
 
-type StreamStep = TextDelta | WaitStep | DelayStep | EmptyForever | BaseException
+type StreamStep = str | WaitStep | DelayStep | EmptyForever | BaseException
 
 
 class ControlledProvider(FakeProvider):
@@ -114,7 +109,7 @@ class ControlledProvider(FakeProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
-    ) -> AsyncIterator[InferenceEvent]:
+    ) -> AsyncIterator[str]:
         self._record_stream_call(
             request,
             input_tokens=input_tokens,
@@ -124,7 +119,7 @@ class ControlledProvider(FakeProvider):
         )
         try:
             for step in self._steps:
-                if isinstance(step, TextDelta):
+                if isinstance(step, str):
                     yield step
                 elif isinstance(step, WaitStep):
                     step.started.set()
@@ -132,7 +127,8 @@ class ControlledProvider(FakeProvider):
                 elif isinstance(step, DelayStep):
                     await asyncio.sleep(step.seconds)
                 elif isinstance(step, EmptyForever):
-                    await asyncio.Event().wait()
+                    while True:
+                        yield ""
                 else:
                     raise step
         finally:
@@ -172,7 +168,7 @@ class FailingStreamConstructionProvider(FakeProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
-    ) -> AsyncIterator[InferenceEvent]:
+    ) -> AsyncIterator[str]:
         raise RuntimeError("stream construction failed")
 
 
@@ -208,7 +204,7 @@ def _executor_stream(
     *,
     timeout_seconds: float,
     request_id: str,
-) -> AsyncIterator[InferenceEvent]:
+) -> AsyncIterator[str]:
     executor = ProviderExecutor(
         lambda _provider_id: provider,
         token_counter=lambda _messages, _system, _tools: 17,
@@ -243,7 +239,7 @@ async def test_executor_uses_structural_provider_port_and_preflights_eagerly() -
     )
 
     assert provider.preflight_calls == [(request, ReasoningPolicy.on())]
-    assert [chunk async for chunk in stream] == [_event("provider-event")]
+    assert [chunk async for chunk in stream] == ["event: message_stop\ndata: {}\n\n"]
     assert provider.stream_calls == [
         {
             "request": request,
@@ -288,7 +284,7 @@ async def test_primary_success_never_resolves_fallback() -> None:
         request_id="req_primary_success",
     )
 
-    assert [chunk async for chunk in stream] == [_event("provider-event")]
+    assert [chunk async for chunk in stream] == ["event: message_stop\ndata: {}\n\n"]
     assert resolved_ids == ["provider"]
     assert fallback.preflight_calls == []
     assert fallback.stream_calls == []
@@ -300,7 +296,7 @@ async def test_retryable_preframe_failure_selects_fallback_after_closing_primary
 ):
     order: list[str] = []
     primary = ControlledProvider([_execution_failure("primary overloaded")])
-    fallback = ControlledProvider([_event("fallback-frame")])
+    fallback = ControlledProvider(["fallback-frame"])
 
     def resolve(provider_id: str) -> FakeProvider:
         if provider_id == "fallback":
@@ -328,7 +324,7 @@ async def test_retryable_preframe_failure_selects_fallback_after_closing_primary
             )
         ]
 
-    assert chunks == [_event("fallback-frame")]
+    assert chunks == ["fallback-frame"]
     assert order == ["fallback-resolved"]
     assert primary.stream_close_calls == 1
     assert fallback.stream_close_calls == 1
@@ -402,7 +398,7 @@ async def test_multiple_retryable_failures_walk_fallbacks_in_order() -> None:
     providers = {
         "provider": ControlledProvider([_execution_failure("primary")]),
         "second": ControlledProvider([_execution_failure("second")]),
-        "third": ControlledProvider([_event("third-frame")]),
+        "third": ControlledProvider(["third-frame"]),
     }
     resolved_ids: list[str] = []
 
@@ -422,7 +418,7 @@ async def test_multiple_retryable_failures_walk_fallbacks_in_order() -> None:
         request_id="req_ordered_fallbacks",
     )
 
-    assert [chunk async for chunk in stream] == [_event("third-frame")]
+    assert [chunk async for chunk in stream] == ["third-frame"]
     assert resolved_ids == ["provider", "second", "third"]
     assert all(provider.stream_close_calls == 1 for provider in providers.values())
 
@@ -507,7 +503,7 @@ async def test_nonretryable_failure_never_resolves_fallback() -> None:
 @pytest.mark.asyncio
 async def test_failure_after_first_frame_never_selects_fallback() -> None:
     primary_failure = _execution_failure("after frame")
-    primary = ControlledProvider([_event("first-frame"), primary_failure])
+    primary = ControlledProvider(["first-frame", primary_failure])
     fallback = FakeProvider()
     resolved_ids: list[str] = []
 
@@ -524,7 +520,7 @@ async def test_failure_after_first_frame_never_selects_fallback() -> None:
         request_id="req_committed",
     )
 
-    assert await anext(stream) == _event("first-frame")
+    assert await anext(stream) == "first-frame"
     with pytest.raises(ExecutionFailure) as exc_info:
         await anext(stream)
 
@@ -569,7 +565,7 @@ async def test_candidate_requests_are_isolated_from_provider_mutation() -> None:
             request_id: str | None = None,
             response_model: str | None = None,
             reasoning: ReasoningPolicy,
-        ) -> AsyncIterator[InferenceEvent]:
+        ) -> AsyncIterator[str]:
             request.messages[0].content = "mutated"
             async for chunk in super().stream_response(
                 request,
@@ -622,7 +618,7 @@ async def test_closing_executor_stream_closes_provider_stream_once() -> None:
         request_id="req_early_close",
     )
 
-    assert await anext(stream) == _event("provider-event")
+    assert await anext(stream) == "event: message_stop\ndata: {}\n\n"
     assert isinstance(stream, AsyncCloseable)
     await stream.aclose()
 
@@ -739,19 +735,17 @@ async def test_progress_timeout_before_first_chunk_is_canonical_and_correlated()
 async def test_progress_timeout_renews_after_output_without_crossing_yield() -> None:
     second_wait = WaitStep()
     third_wait = WaitStep()
-    provider = ControlledProvider(
-        [_event("first"), second_wait, _event("second"), third_wait, _event("third")]
-    )
+    provider = ControlledProvider(["first", second_wait, "second", third_wait, "third"])
     stream = _executor_stream(
         provider,
         timeout_seconds=0.02,
         request_id="req_progress_renewal",
     )
 
-    assert await anext(stream) == _event("first")
+    assert await anext(stream) == "first"
     await asyncio.sleep(0.05)
     second_wait.release.set()
-    assert await anext(stream) == _event("second")
+    assert await anext(stream) == "second"
 
     with pytest.raises(ExecutionFailure) as exc_info:
         await anext(stream)

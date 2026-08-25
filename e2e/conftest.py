@@ -17,7 +17,6 @@ from free_claude_code.config import env_migrations, paths
 from free_claude_code.config.env_migrations import recognized_env_keys
 from free_claude_code.config.loader import clear_settings_cache, get_settings
 from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.core.inference import InferenceEvent, InferenceStreamLedger
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.base import BaseProvider, ProviderConfig
 from free_claude_code.providers.runtime import ProviderRuntime
@@ -74,9 +73,9 @@ class _ModelListingProvider(BaseProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
-    ) -> AsyncIterator[InferenceEvent]:
+    ) -> AsyncIterator[str]:
         if False:
-            yield InferenceStreamLedger("unused", "unused").start_response()
+            yield ""
 
 
 def _close_manager(manager: ProviderRuntimeManager) -> None:

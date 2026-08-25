@@ -21,7 +21,6 @@ from free_claude_code.core.anthropic.stream_contracts import (
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
-from tests.inference_support import collect_anthropic
 from tests.providers.support import (
     immediate_admission,
     make_provider_config,
@@ -334,7 +333,7 @@ async def test_stream_preserves_signed_details_without_duplicating_reasoning(
         return_value=stream,
     ):
         event_text = "".join(
-            await collect_anthropic(zenmux_provider.stream_response(_request()))
+            [event async for event in zenmux_provider.stream_response(_request())]
         )
 
     events = parse_sse_text(event_text)

@@ -25,7 +25,6 @@ from free_claude_code.providers.openai_chat.usage import (
     request_stream_usage,
     usage_int,
 )
-from tests.inference_support import collect_anthropic
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     immediate_admission,
@@ -183,9 +182,9 @@ async def test_openai_chat_stream_requests_usage_and_uses_provider_prompt_tokens
     )
 
     with patch.object(provider._client.chat.completions, "create", create):
-        events = await collect_anthropic(
-            provider.stream_response(request, input_tokens=7)
-        )
+        events = [
+            event async for event in provider.stream_response(request, input_tokens=7)
+        ]
 
     create.assert_awaited_once()
     await_args = create.await_args
@@ -218,12 +217,13 @@ async def test_openai_chat_stream_keeps_response_model_separate_from_upstream_mo
     )
 
     with patch.object(provider._client.chat.completions, "create", create):
-        events = await collect_anthropic(
-            provider.stream_response(
+        events = [
+            event
+            async for event in provider.stream_response(
                 request,
                 response_model="anthropic/test/upstream/model",
             )
-        )
+        ]
 
     assert create.await_args is not None
     assert create.await_args.kwargs["model"] == "upstream/model"

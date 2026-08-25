@@ -10,7 +10,6 @@ from free_claude_code.config.provider_catalog import LMSTUDIO_DEFAULT_BASE
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.lmstudio import LMStudioProvider
-from tests.inference_support import collect_anthropic
 from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     REASONING_OFF,
@@ -183,7 +182,7 @@ async def test_stream_response_text(lmstudio_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = await collect_anthropic(lmstudio_provider.stream_response(req))
+        events = [event async for event in lmstudio_provider.stream_response(req)]
 
         assert any(
             '"text_delta"' in event and "Hello back!" in event for event in events
@@ -217,12 +216,13 @@ async def test_stream_response_passes_exact_reasoning_budget_via_extra_body(
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = await collect_anthropic(
-            lmstudio_provider.stream_response(
+        events = [
+            event
+            async for event in lmstudio_provider.stream_response(
                 req,
                 reasoning=policy,
             )
-        )
+        ]
 
     await_args = mock_create.await_args
     assert await_args is not None

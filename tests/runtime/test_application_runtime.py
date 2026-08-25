@@ -16,7 +16,6 @@ from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.config.admin.persistence import PreparedAdminUpdate
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.core.inference import InferenceEvent, InferenceStreamLedger
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.messaging.command_context import StopOutcome
 from free_claude_code.messaging.platforms.ports import (
@@ -83,9 +82,9 @@ class AdminModelProvider(BaseProvider):
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
-    ) -> AsyncIterator[InferenceEvent]:
+    ) -> AsyncIterator[str]:
         if False:
-            yield InferenceStreamLedger("unused", "unused").start_response()
+            yield ""
 
 
 class TrackingFactory:

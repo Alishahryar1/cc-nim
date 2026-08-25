@@ -44,28 +44,20 @@ from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import (
     MessagesRequest,
     aggregate_anthropic_sse_to_message,
-    aggregate_inference_events_to_message,
     anthropic_error_payload,
     anthropic_error_type_for_failure,
     anthropic_failure_payload,
     anthropic_status_for_error_type,
     get_token_count,
-    iter_anthropic_sse,
 )
 from free_claude_code.core.diagnostics import safe_exception_message
 from free_claude_code.core.failures import ExecutionFailure, find_execution_failure
-from free_claude_code.core.inference import InferenceEvent
 from free_claude_code.core.reasoning import ReasoningControl, ReasoningPolicy
 from free_claude_code.core.trace import trace_event
 
 
 @dataclass(frozen=True)
-class _MessagesEventResult:
-    body: AsyncIterator[InferenceEvent]
-
-
-@dataclass(frozen=True)
-class _MessagesWireStreamResult:
+class _MessagesStreamResult:
     body: AsyncIterator[str]
 
 
@@ -74,9 +66,7 @@ class _MessagesCompleteResult:
     response: object
 
 
-_MessagesResult = (
-    _MessagesEventResult | _MessagesWireStreamResult | _MessagesCompleteResult
-)
+_MessagesResult = _MessagesStreamResult | _MessagesCompleteResult
 MessageIntercept = Callable[[RoutedMessagesRequest], _MessagesResult | None]
 
 
@@ -130,7 +120,7 @@ class MessagesHandler:
                     routed.request.system,
                     routed.request.tools,
                 )
-                result = _MessagesWireStreamResult(
+                result = _MessagesStreamResult(
                     stream_automatic_web_search_response(
                         self._provider_executor,
                         routed,
@@ -138,12 +128,11 @@ class MessagesHandler:
                         request_id=request_id,
                         fallback_input_tokens=input_tokens,
                         verbose_client_errors=self._settings.log_api_error_tracebacks,
-                        log_raw_events=self._settings.log_raw_sse_events,
                     )
                 )
             if result is None:
                 logger.debug("No optimization matched, routing to provider")
-                result = _MessagesEventResult(
+                result = _MessagesStreamResult(
                     self._provider_executor.stream(
                         routed,
                         wire_api="messages",
@@ -183,13 +172,7 @@ class MessagesHandler:
             # complete JSON Message; the internal pipeline is always SSE, so
             # serving that raw here breaks the client SDK's response parse.
             try:
-                if isinstance(result, _MessagesEventResult):
-                    message = await aggregate_inference_events_to_message(result.body)
-                    error = None
-                else:
-                    message, error = await aggregate_anthropic_sse_to_message(
-                        result.body
-                    )
+                message, error = await aggregate_anthropic_sse_to_message(result.body)
             except GeneratorExit:
                 raise
             except asyncio.CancelledError:
@@ -233,16 +216,8 @@ class MessagesHandler:
                     ),
                 )
             return JSONResponse(content=message)
-        body = (
-            iter_anthropic_sse(
-                result.body,
-                log_raw_events=self._settings.log_raw_sse_events,
-            )
-            if isinstance(result, _MessagesEventResult)
-            else result.body
-        )
         return await anthropic_sse_streaming_response(
-            body,
+            result.body,
             pre_start_error_response=lambda exc: self._pre_start_error_response(
                 exc, request_id=request_id
             ),
@@ -404,7 +379,7 @@ class MessagesHandler:
                 self._settings.web_fetch_allowed_schemes
             ),
         )
-        return _MessagesWireStreamResult(
+        return _MessagesStreamResult(
             stream_web_server_tool_response(
                 routed.request,
                 input_tokens=input_tokens,

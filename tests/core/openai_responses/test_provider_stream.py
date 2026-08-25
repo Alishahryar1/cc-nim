@@ -6,16 +6,15 @@ from free_claude_code.core.anthropic.stream_contracts import (
     parse_sse_text,
     thinking_content,
 )
-from free_claude_code.core.openai_responses.provider_events import (
-    ResponsesEventDecoder,
+from free_claude_code.core.openai_responses.provider_stream import (
+    ResponsesProviderStream,
     ResponsesStreamFailure,
 )
-from tests.inference_support import present_anthropic
 
 
-def test_responses_decoder_preserves_reasoning_tools_usage_and_ids() -> None:
-    stream = ResponsesEventDecoder(
-        response_id="response_test",
+def test_responses_provider_stream_preserves_reasoning_tools_usage_and_ids() -> None:
+    stream = ResponsesProviderStream(
+        message_id="msg_test",
         model="openai/gpt-test",
         input_tokens=12,
     )
@@ -103,7 +102,7 @@ def test_responses_decoder_preserves_reasoning_tools_usage_and_ids() -> None:
         )
     )
 
-    events = parse_sse_text("".join(present_anthropic(output)))
+    events = parse_sse_text("".join(output))
     assert_anthropic_stream_contract(events)
     assert thinking_content(events) == "reasoning"
     starts = [
@@ -141,13 +140,13 @@ def test_responses_decoder_preserves_reasoning_tools_usage_and_ids() -> None:
         (None, 5, 12),
     ],
 )
-def test_responses_decoder_ignores_invalid_cache_partitions(
+def test_responses_provider_stream_ignores_invalid_cache_partitions(
     input_tokens: int | None,
     cached_tokens: int | bool,
     expected_input_tokens: int,
 ) -> None:
-    stream = ResponsesEventDecoder(
-        response_id="response_test",
+    stream = ResponsesProviderStream(
+        message_id="msg_test",
         model="openai/gpt-test",
         input_tokens=12,
     )
@@ -169,7 +168,7 @@ def test_responses_decoder_ignores_invalid_cache_partitions(
 
     message_delta = next(
         event
-        for event in parse_sse_text("".join(present_anthropic(output)))
+        for event in parse_sse_text("".join(output))
         if event.event == "message_delta"
     )
     assert message_delta.data["usage"] == {
@@ -178,9 +177,9 @@ def test_responses_decoder_ignores_invalid_cache_partitions(
     }
 
 
-def test_responses_decoder_surfaces_failed_event() -> None:
-    stream = ResponsesEventDecoder(
-        response_id="response_test",
+def test_responses_provider_stream_surfaces_failed_event() -> None:
+    stream = ResponsesProviderStream(
+        message_id="msg_test",
         model="gpt-test",
         input_tokens=0,
     )
@@ -201,14 +200,14 @@ def test_responses_decoder_surfaces_failed_event() -> None:
     assert exc_info.value.code == "server_error"
 
 
-def test_responses_decoder_restores_added_and_done_only_tool_names() -> None:
+def test_responses_provider_stream_restores_added_and_done_only_tool_names() -> None:
     originals = (
         "mcp__responses_added__" + "x" * 70,
         "mcp__responses_done__" + "y" * 70,
     )
     codec = OpenAIToolNameCodec.from_names(originals)
-    stream = ResponsesEventDecoder(
-        response_id="response_test",
+    stream = ResponsesProviderStream(
+        message_id="msg_test",
         model="gpt-test",
         input_tokens=0,
         tool_names=codec,
@@ -256,7 +255,7 @@ def test_responses_decoder_restores_added_and_done_only_tool_names() -> None:
         )
     )
 
-    event_text = "".join(present_anthropic(output))
+    event_text = "".join(output)
     starts = [
         event.data["content_block"]
         for event in parse_sse_text(event_text)

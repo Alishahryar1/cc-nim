@@ -8,7 +8,6 @@ import httpx
 import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
-from free_claude_code.core.anthropic import AnthropicEventPresenter
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import (
     assert_anthropic_stream_contract,
@@ -17,7 +16,6 @@ from free_claude_code.core.anthropic.stream_contracts import (
 )
 from free_claude_code.core.diagnostics import ERROR_DETAIL_DISPLAY_CAP_BYTES
 from free_claude_code.core.failures import ExecutionFailure
-from free_claude_code.core.inference import InferenceEvent
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
@@ -26,7 +24,6 @@ from free_claude_code.providers.openai_codex.auth import (
     OpenAIAuthManager,
 )
 from free_claude_code.providers.openai_codex.provider import OpenAICodexProvider
-from tests.inference_support import collect_anthropic
 from tests.providers.support import make_provider_config
 
 
@@ -161,8 +158,8 @@ def _complete_stream(text: str) -> str:
     )
 
 
-async def _collect(stream: AsyncIterator[InferenceEvent]) -> str:
-    return "".join(await collect_anthropic(stream))
+async def _collect(stream: AsyncIterator[str]) -> str:
+    return "".join([chunk async for chunk in stream])
 
 
 @pytest.mark.asyncio
@@ -729,15 +726,14 @@ async def test_truncated_attempt_after_commit_is_not_retried_or_duplicated() -> 
         _config(), auth=_FakeAuth(), admission=_admission(), client=client
     )
     chunks: list[str] = []
-    presenter = AnthropicEventPresenter()
 
     with pytest.raises(ExecutionFailure):
-        async for event in provider.stream_response(
+        async for chunk in provider.stream_response(
             _request(),
             request_id="req_committed",
             response_model="claude-opus-4",
         ):
-            chunks.extend(presenter.present(event))
+            chunks.extend((chunk,))
 
     body = "".join(chunks)
     assert attempts == 1

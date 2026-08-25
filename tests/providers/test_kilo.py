@@ -19,7 +19,6 @@ from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.providers.kilo import KiloProvider
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
-from tests.inference_support import collect_anthropic
 from tests.providers.support import (
     immediate_admission,
     make_provider_config,
@@ -266,7 +265,7 @@ async def test_stream_uses_reasoning_field_without_duplicating_plain_details(
         return_value=stream,
     ):
         event_text = "".join(
-            await collect_anthropic(kilo_provider.stream_response(request))
+            [event async for event in kilo_provider.stream_response(request)]
         )
 
     events = parse_sse_text(event_text)
@@ -307,7 +306,7 @@ async def test_stream_restarts_reasoning_reconciliation_after_early_retry(
         side_effect=[abandoned, recovered],
     ) as create:
         event_text = "".join(
-            await collect_anthropic(kilo_provider.stream_response(request))
+            [event async for event in kilo_provider.stream_response(request)]
         )
 
     events = parse_sse_text(event_text)
@@ -347,12 +346,13 @@ async def test_stream_omits_all_reasoning_representations_when_disabled(
         return_value=stream,
     ):
         event_text = "".join(
-            await collect_anthropic(
-                kilo_provider.stream_response(
+            [
+                event
+                async for event in kilo_provider.stream_response(
                     request,
                     reasoning=ReasoningPolicy.off(),
                 )
-            )
+            ]
         )
 
     events = parse_sse_text(event_text)

@@ -15,7 +15,6 @@ from free_claude_code.core.anthropic.stream_contracts import (
     thinking_content,
 )
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
-from tests.inference_support import collect_anthropic
 from tests.providers.support import (
     REASONING_OFF,
     immediate_admission,
@@ -157,7 +156,7 @@ async def test_stream_preserves_reasoning_content(minimax_provider):
         new_callable=AsyncMock,
         return_value=stream,
     ) as create:
-        events = await collect_anthropic(minimax_provider.stream_response(request))
+        events = [event async for event in minimax_provider.stream_response(request)]
 
     parsed = parse_sse_text("".join(events))
     assert thinking_content(parsed) == "plan"

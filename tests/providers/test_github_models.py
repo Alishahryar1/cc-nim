@@ -16,7 +16,6 @@ from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.github_models import GitHubModelsProvider
 from free_claude_code.providers.github_models.client import GITHUB_MODELS_CATALOG_URL
 from free_claude_code.providers.model_listing import ModelListResponseError
-from tests.inference_support import collect_anthropic
 from tests.providers.support import (
     REASONING_ON,
     immediate_admission,
@@ -217,9 +216,9 @@ async def test_stream_response_text(
         new_callable=AsyncMock,
         return_value=_stream(_chunk(delta)),
     ) as mock_create:
-        events = await collect_anthropic(
-            github_models_provider.stream_response(_request())
-        )
+        events = [
+            event async for event in github_models_provider.stream_response(_request())
+        ]
 
     parsed = parse_sse_text("".join(events))
     assert any(
@@ -267,9 +266,9 @@ async def test_stream_response_tool_call(
         new_callable=AsyncMock,
         return_value=_stream(_chunk(delta, finish_reason="tool_calls")),
     ):
-        events = await collect_anthropic(
-            github_models_provider.stream_response(request)
-        )
+        events = [
+            event async for event in github_models_provider.stream_response(request)
+        ]
 
     parsed = parse_sse_text("".join(events))
     assert any(
@@ -301,9 +300,9 @@ async def test_stream_response_reasoning_content(
         new_callable=AsyncMock,
         return_value=_stream(_chunk(delta)),
     ):
-        events = await collect_anthropic(
-            github_models_provider.stream_response(_request())
-        )
+        events = [
+            event async for event in github_models_provider.stream_response(_request())
+        ]
 
     parsed = parse_sse_text("".join(events))
     assert any(

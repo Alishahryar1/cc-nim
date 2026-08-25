@@ -6,7 +6,6 @@ from typing import Protocol
 
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import MessagesRequest
-from free_claude_code.core.inference import InferenceEvent
 from free_claude_code.core.reasoning import ReasoningPolicy
 
 from .model_metadata import ProviderModelInfo
@@ -30,7 +29,7 @@ class ProviderPort(Protocol):
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
-    ) -> AsyncIterator[InferenceEvent]: ...
+    ) -> AsyncIterator[str]: ...
 
 
 ProviderResolver = Callable[[str], ProviderPort]
