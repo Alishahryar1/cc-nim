@@ -19,6 +19,7 @@ from free_claude_code.api.web_tools.egress import (
 from free_claude_code.api.web_tools.outbound import (
     _drain_response_body_capped,
     _read_response_body_capped,
+    _run_parallel_web_search,
     _run_web_fetch,
 )
 from free_claude_code.api.web_tools.request import (
@@ -27,7 +28,10 @@ from free_claude_code.api.web_tools.request import (
     plan_automatic_web_search,
     unsupported_server_tool_error,
 )
-from free_claude_code.api.web_tools.streaming import stream_web_server_tool_response
+from free_claude_code.api.web_tools.streaming import (
+    _search_summary,
+    stream_web_server_tool_response,
+)
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.application.routing import (
     ModelRouter,
@@ -35,6 +39,7 @@ from free_claude_code.application.routing import (
     ResolvedModelRoute,
     RoutedMessagesRequest,
 )
+from free_claude_code.config.admin.manifest import FIELD_BY_KEY
 from free_claude_code.config.provider_catalog import PROVIDER_CATALOG
 from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.config.settings import Settings
@@ -1474,3 +1479,243 @@ async def test_service_rejects_listed_server_tools_for_every_provider(
     )
     with pytest.raises(InvalidRequestError, match="ENABLE_WEB_SERVER_TOOLS=false"):
         await service.create(request)
+
+
+@pytest.mark.asyncio
+async def test_parallel_search_mcp_invokes_advertised_tool_and_preserves_excerpts() -> (
+    None
+):
+    requests: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "DELETE":
+            return httpx.Response(200)
+        payload = json.loads(request.content)
+        method = payload["method"]
+        if method == "initialize":
+            return httpx.Response(
+                200,
+                headers={"Mcp-Session-Id": "test-session"},
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 1,
+                    "result": {"protocolVersion": "2025-03-26"},
+                },
+            )
+        if method == "notifications/initialized":
+            return httpx.Response(202)
+        if method == "tools/list":
+            return httpx.Response(
+                200,
+                json={
+                    "jsonrpc": "2.0",
+                    "id": 2,
+                    "result": {
+                        "tools": [{"name": "web_search"}, {"name": "web_fetch"}]
+                    },
+                },
+            )
+        assert payload["params"] == {
+            "name": "web_search",
+            "arguments": {
+                "objective": "current MCP protocol",
+                "search_queries": ["current MCP protocol"],
+            },
+        }
+        return httpx.Response(
+            200,
+            json={
+                "jsonrpc": "2.0",
+                "id": 3,
+                "result": {
+                    "structuredContent": {
+                        "results": [
+                            {
+                                "url": "https://example.com/mcp",
+                                "title": None,
+                                "excerpts": ["Protocol evidence", "More evidence"],
+                            }
+                        ]
+                    }
+                },
+            },
+        )
+
+    async_client = httpx.AsyncClient
+
+    with (
+        patch(
+            "free_claude_code.api.web_tools.outbound._PARALLEL_SEARCH_MCP_URL",
+            "https://fixture.invalid/mcp",
+        ),
+        patch(
+            "httpx.AsyncClient",
+            side_effect=lambda **kwargs: async_client(
+                transport=httpx.MockTransport(handle), **kwargs
+            ),
+        ),
+    ):
+        results = await _run_parallel_web_search("current MCP protocol")
+
+    assert results == [
+        {
+            "url": "https://example.com/mcp",
+            "title": "https://example.com/mcp",
+            "content": "Protocol evidence\nMore evidence",
+        }
+    ]
+    assert [request.method for request in requests] == [
+        "POST",
+        "POST",
+        "POST",
+        "POST",
+        "DELETE",
+    ]
+    assert all(
+        request.headers["user-agent"].startswith(
+            "Mozilla/5.0 compatible; free-claude-code/"
+        )
+        for request in requests
+    )
+    assert requests[-1].headers["mcp-session-id"] == "test-session"
+    assert requests[-1].headers["mcp-protocol-version"] == "2025-03-26"
+
+
+def test_web_search_provider_defaults_to_duckduckgo_and_requires_explicit_parallel() -> (
+    None
+):
+    assert Settings().web_search_provider == "duckduckgo"
+    assert (
+        Settings.model_validate({"WEB_SEARCH_PROVIDER": "parallel"}).web_search_provider
+        == "parallel"
+    )
+    with pytest.raises(ValueError, match="WEB_SEARCH_PROVIDER"):
+        Settings.model_validate({"WEB_SEARCH_PROVIDER": "unknown"})
+
+
+def test_duckduckgo_search_summary_is_byte_for_byte_compatible() -> None:
+    assert (
+        _search_summary(
+            "incumbent query",
+            [{"title": "Existing title", "url": "https://example.com/existing"}],
+        )
+        == "Search results for: incumbent query\n\n1. Existing title\nhttps://example.com/existing"
+    )
+
+
+@pytest.mark.asyncio
+async def test_forced_messages_handler_uses_opted_in_parallel_and_emits_excerpts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parallel = AsyncMock(
+        return_value=[
+            {
+                "title": "Parallel result",
+                "url": "https://example.com/parallel",
+                "content": "model-visible forced excerpt",
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        "free_claude_code.api.web_tools.outbound._run_parallel_web_search", parallel
+    )
+    settings = Settings.model_validate(
+        {"ENABLE_WEB_SERVER_TOOLS": True, "WEB_SEARCH_PROVIDER": "parallel"}
+    )
+    provider_resolver = MagicMock()
+    service = MessagesHandler(
+        settings,
+        provider_resolver=provider_resolver,
+        model_router=FixedProviderModelRouter(settings, _PROVIDER_IDS[0]),
+    )
+    request = MessagesRequest(
+        model="claude-haiku-4-5-20251001",
+        max_tokens=100,
+        stream=True,
+        messages=[Message(role="user", content="Search for runtime evidence")],
+        tools=[Tool(name="web_search", type="web_search_20250305")],
+        tool_choice={"type": "tool", "name": "web_search"},
+    )
+
+    response = await service.create(request)
+
+    assert isinstance(response, StreamingResponse)
+    raw = await _streaming_body_text(response)
+    parallel.assert_awaited_once_with("Search for runtime evidence")
+    assert "model-visible forced excerpt" in text_content(parse_sse_text(raw))
+    provider_resolver.assert_not_called()
+
+
+@pytest.mark.asyncio
+async def test_automatic_messages_handler_uses_opted_in_parallel_and_emits_excerpts(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parallel = AsyncMock(
+        return_value=[
+            {
+                "title": "Parallel result",
+                "url": "https://example.com/parallel",
+                "content": "model-visible automatic excerpt",
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        "free_claude_code.api.web_tools.outbound._run_parallel_web_search", parallel
+    )
+    provider = ScriptedSelectionProvider(
+        _provider_tool_events(arguments={"query": "selected parallel query"})
+    )
+    settings = Settings.model_validate({"WEB_SEARCH_PROVIDER": "parallel"})
+    service = _automatic_search_service(provider, settings=settings)
+
+    response = await service.create(
+        _automatic_search_request(), request_id="req_parallel_automatic"
+    )
+
+    assert isinstance(response, StreamingResponse)
+    raw = await _streaming_body_text(response)
+    parallel.assert_awaited_once_with("selected parallel query")
+    assert "model-visible automatic excerpt" in text_content(parse_sse_text(raw))
+
+
+@pytest.mark.asyncio
+async def test_parallel_malformed_initialize_still_closes_allocated_session() -> None:
+    requests: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "DELETE":
+            return httpx.Response(200)
+        return httpx.Response(
+            200,
+            headers={"Mcp-Session-Id": "allocated-before-malformed-body"},
+            content=b"not-json",
+        )
+
+    async_client = httpx.AsyncClient
+    with (
+        patch(
+            "free_claude_code.api.web_tools.outbound._PARALLEL_SEARCH_MCP_URL",
+            "https://fixture.invalid/mcp",
+        ),
+        patch(
+            "httpx.AsyncClient",
+            side_effect=lambda **kwargs: async_client(
+                transport=httpx.MockTransport(handle), **kwargs
+            ),
+        ),
+        pytest.raises(json.JSONDecodeError),
+    ):
+        await _run_parallel_web_search("cleanup query")
+
+    assert [request.method for request in requests] == ["POST", "DELETE"]
+    assert requests[-1].headers["mcp-session-id"] == "allocated-before-malformed-body"
+
+
+def test_web_search_provider_admin_field_is_native_select() -> None:
+    field = FIELD_BY_KEY["WEB_SEARCH_PROVIDER"]
+    assert field.field_type == "select"
+    assert field.settings_attr == "web_search_provider"
+    assert field.options == ("duckduckgo", "parallel")
+    assert field.resolved_default() == "duckduckgo"

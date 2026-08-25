@@ -30,6 +30,7 @@ async def stream_automatic_web_search_response(
     request_id: str,
     fallback_input_tokens: int,
     verbose_client_errors: bool,
+    search_provider: str,
 ) -> AsyncIterator[str]:
     """Buffer one model decision, then replay it or execute one local search."""
     translated = replace(routed, request=plan.request)
@@ -120,6 +121,7 @@ async def stream_automatic_web_search_response(
         provider_usage=provider_usage,
         result_filter=lambda results: _filter_results(results, plan.domains),
         verbose_client_errors=verbose_client_errors,
+        search_provider=search_provider,
     ):
         yield frame
     trace_event(

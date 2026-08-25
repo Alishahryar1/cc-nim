@@ -1311,8 +1311,10 @@ boundary translates that server tool into one private ordinary search function.
 `ProviderExecutor` runs and buffers one normal provider decision, preserving its
 retry, fallback, timeout, and failure behavior. If the model declines the tool,
 FCC replays the buffered stream unchanged. If the model selects one valid query,
-FCC discards the private function frames, searches the fixed DuckDuckGo backend,
-and emits the existing Anthropic `server_tool_use` and
+FCC discards the private function frames and searches DuckDuckGo by default.
+`WEB_SEARCH_PROVIDER=parallel` explicitly opts into sending search objectives and
+queries to the external `https://search.parallel.ai/mcp` service instead. Both
+backends emit the existing Anthropic `server_tool_use` and
 `web_search_tool_result` lifecycle. Claude Code owns the outer continuation; FCC
 does not run a second provider round or persist hidden transcript state.
 

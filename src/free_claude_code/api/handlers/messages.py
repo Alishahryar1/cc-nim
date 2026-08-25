@@ -128,6 +128,7 @@ class MessagesHandler:
                         request_id=request_id,
                         fallback_input_tokens=input_tokens,
                         verbose_client_errors=self._settings.log_api_error_tracebacks,
+                        search_provider=self._settings.web_search_provider,
                     )
                 )
             if result is None:
@@ -386,6 +387,7 @@ class MessagesHandler:
                 web_fetch_egress=egress,
                 response_model=routed.resolved.original_model,
                 verbose_client_errors=self._settings.log_api_error_tracebacks,
+                search_provider=self._settings.web_search_provider,
             ),
         )
 
