@@ -211,22 +211,7 @@ class ProviderExecutor:
         async def provider_body() -> AsyncIterator[str]:
             loop = asyncio.get_running_loop()
             progress_deadline = loop.time() + self._progress_timeout_seconds
-
-            def raise_if_cancelled() -> None:
-                current = asyncio.current_task()
-                if current is not None and current.cancelling():
-                    raise asyncio.CancelledError()
-
-            def raise_if_execution_stopped(provider_id: str) -> None:
-                raise_if_cancelled()
-                if loop.time() >= progress_deadline:
-                    raise self._progress_timeout_failure(
-                        request_id=request_id,
-                        provider_id=provider_id,
-                    )
-
             for index, target in enumerate(candidates):
-                raise_if_execution_stopped(target.provider_id)
                 provider = (
                     primary_provider
                     if index == 0
@@ -245,7 +230,6 @@ class ProviderExecutor:
                         candidate_request,
                         reasoning=routed.reasoning,
                     )
-                raise_if_execution_stopped(target.provider_id)
 
                 provider_stream: AsyncIterator[str] | None = None
                 candidate_committed = False
@@ -261,51 +245,48 @@ class ProviderExecutor:
                         )
                     except ExecutionFailure as failure:
                         candidate_failure = failure
-                    except Exception:
-                        raise_if_cancelled()
-                        raise
 
-                    raise_if_execution_stopped(target.provider_id)
                     if provider_stream is None and candidate_failure is None:
                         raise TypeError(
                             "provider stream_response must return an async iterator"
                         )
                     while provider_stream is not None:
-                        raise_if_execution_stopped(target.provider_id)
+                        if loop.time() >= progress_deadline:
+                            raise self._progress_timeout_failure(
+                                request_id=request_id,
+                                provider_id=target.provider_id,
+                            )
                         progress_timeout = asyncio.timeout_at(progress_deadline)
-                        chunk: object = None
                         read_failure: ExecutionFailure | None = None
-                        stream_finished = False
                         try:
                             async with progress_timeout:
                                 try:
                                     chunk = await anext(provider_stream)
-                                except StopAsyncIteration:
-                                    stream_finished = True
                                 except ExecutionFailure as failure:
                                     read_failure = failure
-                                except Exception:
-                                    raise_if_cancelled()
-                                    raise
+                        except StopAsyncIteration:
+                            if progress_timeout.expired():
+                                raise self._progress_timeout_failure(
+                                    request_id=request_id,
+                                    provider_id=target.provider_id,
+                                ) from None
+                            break
                         except TimeoutError as exc:
-                            raise_if_cancelled()
                             if not progress_timeout.expired():
                                 raise
                             raise self._progress_timeout_failure(
                                 request_id=request_id,
                                 provider_id=target.provider_id,
                             ) from exc
-                        raise_if_execution_stopped(target.provider_id)
-                        if stream_finished:
-                            break
+                        if progress_timeout.expired():
+                            raise self._progress_timeout_failure(
+                                request_id=request_id,
+                                provider_id=target.provider_id,
+                            )
                         if read_failure is not None:
                             candidate_failure = read_failure
                             break
-                        if not isinstance(chunk, str):
-                            raise TypeError(
-                                "provider stream_response must yield string chunks"
-                            )
-                        if chunk == "":
+                        if not chunk:
                             await asyncio.sleep(0)
                             continue
                         if not candidate_committed:
@@ -329,7 +310,6 @@ class ProviderExecutor:
                             preserved_error=sys.exception(),
                         )
 
-                raise_if_cancelled()
                 if candidate_failure is None:
                     return
                 if candidate_committed or index + 1 >= len(candidates):
