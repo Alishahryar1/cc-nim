@@ -21,11 +21,8 @@ from free_claude_code.application.ports import (
     TaskController,
 )
 from free_claude_code.config.settings import Settings
-from free_claude_code.core.inference import (
-    InferenceEvent,
-    InferenceRequest,
-    InferenceStreamLedger,
-)
+from free_claude_code.core.anthropic import MessagesRequest
+from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.reasoning import ReasoningPolicy
 
 
@@ -381,7 +378,7 @@ async def test_outer_cancellation_drains_both_owned_tasks() -> None:
 
 
 class _ControlledProvider:
-    def __init__(self, chunks: tuple[InferenceEvent, ...]) -> None:
+    def __init__(self, chunks: tuple[str, ...]) -> None:
         self._chunks = chunks
         self.blocked = asyncio.Event()
         self.closed = asyncio.Event()
@@ -389,24 +386,22 @@ class _ControlledProvider:
 
     def preflight_stream(
         self,
-        _request: InferenceRequest,
+        _request: MessagesRequest,
         *,
-        provider_model: str,
         reasoning: ReasoningPolicy,
     ) -> None:
-        del provider_model, reasoning
+        del reasoning
 
     async def stream_response(
         self,
-        _request: InferenceRequest,
+        _request: MessagesRequest,
         *,
         input_tokens: int,
-        provider_model: str,
         request_id: str,
         response_model: str,
         reasoning: ReasoningPolicy,
-    ) -> AsyncIterator[InferenceEvent]:
-        del input_tokens, provider_model, response_model, reasoning
+    ) -> AsyncIterator[str]:
+        del input_tokens, response_model, reasoning
         self.request_ids.append(request_id)
         try:
             for chunk in self._chunks:
@@ -459,16 +454,44 @@ class _Requests:
         return ()
 
 
-def _message_start() -> InferenceEvent:
-    return InferenceStreamLedger("msg_lifetime", "test-model", 1).start_response()
+def _message_start() -> str:
+    return format_sse_event(
+        "message_start",
+        {
+            "type": "message_start",
+            "message": {
+                "id": "msg_lifetime",
+                "type": "message",
+                "role": "assistant",
+                "model": "test-model",
+                "content": [],
+                "stop_reason": None,
+                "stop_sequence": None,
+                "usage": {"input_tokens": 1, "output_tokens": 0},
+            },
+        },
+    )
 
 
-def _partial_message_stream() -> tuple[InferenceEvent, ...]:
-    ledger = InferenceStreamLedger("msg_lifetime", "test-model", 1)
+def _partial_message_stream() -> tuple[str, ...]:
     return (
-        ledger.start_response(),
-        ledger.start_text_block(),
-        ledger.emit_text_delta("partial"),
+        _message_start(),
+        format_sse_event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""},
+            },
+        ),
+        format_sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": "partial"},
+            },
+        ),
     )
 
 

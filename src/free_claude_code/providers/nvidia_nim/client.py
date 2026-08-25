@@ -9,8 +9,8 @@ import openai
 from loguru import logger
 
 from free_claude_code.config.nim import NimSettings
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.failures import ExecutionFailure
-from free_claude_code.core.inference import InferenceRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
@@ -66,16 +66,14 @@ class NvidiaNimProvider(OpenAIChatProvider):
 
     def _build_request_body(
         self,
-        request: InferenceRequest,
+        request: MessagesRequest,
         *,
-        provider_model: str,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> dict:
         """Internal helper for tests and shared building."""
         return build_nim_request_body(
             request,
             self._nim_settings,
-            provider_model=provider_model,
             reasoning=reasoning,
         )
 

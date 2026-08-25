@@ -1,7 +1,6 @@
 """Tests for the ZenMux OpenAI-chat provider profile."""
 
 import json
-from collections.abc import Mapping
 from types import SimpleNamespace
 from typing import Any
 from unittest.mock import AsyncMock, patch
@@ -19,23 +18,9 @@ from free_claude_code.core.anthropic.stream_contracts import (
     text_content,
     thinking_content,
 )
-from free_claude_code.core.inference import (
-    ReplayArtifact,
-    ReplayArtifactKind,
-    ReplayArtifactOrigin,
-    ReplayAttachment,
-)
-from free_claude_code.core.json_types import JsonValue
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
-from free_claude_code.core.replay_envelope import (
-    decode_replay_envelope,
-    encode_replay_envelope,
-)
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
-from free_claude_code.providers.openai_compat import openai_replay_scope
-from tests.inference_support import collect_anthropic
-from tests.providers.request_factory import canonical_request
 from tests.providers.support import (
     immediate_admission,
     make_provider_config,
@@ -65,24 +50,6 @@ def _request(**overrides: Any) -> MessagesRequest:
     }
     payload.update(overrides)
     return MessagesRequest.model_validate(payload)
-
-
-def _reasoning_carrier(detail: Mapping[str, JsonValue]) -> str:
-    return encode_replay_envelope(
-        (
-            ReplayArtifact(
-                origin=ReplayArtifactOrigin.OPENAI_COMPATIBLE,
-                kind=ReplayArtifactKind.REASONING_DETAILS,
-                attachment=ReplayAttachment.REASONING,
-                scope=openai_replay_scope(
-                    "ZENMUX",
-                    "deepseek/deepseek-v4-flash-free",
-                    replay_format="chat-completions",
-                ),
-                payload=detail,
-            ),
-        )
-    )
 
 
 class AsyncStream:
@@ -163,9 +130,8 @@ def test_build_request_body_uses_supported_output_field_tools_and_images(
     )
 
     body = zenmux_provider._build_request_body(
-        canonical_request(request),
+        request,
         reasoning=reasoning_for(request),
-        provider_model=(request).model,
     )
 
     assert body["model"] == "deepseek/deepseek-v4-flash-free"
@@ -196,9 +162,8 @@ def test_build_request_body_maps_reasoning_effort_to_documented_vocabulary(
     expected: str,
 ) -> None:
     body = zenmux_provider._build_request_body(
-        canonical_request(_request()),
+        _request(),
         reasoning=ReasoningPolicy.on(effort=effort),
-        provider_model=(_request()).model,
     )
 
     assert body["extra_body"]["reasoning"] == {"effort": expected}
@@ -217,11 +182,7 @@ def test_build_request_body_maps_reasoning_control_and_budget(
     reasoning: ReasoningPolicy,
     expected: dict[str, Any],
 ) -> None:
-    body = zenmux_provider._build_request_body(
-        canonical_request(_request()),
-        reasoning=reasoning,
-        provider_model=(_request()).model,
-    )
+    body = zenmux_provider._build_request_body(_request(), reasoning=reasoning)
 
     assert body["extra_body"]["reasoning"] == expected
 
@@ -230,9 +191,8 @@ def test_build_request_body_leaves_reasoning_to_provider_by_default(
     zenmux_provider: OpenAIChatProvider,
 ) -> None:
     body = zenmux_provider._build_request_body(
-        canonical_request(_request()),
+        _request(),
         reasoning=ReasoningPolicy.provider_default(),
-        provider_model=(_request()).model,
     )
 
     assert "reasoning" not in body.get("extra_body", {})
@@ -244,9 +204,8 @@ def test_build_request_body_preserves_unrelated_gateway_options(
     request = _request(extra_body={"provider": {"fallback": "true"}})
 
     body = zenmux_provider._build_request_body(
-        canonical_request(request),
+        request,
         reasoning=ReasoningPolicy.provider_default(),
-        provider_model=(request).model,
     )
 
     assert body["extra_body"] == {"provider": {"fallback": "true"}}
@@ -264,9 +223,8 @@ def test_build_request_body_rejects_caller_canonical_override(
 
     with pytest.raises(InvalidRequestError, match="must not override canonical"):
         zenmux_provider._build_request_body(
-            canonical_request(request),
+            request,
             reasoning=ReasoningPolicy.on(),
-            provider_model=(request).model,
         )
 
 
@@ -287,7 +245,7 @@ def test_build_request_body_replays_reasoning_and_signed_details_unchanged(
                 "role": "assistant",
                 "content": [
                     {"type": "thinking", "thinking": "Need a tool."},
-                    {"type": "redacted_thinking", "data": _reasoning_carrier(detail)},
+                    {"type": "redacted_thinking", "data": json.dumps(detail)},
                     {
                         "type": "tool_use",
                         "id": "call_read",
@@ -310,9 +268,8 @@ def test_build_request_body_replays_reasoning_and_signed_details_unchanged(
     )
 
     body = zenmux_provider._build_request_body(
-        canonical_request(request),
+        request,
         reasoning=reasoning_for(request),
-        provider_model=(request).model,
     )
 
     assistant = next(
@@ -376,11 +333,7 @@ async def test_stream_preserves_signed_details_without_duplicating_reasoning(
         return_value=stream,
     ):
         event_text = "".join(
-            await collect_anthropic(
-                zenmux_provider.stream_response(
-                    canonical_request(_request()), provider_model=(_request()).model
-                )
-            )
+            [event async for event in zenmux_provider.stream_response(_request())]
         )
 
     events = parse_sse_text(event_text)
@@ -393,16 +346,7 @@ async def test_stream_preserves_signed_details_without_duplicating_reasoning(
         and event.data.get("content_block", {}).get("type") == "redacted_thinking"
     ]
     assert len(redacted_blocks) == 1
-    artifacts = decode_replay_envelope(
-        redacted_blocks[0]["data"],
-        attachment=ReplayAttachment.REASONING,
-    )
-    assert artifacts is not None
-    assert len(artifacts) == 1
-    assert artifacts[0].kind is ReplayArtifactKind.REASONING_DETAILS
-    assert isinstance(artifacts[0].payload, str)
-    assert json.loads(artifacts[0].payload) == detail
-    assert artifacts[0].scope is not None
+    assert json.loads(redacted_blocks[0]["data"]) == detail
     assert stream.closed
 
 

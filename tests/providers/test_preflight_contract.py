@@ -6,30 +6,23 @@ import pytest
 
 from free_claude_code.application.model_metadata import ProviderModelInfo
 from free_claude_code.core.anthropic.models import Message, MessagesRequest
-from free_claude_code.core.inference import (
-    InferenceEvent,
-    InferenceRequest,
-    InferenceStreamLedger,
-)
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.base import BaseProvider
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
-from tests.providers.request_factory import canonical_request
 from tests.providers.support import make_provider_config
 
 
 class RecordingOpenAIProvider(OpenAIChatProvider):
     def __init__(self) -> None:
-        self.build_calls: list[tuple[InferenceRequest, str, ReasoningPolicy]] = []
+        self.build_calls: list[tuple[MessagesRequest, ReasoningPolicy]] = []
 
     def _build_request_body(
         self,
-        request: InferenceRequest,
+        request: MessagesRequest,
         *,
-        provider_model: str,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> dict:
-        self.build_calls.append((request, provider_model, reasoning))
+        self.build_calls.append((request, reasoning))
         return {}
 
 
@@ -42,16 +35,15 @@ class ProviderWithoutPreflight(BaseProvider):
 
     async def stream_response(
         self,
-        request: InferenceRequest,
+        request: MessagesRequest,
         input_tokens: int = 0,
         *,
-        provider_model: str,
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
-    ) -> AsyncIterator[InferenceEvent]:
+    ) -> AsyncIterator[str]:
         if False:
-            yield InferenceStreamLedger("unused", "unused").start_response()
+            yield ""
 
 
 def test_provider_base_requires_an_explicit_preflight_implementation() -> None:
@@ -72,12 +64,6 @@ def test_provider_preflight_calls_builder_and_preserves_policy() -> None:
         messages=[Message(role="user", content="hello")],
     )
 
-    provider.preflight_stream(
-        canonical_request(request),
-        reasoning=ReasoningPolicy.off(),
-        provider_model=(request).model,
-    )
+    provider.preflight_stream(request, reasoning=ReasoningPolicy.off())
 
-    assert provider.build_calls == [
-        (canonical_request(request), request.model, ReasoningPolicy.off())
-    ]
+    assert provider.build_calls == [(request, ReasoningPolicy.off())]

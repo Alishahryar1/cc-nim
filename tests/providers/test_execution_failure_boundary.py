@@ -8,7 +8,6 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from free_claude_code.config.nim import NimSettings
-from free_claude_code.core.anthropic import AnthropicEventPresenter
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.core.async_iterators import AsyncCloseable
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
@@ -18,8 +17,7 @@ from free_claude_code.providers.http import (
     close_provider_stream,
 )
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
-from tests.inference_support import collect_anthropic
-from tests.providers.request_factory import canonical_request, make_messages_request
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     immediate_admission,
     make_provider_config,
@@ -90,7 +88,6 @@ async def test_committed_provider_failure_closes_block_then_raises_canonical_val
         RuntimeError("connection lost after commit"),
     )
     emitted: deque[str] = deque()
-    presenter = AnthropicEventPresenter()
 
     with (
         patch.object(
@@ -102,11 +99,10 @@ async def test_committed_provider_failure_closes_block_then_raises_canonical_val
         pytest.raises(ExecutionFailure) as exc_info,
     ):
         async for event in provider.stream_response(
-            canonical_request(request),
+            request,
             request_id="req_committed_failure",
-            provider_model=(request).model,
         ):
-            emitted.extend(presenter.present(event))
+            emitted.append(event)
 
     events = parse_sse_text("".join(emitted))
     assert [event.event for event in events][-1] == "content_block_stop"
@@ -142,13 +138,13 @@ async def test_openai_stream_close_failure_cannot_mask_execution_failure() -> No
         patch("free_claude_code.providers.http.trace_event") as trace_event,
         pytest.raises(ExecutionFailure) as exc_info,
     ):
-        await collect_anthropic(
-            provider.stream_response(
-                canonical_request(request),
+        [
+            event
+            async for event in provider.stream_response(
+                request,
                 request_id="req_close_failure",
-                provider_model=(request).model,
             )
-        )
+        ]
 
     assert stream.close_calls == 1
     assert exc_info.value.status_code == 502
@@ -280,13 +276,13 @@ async def test_completed_stream_close_failure_preserves_success_lifecycle(
         ),
         patch("free_claude_code.providers.http.trace_event") as trace_event,
     ):
-        emitted = await collect_anthropic(
-            provider.stream_response(
-                canonical_request(request),
+        emitted = [
+            event
+            async for event in provider.stream_response(
+                request,
                 request_id="req_successful_close_failure",
-                provider_model=(request).model,
             )
-        )
+        ]
 
     events = parse_sse_text("".join(emitted))
     assert events[-1].event == "message_stop"
@@ -358,11 +354,7 @@ async def test_closing_public_openai_stream_closes_raw_stream_once() -> None:
         new_callable=AsyncMock,
         return_value=raw_stream,
     ):
-        stream = provider.stream_response(
-            canonical_request(request),
-            request_id="req_early_close",
-            provider_model=(request).model,
-        )
+        stream = provider.stream_response(request, request_id="req_early_close")
         await anext(stream)
         assert isinstance(stream, AsyncCloseable)
         await stream.aclose()

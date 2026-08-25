@@ -1,15 +1,13 @@
 from copy import deepcopy
 from typing import Any
 
+from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.reasoning import ReasoningPolicy
-from free_claude_code.providers.openai_chat.request_codec import ReasoningReplayMode
 from free_claude_code.providers.openai_chat.request_policy import (
     OpenAIChatRequestPolicy,
     build_openai_chat_request_body,
 )
-from free_claude_code.providers.openai_compat import OpenAIToolNameCodec
-from tests.providers.request_factory import canonical_request
 
 _POLICY = OpenAIChatRequestPolicy(
     provider_name="TEST",
@@ -69,14 +67,10 @@ def _request(name: str, *, continued: bool = False) -> MessagesRequest:
 
 
 def _body(request: MessagesRequest, *, postprocessors=()) -> dict[str, Any]:
-    canonical = canonical_request(request)
     return build_openai_chat_request_body(
-        canonical,
-        provider_model=canonical.model,
+        request,
         reasoning=ReasoningPolicy.provider_default(),
         policy=_POLICY,
-        tool_names=OpenAIToolNameCodec.from_request(canonical),
-        replay_scope=None,
         postprocessors=postprocessors,
     )
 
@@ -103,13 +97,13 @@ def test_chat_request_uses_one_alias_in_definition_choice_and_history() -> None:
     assistant = next(message for message in messages if message["role"] == "assistant")
     assert assistant["tool_calls"][0]["function"] == {
         "name": alias,
-        "arguments": '{"value":"x"}',
+        "arguments": '{"value": "x"}',
     }
     assert assistant["tool_calls"][0]["id"] == "call_1"
     assert request.model_dump() == snapshot
 
 
-def test_provider_postprocessors_observe_final_upstream_tool_names() -> None:
+def test_chat_name_encoding_runs_after_provider_postprocessors() -> None:
     original = "mcp__postprocessor_order__" + "x" * 80
     request = _request(original)
     observed: list[str] = []
@@ -119,9 +113,8 @@ def test_provider_postprocessors_observe_final_upstream_tool_names() -> None:
 
     body = _body(request, postprocessors=(observe_names,))
 
-    alias = body["tools"][0]["function"]["name"]
-    assert alias != original
-    assert observed == [alias]
+    assert observed == [original]
+    assert body["tools"][0]["function"]["name"] != original
 
 
 def test_chat_aliases_remain_stable_for_append_only_requests() -> None:
@@ -147,21 +140,11 @@ def test_chat_encoding_does_not_rewrite_unrelated_name_fields() -> None:
     )
     snapshot = deepcopy(request.extra_body)
 
-    canonical = canonical_request(request)
     body = build_openai_chat_request_body(
-        canonical,
-        provider_model=canonical.model,
+        request,
         reasoning=ReasoningPolicy.provider_default(),
         policy=policy,
-        tool_names=OpenAIToolNameCodec.from_request(canonical),
-        replay_scope=None,
     )
 
     assert body["extra_body"] == snapshot
-    tools = body["tools"]
-    assert isinstance(tools, list)
-    tool = tools[0]
-    assert isinstance(tool, dict)
-    function = tool["function"]
-    assert isinstance(function, dict)
-    assert function["name"] != original
+    assert body["tools"][0]["function"]["name"] != original

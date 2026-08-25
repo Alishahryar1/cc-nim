@@ -6,10 +6,9 @@ from unittest.mock import AsyncMock, MagicMock, patch
 import pytest
 
 from free_claude_code.config.provider_catalog import HUGGINGFACE_DEFAULT_BASE
+from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
-from free_claude_code.providers.openai_chat import ReasoningReplayMode
-from tests.inference_support import collect_anthropic
-from tests.providers.request_factory import canonical_request, make_messages_request
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     immediate_admission,
     make_provider_config,
@@ -76,9 +75,7 @@ def test_build_request_body_keeps_max_tokens(huggingface_provider):
             "max_tokens": 42,
         }
 
-        body = huggingface_provider._build_request_body(
-            canonical_request(make_request()), provider_model=(make_request()).model
-        )
+        body = huggingface_provider._build_request_body(make_request())
 
     mock_convert.assert_called_once()
     assert (
@@ -94,9 +91,7 @@ def test_build_request_body_preserves_caller_extra_body(huggingface_provider):
     extra_body = {"provider": "auto", "routing": {"bill_to": "my-org"}}
     req = make_request(extra_body=extra_body)
 
-    body = huggingface_provider._build_request_body(
-        canonical_request(req), provider_model=(req).model
-    )
+    body = huggingface_provider._build_request_body(req)
 
     assert body["extra_body"] == extra_body
     assert body["extra_body"] is not extra_body
@@ -115,9 +110,8 @@ def test_build_request_body_leaves_reasoning_control_to_selected_upstream(
     huggingface_provider, reasoning
 ):
     body = huggingface_provider._build_request_body(
-        canonical_request(make_request()),
+        make_request(),
         reasoning=reasoning,
-        provider_model=(make_request()).model,
     )
 
     assert "reasoning_effort" not in body
@@ -142,9 +136,7 @@ def test_build_request_body_does_not_replay_prior_thinking_blocks(
         ],
     )
 
-    body = huggingface_provider._build_request_body(
-        canonical_request(req), provider_model=(req).model
-    )
+    body = huggingface_provider._build_request_body(req)
 
     assert body["messages"] == [{"role": "assistant", "content": "visible answer"}]
     assert "reasoning_content" not in body["messages"][0]
@@ -165,9 +157,7 @@ def test_build_request_body_does_not_replay_top_level_reasoning_content(
         ],
     )
 
-    body = huggingface_provider._build_request_body(
-        canonical_request(req), provider_model=(req).model
-    )
+    body = huggingface_provider._build_request_body(req)
 
     assert body["messages"] == [{"role": "assistant", "content": "visible answer"}]
     assert "hidden prior reasoning" not in str(body)
@@ -196,11 +186,10 @@ async def test_stream_response_text(huggingface_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = await collect_anthropic(
-            huggingface_provider.stream_response(
-                canonical_request(make_request()), provider_model=(make_request()).model
-            )
-        )
+        events = [
+            event
+            async for event in huggingface_provider.stream_response(make_request())
+        ]
 
     assert any(
         '"text_delta"' in event and "Hello from Hugging Face" in event
@@ -231,11 +220,10 @@ async def test_stream_response_reasoning_content(huggingface_provider):
     ) as mock_create:
         mock_create.return_value = mock_stream()
 
-        events = await collect_anthropic(
-            huggingface_provider.stream_response(
-                canonical_request(make_request()), provider_model=(make_request()).model
-            )
-        )
+        events = [
+            event
+            async for event in huggingface_provider.stream_response(make_request())
+        ]
 
     assert any(
         '"thinking_delta"' in event and "Thinking via router" in event

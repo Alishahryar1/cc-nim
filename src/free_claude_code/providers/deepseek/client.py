@@ -2,7 +2,7 @@
 
 from typing import Any
 
-from free_claude_code.core.inference import InferenceRequest
+from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY, ReasoningPolicy
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
@@ -35,18 +35,16 @@ class DeepSeekProvider(OpenAIChatProvider):
 
     def _build_request_body(
         self,
-        request: InferenceRequest,
+        request: MessagesRequest,
         *,
-        provider_model: str,
         reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
     ) -> dict:
         return build_deepseek_request_body(
             request,
-            provider_model=provider_model,
             reasoning=reasoning,
         )
 
-    def _usage_fields(self, usage_info: Any) -> dict[str, int]:
+    def _anthropic_usage_fields(self, usage_info: Any) -> dict[str, int]:
         cache_hit_tokens = usage_int(usage_info, "prompt_cache_hit_tokens")
         cache_miss_tokens = usage_int(usage_info, "prompt_cache_miss_tokens")
         if (

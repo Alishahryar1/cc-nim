@@ -128,7 +128,7 @@ def test_count_tokens_endpoint(client):
         "messages": [{"role": "user", "content": "hello"}],
     }
 
-    with patch("free_claude_code.api.routes.get_inference_token_count", return_value=5):
+    with patch("free_claude_code.api.routes.get_token_count", return_value=5):
         response = client.post("/v1/messages/count_tokens", json=payload)
 
     assert response.status_code == 200
@@ -136,14 +136,14 @@ def test_count_tokens_endpoint(client):
 
 
 def test_count_tokens_error_returns_500(client):
-    """When canonical token counting raises, count_tokens returns 500."""
+    """When get_token_count raises, count_tokens returns 500."""
     payload = {
         "model": "claude-3-sonnet",
         "messages": [{"role": "user", "content": "hello"}],
     }
 
     with patch(
-        "free_claude_code.api.routes.get_inference_token_count",
+        "free_claude_code.api.routes.get_token_count",
         side_effect=RuntimeError("token error"),
     ):
         response = client.post("/v1/messages/count_tokens", json=payload)

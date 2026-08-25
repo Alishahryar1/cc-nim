@@ -7,8 +7,7 @@ from unittest.mock import patch
 import httpx
 import pytest
 
-from free_claude_code.core.anthropic import AnthropicEventPresenter
-from free_claude_code.core.anthropic.ingress import AnthropicIngressError
+from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import (
     assert_anthropic_stream_contract,
@@ -17,7 +16,6 @@ from free_claude_code.core.anthropic.stream_contracts import (
 )
 from free_claude_code.core.diagnostics import ERROR_DETAIL_DISPLAY_CAP_BYTES
 from free_claude_code.core.failures import ExecutionFailure
-from free_claude_code.core.inference import InferenceEvent
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
@@ -26,8 +24,6 @@ from free_claude_code.providers.openai_codex.auth import (
     OpenAIAuthManager,
 )
 from free_claude_code.providers.openai_codex.provider import OpenAICodexProvider
-from tests.inference_support import collect_anthropic
-from tests.providers.request_factory import canonical_request
 from tests.providers.support import make_provider_config
 
 
@@ -162,8 +158,8 @@ def _complete_stream(text: str) -> str:
     )
 
 
-async def _collect(stream: AsyncIterator[InferenceEvent]) -> str:
-    return "".join(await collect_anthropic(stream))
+async def _collect(stream: AsyncIterator[str]) -> str:
+    return "".join([chunk async for chunk in stream])
 
 
 @pytest.mark.asyncio
@@ -207,12 +203,11 @@ async def test_provider_uses_subscription_headers_and_visible_model_catalog() ->
     infos = await provider.list_model_infos()
     body = await _collect(
         provider.stream_response(
-            canonical_request(_request()),
+            _request(),
             input_tokens=3,
             request_id="req_test",
             response_model="claude-opus-4",
             reasoning=ReasoningPolicy.provider_default(),
-            provider_model=(_request()).model,
         )
     )
 
@@ -303,23 +298,11 @@ async def test_generation_close_failure_preserves_success_and_permit() -> None:
     )
 
     first = await asyncio.wait_for(
-        _collect(
-            provider.stream_response(
-                canonical_request(_request()),
-                response_model="claude-opus-4",
-                provider_model=(_request()).model,
-            )
-        ),
+        _collect(provider.stream_response(_request(), response_model="claude-opus-4")),
         timeout=1,
     )
     second = await asyncio.wait_for(
-        _collect(
-            provider.stream_response(
-                canonical_request(_request()),
-                response_model="claude-opus-4",
-                provider_model=(_request()).model,
-            )
-        ),
+        _collect(provider.stream_response(_request(), response_model="claude-opus-4")),
         timeout=1,
     )
 
@@ -354,10 +337,9 @@ async def test_generation_close_failure_preserves_provider_failure() -> None:
     with pytest.raises(ExecutionFailure) as exc_info:
         await _collect(
             provider.stream_response(
-                canonical_request(_request()),
+                _request(),
                 request_id="req_close_failure",
                 response_model="claude-opus-4",
-                provider_model=(_request()).model,
             )
         )
 
@@ -392,18 +374,15 @@ async def test_provider_accepts_claude_client_controls_before_upstream_io() -> N
     original_request = request.model_dump()
     reasoning = ReasoningPolicy.on(effort=ReasoningEffort.HIGH)
 
-    provider.preflight_stream(
-        canonical_request(request), reasoning=reasoning, provider_model=(request).model
-    )
+    provider.preflight_stream(request, reasoning=reasoning)
     assert requests == []
 
     body = await _collect(
         provider.stream_response(
-            canonical_request(request),
+            request,
             request_id="req_client_controls",
             response_model="claude-opus-4",
             reasoning=reasoning,
-            provider_model=(request).model,
         )
     )
 
@@ -422,6 +401,7 @@ async def test_provider_accepts_claude_client_controls_before_upstream_io() -> N
     await client.aclose()
 
 
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
     ("field", "value", "error_path"),
     [
@@ -444,19 +424,35 @@ async def test_provider_accepts_claude_client_controls_before_upstream_io() -> N
         ),
     ],
 )
-def test_ingress_rejects_unrepresentable_client_controls(
+async def test_provider_preflight_rejects_unrepresentable_client_controls(
     field: str,
     value: object,
     error_path: str,
 ) -> None:
+    requests: list[httpx.Request] = []
+
+    def handler(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        return httpx.Response(500, request=request)
+
+    client = httpx.AsyncClient(
+        base_url="https://chatgpt.com/backend-api/codex/",
+        transport=httpx.MockTransport(handler),
+    )
+    provider = OpenAICodexProvider(
+        _config(), auth=_FakeAuth(), admission=_admission(), client=client
+    )
     payload = {
         "model": "gpt-test",
         "messages": [{"role": "user", "content": "hello"}],
         field: value,
     }
 
-    with pytest.raises(AnthropicIngressError, match=error_path):
-        canonical_request(MessagesRequest.model_validate(payload))
+    with pytest.raises(InvalidRequestError, match=error_path):
+        provider.preflight_stream(MessagesRequest.model_validate(payload))
+
+    assert requests == []
+    await client.aclose()
 
 
 @pytest.mark.asyncio
@@ -534,11 +530,7 @@ async def test_provider_round_trips_portable_tool_name_alias() -> None:
         _config(), auth=_FakeAuth(), admission=_admission(), client=client
     )
 
-    body = await _collect(
-        provider.stream_response(
-            canonical_request(request), provider_model=(request).model
-        )
-    )
+    body = await _collect(provider.stream_response(request))
 
     payload = payloads[0]
     alias = payload["tools"][0]["name"]
@@ -594,10 +586,9 @@ async def test_early_truncated_attempt_is_retried_without_duplicate_output() -> 
 
     body = await _collect(
         provider.stream_response(
-            canonical_request(_request()),
+            _request(),
             request_id="req_retry",
             response_model="claude-opus-4",
-            provider_model=(_request()).model,
         )
     )
 
@@ -639,10 +630,9 @@ async def test_pre_stream_retry_discards_held_message_start() -> None:
 
     body = await _collect(
         provider.stream_response(
-            canonical_request(_request()),
+            _request(),
             request_id="req_pre_stream",
             response_model="claude-opus-4",
-            provider_model=(_request()).model,
         )
     )
 
@@ -685,10 +675,9 @@ async def test_non_streaming_success_is_retried_then_reports_bounded_body() -> N
     with pytest.raises(ExecutionFailure) as exc_info:
         await _collect(
             provider.stream_response(
-                canonical_request(_request()),
+                _request(),
                 request_id="req_non_stream",
                 response_model="claude-opus-4",
-                provider_model=(_request()).model,
             )
         )
 
@@ -737,16 +726,14 @@ async def test_truncated_attempt_after_commit_is_not_retried_or_duplicated() -> 
         _config(), auth=_FakeAuth(), admission=_admission(), client=client
     )
     chunks: list[str] = []
-    presenter = AnthropicEventPresenter()
 
     with pytest.raises(ExecutionFailure):
-        async for event in provider.stream_response(
-            canonical_request(_request()),
+        async for chunk in provider.stream_response(
+            _request(),
             request_id="req_committed",
             response_model="claude-opus-4",
-            provider_model=(_request()).model,
         ):
-            chunks.extend(presenter.present(event))
+            chunks.extend((chunk,))
 
     body = "".join(chunks)
     assert attempts == 1
@@ -788,10 +775,9 @@ async def test_unauthorized_response_forces_one_auth_refresh() -> None:
 
     body = await _collect(
         provider.stream_response(
-            canonical_request(_request()),
+            _request(),
             request_id="req_auth",
             response_model="claude-opus-4",
-            provider_model=(_request()).model,
         )
     )
 
@@ -903,10 +889,9 @@ async def test_auth_refresh_failure_does_not_repeat_rejected_provider_call() -> 
     with pytest.raises(ExecutionFailure, match="refresh interrupted") as exc_info:
         await _collect(
             provider.stream_response(
-                canonical_request(_request()),
+                _request(),
                 request_id="req_auth_transient",
                 response_model="claude-opus-4",
-                provider_model=(_request()).model,
             )
         )
 
@@ -940,10 +925,9 @@ async def test_second_unauthorized_response_is_terminal_without_refresh_loop() -
     with pytest.raises(ExecutionFailure) as exc_info:
         await _collect(
             provider.stream_response(
-                canonical_request(_request()),
+                _request(),
                 request_id="req_auth_terminal",
                 response_model="claude-opus-4",
-                provider_model=(_request()).model,
             )
         )
 
@@ -979,10 +963,9 @@ async def test_final_attempt_unauthorized_preserves_the_provider_401() -> None:
     with pytest.raises(ExecutionFailure) as exc_info:
         await _collect(
             provider.stream_response(
-                canonical_request(_request()),
+                _request(),
                 request_id="req_final_401",
                 response_model="claude-opus-4",
-                provider_model=(_request()).model,
             )
         )
 
@@ -1032,10 +1015,9 @@ async def test_stream_failure_redacts_credentials_from_customer_diagnostic() -> 
     with pytest.raises(ExecutionFailure) as exc_info:
         await _collect(
             provider.stream_response(
-                canonical_request(_request()),
+                _request(),
                 request_id="req_redaction",
                 response_model="claude-opus-4",
-                provider_model=(_request()).model,
             )
         )
 

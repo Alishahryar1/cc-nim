@@ -71,7 +71,7 @@ PROVIDER_SMOKE_DEFAULT_MODELS: dict[str, str] = {
     "zai_api": "zai_api/glm-4.7-flash",
     "gemini": "gemini/models/gemini-3.1-flash-lite",
     "vertex": "vertex/google/gemini-3.5-flash",
-    "groq": "groq/openai/gpt-oss-120b",
+    "groq": "groq/llama-3.3-70b-versatile",
     "cline_pass": "cline_pass/cline-pass/deepseek-v4-flash",
     "xai": "xai/grok-4.5",
     "qwencloud": "qwencloud/qwen3.7-plus",

@@ -1,5 +1,6 @@
 """Google AI Studio Gemini provider (OpenAI-compatible chat completions)."""
 
+from free_claude_code.core.anthropic import ReasoningReplayMode
 from free_claude_code.providers.admission import ProviderAdmissionController
 from free_claude_code.providers.base import ProviderConfig
 from free_claude_code.providers.google_openai import (
@@ -10,7 +11,6 @@ from free_claude_code.providers.google_openai import (
 from free_claude_code.providers.openai_chat import (
     OpenAIChatProfile,
     OpenAIChatRequestPolicy,
-    ReasoningReplayMode,
 )
 
 _REQUEST_POLICY = OpenAIChatRequestPolicy(

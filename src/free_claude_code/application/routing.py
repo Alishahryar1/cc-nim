@@ -1,4 +1,4 @@
-"""Provider model routing for canonical inference requests."""
+"""Model routing for Claude-compatible requests."""
 
 from dataclasses import dataclass
 
@@ -12,8 +12,8 @@ from free_claude_code.config.provider_catalog import (
 )
 from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.config.settings import Settings
+from free_claude_code.core.anthropic import MessagesRequest, TokenCountRequest
 from free_claude_code.core.gateway_model_ids import decode_gateway_model_id
-from free_claude_code.core.inference import InferenceRequest
 from free_claude_code.core.reasoning import ReasoningPolicy
 
 from .reasoning import resolve_reasoning_policy
@@ -46,15 +46,15 @@ class ResolvedModelRoute:
 
 
 @dataclass(frozen=True, slots=True)
-class RoutedInferenceRequest:
-    request: InferenceRequest
+class RoutedMessagesRequest:
+    request: MessagesRequest
     resolved: ResolvedModelRoute
     reasoning: ReasoningPolicy
 
 
 @dataclass(frozen=True, slots=True)
 class RoutedTokenCountRequest:
-    request: InferenceRequest
+    request: TokenCountRequest
     resolved: ResolvedModelRoute
 
 
@@ -187,23 +187,28 @@ class ModelRouter:
             None,
         )
 
-    def resolve_inference_request(
-        self, request: InferenceRequest
-    ) -> RoutedInferenceRequest:
+    def resolve_messages_request(
+        self, request: MessagesRequest
+    ) -> RoutedMessagesRequest:
         """Return an internal routed request context."""
         resolved = self.resolve(request.model)
-        return RoutedInferenceRequest(
-            request=request,
+        routed = request.model_copy(deep=True)
+        routed.model = resolved.primary.provider_model
+        return RoutedMessagesRequest(
+            request=routed,
             resolved=resolved,
             reasoning=resolve_reasoning_policy(
-                request.reasoning,
+                routed,
                 resolved.reasoning_preference,
             ),
         )
 
     def resolve_token_count_request(
-        self, request: InferenceRequest
+        self, request: TokenCountRequest
     ) -> RoutedTokenCountRequest:
         """Return an internal token-count request context."""
         resolved = self.resolve(request.model)
-        return RoutedTokenCountRequest(request=request, resolved=resolved)
+        routed = request.model_copy(
+            update={"model": resolved.primary.provider_model}, deep=True
+        )
+        return RoutedTokenCountRequest(request=routed, resolved=resolved)

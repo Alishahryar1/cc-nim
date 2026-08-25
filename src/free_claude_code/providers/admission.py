@@ -278,7 +278,7 @@ class ProviderAttempt:
         await self.aclose()
 
     async def accept(self) -> None:
-        """Record first upstream reachability and close a recovery episode if probing."""
+        """Record a valid upstream response and close a recovery episode if probing."""
         if self._resolved or self._closed:
             return
         await self._controller._attempt_accepted(self._execution, self._permit)

@@ -1,4 +1,4 @@
-"""OpenAI Chat continuation and tool-repair transformations."""
+"""Pure Anthropic continuation and tool-repair transformations."""
 
 import json
 from copy import deepcopy
@@ -8,11 +8,7 @@ from typing import Any
 import jsonschema
 from loguru import logger
 
-from free_claude_code.core.inference import (
-    FunctionTool,
-    InferenceRequest,
-    thaw_json_object,
-)
+from ..models import MessagesRequest
 
 _RECOVERY_USER_PREFIX = (
     "The previous provider stream was interrupted. Continue the assistant response "
@@ -25,7 +21,7 @@ _RECOVERY_THINKING_PREFIX = (
 
 @dataclass(frozen=True, slots=True)
 class ToolSchema:
-    """Tool schema resolved from the original canonical request."""
+    """Tool schema resolved from the original Anthropic request."""
 
     name: str
     input_schema: dict[str, Any]
@@ -39,16 +35,20 @@ class ToolRepair:
     parsed_input: dict[str, Any]
 
 
-def tool_schemas_by_name(request: InferenceRequest) -> dict[str, ToolSchema]:
-    """Return canonical function-tool schemas keyed by tool name."""
+def tool_schemas_by_name(request: MessagesRequest) -> dict[str, ToolSchema]:
+    """Return Anthropic tool input schemas keyed by tool name."""
     schemas: dict[str, ToolSchema] = {}
-    for tool in request.tools:
-        if not isinstance(tool, FunctionTool):
-            continue
+    tools = request.tools
+    if not tools:
+        return schemas
+
+    for tool in tools:
         name = tool.name
         if not name:
             continue
-        schema = thaw_json_object(tool.input_schema)
+        schema = tool.input_schema
+        if schema is None:
+            schema = {"type": "object"}
         schemas[name] = ToolSchema(name=name, input_schema=deepcopy(schema))
     return schemas
 

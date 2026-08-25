@@ -13,7 +13,6 @@ from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
-from tests.providers.request_factory import canonical_request
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
@@ -65,9 +64,7 @@ def test_encodes_documented_reasoning_effort(
         }
     )
 
-    body = nebius_provider._build_request_body(
-        canonical_request(request), reasoning=reasoning, provider_model=(request).model
-    )
+    body = nebius_provider._build_request_body(request, reasoning=reasoning)
 
     assert body["reasoning_effort"] == expected
     assert "extra_body" not in body
@@ -92,9 +89,8 @@ def test_replays_reasoning_content(nebius_provider: OpenAIChatProvider) -> None:
     )
 
     body = nebius_provider._build_request_body(
-        canonical_request(request),
+        request,
         reasoning=reasoning_for(request),
-        provider_model=(request).model,
     )
 
     assert body["messages"][1] == {

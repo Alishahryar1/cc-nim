@@ -9,7 +9,6 @@ import pytest
 from openai import AsyncOpenAI
 
 from free_claude_code.application.errors import InvalidRequestError
-from free_claude_code.core.anthropic import AnthropicEventPresenter
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import (
     assert_anthropic_stream_contract,
@@ -19,8 +18,6 @@ from free_claude_code.core.anthropic.stream_contracts import (
 )
 from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.providers.openai_responses import OpenAIResponsesTransport
-from tests.inference_support import collect_anthropic
-from tests.providers.request_factory import canonical_request
 from tests.providers.support import REASONING_ON, immediate_admission
 
 
@@ -127,6 +124,7 @@ def _transport(client: AsyncOpenAI, *, max_attempts: int = 5):
         ),
         provider_name="TEST_RESPONSES",
         read_timeout_s=120.0,
+        log_raw_sse_events=False,
     )
 
 
@@ -134,16 +132,16 @@ async def _collect(
     transport: OpenAIResponsesTransport,
     request: MessagesRequest | None = None,
 ) -> list[str]:
-    return await collect_anthropic(
-        transport.stream_response(
-            canonical_request(request or _request()),
+    return [
+        chunk
+        async for chunk in transport.stream_response(
+            request or _request(),
             input_tokens=11,
             request_id="req_responses",
             response_model="public-model",
             reasoning=REASONING_ON,
-            provider_model=(request or _request()).model,
         )
-    )
+    ]
 
 
 @pytest.mark.asyncio
@@ -369,18 +367,16 @@ async def test_post_commit_truncation_is_not_replayed() -> None:
 
     client = _client(handler)
     chunks: list[str] = []
-    presenter = AnthropicEventPresenter()
     try:
         with pytest.raises(ExecutionFailure):
-            async for event in _transport(client).stream_response(
-                canonical_request(_request()),
+            async for chunk in _transport(client).stream_response(
+                _request(),
                 input_tokens=1,
                 request_id="req_committed",
                 response_model="public-model",
                 reasoning=REASONING_ON,
-                provider_model=(_request()).model,
             ):
-                chunks.extend(presenter.present(event))
+                chunks.extend((chunk,))
     finally:
         await client.close()
 
@@ -390,14 +386,11 @@ async def test_post_commit_truncation_is_not_replayed() -> None:
 
 
 class _BlockingBody(httpx2.AsyncByteStream):
-    def __init__(self, *prefix: bytes) -> None:
-        self._prefix = prefix
+    def __init__(self) -> None:
         self.entered = asyncio.Event()
         self.closed = asyncio.Event()
 
     async def __aiter__(self):
-        for chunk in self._prefix:
-            yield chunk
         self.entered.set()
         await asyncio.Event().wait()
         yield b""
@@ -417,37 +410,14 @@ async def test_cancellation_closes_the_sdk_stream() -> None:
         )
     )
     task = asyncio.create_task(_collect(_transport(client)))
-    await asyncio.wait_for(body.entered.wait(), timeout=3)
+    await asyncio.wait_for(body.entered.wait(), timeout=1)
     task.cancel()
     try:
         with pytest.raises(asyncio.CancelledError):
             await task
-        await asyncio.wait_for(body.closed.wait(), timeout=3)
+        await asyncio.wait_for(body.closed.wait(), timeout=1)
     finally:
         await client.close()
-
-
-@pytest.mark.asyncio
-async def test_terminal_event_closes_sdk_stream_without_waiting_for_eof() -> None:
-    body = _BlockingBody(
-        _sse(_text_delta("complete"), _completed_event()).encode(),
-    )
-    client = _client(
-        lambda _request: httpx2.Response(
-            200,
-            headers={"content-type": "text/event-stream"},
-            stream=body,
-        )
-    )
-    try:
-        chunks = await asyncio.wait_for(_collect(_transport(client)), timeout=3)
-        await asyncio.wait_for(body.closed.wait(), timeout=3)
-    finally:
-        await client.close()
-
-    parsed = parse_sse_text("".join(chunks))
-    assert text_content(parsed) == "complete"
-    assert_anthropic_stream_contract(parsed)
 
 
 @pytest.mark.asyncio
@@ -458,10 +428,6 @@ async def test_preflight_rejects_fields_responses_cannot_represent() -> None:
 
     try:
         with pytest.raises(InvalidRequestError, match="stop_sequences"):
-            transport.preflight_stream(
-                canonical_request(request),
-                reasoning=REASONING_ON,
-                provider_model=(request).model,
-            )
+            transport.preflight_stream(request, reasoning=REASONING_ON)
     finally:
         await client.close()
