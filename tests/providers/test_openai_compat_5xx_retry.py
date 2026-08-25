@@ -10,8 +10,7 @@ from httpx2 import Request, Response
 from free_claude_code.config.nim import NimSettings
 from free_claude_code.core.failures import ExecutionFailure
 from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
-from tests.inference_support import collect_anthropic
-from tests.providers.request_factory import canonical_request, make_messages_request
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     immediate_admission,
     make_provider_config,
@@ -73,9 +72,7 @@ async def test_nim_stream_retries_on_openai_5xx_then_streams(status_code):
         ) as mock_create,
     ):
         mock_create.side_effect = [_internal_5xx(status_code), mock_stream()]
-        events = await collect_anthropic(
-            provider.stream_response(canonical_request(req), provider_model=(req).model)
-        )
+        events = [e async for e in provider.stream_response(req)]
 
     assert mock_create.await_count == 2
     assert any("Hi" in e for e in events)
@@ -119,9 +116,7 @@ async def test_nim_stream_retries_on_pre_stream_connection_error_then_streams():
         ) as mock_create,
     ):
         mock_create.side_effect = [_connection_error(), mock_stream()]
-        events = await collect_anthropic(
-            provider.stream_response(canonical_request(req), provider_model=(req).model)
-        )
+        events = [e async for e in provider.stream_response(req)]
 
     assert mock_create.await_count == 2
     assert any("Recovered" in e for e in events)
@@ -156,13 +151,7 @@ async def test_nim_stream_connection_error_exhausted_emits_cause_chain():
         patch("free_claude_code.providers.openai_chat.provider.trace_event") as trace,
         pytest.raises(ExecutionFailure) as exc_info,
     ):
-        await collect_anthropic(
-            provider.stream_response(
-                canonical_request(req),
-                request_id="req_conn",
-                provider_model=(req).model,
-            )
-        )
+        [e async for e in provider.stream_response(req, request_id="req_conn")]
 
     assert mock_create.await_count == 5
     error_traces = [
@@ -215,11 +204,7 @@ async def test_nim_stream_openai_5xx_exhausted_emits_user_message(
     ):
         mock_create.side_effect = _internal_5xx(status_code)
         with pytest.raises(ExecutionFailure) as exc_info:
-            await collect_anthropic(
-                provider.stream_response(
-                    canonical_request(req), provider_model=(req).model
-                )
-            )
+            [e async for e in provider.stream_response(req)]
 
     assert mock_create.await_count == 5
     assert expect_substr in exc_info.value.message.lower()

@@ -19,7 +19,7 @@ def test_proxy_auth_accepts_x_api_key_and_rejects_other_legacy_headers():
         "messages": [{"role": "user", "content": "hello"}],
     }
 
-    with patch("free_claude_code.api.routes.get_inference_token_count", return_value=1):
+    with patch("free_claude_code.api.routes.get_token_count", return_value=1):
         r = client.post("/v1/messages/count_tokens", json=payload)
         assert r.status_code == 401
         assert r.json() == {"detail": "Missing proxy authentication token"}
@@ -64,7 +64,7 @@ def test_proxy_auth_ignores_conflicting_legacy_headers():
         "messages": [{"role": "user", "content": "hello"}],
     }
 
-    with patch("free_claude_code.api.routes.get_inference_token_count", return_value=2):
+    with patch("free_claude_code.api.routes.get_token_count", return_value=2):
         r = client.post(
             "/v1/messages/count_tokens",
             json=payload,
@@ -104,7 +104,7 @@ def test_proxy_auth_token_normalizes_configured_whitespace():
         "messages": [{"role": "user", "content": "hello"}],
     }
 
-    with patch("free_claude_code.api.routes.get_inference_token_count", return_value=3):
+    with patch("free_claude_code.api.routes.get_token_count", return_value=3):
         r = client.post(
             "/v1/messages/count_tokens",
             json=payload,

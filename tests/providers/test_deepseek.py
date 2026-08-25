@@ -1,6 +1,6 @@
 """Tests for DeepSeek OpenAI-compatible Chat Completions provider."""
 
-import json
+import logging
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -9,7 +9,6 @@ import pytest
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.config.constants import ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 from free_claude_code.config.provider_catalog import DEEPSEEK_DEFAULT_BASE
-from free_claude_code.core.anthropic.ingress import AnthropicIngressError
 from free_claude_code.core.anthropic.models import (
     ContentBlockDocument,
     ContentBlockImage,
@@ -19,8 +18,6 @@ from free_claude_code.core.anthropic.models import (
 )
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.providers.deepseek import DeepSeekProvider
-from tests.inference_support import collect_anthropic
-from tests.providers.request_factory import canonical_request
 from tests.providers.support import (
     REASONING_OFF,
     REASONING_ON,
@@ -144,7 +141,7 @@ def test_init(deepseek_config):
 def test_maps_only_complete_consistent_cache_usage(
     deepseek_provider, usage, expected
 ) -> None:
-    assert deepseek_provider._usage_fields(usage) == expected
+    assert deepseek_provider._anthropic_usage_fields(usage) == expected
 
 
 def test_build_request_body_openai_chat_shape(deepseek_provider):
@@ -155,9 +152,7 @@ def test_build_request_body_openai_chat_shape(deepseek_provider):
         system="S",
     )
     body = deepseek_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
     assert body["model"] == "deepseek-v4-pro"
     assert "stream" not in body
@@ -174,9 +169,7 @@ def test_build_request_body_default_max_tokens(deepseek_provider):
         messages=[Message(role="user", content="x")],
     )
     body = deepseek_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
     assert body["max_tokens"] == ANTHROPIC_DEFAULT_MAX_OUTPUT_TOKENS
 
@@ -190,9 +183,7 @@ def test_build_request_body_thinking_enabled(deepseek_provider):
         }
     )
     body = deepseek_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
     assert body["extra_body"]["thinking"] == {"type": "enabled"}
 
@@ -214,9 +205,7 @@ def test_build_request_body_tool_list_keeps_thinking(deepseek_provider):
     )
 
     body = deepseek_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
 
     assert body["extra_body"]["thinking"] == {"type": "enabled"}
@@ -234,9 +223,7 @@ def test_build_request_body_tool_choice_keeps_thinking(deepseek_provider):
     )
 
     body = deepseek_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
 
     assert body["extra_body"]["thinking"] == {"type": "enabled"}
@@ -263,9 +250,7 @@ def test_build_request_body_forced_tool_choice_downgrades_to_auto(
     )
 
     body = deepseek_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
 
     assert body["extra_body"]["thinking"] == {"type": "enabled"}
@@ -289,11 +274,7 @@ def test_build_request_body_encodes_reasoning_off():
             "thinking": {"type": "enabled", "budget_tokens": 1},
         }
     )
-    body = provider._build_request_body(
-        canonical_request(request),
-        reasoning=REASONING_OFF,
-        provider_model=(request).model,
-    )
+    body = provider._build_request_body(request, reasoning=REASONING_OFF)
     assert body["extra_body"]["thinking"] == {"type": "disabled"}
     assert "stream_options" not in body
 
@@ -318,9 +299,7 @@ def test_non_tool_thinking_is_omitted_from_first_replay(deepseek_provider):
         }
     )
     body = deepseek_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
     assert body["messages"][0] == {"role": "assistant", "content": "out"}
 
@@ -341,9 +320,7 @@ def test_strip_redacted_thinking_when_thinking_on(deepseek_provider):
         }
     )
     body = deepseek_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
     assert body["messages"][0] == {"role": "assistant", "content": "out"}
 
@@ -390,9 +367,7 @@ def test_tool_history_with_replayable_thinking_preserves_thinking(deepseek_provi
     )
 
     body = deepseek_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
 
     assert body["reasoning_effort"] == "high"
@@ -402,7 +377,7 @@ def test_tool_history_with_replayable_thinking_preserves_thinking(deepseek_provi
     assert assistant["content"] == ""
     assert assistant["reasoning_content"] == "hidden"
     assert assistant["tool_calls"][0]["function"]["name"] == "Read"
-    assert assistant["tool_calls"][0]["function"]["arguments"] == '{"file_path":"x"}'
+    assert assistant["tool_calls"][0]["function"]["arguments"] == '{"file_path": "x"}'
     assert body["messages"][1] == {
         "role": "tool",
         "tool_call_id": "t1",
@@ -443,9 +418,7 @@ def test_tool_history_with_unsigned_thinking_preserves_thinking(deepseek_provide
     )
 
     body = deepseek_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
 
     assert body["extra_body"]["thinking"] == {"type": "enabled"}
@@ -491,16 +464,16 @@ def test_tool_history_without_thinking_disables_thinking_and_hints(deepseek_prov
             "context_management": {
                 "edits": [
                     {"type": "clear_thinking_20251015", "keep": "all"},
+                    {"type": "other_edit", "keep": "all"},
                 ],
+                "other": True,
             },
-            "output_config": {"effort": "high"},
+            "output_config": {"effort": "high", "format": "text"},
         }
     )
 
     body = deepseek_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
 
     assert body["extra_body"]["thinking"] == {"type": "disabled"}
@@ -545,9 +518,7 @@ def test_tool_history_with_empty_thinking_preserves_reasoning_state(deepseek_pro
     )
 
     body = deepseek_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
 
     assert body["extra_body"]["thinking"] == {"type": "enabled"}
@@ -590,9 +561,7 @@ def test_tool_history_with_empty_top_level_reasoning_preserves_reasoning_state(
     )
 
     body = deepseek_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
 
     assert body["extra_body"]["thinking"] == {"type": "enabled"}
@@ -624,11 +593,7 @@ def test_thinking_off_strips_thinking_history():
             ],
         }
     )
-    body = provider._build_request_body(
-        canonical_request(request),
-        reasoning=REASONING_OFF,
-        provider_model=(request).model,
-    )
+    body = provider._build_request_body(request, reasoning=REASONING_OFF)
     assert "reasoning_content" not in body["messages"][0]
     assert "sec" not in str(body["messages"])
 
@@ -673,11 +638,7 @@ def test_thinking_off_still_replays_required_tool_reasoning():
         }
     )
 
-    body = provider._build_request_body(
-        canonical_request(request),
-        reasoning=REASONING_OFF,
-        provider_model=(request).model,
-    )
+    body = provider._build_request_body(request, reasoning=REASONING_OFF)
 
     assert body["extra_body"]["thinking"] == {"type": "disabled"}
     assert body["messages"][0]["reasoning_content"] == "required"
@@ -713,16 +674,14 @@ def test_passthrough_tool_use_and_result(deepseek_provider):
         }
     )
     body = deepseek_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
     assert body["messages"][0]["tool_calls"][0]["function"]["name"] == "n"
     assert body["messages"][1]["role"] == "tool"
 
 
-def test_preflight_rejects_user_image_for_non_vision_model():
-    """Unsupported image input is rejected instead of being silently discarded."""
+def test_preflight_strips_user_image():
+    """Image blocks are silently stripped (DeepSeek lacks vision); request must not fail."""
     request = MessagesRequest(
         model="m",
         messages=[
@@ -750,12 +709,12 @@ def test_preflight_rejects_user_image_for_non_vision_model():
         ),
         admission=immediate_admission(),
     )
-    with pytest.raises(InvalidRequestError, match="does not support image content"):
-        provider.preflight_stream(
-            canonical_request(request),
-            reasoning=REASONING_ON,
-            provider_model=request.model,
-        )
+    # Should not raise; image is stripped.
+    provider.preflight_stream(request, reasoning=REASONING_ON)
+    body = provider._build_request_body(request, reasoning=reasoning_for(request))
+    content = body["messages"][0]["content"]
+    assert "attachment omitted" in content.lower()
+    assert "image or document inputs" in content.lower()
 
 
 def test_vision_model_forwards_user_image():
@@ -789,16 +748,8 @@ def test_vision_model_forwards_user_image():
         admission=immediate_admission(),
     )
     # Must not raise on preflight (no InvalidRequestError for image blocks).
-    provider.preflight_stream(
-        canonical_request(request),
-        reasoning=REASONING_ON,
-        provider_model=(request).model,
-    )
-    body = provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
-    )
+    provider.preflight_stream(request, reasoning=REASONING_ON)
+    body = provider._build_request_body(request, reasoning=reasoning_for(request))
     content = body["messages"][0]["content"]
     assert isinstance(content, list)
     image_parts = [
@@ -816,8 +767,8 @@ def test_vision_model_forwards_user_image():
     assert text_parts[0]["text"] == "Describe this image"
 
 
-def test_vision_model_rejects_user_document():
-    """Unsupported document input is rejected instead of being silently discarded."""
+def test_vision_model_strips_user_document():
+    """Vision models still omit documents; conversion has no document parts."""
     request = MessagesRequest(
         model="deepseek-v4-flash-vision-exp",
         messages=[
@@ -845,35 +796,66 @@ def test_vision_model_rejects_user_document():
         ),
         admission=immediate_admission(),
     )
-    with pytest.raises(InvalidRequestError, match="does not support document content"):
-        provider.preflight_stream(
-            canonical_request(request),
-            reasoning=REASONING_ON,
-            provider_model=request.model,
+    provider.preflight_stream(request, reasoning=REASONING_ON)
+    body = provider._build_request_body(request, reasoning=reasoning_for(request))
+    content = body["messages"][0]["content"]
+    assert content
+    if isinstance(content, str):
+        lowered = content.lower()
+    else:
+        texts = [
+            part.get("text", "")
+            for part in content
+            if isinstance(part, dict) and part.get("type") == "text"
+        ]
+        lowered = "\n".join(texts).lower()
+        assert not any(
+            isinstance(part, dict) and part.get("type") == "image_url"
+            for part in content
         )
+    assert "attachment omitted" in lowered
+    assert "image or document inputs" in lowered
 
 
-def test_ingress_rejects_mcp_servers_before_provider_preflight():
+def test_preflight_rejects_mcp_servers():
     request = MessagesRequest(
         model="m",
         messages=[Message(role="user", content="x")],
         mcp_servers=[{"type": "url", "url": "https://x"}],
     )
-    with pytest.raises(AnthropicIngressError, match="mcp_servers"):
-        canonical_request(request)
+    provider = DeepSeekProvider(
+        make_provider_config(
+            api_key="k",
+            base_url=DEEPSEEK_DEFAULT_BASE,
+            rate_limit=1,
+            rate_window=1,
+        ),
+        admission=immediate_admission(),
+    )
+    with pytest.raises(InvalidRequestError, match="mcp_servers"):
+        provider.preflight_stream(request)
 
 
-def test_ingress_rejects_server_tools_before_provider_preflight():
+def test_preflight_rejects_listed_server_tools_in_tools_list():
     request = MessagesRequest(
         model="m",
         messages=[Message(role="user", content="x")],
         tools=[Tool(name="web_search", type="web_search_20250305", input_schema={})],
     )
-    with pytest.raises(AnthropicIngressError, match="web_search"):
-        canonical_request(request)
+    provider = DeepSeekProvider(
+        make_provider_config(
+            api_key="k",
+            base_url=DEEPSEEK_DEFAULT_BASE,
+            rate_limit=1,
+            rate_window=1,
+        ),
+        admission=immediate_admission(),
+    )
+    with pytest.raises(InvalidRequestError, match="web_search"):
+        provider.preflight_stream(request)
 
 
-def test_ingress_rejects_server_tool_history_before_provider_preflight():
+def test_preflight_rejects_server_tool_result_blocks():
     request = MessagesRequest.model_validate(
         {
             "model": "m",
@@ -897,8 +879,17 @@ def test_ingress_rejects_server_tool_history_before_provider_preflight():
             ],
         }
     )
-    with pytest.raises(AnthropicIngressError, match=r"web_search_tool_result|server"):
-        canonical_request(request)
+    provider = DeepSeekProvider(
+        make_provider_config(
+            api_key="k",
+            base_url=DEEPSEEK_DEFAULT_BASE,
+            rate_limit=1,
+            rate_window=1,
+        ),
+        admission=immediate_admission(),
+    )
+    with pytest.raises(InvalidRequestError, match=r"web_search_tool_result|server"):
+        provider.preflight_stream(request)
 
 
 def test_non_tool_top_level_reasoning_is_not_replayed(deepseek_provider):
@@ -913,9 +904,7 @@ def test_non_tool_top_level_reasoning_is_not_replayed(deepseek_provider):
         ],
     )
     body = deepseek_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
     assert body["messages"][0] == {"role": "assistant", "content": "hi"}
 
@@ -952,9 +941,7 @@ def test_tool_call_top_level_reasoning_is_replayed(deepseek_provider):
     )
 
     body = deepseek_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
 
     assert body["messages"][0]["reasoning_content"] == "required"
@@ -1032,9 +1019,7 @@ async def test_wire_messages_keep_prefix_across_tool_thinking_fallback(
             }
         )
         return deepseek_provider._build_request_body(
-            canonical_request(request),
-            reasoning=reasoning_for(request),
-            provider_model=(request).model,
+            request, reasoning=reasoning_for(request)
         )
 
     first_wire = await capture_openai_chat_wire_body(build(prefix_messages))
@@ -1094,14 +1079,12 @@ async def test_stream_uses_chat_completions_and_maps_cache_usage(deepseek_provid
 
     create = AsyncMock(return_value=fake_stream())
     with patch.object(deepseek_provider._client.chat.completions, "create", create):
-        chunks = await collect_anthropic(
-            deepseek_provider.stream_response(
-                canonical_request(request),
-                input_tokens=7,
-                request_id="r1",
-                provider_model=(request).model,
+        chunks = [
+            chunk
+            async for chunk in deepseek_provider.stream_response(
+                request, input_tokens=7, request_id="r1"
             )
-        )
+        ]
 
     create.assert_awaited_once()
     await_args = create.await_args
@@ -1129,9 +1112,7 @@ def test_preserves_extra_body_for_openai_chat_request(deepseek_provider):
         "extra_body": {"note": 1},
     }
     r = MessagesRequest.model_validate(raw)
-    body = deepseek_provider._build_request_body(
-        canonical_request(r), reasoning=reasoning_for(r), provider_model=(r).model
-    )
+    body = deepseek_provider._build_request_body(r, reasoning=reasoning_for(r))
     assert body["extra_body"] == {"note": 1}
 
 
@@ -1170,9 +1151,7 @@ def test_normalizes_tool_result_content_array_to_string(deepseek_provider):
     )
 
     body = deepseek_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
 
     tool_result = body["messages"][1]
@@ -1182,8 +1161,8 @@ def test_normalizes_tool_result_content_array_to_string(deepseek_provider):
     assert "file2.txt" in tool_result["content"]
 
 
-def test_rejects_document_blocks_for_deepseek(deepseek_provider):
-    """DeepSeek rejects documents instead of forwarding a partial request."""
+def test_strips_document_blocks_for_deepseek(deepseek_provider):
+    """Document blocks (e.g. PDFs from Claude Code) are stripped since DeepSeek can't process them."""
     request = MessagesRequest.model_validate(
         {
             "model": "m",
@@ -1207,16 +1186,19 @@ def test_rejects_document_blocks_for_deepseek(deepseek_provider):
         }
     )
 
-    with pytest.raises(InvalidRequestError, match="does not support document content"):
-        deepseek_provider._build_request_body(
-            canonical_request(request),
-            reasoning=reasoning_for(request),
-            provider_model=request.model,
-        )
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
+
+    assert body["messages"][0] == {
+        "role": "tool",
+        "tool_call_id": "t1",
+        "content": "PDF text extracted",
+    }
 
 
-def test_rejects_image_blocks_for_deepseek(deepseek_provider):
-    """DeepSeek rejects unsupported images instead of forwarding a partial request."""
+def test_strips_image_blocks_for_deepseek(deepseek_provider):
+    """Image blocks are stripped for DeepSeek since it doesn't support vision."""
     request = MessagesRequest.model_validate(
         {
             "model": "m",
@@ -1239,12 +1221,11 @@ def test_rejects_image_blocks_for_deepseek(deepseek_provider):
         }
     )
 
-    with pytest.raises(InvalidRequestError, match="does not support image content"):
-        deepseek_provider._build_request_body(
-            canonical_request(request),
-            reasoning=reasoning_for(request),
-            provider_model=request.model,
-        )
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
+
+    assert body["messages"][0] == {"role": "user", "content": "describe this"}
 
 
 def test_normalizes_tool_result_content_dict_to_string(deepseek_provider):
@@ -1279,9 +1260,7 @@ def test_normalizes_tool_result_content_dict_to_string(deepseek_provider):
     )
 
     body = deepseek_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
 
     tool_result = body["messages"][1]
@@ -1291,8 +1270,8 @@ def test_normalizes_tool_result_content_dict_to_string(deepseek_provider):
     assert "success" in tool_result["content"]
 
 
-def test_preserves_image_descriptor_inside_tool_result(deepseek_provider):
-    """Opaque tool output stays lossless even when it describes an image."""
+def test_strips_image_block_inside_tool_result(deepseek_provider):
+    """Image blocks nested inside tool_result.content are stripped, not rejected."""
     request = MessagesRequest.model_validate(
         {
             "model": "m",
@@ -1333,21 +1312,20 @@ def test_preserves_image_descriptor_inside_tool_result(deepseek_provider):
     )
 
     body = deepseek_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
 
     tool_result = body["messages"][1]
     assert tool_result["role"] == "tool"
+    # After stripping + string-normalization, no base64/image marker survives.
     assert isinstance(tool_result["content"], str)
     assert "screenshot saved" in tool_result["content"]
-    assert "base64" in tool_result["content"]
-    assert "abc" in tool_result["content"]
+    assert "base64" not in tool_result["content"]
+    assert "abc" not in tool_result["content"]
 
 
-def test_image_only_tool_result_is_serialized_losslessly(deepseek_provider):
-    """An image descriptor returned by a tool remains opaque JSON output."""
+def test_image_only_tool_result_replaced_with_placeholder(deepseek_provider):
+    """A tool_result whose only inner block is an image becomes a placeholder string."""
     request = MessagesRequest.model_validate(
         {
             "model": "m",
@@ -1387,28 +1365,21 @@ def test_image_only_tool_result_is_serialized_losslessly(deepseek_provider):
     )
 
     body = deepseek_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
 
     tool_result = body["messages"][1]
     assert tool_result["role"] == "tool"
     assert isinstance(tool_result["content"], str)
-    assert json.loads(tool_result["content"]) == {
-        "type": "image",
-        "source": {
-            "type": "base64",
-            "media_type": "image/png",
-            "data": "abc",
-        },
-    }
+    assert tool_result["content"] != ""
+    assert "attachment omitted" in tool_result["content"].lower()
+    assert "image or document inputs" in tool_result["content"].lower()
 
 
-def test_document_only_tool_result_is_serialized_losslessly(
+def test_document_only_tool_result_replaced_with_generic_placeholder(
     deepseek_provider,
 ):
-    """A document descriptor returned by a tool remains opaque JSON output."""
+    """A document-only tool_result uses the generic attachment placeholder."""
     request = MessagesRequest.model_validate(
         {
             "model": "m",
@@ -1447,22 +1418,19 @@ def test_document_only_tool_result_is_serialized_losslessly(
     )
 
     body = deepseek_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
 
     tool_result = body["messages"][1]
     assert tool_result["role"] == "tool"
     assert isinstance(tool_result["content"], str)
-    assert json.loads(tool_result["content"]) == {
-        "type": "document",
-        "source": {"type": "file", "file_id": "file_pdf"},
-    }
+    assert "attachment omitted" in tool_result["content"].lower()
+    assert "document inputs" in tool_result["content"].lower()
+    assert "image omitted" not in tool_result["content"].lower()
 
 
-def test_image_only_message_is_rejected(deepseek_provider):
-    """A top-level unsupported image cannot be silently discarded."""
+def test_image_only_message_replaced_with_placeholder(deepseek_provider):
+    """A top-level image-only message remains non-empty after stripping."""
     request = MessagesRequest.model_validate(
         {
             "model": "m",
@@ -1484,16 +1452,17 @@ def test_image_only_message_is_rejected(deepseek_provider):
         }
     )
 
-    with pytest.raises(InvalidRequestError, match="does not support image content"):
-        deepseek_provider._build_request_body(
-            canonical_request(request),
-            reasoning=reasoning_for(request),
-            provider_model=request.model,
-        )
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
+
+    content = body["messages"][0]["content"]
+    assert "attachment omitted" in content.lower()
+    assert "image or document inputs" in content.lower()
 
 
-def test_document_only_message_is_rejected(deepseek_provider):
-    """A top-level unsupported document cannot be silently discarded."""
+def test_document_only_message_replaced_with_placeholder(deepseek_provider):
+    """A top-level document-only message remains non-empty after stripping."""
     request = MessagesRequest.model_validate(
         {
             "model": "m",
@@ -1511,9 +1480,90 @@ def test_document_only_message_is_rejected(deepseek_provider):
         }
     )
 
-    with pytest.raises(InvalidRequestError, match="does not support document content"):
-        deepseek_provider._build_request_body(
-            canonical_request(request),
-            reasoning=reasoning_for(request),
-            provider_model=request.model,
-        )
+    body = deepseek_provider._build_request_body(
+        request, reasoning=reasoning_for(request)
+    )
+
+    content = body["messages"][0]["content"]
+    assert "attachment omitted" in content.lower()
+    assert "document inputs" in content.lower()
+
+
+def test_warns_when_stripping_attachment_blocks(deepseek_provider, caplog):
+    """A warning is emitted when image/document blocks are dropped so users notice."""
+    request = MessagesRequest.model_validate(
+        {
+            "model": "m",
+            "messages": [
+                {
+                    "role": "user",
+                    "content": [
+                        {"type": "text", "text": "look"},
+                        {
+                            "type": "image",
+                            "source": {
+                                "type": "base64",
+                                "media_type": "image/png",
+                                "data": "abc",
+                            },
+                        },
+                    ],
+                },
+                {
+                    "role": "assistant",
+                    "content": [
+                        {
+                            "type": "tool_use",
+                            "id": "t1",
+                            "name": "Screenshot",
+                            "input": {},
+                        }
+                    ],
+                },
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "tool_result",
+                            "tool_use_id": "t1",
+                            "content": [
+                                {
+                                    "type": "image",
+                                    "source": {
+                                        "type": "base64",
+                                        "media_type": "image/png",
+                                        "data": "abc",
+                                    },
+                                },
+                            ],
+                        }
+                    ],
+                },
+            ],
+        }
+    )
+
+    with caplog.at_level(logging.WARNING):
+        deepseek_provider._build_request_body(request, reasoning=reasoning_for(request))
+
+    warnings = [r for r in caplog.records if r.levelno == logging.WARNING]
+    assert any("stripped unsupported attachment blocks" in r.message for r in warnings)
+
+
+def test_no_warning_when_no_attachments(deepseek_provider, caplog):
+    """No warning is emitted on plain text-only requests."""
+    request = MessagesRequest.model_validate(
+        {
+            "model": "m",
+            "messages": [{"role": "user", "content": "hello"}],
+        }
+    )
+
+    with caplog.at_level(logging.WARNING):
+        deepseek_provider._build_request_body(request, reasoning=reasoning_for(request))
+
+    assert not any(
+        "stripped unsupported attachment blocks" in r.message
+        for r in caplog.records
+        if r.levelno == logging.WARNING
+    )

@@ -26,7 +26,7 @@ from free_claude_code.providers.vertex.endpoint import (
     vertex_service_endpoint,
 )
 from free_claude_code.providers.vertex.models import extract_vertex_model_page
-from tests.providers.request_factory import canonical_request, make_messages_request
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     immediate_admission,
     make_provider_config,
@@ -247,11 +247,7 @@ def test_vertex_request_uses_google_thinking_budget_without_named_effort() -> No
         thinking={"type": "enabled", "budget_tokens": 2048},
     )
 
-    body = provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
-    )
+    body = provider._build_request_body(request, reasoning=reasoning_for(request))
 
     assert body["model"] == "google/gemini-3.5-flash"
     assert "reasoning_effort" not in body
@@ -268,11 +264,7 @@ def test_vertex_request_maps_reasoning_off_to_zero_budget() -> None:
         thinking={"type": "disabled"},
     )
 
-    body = provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
-    )
+    body = provider._build_request_body(request, reasoning=reasoning_for(request))
 
     assert body["extra_body"]["extra_body"]["google"]["thinking_config"] == {
         "thinking_budget": 0,
@@ -310,9 +302,8 @@ def test_vertex_reasoning_has_one_google_wire_owner(
     provider = _provider()
 
     body = provider._build_request_body(
-        canonical_request(make_messages_request("google/gemini", thinking=None)),
+        make_messages_request("google/gemini", thinking=None),
         reasoning=reasoning,
-        provider_model=(make_messages_request("google/gemini", thinking=None)).model,
     )
     wire = _simulate_openai_sdk_wire_json(body)
 
@@ -338,9 +329,8 @@ def test_vertex_preserves_caller_thinking_config_only_for_provider_default() -> 
     )
 
     body = provider._build_request_body(
-        canonical_request(request),
+        request,
         reasoning=ReasoningPolicy.provider_default(),
-        provider_model=(request).model,
     )
     wire = _simulate_openai_sdk_wire_json(body)
 
@@ -362,9 +352,8 @@ def test_vertex_rejects_caller_thinking_config_with_fcc_reasoning_control() -> N
 
     with pytest.raises(InvalidRequestError, match="thinking_config"):
         provider._build_request_body(
-            canonical_request(request),
+            request,
             reasoning=ReasoningPolicy.on(effort=ReasoningEffort.HIGH),
-            provider_model=(request).model,
         )
 
 

@@ -11,15 +11,15 @@ from openai.types.responses import ResponseStreamEvent
 from openai.types.responses.response_create_params import ResponseCreateParamsStreaming
 
 from free_claude_code.application.errors import InvalidRequestError
+from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.anthropic.openai_tool_names import OpenAIToolNameCodec
 from free_claude_code.core.diagnostics import extract_upstream_error_detail
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
-from free_claude_code.core.inference import (
-    InferenceEvent,
-    InferenceRequest,
-    ReplayCompatibilityScope,
-)
 from free_claude_code.core.openai_responses import (
     ResponsesConversionError,
+    ResponsesProviderStream,
+    ResponsesStreamFailure,
+    build_responses_provider_request,
 )
 from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.core.trace import trace_event
@@ -34,17 +34,10 @@ from free_claude_code.providers.failure_policy import (
     is_retryable_stream_error,
 )
 from free_claude_code.providers.http import ProviderAttemptScope, maybe_await_aclose
-from free_claude_code.providers.openai_compat import (
-    OpenAIToolNameCodec,
-    openai_replay_scope,
-)
 from free_claude_code.providers.stream_recovery import (
     RecoveryController,
     RecoveryFailureAction,
 )
-
-from .events import ResponsesEventDecoder, ResponsesStreamFailure
-from .request_codec import ResponsesRequestEncodingError, build_responses_request_body
 
 
 class _TruncatedResponsesStream(RetryableProviderProtocolError):
@@ -77,74 +70,53 @@ class OpenAIResponsesTransport:
         admission: ProviderAdmissionController,
         provider_name: str,
         read_timeout_s: float,
+        log_raw_sse_events: bool,
     ) -> None:
         self._client = client
         self._admission = admission
         self._provider_name = provider_name
         self._read_timeout_s = read_timeout_s
+        self._log_raw_sse_events = log_raw_sse_events
 
     def preflight_stream(
         self,
-        request: InferenceRequest,
+        request: MessagesRequest,
         *,
-        provider_model: str,
         reasoning: ReasoningPolicy,
     ) -> None:
-        self._build_body(request, provider_model=provider_model, reasoning=reasoning)
+        self._build_body(request, reasoning=reasoning)
 
     def stream_response(
         self,
-        request: InferenceRequest,
+        request: MessagesRequest,
         *,
-        provider_model: str,
         input_tokens: int,
         request_id: str | None,
         response_model: str,
         reasoning: ReasoningPolicy,
-    ) -> AsyncIterator[InferenceEvent]:
-        body = self._build_body(
-            request,
-            provider_model=provider_model,
-            reasoning=reasoning,
-        )
+    ) -> AsyncIterator[str]:
+        body = self._build_body(request, reasoning=reasoning)
         tool_names = OpenAIToolNameCodec.from_request(request)
-        replay_scope = openai_replay_scope(
-            self._provider_name,
-            provider_model,
-            replay_format="responses",
-        )
         return self._run_stream(
             body,
             input_tokens=input_tokens,
             request_id=request_id,
             response_model=response_model,
             tool_names=tool_names,
-            replay_scope=replay_scope,
         )
 
+    @staticmethod
     def _build_body(
-        self,
-        request: InferenceRequest,
+        request: MessagesRequest,
         *,
-        provider_model: str,
         reasoning: ReasoningPolicy,
     ) -> ResponseCreateParamsStreaming:
         try:
             return cast(
                 ResponseCreateParamsStreaming,
-                build_responses_request_body(
-                    request,
-                    provider_model=provider_model,
-                    reasoning=reasoning,
-                    tool_names=OpenAIToolNameCodec.from_request(request),
-                    replay_scope=openai_replay_scope(
-                        self._provider_name,
-                        provider_model,
-                        replay_format="responses",
-                    ),
-                ),
+                build_responses_provider_request(request, reasoning=reasoning),
             )
-        except (ResponsesConversionError, ResponsesRequestEncodingError) as exc:
+        except ResponsesConversionError as exc:
             raise InvalidRequestError(str(exc)) from exc
 
     async def _run_stream(
@@ -155,8 +127,7 @@ class OpenAIResponsesTransport:
         request_id: str | None,
         response_model: str,
         tool_names: OpenAIToolNameCodec,
-        replay_scope: ReplayCompatibilityScope,
-    ) -> AsyncIterator[InferenceEvent]:
+    ) -> AsyncIterator[str]:
         execution = self._admission.start_execution(request_id=request_id)
         provider_stream = self._run_execution(
             body,
@@ -164,7 +135,6 @@ class OpenAIResponsesTransport:
             request_id=request_id,
             response_model=response_model,
             tool_names=tool_names,
-            replay_scope=replay_scope,
             execution=execution,
         )
         try:
@@ -189,11 +159,10 @@ class OpenAIResponsesTransport:
         request_id: str | None,
         response_model: str,
         tool_names: OpenAIToolNameCodec,
-        replay_scope: ReplayCompatibilityScope,
         execution: ProviderExecution,
-    ) -> AsyncIterator[InferenceEvent]:
+    ) -> AsyncIterator[str]:
         recovery = RecoveryController()
-        response_id = f"response_{uuid.uuid4().hex}"
+        message_id = f"msg_{uuid.uuid4()}"
         trace_event(
             stage="provider",
             event="provider.request.sent",
@@ -207,12 +176,12 @@ class OpenAIResponsesTransport:
         )
 
         while execution.can_attempt:
-            stream_adapter = ResponsesEventDecoder(
-                response_id=response_id,
+            stream_adapter = ResponsesProviderStream(
+                message_id=message_id,
                 model=response_model,
                 input_tokens=input_tokens,
                 tool_names=tool_names,
-                replay_scope=replay_scope,
+                log_raw_events=self._log_raw_sse_events,
             )
             for event in stream_adapter.start():
                 for held in recovery.push(event):

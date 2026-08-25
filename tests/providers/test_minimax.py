@@ -15,8 +15,6 @@ from free_claude_code.core.anthropic.stream_contracts import (
     thinking_content,
 )
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
-from tests.inference_support import collect_anthropic
-from tests.providers.request_factory import canonical_request
 from tests.providers.support import (
     REASONING_OFF,
     immediate_admission,
@@ -103,9 +101,7 @@ def test_build_request_body_requests_split_output_and_max_completion_tokens(
     )
 
     body = minimax_provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
+        request, reasoning=reasoning_for(request)
     )
 
     assert body["model"] == "MiniMax-M3"
@@ -123,11 +119,7 @@ def test_build_request_body_does_not_invent_unsupported_compute_control(
         messages=[Message(role="user", content="Hello")],
     )
 
-    body = minimax_provider._build_request_body(
-        canonical_request(request),
-        reasoning=REASONING_OFF,
-        provider_model=(request).model,
-    )
+    body = minimax_provider._build_request_body(request, reasoning=REASONING_OFF)
 
     assert body["extra_body"] == {"reasoning_split": True}
 
@@ -164,11 +156,7 @@ async def test_stream_preserves_reasoning_content(minimax_provider):
         new_callable=AsyncMock,
         return_value=stream,
     ) as create:
-        events = await collect_anthropic(
-            minimax_provider.stream_response(
-                canonical_request(request), provider_model=(request).model
-            )
-        )
+        events = [event async for event in minimax_provider.stream_response(request)]
 
     parsed = parse_sse_text("".join(events))
     assert thinking_content(parsed) == "plan"

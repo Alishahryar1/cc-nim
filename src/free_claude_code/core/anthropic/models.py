@@ -79,8 +79,6 @@ class SystemContent(_AnthropicBlockBase):
 
 
 class Message(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
     role: Literal["user", "assistant", "system"]
     content: (
         str
@@ -108,8 +106,6 @@ class Tool(_AnthropicBlockBase):
 
 
 class ThinkingConfig(BaseModel):
-    model_config = ConfigDict(extra="allow")
-
     enabled: bool | None = True
     type: str | None = None
     budget_tokens: int | None = None
@@ -119,6 +115,8 @@ class MessagesRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     model: str
+    original_model: str | None = Field(default=None, exclude=True)
+    resolved_provider_model: str | None = Field(default=None, exclude=True)
     max_tokens: int | None = None
     messages: list[Message]
     system: str | list[SystemContent] | None = None
@@ -142,6 +140,8 @@ class TokenCountRequest(BaseModel):
     model_config = ConfigDict(extra="allow")
 
     model: str
+    original_model: str | None = Field(default=None, exclude=True)
+    resolved_provider_model: str | None = Field(default=None, exclude=True)
     messages: list[Message]
     system: str | list[SystemContent] | None = None
     tools: list[Tool] | None = None

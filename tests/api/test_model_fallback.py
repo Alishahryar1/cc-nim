@@ -4,6 +4,7 @@ import pytest
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
+from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from tests.api.model_fallback_support import (
     ControlledFallbackProvider,
@@ -123,7 +124,10 @@ def test_lazy_fallback_preflight_error_remains_ordinary(
 
 
 def test_postframe_failure_never_opens_fallback_for_streaming_messages() -> None:
-    first = text_stream("unused", model="nvidia_nim/primary-model")[0]
+    first = format_sse_event(
+        "message_start",
+        {"type": "message_start", "message": {}},
+    )
     primary = ControlledFallbackProvider(
         chunks_before_failure=(first,),
         failure=execution_failure("primary failed after start"),
@@ -141,7 +145,22 @@ def test_postframe_failure_never_opens_fallback_for_streaming_messages() -> None
 
 
 def test_postframe_failure_never_opens_fallback_for_responses() -> None:
-    first = text_stream("unused", model="nvidia_nim/primary-model")[0]
+    first = format_sse_event(
+        "message_start",
+        {
+            "type": "message_start",
+            "message": {
+                "id": "msg_primary",
+                "type": "message",
+                "role": "assistant",
+                "model": "nvidia_nim/primary-model",
+                "content": [],
+                "stop_reason": None,
+                "stop_sequence": None,
+                "usage": {"input_tokens": 3, "output_tokens": 0},
+            },
+        },
+    )
     primary = ControlledFallbackProvider(
         chunks_before_failure=(first,),
         failure=execution_failure("primary failed after start"),

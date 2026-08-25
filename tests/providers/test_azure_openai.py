@@ -7,7 +7,7 @@ import pytest
 
 from free_claude_code.core.reasoning import ReasoningEffort, ReasoningPolicy
 from free_claude_code.providers.openai_chat import OpenAIChatProvider
-from tests.providers.request_factory import canonical_request, make_messages_request
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     immediate_admission,
     make_provider_config,
@@ -63,9 +63,8 @@ def test_request_uses_deployment_name_modern_token_field_tools_and_reasoning() -
     )
 
     body = _provider()._build_request_body(
-        canonical_request(request),
+        request,
         reasoning=ReasoningPolicy.on(effort=ReasoningEffort.HIGH),
-        provider_model=(request).model,
     )
 
     assert body["model"] == AZURE_OPENAI_DEPLOYMENT
@@ -90,21 +89,12 @@ def test_reasoning_uses_azure_supported_provider_vocabulary(
     expected: str,
 ) -> None:
     body = _provider()._build_request_body(
-        canonical_request(
-            make_messages_request(
-                AZURE_OPENAI_DEPLOYMENT,
-                temperature=None,
-                top_p=None,
-            )
+        make_messages_request(
+            AZURE_OPENAI_DEPLOYMENT,
+            temperature=None,
+            top_p=None,
         ),
         reasoning=policy,
-        provider_model=(
-            make_messages_request(
-                AZURE_OPENAI_DEPLOYMENT,
-                temperature=None,
-                top_p=None,
-            )
-        ).model,
     )
 
     assert body["reasoning_effort"] == expected
@@ -127,9 +117,7 @@ def test_reasoning_history_replays_as_portable_think_tags() -> None:
         ],
     )
 
-    body = _provider()._build_request_body(
-        canonical_request(request), provider_model=(request).model
-    )
+    body = _provider()._build_request_body(request)
     assistant = next(
         message for message in body["messages"] if message["role"] == "assistant"
     )

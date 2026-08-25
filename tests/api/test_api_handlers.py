@@ -19,17 +19,10 @@ from free_claude_code.core.anthropic.models import (
     MessagesRequest,
     TokenCountRequest,
 )
+from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
-from free_claude_code.core.inference import (
-    InferenceEvent,
-    InferenceRequest,
-    InstructionItem,
-    MessageItem,
-    TextContent,
-)
 from free_claude_code.core.openai_responses import OpenAIResponsesRequest
 from free_claude_code.core.reasoning import ReasoningPolicy
-from tests.inference_support import text_event_stream
 
 _LEGACY_CLASSIFIER_SYSTEM = (
     "You are a security monitor. Respond with <block>yes</block> or <block>no</block>."
@@ -45,26 +38,19 @@ _CLASSIFIER_USER = (
 
 
 class FakeProvider:
-    def __init__(
-        self,
-        events: list[InferenceEvent] | None = None,
-        *,
-        failure: ExecutionFailure | None = None,
-    ) -> None:
-        self.preflight_calls: list[tuple[InferenceRequest, str, ReasoningPolicy]] = []
-        self.requests: list[InferenceRequest] = []
+    def __init__(self, events: list[str] | None = None) -> None:
+        self.preflight_calls: list[tuple[MessagesRequest, ReasoningPolicy]] = []
+        self.requests: list[MessagesRequest] = []
         self.stream_kwargs: list[dict[str, Any]] = []
-        self.events = text_event_stream("ok") if events is None else events
-        self.failure = failure
+        self.events = events or [
+            'event: message_start\ndata: {"type":"message_start"}\n\n',
+            'event: message_stop\ndata: {"type":"message_stop"}\n\n',
+        ]
 
     def preflight_stream(
-        self,
-        request: InferenceRequest,
-        *,
-        provider_model: str,
-        reasoning: ReasoningPolicy,
+        self, request: MessagesRequest, *, reasoning: ReasoningPolicy
     ) -> None:
-        self.preflight_calls.append((request, provider_model, reasoning))
+        self.preflight_calls.append((request, reasoning))
 
     async def cleanup(self) -> None:
         return None
@@ -74,19 +60,17 @@ class FakeProvider:
 
     async def stream_response(
         self,
-        request: InferenceRequest,
+        request: MessagesRequest,
         input_tokens: int = 0,
         *,
-        provider_model: str,
         request_id: str | None = None,
         response_model: str | None = None,
         reasoning: ReasoningPolicy,
-    ) -> AsyncIterator[InferenceEvent]:
+    ) -> AsyncIterator[str]:
         self.requests.append(request)
         self.stream_kwargs.append(
             {
                 "input_tokens": input_tokens,
-                "provider_model": provider_model,
                 "request_id": request_id,
                 "response_model": response_model,
                 "reasoning": reasoning,
@@ -94,8 +78,6 @@ class FakeProvider:
         )
         for event in self.events:
             yield event
-        if self.failure is not None:
-            raise self.failure
 
 
 async def _streaming_body_text(response: StreamingResponse) -> str:
@@ -138,8 +120,7 @@ async def test_messages_handler_passes_routed_request_and_stream_metadata() -> N
 
     body = await _streaming_body_text(response)
     assert "message_start" in body
-    assert provider.requests[0].model == "nvidia_nim/test-model"
-    assert provider.stream_kwargs[0]["provider_model"] == "test-model"
+    assert provider.requests[0].model == "test-model"
     assert provider.stream_kwargs[0]["input_tokens"] > 0
     assert provider.stream_kwargs[0]["request_id"].startswith("req_")
     assert provider.stream_kwargs[0]["response_model"] == "nvidia_nim/test-model"
@@ -155,9 +136,8 @@ async def test_messages_handler_preflight_invalid_request_stays_http_error(
     class RejectPreflightProvider(FakeProvider):
         def preflight_stream(
             self,
-            request: InferenceRequest,
+            request: MessagesRequest,
             *,
-            provider_model: str,
             reasoning: ReasoningPolicy,
         ) -> None:
             raise InvalidRequestError("bad tool shape")
@@ -178,13 +158,56 @@ async def test_messages_handler_preflight_invalid_request_stays_http_error(
 @pytest.mark.asyncio
 async def test_messages_handler_aggregates_provider_stream_when_stream_false() -> None:
     provider = FakeProvider(
-        text_event_stream(
-            "OK",
-            model="test-model",
-            input_tokens=20,
-            output_tokens=2,
-            cache_read_input_tokens=10,
-        )
+        [
+            format_sse_event(
+                "message_start",
+                {
+                    "type": "message_start",
+                    "message": {
+                        "id": "msg_test",
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [],
+                        "model": "test-model",
+                        "stop_reason": None,
+                        "stop_sequence": None,
+                        "usage": {"input_tokens": 7, "output_tokens": 1},
+                    },
+                },
+            ),
+            format_sse_event(
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                },
+            ),
+            format_sse_event(
+                "content_block_delta",
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "OK"},
+                },
+            ),
+            format_sse_event(
+                "content_block_stop", {"type": "content_block_stop", "index": 0}
+            ),
+            format_sse_event(
+                "message_delta",
+                {
+                    "type": "message_delta",
+                    "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                    "usage": {
+                        "input_tokens": 20,
+                        "output_tokens": 2,
+                        "cache_read_input_tokens": 10,
+                    },
+                },
+            ),
+            format_sse_event("message_stop", {"type": "message_stop"}),
+        ]
     )
     handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
     request = MessagesRequest(
@@ -199,7 +222,7 @@ async def test_messages_handler_aggregates_provider_stream_when_stream_false() -
     assert isinstance(response, JSONResponse)
     assert response.headers["content-type"].startswith("application/json")
     body = _json_response_content(response)
-    assert body["id"].startswith("msg_")
+    assert body["id"] == "msg_test"
     assert body["type"] == "message"
     assert body["role"] == "assistant"
     assert body["model"] == "test-model"
@@ -215,13 +238,15 @@ async def test_messages_handler_aggregates_provider_stream_when_stream_false() -
 @pytest.mark.asyncio
 async def test_messages_handler_returns_error_json_for_stream_false_sse_error() -> None:
     provider = FakeProvider(
-        [],
-        failure=ExecutionFailure(
-            kind=FailureKind.UPSTREAM,
-            status_code=500,
-            message="upstream failed",
-            retryable=False,
-        ),
+        [
+            format_sse_event(
+                "error",
+                {
+                    "type": "error",
+                    "error": {"type": "api_error", "message": "upstream failed"},
+                },
+            )
+        ]
     )
     handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
     request = MessagesRequest(
@@ -244,15 +269,51 @@ async def test_messages_handler_returns_error_json_for_stream_false_sse_error() 
 
 @pytest.mark.asyncio
 async def test_messages_handler_discards_partial_stream_false_output_on_error() -> None:
-    partial = text_event_stream("incomplete", model="test-model")[:3]
     provider = FakeProvider(
-        partial,
-        failure=ExecutionFailure(
-            kind=FailureKind.OVERLOADED,
-            status_code=529,
-            message="provider overloaded",
-            retryable=False,
-        ),
+        [
+            format_sse_event(
+                "message_start",
+                {
+                    "type": "message_start",
+                    "message": {
+                        "id": "msg_partial",
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [],
+                        "model": "test-model",
+                        "stop_reason": None,
+                        "stop_sequence": None,
+                        "usage": {"input_tokens": 1, "output_tokens": 1},
+                    },
+                },
+            ),
+            format_sse_event(
+                "content_block_start",
+                {
+                    "type": "content_block_start",
+                    "index": 0,
+                    "content_block": {"type": "text", "text": ""},
+                },
+            ),
+            format_sse_event(
+                "content_block_delta",
+                {
+                    "type": "content_block_delta",
+                    "index": 0,
+                    "delta": {"type": "text_delta", "text": "incomplete"},
+                },
+            ),
+            format_sse_event(
+                "error",
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "overloaded_error",
+                        "message": "provider overloaded",
+                    },
+                },
+            ),
+        ]
     )
     handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
     request = MessagesRequest(
@@ -280,19 +341,17 @@ async def test_messages_handler_stream_false_provider_exception_keeps_status() -
     class FailingProvider(FakeProvider):
         async def stream_response(
             self,
-            request: InferenceRequest,
+            request: Any,
             input_tokens: int = 0,
             *,
-            provider_model: str,
             request_id: str | None = None,
             response_model: str | None = None,
             reasoning: ReasoningPolicy,
-        ) -> AsyncIterator[InferenceEvent]:
+        ) -> AsyncIterator[str]:
             self.requests.append(request)
             self.stream_kwargs.append(
                 {
                     "input_tokens": input_tokens,
-                    "provider_model": provider_model,
                     "request_id": request_id,
                     "response_model": response_model,
                     "reasoning": reasoning,
@@ -304,7 +363,7 @@ async def test_messages_handler_stream_false_provider_exception_keeps_status() -
                 message="upstream is busy",
                 retryable=True,
             )
-            yield text_event_stream("unreachable")[0]
+            yield "unreachable"
 
     provider = FailingProvider()
     handler = MessagesHandler(Settings(), provider_resolver=lambda _: provider)
@@ -355,16 +414,12 @@ async def test_messages_handler_normalizes_safety_classifier_policy(
         assert isinstance(response, StreamingResponse)
         await _streaming_body_text(response)
 
-    assert provider.preflight_calls[0][2] == ReasoningPolicy.off()
+    assert provider.preflight_calls[0][1] == ReasoningPolicy.off()
     assert provider.stream_kwargs[0]["reasoning"] == ReasoningPolicy.off()
-    assert provider.requests[0].model == "nvidia_nim/test-model"
-    assert provider.preflight_calls[0][1] == "test-model"
-    assert any(
-        isinstance(item, InstructionItem) and item.text == system
-        for item in provider.requests[0].items
-    )
-    assert provider.preflight_calls[0][0].stop_sequences == ()
-    assert provider.requests[0].stop_sequences == ()
+    assert provider.requests[0].model == "test-model"
+    assert provider.requests[0].system == system
+    assert provider.preflight_calls[0][0].stop_sequences is None
+    assert provider.requests[0].stop_sequences is None
     assert request.stop_sequences == [classifier_stop_sequence]
     assert _trace_events(
         trace_mock, "free_claude_code.api.route.safety_classifier_policy"
@@ -407,9 +462,9 @@ async def test_messages_handler_preserves_thinking_for_non_classifier() -> None:
         assert isinstance(response, StreamingResponse)
         await _streaming_body_text(response)
 
-    assert provider.preflight_calls[0][2] == ReasoningPolicy.provider_default()
+    assert provider.preflight_calls[0][1] == ReasoningPolicy.provider_default()
     assert provider.stream_kwargs[0]["reasoning"] == ReasoningPolicy.provider_default()
-    assert provider.requests[0].stop_sequences == ("</severity>",)
+    assert provider.requests[0].stop_sequences == ["</severity>"]
     assert (
         _trace_events(
             trace_mock,
@@ -437,9 +492,9 @@ async def test_messages_handler_keeps_existing_no_thinking_for_classifier() -> N
         assert isinstance(response, StreamingResponse)
         await _streaming_body_text(response)
 
-    assert provider.preflight_calls[0][2] == ReasoningPolicy.off()
+    assert provider.preflight_calls[0][1] == ReasoningPolicy.off()
     assert provider.stream_kwargs[0]["reasoning"] == ReasoningPolicy.off()
-    assert provider.requests[0].stop_sequences == ()
+    assert provider.requests[0].stop_sequences is None
     assert request.stop_sequences == ["</block>"]
     assert _trace_events(
         trace_mock, "free_claude_code.api.route.safety_classifier_policy"
@@ -475,8 +530,8 @@ async def test_messages_handler_forces_no_thinking_without_classifier_stop_hint(
         assert isinstance(response, StreamingResponse)
         await _streaming_body_text(response)
 
-    assert provider.preflight_calls[0][2] == ReasoningPolicy.off()
-    assert provider.requests[0].stop_sequences == ()
+    assert provider.preflight_calls[0][1] == ReasoningPolicy.off()
+    assert provider.requests[0].stop_sequences is None
     assert _trace_events(
         trace_mock, "free_claude_code.api.route.safety_classifier_policy"
     ) == [
@@ -510,13 +565,13 @@ async def test_messages_handler_preserves_unowned_classifier_stop_sequences() ->
     assert isinstance(response, StreamingResponse)
     await _streaming_body_text(response)
 
-    assert provider.preflight_calls[0][2] == ReasoningPolicy.off()
-    assert provider.preflight_calls[0][0].stop_sequences == (
+    assert provider.preflight_calls[0][1] == ReasoningPolicy.off()
+    assert provider.preflight_calls[0][0].stop_sequences == [
         "custom",
         "custom",
         "tail",
-    )
-    assert provider.requests[0].stop_sequences == ("custom", "custom", "tail")
+    ]
+    assert provider.requests[0].stop_sequences == ["custom", "custom", "tail"]
     assert request.stop_sequences == original_stops
 
 
@@ -543,33 +598,6 @@ async def test_messages_handler_optimization_intercepts_before_provider_executio
 
 
 @pytest.mark.asyncio
-async def test_invalid_shortcut_shaped_request_is_rejected_before_interception() -> (
-    None
-):
-    provider_resolver = MagicMock()
-    handler = MessagesHandler(Settings(), provider_resolver=provider_resolver)
-    request = MessagesRequest.model_validate(
-        {
-            "model": "nvidia_nim/test-model",
-            "max_tokens": 100,
-            "messages": [{"role": "user", "content": "quota check"}],
-            "client_extension": True,
-        }
-    )
-
-    with (
-        patch(
-            "free_claude_code.api.handlers.messages.try_optimizations",
-            side_effect=AssertionError("invalid request reached local interception"),
-        ),
-        pytest.raises(InvalidRequestError, match=r"request\.client_extension"),
-    ):
-        await handler.create(request)
-
-    provider_resolver.assert_not_called()
-
-
-@pytest.mark.asyncio
 async def test_responses_handler_bypasses_message_only_optimizations() -> None:
     provider = FakeProvider()
     handler = ResponsesHandler(Settings(), provider_resolver=lambda _: provider)
@@ -588,14 +616,7 @@ async def test_responses_handler_bypasses_message_only_optimizations() -> None:
     assert isinstance(response, StreamingResponse)
     body = await _streaming_body_text(response)
     assert "response.completed" in body
-    assert provider.requests[0].message_count == 1
-    assert any(
-        isinstance(item, MessageItem)
-        and item.content
-        and isinstance(item.content[0], TextContent)
-        and item.content[0].text == "quota check"
-        for item in provider.requests[0].items
-    )
+    assert provider.requests[0].messages[0].content == "quota check"
 
 
 @pytest.mark.asyncio
@@ -615,7 +636,7 @@ async def test_responses_handler_does_not_apply_safety_classifier_policy() -> No
         assert isinstance(response, StreamingResponse)
         await _streaming_body_text(response)
 
-    assert provider.preflight_calls[0][2] == ReasoningPolicy.provider_default()
+    assert provider.preflight_calls[0][1] == ReasoningPolicy.provider_default()
     assert provider.stream_kwargs[0]["reasoning"] == ReasoningPolicy.provider_default()
     assert (
         _trace_events(
@@ -629,7 +650,7 @@ async def test_responses_handler_does_not_apply_safety_classifier_policy() -> No
 def test_token_count_handler_routes_and_counts_tokens() -> None:
     handler = TokenCountHandler(
         Settings(),
-        token_counter=lambda request: request.message_count + 41,
+        token_counter=lambda messages, system, tools: len(messages) + 41,
     )
 
     with patch("free_claude_code.api.handlers.token_count.trace_event") as trace:

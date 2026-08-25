@@ -6,44 +6,19 @@ from fastapi.testclient import TestClient
 
 from free_claude_code.application.errors import InvalidRequestError
 from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
+from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
-from free_claude_code.core.inference import (
-    FinishReason,
-    InferenceEvent,
-    InferenceStreamLedger,
-    MessageItem,
-    MessageRole,
-    ReasoningItem,
-    ReplayArtifact,
-    ReplayArtifactKind,
-    ReplayArtifactOrigin,
-    ReplayAttachment,
-    ResponseStarted,
-    TextContent,
-    ToolCallItem,
-    ToolCallKind,
-    ToolChoiceMode,
-    ToolResultItem,
-)
 from free_claude_code.core.reasoning import (
     ReasoningControl,
     ReasoningEffort,
     ReasoningPolicy,
 )
-from free_claude_code.core.replay_envelope import decode_replay_envelope
 from tests.api.support import create_test_app
-from tests.inference_support import reported_usage
 
 
 class FakeProvider:
-    def __init__(
-        self,
-        chunks: list[InferenceEvent],
-        *,
-        failure: Exception | None = None,
-    ) -> None:
+    def __init__(self, chunks: list[str]) -> None:
         self.chunks = chunks
-        self.failure = failure
         self.preflight_stream = MagicMock()
         self.requests: list[Any] = []
         self.stream_kwargs: list[dict[str, Any]] = []
@@ -53,8 +28,6 @@ class FakeProvider:
         self.stream_kwargs.append(_kwargs)
         for chunk in self.chunks:
             yield chunk
-        if self.failure is not None:
-            raise self.failure
 
 
 class PreStartFailingProvider(FakeProvider):
@@ -70,12 +43,12 @@ class PreStartFailingProvider(FakeProvider):
             message="upstream is busy",
             retryable=True,
         )
-        yield ResponseStarted("response_unreachable", "test-model")
+        yield "unreachable"
 
 
 class PostStartFailingProvider(FakeProvider):
     def __init__(self) -> None:
-        super().__init__([ResponseStarted("response_test", "test-model")])
+        super().__init__([format_sse_event("message_start", {"type": "message_start"})])
 
     async def stream_response(self, request_data, **_kwargs):
         self.requests.append(request_data)
@@ -130,12 +103,10 @@ def test_create_response_stream_routes_through_provider(
     )
     assert provider.preflight_stream.called
     routed = provider.requests[0]
-    assert routed.model == "nvidia_nim/test-model"
-    assert routed.items == (
-        MessageItem("turn_0", MessageRole.USER, (TextContent("Hello"),)),
-    )
-    assert routed.max_output_tokens == 32
-    assert provider.stream_kwargs[0]["provider_model"] == "test-model"
+    assert routed.model == "test-model"
+    assert routed.messages[0].role == "user"
+    assert routed.messages[0].content == "Hello"
+    assert routed.max_tokens == 32
     assert provider.stream_kwargs[0]["request_id"] == response.headers["request-id"]
 
 
@@ -192,7 +163,7 @@ def test_create_response_preflight_rejection_stays_an_ordinary_http_error() -> N
     assert provider.requests == []
 
 
-def test_create_response_rejects_unknown_top_level_extensions_before_provider(
+def test_create_response_accepts_unknown_top_level_extensions(
     responses_client: tuple[TestClient, FakeProvider],
 ) -> None:
     client, provider = responses_client
@@ -206,51 +177,8 @@ def test_create_response_rejects_unknown_top_level_extensions_before_provider(
         },
     )
 
-    assert response.status_code == 400
-    assert "provider_extension" in response.json()["error"]["message"]
-    assert provider.requests == []
-
-
-@pytest.mark.parametrize(
-    "override",
-    [
-        {"store": True},
-        {"previous_response_id": "resp_1"},
-        {"include": []},
-        {"prompt_cache_key": ""},
-        {"reasoning": {"summary": "concise"}},
-        {
-            "tools": [{"type": "web_search"}],
-            "tool_choice": "required",
-        },
-        {"tool_choice": {"type": "web_search"}},
-        {"input": [{"type": "input_image", "image_url": "https://invalid"}]},
-    ],
-)
-def test_invalid_responses_semantics_fail_before_provider_resolution(
-    override: dict[str, object],
-) -> None:
-    provider = FakeProvider(_anthropic_text_stream("unused"))
-    app = create_test_app()
-    payload: dict[str, object] = {
-        "model": "nvidia_nim/test-model",
-        "input": "Hello",
-    }
-    payload.update(override)
-
-    with (
-        patch(
-            "free_claude_code.api.routes.resolve_provider",
-            return_value=provider,
-        ) as resolve_provider,
-        TestClient(app) as client,
-    ):
-        response = client.post("/v1/responses", json=payload)
-
-    assert response.status_code == 400
-    resolve_provider.assert_not_called()
-    provider.preflight_stream.assert_not_called()
-    assert provider.requests == []
+    assert response.status_code == 200
+    assert provider.requests[0].messages[0].content == "Hello"
 
 
 def test_create_response_pre_start_provider_error_returns_openai_error() -> None:
@@ -337,9 +265,7 @@ def test_create_response_stream_bypasses_local_message_optimizations() -> None:
     assert response.status_code == 200
     completed = parse_sse_text(response.text)[-1].data["response"]
     assert completed["output"][0]["content"][0]["text"] == "Provider response"
-    assert provider.requests[0].items == (
-        MessageItem("turn_0", MessageRole.USER, (TextContent("quota check"),)),
-    )
+    assert provider.requests[0].messages[0].content == "quota check"
 
 
 def test_create_response_stream_false_returns_openai_error(
@@ -471,9 +397,7 @@ def test_create_response_malformed_provider_function_call_fails_stream() -> None
 
 
 def test_create_response_accepts_codex_namespace_tool_request() -> None:
-    provider = FakeProvider(
-        _anthropic_tool_stream(tool_name="js", namespace="mcp__node_repl")
-    )
+    provider = FakeProvider(_anthropic_tool_stream(tool_name="mcp__node_repl__js"))
     app = create_test_app()
     with (
         patch("free_claude_code.api.routes.resolve_provider", return_value=provider),
@@ -508,9 +432,7 @@ def test_create_response_accepts_codex_namespace_tool_request() -> None:
 
     assert response.status_code == 200
     routed = provider.requests[0]
-    assert [(tool.name, tool.namespace) for tool in routed.tools] == [
-        ("js", "mcp__node_repl")
-    ]
+    assert [tool.name for tool in routed.tools] == ["mcp__node_repl__js"]
     completed = parse_sse_text(response.text)[-1].data["response"]
     call = completed["output"][0]
     assert call["namespace"] == "mcp__node_repl"
@@ -518,9 +440,7 @@ def test_create_response_accepts_codex_namespace_tool_request() -> None:
 
 
 def test_create_response_accepts_muse_code_request_shape() -> None:
-    provider = FakeProvider(
-        _anthropic_tool_stream(tool_name="read_file", namespace="muse")
-    )
+    provider = FakeProvider(_anthropic_tool_stream(tool_name="muse__read_file"))
     app = create_test_app()
     with (
         patch("free_claude_code.api.routes.resolve_provider", return_value=provider),
@@ -563,16 +483,13 @@ def test_create_response_accepts_muse_code_request_shape() -> None:
 
     assert response.status_code == 200
     routed = provider.requests[0]
-    assert routed.max_output_tokens == 64
-    assert routed.reasoning.control is ReasoningControl.ON
-    assert routed.reasoning.effort is ReasoningEffort.HIGH
+    assert routed.max_tokens == 64
+    assert routed.output_config == {"effort": "high"}
     assert provider.stream_kwargs[0]["reasoning"] == ReasoningPolicy(
-        control=ReasoningControl.ON,
+        control=ReasoningControl.DEFAULT,
         effort=ReasoningEffort.HIGH,
     )
-    assert [(tool.name, tool.namespace) for tool in routed.tools] == [
-        ("read_file", "muse")
-    ]
+    assert [tool.name for tool in routed.tools] == ["muse__read_file"]
     completed = parse_sse_text(response.text)[-1].data["response"]
     call = completed["output"][0]
     assert call["namespace"] == "muse"
@@ -584,7 +501,6 @@ def test_create_response_accepts_codex_custom_tool_request() -> None:
         _anthropic_tool_stream(
             tool_name="apply_patch",
             partial_json='{"input":"*** Begin Patch"}',
-            kind=ToolCallKind.CUSTOM,
         )
     )
     app = create_test_app()
@@ -613,10 +529,7 @@ def test_create_response_accepts_codex_custom_tool_request() -> None:
     assert response.status_code == 200
     routed = provider.requests[0]
     assert [tool.name for tool in routed.tools] == ["apply_patch"]
-    assert routed.tool_choice is not None
-    assert routed.tool_choice.mode is ToolChoiceMode.SPECIFIC
-    assert routed.tool_choice.kind is ToolCallKind.CUSTOM
-    assert routed.tool_choice.name == "apply_patch"
+    assert routed.tool_choice == {"type": "tool", "name": "apply_patch"}
     events = parse_sse_text(response.text)
     assert "response.custom_tool_call_input.delta" in [event.event for event in events]
     completed = events[-1].data["response"]
@@ -628,8 +541,18 @@ def test_create_response_accepts_codex_custom_tool_request() -> None:
 
 def test_create_response_stream_provider_error_returns_response_failed() -> None:
     provider = FakeProvider(
-        [ResponseStarted("response_test", "test-model")],
-        failure=RuntimeError("provider failed"),
+        [
+            format_sse_event(
+                "error",
+                {
+                    "type": "error",
+                    "error": {
+                        "type": "api_error",
+                        "message": "provider failed",
+                    },
+                },
+            )
+        ]
     )
     app = create_test_app()
     with (
@@ -705,19 +628,16 @@ def test_create_response_replays_prior_reasoning_as_reasoning_content() -> None:
 
     assert response.status_code == 200
     routed = provider.requests[0]
-    assert routed.items == (
-        ReasoningItem("turn_0", "Need the tool."),
-        ToolCallItem(
-            turn_id="turn_0",
-            call_id="call_1",
-            kind=ToolCallKind.FUNCTION,
-            name="echo",
-            input={},
-        ),
-        ToolResultItem("turn_1", "call_1", "ok"),
-        ReasoningItem("turn_2", "Use the result."),
-        MessageItem("turn_3", MessageRole.USER, (TextContent("continue"),)),
-    )
+    assert routed.messages[0].role == "assistant"
+    assert routed.messages[0].reasoning_content == "Need the tool."
+    assert routed.messages[0].content[0].type == "tool_use"
+    assert routed.messages[1].role == "user"
+    assert routed.messages[1].content[0].type == "tool_result"
+    assert routed.messages[2].role == "assistant"
+    assert routed.messages[2].content == ""
+    assert routed.messages[2].reasoning_content == "Use the result."
+    assert routed.messages[3].role == "user"
+    assert routed.messages[3].content == "continue"
 
 
 def test_create_response_quarantines_malformed_prior_function_call() -> None:
@@ -752,10 +672,9 @@ def test_create_response_quarantines_malformed_prior_function_call() -> None:
 
     assert response.status_code == 200
     routed = provider.requests[0]
-    assert routed.items == (
-        MessageItem("turn_0", MessageRole.USER, (TextContent("hello"),)),
-        MessageItem("turn_1", MessageRole.USER, (TextContent("continue"),)),
-    )
+    assert [message.role for message in routed.messages] == ["user", "user"]
+    assert routed.messages[0].content == "hello"
+    assert routed.messages[1].content == "continue"
     completed = parse_sse_text(response.text)[-1].data["response"]
     assert completed["output"][0]["content"][0]["text"] == "done"
 
@@ -767,7 +686,7 @@ def test_create_response_quarantines_malformed_prior_function_call() -> None:
         (
             {"effort": "low"},
             ReasoningPolicy(
-                control=ReasoningControl.ON,
+                control=ReasoningControl.DEFAULT,
                 effort=ReasoningEffort.LOW,
             ),
         ),
@@ -795,8 +714,8 @@ def test_create_response_preserves_and_resolves_reasoning_effort(
 
     assert response.status_code == 200
     routed = provider.requests[0]
-    assert routed.reasoning.control is expected_policy.control
-    assert routed.reasoning.effort is expected_policy.effort
+    assert routed.thinking is None
+    assert routed.output_config == reasoning
     assert provider.stream_kwargs[0]["reasoning"] == expected_policy
     assert provider.preflight_stream.call_args.kwargs["reasoning"] == expected_policy
 
@@ -819,21 +738,16 @@ def test_create_response_maps_redacted_thinking_to_encrypted_reasoning() -> None
 
     assert response.status_code == 200
     completed = parse_sse_text(response.text)[-1].data["response"]
-    assert len(completed["output"]) == 1
-    output = completed["output"][0]
-    assert output["type"] == "reasoning"
-    assert output["status"] == "completed"
-    assert output["summary"] == []
-    artifacts = decode_replay_envelope(
-        output["encrypted_content"],
-        attachment=ReplayAttachment.REASONING,
-    )
-    assert artifacts is not None
-    assert len(artifacts) == 1
-    assert artifacts[0].origin is ReplayArtifactOrigin.ANTHROPIC
-    assert artifacts[0].kind is ReplayArtifactKind.REDACTED_THINKING
-    assert artifacts[0].payload == "opaque-redacted"
-    assert "content" not in output
+    assert completed["output"] == [
+        {
+            "id": completed["output"][0]["id"],
+            "type": "reasoning",
+            "status": "completed",
+            "summary": [],
+            "encrypted_content": "opaque-redacted",
+        }
+    ]
+    assert "content" not in completed["output"][0]
 
 
 def test_create_response_unsupported_tool_returns_openai_error(
@@ -853,121 +767,295 @@ def test_create_response_unsupported_tool_returns_openai_error(
     assert response.status_code == 400
     payload = response.json()
     assert payload["error"]["type"] == "invalid_request_error"
-    assert "tools[0].type" in payload["error"]["message"]
+    assert "Unsupported Responses tool type" in payload["error"]["message"]
 
 
-def _anthropic_text_stream(
-    text: str,
-    *,
-    stop_reason: str = "end_turn",
-) -> list[InferenceEvent]:
-    ledger = InferenceStreamLedger("response_test", "test-model", 3)
-    events: list[InferenceEvent] = [ledger.start_response()]
-    events.extend(ledger.ensure_text_block())
-    events.append(ledger.emit_text_delta(text))
-    events.extend(ledger.close_all_blocks())
-    finish_reason = (
-        FinishReason.OUTPUT_LIMIT
-        if stop_reason == "max_tokens"
-        else FinishReason.END_TURN
-    )
-    events.extend(
-        ledger.finish_events(
-            finish_reason,
-            reported_usage(input_tokens=3, output_tokens=4),
-        )
-    )
-    return events
+def _anthropic_text_stream(text: str, *, stop_reason: str = "end_turn") -> list[str]:
+    return [
+        format_sse_event("message_start", {"type": "message_start", "message": {}}),
+        format_sse_event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "text", "text": ""},
+            },
+        ),
+        format_sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "text_delta", "text": text},
+            },
+        ),
+        format_sse_event(
+            "content_block_stop",
+            {"type": "content_block_stop", "index": 0},
+        ),
+        format_sse_event(
+            "message_delta",
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": stop_reason, "stop_sequence": None},
+                "usage": {"input_tokens": 3, "output_tokens": 4},
+            },
+        ),
+        format_sse_event("message_stop", {"type": "message_stop"}),
+    ]
 
 
 def _anthropic_tool_stream(
-    tool_name: str = "echo",
-    partial_json: str = '{"value":"FCC"}',
-    *,
-    kind: ToolCallKind = ToolCallKind.FUNCTION,
-    namespace: str | None = None,
-) -> list[InferenceEvent]:
-    ledger = InferenceStreamLedger("response_test", "test-model", 3)
-    events: list[InferenceEvent] = [ledger.start_response()]
-    events.append(
-        ledger.start_tool_block(
-            0,
-            "toolu_1",
-            tool_name,
-            kind=kind,
-            namespace=namespace,
-        )
-    )
-    events.append(ledger.emit_tool_delta(0, partial_json))
-    events.append(ledger.stop_tool_block(0))
-    events.extend(
-        ledger.finish_events(
-            FinishReason.TOOL_CALLS,
-            reported_usage(input_tokens=3, output_tokens=4),
-        )
-    )
-    return events
+    tool_name: str = "echo", partial_json: str = '{"value":"FCC"}'
+) -> list[str]:
+    return [
+        format_sse_event("message_start", {"type": "message_start", "message": {}}),
+        format_sse_event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": tool_name,
+                    "input": {},
+                },
+            },
+        ),
+        format_sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {
+                    "type": "input_json_delta",
+                    "partial_json": partial_json,
+                },
+            },
+        ),
+        format_sse_event(
+            "content_block_stop",
+            {"type": "content_block_stop", "index": 0},
+        ),
+        format_sse_event(
+            "message_delta",
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "tool_use", "stop_sequence": None},
+                "usage": {"input_tokens": 3, "output_tokens": 4},
+            },
+        ),
+        format_sse_event("message_stop", {"type": "message_stop"}),
+    ]
 
 
-def _anthropic_reasoning_text_stream() -> list[InferenceEvent]:
-    ledger = InferenceStreamLedger("response_test", "test-model", 3)
-    events: list[InferenceEvent] = [ledger.start_response()]
-    events.extend(ledger.ensure_reasoning_block())
-    events.append(ledger.emit_reasoning_delta("provider reasoning"))
-    events.extend(ledger.ensure_text_block())
-    events.append(ledger.emit_text_delta("provider answer"))
-    events.extend(ledger.close_all_blocks())
-    events.extend(
-        ledger.finish_events(
-            FinishReason.END_TURN,
-            reported_usage(input_tokens=3, output_tokens=4),
-        )
-    )
-    return events
+def _anthropic_reasoning_text_stream() -> list[str]:
+    return [
+        format_sse_event("message_start", {"type": "message_start", "message": {}}),
+        format_sse_event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "thinking", "thinking": ""},
+            },
+        ),
+        format_sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {
+                    "type": "thinking_delta",
+                    "thinking": "provider reasoning",
+                },
+            },
+        ),
+        format_sse_event(
+            "content_block_stop",
+            {"type": "content_block_stop", "index": 0},
+        ),
+        format_sse_event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": 1,
+                "content_block": {"type": "text", "text": ""},
+            },
+        ),
+        format_sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 1,
+                "delta": {"type": "text_delta", "text": "provider answer"},
+            },
+        ),
+        format_sse_event(
+            "content_block_stop",
+            {"type": "content_block_stop", "index": 1},
+        ),
+        format_sse_event(
+            "message_delta",
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                "usage": {"input_tokens": 3, "output_tokens": 4},
+            },
+        ),
+        format_sse_event("message_stop", {"type": "message_stop"}),
+    ]
 
 
-def _anthropic_interleaved_reasoning_stream() -> list[InferenceEvent]:
-    ledger = InferenceStreamLedger("response_test", "test-model", 3)
-    events: list[InferenceEvent] = [ledger.start_response()]
-    events.extend(ledger.ensure_reasoning_block())
-    events.append(ledger.emit_reasoning_delta("first thought"))
-    events.extend(ledger.ensure_text_block())
-    events.append(ledger.emit_text_delta("first answer"))
-    events.extend(ledger.close_content_blocks())
-    events.append(ledger.start_tool_block(0, "toolu_1", "echo"))
-    events.append(ledger.emit_tool_delta(0, '{"value":"FCC"}'))
-    events.append(ledger.stop_tool_block(0))
-    events.extend(ledger.ensure_reasoning_block())
-    events.append(ledger.emit_reasoning_delta("second thought"))
-    events.extend(ledger.ensure_text_block())
-    events.append(ledger.emit_text_delta("final answer"))
-    events.extend(ledger.close_all_blocks())
-    events.extend(
-        ledger.finish_events(
-            FinishReason.END_TURN,
-            reported_usage(input_tokens=3, output_tokens=4),
-        )
-    )
-    return events
+def _anthropic_interleaved_reasoning_stream() -> list[str]:
+    return [
+        format_sse_event("message_start", {"type": "message_start", "message": {}}),
+        format_sse_event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {"type": "thinking", "thinking": ""},
+            },
+        ),
+        format_sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "thinking_delta", "thinking": "first thought"},
+            },
+        ),
+        format_sse_event(
+            "content_block_stop",
+            {"type": "content_block_stop", "index": 0},
+        ),
+        format_sse_event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": 1,
+                "content_block": {"type": "text", "text": ""},
+            },
+        ),
+        format_sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 1,
+                "delta": {"type": "text_delta", "text": "first answer"},
+            },
+        ),
+        format_sse_event(
+            "content_block_stop",
+            {"type": "content_block_stop", "index": 1},
+        ),
+        format_sse_event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": 2,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "toolu_1",
+                    "name": "echo",
+                    "input": {},
+                },
+            },
+        ),
+        format_sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 2,
+                "delta": {
+                    "type": "input_json_delta",
+                    "partial_json": '{"value":"FCC"}',
+                },
+            },
+        ),
+        format_sse_event(
+            "content_block_stop",
+            {"type": "content_block_stop", "index": 2},
+        ),
+        format_sse_event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": 3,
+                "content_block": {"type": "thinking", "thinking": ""},
+            },
+        ),
+        format_sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 3,
+                "delta": {"type": "thinking_delta", "thinking": "second thought"},
+            },
+        ),
+        format_sse_event(
+            "content_block_stop",
+            {"type": "content_block_stop", "index": 3},
+        ),
+        format_sse_event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": 4,
+                "content_block": {"type": "text", "text": ""},
+            },
+        ),
+        format_sse_event(
+            "content_block_delta",
+            {
+                "type": "content_block_delta",
+                "index": 4,
+                "delta": {"type": "text_delta", "text": "final answer"},
+            },
+        ),
+        format_sse_event(
+            "content_block_stop",
+            {"type": "content_block_stop", "index": 4},
+        ),
+        format_sse_event(
+            "message_delta",
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                "usage": {"input_tokens": 3, "output_tokens": 4},
+            },
+        ),
+        format_sse_event("message_stop", {"type": "message_stop"}),
+    ]
 
 
-def _anthropic_redacted_thinking_stream() -> list[InferenceEvent]:
-    ledger = InferenceStreamLedger("response_test", "test-model", 3)
-    events: list[InferenceEvent] = [ledger.start_response()]
-    events.extend(
-        ledger.emit_reasoning_artifact(
-            ReplayArtifact(
-                origin=ReplayArtifactOrigin.ANTHROPIC,
-                kind=ReplayArtifactKind.REDACTED_THINKING,
-                attachment=ReplayAttachment.REASONING,
-                payload="opaque-redacted",
-            )
-        )
-    )
-    events.extend(
-        ledger.finish_events(
-            FinishReason.END_TURN,
-            reported_usage(input_tokens=3, output_tokens=4),
-        )
-    )
-    return events
+def _anthropic_redacted_thinking_stream() -> list[str]:
+    return [
+        format_sse_event("message_start", {"type": "message_start", "message": {}}),
+        format_sse_event(
+            "content_block_start",
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {
+                    "type": "redacted_thinking",
+                    "data": "opaque-redacted",
+                },
+            },
+        ),
+        format_sse_event(
+            "content_block_stop",
+            {"type": "content_block_stop", "index": 0},
+        ),
+        format_sse_event(
+            "message_delta",
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "end_turn", "stop_sequence": None},
+                "usage": {"input_tokens": 3, "output_tokens": 4},
+            },
+        ),
+        format_sse_event("message_stop", {"type": "message_stop"}),
+    ]

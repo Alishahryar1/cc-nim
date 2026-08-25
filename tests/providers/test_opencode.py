@@ -30,8 +30,6 @@ from free_claude_code.providers.opencode.catalog import (
     OpenCodeUpstreamTransport,
     parse_open_code_catalog,
 )
-from tests.inference_support import collect_anthropic
-from tests.providers.request_factory import canonical_request
 from tests.providers.support import (
     capture_openai_chat_wire_body,
     immediate_admission,
@@ -233,14 +231,14 @@ def _provider_with_wire_transports(
 
 async def _collect(provider: OpenCodeProvider, model: str, **overrides: object) -> str:
     return "".join(
-        await collect_anthropic(
-            provider.stream_response(
-                canonical_request(_request(model, **overrides)),
+        [
+            chunk
+            async for chunk in provider.stream_response(
+                _request(model, **overrides),
                 input_tokens=2,
                 request_id="req_opencode",
-                provider_model=(_request(model, **overrides)).model,
             )
-        )
+        ]
     )
 
 
@@ -584,18 +582,10 @@ async def test_warm_preflight_rejects_unknown_and_route_specific_fields() -> Non
     try:
         await provider.list_model_infos()
         with pytest.raises(InvalidRequestError, match="does not advertise"):
-            provider.preflight_stream(
-                canonical_request(_request("missing")),
-                provider_model=(_request("missing")).model,
-            )
+            provider.preflight_stream(_request("missing"))
         with pytest.raises(InvalidRequestError, match="stop_sequences"):
             provider.preflight_stream(
-                canonical_request(
-                    _request("responses-selector", stop_sequences=["done"])
-                ),
-                provider_model=(
-                    _request("responses-selector", stop_sequences=["done"])
-                ).model,
+                _request("responses-selector", stop_sequences=["done"])
             )
     finally:
         await provider.cleanup()
@@ -670,11 +660,7 @@ def test_build_request_body_replays_tool_reasoning_natively(
         }
     )
 
-    body = provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
-    )
+    body = provider._build_request_body(request, reasoning=reasoning_for(request))
 
     assistant = body["messages"][0]
     assert assistant["content"] == ""
@@ -731,11 +717,7 @@ async def test_tool_only_history_sends_empty_reasoning_content_on_wire(
         }
     )
 
-    body = provider._build_request_body(
-        canonical_request(request),
-        reasoning=reasoning_for(request),
-        provider_model=(request).model,
-    )
+    body = provider._build_request_body(request, reasoning=reasoning_for(request))
     wire = await capture_openai_chat_wire_body(body)
 
     assistant = wire["messages"][0]
