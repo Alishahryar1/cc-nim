@@ -155,6 +155,15 @@ def _apply_common_openai_chat_policy(
     for key in policy.unsupported_body_keys:
         body.pop(key, None)
 
+    # unsupported_body_keys must also be stripped from a caller-supplied
+    # extra_body: it becomes the SDK's own extra_body= kwarg and gets merged
+    # into the wire-level JSON verbatim, so a key unsupported at the top
+    # level is equally unsupported when it arrives this way (#1548).
+    extra_body = body.get("extra_body")
+    if isinstance(extra_body, dict):
+        for key in policy.unsupported_body_keys:
+            extra_body.pop(key, None)
+
     if policy.max_tokens_field == "max_completion_tokens":
         _normalize_max_completion_tokens(body)
 
