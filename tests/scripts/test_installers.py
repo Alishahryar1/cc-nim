@@ -27,6 +27,30 @@ FCC_COMMANDS = (
     "free-claude-code",
 )
 
+# Host utilities install.sh calls. Everything else on the host stays off the
+# harness PATH so real agent CLIs cannot satisfy the installer's checks.
+POSIX_SYSTEM_UTILITIES = (
+    "awk",
+    "bash",
+    "cat",
+    "chmod",
+    "cp",
+    "dirname",
+    "env",
+    "gzip",
+    "ln",
+    "mkdir",
+    "mktemp",
+    "mv",
+    "readlink",
+    "rm",
+    "sed",
+    "sh",
+    "sort",
+    "tar",
+    "tr",
+)
+
 
 def _repo_root() -> Path:
     return Path(__file__).resolve().parents[2]
@@ -293,6 +317,20 @@ printf '%s\n' "$FCC_PS_OUTPUT"
         return self.log.read_text(encoding="utf-8").splitlines()
 
 
+def _link_system_utilities(bin_dir: Path) -> None:
+    """Expose only the host utilities install.sh needs.
+
+    Putting /usr/bin on the harness PATH would let a real agent CLI installed on
+    the host (dsh, cline, grok, ...) satisfy the installer's discovery checks and
+    shadow the fixtures, so the scenarios would assert against host state.
+    """
+    for name in POSIX_SYSTEM_UTILITIES:
+        resolved = shutil.which(name)
+        if resolved is None:
+            continue
+        (bin_dir / name).symlink_to(resolved)
+
+
 @pytest.fixture
 def posix_harness(tmp_path: Path) -> PosixHarness:
     if os.name == "nt":
@@ -513,10 +551,12 @@ printf '%s  %s\n' "$checksum" "$1"
 """,
     )
 
+    _link_system_utilities(bin_dir)
+
     env = os.environ.copy()
     env.update(
         {
-            "PATH": f"{bin_dir}:/usr/bin:/bin",
+            "PATH": str(bin_dir),
             "HOME": str(home),
             "CALL_LOG": str(log),
             "FAKE_FIXTURES": str(fixtures),
