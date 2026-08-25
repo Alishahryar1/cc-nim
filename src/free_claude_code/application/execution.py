@@ -265,11 +265,6 @@ class ProviderExecutor:
                                 except ExecutionFailure as failure:
                                     read_failure = failure
                         except StopAsyncIteration:
-                            if progress_timeout.expired():
-                                raise self._progress_timeout_failure(
-                                    request_id=request_id,
-                                    provider_id=target.provider_id,
-                                ) from None
                             break
                         except TimeoutError as exc:
                             if not progress_timeout.expired():
@@ -303,12 +298,26 @@ class ProviderExecutor:
                         progress_deadline = loop.time() + self._progress_timeout_seconds
                 finally:
                     if provider_stream is not None:
-                        await close_stream_input(
-                            provider_stream,
-                            owner="provider_executor",
-                            source="api",
-                            preserved_error=sys.exception(),
+                        active_error = sys.exception()
+                        preserved_error = active_error or candidate_failure
+                        cleanup_timeout = asyncio.timeout_at(
+                            progress_deadline if active_error is None else None
                         )
+                        try:
+                            async with cleanup_timeout:
+                                await close_stream_input(
+                                    provider_stream,
+                                    owner="provider_executor",
+                                    source="api",
+                                    preserved_error=preserved_error,
+                                )
+                        except TimeoutError as exc:
+                            if not cleanup_timeout.expired():
+                                raise
+                            raise self._progress_timeout_failure(
+                                request_id=request_id,
+                                provider_id=target.provider_id,
+                            ) from exc
 
                 if candidate_failure is None:
                     return

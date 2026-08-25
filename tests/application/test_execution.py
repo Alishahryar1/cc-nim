@@ -190,8 +190,21 @@ class ExecutionFailureStreamConstructionProvider(FakeProvider):
         raise self._failure
 
 
-class CancellationSuppressingProvider(FakeProvider):
-    async def stream_response(
+class CloseControlledProvider(FakeProvider):
+    def __init__(
+        self,
+        failure: ExecutionFailure,
+        *,
+        close_delay_seconds: float = 0.0,
+        close_error: Exception | None = None,
+    ) -> None:
+        super().__init__()
+        self._failure = failure
+        self._close_delay_seconds = close_delay_seconds
+        self._close_error = close_error
+        self._read = False
+
+    def stream_response(
         self,
         request: MessagesRequest,
         input_tokens: int = 0,
@@ -207,14 +220,23 @@ class CancellationSuppressingProvider(FakeProvider):
             response_model=response_model,
             reasoning=reasoning,
         )
-        try:
-            try:
-                await asyncio.Event().wait()
-            except asyncio.CancelledError:
-                return
-            yield "unreachable"
-        finally:
-            self.stream_close_calls += 1
+        return self
+
+    def __aiter__(self) -> AsyncIterator[str]:
+        return self
+
+    async def __anext__(self) -> str:
+        if self._read:
+            raise StopAsyncIteration
+        self._read = True
+        raise self._failure
+
+    async def aclose(self) -> None:
+        self.stream_close_calls += 1
+        if self._close_delay_seconds:
+            await asyncio.sleep(self._close_delay_seconds)
+        if self._close_error is not None:
+            raise self._close_error
 
 
 def _target(provider_id: str, provider_model: str) -> ProviderModelTarget:
@@ -875,8 +897,11 @@ async def test_application_progress_timeout_never_resolves_fallback() -> None:
 
 
 @pytest.mark.asyncio
-async def test_progress_timeout_wins_when_provider_suppresses_cancellation() -> None:
-    primary = CancellationSuppressingProvider()
+async def test_provider_cleanup_cannot_delay_fallback_past_progress_deadline() -> None:
+    primary = CloseControlledProvider(
+        _execution_failure("primary overloaded"),
+        close_delay_seconds=0.05,
+    )
     fallback = FakeProvider()
     resolved_ids: list[str] = []
 
@@ -890,17 +915,53 @@ async def test_progress_timeout_wins_when_provider_suppresses_cancellation() -> 
         wire_api="messages",
         raw_log_label="FULL_PAYLOAD",
         raw_log_payload={},
-        request_id="req_suppressed_timeout",
+        request_id="req_cleanup_timeout",
     )
 
-    with pytest.raises(ExecutionFailure) as exc_info:
-        _ = [chunk async for chunk in stream]
+    with (
+        patch("free_claude_code.application.execution.trace_event") as trace_mock,
+        pytest.raises(ExecutionFailure) as exc_info,
+    ):
+        await anext(stream)
 
     assert exc_info.value.kind is FailureKind.TIMEOUT
     assert exc_info.value.status_code == 504
     assert resolved_ids == ["provider"]
     assert primary.stream_close_calls == 1
     assert fallback.stream_calls == []
+    assert all(
+        call.kwargs.get("event") != "free_claude_code.model_fallback.started"
+        for call in trace_mock.call_args_list
+    )
+
+
+@pytest.mark.asyncio
+async def test_cleanup_failure_trace_names_preserved_provider_failure() -> None:
+    failure = _execution_failure("primary overloaded")
+    provider = CloseControlledProvider(
+        failure,
+        close_error=RuntimeError("close failed"),
+    )
+    stream = _executor_stream(
+        provider,
+        timeout_seconds=1.0,
+        request_id="req_close_failure_trace",
+    )
+
+    with (
+        patch("free_claude_code.core.trace.trace_event") as trace_mock,
+        pytest.raises(ExecutionFailure) as exc_info,
+    ):
+        await anext(stream)
+
+    assert exc_info.value is failure
+    close_trace = next(
+        call.kwargs
+        for call in trace_mock.call_args_list
+        if call.kwargs.get("event") == "stream.input.close_failed"
+    )
+    assert close_trace["close_exc_type"] == "RuntimeError"
+    assert close_trace["preserved_exc_type"] == "ExecutionFailure"
 
 
 @pytest.mark.asyncio
