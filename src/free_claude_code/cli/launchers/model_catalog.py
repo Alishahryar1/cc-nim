@@ -1,7 +1,7 @@
 """Shared FCC model-catalog projection for installed client launchers."""
 
 import json
-from collections.abc import Mapping
+from collections.abc import Mapping, Sequence
 from dataclasses import dataclass
 from urllib.request import Request
 
@@ -36,6 +36,26 @@ def client_models_from_response(
         models.append(candidate)
 
     return tuple(models)
+
+
+def catalog_wire_slug_for_ref(
+    models: Sequence[ClientModel],
+    provider_model_ref: str | None,
+) -> str | None:
+    """Return the slug a client catalog advertises for one configured ref.
+
+    A model the gateway reports as non-thinking is advertised under its
+    no-thinking slug, not its bare provider ref, so a client told to select the
+    bare ref would not find it in the catalog it was given.
+    """
+
+    if not provider_model_ref:
+        return provider_model_ref
+
+    for model in models:
+        if model.provider_model_ref == provider_model_ref:
+            return model.wire_slug
+    return provider_model_ref
 
 
 def fetch_proxy_models_response(proxy_root_url: str, auth_token: str) -> JsonObject:

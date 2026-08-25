@@ -490,6 +490,177 @@ def test_launch_codex_passes_responses_config_and_child_env(
     unregister_pid.assert_called_once_with(12345)
 
 
+def test_launch_codex_selects_the_slug_its_catalog_advertises(
+    tmp_path: Path,
+    empty_proxy_bypass_env: None,
+) -> None:
+    """A non-thinking configured model is advertised under its no-thinking slug."""
+
+    from free_claude_code.cli.launchers.codex import launch
+
+    settings = _launcher_settings(port=9191, token="proxy-token")
+    catalog_path = tmp_path / "codex-model-catalog.json"
+    no_thinking_slug = "claude-3-freecc-no-thinking/nvidia_nim/test-model"
+
+    def fake_urlopen(request: Request, *, timeout: float) -> _JsonResponse:
+        del request, timeout
+        return _JsonResponse(
+            {
+                "data": [
+                    {
+                        "id": no_thinking_slug,
+                        "provider_model_ref": "nvidia_nim/test-model",
+                        "display_name": "NVIDIA model (no thinking)",
+                    }
+                ]
+            }
+        )
+
+    with (
+        patch(
+            "free_claude_code.cli.launchers.codex.get_settings", return_value=settings
+        ),
+        patch(
+            "free_claude_code.cli.launchers.codex.preflight_proxy", return_value=None
+        ),
+        patch(
+            "free_claude_code.cli.launchers.common.shutil.which",
+            return_value="resolved-codex.cmd",
+        ),
+        patch(
+            "free_claude_code.cli.launchers.codex.codex_model_catalog_path",
+            return_value=catalog_path,
+        ),
+        patch(
+            "free_claude_code.cli.launchers.model_catalog.open_local_request",
+            side_effect=fake_urlopen,
+        ),
+        patch("free_claude_code.cli.launchers.common.subprocess.Popen") as popen,
+        patch("free_claude_code.cli.launchers.common.register_pid"),
+        patch("free_claude_code.cli.launchers.common.unregister_pid"),
+        pytest.raises(SystemExit),
+    ):
+        process = popen.return_value
+        process.pid = 12345
+        process.wait.return_value = 0
+        launch(["exec", "hello"])
+
+    command = popen.call_args.args[0]
+    catalog = json.loads(catalog_path.read_text(encoding="utf-8"))
+    assert [model["slug"] for model in catalog["models"]] == [no_thinking_slug]
+    assert f"model={json.dumps(no_thinking_slug)}" in command
+    assert 'model="nvidia_nim/test-model"' not in command
+
+
+def test_launch_codex_keeps_the_configured_ref_without_a_catalog(
+    tmp_path: Path,
+    empty_proxy_bypass_env: None,
+) -> None:
+    """A failed catalog fetch must not change the model Codex is told to use."""
+
+    from free_claude_code.cli.launchers.codex import launch
+
+    settings = _launcher_settings(port=9191, token="proxy-token")
+
+    with (
+        patch(
+            "free_claude_code.cli.launchers.codex.get_settings", return_value=settings
+        ),
+        patch(
+            "free_claude_code.cli.launchers.codex.preflight_proxy", return_value=None
+        ),
+        patch(
+            "free_claude_code.cli.launchers.common.shutil.which",
+            return_value="resolved-codex.cmd",
+        ),
+        patch(
+            "free_claude_code.cli.launchers.codex.codex_model_catalog_path",
+            return_value=tmp_path / "codex-model-catalog.json",
+        ),
+        patch(
+            "free_claude_code.cli.launchers.model_catalog.open_local_request",
+            side_effect=URLError("boom"),
+        ),
+        patch("free_claude_code.cli.launchers.common.subprocess.Popen") as popen,
+        patch("free_claude_code.cli.launchers.common.register_pid"),
+        patch("free_claude_code.cli.launchers.common.unregister_pid"),
+        pytest.raises(SystemExit),
+    ):
+        process = popen.return_value
+        process.pid = 12345
+        process.wait.return_value = 0
+        launch(["exec", "hello"])
+
+    assert 'model="nvidia_nim/test-model"' in popen.call_args.args[0]
+
+
+def test_codex_empty_catalog_keeps_the_configured_ref_without_catalog_config(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    from free_claude_code.cli.launchers import codex
+
+    settings = _launcher_settings(port=9191, token="proxy-token")
+    with (
+        patch.object(codex, "fetch_proxy_models_response", return_value={"data": []}),
+        patch.object(codex, "write_codex_model_catalog") as write_catalog,
+    ):
+        catalog = codex.codex_model_catalog_plan("http://127.0.0.1:9191", settings)
+
+    command = codex.build_codex_launcher_command(
+        binary_path="resolved-codex.cmd",
+        argv=("exec", "hello"),
+        settings=settings,
+        proxy_root_url="http://127.0.0.1:9191",
+        catalog_config_args=catalog.config_args,
+        catalog_models=catalog.models,
+    )
+
+    assert catalog == codex.CodexModelCatalogPlan()
+    assert not any("model_catalog_json=" in arg for arg in command)
+    assert 'model="nvidia_nim/test-model"' in command
+    write_catalog.assert_not_called()
+    assert "Codex model catalog is empty" in capsys.readouterr().err
+
+
+@pytest.mark.parametrize(
+    "failing_step", ("build_codex_model_catalog", "write_codex_model_catalog")
+)
+def test_codex_catalog_plan_fails_open_when_catalog_processing_fails(
+    failing_step: str,
+    capsys: pytest.CaptureFixture[str],
+    tmp_path: Path,
+) -> None:
+    from free_claude_code.cli.launchers import codex
+
+    settings = _launcher_settings(port=9191, token="proxy-token")
+    models_response = {
+        "data": [
+            {
+                "id": "nvidia_nim/test-model",
+                "provider_model_ref": "nvidia_nim/test-model",
+                "display_name": "NVIDIA model",
+            }
+        ]
+    }
+    with (
+        patch.object(
+            codex, "fetch_proxy_models_response", return_value=models_response
+        ),
+        patch.object(
+            codex,
+            "codex_model_catalog_path",
+            return_value=tmp_path / "codex-model-catalog.json",
+        ),
+        patch.object(codex, failing_step, side_effect=OSError("boom")),
+    ):
+        catalog = codex.codex_model_catalog_plan("http://127.0.0.1:9191", settings)
+
+    assert catalog == codex.CodexModelCatalogPlan()
+    captured = capsys.readouterr()
+    assert "could not prepare Codex model catalog" in captured.err
+    assert "launching without model picker catalog" in captured.err
+
+
 def test_codex_proxy_auth_command_prints_only_current_token(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
