@@ -220,6 +220,10 @@ class _OpenAIChatStreamAssembler:
         return has_committed_sse_output(self._ledger)
 
     @property
+    def has_started_tool_block(self) -> bool:
+        return self._ledger.has_emitted_tool_block()
+
+    @property
     def complete_tool_salvageable(self) -> bool:
         return (
             self.generated_output
@@ -976,21 +980,23 @@ class _OpenAIChatStreamRunner:
             )
 
         generated_output = assembler.generated_output
-        # generated_output means the ledger has assembled *any* output,
-        # which can still be sitting in the holdback buffer rather than
-        # actually flushed to the client (recovery.committed is the
-        # narrower, literal-flush signal) -- but test_error_after_native_tool_call_failure_includes_body
-        # requires that once a complete tool call has been assembled, a
-        # subsequent BAD_REQUEST-shaped error raises as final rather than
-        # attempting recovery, regardless of literal flush timing. Gating on
-        # generated_output (true as soon as anything is assembled, not only
-        # once physically flushed) satisfies that guarantee while still
-        # covering #1543's reported scenario, where nothing had been
-        # generated at all yet. A stream that never opened has no
+        # recovery.committed is the literal "holdback buffer has flushed to
+        # the client" signal. Buffered *text* alone isn't enough to force
+        # non-retryable: it can still be sitting in the holdback buffer,
+        # unseen by the client, and safely discarded by an early retry --
+        # this is #1543's exact scenario (buffered text only, nothing
+        # committed). A *started tool block* is different: it's a semantic
+        # commitment regardless of flush timing (a fallback attempt could
+        # produce a different tool call, corrupting what's already been
+        # assembled), which is what
+        # test_error_after_native_tool_call_failure_includes_body requires
+        # to stay non-retryable. A stream that never opened has no
         # meaningful commit state either way; treat it the same as
-        # generated, since a create-time BAD_REQUEST is a genuine client
+        # committed, since a create-time BAD_REQUEST is a genuine client
         # error, not a mid-stream provider hiccup.
-        stream_committed = scope is None or generated_output
+        stream_committed = (
+            scope is None or recovery.committed or assembler.has_started_tool_block
+        )
         retryable = (
             attempt_failure.retryable
             if attempt_failure is not None

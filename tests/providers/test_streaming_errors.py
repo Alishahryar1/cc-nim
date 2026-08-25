@@ -706,6 +706,48 @@ class TestStreamingExceptionHandling:
         _assert_error_not_in_text_deltas_after_tool(events, "bad after tool")
 
     @pytest.mark.asyncio
+    async def test_statusless_bad_request_before_any_tool_block_retries_silently(self):
+        """A mid-stream BAD_REQUEST with only buffered text (#1543) is retried, not raised.
+
+        Distinguishes this from test_error_after_native_tool_call_failure_includes_body:
+        that test has a *complete tool call* already assembled, which must stay
+        non-retryable regardless of flush timing. Here nothing but plain text has
+        been buffered -- the exact shape reported in #1543 -- so the holdback is
+        safely discardable and the candidate should retry invisibly to the client.
+        """
+        provider = _make_provider()
+        request = _make_request()
+        statusless_bad_request = openai.APIError(
+            "stream embedded error",
+            request=httpx2.Request("POST", "https://example.com/v1/chat/completions"),
+            body={"error": {"message": "stream embedded error", "type": "BAD_REQUEST"}},
+        )
+        first_stream = AsyncStreamMock(
+            [_make_chunk(content="hidden")],
+            error=statusless_bad_request,
+        )
+        second_stream = AsyncStreamMock(
+            [
+                _make_chunk(content="visible"),
+                _make_chunk(finish_reason="stop"),
+            ]
+        )
+
+        with patch.object(
+            provider._client.chat.completions,
+            "create",
+            new_callable=AsyncMock,
+            side_effect=[first_stream, second_stream],
+        ) as mock_create:
+            events = await _collect_stream(provider, request)
+
+        event_text = "".join(events)
+        assert mock_create.await_count == 2
+        assert "hidden" not in event_text
+        assert "visible" in event_text
+        assert "event: error\n" not in event_text
+
+    @pytest.mark.asyncio
     async def test_clean_eof_after_complete_tool_call_salvages_tool_use(self):
         """A complete tool JSON payload missing finish_reason is committed as tool_use."""
         provider = _make_provider()
