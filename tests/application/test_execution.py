@@ -172,6 +172,24 @@ class FailingStreamConstructionProvider(FakeProvider):
         raise RuntimeError("stream construction failed")
 
 
+class ExecutionFailureStreamConstructionProvider(FakeProvider):
+    def __init__(self, failure: ExecutionFailure) -> None:
+        super().__init__()
+        self._failure = failure
+
+    def stream_response(
+        self,
+        request: MessagesRequest,
+        input_tokens: int = 0,
+        *,
+        request_id: str | None = None,
+        response_model: str | None = None,
+        reasoning: ReasoningPolicy,
+    ) -> AsyncIterator[str]:
+        del request, input_tokens, request_id, response_model, reasoning
+        raise self._failure
+
+
 def _target(provider_id: str, provider_model: str) -> ProviderModelTarget:
     return ProviderModelTarget(
         provider_id=provider_id,
@@ -473,11 +491,19 @@ async def test_unexpected_primary_failure_does_not_select_fallback() -> None:
     assert primary.stream_close_calls == 1
 
 
+@pytest.mark.parametrize("failure_kind", tuple(FailureKind))
 @pytest.mark.asyncio
-async def test_nonretryable_failure_never_resolves_fallback() -> None:
-    primary_failure = _execution_failure("rejected", retryable=False)
+async def test_nonretryable_provider_failure_selects_fallback_before_first_frame(
+    failure_kind: FailureKind,
+) -> None:
+    primary_failure = ExecutionFailure(
+        kind=failure_kind,
+        status_code=500,
+        message="provider rejected candidate",
+        retryable=False,
+    )
     primary = ControlledProvider([primary_failure])
-    fallback = FakeProvider()
+    fallback = ControlledProvider(["fallback-frame"])
     resolved_ids: list[str] = []
 
     def resolve(provider_id: str) -> FakeProvider:
@@ -493,11 +519,45 @@ async def test_nonretryable_failure_never_resolves_fallback() -> None:
         request_id="req_rejected",
     )
 
-    with pytest.raises(ExecutionFailure) as exc_info:
-        await anext(stream)
+    with patch("free_claude_code.application.execution.trace_event") as trace_mock:
+        chunks = [chunk async for chunk in stream]
 
-    assert exc_info.value is primary_failure
-    assert resolved_ids == ["provider"]
+    assert chunks == ["fallback-frame"]
+    assert resolved_ids == ["provider", "fallback"]
+    fallback_started = next(
+        call.kwargs
+        for call in trace_mock.call_args_list
+        if call.kwargs.get("event") == "free_claude_code.model_fallback.started"
+    )
+    assert fallback_started["failure_kind"] == failure_kind.value
+    assert fallback_started["provider_retryable"] is False
+
+
+@pytest.mark.asyncio
+async def test_nonretryable_stream_construction_failure_selects_fallback() -> None:
+    primary_failure = ExecutionFailure(
+        kind=FailureKind.PERMISSION,
+        status_code=403,
+        message="provider denied candidate",
+        retryable=False,
+    )
+    primary = ExecutionFailureStreamConstructionProvider(primary_failure)
+    fallback = ControlledProvider(["fallback-frame"])
+    providers = {"provider": primary, "fallback": fallback}
+    executor = ProviderExecutor(
+        providers.__getitem__,
+        progress_timeout_seconds=60.0,
+    )
+    stream = executor.stream(
+        _routed_request(_target("fallback", "model")),
+        wire_api="messages",
+        raw_log_label="FULL_PAYLOAD",
+        raw_log_payload={},
+        request_id="req_construction_failure",
+    )
+
+    assert [chunk async for chunk in stream] == ["fallback-frame"]
+    assert fallback.stream_calls[0]["request_id"] == "req_construction_failure"
 
 
 @pytest.mark.asyncio
@@ -729,6 +789,36 @@ async def test_progress_timeout_before_first_chunk_is_canonical_and_correlated()
             "timeout_seconds": 0.02,
         }
     ]
+
+
+@pytest.mark.asyncio
+async def test_application_progress_timeout_never_resolves_fallback() -> None:
+    primary = ControlledProvider([WaitStep()])
+    fallback = FakeProvider()
+    resolved_ids: list[str] = []
+
+    def resolve(provider_id: str) -> FakeProvider:
+        resolved_ids.append(provider_id)
+        return {"provider": primary, "fallback": fallback}[provider_id]
+
+    executor = ProviderExecutor(resolve, progress_timeout_seconds=0.02)
+    stream = executor.stream(
+        _routed_request(_target("fallback", "model")),
+        wire_api="messages",
+        raw_log_label="FULL_PAYLOAD",
+        raw_log_payload={},
+        request_id="req_terminal_progress_timeout",
+    )
+
+    with pytest.raises(ExecutionFailure) as exc_info:
+        await anext(stream)
+
+    assert exc_info.value.kind is FailureKind.TIMEOUT
+    assert exc_info.value.status_code == 504
+    assert exc_info.value.retryable is False
+    assert resolved_ids == ["provider"]
+    assert primary.stream_close_calls == 1
+    assert fallback.stream_calls == []
 
 
 @pytest.mark.asyncio
