@@ -122,6 +122,7 @@ async def stream_automatic_web_search_response(
         result_filter=lambda results: _filter_results(results, plan.domains),
         verbose_client_errors=verbose_client_errors,
         search_provider=search_provider,
+        max_output_tokens=routed.request.max_tokens,
     ):
         yield frame
     trace_event(

@@ -12,6 +12,7 @@ from aiohttp import ClientSession, ClientTimeout, TCPConnector
 from aiohttp.abc import AbstractResolver, ResolveResult
 from loguru import logger
 
+from free_claude_code.core.anthropic.stream_contracts import parse_sse_text
 from free_claude_code.core.version import package_version
 
 from . import constants
@@ -189,24 +190,38 @@ _PARALLEL_SEARCH_MCP_URL = "https://search.parallel.ai/mcp"
 _MCP_PROTOCOL_VERSION = "2025-03-26"
 
 
-def _mcp_json(response: httpx.Response) -> dict[str, object]:
+def _matching_mcp_response(value: object, *, request_id: int) -> bool:
+    if not isinstance(value, dict):
+        return False
+    response_id = value.get("id")
+    return (
+        value.get("jsonrpc") == "2.0"
+        and isinstance(response_id, int)
+        and not isinstance(response_id, bool)
+        and response_id == request_id
+        and ("result" in value) != ("error" in value)
+    )
+
+
+def _mcp_json(response: httpx.Response, *, request_id: int) -> dict[str, object]:
     response.raise_for_status()
     content_type = response.headers.get("content-type", "")
     if "text/event-stream" in content_type:
         payloads = [
-            line.removeprefix("data:").strip()
-            for line in response.text.splitlines()
-            if line.startswith("data:") and line.removeprefix("data:").strip()
+            event.data
+            for event in parse_sse_text(response.text)
+            if _matching_mcp_response(event.data, request_id=request_id)
         ]
         if not payloads:
-            raise ValueError("MCP response did not contain an event payload")
-        value = json.loads(payloads[-1])
+            raise ValueError("MCP response did not contain a JSON-RPC event payload")
+        value = payloads[-1]
     else:
         value = response.json()
     if not isinstance(value, dict):
         raise ValueError("MCP response must be a JSON object")
-    error = value.get("error")
-    if error is not None:
+    if not _matching_mcp_response(value, request_id=request_id):
+        raise ValueError("MCP response did not contain a matching JSON-RPC response")
+    if "error" in value:
         raise ValueError("MCP server returned a JSON-RPC error")
     return value
 
@@ -285,7 +300,7 @@ async def _run_parallel_web_search(query: str) -> list[dict[str, str]]:
             session_id = initialized.headers.get("mcp-session-id")
             if session_id:
                 client.headers["Mcp-Session-Id"] = session_id
-            initialize_envelope = _mcp_json(initialized)
+            initialize_envelope = _mcp_json(initialized, request_id=1)
             initialize_result = initialize_envelope.get("result")
             negotiated_version = (
                 initialize_result.get("protocolVersion")
@@ -303,7 +318,8 @@ async def _run_parallel_web_search(query: str) -> list[dict[str, str]]:
                 await client.post(
                     _PARALLEL_SEARCH_MCP_URL,
                     json={"jsonrpc": "2.0", "id": 2, "method": "tools/list"},
-                )
+                ),
+                request_id=2,
             )
             listed_result = listed.get("result")
             tools = (
@@ -329,12 +345,20 @@ async def _run_parallel_web_search(query: str) -> list[dict[str, str]]:
                             },
                         },
                     },
-                )
+                ),
+                request_id=3,
             )
             return _parallel_search_results(called)
         finally:
             if session_id is not None:
-                await client.delete(_PARALLEL_SEARCH_MCP_URL)
+                try:
+                    await client.delete(_PARALLEL_SEARCH_MCP_URL)
+                except Exception as error:
+                    logger.warning(
+                        "web_tool_cleanup_failure tool={} exc_type={}",
+                        "web_search",
+                        type(error).__name__,
+                    )
 
 
 async def _run_web_search(

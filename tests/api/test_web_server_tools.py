@@ -18,6 +18,7 @@ from free_claude_code.api.web_tools.egress import (
 )
 from free_claude_code.api.web_tools.outbound import (
     _drain_response_body_capped,
+    _mcp_json,
     _read_response_body_capped,
     _run_parallel_web_search,
     _run_web_fetch,
@@ -57,6 +58,7 @@ from free_claude_code.core.anthropic.stream_contracts import (
 from free_claude_code.core.anthropic.streaming import format_sse_event
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
 from free_claude_code.core.reasoning import ReasoningPolicy
+from free_claude_code.core.token_estimation import estimate_text_tokens
 from free_claude_code.core.version import package_version
 from free_claude_code.messaging.event_parser import parse_cli_event
 
@@ -1482,14 +1484,19 @@ async def test_service_rejects_listed_server_tools_for_every_provider(
 
 
 @pytest.mark.asyncio
-async def test_parallel_search_mcp_invokes_advertised_tool_and_preserves_excerpts() -> (
-    None
-):
+@pytest.mark.parametrize("response_format", ["json", "multiline_sse"])
+@pytest.mark.parametrize("cleanup_failure", [False, True])
+async def test_parallel_search_mcp_invokes_advertised_tool_and_preserves_excerpts(
+    response_format: str,
+    cleanup_failure: bool,
+) -> None:
     requests: list[httpx.Request] = []
 
     def handle(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         if request.method == "DELETE":
+            if cleanup_failure:
+                raise httpx.ConnectError("session cleanup failed", request=request)
             return httpx.Response(200)
         payload = json.loads(request.content)
         method = payload["method"]
@@ -1523,24 +1530,37 @@ async def test_parallel_search_mcp_invokes_advertised_tool_and_preserves_excerpt
                 "search_queries": ["current MCP protocol"],
             },
         }
-        return httpx.Response(
-            200,
-            json={
-                "jsonrpc": "2.0",
-                "id": 3,
-                "result": {
-                    "structuredContent": {
-                        "results": [
-                            {
-                                "url": "https://example.com/mcp",
-                                "title": None,
-                                "excerpts": ["Protocol evidence", "More evidence"],
-                            }
-                        ]
-                    }
-                },
+        result = {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "result": {
+                "structuredContent": {
+                    "results": [
+                        {
+                            "url": "https://example.com/mcp",
+                            "title": None,
+                            "excerpts": ["Protocol evidence", "More evidence"],
+                        }
+                    ]
+                }
             },
-        )
+        }
+        if response_format == "multiline_sse":
+            before_result, result_body = json.dumps(result).split('"result":', 1)
+            return httpx.Response(
+                200,
+                headers={"Content-Type": "text/event-stream"},
+                text=(
+                    "event: progress\n"
+                    'data: {"jsonrpc":"2.0","method":"notifications/progress"}\n\n'
+                    "event: message\n"
+                    f"data: {before_result}\n"
+                    f'data: "result":{result_body}\n\n'
+                    "event: progress\n"
+                    'data: {"jsonrpc":"2.0","method":"notifications/progress"}\n\n'
+                ),
+            )
+        return httpx.Response(200, json=result)
 
     async_client = httpx.AsyncClient
 
@@ -1602,6 +1622,99 @@ def test_duckduckgo_search_summary_is_byte_for_byte_compatible() -> None:
         )
         == "Search results for: incumbent query\n\n1. Existing title\nhttps://example.com/existing"
     )
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "event: message\ndata: not-json\n\n",
+        "event: message\ndata: []\n\n",
+        "event: keepalive\n\n",
+        'event: message\ndata: {"jsonrpc":"2.0","id":9,"result":{}}\n\n',
+    ],
+)
+def test_parallel_mcp_rejects_invalid_or_unrelated_sse_responses(payload: str) -> None:
+    response = httpx.Response(
+        200,
+        headers={"Content-Type": "text/event-stream"},
+        text=payload,
+        request=httpx.Request("POST", "https://fixture.invalid/mcp"),
+    )
+
+    with pytest.raises(ValueError, match="JSON-RPC"):
+        _mcp_json(response, request_id=3)
+
+
+@pytest.mark.parametrize("response_format", ["json", "sse"])
+@pytest.mark.parametrize(
+    ("payload", "request_id"),
+    [
+        ({"jsonrpc": "2.0", "id": 9, "result": {}}, 3),
+        ({"jsonrpc": "2.0", "id": True, "result": {}}, 1),
+        ({"id": 3, "result": {}}, 3),
+        ({"jsonrpc": "1.0", "id": 3, "result": {}}, 3),
+        ({"jsonrpc": "2.0", "result": {}}, 3),
+        ({"jsonrpc": "2.0", "id": 3}, 3),
+        (
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "result": {},
+                "error": {"code": -32000, "message": "invalid"},
+            },
+            3,
+        ),
+    ],
+)
+def test_parallel_mcp_requires_matching_jsonrpc_response_envelopes(
+    response_format: str,
+    payload: dict[str, object],
+    request_id: int,
+) -> None:
+    body = json.dumps(payload)
+    if response_format == "sse":
+        body = f"event: message\ndata: {body}\n\n"
+    response = httpx.Response(
+        200,
+        headers={
+            "Content-Type": (
+                "text/event-stream" if response_format == "sse" else "application/json"
+            )
+        },
+        text=body,
+        request=httpx.Request("POST", "https://fixture.invalid/mcp"),
+    )
+
+    with pytest.raises(ValueError, match="JSON-RPC"):
+        _mcp_json(response, request_id=request_id)
+
+
+@pytest.mark.parametrize("response_format", ["json", "sse"])
+def test_parallel_mcp_preserves_matching_jsonrpc_server_errors(
+    response_format: str,
+) -> None:
+    body = json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "id": 3,
+            "error": {"code": -32000, "message": "search unavailable"},
+        }
+    )
+    if response_format == "sse":
+        body = f"event: message\ndata: {body}\n\n"
+    response = httpx.Response(
+        200,
+        headers={
+            "Content-Type": (
+                "text/event-stream" if response_format == "sse" else "application/json"
+            )
+        },
+        text=body,
+        request=httpx.Request("POST", "https://fixture.invalid/mcp"),
+    )
+
+    with pytest.raises(ValueError, match="server returned a JSON-RPC error"):
+        _mcp_json(response, request_id=3)
 
 
 @pytest.mark.asyncio
@@ -1680,12 +1793,76 @@ async def test_automatic_messages_handler_uses_opted_in_parallel_and_emits_excer
 
 
 @pytest.mark.asyncio
-async def test_parallel_malformed_initialize_still_closes_allocated_session() -> None:
+@pytest.mark.parametrize(
+    ("automatic", "excerpt_character"),
+    [(False, "🧠"), (True, "界")],
+    ids=["forced-dense-emoji", "automatic-dense-unicode"],
+)
+async def test_parallel_search_respects_real_request_token_budget(
+    automatic: bool,
+    excerpt_character: str,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    parallel = AsyncMock(
+        return_value=[
+            {
+                "title": "Relevant evidence",
+                "url": "https://example.com/evidence",
+                "content": excerpt_character * 24_000,
+            }
+        ]
+    )
+    monkeypatch.setattr(
+        "free_claude_code.api.web_tools.outbound._run_parallel_web_search", parallel
+    )
+    settings = Settings.model_validate({"WEB_SEARCH_PROVIDER": "parallel"})
+    if automatic:
+        provider = ScriptedSelectionProvider(
+            _provider_tool_events(arguments={"query": "selected evidence"})
+        )
+        service = _automatic_search_service(provider, settings=settings)
+        request = _automatic_search_request()
+    else:
+        service = MessagesHandler(
+            settings,
+            provider_resolver=MagicMock(),
+            model_router=FixedProviderModelRouter(settings, _PROVIDER_IDS[0]),
+        )
+        request = MessagesRequest(
+            model="claude-haiku-4-5-20251001",
+            max_tokens=100,
+            stream=True,
+            messages=[Message(role="user", content="Search for dense evidence")],
+            tools=[Tool(name="web_search", type="web_search_20250305")],
+            tool_choice={"type": "tool", "name": "web_search"},
+        )
+
+    response = await service.create(request)
+
+    assert isinstance(response, StreamingResponse)
+    events = parse_sse_text(await _streaming_body_text(response))
+    summary = text_content(events)
+    assert excerpt_character in summary
+    assert estimate_text_tokens(summary) <= 100
+    assert len(summary) <= 400
+    final_usage = next(
+        event.data["usage"] for event in events if event.event == "message_delta"
+    )
+    assert final_usage["output_tokens"] <= 100
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cleanup_failure", [False, True])
+async def test_parallel_malformed_initialize_still_closes_allocated_session(
+    cleanup_failure: bool,
+) -> None:
     requests: list[httpx.Request] = []
 
     def handle(request: httpx.Request) -> httpx.Response:
         requests.append(request)
         if request.method == "DELETE":
+            if cleanup_failure:
+                raise httpx.ConnectError("session cleanup failed", request=request)
             return httpx.Response(200)
         return httpx.Response(
             200,
@@ -1711,6 +1888,43 @@ async def test_parallel_malformed_initialize_still_closes_allocated_session() ->
 
     assert [request.method for request in requests] == ["POST", "DELETE"]
     assert requests[-1].headers["mcp-session-id"] == "allocated-before-malformed-body"
+
+
+@pytest.mark.asyncio
+async def test_parallel_cleanup_failure_preserves_request_cancellation() -> None:
+    requests: list[httpx.Request] = []
+
+    def handle(request: httpx.Request) -> httpx.Response:
+        requests.append(request)
+        if request.method == "DELETE":
+            raise httpx.ConnectError("session cleanup failed", request=request)
+        return httpx.Response(
+            200,
+            headers={"Mcp-Session-Id": "cancelled-session"},
+            json={"jsonrpc": "2.0", "id": 1, "result": {}},
+        )
+
+    async_client = httpx.AsyncClient
+    with (
+        patch(
+            "free_claude_code.api.web_tools.outbound._PARALLEL_SEARCH_MCP_URL",
+            "https://fixture.invalid/mcp",
+        ),
+        patch(
+            "httpx.AsyncClient",
+            side_effect=lambda **kwargs: async_client(
+                transport=httpx.MockTransport(handle), **kwargs
+            ),
+        ),
+        patch(
+            "free_claude_code.api.web_tools.outbound._mcp_json",
+            side_effect=asyncio.CancelledError,
+        ),
+        pytest.raises(asyncio.CancelledError),
+    ):
+        await _run_parallel_web_search("cancelled query")
+
+    assert [request.method for request in requests] == ["POST", "DELETE"]
 
 
 def test_web_search_provider_admin_field_is_native_select() -> None:
