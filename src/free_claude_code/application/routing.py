@@ -13,7 +13,10 @@ from free_claude_code.config.provider_catalog import (
 from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.config.settings import Settings
 from free_claude_code.core.anthropic import MessagesRequest, TokenCountRequest
-from free_claude_code.core.gateway_model_ids import decode_gateway_model_id
+from free_claude_code.core.gateway_model_ids import (
+    decode_gateway_model_id,
+    resolve_picker_alias,
+)
 from free_claude_code.core.reasoning import ReasoningPolicy
 
 from .reasoning import resolve_reasoning_policy

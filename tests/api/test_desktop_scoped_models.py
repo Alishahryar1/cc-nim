@@ -81,7 +81,7 @@ def test_messages_round_trip_works_under_desktop_prefix() -> None:
 
     with (
         patch(
-            "free_claude_code.api.routes.get_inference_token_count",
+            "free_claude_code.api.routes.get_token_count",
             return_value=1,
         ),
     ):
@@ -94,3 +94,46 @@ def test_messages_round_trip_works_under_desktop_prefix() -> None:
         )
 
     assert response.status_code == 200
+
+
+def test_advertised_alias_routes_through_prefixed_api() -> None:
+    """An alias served by the desktop catalog must be routable end to end."""
+    from unittest.mock import patch
+
+    from free_claude_code.application.routing import (
+        ModelRouter,
+        RoutedTokenCountRequest,
+    )
+    from free_claude_code.core.anthropic import TokenCountRequest
+
+    app = create_test_app(_settings())
+    routed_refs: list[str] = []
+    original_resolver = ModelRouter.resolve_token_count_request
+
+    def spy(
+        self: ModelRouter, request: TokenCountRequest
+    ) -> RoutedTokenCountRequest:
+        routed = original_resolver(self, request)
+        routed_refs.append(routed.resolved.primary.provider_model_ref)
+        return routed
+
+    with (
+        patch("free_claude_code.api.routes.get_token_count", return_value=1),
+        patch.object(
+            ModelRouter,
+            "resolve_token_count_request",
+            autospec=True,
+            side_effect=spy,
+        ),
+    ):
+        response = TestClient(app).post(
+            "/claude-desktop/v1/messages/count_tokens",
+            json={
+                "model": "claude-sonnet-nim-0001",
+                "messages": [{"role": "user", "content": "hello"}],
+            },
+        )
+
+    assert response.status_code == 200
+    # The advertised alias reached the router and resolved to its seeded ref.
+    assert routed_refs == ["deepseek/deepseek-chat"]
