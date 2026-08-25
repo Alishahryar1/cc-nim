@@ -190,6 +190,33 @@ class ExecutionFailureStreamConstructionProvider(FakeProvider):
         raise self._failure
 
 
+class CancellationSuppressingProvider(FakeProvider):
+    async def stream_response(
+        self,
+        request: MessagesRequest,
+        input_tokens: int = 0,
+        *,
+        request_id: str | None = None,
+        response_model: str | None = None,
+        reasoning: ReasoningPolicy,
+    ) -> AsyncIterator[str]:
+        self._record_stream_call(
+            request,
+            input_tokens=input_tokens,
+            request_id=request_id,
+            response_model=response_model,
+            reasoning=reasoning,
+        )
+        try:
+            try:
+                await asyncio.Event().wait()
+            except asyncio.CancelledError:
+                return
+            yield "unreachable"
+        finally:
+            self.stream_close_calls += 1
+
+
 def _target(provider_id: str, provider_model: str) -> ProviderModelTarget:
     return ProviderModelTarget(
         provider_id=provider_id,
@@ -489,6 +516,32 @@ async def test_unexpected_primary_failure_does_not_select_fallback() -> None:
 
     assert resolved_ids == ["provider"]
     assert primary.stream_close_calls == 1
+
+
+@pytest.mark.asyncio
+async def test_invalid_none_stream_remains_terminal() -> None:
+    primary = FakeProvider()
+    fallback = FakeProvider()
+    resolved_ids: list[str] = []
+
+    def resolve(provider_id: str) -> FakeProvider:
+        resolved_ids.append(provider_id)
+        return {"provider": primary, "fallback": fallback}[provider_id]
+
+    executor = ProviderExecutor(resolve, progress_timeout_seconds=60.0)
+    with patch.object(primary, "stream_response", return_value=None):
+        stream = executor.stream(
+            _routed_request(_target("fallback", "model")),
+            wire_api="messages",
+            raw_log_label="FULL_PAYLOAD",
+            raw_log_payload={},
+            request_id="req_invalid_stream",
+        )
+        with pytest.raises(TypeError):
+            await anext(stream)
+
+    assert resolved_ids == ["provider"]
+    assert fallback.stream_calls == []
 
 
 @pytest.mark.parametrize("failure_kind", tuple(FailureKind))
@@ -816,6 +869,35 @@ async def test_application_progress_timeout_never_resolves_fallback() -> None:
     assert exc_info.value.kind is FailureKind.TIMEOUT
     assert exc_info.value.status_code == 504
     assert exc_info.value.retryable is False
+    assert resolved_ids == ["provider"]
+    assert primary.stream_close_calls == 1
+    assert fallback.stream_calls == []
+
+
+@pytest.mark.asyncio
+async def test_progress_timeout_wins_when_provider_suppresses_cancellation() -> None:
+    primary = CancellationSuppressingProvider()
+    fallback = FakeProvider()
+    resolved_ids: list[str] = []
+
+    def resolve(provider_id: str) -> FakeProvider:
+        resolved_ids.append(provider_id)
+        return {"provider": primary, "fallback": fallback}[provider_id]
+
+    executor = ProviderExecutor(resolve, progress_timeout_seconds=0.02)
+    stream = executor.stream(
+        _routed_request(_target("fallback", "model")),
+        wire_api="messages",
+        raw_log_label="FULL_PAYLOAD",
+        raw_log_payload={},
+        request_id="req_suppressed_timeout",
+    )
+
+    with pytest.raises(ExecutionFailure) as exc_info:
+        _ = [chunk async for chunk in stream]
+
+    assert exc_info.value.kind is FailureKind.TIMEOUT
+    assert exc_info.value.status_code == 504
     assert resolved_ids == ["provider"]
     assert primary.stream_close_calls == 1
     assert fallback.stream_calls == []

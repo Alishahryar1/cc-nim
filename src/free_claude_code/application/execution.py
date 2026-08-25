@@ -246,6 +246,10 @@ class ProviderExecutor:
                     except ExecutionFailure as failure:
                         candidate_failure = failure
 
+                    if provider_stream is None and candidate_failure is None:
+                        raise TypeError(
+                            "provider stream_response must return an async iterator"
+                        )
                     while provider_stream is not None:
                         if loop.time() >= progress_deadline:
                             raise self._progress_timeout_failure(
@@ -261,6 +265,11 @@ class ProviderExecutor:
                                 except ExecutionFailure as failure:
                                     read_failure = failure
                         except StopAsyncIteration:
+                            if progress_timeout.expired():
+                                raise self._progress_timeout_failure(
+                                    request_id=request_id,
+                                    provider_id=target.provider_id,
+                                ) from None
                             break
                         except TimeoutError as exc:
                             if not progress_timeout.expired():
