@@ -100,7 +100,7 @@ class ProviderExecutor:
             "candidate_count": candidate_count,
             "failure_kind": failure.kind.value,
             "status_code": failure.status_code,
-            "provider_retryable": True,
+            "provider_retryable": failure.retryable,
         }
         if self._generation_id is not None:
             fields["generation_id"] = self._generation_id
@@ -233,25 +233,37 @@ class ProviderExecutor:
 
                 provider_stream: AsyncIterator[str] | None = None
                 candidate_committed = False
-                advance_failure: ExecutionFailure | None = None
+                candidate_failure: ExecutionFailure | None = None
                 try:
-                    provider_stream = provider.stream_response(
-                        candidate_request,
-                        input_tokens=input_tokens,
-                        request_id=request_id,
-                        response_model=gateway_model,
-                        reasoning=routed.reasoning,
-                    )
-                    while True:
+                    try:
+                        provider_stream = provider.stream_response(
+                            candidate_request,
+                            input_tokens=input_tokens,
+                            request_id=request_id,
+                            response_model=gateway_model,
+                            reasoning=routed.reasoning,
+                        )
+                    except ExecutionFailure as failure:
+                        candidate_failure = failure
+
+                    if provider_stream is None and candidate_failure is None:
+                        raise TypeError(
+                            "provider stream_response must return an async iterator"
+                        )
+                    while provider_stream is not None:
                         if loop.time() >= progress_deadline:
                             raise self._progress_timeout_failure(
                                 request_id=request_id,
                                 provider_id=target.provider_id,
                             )
                         progress_timeout = asyncio.timeout_at(progress_deadline)
+                        read_failure: ExecutionFailure | None = None
                         try:
                             async with progress_timeout:
-                                chunk = await anext(provider_stream)
+                                try:
+                                    chunk = await anext(provider_stream)
+                                except ExecutionFailure as failure:
+                                    read_failure = failure
                         except StopAsyncIteration:
                             break
                         except TimeoutError as exc:
@@ -261,6 +273,14 @@ class ProviderExecutor:
                                 request_id=request_id,
                                 provider_id=target.provider_id,
                             ) from exc
+                        if progress_timeout.expired():
+                            raise self._progress_timeout_failure(
+                                request_id=request_id,
+                                provider_id=target.provider_id,
+                            )
+                        if read_failure is not None:
+                            candidate_failure = read_failure
+                            break
                         if not chunk:
                             await asyncio.sleep(0)
                             continue
@@ -276,32 +296,40 @@ class ProviderExecutor:
                                 )
                         yield chunk
                         progress_deadline = loop.time() + self._progress_timeout_seconds
-                except ExecutionFailure as failure:
-                    if (
-                        candidate_committed
-                        or not failure.retryable
-                        or index + 1 >= len(candidates)
-                    ):
-                        raise
-                    advance_failure = failure
                 finally:
                     if provider_stream is not None:
-                        await close_stream_input(
-                            provider_stream,
-                            owner="provider_executor",
-                            source="api",
-                            preserved_error=sys.exception(),
+                        active_error = sys.exception()
+                        preserved_error = active_error or candidate_failure
+                        cleanup_timeout = asyncio.timeout_at(
+                            progress_deadline if active_error is None else None
                         )
+                        try:
+                            async with cleanup_timeout:
+                                await close_stream_input(
+                                    provider_stream,
+                                    owner="provider_executor",
+                                    source="api",
+                                    preserved_error=preserved_error,
+                                )
+                        except TimeoutError as exc:
+                            if not cleanup_timeout.expired():
+                                raise
+                            raise self._progress_timeout_failure(
+                                request_id=request_id,
+                                provider_id=target.provider_id,
+                            ) from exc
 
-                if advance_failure is None:
+                if candidate_failure is None:
                     return
+                if candidate_committed or index + 1 >= len(candidates):
+                    raise candidate_failure
                 next_target = candidates[index + 1]
                 self._trace_fallback_started(
                     request_id=request_id,
                     wire_api=wire_api,
                     failed=target,
                     selected=next_target,
-                    failure=advance_failure,
+                    failure=candidate_failure,
                     candidate_index=index + 2,
                     candidate_count=len(candidates),
                 )

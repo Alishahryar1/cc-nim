@@ -68,6 +68,36 @@ def test_responses_fallback_emits_one_stable_response_lifecycle() -> None:
         ("/v1/responses", responses_payload()),
     ),
 )
+def test_nonretryable_provider_failure_uses_fallback_before_output(
+    path: str,
+    payload: dict[str, object],
+) -> None:
+    primary = ControlledFallbackProvider(
+        failure=ExecutionFailure(
+            kind=FailureKind.PERMISSION,
+            status_code=403,
+            message="primary quota exhausted",
+            retryable=False,
+        )
+    )
+    fallback = ControlledFallbackProvider(text="fallback worked")
+
+    with fallback_client(primary, fallback) as client:
+        response = client.post(path, json=payload)
+
+    assert response.status_code == 200
+    assert "fallback worked" in response.text
+    assert "primary quota exhausted" not in response.text
+    assert primary.close_calls == fallback.close_calls == 1
+
+
+@pytest.mark.parametrize(
+    ("path", "payload"),
+    (
+        ("/v1/messages", messages_payload(stream=True)),
+        ("/v1/responses", responses_payload()),
+    ),
+)
 def test_final_failure_uses_last_candidate_typed_error(
     path: str,
     payload: dict[str, object],

@@ -256,6 +256,42 @@ _CASES = (
         False,
     ),
     _ClassificationCase(
+        "statusless_openai_tokenrouter_bad_request",
+        lambda: _statusless_openai_error(
+            "stream embedded error",
+            {
+                "object": "error",
+                "message": (
+                    "Invalid request: Disaggregated request received without "
+                    "bootstrap room id"
+                ),
+                "type": "BAD_REQUEST",
+                "param": None,
+                "code": 400,
+            },
+        ),
+        FailureKind.UPSTREAM,
+        500,
+        False,
+    ),
+    _ClassificationCase(
+        "openai_insufficient_user_quota",
+        lambda: _openai_status_error(
+            openai.PermissionDeniedError,
+            status_code=403,
+            message="insufficient user quota",
+            body={
+                "error": {
+                    "message": "insufficient user quota",
+                    "code": "insufficient_user_quota",
+                }
+            },
+        ),
+        FailureKind.PERMISSION,
+        403,
+        False,
+    ),
+    _ClassificationCase(
         "http_401_maps_authentication",
         lambda: _http_status_error(401, "Unauthorized"),
         FailureKind.AUTHENTICATION,

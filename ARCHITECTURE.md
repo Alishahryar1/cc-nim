@@ -619,16 +619,18 @@ publish the private upstream model as the response model.
 Fallback execution is a bounded first-frame state machine in
 [application/execution.py](src/free_claude_code/application/execution.py). The
 executor opens the primary first and resolves each later provider lazily. It
-advances only when the current candidate raises a retryable `ExecutionFailure`
-before emitting any non-empty protocol chunk and another configured target
-exists. It closes the abandoned iterator before resolving the next provider and
-deep-copies the original routed request for every candidate, changing only the
-upstream model. Authentication, permission, billing, invalid request, context
-overflow, deterministic preflight, unexpected exceptions, empty completion,
-timeouts, cancellation, and disconnect do not advance. Once any protocol frame
-is emitted, the candidate is committed and existing terminal-error behavior is
-authoritative; this prevents duplicate lifecycles and output. Final exhaustion
-re-raises the last exact failure.
+advances when the current provider has finalized any `ExecutionFailure` before
+emitting a non-empty protocol chunk and another configured target exists.
+`retryable` remains provider-local recovery metadata; it does not control the
+application's forward transition to a different target. The executor closes the
+abandoned iterator before resolving the next provider and deep-copies the
+original routed request for every candidate, changing only the upstream model.
+Deterministic preflight or validation failures, unexpected exceptions, the
+application-owned progress deadline, cancellation, disconnect, and empty
+completion remain terminal. Once any protocol frame is emitted, the candidate
+is committed and existing terminal-error behavior is authoritative; this
+prevents duplicate lifecycles and output. Final exhaustion re-raises the last
+exact failure.
 
 Every candidate keeps the original request ID, public response model, input
 token count, reasoning policy, messages, system prompt, tools, and generation
