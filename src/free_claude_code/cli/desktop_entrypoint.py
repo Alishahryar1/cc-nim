@@ -17,9 +17,15 @@ def launch(argv: Sequence[str] | None = None) -> None:
     if args:
         print("Usage: fcc-desktop [--export-icon PATH]", file=sys.stderr)
         raise SystemExit(2)
-    if sys.platform not in {"darwin", "win32"}:
-        print("FCC Desktop is supported on Windows and macOS.", file=sys.stderr)
+    if sys.platform not in {"darwin", "win32", "linux"}:
+        print("FCC Desktop is supported on Windows, macOS, and Linux.", file=sys.stderr)
         raise SystemExit(1)
+
+    if sys.platform == "linux":
+        from free_claude_code.cli.desktop_console import launch as launch_console
+
+        launch_console()
+        return
 
     from free_claude_code.cli.desktop_tray import launch as launch_tray
 
