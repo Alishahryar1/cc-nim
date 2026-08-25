@@ -199,25 +199,42 @@ def test_gemini_adaptive_thinking_with_effort_does_not_emit_custom_config(
 
 
 def test_build_request_body_preserves_caller_extra_body(gemini_provider):
-    req = make_request(extra_body={"metadata": {"user": "u1"}})
+    # This opaque sentinel verifies FCC's pass-through contract only; it does not
+    # imply that Gemini accepts an undocumented "custom_tag" wire field.
+    req = make_request(extra_body={"custom_tag": {"user": "u1"}})
 
     body = gemini_provider._build_request_body(req, reasoning=reasoning_for(req))
 
     assert "reasoning_effort" not in body
     eb = body.get("extra_body")
     assert isinstance(eb, dict)
-    assert eb.get("metadata") == {"user": "u1"}
+    assert eb.get("custom_tag") == {"user": "u1"}
     literal_extra_body = eb.get("extra_body")
     assert isinstance(literal_extra_body, dict)
     google = literal_extra_body.get("google")
     assert isinstance(google, dict)
 
 
+def test_build_request_body_strips_unsupported_metadata_key(gemini_provider):
+    """Regression for #1548: Gemini's OpenAI-compat endpoint hard-rejects the
+    whole request with "Unknown name 'metadata': Cannot find field" if this
+    key is present -- whether the caller sends it as a top-level extra_body
+    entry or FCC would otherwise forward it verbatim via the SDK merge.
+    """
+    req = make_request(extra_body={"metadata": {"user_id": "u1"}})
+
+    body = gemini_provider._build_request_body(req, reasoning=reasoning_for(req))
+    wire_json = _simulate_openai_sdk_wire_json(body)
+
+    assert "metadata" not in body
+    assert "metadata" not in body.get("extra_body", {})
+    assert "metadata" not in wire_json
+
+
 def test_build_request_body_merges_caller_nested_google(gemini_provider):
     req = make_request(
         thinking=None,
         extra_body={
-            "metadata": {"user": "u1"},
             "extra_body": {
                 "google": {
                     "thinking_config": {
@@ -235,7 +252,6 @@ def test_build_request_body_merges_caller_nested_google(gemini_provider):
     assert "reasoning_effort" not in body
     eb = body.get("extra_body")
     assert isinstance(eb, dict)
-    assert eb.get("metadata") == {"user": "u1"}
     literal_extra_body = eb.get("extra_body")
     assert isinstance(literal_extra_body, dict)
     google = literal_extra_body.get("google")
