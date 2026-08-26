@@ -535,13 +535,14 @@ non-2xx JSON for any terminal stream error, discarding incomplete content rather
 than presenting a partial success.
 
 The public response chain follows a transitive close-ownership rule. A response
-owns its replay iterator; replay owns the active protocol adapter; each protocol
-adapter owns its direct input; tracing owns the executor body; the executor body
-owns the provider iterator; and the provider runner owns its upstream stream.
-Each of these response-chain owners closes its direct input on normal completion,
-failure, cancellation, and early consumer close. Failures from those explicit
-cleanup calls are trace metadata and cannot replace an established wire outcome;
-a generation lease is released only after the body chain has finished closing.
+owns its prefetched replay iterator; replay owns the traced executor body;
+tracing owns the provider-execution iterator; and the provider runner owns its
+upstream stream. Provider-owned conversion and presentation iterators stay
+inside their concrete transport chain and close their direct inputs. Each
+response-chain owner closes its direct input on normal completion, failure,
+cancellation, and early consumer close. Failures from those explicit cleanup
+calls are trace metadata and cannot replace an established wire outcome; a
+generation lease is released only after the body chain has finished closing.
 
 Ingress authentication, request validation, model routing, and deterministic
 preflight failures remain ordinary HTTP errors and do not receive the terminal
@@ -899,14 +900,14 @@ client-specific recovery phrase.
 Providers call the OpenAI request policy for Anthropic-to-OpenAI conversion,
 reasoning replay selection, `extra_body`, and chat-completion field normalization.
 The SDK-free `OpenAIToolNameCodec` in
-[core/anthropic/](src/free_claude_code/core/anthropic/) owns reversible
-translation from client tool identities to OpenAI's portable function-name
-grammar. OpenAI Chat and upstream Responses adapters apply that codec only to
-their explicit declaration, forced-choice, and replay fields, then restore the
-original identity before Anthropic tool state or schema validation. Valid names
-remain unchanged, while deterministic aliases keep retries, replay, and
-append-only prompt prefixes stable. This is target-protocol conversion, never a
-provider or model capability switch.
+[core/openai_tool_names.py](src/free_claude_code/core/openai_tool_names.py) owns
+reversible translation from client tool identities to OpenAI's portable
+function-name grammar. OpenAI Chat and upstream Responses converters apply that
+codec only to their explicit declaration, forced-choice, and replay fields,
+then restore the original identity before Anthropic tool state or schema
+validation. Valid names remain unchanged, while deterministic aliases keep
+retries, replay, and append-only prompt prefixes stable. This is target-protocol
+conversion, never a provider or model capability switch.
 When an Anthropic request declares tools but omits `tool_choice`, the conversion
 boundary resolves Anthropic's implicit `auto` intent once. Both upstream OpenAI
 Chat and OpenAI Responses encoders materialize that value explicitly, while
