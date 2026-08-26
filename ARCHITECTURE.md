@@ -1228,9 +1228,11 @@ Provider adapters consume the resolved `ReasoningPolicy`; each cross-protocol
 translator maps the replay material its target supports, while the native cell
 passes Responses reasoning through unchanged. Tool-name flattening is likewise
 limited to OpenAI-compatible cross-protocol boundaries and is reversed at the
-public edge. Output presenters own public event construction and terminal
-failure framing; providers continue to own HTTP classification, retry policy,
-admission, and physical stream cleanup.
+public edge. Output presenters own provider-attempt event construction and
+terminal failure framing. If an application-owned failure occurs after the
+public stream commits, the API wire boundary closes that same public lifecycle;
+providers continue to own HTTP classification, retry policy, admission, and
+physical stream cleanup.
 
 Provider code should delegate protocol details to these modules. Avoid copying
 conversion code into individual providers, and avoid provider-to-provider imports
