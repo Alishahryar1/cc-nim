@@ -333,7 +333,7 @@ async def test_stream_preserves_signed_details_without_duplicating_reasoning(
         return_value=stream,
     ):
         event_text = "".join(
-            [event async for event in zenmux_provider.stream_response(_request())]
+            [event async for event in zenmux_provider.stream_messages(_request())]
         )
 
     events = parse_sse_text(event_text)

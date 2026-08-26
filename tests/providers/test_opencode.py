@@ -11,7 +11,15 @@ import pytest
 from openai import AsyncOpenAI
 
 from free_claude_code.application.errors import InvalidRequestError
+from free_claude_code.application.execution import ProviderExecutor
 from free_claude_code.application.model_metadata import ProviderModelInfo
+from free_claude_code.application.routing import (
+    ProviderModelTarget,
+    ResolvedModelRoute,
+    RoutedMessagesRequest,
+    RoutedResponsesRequest,
+)
+from free_claude_code.config.reasoning import ReasoningPreference
 from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.anthropic.stream_contracts import (
     assert_anthropic_stream_contract,
@@ -19,6 +27,8 @@ from free_claude_code.core.anthropic.stream_contracts import (
     text_content,
 )
 from free_claude_code.core.failures import ExecutionFailure
+from free_claude_code.core.openai_responses import OpenAIResponsesRequest
+from free_claude_code.core.reasoning import DEFAULT_REASONING_POLICY
 from free_claude_code.providers.model_listing import ModelListResponseError
 from free_claude_code.providers.opencode import (
     OpenCodeProvider,
@@ -88,11 +98,72 @@ def _request(model: str, **overrides: object) -> MessagesRequest:
     return MessagesRequest.model_validate(payload)
 
 
+def _responses_request(
+    model: str,
+    **overrides: object,
+) -> OpenAIResponsesRequest:
+    payload: dict[str, object] = {
+        "model": model,
+        "input": "hello",
+        "max_output_tokens": 128,
+    }
+    payload.update(overrides)
+    return OpenAIResponsesRequest.model_validate(payload)
+
+
 def _responses_event_stream(text: str) -> str:
+    completed_response: dict[str, object] = {
+        "id": "resp_1",
+        "object": "response",
+        "created_at": 1,
+        "status": "completed",
+        "background": False,
+        "billing": {"payer": "developer"},
+        "error": None,
+        "incomplete_details": None,
+        "instructions": None,
+        "max_output_tokens": 128,
+        "max_tool_calls": None,
+        "model": "responses-upstream",
+        "output": [],
+        "parallel_tool_calls": True,
+        "previous_response_id": None,
+        "prompt_cache_key": None,
+        "prompt_cache_retention": None,
+        "reasoning": {"effort": None, "summary": None},
+        "safety_identifier": None,
+        "service_tier": "default",
+        "store": False,
+        "temperature": 1.0,
+        "text": {"format": {"type": "text"}, "verbosity": "medium"},
+        "tool_choice": "auto",
+        "tools": [],
+        "top_logprobs": 0,
+        "top_p": 1.0,
+        "truncation": "disabled",
+        "usage": {
+            "input_tokens": 2,
+            "input_tokens_details": {"cached_tokens": 0},
+            "output_tokens": 1,
+            "output_tokens_details": {"reasoning_tokens": 0},
+            "total_tokens": 3,
+        },
+        "user": None,
+    }
     events: tuple[dict[str, object], ...] = (
         {
-            "type": "response.output_text.delta",
+            "type": "response.created",
             "sequence_number": 0,
+            "response": {
+                **completed_response,
+                "status": "in_progress",
+                "output": [],
+                "usage": None,
+            },
+        },
+        {
+            "type": "response.output_text.delta",
+            "sequence_number": 1,
             "item_id": "item_text",
             "output_index": 0,
             "content_index": 0,
@@ -101,45 +172,8 @@ def _responses_event_stream(text: str) -> str:
         },
         {
             "type": "response.completed",
-            "sequence_number": 1,
-            "response": {
-                "id": "resp_1",
-                "object": "response",
-                "created_at": 1,
-                "status": "completed",
-                "background": False,
-                "billing": {"payer": "developer"},
-                "error": None,
-                "incomplete_details": None,
-                "instructions": None,
-                "max_output_tokens": 128,
-                "max_tool_calls": None,
-                "model": "responses-upstream",
-                "output": [],
-                "parallel_tool_calls": True,
-                "previous_response_id": None,
-                "prompt_cache_key": None,
-                "prompt_cache_retention": None,
-                "reasoning": {"effort": None, "summary": None},
-                "safety_identifier": None,
-                "service_tier": "default",
-                "store": False,
-                "temperature": 1.0,
-                "text": {"format": {"type": "text"}, "verbosity": "medium"},
-                "tool_choice": "auto",
-                "tools": [],
-                "top_logprobs": 0,
-                "top_p": 1.0,
-                "truncation": "disabled",
-                "usage": {
-                    "input_tokens": 2,
-                    "input_tokens_details": {"cached_tokens": 0},
-                    "output_tokens": 1,
-                    "output_tokens_details": {"reasoning_tokens": 0},
-                    "total_tokens": 3,
-                },
-                "user": None,
-            },
+            "sequence_number": 2,
+            "response": completed_response,
         },
     )
     return "".join(f"data: {json.dumps(event)}\n\n" for event in events)
@@ -186,12 +220,17 @@ def _chat_event_stream(text: str) -> str:
 
 def _provider_with_wire_transports(
     payload: dict[str, object],
+    *,
+    generation_response: Callable[[httpx2.Request], httpx2.Response] | None = None,
+    max_attempts: int = 5,
 ) -> tuple[OpenCodeProvider, list[httpx2.Request], list[httpx.Request]]:
     generation_requests: list[httpx2.Request] = []
     catalog_requests: list[httpx.Request] = []
 
     def generation_handler(request: httpx2.Request) -> httpx2.Response:
         generation_requests.append(request)
+        if generation_response is not None:
+            return generation_response(request)
         if request.url.path.endswith("/responses"):
             body = _responses_event_stream("responses-ok")
         elif request.url.path.endswith("/chat/completions"):
@@ -223,7 +262,10 @@ def _provider_with_wire_transports(
         provider = create_opencode_provider(
             "opencode_zen",
             _config(),
-            immediate_admission(provider_name="opencode_zen"),
+            immediate_admission(
+                provider_name="opencode_zen",
+                max_attempts=max_attempts,
+            ),
             catalog_client=_catalog_client(catalog_handler),
         )
     return provider, generation_requests, catalog_requests
@@ -233,10 +275,27 @@ async def _collect(provider: OpenCodeProvider, model: str, **overrides: object) 
     return "".join(
         [
             chunk
-            async for chunk in provider.stream_response(
+            async for chunk in provider.stream_messages(
                 _request(model, **overrides),
                 input_tokens=2,
                 request_id="req_opencode",
+            )
+        ]
+    )
+
+
+async def _collect_responses(
+    provider: OpenCodeProvider,
+    model: str,
+    **overrides: object,
+) -> str:
+    return "".join(
+        [
+            chunk
+            async for chunk in provider.stream_responses(
+                _responses_request(model, **overrides),
+                input_tokens=2,
+                request_id="req_opencode_responses",
             )
         ]
     )
@@ -520,6 +579,194 @@ async def test_chat_catalog_route_uses_existing_chat_transport_and_upstream_id()
 
 
 @pytest.mark.asyncio
+async def test_responses_ingress_uses_catalog_responses_transport_natively() -> None:
+    provider, generation_requests, catalog_requests = _provider_with_wire_transports(
+        _catalog_payload()
+    )
+    try:
+        body = await _collect_responses(provider, "responses-selector")
+    finally:
+        await provider.cleanup()
+
+    assert len(catalog_requests) == 1
+    assert [request.url.path for request in generation_requests] == [
+        "/zen/v1/responses"
+    ]
+    payload = json.loads(generation_requests[0].content)
+    assert payload["model"] == "responses-upstream"
+    assert payload["input"] == "hello"
+    assert payload["stream"] is True
+    assert payload["store"] is False
+    events = parse_sse_text(body)
+    assert [event.event for event in events] == [
+        "response.created",
+        "response.output_text.delta",
+        "response.completed",
+    ]
+    assert events[0].data["response"]["id"] == "resp_1"
+    assert events[-1].data["response"]["model"] == "responses-selector"
+
+
+@pytest.mark.asyncio
+async def test_responses_ingress_uses_catalog_chat_transport_directly() -> None:
+    provider, generation_requests, catalog_requests = _provider_with_wire_transports(
+        _catalog_payload()
+    )
+    try:
+        body = await _collect_responses(provider, "chat-selector")
+    finally:
+        await provider.cleanup()
+
+    assert len(catalog_requests) == 1
+    assert [request.url.path for request in generation_requests] == [
+        "/zen/v1/chat/completions"
+    ]
+    payload = json.loads(generation_requests[0].content)
+    assert payload["model"] == "chat-upstream"
+    assert payload["messages"] == [{"role": "user", "content": "hello"}]
+    events = parse_sse_text(body)
+    assert events[0].event == "response.created"
+    assert events[-1].event == "response.completed"
+    assert events[-1].data["response"]["model"] == "chat-selector"
+    assert events[-1].data["response"]["output"][0]["content"][0]["text"] == ("chat-ok")
+
+
+@pytest.mark.parametrize(
+    (
+        "wire_api",
+        "primary_model",
+        "fallback_model",
+        "failed_path",
+        "fallback_path",
+        "fallback_text",
+    ),
+    (
+        (
+            "responses",
+            "responses-selector",
+            "chat-selector",
+            "/zen/v1/responses",
+            "/zen/v1/chat/completions",
+            "chat-fallback",
+        ),
+        (
+            "messages",
+            "chat-selector",
+            "responses-selector",
+            "/zen/v1/chat/completions",
+            "/zen/v1/responses",
+            "responses-fallback",
+        ),
+    ),
+)
+@pytest.mark.asyncio
+async def test_candidate_fallback_resolves_each_opencode_transport(
+    wire_api: str,
+    primary_model: str,
+    fallback_model: str,
+    failed_path: str,
+    fallback_path: str,
+    fallback_text: str,
+) -> None:
+    def generation_response(request: httpx2.Request) -> httpx2.Response:
+        if request.url.path == failed_path:
+            return httpx2.Response(503, json={"error": "temporary overload"})
+        if request.url.path == "/zen/v1/responses":
+            body = _responses_event_stream(fallback_text)
+        elif request.url.path == "/zen/v1/chat/completions":
+            body = _chat_event_stream(fallback_text)
+        else:
+            raise AssertionError(f"unexpected generation path {request.url.path}")
+        return httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            text=body,
+        )
+
+    provider, generation_requests, catalog_requests = _provider_with_wire_transports(
+        _catalog_payload(),
+        generation_response=generation_response,
+        max_attempts=2,
+    )
+
+    def target(model: str) -> ProviderModelTarget:
+        return ProviderModelTarget(
+            provider_id="opencode_zen",
+            provider_model=model,
+            provider_model_ref=f"opencode_zen/{model}",
+        )
+
+    def upstream_id(model: str) -> str:
+        return (
+            "responses-upstream" if model == "responses-selector" else "chat-upstream"
+        )
+
+    resolved = ResolvedModelRoute(
+        original_model="public-model",
+        primary=target(primary_model),
+        fallbacks=(target(fallback_model),),
+        reasoning_preference=ReasoningPreference.INHERIT,
+    )
+    executor = ProviderExecutor(
+        lambda _provider_id: provider,
+        progress_timeout_seconds=60.0,
+    )
+
+    try:
+        if wire_api == "responses":
+            stream = executor.stream_responses(
+                RoutedResponsesRequest(
+                    request=_responses_request(primary_model),
+                    resolved=resolved,
+                    reasoning=DEFAULT_REASONING_POLICY,
+                ),
+                raw_log_payload={},
+                request_id="req_opencode_cross_transport_responses",
+            )
+        else:
+            stream = executor.stream_messages(
+                RoutedMessagesRequest(
+                    request=_request(primary_model),
+                    resolved=resolved,
+                    reasoning=DEFAULT_REASONING_POLICY,
+                ),
+                raw_log_payload={},
+                request_id="req_opencode_cross_transport_messages",
+            )
+        body = "".join([chunk async for chunk in stream])
+    finally:
+        await provider.cleanup()
+
+    assert len(catalog_requests) == 1
+    assert [request.url.path for request in generation_requests] == [
+        failed_path,
+        failed_path,
+        fallback_path,
+    ]
+    payloads = [json.loads(request.content) for request in generation_requests]
+    assert [payload["model"] for payload in payloads] == [
+        upstream_id(primary_model),
+        upstream_id(primary_model),
+        upstream_id(fallback_model),
+    ]
+    events = parse_sse_text(body)
+    if wire_api == "responses":
+        assert [event.event for event in events].count("response.created") == 1
+        assert [event.event for event in events].count("response.completed") == 1
+        assert events[-1].data["response"]["model"] == "public-model"
+        assert [
+            event.data["delta"]
+            for event in events
+            if event.event == "response.output_text.delta"
+        ] == [fallback_text]
+    else:
+        assert_anthropic_stream_contract(events)
+        assert events[0].data["message"]["model"] == "public-model"
+        assert text_content(events) == fallback_text
+    assert "temporary overload" not in body
+
+
+@pytest.mark.asyncio
 async def test_unknown_model_rejects_before_either_generation_endpoint() -> None:
     provider, generation_requests, catalog_requests = _provider_with_wire_transports(
         _catalog_payload()
@@ -582,9 +829,9 @@ async def test_warm_preflight_rejects_unknown_and_route_specific_fields() -> Non
     try:
         await provider.list_model_infos()
         with pytest.raises(InvalidRequestError, match="does not advertise"):
-            provider.preflight_stream(_request("missing"))
+            provider.preflight_messages(_request("missing"))
         with pytest.raises(InvalidRequestError, match="stop_sequences"):
-            provider.preflight_stream(
+            provider.preflight_messages(
                 _request("responses-selector", stop_sequences=["done"])
             )
     finally:

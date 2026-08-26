@@ -2,12 +2,7 @@ import json
 
 import pytest
 
-from free_claude_code.application.reasoning import client_reasoning_policy
 from free_claude_code.core.anthropic.models import MessagesRequest
-from free_claude_code.core.openai_responses import (
-    OpenAIResponsesAdapter,
-    OpenAIResponsesRequest,
-)
 from free_claude_code.core.openai_responses.errors import ResponsesConversionError
 from free_claude_code.core.openai_responses.provider_input import (
     build_responses_provider_request,
@@ -391,78 +386,6 @@ def test_responses_provider_request_uses_one_portable_tool_alias() -> None:
     assert function_call["call_id"] == "call_1"
     assert function_call["arguments"] == '{"q":"value"}'
     assert request.model_dump() == snapshot
-
-
-def test_responses_round_trip_preserves_encrypted_reasoning_and_tool_ids() -> None:
-    adapter = OpenAIResponsesAdapter()
-    ingress = OpenAIResponsesRequest.model_validate(
-        {
-            "model": "openai/gpt-test",
-            "input": [
-                {
-                    "type": "reasoning",
-                    "summary": [{"type": "summary_text", "text": "Use a tool."}],
-                    "encrypted_content": "opaque-reasoning",
-                },
-                {
-                    "type": "function_call",
-                    "call_id": "call_stable",
-                    "name": "lookup",
-                    "arguments": '{"q":"value"}',
-                },
-                {
-                    "type": "function_call_output",
-                    "call_id": "call_stable",
-                    "output": "done",
-                },
-            ],
-        }
-    )
-    anthropic = MessagesRequest.model_validate(adapter.to_anthropic_payload(ingress))
-
-    body = build_responses_provider_request(
-        anthropic,
-        reasoning=ReasoningPolicy.provider_default(),
-    )
-
-    assert body["input"][:3] == [
-        {
-            "type": "reasoning",
-            "summary": [{"type": "summary_text", "text": "Use a tool."}],
-            "encrypted_content": "opaque-reasoning",
-        },
-        {
-            "type": "function_call",
-            "call_id": "call_stable",
-            "name": "lookup",
-            "arguments": '{"q":"value"}',
-        },
-        {
-            "type": "function_call_output",
-            "call_id": "call_stable",
-            "output": "done",
-        },
-    ]
-
-
-def test_responses_reasoning_round_trip_reaches_provider_request() -> None:
-    adapter = OpenAIResponsesAdapter()
-    ingress = OpenAIResponsesRequest.model_validate(
-        {
-            "model": "openai/gpt-test",
-            "input": "hello",
-            "reasoning": {"effort": "high"},
-        }
-    )
-    anthropic = MessagesRequest.model_validate(adapter.to_anthropic_payload(ingress))
-
-    body = build_responses_provider_request(
-        anthropic,
-        reasoning=client_reasoning_policy(anthropic),
-    )
-
-    assert body["reasoning"] == {"effort": "high", "summary": "auto"}
-    assert "output_config" not in body
 
 
 @pytest.mark.parametrize(

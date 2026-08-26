@@ -42,7 +42,7 @@ async def test_stream_failure_default_logs_exclude_exception_text(caplog) -> Non
         caplog.at_level(logging.ERROR),
         pytest.raises(ExecutionFailure),
     ):
-        [event async for event in provider.stream_response(make_messages_request())]
+        [event async for event in provider.stream_messages(make_messages_request())]
 
     messages = " | ".join(record.getMessage() for record in caplog.records)
     assert "SECRET_OPENAI_COMPAT" not in messages
@@ -66,7 +66,7 @@ async def test_stream_failure_default_logs_cause_types_only(caplog) -> None:
         caplog.at_level(logging.ERROR),
         pytest.raises(ExecutionFailure),
     ):
-        [event async for event in provider.stream_response(make_messages_request())]
+        [event async for event in provider.stream_messages(make_messages_request())]
 
     messages = " | ".join(record.getMessage() for record in caplog.records)
     assert "SECRET_CAUSE_DETAIL" not in messages
@@ -89,7 +89,7 @@ async def test_stream_failure_verbose_traceback_redacts_credentials(caplog) -> N
         caplog.at_level(logging.ERROR),
         pytest.raises(ExecutionFailure),
     ):
-        [event async for event in provider.stream_response(make_messages_request())]
+        [event async for event in provider.stream_messages(make_messages_request())]
 
     messages = " | ".join(record.getMessage() for record in caplog.records)
     assert "api_key=<redacted>" in messages

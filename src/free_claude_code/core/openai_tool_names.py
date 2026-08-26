@@ -1,12 +1,12 @@
-"""Reversible tool names for Anthropic-to-OpenAI protocol conversion."""
+"""Reversible tool names for OpenAI-compatible protocol boundaries."""
 
 import hashlib
 import re
 from collections.abc import Iterable
 from dataclasses import dataclass
 
-from .content import get_block_attr, get_block_type
-from .models import MessagesRequest
+from .anthropic.content import get_block_attr, get_block_type
+from .anthropic.models import MessagesRequest
 
 OPENAI_TOOL_NAME_MAX_LENGTH = 64
 _ALIAS_DIGEST_LENGTH = 16
@@ -77,6 +77,60 @@ class OpenAIToolNameCodec:
             alias != value and alias.startswith(value)
             for alias in self._alias_to_original
         )
+
+
+def encode_openai_chat_tool_names(
+    body: dict[str, object], codec: OpenAIToolNameCodec
+) -> None:
+    """Encode canonical Chat tool-name locations at the provider boundary."""
+    if not codec.has_aliases:
+        return
+
+    tools = body.get("tools")
+    if isinstance(tools, list):
+        for tool in tools:
+            if not isinstance(tool, dict):
+                continue
+            function = tool.get("function")
+            if not isinstance(function, dict):
+                continue
+            name = function.get("name")
+            if isinstance(name, str):
+                function["name"] = codec.encode(name)
+
+    messages = body.get("messages")
+    if isinstance(messages, list):
+        for message in messages:
+            if not isinstance(message, dict):
+                continue
+            tool_calls = message.get("tool_calls")
+            if not isinstance(tool_calls, list):
+                continue
+            for tool_call in tool_calls:
+                if not isinstance(tool_call, dict):
+                    continue
+                function = tool_call.get("function")
+                if not isinstance(function, dict):
+                    continue
+                name = function.get("name")
+                if isinstance(name, str):
+                    function["name"] = codec.encode(name)
+
+    tool_choice = body.get("tool_choice")
+    if not isinstance(tool_choice, dict):
+        return
+    function = tool_choice.get("function")
+    if not isinstance(function, dict):
+        return
+    name = function.get("name")
+    if not isinstance(name, str):
+        return
+    encoded = codec.encode(name)
+    if encoded != name:
+        body["tool_choice"] = {
+            **tool_choice,
+            "function": {**function, "name": encoded},
+        }
 
 
 def _request_tool_names(request: MessagesRequest) -> Iterable[str]:

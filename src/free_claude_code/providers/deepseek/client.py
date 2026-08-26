@@ -13,7 +13,11 @@ from free_claude_code.providers.openai_chat import (
     usage_int,
 )
 
-from .compat import DEEPSEEK_REQUEST_POLICY, build_deepseek_request_body
+from .compat import (
+    DEEPSEEK_REQUEST_POLICY,
+    build_deepseek_request_body,
+    finalize_deepseek_chat_body,
+)
 
 _PROFILE = OpenAIChatProfile(
     DEEPSEEK_REQUEST_POLICY,
@@ -43,6 +47,16 @@ class DeepSeekProvider(OpenAIChatProvider):
             request,
             reasoning=reasoning,
         )
+
+    def _finalize_chat_body(
+        self,
+        body: dict[str, Any],
+        *,
+        reasoning: ReasoningPolicy,
+    ) -> dict[str, Any]:
+        """Apply DeepSeek policy after either client-protocol translation."""
+        finalize_deepseek_chat_body(body, reasoning)
+        return body
 
     def _anthropic_usage_fields(self, usage_info: Any) -> dict[str, int]:
         cache_hit_tokens = usage_int(usage_info, "prompt_cache_hit_tokens")

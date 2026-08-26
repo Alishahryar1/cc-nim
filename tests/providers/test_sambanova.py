@@ -106,7 +106,7 @@ def test_build_request_body_uses_only_documented_reasoning_efforts(
 
 
 @pytest.mark.asyncio
-async def test_stream_response_text(sambanova_provider):
+async def test_stream_messages_text(sambanova_provider):
     """Text content deltas are emitted as text blocks."""
     mock_chunk = MagicMock()
     mock_chunk.choices = [
@@ -130,7 +130,7 @@ async def test_stream_response_text(sambanova_provider):
         mock_create.return_value = mock_stream()
 
         events = [
-            event async for event in sambanova_provider.stream_response(make_request())
+            event async for event in sambanova_provider.stream_messages(make_request())
         ]
 
     assert any(
@@ -139,7 +139,7 @@ async def test_stream_response_text(sambanova_provider):
 
 
 @pytest.mark.asyncio
-async def test_stream_response_tool_call(sambanova_provider):
+async def test_stream_messages_tool_call(sambanova_provider):
     mock_tc = MagicMock()
     mock_tc.index = 0
     mock_tc.id = "call_1"
@@ -165,7 +165,7 @@ async def test_stream_response_tool_call(sambanova_provider):
         mock_create.return_value = mock_stream()
 
         events = [
-            event async for event in sambanova_provider.stream_response(make_request())
+            event async for event in sambanova_provider.stream_messages(make_request())
         ]
 
     assert any(
@@ -177,7 +177,7 @@ async def test_stream_response_tool_call(sambanova_provider):
 
 
 @pytest.mark.asyncio
-async def test_stream_response_reasoning_content(sambanova_provider):
+async def test_stream_messages_reasoning_content(sambanova_provider):
     """reasoning_content deltas are emitted as thinking blocks."""
     mock_chunk = MagicMock()
     mock_chunk.choices = [
@@ -201,7 +201,7 @@ async def test_stream_response_reasoning_content(sambanova_provider):
         mock_create.return_value = mock_stream()
 
         events = [
-            event async for event in sambanova_provider.stream_response(make_request())
+            event async for event in sambanova_provider.stream_messages(make_request())
         ]
 
     assert any(

@@ -16,6 +16,11 @@ from free_claude_code.core.anthropic import (
     get_token_count,
 )
 from free_claude_code.core.failures import ExecutionFailure, FailureKind
+from free_claude_code.core.openai_responses import (
+    OpenAIResponsesRequest,
+    estimate_responses_input_tokens,
+)
+from free_claude_code.core.reasoning import ReasoningPolicy
 from free_claude_code.core.trace import (
     close_stream_input,
     trace_event,
@@ -23,13 +28,20 @@ from free_claude_code.core.trace import (
 )
 
 from .ports import ProviderResolver
-from .routing import ProviderModelTarget, RoutedMessagesRequest
+from .routing import (
+    ProviderModelTarget,
+    ResolvedModelRoute,
+    RoutedMessagesRequest,
+    RoutedResponsesRequest,
+)
 
 TokenCounter = Callable[
     [list[Message], str | list[SystemContent] | None, list[Tool] | None],
     int,
 ]
+ResponsesTokenCounter = Callable[[OpenAIResponsesRequest], int]
 WireApi = Literal["messages", "responses"]
+CandidateStreamOpener = Callable[[int, ProviderModelTarget], AsyncIterator[str]]
 
 
 class ProviderExecutor:
@@ -41,6 +53,7 @@ class ProviderExecutor:
         *,
         progress_timeout_seconds: float,
         token_counter: TokenCounter = get_token_count,
+        responses_token_counter: ResponsesTokenCounter = estimate_responses_input_tokens,
         generation_id: int | None = None,
         log_raw_payloads: bool = False,
     ) -> None:
@@ -48,6 +61,7 @@ class ProviderExecutor:
             raise ValueError("progress_timeout_seconds must be finite and positive")
         self._provider_resolver = provider_resolver
         self._token_counter = token_counter
+        self._responses_token_counter = responses_token_counter
         self._generation_id = generation_id
         self._log_raw_payloads = log_raw_payloads
         self._progress_timeout_seconds = float(progress_timeout_seconds)
@@ -140,26 +154,155 @@ class ProviderExecutor:
             fields["generation_id"] = self._generation_id
         trace_event(**fields)
 
-    def stream(
+    def stream_messages(
         self,
         routed: RoutedMessagesRequest,
         *,
-        wire_api: WireApi,
-        raw_log_label: str,
         raw_log_payload: object,
         request_id: str,
     ) -> AsyncIterator[str]:
-        """Preflight synchronously, then return the traced provider stream."""
+        """Preflight and execute one Anthropic Messages request."""
+
         primary = routed.resolved.primary
         primary_provider = self._provider_resolver(primary.provider_id)
         primary_request = routed.request.model_copy(deep=True)
-        primary_provider.preflight_stream(
+        primary_provider.preflight_messages(
             primary_request,
             reasoning=routed.reasoning,
         )
-        candidates = (primary, *routed.resolved.fallbacks)
+        input_tokens = self._token_counter(
+            routed.request.messages,
+            routed.request.system,
+            routed.request.tools,
+        )
 
-        gateway_model = routed.resolved.original_model
+        def open_candidate(
+            index: int,
+            target: ProviderModelTarget,
+        ) -> AsyncIterator[str]:
+            provider = (
+                primary_provider
+                if index == 0
+                else self._provider_resolver(target.provider_id)
+            )
+            request = (
+                primary_request
+                if index == 0
+                else routed.request.model_copy(
+                    update={"model": target.provider_model},
+                    deep=True,
+                )
+            )
+            if index > 0:
+                provider.preflight_messages(request, reasoning=routed.reasoning)
+            return provider.stream_messages(
+                request,
+                input_tokens=input_tokens,
+                request_id=request_id,
+                response_model=routed.resolved.original_model,
+                reasoning=routed.reasoning,
+            )
+
+        return self._stream_candidates(
+            resolved=routed.resolved,
+            reasoning=routed.reasoning,
+            wire_api="messages",
+            raw_log_label="FULL_PAYLOAD",
+            raw_log_payload=raw_log_payload,
+            request_snapshot=anthropic_request_snapshot(routed.request),
+            ingress_count_name="message_count",
+            ingress_count=len(routed.request.messages),
+            request_id=request_id,
+            open_candidate=open_candidate,
+        )
+
+    def stream_responses(
+        self,
+        routed: RoutedResponsesRequest,
+        *,
+        raw_log_payload: object,
+        request_id: str,
+    ) -> AsyncIterator[str]:
+        """Preflight and execute one native OpenAI Responses request."""
+
+        primary = routed.resolved.primary
+        primary_provider = self._provider_resolver(primary.provider_id)
+        primary_request = routed.request.model_copy(deep=True)
+        primary_provider.preflight_responses(
+            primary_request,
+            reasoning=routed.reasoning,
+        )
+        input_tokens = self._responses_token_counter(routed.request)
+
+        def open_candidate(
+            index: int,
+            target: ProviderModelTarget,
+        ) -> AsyncIterator[str]:
+            provider = (
+                primary_provider
+                if index == 0
+                else self._provider_resolver(target.provider_id)
+            )
+            request = (
+                primary_request
+                if index == 0
+                else routed.request.model_copy(
+                    update={"model": target.provider_model},
+                    deep=True,
+                )
+            )
+            if index > 0:
+                provider.preflight_responses(request, reasoning=routed.reasoning)
+            return provider.stream_responses(
+                request,
+                input_tokens=input_tokens,
+                request_id=request_id,
+                response_model=routed.resolved.original_model,
+                reasoning=routed.reasoning,
+            )
+
+        raw_input = routed.request.input
+        input_item_count = (
+            len(raw_input)
+            if isinstance(raw_input, list)
+            else int(raw_input is not None)
+        )
+        return self._stream_candidates(
+            resolved=routed.resolved,
+            reasoning=routed.reasoning,
+            wire_api="responses",
+            raw_log_label="FULL_RESPONSES_PAYLOAD",
+            raw_log_payload=raw_log_payload,
+            request_snapshot={
+                "model": routed.request.model,
+                "input_item_count": input_item_count,
+                "tool_count": len(routed.request.tools or ()),
+            },
+            ingress_count_name="input_item_count",
+            ingress_count=input_item_count,
+            request_id=request_id,
+            open_candidate=open_candidate,
+        )
+
+    def _stream_candidates(
+        self,
+        *,
+        resolved: ResolvedModelRoute,
+        reasoning: ReasoningPolicy,
+        wire_api: WireApi,
+        raw_log_label: str,
+        raw_log_payload: object,
+        request_snapshot: dict[str, object],
+        ingress_count_name: str,
+        ingress_count: int,
+        request_id: str,
+        open_candidate: CandidateStreamOpener,
+    ) -> AsyncIterator[str]:
+        """Run one protocol-blind candidate lifecycle after eager preflight."""
+
+        primary = resolved.primary
+        candidates = (primary, *resolved.fallbacks)
+        gateway_model = resolved.original_model
         route_trace: dict[str, object] = {
             "stage": "routing",
             "event": "free_claude_code.api.route.resolved",
@@ -168,15 +311,13 @@ class ProviderExecutor:
             "provider_id": primary.provider_id,
             "provider_model": primary.provider_model,
             "provider_model_ref": primary.provider_model_ref,
-            "fallback_count": len(routed.resolved.fallbacks),
+            "fallback_count": len(resolved.fallbacks),
             "gateway_model": gateway_model,
-            "reasoning_control": routed.reasoning.control.value,
+            "reasoning_control": reasoning.control.value,
             "reasoning_effort": (
-                routed.reasoning.effort.value
-                if routed.reasoning.effort is not None
-                else None
+                reasoning.effort.value if reasoning.effort is not None else None
             ),
-            "reasoning_budget_tokens": routed.reasoning.budget_tokens,
+            "reasoning_budget_tokens": reasoning.budget_tokens,
         }
         if wire_api == "responses":
             route_trace["wire_api"] = "responses"
@@ -184,71 +325,42 @@ class ProviderExecutor:
             route_trace["generation_id"] = self._generation_id
         trace_event(**route_trace)
 
-        request_snapshot = anthropic_request_snapshot(routed.request)
         request_snapshot["model"] = gateway_model
-        trace_event(
-            stage="ingress",
-            event=(
+        ingress_trace: dict[str, object] = {
+            "stage": "ingress",
+            "event": (
                 "free_claude_code.api.responses.request.received"
                 if wire_api == "responses"
                 else "free_claude_code.api.request.received"
             ),
-            source="api",
-            message_count=len(routed.request.messages),
-            snapshot=request_snapshot,
-            request_id=request_id,
+            "source": "api",
+            "snapshot": request_snapshot,
+            "request_id": request_id,
+            ingress_count_name: ingress_count,
+        }
+        trace_event(
+            **ingress_trace,
         )
 
         if self._log_raw_payloads:
             logger.debug(f"{raw_log_label} [{{}}]: {{}}", request_id, raw_log_payload)
 
-        input_tokens = self._token_counter(
-            routed.request.messages,
-            routed.request.system,
-            routed.request.tools,
-        )
-
         async def provider_body() -> AsyncIterator[str]:
             loop = asyncio.get_running_loop()
             progress_deadline = loop.time() + self._progress_timeout_seconds
             for index, target in enumerate(candidates):
-                provider = (
-                    primary_provider
-                    if index == 0
-                    else self._provider_resolver(target.provider_id)
-                )
-                candidate_request = (
-                    primary_request
-                    if index == 0
-                    else routed.request.model_copy(
-                        update={"model": target.provider_model},
-                        deep=True,
-                    )
-                )
-                if index > 0:
-                    provider.preflight_stream(
-                        candidate_request,
-                        reasoning=routed.reasoning,
-                    )
-
                 provider_stream: AsyncIterator[str] | None = None
                 candidate_committed = False
                 candidate_failure: ExecutionFailure | None = None
                 try:
                     try:
-                        provider_stream = provider.stream_response(
-                            candidate_request,
-                            input_tokens=input_tokens,
-                            request_id=request_id,
-                            response_model=gateway_model,
-                            reasoning=routed.reasoning,
-                        )
+                        provider_stream = open_candidate(index, target)
                     except ExecutionFailure as failure:
                         candidate_failure = failure
 
                     if provider_stream is None and candidate_failure is None:
                         raise TypeError(
-                            "provider stream_response must return an async iterator"
+                            "provider stream method must return an async iterator"
                         )
                     while provider_stream is not None:
                         if loop.time() >= progress_deadline:

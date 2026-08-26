@@ -607,7 +607,9 @@ wheels = [
 
 [[package]]
 name = "free-claude-code"
+fix/telegram-allowlist-fail-closed
 version = "6.0.0"
+main
 source = { editable = "." }
 dependencies = [
     { name = "aiohttp" },

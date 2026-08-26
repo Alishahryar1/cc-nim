@@ -10,9 +10,7 @@ import openai
 from loguru import logger
 
 from free_claude_code.core.anthropic import ReasoningReplayMode
-from free_claude_code.core.anthropic.models import MessagesRequest
 from free_claude_code.core.reasoning import (
-    DEFAULT_REASONING_POLICY,
     ReasoningEffort,
     ReasoningPolicy,
 )
@@ -97,13 +95,12 @@ class GroqProvider(OpenAIChatProvider):
         super().__init__(config, profile=_PROFILE, admission=admission)
         self._model_reasoning_vocabularies: dict[str, frozenset[str]] = {}
 
-    def _build_request_body(
+    def _finalize_chat_body(
         self,
-        request: MessagesRequest,
+        body: dict[str, Any],
         *,
-        reasoning: ReasoningPolicy = DEFAULT_REASONING_POLICY,
+        reasoning: ReasoningPolicy,
     ) -> dict[str, Any]:
-        body = super()._build_request_body(request, reasoning=reasoning)
         model = body.get("model")
         if not isinstance(model, str):
             return body

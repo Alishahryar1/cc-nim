@@ -196,7 +196,12 @@ def test_preflight_rejection_is_protocol_specific_400_without_terminal_header(
 ) -> None:
     message = "bad tool shape"
     provider = MagicMock()
-    provider.preflight_stream.side_effect = InvalidRequestError(message)
+    preflight = (
+        provider.preflight_responses
+        if wire_api == "responses"
+        else provider.preflight_messages
+    )
+    preflight.side_effect = InvalidRequestError(message)
     app = create_test_app(_settings())
 
     with (
@@ -208,7 +213,12 @@ def test_preflight_rejection_is_protocol_specific_400_without_terminal_header(
     ):
         response = client.post(path, json=payload)
 
-    provider.stream_response.assert_not_called()
+    stream = (
+        provider.stream_responses
+        if wire_api == "responses"
+        else provider.stream_messages
+    )
+    stream.assert_not_called()
     _assert_ordinary_protocol_error(
         response,
         wire_api=wire_api,

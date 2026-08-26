@@ -164,7 +164,7 @@ def test_build_request_body_does_not_replay_top_level_reasoning_content(
 
 
 @pytest.mark.asyncio
-async def test_stream_response_text(huggingface_provider):
+async def test_stream_messages_text(huggingface_provider):
     mock_chunk = MagicMock()
     mock_chunk.choices = [
         MagicMock(
@@ -188,7 +188,7 @@ async def test_stream_response_text(huggingface_provider):
 
         events = [
             event
-            async for event in huggingface_provider.stream_response(make_request())
+            async for event in huggingface_provider.stream_messages(make_request())
         ]
 
     assert any(
@@ -198,7 +198,7 @@ async def test_stream_response_text(huggingface_provider):
 
 
 @pytest.mark.asyncio
-async def test_stream_response_reasoning_content(huggingface_provider):
+async def test_stream_messages_reasoning_content(huggingface_provider):
     mock_chunk = MagicMock()
     mock_chunk.choices = [
         MagicMock(
@@ -222,7 +222,7 @@ async def test_stream_response_reasoning_content(huggingface_provider):
 
         events = [
             event
-            async for event in huggingface_provider.stream_response(make_request())
+            async for event in huggingface_provider.stream_messages(make_request())
         ]
 
     assert any(
