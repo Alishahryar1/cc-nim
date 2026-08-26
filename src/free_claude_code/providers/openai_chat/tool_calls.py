@@ -7,7 +7,10 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from free_claude_code.core.anthropic import OpenAIToolNameCodec
-from free_claude_code.core.anthropic.models import MessagesRequest
+from free_claude_code.core.anthropic.models import (
+    ContentBlockToolUse,
+    MessagesRequest,
+)
 from free_claude_code.core.anthropic.streaming import (
     AnthropicStreamLedger,
     parse_complete_tool_input,
@@ -189,9 +192,21 @@ class OpenAIToolCallAssembler:
     """Assemble OpenAI tool-call deltas into Anthropic SSE tool blocks."""
 
     def __init__(
-        self, *, record_extra_content: RecordToolExtraContent | None = None
+        self,
+        *,
+        request: MessagesRequest,
+        record_extra_content: RecordToolExtraContent | None = None,
     ) -> None:
         self._record_extra_content = record_extra_content
+        self._reserved_tool_ids = {
+            block.id
+            for message in request.messages
+            if isinstance(message.content, list)
+            for block in message.content
+            if isinstance(block, ContentBlockToolUse) and block.id.strip()
+        }
+        self._candidate_tool_ids: dict[int, str] = {}
+        self._public_tool_ids: dict[int, str] = {}
 
     def process_tool_call(
         self,
@@ -213,8 +228,15 @@ class OpenAIToolCallAssembler:
         incoming_name = fn_delta.get("name")
         arguments = fn_delta.get("arguments", "") or ""
 
-        if tc.get("id") is not None:
-            ledger.blocks.set_stream_tool_id(tc_index, tc.get("id"))
+        candidate_id = tc.get("id")
+        if candidate_id is not None:
+            ledger.blocks.ensure_tool_state(tc_index)
+        if (
+            tc_index not in self._public_tool_ids
+            and isinstance(candidate_id, str)
+            and candidate_id.strip()
+        ):
+            self._candidate_tool_ids[tc_index] = candidate_id
 
         raw_extra_content = tc.get("extra_content")
         extra_content = (
@@ -236,15 +258,12 @@ class OpenAIToolCallAssembler:
                 ledger.blocks.register_tool_name(tc_index, resolved_name)
 
         state = ledger.blocks.tool_states.get(tc_index)
-        resolved_id = (state.tool_id if state and state.tool_id else None) or tc.get(
-            "id"
-        )
         resolved_name = (state.name if state else "") or ""
 
         if not state or not state.started:
             name_ok = bool((resolved_name or "").strip())
             if name_ok:
-                tool_id = str(resolved_id) if resolved_id else f"tool_{uuid.uuid4()}"
+                tool_id = self._assign_public_tool_id(tc_index)
                 display_name = (resolved_name or "").strip() or "tool_call"
                 start_extra_content = state.extra_content if state else extra_content
                 if start_extra_content:
@@ -285,6 +304,23 @@ class OpenAIToolCallAssembler:
             tool_argument_aliases=tool_argument_aliases,
             tool_argument_alias_buffers=tool_argument_alias_buffers,
         )
+
+    def _assign_public_tool_id(self, tool_index: int) -> str:
+        assigned = self._public_tool_ids.get(tool_index)
+        if assigned is not None:
+            return assigned
+
+        candidate = self._candidate_tool_ids.get(tool_index)
+        if candidate is not None and candidate not in self._reserved_tool_ids:
+            public_id = candidate
+        else:
+            public_id = f"tool_{uuid.uuid4()}"
+            while public_id in self._reserved_tool_ids:
+                public_id = f"tool_{uuid.uuid4()}"
+
+        self._reserved_tool_ids.add(public_id)
+        self._public_tool_ids[tool_index] = public_id
+        return public_id
 
     def flush_task_arg_buffers(self, ledger: AnthropicStreamLedger) -> Iterator[str]:
         """Emit buffered Task args as a single JSON delta."""
