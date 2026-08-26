@@ -2,9 +2,9 @@
 
 import json
 import uuid
-from collections.abc import Callable, Iterator
+from collections.abc import Callable, Iterator, Mapping
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, NotRequired, TypedDict
 
 from free_claude_code.core.anthropic import OpenAIToolNameCodec
 from free_claude_code.core.anthropic.models import (
@@ -16,6 +16,7 @@ from free_claude_code.core.anthropic.streaming import (
     parse_complete_tool_input,
     tool_schemas_by_name,
 )
+from free_claude_code.core.json_types import JsonObject
 
 RecordToolExtraContent = Callable[[str, dict[str, Any]], None]
 
@@ -27,6 +28,20 @@ class _CollectedToolCall:
     name: str = ""
     argument_parts: list[str] = field(default_factory=list)
     extra_content: dict[str, Any] | None = None
+
+
+class _CompletedOpenAIToolFunction(TypedDict):
+    name: str
+    arguments: str
+
+
+class CompletedOpenAIToolCall(TypedDict):
+    """Schema-valid OpenAI tool-call payload collected for recovery emission."""
+
+    index: int
+    id: str | None
+    function: _CompletedOpenAIToolFunction
+    extra_content: NotRequired[JsonObject]
 
 
 class OpenAIToolCallCollector:
@@ -68,10 +83,10 @@ class OpenAIToolCallCollector:
         *,
         tool_names: OpenAIToolNameCodec | None = None,
         tool_argument_aliases: dict[str, dict[str, str]] | None = None,
-    ) -> tuple[dict[str, Any], ...] | None:
+    ) -> tuple[CompletedOpenAIToolCall, ...] | None:
         """Return complete schema-valid calls, or None when output is incomplete."""
         schemas = tool_schemas_by_name(request)
-        completed: list[dict[str, Any]] = []
+        completed: list[CompletedOpenAIToolCall] = []
         for index in sorted(self._calls):
             state = self._calls[index]
             wire_name = state.name.strip()
@@ -92,7 +107,7 @@ class OpenAIToolCallCollector:
             if parse_complete_tool_input(arguments, name, schemas) is None:
                 return None
 
-            call: dict[str, Any] = {
+            call: CompletedOpenAIToolCall = {
                 "index": index,
                 "id": state.tool_id,
                 "function": {
@@ -210,7 +225,7 @@ class OpenAIToolCallAssembler:
 
     def process_tool_call(
         self,
-        tc: dict[str, Any],
+        tc: Mapping[str, Any],
         ledger: AnthropicStreamLedger,
         *,
         tool_names: OpenAIToolNameCodec | None = None,

@@ -71,6 +71,7 @@ from .profiles import OpenAIChatProfile
 from .reasoning_details import StructuredReasoningStream
 from .request_policy import build_openai_chat_request_body
 from .tool_calls import (
+    CompletedOpenAIToolCall,
     OpenAIToolCallAssembler,
     OpenAIToolCallCollector,
     all_emitted_tools_complete,
@@ -94,7 +95,7 @@ _ExtraReasoningEvents = Callable[[Any, AnthropicStreamLedger], Iterator[str]]
 class _CollectedRecoveryOutput:
     text: str
     thinking: str
-    tool_calls: tuple[dict[str, Any], ...]
+    tool_calls: tuple[CompletedOpenAIToolCall, ...]
 
 
 def _iter_visible_text_events(
@@ -231,7 +232,9 @@ class _OpenAIChatStreamAssembler:
     def tool_argument_alias_buffers(self) -> Mapping[int, str]:
         return self._tool_argument_alias_buffers
 
-    def recovered_tool_call_events(self, tool_call: dict[str, Any]) -> Iterator[str]:
+    def recovered_tool_call_events(
+        self, tool_call: CompletedOpenAIToolCall
+    ) -> Iterator[str]:
         """Emit one buffered recovery call through this attempt's ID scope."""
         yield from self._tool_calls.process_tool_call(tool_call, self._ledger)
 
