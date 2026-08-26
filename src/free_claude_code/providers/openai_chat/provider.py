@@ -71,6 +71,7 @@ from .profiles import OpenAIChatProfile
 from .reasoning_details import StructuredReasoningStream
 from .request_policy import build_openai_chat_request_body
 from .tool_calls import (
+    CompletedOpenAIToolCall,
     OpenAIToolCallAssembler,
     OpenAIToolCallCollector,
     all_emitted_tools_complete,
@@ -94,7 +95,7 @@ _ExtraReasoningEvents = Callable[[Any, AnthropicStreamLedger], Iterator[str]]
 class _CollectedRecoveryOutput:
     text: str
     thinking: str
-    tool_calls: tuple[dict[str, Any], ...]
+    tool_calls: tuple[CompletedOpenAIToolCall, ...]
 
 
 def _iter_visible_text_events(
@@ -230,6 +231,12 @@ class _OpenAIChatStreamAssembler:
     @property
     def tool_argument_alias_buffers(self) -> Mapping[int, str]:
         return self._tool_argument_alias_buffers
+
+    def recovered_tool_call_events(
+        self, tool_call: CompletedOpenAIToolCall
+    ) -> Iterator[str]:
+        """Emit one buffered recovery call through this attempt's ID scope."""
+        yield from self._tool_calls.process_tool_call(tool_call, self._ledger)
 
     def start_events(self) -> Iterator[str]:
         if self._started:
@@ -806,9 +813,6 @@ class _OpenAIChatStreamRunner:
         self._reasoning = reasoning
         self._tool_names = OpenAIToolNameCodec.from_request(request)
         self._message_id = f"msg_{uuid.uuid4()}"
-        self._tool_calls = OpenAIToolCallAssembler(
-            record_extra_content=provider._record_tool_call_extra_content
-        )
 
     async def run(self) -> AsyncIterator[str]:
         """Convert the upstream OpenAI-chat stream into Anthropic SSE."""
@@ -1009,7 +1013,7 @@ class _OpenAIChatStreamRunner:
             try:
                 recovery_events = await self._recovery_events(
                     body=body,
-                    ledger=assembler.ledger,
+                    assembler=assembler,
                     error=error,
                     tool_argument_alias_buffers=(assembler.tool_argument_alias_buffers),
                     output_reasoning=self._reasoning.output_enabled,
@@ -1188,13 +1192,14 @@ class _OpenAIChatStreamRunner:
         self,
         *,
         body: dict[str, Any],
-        ledger: AnthropicStreamLedger,
+        assembler: _OpenAIChatStreamAssembler,
         error: Exception,
         tool_argument_alias_buffers: Mapping[int, str],
         output_reasoning: bool,
         execution: ProviderExecution,
     ) -> list[str] | None:
         """Build terminal recovery events when the interrupted stream permits it."""
+        ledger = assembler.ledger
         if ledger.has_emitted_tool_block():
             if not all_emitted_tools_complete(ledger, self._request):
                 repair_events = await self._repair_tool_args(
@@ -1260,7 +1265,7 @@ class _OpenAIChatStreamRunner:
         if recovered.tool_calls:
             events.extend(ledger.close_content_blocks())
             for tool_call in recovered.tool_calls:
-                events.extend(self._tool_calls.process_tool_call(tool_call, ledger))
+                events.extend(assembler.recovered_tool_call_events(tool_call))
         if not events:
             return None
         events.extend(ledger.close_all_blocks())
@@ -1374,6 +1379,9 @@ class _OpenAIChatStreamRunner:
             provider_name=self._provider._provider_name,
             output_reasoning=output_reasoning,
             tool_names=self._tool_names,
-            tool_calls=self._tool_calls,
+            tool_calls=OpenAIToolCallAssembler(
+                request=self._request,
+                record_extra_content=self._provider._record_tool_call_extra_content,
+            ),
             extra_reasoning_events=extra_reasoning_events,
         )

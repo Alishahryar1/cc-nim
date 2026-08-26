@@ -10,6 +10,7 @@ from free_claude_code.providers.nvidia_nim import NvidiaNimProvider
 from free_claude_code.providers.openai_chat.tool_calls import (
     OpenAIToolCallAssembler,
 )
+from tests.providers.request_factory import make_messages_request
 from tests.providers.support import (
     immediate_admission,
     make_provider_config,
@@ -26,9 +27,7 @@ async def test_task_tool_interception():
         admission=immediate_admission(),
     )
 
-    # Mock request and stream ledger with real StreamBlockLedger
-    request = MagicMock()
-    request.model = "test-model"
+    request = make_messages_request("test-model")
 
     sse = MagicMock()
     sse.blocks = StreamBlockLedger()
@@ -50,7 +49,7 @@ async def test_task_tool_interception():
     }
 
     tool_calls = OpenAIToolCallAssembler(
-        record_extra_content=provider._record_tool_call_extra_content
+        request=request, record_extra_content=provider._record_tool_call_extra_content
     )
 
     # Call the assembler (consume generator to trigger side effects)
